@@ -1,0 +1,34 @@
+id: primitive_amplitude_amplification
+name: Amplitude Amplification
+node_type: Primitive
+description: |
+  Amplitude amplification is a generalization of Grover's algorithm that increases 
+  the probability of obtaining a desired quantum state. It provides a quadratic 
+  speedup over classical brute-force search for unstructured databases.
+
+category: oracle
+complexity:
+  gate_count: O(√N) iterations for N items
+  depth: O(√N · oracle_depth)
+  qubits: n (for N = 2^n items)
+  classical_equivalent: O(N)
+  
+references:
+  - arxiv:quant-ph/0005055
+  - Grover1996
+
+tags:
+  - search
+  - grover
+  - oracle
+  - quadratic-speedup
+  - optimization
+
+definition: |
+  Given state |ψ⟩ = sin(θ)|good⟩ + cos(θ)|bad⟩,
+  amplitude amplification performs ≈ π/(4θ) iterations of the 
+  Grover operator to amplify |good⟩ amplitude to ≈ 1.
+
+prerequisites:
+  - oracle_construction
+  - diffusion_operator
