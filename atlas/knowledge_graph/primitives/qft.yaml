@@ -1,0 +1,31 @@
+id: primitive_qft
+name: Quantum Fourier Transform
+node_type: Primitive
+description: |
+  The Quantum Fourier Transform (QFT) is a quantum analog of the classical discrete Fourier transform.
+  It transforms a quantum state from the computational basis to the Fourier basis.
+  QFT is a fundamental primitive used in many quantum algorithms including Shor's algorithm
+  and quantum phase estimation.
+
+category: transformation
+complexity:
+  gate_count: O(n^2)
+  depth: O(n)
+  qubits: n
+  classical_equivalent: O(n 2^n)
+
+references:
+  - arxiv:9508027
+  - NielsenChuang
+
+tags:
+  - fourier
+  - transformation
+  - fundamental
+  - shor
+  - qpe
+
+definition: |
+  QFT acts on n qubits and performs the transform:
+  |j⟩ → (1/√N) Σ_k e^(2πijk/N) |k⟩
+  where N = 2^n
