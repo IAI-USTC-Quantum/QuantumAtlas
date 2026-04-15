@@ -65,8 +65,8 @@ class ArxivFetcher:
     def _is_valid_arxiv_id(self, arxiv_id: str) -> bool:
         """Check if string looks like a valid arXiv ID."""
         # Old format: 7 digits
-        # New format: YYMM.number
-        pattern = r'^(\d{7}|\d{4}\.\d{4,5})$'
+        # New format: YYMM.number (4-6 digits after decimal)
+        pattern = r'^(\d{7}|\d{4}\.\d{4,6})$'
         return bool(re.match(pattern, arxiv_id))
     
     def fetch_metadata(self, arxiv_id: str) -> dict:

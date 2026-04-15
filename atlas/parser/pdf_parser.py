@@ -110,6 +110,8 @@ class PDFParser:
         for page in doc:
             full_text += page.get_text()
         
+        # Save page count before closing
+        page_count = len(doc)
         doc.close()
         
         # Initialize parsed paper
@@ -137,7 +139,7 @@ class PDFParser:
         
         # Store metadata
         paper.metadata = {
-            "page_count": len(doc),
+            "page_count": page_count,
             "file_size": pdf_path.stat().st_size,
         }
         

@@ -48,7 +48,12 @@ class Neo4jClient:
         """
         self.uri = uri or os.getenv("NEO4J_URI", "bolt://localhost:7687")
         self.username = username or os.getenv("NEO4J_USER", "neo4j")
-        self.password = password or os.getenv("NEO4J_PASSWORD", "quantum-atlas")
+        self.password = password or os.getenv("NEO4J_PASSWORD")
+        if not self.password:
+            raise ValueError(
+                "Neo4j password is required. Set NEO4J_PASSWORD environment variable "
+                "or pass password parameter."
+            )
         self._driver: Optional[Driver] = None
     
     def connect(self) -> "Neo4jClient":
