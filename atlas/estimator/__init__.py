@@ -7,10 +7,35 @@
 - 估算运行时间和错误率
 - 生成资源需求报告
 
-TODO:
-- [ ] 实现量子比特数估算
-- [ ] 实现电路深度估算
-- [ ] 实现 T 门计数
-- [ ] 实现错误率估算
-- [ ] 实现资源报告生成
+核心组件：
+- ResourceAnalyzer: 分析电路资源需求
+- ReportGenerator: 生成资源报告
+- ResourceEstimator: 主入口类，整合分析和报告功能
+
+使用示例：
+    from atlas.estimator import ResourceEstimator, ResourceAnalyzer
+    
+    # 使用主类进行完整分析
+    estimator = ResourceEstimator()
+    report = estimator.estimate(circuit, algorithm_name="My Algorithm")
+    
+    # 快速分析
+    analyzer = ResourceAnalyzer()
+    stats = analyzer.analyze(circuit)
+    print(f"Depth: {stats.depth}, Gates: {stats.total_gates}")
+    
+CLI 使用：
+    python -m atlas.estimator <circuit_file>
+    python -m atlas.estimator --demo
 """
+
+from .resource_analyzer import ResourceAnalyzer, ResourceStats
+from .report_generator import ReportGenerator
+from .estimator import ResourceEstimator
+
+__all__ = [
+    "ResourceAnalyzer",
+    "ResourceStats", 
+    "ReportGenerator",
+    "ResourceEstimator",
+]
