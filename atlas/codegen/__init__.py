@@ -7,10 +7,41 @@
 - 生成 Python 量子代码
 - 生成代码注释和文档
 
-TODO:
-- [ ] 实现 Qiskit 代码生成器
-- [ ] 实现 Cirq 代码生成器
-- [ ] 实现 QPanda 代码生成器
-- [ ] 实现代码模板系统
-- [ ] 实现自动注释生成
+Usage:
+    from atlas.codegen import CodeGenerator
+    from atlas.designer.quantum_ir import QuantumIR
+    
+    # Load Quantum IR
+    ir = QuantumIR.load("circuit.json")
+    
+    # Generate code
+    generator = CodeGenerator(backend="qiskit")
+    code = generator.generate(ir)
+    
+    # Save to file
+    generator.generate_file(ir, "output.py")
 """
+
+from .generator import CodeGenerator, generate_qpanda_code, generate_qiskit_code
+from .qpanda_generator import QPandaCodeGenerator
+from .qiskit_generator import QiskitCodeGenerator
+from .formatter import CodeFormatter, format_code, validate_code_syntax
+from .template_engine import TemplateEngine
+
+__all__ = [
+    # Main generator
+    "CodeGenerator",
+    "generate_qpanda_code",
+    "generate_qiskit_code",
+    # Backend generators
+    "QPandaCodeGenerator",
+    "QiskitCodeGenerator",
+    # Formatting
+    "CodeFormatter",
+    "format_code",
+    "validate_code_syntax",
+    # Templates
+    "TemplateEngine",
+]
+
+__version__ = "0.1.0"
