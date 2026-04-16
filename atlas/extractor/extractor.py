@@ -113,22 +113,25 @@ class AlgorithmExtractor:
         self,
         client: Neo4jClient,
         algorithm_ir: AlgorithmIR
-    ) -> None:
+    ) -> Dict[str, Any]:
         """
         Save extracted algorithm to Neo4j knowledge graph.
-        
+
         Args:
             client: Neo4j client instance
             algorithm_ir: Algorithm IR to save
-            
+
+        Returns:
+            Dict with algorithm_id, paper_id, primitives_linked
+
         Raises:
             ValueError: If client is not connected
         """
         if not client.is_connected():
             raise ValueError("Neo4j client is not connected")
-        
+
         print(f"Saving algorithm {algorithm_ir.id} to knowledge graph...")
-        
+
         # Create Algorithm node
         algorithm = Algorithm(
             id=algorithm_ir.id,
@@ -140,9 +143,10 @@ class AlgorithmExtractor:
             paper_id=f"paper_{algorithm_ir.arxiv_id}" if algorithm_ir.arxiv_id else None,
             year=algorithm_ir.year,
         )
-        
+
         client.create_algorithm(algorithm)
-        
+
+        paper_id = None
         # Link to paper if exists
         if algorithm_ir.arxiv_id:
             paper_id = f"paper_{algorithm_ir.arxiv_id}"
@@ -151,8 +155,14 @@ class AlgorithmExtractor:
                 print(f"  Linked to paper {paper_id}")
             except Exception as e:
                 print(f"  Warning: Could not link to paper: {e}")
-        
+
         print(f"  Saved with {len(algorithm_ir.primitives)} primitives")
+
+        return {
+            "algorithm_id": algorithm_ir.id,
+            "paper_id": paper_id,
+            "primitives_linked": algorithm_ir.primitives,
+        }
     
     def get_extraction_stats(self) -> Dict[str, Any]:
         """Get statistics about extractions performed."""
@@ -161,8 +171,24 @@ class AlgorithmExtractor:
             "total_extractions": len(self.extraction_history),
             "successful_extractions": sum(1 for h in self.extraction_history if h["success"]),
             "total_tokens": total_usage.total_tokens,
-            "estimated_cost_usd": total_usage.estimated_cost,
+            "estimated_cost_usd": getattr(total_usage, 'estimated_cost', 0.0),
         }
+
+    def get_total_token_usage(self) -> "TokenUsage":
+        """Get total token usage from LLM."""
+        return self.llm.get_total_usage()
+
+    def export_to_yaml(self, algorithm_ir: AlgorithmIR, filepath: str) -> None:
+        """
+        Export AlgorithmIR to YAML file.
+
+        Args:
+            algorithm_ir: Algorithm IR to export
+            filepath: Path to save YAML file
+        """
+        yaml_content = algorithm_ir.to_yaml()
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write(yaml_content)
     
     def _get_default_primitives(self) -> List[str]:
         """Get default list of primitive IDs."""

@@ -213,17 +213,26 @@ class LLMInterface(ABC):
         raise NotImplementedError("Subclasses must implement extract_complexity()")
     
     @abstractmethod
-    def identify_primitives(self, paper_text: str) -> ExtractionResult:
+    def identify_primitives(
+        self,
+        paper_text: str,
+        available_primitives: Optional[List[str]] = None
+    ) -> ExtractionResult:
         """
         Identify quantum primitives used in the algorithm.
-        
+
         Args:
             paper_text: Full text of the paper
-            
+            available_primitives: Optional list of primitive IDs to consider
+
         Returns:
             ExtractionResult with list of primitive IDs
         """
         raise NotImplementedError("Subclasses must implement identify_primitives()")
+
+    def get_total_usage(self) -> TokenUsage:
+        """Get total token usage across all extractions."""
+        return self._total_token_usage
     
     def _truncate_text(self, text: str, max_chars: int = 15000) -> str:
         """Truncate text to fit context window."""
@@ -362,14 +371,23 @@ Extract time complexity, space complexity, query complexity, gate count, circuit
         return self._call_structured(system_prompt, user_prompt, ComplexityExtraction)
     
     @with_retry()
-    def identify_primitives(self, paper_text: str) -> ExtractionResult:
+    def identify_primitives(
+        self,
+        paper_text: str,
+        available_primitives: Optional[List[str]] = None
+    ) -> ExtractionResult:
         """Identify quantum primitives used in the algorithm."""
         system_prompt = """You are an expert in quantum computing primitives.
 Identify which quantum primitives (QFT, QPE, Grover, etc.) are used in the algorithm.
-Use standard primitive IDs like: primitive_qft, primitive_qpe, primitive_grover, 
+Use standard primitive IDs like: primitive_qft, primitive_qpe, primitive_grover,
 primitive_vqe, primitive_qaoa, primitive_shors, etc."""
-        
-        user_prompt = f"""Please analyze the following paper text and identify quantum primitives used.
+
+        # Include available primitives in the prompt if provided
+        primitives_hint = ""
+        if available_primitives:
+            primitives_hint = f"\n\nAvailable primitives to consider: {', '.join(available_primitives)}"
+
+        user_prompt = f"""Please analyze the following paper text and identify quantum primitives used.{primitives_hint}
 
 --- Paper Text ---
 
@@ -378,7 +396,7 @@ primitive_vqe, primitive_qaoa, primitive_shors, etc."""
 --- End of Paper Text ---
 
 Identify all quantum primitives used in the algorithm and describe how each is used."""
-        
+
         return self._call_structured(system_prompt, user_prompt, PrimitiveIdentification)
 
 
@@ -550,14 +568,23 @@ Extract the following information as JSON:
         return self._call_with_json_output(system_prompt, user_prompt, ComplexityExtraction)
     
     @with_retry()
-    def identify_primitives(self, paper_text: str) -> ExtractionResult:
+    def identify_primitives(
+        self,
+        paper_text: str,
+        available_primitives: Optional[List[str]] = None
+    ) -> ExtractionResult:
         """Identify quantum primitives used in the algorithm using Claude."""
         system_prompt = """You are an expert in quantum computing primitives.
 Identify which quantum primitives (QFT, QPE, Grover, etc.) are used in the algorithm.
-Use standard primitive IDs like: primitive_qft, primitive_qpe, primitive_grover, 
+Use standard primitive IDs like: primitive_qft, primitive_qpe, primitive_grover,
 primitive_vqe, primitive_qaoa, primitive_shors, etc."""
-        
-        user_prompt = f"""Please analyze the following paper text and identify quantum primitives used.
+
+        # Include available primitives in the prompt if provided
+        primitives_hint = ""
+        if available_primitives:
+            primitives_hint = f"\n\nAvailable primitives to consider: {', '.join(available_primitives)}"
+
+        user_prompt = f"""Please analyze the following paper text and identify quantum primitives used.{primitives_hint}
 
 --- Paper Text ---
 
@@ -568,7 +595,7 @@ primitive_vqe, primitive_qaoa, primitive_shors, etc."""
 Extract the following information as JSON:
 - primitives: List of primitive IDs used by the algorithm (e.g., ["primitive_qft", "primitive_qpe"])
 - usage_context: Object mapping primitive IDs to description of how they are used"""
-        
+
         return self._call_with_json_output(system_prompt, user_prompt, PrimitiveIdentification)
 
 
@@ -595,7 +622,11 @@ class LocalLLM(LLMInterface):
         # TODO: Implement
         return ExtractionResult(success=False, error="Not implemented")
     
-    def identify_primitives(self, paper_text: str) -> ExtractionResult:
+    def identify_primitives(
+        self,
+        paper_text: str,
+        available_primitives: Optional[List[str]] = None
+    ) -> ExtractionResult:
         # TODO: Implement
         return ExtractionResult(success=False, error="Not implemented")
 

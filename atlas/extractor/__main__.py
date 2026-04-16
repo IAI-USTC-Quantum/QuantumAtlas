@@ -201,7 +201,6 @@ def main(
         algorithm_ir = extractor.extract_from_paper(
             paper_text=paper_text,
             arxiv_id=arxiv_id,
-            paper_metadata=paper_metadata,
         )
         click.echo(f"✓ Extracted: {algorithm_ir.name}")
         click.echo(f"  Problem Type: {algorithm_ir.problem_type}")
