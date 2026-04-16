@@ -2,13 +2,24 @@
 LLM Interface Module
 
 Abstract interface for LLM-based information extraction.
-TODO: Implement concrete providers (OpenAI, Claude, local models, etc.)
+Implements concrete providers for OpenAI, Claude, and extensible for others.
 """
 
+import os
+import json
+import time
+import logging
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, List
-from dataclasses import dataclass
+from typing import Dict, Any, Optional, List, Callable
+from dataclasses import dataclass, field
 from enum import Enum
+from functools import wraps
+
+import pydantic
+from pydantic import BaseModel, Field
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 class LLMProvider(Enum):
@@ -21,6 +32,32 @@ class LLMProvider(Enum):
 
 
 @dataclass
+class TokenUsage:
+    """Token usage information for LLM calls."""
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    
+    def __add__(self, other: "TokenUsage") -> "TokenUsage":
+        """Combine two token usage records."""
+        return TokenUsage(
+            prompt_tokens=self.prompt_tokens + other.prompt_tokens,
+            completion_tokens=self.completion_tokens + other.completion_tokens,
+            total_tokens=self.total_tokens + other.total_tokens,
+        )
+
+
+@dataclass
+class RetryConfig:
+    """Configuration for retry mechanism."""
+    max_retries: int = 3
+    base_delay: float = 1.0
+    max_delay: float = 60.0
+    exponential_base: float = 2.0
+    retryable_exceptions: tuple = (Exception,)
+
+
+@dataclass
 class ExtractionResult:
     """Result of LLM extraction."""
     success: bool
@@ -28,19 +65,88 @@ class ExtractionResult:
     error: Optional[str] = None
     raw_response: Optional[str] = None
     confidence: Optional[float] = None
+    token_usage: TokenUsage = field(default_factory=TokenUsage)
+
+
+def with_retry(config: Optional[RetryConfig] = None):
+    """Decorator for adding retry mechanism to LLM calls."""
+    if config is None:
+        config = RetryConfig()
+    
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        def wrapper(*args, **kwargs) -> ExtractionResult:
+            last_exception = None
+            
+            for attempt in range(config.max_retries + 1):
+                try:
+                    return func(*args, **kwargs)
+                except config.retryable_exceptions as e:
+                    last_exception = e
+                    if attempt < config.max_retries:
+                        delay = min(
+                            config.base_delay * (config.exponential_base ** attempt),
+                            config.max_delay
+                        )
+                        logger.warning(
+                            f"{func.__name__} failed (attempt {attempt + 1}/{config.max_retries + 1}): {e}. "
+                            f"Retrying in {delay:.1f}s..."
+                        )
+                        time.sleep(delay)
+                    else:
+                        logger.error(f"{func.__name__} failed after {config.max_retries + 1} attempts: {e}")
+            
+            return ExtractionResult(
+                success=False,
+                error=f"Failed after {config.max_retries + 1} attempts: {str(last_exception)}"
+            )
+        return wrapper
+    return decorator
+
+
+# Pydantic models for structured output
+
+class AlgorithmMetadata(BaseModel):
+    """Structured output for algorithm metadata extraction."""
+    name: str = Field(description="The name of the algorithm")
+    description: str = Field(description="A concise description of what the algorithm does")
+    authors: List[str] = Field(default_factory=list, description="List of paper authors")
+    year: Optional[int] = Field(None, description="Publication year")
+    problem_type: str = Field(description="Type of problem the algorithm solves")
+    venue: Optional[str] = Field(None, description="Publication venue")
+    doi: Optional[str] = Field(None, description="DOI of the paper")
+
+
+class PseudocodeExtraction(BaseModel):
+    """Structured output for pseudocode extraction."""
+    algorithm_name: str = Field(description="Name of the algorithm")
+    pseudocode: str = Field(description="The pseudocode in plain text format")
+    input_description: str = Field(description="Description of input parameters")
+    output_description: str = Field(description="Description of output")
+
+
+class ComplexityExtraction(BaseModel):
+    """Structured output for complexity extraction."""
+    time_complexity: str = Field(description="Time complexity (e.g., O(n^2), O(2^n))")
+    space_complexity: str = Field(description="Space complexity")
+    query_complexity: Optional[str] = Field(None, description="Query complexity for quantum algorithms")
+    gate_count: Optional[str] = Field(None, description="Number of quantum gates required")
+    circuit_depth: Optional[str] = Field(None, description="Depth of the quantum circuit")
+    qubit_count: Optional[str] = Field(None, description="Number of qubits required")
+
+
+class PrimitiveIdentification(BaseModel):
+    """Structured output for primitive identification."""
+    primitives: List[str] = Field(description="List of primitive IDs used by the algorithm")
+    usage_context: Dict[str, str] = Field(default_factory=dict, description="How each primitive is used")
 
 
 class LLMInterface(ABC):
     """
     Abstract base class for LLM interfaces.
     
-    TODO: Implement concrete subclasses:
-    - OpenAILLM: OpenAI GPT models
-    - AnthropicLLM: Claude models
-    - LocalLLM: Local models via vLLM, llama.cpp, etc.
-    
     Usage:
-        llm = OpenAILLM(api_key="...")
+        llm = OpenAIProvider(model="gpt-4")
         result = llm.extract_metadata(paper_text)
     """
     
@@ -56,6 +162,16 @@ class LLMInterface(ABC):
         self.provider = provider
         self.model = model
         self.config = kwargs
+        self.retry_config = RetryConfig(
+            max_retries=kwargs.get("max_retries", 3),
+            base_delay=kwargs.get("base_delay", 1.0),
+        )
+        self._total_token_usage = TokenUsage()
+    
+    @property
+    def total_token_usage(self) -> TokenUsage:
+        """Get total token usage across all extractions."""
+        return self._total_token_usage
     
     @abstractmethod
     def extract_metadata(self, paper_text: str) -> ExtractionResult:
@@ -67,16 +183,6 @@ class LLMInterface(ABC):
             
         Returns:
             ExtractionResult with structured metadata
-            
-        TODO: Implement with concrete LLM
-        Expected output format:
-        {
-            "title": "...",
-            "authors": ["...", "..."],
-            "year": 2024,
-            "venue": "...",
-            "doi": "..."
-        }
         """
         raise NotImplementedError("Subclasses must implement extract_metadata()")
     
@@ -90,15 +196,6 @@ class LLMInterface(ABC):
             
         Returns:
             ExtractionResult with structured pseudocode
-            
-        TODO: Implement with concrete LLM
-        Expected output format:
-        {
-            "algorithm_name": "...",
-            "pseudocode": "...",
-            "input_description": "...",
-            "output_description": "..."
-        }
         """
         raise NotImplementedError("Subclasses must implement extract_pseudocode()")
     
@@ -112,15 +209,6 @@ class LLMInterface(ABC):
             
         Returns:
             ExtractionResult with complexity metrics
-            
-        TODO: Implement with concrete LLM
-        Expected output format:
-        {
-            "gate_count": "O(n^2)",
-            "circuit_depth": "O(n)",
-            "qubit_count": "n + O(1)",
-            "classical_equivalent": "O(2^n)"
-        }
         """
         raise NotImplementedError("Subclasses must implement extract_complexity()")
     
@@ -134,95 +222,354 @@ class LLMInterface(ABC):
             
         Returns:
             ExtractionResult with list of primitive IDs
-            
-        TODO: Implement with concrete LLM
-        Expected output format:
-        {
-            "primitives": ["primitive_qft", "primitive_qpe", "..."],
-            "usage_context": {...}
-        }
         """
         raise NotImplementedError("Subclasses must implement identify_primitives()")
     
-    def _build_prompt(self, task: str, paper_text: str, format_instruction: str) -> str:
+    def _truncate_text(self, text: str, max_chars: int = 15000) -> str:
+        """Truncate text to fit context window."""
+        if len(text) <= max_chars:
+            return text
+        return text[:max_chars] + "\n...[truncated]"
+
+
+class OpenAIProvider(LLMInterface):
+    """
+    OpenAI GPT provider for algorithm extraction.
+    
+    Usage:
+        provider = OpenAIProvider(model="gpt-4o")
+        result = provider.extract_metadata(paper_text)
+    """
+    
+    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-4o", **kwargs):
         """
-        Build prompt for LLM.
+        Initialize OpenAI provider.
         
-        TODO: Implement prompt templates for different tasks
+        Args:
+            api_key: OpenAI API key (default: from OPENAI_API_KEY env var)
+            model: Model name (default: gpt-4o)
+            **kwargs: Additional configuration
         """
-        prompt = f"""You are an expert in quantum computing. Your task is to {task}.
-
-Please analyze the following paper text and provide the output in the specified format.
-
-{format_instruction}
+        super().__init__(LLMProvider.OPENAI, model, **kwargs)
+        
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        if not self.api_key:
+            raise ValueError(
+                "OpenAI API key is required. Set OPENAI_API_KEY environment variable "
+                "or pass api_key parameter."
+            )
+        
+        try:
+            from openai import OpenAI
+            self.client = OpenAI(api_key=self.api_key)
+        except ImportError:
+            raise ImportError(
+                "openai package is required. Install with: pip install openai>=1.0.0"
+            )
+    
+    def _call_structured(
+        self, 
+        system_prompt: str, 
+        user_prompt: str, 
+        response_format: type
+    ) -> ExtractionResult:
+        """Make a structured call to OpenAI API."""
+        try:
+            response = self.client.beta.chat.completions.parse(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                response_format=response_format,
+            )
+            
+            # Track token usage
+            usage = TokenUsage(
+                prompt_tokens=response.usage.prompt_tokens,
+                completion_tokens=response.usage.completion_tokens,
+                total_tokens=response.usage.total_tokens,
+            )
+            self._total_token_usage = self._total_token_usage + usage
+            
+            return ExtractionResult(
+                success=True,
+                data=response.choices[0].message.parsed.model_dump(),
+                token_usage=usage,
+            )
+        except Exception as e:
+            logger.error(f"OpenAI API error: {e}")
+            return ExtractionResult(
+                success=False,
+                error=f"OpenAI API error: {str(e)}"
+            )
+    
+    @with_retry()
+    def extract_metadata(self, paper_text: str) -> ExtractionResult:
+        """Extract paper metadata using structured output."""
+        system_prompt = """You are an expert in quantum computing research. 
+Extract algorithm metadata from the provided paper text.
+Be precise and extract only information explicitly stated in the text."""
+        
+        user_prompt = f"""Please analyze the following paper text and extract the algorithm metadata.
 
 --- Paper Text ---
 
-{paper_text[:15000]}  # Truncate to fit context window
+{self._truncate_text(paper_text)}
 
 --- End of Paper Text ---
 
-Please provide your response in valid JSON format."""
+Extract the algorithm name, description, authors, year, problem type, venue, and DOI."""
         
-        return prompt
-
-
-# TODO: Implement concrete providers
-
-class OpenAILLM(LLMInterface):
-    """
-    OpenAI GPT interface.
+        return self._call_structured(system_prompt, user_prompt, AlgorithmMetadata)
     
-    TODO: Implement OpenAI API integration
-    """
-    
-    def __init__(self, api_key: str, model: str = "gpt-4", **kwargs):
-        super().__init__(LLMProvider.OPENAI, model, api_key=api_key, **kwargs)
-        # TODO: Initialize OpenAI client
-    
-    def extract_metadata(self, paper_text: str) -> ExtractionResult:
-        # TODO: Implement
-        return ExtractionResult(success=False, error="Not implemented")
-    
+    @with_retry()
     def extract_pseudocode(self, paper_text: str) -> ExtractionResult:
-        # TODO: Implement
-        return ExtractionResult(success=False, error="Not implemented")
+        """Extract algorithm pseudocode from paper."""
+        system_prompt = """You are an expert in quantum computing algorithms.
+Extract the pseudocode from the provided paper text.
+If no explicit pseudocode is present, reconstruct it from the algorithm description."""
+        
+        user_prompt = f"""Please analyze the following paper text and extract or reconstruct the algorithm pseudocode.
+
+--- Paper Text ---
+
+{self._truncate_text(paper_text)}
+
+--- End of Paper Text ---
+
+Extract the algorithm name, pseudocode, input description, and output description."""
+        
+        return self._call_structured(system_prompt, user_prompt, PseudocodeExtraction)
     
+    @with_retry()
     def extract_complexity(self, paper_text: str) -> ExtractionResult:
-        # TODO: Implement
-        return ExtractionResult(success=False, error="Not implemented")
+        """Extract complexity information from paper."""
+        system_prompt = """You are an expert in quantum computing complexity analysis.
+Extract complexity metrics from the provided paper text.
+Include time, space, query complexity, gate count, circuit depth, and qubit count if mentioned."""
+        
+        user_prompt = f"""Please analyze the following paper text and extract complexity information.
+
+--- Paper Text ---
+
+{self._truncate_text(paper_text)}
+
+--- End of Paper Text ---
+
+Extract time complexity, space complexity, query complexity, gate count, circuit depth, and qubit count."""
+        
+        return self._call_structured(system_prompt, user_prompt, ComplexityExtraction)
     
+    @with_retry()
     def identify_primitives(self, paper_text: str) -> ExtractionResult:
-        # TODO: Implement
-        return ExtractionResult(success=False, error="Not implemented")
+        """Identify quantum primitives used in the algorithm."""
+        system_prompt = """You are an expert in quantum computing primitives.
+Identify which quantum primitives (QFT, QPE, Grover, etc.) are used in the algorithm.
+Use standard primitive IDs like: primitive_qft, primitive_qpe, primitive_grover, 
+primitive_vqe, primitive_qaoa, primitive_shors, etc."""
+        
+        user_prompt = f"""Please analyze the following paper text and identify quantum primitives used.
+
+--- Paper Text ---
+
+{self._truncate_text(paper_text)}
+
+--- End of Paper Text ---
+
+Identify all quantum primitives used in the algorithm and describe how each is used."""
+        
+        return self._call_structured(system_prompt, user_prompt, PrimitiveIdentification)
 
 
-class AnthropicLLM(LLMInterface):
+class ClaudeProvider(LLMInterface):
     """
-    Anthropic Claude interface.
+    Anthropic Claude provider for algorithm extraction.
     
-    TODO: Implement Anthropic API integration
+    Usage:
+        provider = ClaudeProvider(model="claude-3-sonnet-20240229")
+        result = provider.extract_metadata(paper_text)
     """
     
-    def __init__(self, api_key: str, model: str = "claude-3-opus-20240229", **kwargs):
-        super().__init__(LLMProvider.ANTHROPIC, model, api_key=api_key, **kwargs)
-        # TODO: Initialize Anthropic client
+    def __init__(self, api_key: Optional[str] = None, model: str = "claude-3-sonnet-20240229", **kwargs):
+        """
+        Initialize Claude provider.
+        
+        Args:
+            api_key: Anthropic API key (default: from ANTHROPIC_API_KEY env var)
+            model: Model name (default: claude-3-sonnet-20240229)
+            **kwargs: Additional configuration
+        """
+        super().__init__(LLMProvider.ANTHROPIC, model, **kwargs)
+        
+        self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
+        if not self.api_key:
+            raise ValueError(
+                "Anthropic API key is required. Set ANTHROPIC_API_KEY environment variable "
+                "or pass api_key parameter."
+            )
+        
+        try:
+            import anthropic
+            self.client = anthropic.Anthropic(api_key=self.api_key)
+        except ImportError:
+            raise ImportError(
+                "anthropic package is required. Install with: pip install anthropic"
+            )
     
+    def _call_with_json_output(
+        self, 
+        system_prompt: str, 
+        user_prompt: str,
+        response_schema: type
+    ) -> ExtractionResult:
+        """Make a call to Claude API with JSON output."""
+        try:
+            # Add JSON instruction to system prompt
+            json_instruction = "\n\nRespond with valid JSON only."
+            full_system = system_prompt + json_instruction
+            
+            response = self.client.messages.create(
+                model=self.model,
+                max_tokens=4096,
+                system=full_system,
+                messages=[
+                    {"role": "user", "content": user_prompt},
+                ],
+            )
+            
+            # Claude doesn't provide token usage directly in the same way
+            # We'll estimate or set to 0 for now
+            usage = TokenUsage(
+                prompt_tokens=response.usage.input_tokens,
+                completion_tokens=response.usage.output_tokens,
+                total_tokens=response.usage.input_tokens + response.usage.output_tokens,
+            )
+            self._total_token_usage = self._total_token_usage + usage
+            
+            # Parse JSON response
+            content = response.content[0].text
+            try:
+                data = json.loads(content)
+                # Validate with pydantic model
+                validated = response_schema(**data)
+                return ExtractionResult(
+                    success=True,
+                    data=validated.model_dump(),
+                    raw_response=content,
+                    token_usage=usage,
+                )
+            except (json.JSONDecodeError, pydantic.ValidationError) as e:
+                logger.error(f"Failed to parse Claude response as JSON: {e}")
+                return ExtractionResult(
+                    success=False,
+                    error=f"JSON parsing error: {str(e)}",
+                    raw_response=content,
+                    token_usage=usage,
+                )
+                
+        except Exception as e:
+            logger.error(f"Claude API error: {e}")
+            return ExtractionResult(
+                success=False,
+                error=f"Claude API error: {str(e)}"
+            )
+    
+    @with_retry()
     def extract_metadata(self, paper_text: str) -> ExtractionResult:
-        # TODO: Implement
-        return ExtractionResult(success=False, error="Not implemented")
+        """Extract paper metadata using Claude."""
+        system_prompt = """You are an expert in quantum computing research. 
+Extract algorithm metadata from the provided paper text.
+Be precise and extract only information explicitly stated in the text."""
+        
+        user_prompt = f"""Please analyze the following paper text and extract the algorithm metadata.
+
+--- Paper Text ---
+
+{self._truncate_text(paper_text)}
+
+--- End of Paper Text ---
+
+Extract the following information as JSON:
+- name: The name of the algorithm
+- description: A concise description of what the algorithm does
+- authors: List of paper authors
+- year: Publication year (integer or null)
+- problem_type: Type of problem the algorithm solves
+- venue: Publication venue (string or null)
+- doi: DOI of the paper (string or null)"""
+        
+        return self._call_with_json_output(system_prompt, user_prompt, AlgorithmMetadata)
     
+    @with_retry()
     def extract_pseudocode(self, paper_text: str) -> ExtractionResult:
-        # TODO: Implement
-        return ExtractionResult(success=False, error="Not implemented")
+        """Extract algorithm pseudocode from paper using Claude."""
+        system_prompt = """You are an expert in quantum computing algorithms.
+Extract the pseudocode from the provided paper text.
+If no explicit pseudocode is present, reconstruct it from the algorithm description."""
+        
+        user_prompt = f"""Please analyze the following paper text and extract or reconstruct the algorithm pseudocode.
+
+--- Paper Text ---
+
+{self._truncate_text(paper_text)}
+
+--- End of Paper Text ---
+
+Extract the following information as JSON:
+- algorithm_name: Name of the algorithm
+- pseudocode: The pseudocode in plain text format
+- input_description: Description of input parameters
+- output_description: Description of output"""
+        
+        return self._call_with_json_output(system_prompt, user_prompt, PseudocodeExtraction)
     
+    @with_retry()
     def extract_complexity(self, paper_text: str) -> ExtractionResult:
-        # TODO: Implement
-        return ExtractionResult(success=False, error="Not implemented")
+        """Extract complexity information from paper using Claude."""
+        system_prompt = """You are an expert in quantum computing complexity analysis.
+Extract complexity metrics from the provided paper text.
+Include time, space, query complexity, gate count, circuit depth, and qubit count if mentioned."""
+        
+        user_prompt = f"""Please analyze the following paper text and extract complexity information.
+
+--- Paper Text ---
+
+{self._truncate_text(paper_text)}
+
+--- End of Paper Text ---
+
+Extract the following information as JSON:
+- time_complexity: Time complexity (e.g., O(n^2), O(2^n))
+- space_complexity: Space complexity
+- query_complexity: Query complexity for quantum algorithms (string or null)
+- gate_count: Number of quantum gates required (string or null)
+- circuit_depth: Depth of the quantum circuit (string or null)
+- qubit_count: Number of qubits required (string or null)"""
+        
+        return self._call_with_json_output(system_prompt, user_prompt, ComplexityExtraction)
     
+    @with_retry()
     def identify_primitives(self, paper_text: str) -> ExtractionResult:
-        # TODO: Implement
-        return ExtractionResult(success=False, error="Not implemented")
+        """Identify quantum primitives used in the algorithm using Claude."""
+        system_prompt = """You are an expert in quantum computing primitives.
+Identify which quantum primitives (QFT, QPE, Grover, etc.) are used in the algorithm.
+Use standard primitive IDs like: primitive_qft, primitive_qpe, primitive_grover, 
+primitive_vqe, primitive_qaoa, primitive_shors, etc."""
+        
+        user_prompt = f"""Please analyze the following paper text and identify quantum primitives used.
+
+--- Paper Text ---
+
+{self._truncate_text(paper_text)}
+
+--- End of Paper Text ---
+
+Extract the following information as JSON:
+- primitives: List of primitive IDs used by the algorithm (e.g., ["primitive_qft", "primitive_qpe"])
+- usage_context: Object mapping primitive IDs to description of how they are used"""
+        
+        return self._call_with_json_output(system_prompt, user_prompt, PrimitiveIdentification)
 
 
 class LocalLLM(LLMInterface):
@@ -253,24 +600,21 @@ class LocalLLM(LLMInterface):
         return ExtractionResult(success=False, error="Not implemented")
 
 
-# Factory function
 def create_llm(provider: str, **kwargs) -> LLMInterface:
     """
     Factory function to create LLM interface.
     
-    TODO: Extend with more providers
-    
     Usage:
-        llm = create_llm("openai", api_key="...")
-        llm = create_llm("anthropic", api_key="...")
+        llm = create_llm("openai", model="gpt-4o")
+        llm = create_llm("anthropic", model="claude-3-sonnet-20240229")
         llm = create_llm("local", model_path="/path/to/model")
     """
     provider = provider.lower()
     
     if provider == "openai":
-        return OpenAILLM(**kwargs)
-    elif provider == "anthropic":
-        return AnthropicLLM(**kwargs)
+        return OpenAIProvider(**kwargs)
+    elif provider in ["anthropic", "claude"]:
+        return ClaudeProvider(**kwargs)
     elif provider == "local":
         return LocalLLM(**kwargs)
     else:
