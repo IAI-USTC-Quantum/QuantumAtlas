@@ -1,17 +1,36 @@
 """
-信息提取模块 (Extractor)
+Information Extractor Module
 
-职责：
-- 使用 LLM 提取算法核心要素
-- 提取输入/输出量子态描述
-- 提取核心变换/算子定义
-- 提取复杂度分析信息
-- 提取电路深度和宽度参数
-
-TODO:
-- [ ] 实现 LLM 调用封装
-- [ ] 实现算法要素提取 Prompt 设计
-- [ ] 实现量子态描述提取
-- [ ] 实现算子定义提取
-- [ ] 实现复杂度信息提取
+Responsibilities:
+- Extract algorithm metadata from parsed papers
+- Extract pseudocode and complexity information
+- Interface with LLM for structured extraction
+- Map algorithms to primitives
 """
+
+from .algorithm_ir import AlgorithmIR, Complexity
+from .extractor import AlgorithmExtractor, ExtractionError, create_extractor
+from .llm_interface import (
+    ClaudeProvider,
+    ExtractionResult,
+    LLMInterface,
+    LLMProvider,
+    OpenAIProvider,
+    TokenUsage,
+    create_llm,
+)
+
+__all__ = [
+    "AlgorithmExtractor",
+    "AlgorithmIR",
+    "ClaudeProvider",
+    "Complexity",
+    "create_extractor",
+    "create_llm",
+    "ExtractionError",
+    "ExtractionResult",
+    "LLMInterface",
+    "LLMProvider",
+    "OpenAIProvider",
+    "TokenUsage",
+]

@@ -1,15 +1,16 @@
 """
-知识处理模块 (Knowledge)
+Knowledge Graph Module
 
-职责：
-- 量子算法本体定义（算法类型、核心算子、资源需求）
-- 将解析后的论文内容映射到知识图谱
-- 管理算法本体之间的关系
-- 提供知识查询和推理接口
-
-TODO:
-- [ ] 定义量子算法本体模型
-- [ ] 实现论文到本体的映射逻辑
-- [ ] 实现知识推理功能
-- [ ] 实现本体关系管理
+Manages the Neo4j-based knowledge graph for quantum algorithms.
 """
+
+from .models import Algorithm, Implementation, Paper, Primitive
+from .neo4j_client import Neo4jClient
+
+__all__ = [
+    "Algorithm",
+    "Implementation",
+    "Neo4jClient",
+    "Paper",
+    "Primitive",
+]
