@@ -7,9 +7,41 @@
 - 运行模拟验证
 - 生成验证报告
 
-TODO:
-- [ ] 实现语法验证
-- [ ] 实现逻辑等价性检查
-- [ ] 实现模拟运行接口
-- [ ] 实现验证报告生成
+主要组件：
+- EquivalenceChecker: 电路等价性检查器
+- TestExecutor: 测试执行器
+- ReferenceComparator: 参考实现对比器
+- Validator: 主验证器类
 """
+
+from atlas.validator.equivalence_checker import EquivalenceChecker, EquivalenceResult
+from atlas.validator.test_framework import (
+    TestCase, TestSuite, TestExecutor, TestSuiteResult,
+    TestStatus, TestResult
+)
+from atlas.validator.reference_comparison import (
+    ReferenceComparator, ReferenceComparisonResult,
+    ComparisonStatus, MetricComparison
+)
+from atlas.validator.validator import Validator, ValidationReport
+
+__all__ = [
+    # 等价性检查
+    'EquivalenceChecker',
+    'EquivalenceResult',
+    # 测试框架
+    'TestCase',
+    'TestSuite',
+    'TestExecutor',
+    'TestSuiteResult',
+    'TestStatus',
+    'TestResult',
+    # 参考对比
+    'ReferenceComparator',
+    'ReferenceComparisonResult',
+    'ComparisonStatus',
+    'MetricComparison',
+    # 主验证器
+    'Validator',
+    'ValidationReport',
+]
