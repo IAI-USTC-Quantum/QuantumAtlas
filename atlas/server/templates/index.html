@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+
+{% block title %}QuantumAtlas - Home{% endblock %}
+
+{% block content %}
+<div class="space-y-8">
+    <!-- Hero Section -->
+    <div class="text-center py-12 bg-gradient-to-r from-blue-900 to-purple-900 rounded-xl">
+        <h1 class="text-4xl font-bold mb-4">Welcome to QuantumAtlas</h1>
+        <p class="text-xl text-gray-300 mb-8">AI-driven Quantum Algorithm Implementation Framework</p>
+        <div class="flex justify-center space-x-4">
+            <a href="/wiki" class="bg-blue-600 hover:bg-blue-700 px-6 py-3 rounded-lg font-medium transition">
+                Browse Wiki
+            </a>
+            <a href="/graph" class="bg-purple-600 hover:bg-purple-700 px-6 py-3 rounded-lg font-medium transition">
+                Explore Graph
+            </a>
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="bg-gray-800 rounded-xl p-6">
+        <h2 class="text-xl font-semibold mb-4">Quick Actions</h2>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <!-- Ingest Paper -->
+            <form action="/api/ingest/paper" method="post" class="flex space-x-2"
+                  @submit.prevent="ingestPaper">
+                <input type="text" name="arxiv_id" placeholder="arxiv-id"
+                       x-model="arxivId"
+                       class="flex-1 bg-gray-700 px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <button type="submit" class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded">
+                    Ingest
+                </button>
+            </form>
+
+            <!-- Search -->
+            <form action="/wiki/search" method="get" class="flex space-x-2">
+                <input type="text" name="q" placeholder="Search knowledge..."
+                       class="flex-1 bg-gray-700 px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <button type="submit" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded">
+                    Search
+                </button>
+            </form>
+
+            <!-- Run Lint -->
+            <a href="/api/lint" class="flex items-center justify-center bg-yellow-600 hover:bg-yellow-700 px-4 py-2 rounded">
+                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                Run Lint Check
+            </a>
+        </div>
+    </div>
+
+    <!-- Stats Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div class="bg-gray-800 rounded-xl p-6">
+            <div class="flex items-center">
+                <div class="p-3 bg-blue-600 rounded-lg">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
+                    </svg>
+                </div>
+                <div class="ml-4">
+                    <p class="text-gray-400 text-sm">Total Pages</p>
+                    <p class="text-2xl font-bold">{{ stats.total_pages }}</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-gray-800 rounded-xl p-6">
+            <div class="flex items-center">
+                <div class="p-3 bg-purple-600 rounded-lg">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"/>
+                    </svg>
+                </div>
+                <div class="ml-4">
+                    <p class="text-gray-400 text-sm">Primitives</p>
+                    <p class="text-2xl font-bold">{{ (stats.by_category or {}).primitive | default(0) }}</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-gray-800 rounded-xl p-6">
+            <div class="flex items-center">
+                <div class="p-3 bg-green-600 rounded-lg">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+                    </svg>
+                </div>
+                <div class="ml-4">
+                    <p class="text-gray-400 text-sm">Algorithms</p>
+                    <p class="text-2xl font-bold">{{ (stats.by_category or {}).algorithm | default(0) }}</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-gray-800 rounded-xl p-6">
+            <div class="flex items-center">
+                <div class="p-3 bg-yellow-600 rounded-lg">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z"/>
+                    </svg>
+                </div>
+                <div class="ml-4">
+                    <p class="text-gray-400 text-sm">Published</p>
+                    <p class="text-2xl font-bold">{{ (stats.by_status or {}).published | default(0) }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Activity -->
+    <div class="bg-gray-800 rounded-xl p-6">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-semibold">Recent Pages</h2>
+            <a href="/wiki" class="text-blue-400 hover:text-blue-300">View all →</a>
+        </div>
+        <div class="space-y-3">
+            {% for page in recent_pages %}
+            <a href="/wiki/page/{{ page.id }}" class="block p-3 bg-gray-700 rounded-lg hover:bg-gray-600 transition">
+                <div class="flex justify-between">
+                    <span class="font-medium">{{ page.title }}</span>
+                    <span class="text-sm text-gray-400">{{ page.id }}</span>
+                </div>
+                <div class="text-sm text-gray-400 mt-1">{{ page.type }}</div>
+            </a>
+            {% else %}
+            <p class="text-gray-400 text-center py-4">No pages yet. Start by ingesting a paper!</p>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endblock %}
