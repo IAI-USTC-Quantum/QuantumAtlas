@@ -233,7 +233,98 @@ class CircuitDesigner:
             parameter_overrides=parameter_overrides,
             circuit_name=f"circuit_{algorithm_id}"
         )
-    
+
+    def design_from_wiki(
+        self,
+        algorithm_id: str,
+        optimization_level: Optional[int] = None,
+        parameter_overrides: Optional[Dict[str, Any]] = None
+    ) -> QuantumIR:
+        """
+        Design a circuit from wiki algorithm page.
+
+        This method reads from wiki/ instead of Neo4j,
+        providing a more detailed view of the algorithm.
+
+        Args:
+            algorithm_id: Algorithm page ID (e.g., 'algo-shors')
+            optimization_level: Optimization level
+            parameter_overrides: Override parameter values
+
+        Returns:
+            QuantumIR with designed circuit
+
+        Raises:
+            ValueError: If algorithm not found in wiki
+        """
+        from atlas.wiki.engine import WikiEngine
+
+        wiki = WikiEngine()
+        page = wiki.get_page(algorithm_id)
+
+        if page is None:
+            raise ValueError(f"Algorithm not found in wiki: {algorithm_id}")
+
+        # Parse algorithm info from wiki page
+        algo_info = self._parse_algorithm_wiki(page)
+
+        # Design circuit using existing logic
+        return self.design_circuit(
+            algo_info,
+            optimization_level=optimization_level,
+            parameter_overrides=parameter_overrides,
+            circuit_name=f"circuit_{algorithm_id}"
+        )
+
+    def _parse_algorithm_wiki(self, page: Any) -> Dict[str, Any]:
+        """
+        Parse algorithm info from wiki page.
+
+        Extracts:
+        - ID, name
+        - Primitives used (from wiki links)
+        - Complexity info
+        - Tags
+
+        Args:
+            page: WikiPage for algorithm
+
+        Returns:
+            Dict with algorithm info compatible with design_circuit()
+        """
+        import re
+
+        content = page.content
+
+        # Extract primitives from wiki links
+        # Looking for [[prim-*]] links
+        prim_pattern = r'\[\[(prim-[^\]|]+)(?:\|[^\]]+)?\]\]'
+        wiki_primitives = list(set(re.findall(prim_pattern, content)))
+
+        # Convert wiki primitive IDs to internal format
+        # prim-qft -> primitive_qft
+        primitives = []
+        for wp in wiki_primitives:
+            internal_id = wp.replace("prim-", "primitive_")
+            primitives.append(internal_id)
+
+        # Extract complexity info if available
+        complexity = {}
+        time_match = re.search(r'\*\*Time\*\*:\s*(.+)', content)
+        if time_match:
+            complexity["time"] = time_match.group(1).strip()
+        gates_match = re.search(r'\*\*Gates\*\*:\s*(.+)', content)
+        if gates_match:
+            complexity["gates"] = gates_match.group(1).strip()
+
+        return {
+            "id": page.frontmatter.id,
+            "name": page.frontmatter.title,
+            "primitives": primitives,
+            "tags": page.frontmatter.tags,
+            "complexity": complexity,
+        }
+
     def save_circuit_to_kg(
         self,
         quantum_ir: QuantumIR,

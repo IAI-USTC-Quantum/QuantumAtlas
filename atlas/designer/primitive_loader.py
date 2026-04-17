@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 class PrimitiveDefinition:
     """
     Represents a quantum primitive definition.
-    
+
     Attributes:
         id: Unique primitive identifier
         name: Human-readable name
@@ -28,6 +28,8 @@ class PrimitiveDefinition:
         parameters: Parameter definitions for parameterized primitives
         references: Reference papers
         tags: Tags for categorization
+        prerequisites: IDs of primitives that this one depends on
+        definition: Formal definition of the primitive
     """
     id: str
     name: str
@@ -40,6 +42,8 @@ class PrimitiveDefinition:
     parameters: Dict[str, Any] = field(default_factory=dict)
     references: List[str] = field(default_factory=list)
     tags: List[str] = field(default_factory=list)
+    prerequisites: List[str] = field(default_factory=list)
+    definition: str = ""
     
     @classmethod
     def from_yaml(cls, yaml_path: str) -> "PrimitiveDefinition":
@@ -73,6 +77,8 @@ class PrimitiveDefinition:
             parameters=data.get('parameters', {}),
             references=data.get('references', []),
             tags=data.get('tags', []),
+            prerequisites=data.get('prerequisites', []),
+            definition=data.get('definition', ''),
         )
     
     def to_dict(self) -> Dict[str, Any]:
@@ -89,6 +95,8 @@ class PrimitiveDefinition:
             "parameters": self.parameters,
             "references": self.references,
             "tags": self.tags,
+            "prerequisites": self.prerequisites,
+            "definition": self.definition,
         }
 
 

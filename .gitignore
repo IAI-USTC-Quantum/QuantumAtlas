@@ -205,3 +205,9 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Wiki and Raw directories (Issue #18)
+raw/papers/pdf/*.pdf
+raw/papers/markdown/*.md
+raw/papers/json/*.json
+wiki/log.md
