@@ -7,7 +7,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Neo4j](https://img.shields.io/badge/Neo4j-5.15+-008CC1?style=flat&logo=neo4j&logoColor=white)](https://neo4j.com/)
-[![Tests](https://img.shields.io/badge/tests-381%20passed-success)](tests/)
+[![Tests](https://img.shields.io/badge/tests-407%20passed-success)](tests/)
 
 ---
 
@@ -117,7 +117,7 @@ uvicorn atlas.server.main:app --reload --port 8000
 | 服务 | URL | 说明 |
 |------|-----|------|
 | **Web 首页** | http://localhost:8000 | Wiki 统计、快速操作 |
-| **Wiki 浏览器** | http://localhost:8000/wiki | 页面列表、搜索 |
+| **Wiki 浏览器** | http://localhost:8000/wiki | 页面列表、搜索、编辑 |
 | **图可视化** | http://localhost:8000/graph | Neo4j 关系图 |
 | **API 文档** | http://localhost:8000/api/docs | REST API |
 | **Neo4j Browser** | http://localhost:7474 | 图数据库查询 |
@@ -141,48 +141,67 @@ curl -X POST http://localhost:8000/api/ingest/paper \
 ```
 atlas/
 ├── parser/          # 论文解析 ✅
-│   ├── arxiv_fetcher.py
-│   └── pdf_parser.py
+│   ├── arxiv_fetcher.py    # arXiv 获取
+│   ├── pdf_parser.py       # PDF 解析
+│   └── __main__.py         # CLI 入口
 │
 ├── wiki/            # Wiki 引擎 ✅ NEW
-│   ├── engine.py          # 核心引擎
-│   ├── page.py            # WikiPage 模型
-│   ├── ingester.py        # 摄入工作流
-│   ├── querier.py         # 查询/搜索
-│   ├── linter.py          # 健康检查
+│   ├── engine.py           # 核心引擎
+│   ├── page.py             # WikiPage 模型
+│   ├── ingester.py         # 摄入工作流
+│   ├── querier.py          # 查询/搜索
+│   ├── linter.py           # 健康检查
+│   ├── templates.py        # 页面模板
 │   └── sync/
-│       └── neo4j_sync.py  # Neo4j 同步
+│       └── neo4j_sync.py   # Neo4j 同步
 │
 ├── server/          # Web 服务 ✅ NEW
-│   ├── main.py            # FastAPI 应用
-│   ├── config.py          # 配置管理
+│   ├── main.py             # FastAPI 应用
+│   ├── config.py           # 配置管理
 │   ├── routers/
-│   │   ├── wiki.py        # Wiki 路由
-│   │   ├── graph.py       # 图可视化
-│   │   └── api.py         # REST API
-│   └── templates/         # Jinja2 模板
+│   │   ├── wiki.py         # Wiki 路由
+│   │   ├── graph.py        # 图可视化
+│   │   └── api.py          # REST API
+│   └── templates/          # Jinja2 模板
+│       ├── wiki/           # Wiki 页面模板
+│       ├── graph/          # 图可视化模板
+│       └── index.html      # 首页
 │
 ├── knowledge/       # 知识图谱 ✅
-│   ├── neo4j_client.py
-│   └── models.py
+│   ├── neo4j_client.py     # Neo4j 客户端
+│   └── models.py           # Pydantic 模型
 │
 ├── extractor/       # LLM 提取 ✅
-│   ├── llm_interface.py
-│   └── extractor.py
+│   ├── extractor.py        # 提取器
+│   ├── llm_interface.py    # LLM 接口
+│   └── algorithm_ir.py     # 算法 IR
 │
 ├── designer/        # 电路设计 ✅
-│   ├── designer.py
-│   └── quantum_ir.py
+│   ├── designer.py         # 设计器
+│   ├── quantum_ir.py       # Quantum IR
+│   ├── quantum_circuit.py  # 电路模型
+│   ├── primitive_loader.py # 原语加载
+│   ├── primitive_composer.py # 原语组合
+│   ├── optimizer.py        # 优化器
+│   └── parameter_mapper.py # 参数映射
 │
 ├── codegen/         # 代码生成 ✅
-│   ├── generator.py
-│   └── qiskit_generator.py
+│   ├── generator.py        # 生成器基类
+│   ├── qiskit_generator.py # Qiskit 生成
+│   ├── qpanda_generator.py # QPanda 生成
+│   ├── template_engine.py  # 模板引擎
+│   └── formatter.py        # 代码格式化
 │
 ├── validator/       # 电路验证 ✅
-│   └── validator.py
+│   ├── validator.py        # 验证器
+│   ├── equivalence_checker.py # 等价检查
+│   ├── reference_comparison.py # 参考对比
+│   └ test_framework.py     # 测试框架
 │
 └── estimator/       # 资源估计 ✅
-    └── estimator.py
+    ├── estimator.py        # 估计器
+    ├── resource_analyzer.py # 资源分析
+    └── report_generator.py # 报告生成
 ```
 
 ---
@@ -218,6 +237,11 @@ curl "http://localhost:8000/api/search?q=quantum+Fourier+transform"
 
 # 获取页面
 curl "http://localhost:8000/api/pages/prim-qft"
+
+# 图查询
+curl -X POST "http://localhost:8000/api/graph/query" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "MATCH (a:Algorithm)-[:DEPENDS_ON]->(p:Primitive) RETURN a, p"}'
 ```
 
 ### Lint（健康检查）
@@ -270,45 +294,43 @@ Mathematical definition...
 
 ## References
 
-- [[paper-arxiv-9508027]]
+- [[arxiv-9508027]]
 ```
 
 ---
 
 ## 🖥️ Web 界面
 
-### Wiki 浏览器
+### Wiki 浏览器 (`/wiki`)
 
 - 页面列表（按类型分组）
 - Markdown 渲染（支持 `[[wiki-links]]`）
 - 页面编辑、创建
 - 全文搜索
+- 反向链接追踪
 
-### 图可视化
+### 图可视化 (`/graph`)
 
 - D3.js 力导向图
 - 节点展开（1-3 跳）
 - 类型过滤
 - 节点详情面板
 
-### REST API
+### REST API (`/api`)
 
 ```bash
-# 列出所有页面
-GET /api/pages
+# Wiki API
+GET  /api/pages              # 列出所有页面
+GET  /api/pages/{page_id}    # 获取单个页面
+GET  /api/search?q={query}   # 搜索
+POST /api/ingest/paper       # 摄入论文
+GET  /api/lint               # 运行 Lint
+GET  /api/stats              # Wiki 统计
 
-# 获取单个页面
-GET /api/pages/{page_id}
-
-# 搜索
-GET /api/search?q={query}
-
-# 摄入论文
-POST /api/ingest/paper
-Body: {"arxiv_id": "9508027"}
-
-# 运行 Lint
-GET /api/lint
+# Graph API
+GET  /api/graph/stats        # Neo4j 统计
+GET  /api/graph/schema       # 图结构
+POST /api/graph/query        # Cypher 查询
 ```
 
 ---
@@ -324,6 +346,11 @@ pytest
 # 特定模块
 pytest tests/wiki/ -v
 pytest tests/server/ -v
+pytest tests/designer/ -v
+pytest tests/codegen/ -v
+
+# 集成测试
+pytest -m integration
 
 # 覆盖率
 pytest --cov=atlas --cov-report=html
@@ -355,7 +382,7 @@ python -m atlas.wiki query {search_term}
 python -m atlas.wiki lint --fix
 
 # Circuit Designer
-python -m atlas.designer {algorithm_id} --output circuit.json
+python -m atlas.designer {algorithm_id} --output circuit.json --visualize
 
 # Code Generator
 python -m atlas.codegen circuit.json --backend qiskit --output code.py
@@ -365,6 +392,9 @@ python -m atlas.validator circuit.json
 
 # Estimator
 python -m atlas.estimator circuit.json --format markdown
+
+# Demo Pipeline
+python examples/demo_pipeline.py --algorithm qft --backend qiskit --save-code
 ```
 
 ---
@@ -373,10 +403,25 @@ python -m atlas.estimator circuit.json --format markdown
 
 | 指标 | 状态 |
 |------|------|
-| **Wiki 页面** | 7+ primitives |
-| **核心模块** | 8/8 完成 |
-| **测试** | 381 passed |
+| **Wiki 页面** | 9+ (7 primitives + index + log) |
+| **核心模块** | 10/10 完成 |
+| **测试** | 407 passed |
 | **API 端点** | 15+ |
+| **Web 模板** | 7 (Wiki + Graph) |
+
+### 开发历程
+
+| Issue | 功能 | 状态 |
+|-------|------|------|
+| #1 | Phase 1 MVP - Paper Parser + Knowledge Graph | ✅ 完成 |
+| #3 | Documentation Roadmap | ✅ 完成 |
+| #4 | Algorithm Extractor - LLM 提取 | ✅ 完成 |
+| #5 | Circuit Designer - 电路设计 | ✅ 完成 |
+| #6 | Code Generator - 代码生成 | ✅ 完成 |
+| #7 | Resource Estimator - 资源估计 | ✅ 完成 |
+| #8 | Validator - 电路验证 | ✅ 完成 |
+| #17 | Bug Fix - Extractor 集成测试 | ✅ 完成 |
+| #18 | Wiki + Web 界面 | ✅ 完成 |
 
 ### 技术路线图
 
@@ -392,7 +437,7 @@ python -m atlas.estimator circuit.json --format markdown
 
 ```
 QuantumAtlas/
-├── atlas/                   # 核心代码
+├── atlas/                   # 核心代码 (10 模块)
 │   ├── parser/              # 论文解析
 │   ├── wiki/                # Wiki 引擎
 │   ├── server/              # Web 服务
@@ -401,13 +446,14 @@ QuantumAtlas/
 │   ├── designer/            # 电路设计
 │   ├── codegen/             # 代码生成
 │   ├── validator/           # 电路验证
-│   └── estimator/           # 资源估计
+│   ├── estimator/           # 资源估计
+│   └ knowledge_graph/       # 原语定义
 │
 ├── raw/                     # Layer 1: 原始资料（不可变）
-│   └── papers/
+│   └ papers/
 │       ├── pdf/
 │       ├── markdown/
-│       └── json/
+│       └ json/
 │
 ├── wiki/                    # Layer 2: Wiki 知识库
 │   ├── index.md             # 主目录
@@ -415,19 +461,29 @@ QuantumAtlas/
 │   ├── concepts/
 │   ├── entities/
 │   │   ├── algorithms/
-│   │   ├── primitives/
-│   │   └── people/
+│   │   ├── primitives/      # 7 primitives
+│   │   └ people/
 │   ├── sources/
-│   │   └── papers/
-│   └── comparisons/
+│   │   └ papers/
+│   └ comparisons/
 │
-├── tests/                   # 测试套件
+├── tests/                   # 测试套件 (27 文件)
 │   ├── wiki/
 │   ├── server/
-│   └── ...
+│   ├── designer/
+│   ├── codegen/
+│   ├── validator/
+│   ├── estimator/
+│   └ integration/
+│   └ ...
 │
 ├── scripts/                 # 辅助脚本
+│   ├── init_primitives.py
+│   ├── migrate_to_wiki.py
+│   └ verify_neo4j.py
+│
 ├── examples/                # 示例代码
+│   └ demo_pipeline.py
 │
 ├── QUANTUM_ATLAS.md         # Wiki 规范文档
 ├── CLAUDE.md                # Claude Code 指引
