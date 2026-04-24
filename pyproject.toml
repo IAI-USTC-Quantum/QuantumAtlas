@@ -1,0 +1,115 @@
+[project]
+name = "quantumatlas"
+version = "0.2.1"
+description = "AI 驱动的量子算法开发辅助系统"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [{ name = "QuantumAtlas Team", email = "team@quantumatlas.dev" }]
+keywords = ["quantum", "algorithm", "llm", "knowledge-graph", "code-generation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+dependencies = [
+    "fastapi>=0.115.0,<0.116",
+    "uvicorn>=0.30.0,<0.31",
+    "jinja2>=3.1.0,<4",
+    "python-multipart>=0.0.9,<0.1",
+    "neo4j>=5.15.0,<6",
+    "pymupdf>=1.23.0,<2",
+    "requests>=2.31.0,<3",
+    "pydantic>=2.5.0,<3",
+    "pydantic-settings>=2.0.0,<3",
+    "numpy>=1.26.0,<3",
+    "click>=8.1.0,<9",
+    "openai>=1.0.0,<2",
+    "anthropic>=0.21.0,<0.22",
+    "pyyaml>=6.0.1,<7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "black>=24.0.0",
+    "isort>=5.13.0",
+    "mypy>=1.7.0",
+]
+
+[project.scripts]
+qatlas = "atlas.cli:main"
+
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["atlas"]
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+tag_format = "v$version"
+version_scheme = "pep440"
+version_provider = "pep621"
+update_changelog_on_bump = true
+major_version_zero = true
+
+# Pytest
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = ["-v", "--tb=short", "--strict-markers", "-m", "not user_env"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+    "user_env: manual tests that intentionally load the repository .env",
+]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 100
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = false
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+ignore_missing_imports = true
