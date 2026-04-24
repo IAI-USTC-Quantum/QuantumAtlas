@@ -143,7 +143,6 @@ def render_service_unit(spec: ServiceSpec) -> str:
         raise ValueError("scope must be 'user' or 'system'")
 
     env_file = spec.env_file if spec.env_file is not None else default_env_file()
-    defaults_path = spec.working_dir / "env.service.defaults"
     wanted_by = "default.target" if spec.scope == "user" else "multi-user.target"
     lines = [
         "[Unit]",
@@ -154,7 +153,6 @@ def render_service_unit(spec: ServiceSpec) -> str:
         "[Service]",
         "Type=simple",
         f"WorkingDirectory={_systemd_unit_path(spec.working_dir)}",
-        f"EnvironmentFile=-{_systemd_unit_path(defaults_path)}",
         f"EnvironmentFile=-{_systemd_unit_path(env_file)}",
     ]
     if spec.systemd_host_override is not None:

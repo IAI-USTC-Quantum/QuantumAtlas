@@ -34,6 +34,18 @@ def _base_url_from_args(args: argparse.Namespace) -> str:
     return args.base_url.rstrip("/") if args.base_url else _default_base_url()
 
 
+def _request_verify(args: argparse.Namespace) -> bool:
+    if not getattr(args, "insecure", False):
+        return True
+    if not getattr(args, "_insecure_warning_shown", False):
+        requests.packages.urllib3.disable_warnings(  # type: ignore[attr-defined]
+            category=requests.packages.urllib3.exceptions.InsecureRequestWarning
+        )
+        print("Warning: TLS certificate verification is disabled.", file=sys.stderr)
+        args._insecure_warning_shown = True
+    return False
+
+
 def _load_json_object(path: str) -> dict[str, Any]:
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
@@ -65,6 +77,7 @@ def _poll_task(base_url: str, task_id: str, args: argparse.Namespace) -> int:
         task_response = requests.get(
             f"{base_url}/api/ingest/{task_id}",
             timeout=args.request_timeout,
+            verify=_request_verify(args),
         )
         task_response.raise_for_status()
         task = task_response.json()
@@ -102,6 +115,7 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         f"{base_url}/api/ingest/paper",
         json=body,
         timeout=args.request_timeout,
+        verify=_request_verify(args),
     )
     response.raise_for_status()
     queued = response.json()
@@ -130,6 +144,7 @@ def cmd_continue(args: argparse.Namespace) -> int:
         f"{base_url}/api/ingest/{args.task_id}/continue",
         json=body,
         timeout=args.request_timeout,
+        verify=_request_verify(args),
     )
     response.raise_for_status()
     queued = response.json()
@@ -152,6 +167,7 @@ def cmd_reviewed(args: argparse.Namespace) -> int:
         f"{base_url}/api/ingest/paper/reviewed-extraction",
         json=body,
         timeout=args.request_timeout,
+        verify=_request_verify(args),
     )
     response.raise_for_status()
     queued = response.json()
@@ -166,6 +182,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     response = requests.get(
         f"{base_url}/api/ingest/{args.task_id}",
         timeout=args.request_timeout,
+        verify=_request_verify(args),
     )
     response.raise_for_status()
     _print_json(response.json())
@@ -178,6 +195,11 @@ def _add_common_http_args(parser: argparse.ArgumentParser) -> None:
         help="Server base URL; defaults to PUBLIC_BASE_URL, then .env host/port",
     )
     parser.add_argument("--request-timeout", type=float, default=30.0)
+    parser.add_argument(
+        "--insecure",
+        action="store_true",
+        help="Skip TLS certificate verification for self-signed HTTPS endpoints",
+    )
 
 
 def _add_poll_args(parser: argparse.ArgumentParser) -> None:

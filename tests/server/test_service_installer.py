@@ -38,8 +38,6 @@ def test_cli_stages_system_service_with_uvicorn_uv_runner(tmp_path):
     assert "User=quantum" in unit
     assert f'WorkingDirectory={tmp_path}' in unit
     assert f'EnvironmentFile=-{tmp_path / ".env"}' in unit
-    assert "EnvironmentFile=-" in unit
-    assert "env.service.defaults" in unit
     assert "Environment=SERVER_HOST=0.0.0.0" in unit
     assert "Environment=SERVER_PORT=9000" in unit
     assert (

@@ -34,21 +34,27 @@ def test_commitizen_uses_pyproject_version_and_v_tags():
     }
 
 
-def test_release_workflow_matches_quantum_algorithm_layout():
-    """Build/artifact/GitHub Release aligned with qalgo; PyPI job intentionally omitted."""
-    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+def test_release_workflows_use_protected_two_step_flow():
+    """Release bot opens a bump PR; main creates the tag/release after merge."""
+    bump_workflow = Path(".github/workflows/bump-version-pr.yml").read_text(encoding="utf-8")
+    release_workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
 
-    assert "Build and upload release distributions" in workflow
-    assert "workflow_dispatch:" in workflow
-    assert "release-build:" in workflow
-    assert "create-release:" in workflow
-    assert "pypi-publish:" not in workflow
-    assert "gh-action-pypi-publish" not in workflow
-    assert "actions/upload-artifact@v4" in workflow
-    assert "actions/download-artifact@v4" in workflow
-    assert "softprops/action-gh-release@v1" in workflow
-    assert 'VERSION=$(grep -Po \'(?<=version = ")[^"]*\' pyproject.toml)' in workflow
-    assert "tag_name: v${{ steps.get_version.outputs.version }}" in workflow
+    assert "Open version bump PR" in bump_workflow
+    assert "peter-evans/create-pull-request@v6" in bump_workflow
+    assert "cz bump" in bump_workflow
+    assert "git tag -d" in bump_workflow
+    assert "add-paths:" in bump_workflow
+    assert "pyproject.toml" in bump_workflow
+    assert "CHANGELOG.md" in bump_workflow
+
+    assert "Tag and publish release" in release_workflow
+    assert "branches:" in release_workflow
+    assert "- main" in release_workflow
+    assert "Create release tag" in release_workflow
+    assert "softprops/action-gh-release@v2" in release_workflow
+    assert "tag_name: ${{ steps.version.outputs.tag }}" in release_workflow
+    assert "pypi-publish:" not in release_workflow
+    assert "gh-action-pypi-publish" not in release_workflow
 
 
 def test_top_level_help(capsys):
@@ -184,9 +190,10 @@ def test_ingest_client_can_disable_wiki_stage(monkeypatch):
         def json(self):
             return self._payload
 
-    def fake_post(url, json, timeout):
+    def fake_post(url, json, timeout, verify):
         captured["url"] = url
         captured["json"] = json
+        captured["verify"] = verify
         return FakeResponse({"task_id": "task-1", "status": "queued"})
 
     monkeypatch.setattr(client_cli, "_default_base_url", lambda: "http://server")
@@ -197,6 +204,41 @@ def test_ingest_client_can_disable_wiki_stage(monkeypatch):
     assert result == 0
     assert captured["url"] == "http://server/api/ingest/paper"
     assert captured["json"]["create_wiki"] is False
+    assert captured["verify"] is True
+
+
+def test_ingest_status_can_skip_tls_verification(monkeypatch, capsys):
+    captured = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"task_id": "task-1", "status": "succeeded"}
+
+    def fake_get(url, timeout, verify):
+        captured["url"] = url
+        captured["verify"] = verify
+        return FakeResponse()
+
+    monkeypatch.setattr(client_cli.requests, "get", fake_get)
+
+    result = client_cli.main(
+        [
+            "status",
+            "task-1",
+            "--base-url",
+            "https://server",
+            "--insecure",
+        ]
+    )
+
+    captured_output = capsys.readouterr()
+    assert result == 0
+    assert captured["url"] == "https://server/api/ingest/task-1"
+    assert captured["verify"] is False
+    assert "TLS certificate verification is disabled" in captured_output.err
 
 
 def test_ingest_continue_accepts_reviewed_json(tmp_path, monkeypatch):
@@ -214,10 +256,11 @@ def test_ingest_continue_accepts_reviewed_json(tmp_path, monkeypatch):
         def json(self):
             return {"task_id": "task-2", "status": "queued"}
 
-    def fake_post(url, json, timeout):
+    def fake_post(url, json, timeout, verify):
         captured["url"] = url
         captured["json"] = json
         captured["timeout"] = timeout
+        captured["verify"] = verify
         return FakeResponse()
 
     monkeypatch.setattr(client_cli, "_default_base_url", lambda: "http://server")
@@ -241,6 +284,7 @@ def test_ingest_continue_accepts_reviewed_json(tmp_path, monkeypatch):
     assert captured["json"]["algorithm"] == {"id": "reviewed_search", "name": "Reviewed Search"}
     assert captured["json"]["reviewed_by"] == "alice"
     assert captured["json"]["sync_neo4j"] is False
+    assert captured["verify"] is True
 
 
 def test_ingest_reviewed_uses_reviewed_extraction_endpoint(tmp_path, monkeypatch):
@@ -258,9 +302,10 @@ def test_ingest_reviewed_uses_reviewed_extraction_endpoint(tmp_path, monkeypatch
         def json(self):
             return {"task_id": "task-3", "status": "queued"}
 
-    def fake_post(url, json, timeout):
+    def fake_post(url, json, timeout, verify):
         captured["url"] = url
         captured["json"] = json
+        captured["verify"] = verify
         return FakeResponse()
 
     monkeypatch.setattr(client_cli, "_default_base_url", lambda: "http://server")
@@ -281,3 +326,4 @@ def test_ingest_reviewed_uses_reviewed_extraction_endpoint(tmp_path, monkeypatch
     assert captured["json"]["arxiv_id"] == "quant-ph/9508027"
     assert captured["json"]["algorithm"] == {"id": "direct_search", "name": "Direct Search"}
     assert captured["json"]["metadata"] == {"title": "T"}
+    assert captured["verify"] is True
