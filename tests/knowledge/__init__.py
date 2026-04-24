@@ -1,1 +1,0 @@
-"""Knowledge graph module tests."""
