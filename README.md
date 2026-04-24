@@ -621,17 +621,15 @@ QuantumAtlas/
 
 日常提交用 **Conventional Commits**（`feat:`、`fix:` 等），也可带 **scope**，如 **`fix(server):`**、**`feat(api):`**。发版交给 **Commitizen** 统一改版本号、写 changelog、打 tag，不要手改 `pyproject.toml` 里的 `version`。
 
-`[tool.commitizen]` 与 [QuantumAlgorithm (`qalgo`)](https://github.com/TMYTiMidlY/QuantumAlgorithm) 对齐：`cz_conventional_commits`、`pep621` + `pep440`、`tag_format = "v$version"`。`cz bump` 会更新 `CHANGELOG.md` 并生成发版 commit；再在默认分支（一般为 `main`）上推送并带上 tag：
+`[tool.commitizen]` 与 [QuantumAlgorithm (`qalgo`)](https://github.com/TMYTiMidlY/QuantumAlgorithm) 对齐：`cz_conventional_commits`、`pep621` + `pep440`、`tag_format = "v$version"`。正式发版走两段式 GitHub Actions，避免 release bot 直推受保护的 `main`：
 
-```bash
-uv run --with commitizen cz bump   # 未全局安装时用这一条即可
-git push
-git push --tags
-```
+1. 手动触发 **Open version bump PR**，由 bot 运行 Commitizen，只修改 `pyproject.toml` 和 `CHANGELOG.md` 并打开 release PR。
+2. maintainer 审核并合并该 PR 到 `main`。
+3. **Tag and publish release** 在 `main` HEAD 读取版本号，创建缺失的 `v*.*.*` tag，构建 wheel/sdist 并创建 GitHub Release（**暂未**接 PyPI）。
 
-（若本机已 `pip install commitizen` 或 `uv tool install commitizen`，可直接 `cz bump`。）
+如果配置了分支保护，建议把 `RELEASE_BOT_TOKEN` 设为 GitHub App token 或 fine-grained PAT，用于创建 bump PR；tag 和 release 仍由合并后的 `main` workflow 统一完成。
 
-推上远程的 **`v*.*.*` tag** 会触发 `.github/workflows/release.yml`：构建 wheel/sdist → 用当前 `pyproject` / `CHANGELOG` 创建 GitHub Release（**暂未**接 PyPI）。约定：**只在已合并进 `main` 的代码上执行 `cz bump`**，这样发版 tag 与主线一致。
+本地维护者如需预演版本变化，可以运行 `uv run --with commitizen cz bump --dry-run`；不要在本地手动推 release tag。
 
 生产若要与发版 tag 对齐，设 `QUANTUMATLAS_REQUIRE_RELEASE_TAG=true`。Wiki 内容仍可独立于应用 tag 更新。
 
