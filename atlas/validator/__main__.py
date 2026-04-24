@@ -15,7 +15,11 @@ import json
 import yaml
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from atlas.designer.quantum_circuit import QuantumCircuit
+    from atlas.validator.test_framework import TestSuite
 
 # 配置日志
 logging.basicConfig(

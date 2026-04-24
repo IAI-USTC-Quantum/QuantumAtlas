@@ -11,7 +11,7 @@ from atlas.knowledge import Neo4jClient
 from atlas.knowledge.models import Algorithm
 
 from .algorithm_ir import AlgorithmIR
-from .llm_interface import LLMInterface, create_llm
+from .llm_interface import LLMInterface, TokenUsage, create_llm
 
 
 class AlgorithmExtractor:

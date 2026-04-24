@@ -3,6 +3,7 @@ from atlas.server.service import (
     _resolve_enable_now,
     detect_runner,
     main,
+    render_service_unit,
     stage_system_service,
 )
 
@@ -38,13 +39,28 @@ def test_cli_stages_system_service_with_uvicorn_uv_runner(tmp_path):
     assert "User=quantum" in unit
     assert f'WorkingDirectory={tmp_path}' in unit
     assert f'EnvironmentFile=-{tmp_path / ".env"}' in unit
-    assert "Environment=SERVER_HOST=0.0.0.0" in unit
-    assert "Environment=SERVER_PORT=9000" in unit
     assert (
-        "ExecStart=/usr/bin/uv run uvicorn atlas.server.main:app --host ${SERVER_HOST} --port ${SERVER_PORT}"
+        "ExecStart=/usr/bin/uv run uvicorn atlas.server.main:app --host 0.0.0.0 --port 9000"
         in unit
     )
     assert "WantedBy=multi-user.target" in unit
+
+
+def test_render_service_unit_uses_concrete_default_bind_args(tmp_path):
+    unit = render_service_unit(
+        ServiceSpec(
+            working_dir=tmp_path,
+            env_file=tmp_path / ".env",
+            uv_executable="/usr/bin/uv",
+        )
+    )
+
+    assert "${SERVER_HOST}" not in unit
+    assert "${SERVER_PORT}" not in unit
+    assert (
+        "ExecStart=/usr/bin/uv run uvicorn atlas.server.main:app "
+        "--host 127.0.0.1 --port 4200"
+    ) in unit
 
 
 def test_resolve_enable_now_system_defaults_both_on_when_unspecified():

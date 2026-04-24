@@ -67,9 +67,6 @@ class ServiceSpec:
     host: str = "127.0.0.1"
     port: int = 4200
     description: str = "QuantumAtlas server"
-    # If set, emit Environment= after EnvironmentFile= so systemd overrides .env (install --host/--port).
-    systemd_host_override: Optional[str] = None
-    systemd_port_override: Optional[int] = None
 
     @property
     def unit_name(self) -> str:
@@ -137,6 +134,22 @@ def _default_python_path(working_dir: Path, python_arg: Optional[str]) -> Path:
     return Path(sys.executable)
 
 
+def _systemd_exec_arg(value: str | int) -> str:
+    """Serialize a simple ExecStart argument without shell expansion."""
+    text = str(value)
+    if (
+        not text
+        or any(ch.isspace() for ch in text)
+        or '"' in text
+        or "\n" in text
+        or "\r" in text
+    ):
+        raise ValueError(
+            "ExecStart argument must be a non-empty token without whitespace or quotes"
+        )
+    return text.replace("%", "%%")
+
+
 def render_service_unit(spec: ServiceSpec) -> str:
     """Render a systemd service unit."""
     if spec.scope not in {"user", "system"}:
@@ -155,10 +168,6 @@ def render_service_unit(spec: ServiceSpec) -> str:
         f"WorkingDirectory={_systemd_unit_path(spec.working_dir)}",
         f"EnvironmentFile=-{_systemd_unit_path(env_file)}",
     ]
-    if spec.systemd_host_override is not None:
-        lines.append(f"Environment=SERVER_HOST={spec.systemd_host_override}")
-    if spec.systemd_port_override is not None:
-        lines.append(f"Environment=SERVER_PORT={spec.systemd_port_override}")
     lines.append("Environment=PYTHONUNBUFFERED=1")
 
     if spec.scope == "system":
@@ -168,7 +177,9 @@ def render_service_unit(spec: ServiceSpec) -> str:
     if spec.app_runner == "module":
         app_command = "python -m atlas.server"
     elif spec.app_runner == "uvicorn":
-        app_command = "uvicorn atlas.server.main:app --host ${SERVER_HOST} --port ${SERVER_PORT}"
+        host = _systemd_exec_arg(spec.host)
+        port = _systemd_exec_arg(spec.port)
+        app_command = f"uvicorn atlas.server.main:app --host {host} --port {port}"
     else:
         raise ValueError("app_runner must be 'uvicorn' or 'module'")
 
@@ -176,7 +187,9 @@ def render_service_unit(spec: ServiceSpec) -> str:
         exec_start = f"{_systemd_unit_path(spec.uv_executable)} run {app_command}"
     elif spec.runner == "python":
         if spec.app_runner == "uvicorn":
-            app_command = "-m uvicorn atlas.server.main:app --host ${SERVER_HOST} --port ${SERVER_PORT}"
+            host = _systemd_exec_arg(spec.host)
+            port = _systemd_exec_arg(spec.port)
+            app_command = f"-m uvicorn atlas.server.main:app --host {host} --port {port}"
         else:
             app_command = "-m atlas.server"
         exec_start = f"{_systemd_unit_path(spec.python_executable)} {app_command}"
@@ -365,13 +378,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         run_as=args.run_as,
         host=args.host or env_config.host,
         port=args.port or env_config.port,
-        systemd_host_override=args.host,
-        systemd_port_override=args.port,
     )
 
     if args.scope == "user":
         result = install_user_service(spec, enable=enable, now=now, dry_run=args.dry_run)
         print(f"Wrote user service: {result.unit_path}")
+        if spec.app_runner == "uvicorn":
+            print(
+                f"Service bind is fixed in this unit as {spec.host}:{spec.port} "
+                "from the current environment/CLI options. To change it, update .env "
+                "or pass --host/--port, then regenerate the unit."
+            )
         if args.dry_run:
             print(result.unit_text)
             if result.commands:
@@ -388,6 +405,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             dry_run=args.dry_run,
         )
         print(f"Staged system service: {result.unit_path}")
+        if spec.app_runner == "uvicorn":
+            print(
+                f"Service bind is fixed in this unit as {spec.host}:{spec.port} "
+                "from the current environment/CLI options. To change it, update .env "
+                "or pass --host/--port, then regenerate the unit."
+            )
         if args.dry_run:
             print(result.unit_text)
         print("Run these commands to install it:")

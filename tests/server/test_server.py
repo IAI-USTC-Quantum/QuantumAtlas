@@ -7,7 +7,7 @@ Tests the web server routes and API endpoints.
 import json
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -287,7 +287,7 @@ class TestAPIRoutes:
 
         (seed / "page.md").write_text("# New page\n", encoding="utf-8")
         commit_all(seed, "add page")
-        git(seed, "push")
+        git(seed, "push", "origin", "HEAD:main")
 
         config = ServerConfig(
             wiki_dir=str(wiki_dir),
