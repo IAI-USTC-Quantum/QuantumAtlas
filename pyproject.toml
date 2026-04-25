@@ -1,6 +1,6 @@
 [project]
 name = "quantumatlas"
-version = "0.2.1"
+version = "0.2.2"
 description = "AI 驱动的量子算法开发辅助系统"
 readme = "README.md"
 license = { text = "MIT" }
