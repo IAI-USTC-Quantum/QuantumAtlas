@@ -339,6 +339,15 @@ def _git_info(path: Path) -> Dict[str, Any]:
     ahead, behind = _git_counts(path, upstream)
     status = _git_output(path, "status", "--porcelain")
     dirty = None if status is None else bool(status)
+    warnings = []
+    if branch not in {"main", "master"}:
+        warnings.append(
+            {
+                "code": "wiki_branch_not_main",
+                "message": "Wiki repo is not checked out on main or master.",
+                "branch": branch,
+            }
+        )
 
     return {
         "enabled": True,
@@ -348,6 +357,7 @@ def _git_info(path: Path) -> Dict[str, Any]:
         "ahead": ahead,
         "behind": behind,
         "dirty": dirty,
+        "warnings": warnings,
     }
 
 
@@ -403,32 +413,48 @@ def wiki_sync_pull(request: Request):
     config: ServerConfig = request.app.state.config
     wiki_dir = _resolve_project_path(config.wiki_dir)
     if not wiki_dir.exists():
+        logger.warning("wiki sync failed: directory does not exist: %s", wiki_dir)
         raise HTTPException(status_code=409, detail="wiki directory does not exist")
 
     before = _git_info(wiki_dir)
     if not before.get("enabled"):
+        logger.warning("wiki sync failed: directory is not a git repository: %s", wiki_dir)
         raise HTTPException(status_code=409, detail="wiki directory is not a git repository")
     if before.get("dirty"):
+        logger.warning("wiki sync failed: worktree has local changes before fetch")
         raise HTTPException(status_code=409, detail="wiki worktree has local changes")
 
     old_commit = _git_output(wiki_dir, "rev-parse", "--short", "HEAD")
 
     fetch = _git_run(wiki_dir, "fetch", "--prune", timeout=30)
     if fetch is None:
+        logger.exception("wiki sync failed: git fetch could not be executed")
         raise HTTPException(status_code=500, detail="git fetch could not be executed")
     if fetch.returncode != 0:
         detail = (fetch.stderr or fetch.stdout or "git fetch failed").strip()
+        logger.warning(
+            "wiki sync failed: git fetch returned %s: %s",
+            fetch.returncode,
+            detail,
+        )
         raise HTTPException(status_code=502, detail=detail)
 
     after_fetch = _git_info(wiki_dir)
     if after_fetch.get("dirty"):
+        logger.warning("wiki sync failed: worktree has local changes after fetch")
         raise HTTPException(status_code=409, detail="wiki worktree has local changes")
 
     pull = _git_run(wiki_dir, "pull", "--ff-only", timeout=30)
     if pull is None:
+        logger.exception("wiki sync failed: git pull could not be executed")
         raise HTTPException(status_code=500, detail="git pull could not be executed")
     if pull.returncode != 0:
         detail = (pull.stderr or pull.stdout or "git pull --ff-only failed").strip()
+        logger.warning(
+            "wiki sync failed: git pull --ff-only returned %s: %s",
+            pull.returncode,
+            detail,
+        )
         raise HTTPException(status_code=409, detail=detail)
 
     new_commit = _git_output(wiki_dir, "rev-parse", "--short", "HEAD")

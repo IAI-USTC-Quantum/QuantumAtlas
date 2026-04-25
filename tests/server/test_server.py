@@ -111,10 +111,12 @@ class TestWikiRoutes:
         response = client.get("/wiki/search?q=test")
         assert response.status_code == 200
 
-    def test_wiki_new_page(self, client):
-        """Test wiki new page form."""
-        response = client.get("/wiki/new")
-        assert response.status_code == 200
+    def test_wiki_write_forms_are_not_exposed(self, client):
+        """Wiki server pages are read-only; edits go through the Git workflow."""
+        assert client.get("/wiki/new").status_code == 404
+        assert client.post("/wiki/new").status_code == 404
+        assert client.get("/wiki/edit/test-page").status_code == 404
+        assert client.post("/wiki/edit/test-page").status_code == 404
 
 
 class TestGraphRoutes:
@@ -240,7 +242,39 @@ class TestAPIRoutes:
         assert data["git"]["enabled"] is True
         assert data["git"]["commit"]
         assert data["git"]["dirty"] is False
+        assert data["git"]["warnings"] == []
         assert str(tmp_path) not in response.text
+
+    def test_wiki_sync_status_warns_on_non_main_branch(self, tmp_path):
+        """Test wiki sync status warns when the server checkout is not main/master."""
+        from atlas.server.config import ServerConfig
+        from atlas.server.main import create_app
+
+        wiki_dir = tmp_path / "wiki"
+        wiki_dir.mkdir()
+        git(wiki_dir, "init")
+        (wiki_dir / "index.md").write_text("# Wiki\n", encoding="utf-8")
+        commit_all(wiki_dir, "initial wiki")
+        git(wiki_dir, "checkout", "-b", "staging")
+
+        config = ServerConfig(
+            wiki_dir=str(wiki_dir),
+            raw_dir=str(tmp_path / "raw"),
+            data_dir=str(tmp_path / "data"),
+        )
+
+        with TestClient(create_app(config)) as test_client:
+            response = test_client.get("/api/wiki/sync/status")
+
+        assert response.status_code == 200
+        warnings = response.json()["git"]["warnings"]
+        assert warnings == [
+            {
+                "code": "wiki_branch_not_main",
+                "message": "Wiki repo is not checked out on main or master.",
+                "branch": "staging",
+            }
+        ]
 
     def test_wiki_sync_pull_rejects_dirty_worktree(self, tmp_path):
         """Test wiki sync pull refuses local changes."""

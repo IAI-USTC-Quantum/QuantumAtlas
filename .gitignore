@@ -144,6 +144,9 @@ ENV/
 env.bak/
 venv.bak/
 
+# Local QuantumAtlas runtime/test data
+/wiki/
+
 # Spyder project settings
 .spyderproject
 .spyproject

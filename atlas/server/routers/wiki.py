@@ -1,9 +1,9 @@
 """Wiki Router."""
 
 import re
-from fastapi import APIRouter, Request, HTTPException, Form
-from fastapi.responses import HTMLResponse, RedirectResponse
-from typing import Optional, List
+from fastapi import APIRouter, Request, HTTPException
+from fastapi.responses import HTMLResponse
+from typing import Optional
 
 from atlas.paper_assets import resolve_paper_assets, share_path_for_asset
 from atlas.server.routers.shares import build_share_url, create_share_record
@@ -183,98 +183,3 @@ async def wiki_search(request: Request, q: str = ""):
             "results": results,
         },
     )
-
-
-@router.get("/edit/{page_id}", response_class=HTMLResponse)
-async def wiki_edit_form(request: Request, page_id: str):
-    """Show edit form for a wiki page."""
-    wiki_engine = _configured_wiki_engine(request, enable_neo4j_sync=False)
-
-    page = wiki_engine.get_page(page_id)
-    if page is None:
-        raise HTTPException(status_code=404, detail=f"Page not found: {page_id}")
-
-    templates = request.app.state.templates
-    return templates.TemplateResponse(
-        request,
-        "wiki/edit.html",
-        {
-            "page": page,
-        },
-    )
-
-
-@router.post("/edit/{page_id}")
-async def wiki_edit_save(
-    request: Request,
-    page_id: str,
-    content: str = Form(...),
-    title: str = Form(...),
-    tags: str = Form(default=""),
-):
-    """Save edited wiki page."""
-    wiki_engine = _configured_wiki_engine(request, enable_neo4j_sync=False)
-
-    # Parse tags
-    tag_list = [t.strip() for t in tags.split(",") if t.strip()]
-
-    # Update page
-    wiki_engine.update_page(
-        page_id,
-        content=content,
-        title=title,
-        tags=tag_list,
-    )
-
-    return RedirectResponse(url=f"/wiki/page/{page_id}", status_code=303)
-
-
-@router.get("/new", response_class=HTMLResponse)
-async def wiki_new_form(request: Request):
-    """Show form to create new wiki page."""
-    templates = request.app.state.templates
-    return templates.TemplateResponse(
-        request,
-        "wiki/new.html",
-        {},
-    )
-
-
-@router.post("/new")
-async def wiki_new_create(
-    request: Request,
-    page_id: str = Form(...),
-    title: str = Form(...),
-    page_type: str = Form(...),
-    category: str = Form(default=""),
-    content: str = Form(default=""),
-    tags: str = Form(default=""),
-):
-    """Create new wiki page."""
-    from atlas.wiki.page import WikiPage, WikiFrontmatter
-
-    wiki_engine = _configured_wiki_engine(request, enable_neo4j_sync=False)
-
-    # Check if page exists
-    if wiki_engine.get_page(page_id):
-        raise HTTPException(status_code=400, detail=f"Page already exists: {page_id}")
-
-    # Parse tags
-    tag_list = [t.strip() for t in tags.split(",") if t.strip()]
-
-    # Create page
-    page = WikiPage(
-        frontmatter=WikiFrontmatter(
-            id=page_id,
-            title=title,
-            type=page_type,
-            category=category or None,
-            tags=tag_list,
-            status="draft",
-        ),
-        content=content,
-    )
-
-    wiki_engine.save_page(page)
-
-    return RedirectResponse(url=f"/wiki/page/{page_id}", status_code=303)

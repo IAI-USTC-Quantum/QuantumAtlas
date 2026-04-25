@@ -41,6 +41,8 @@ from .templates import PageTemplate
 
 logger = logging.getLogger(__name__)
 
+SYSTEM_MARKDOWN_FILES = {"index.md", "log.md", "README.md"}
+
 
 class WikiEngine:
     """
@@ -110,9 +112,10 @@ class WikiEngine:
 
         self.project_root = Path(project_root)
 
-        # Set directories relative to project root
-        self.wiki_dir = self._resolve_path(wiki_dir or "wiki")
-        self.raw_dir = self._resolve_path(raw_dir or "raw")
+        # Set directories relative to project root. CLI callers usually configure these
+        # through the environment, while tests and embedded callers pass them explicitly.
+        self.wiki_dir = self._resolve_path(wiki_dir or os.getenv("WIKI_DIR", "wiki"))
+        self.raw_dir = self._resolve_path(raw_dir or os.getenv("RAW_DIR", "raw"))
 
         # Ensure directory structure exists
         self._ensure_directories()
@@ -176,6 +179,13 @@ class WikiEngine:
 
     # === Page CRUD Operations ===
 
+    def _iter_page_files(self):
+        """Yield Markdown files that represent actual wiki pages."""
+        for filepath in self.wiki_dir.rglob("*.md"):
+            if filepath.name in SYSTEM_MARKDOWN_FILES:
+                continue
+            yield filepath
+
     def get_page(self, page_id: str) -> Optional[WikiPage]:
         """
         Get a wiki page by ID.
@@ -188,7 +198,7 @@ class WikiEngine:
         Returns:
             WikiPage if found, None otherwise
         """
-        for filepath in self.wiki_dir.rglob("*.md"):
+        for filepath in self._iter_page_files():
             try:
                 page = WikiPage.from_file(filepath)
                 if page.frontmatter.id == page_id:
@@ -285,11 +295,7 @@ class WikiEngine:
         """
         pages = []
 
-        for filepath in self.wiki_dir.rglob("*.md"):
-            # Skip index and log files
-            if filepath.name in ("index.md", "log.md"):
-                continue
-
+        for filepath in self._iter_page_files():
             try:
                 page = WikiPage.from_file(filepath)
 
@@ -479,7 +485,7 @@ class WikiEngine:
 
     def _find_page_file(self, page_id: str) -> Optional[Path]:
         """Find the file path for a page ID."""
-        for filepath in self.wiki_dir.rglob("*.md"):
+        for filepath in self._iter_page_files():
             if filepath.stem == page_id:
                 return filepath
             # Also check by parsing frontmatter
