@@ -61,6 +61,11 @@ class ServerConfig(BaseSettings):
         600, validation_alias="DEFAULT_SHARE_EXPIRES_IN"
     )
     user_header: str = Field("X-Forwarded-User", validation_alias="USER_HEADER")
+    cli_token_secret: Optional[str] = Field(
+        None,
+        validation_alias=AliasChoices("CLI_TOKEN_SECRET", "QUANTUMATLAS_CLI_TOKEN_SECRET"),
+    )
+    cli_token_expires_in: int = Field(604800, validation_alias="CLI_TOKEN_EXPIRES_IN")
     require_release_tag: bool = Field(
         False,
         validation_alias=AliasChoices("QUANTUMATLAS_REQUIRE_RELEASE_TAG", "REQUIRE_RELEASE_TAG"),
@@ -96,6 +101,7 @@ class ServerConfig(BaseSettings):
     @field_validator(
         "public_base_url",
         "share_access_token",
+        "cli_token_secret",
         mode="before",
     )
     @classmethod

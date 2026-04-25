@@ -9,12 +9,13 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from atlas import __version__
+from atlas.server.auth import verify_cli_token
 
 from .config import ServerConfig, get_config
 
@@ -70,6 +71,25 @@ def create_app(config: Optional[ServerConfig] = None) -> FastAPI:
     # Store config
     app.state.config = config
 
+    @app.middleware("http")
+    async def cli_bearer_auth(request: Request, call_next):
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.lower().startswith("bearer "):
+            return await call_next(request)
+
+        token = auth_header.split(" ", 1)[1].strip()
+        try:
+            subject = verify_cli_token(config, token)
+        except HTTPException as exc:
+            return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+        if config.user_header:
+            headers = list(request.scope["headers"])
+            headers.append((config.user_header.lower().encode("latin-1"), subject.encode("utf-8")))
+            request.scope["headers"] = headers
+        request.state.cli_user = subject
+        return await call_next(request)
+
     # Setup templates
     template_dir = Path(__file__).parent / "templates"
     templates = Jinja2Templates(directory=str(template_dir))
@@ -82,8 +102,9 @@ def create_app(config: Optional[ServerConfig] = None) -> FastAPI:
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
     # Register routers
-    from .routers import api, downloads, graph, shares, wiki
+    from .routers import api, auth, downloads, graph, shares, wiki
 
+    app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
     app.include_router(wiki.router, prefix="/wiki", tags=["wiki"])
     app.include_router(graph.router, prefix="/graph", tags=["graph"])
     app.include_router(api.router, prefix="/api", tags=["api"])
@@ -119,6 +140,11 @@ def create_app(config: Optional[ServerConfig] = None) -> FastAPI:
                 "config": config,
             },
         )
+
+    @app.get("/cli-token", response_class=HTMLResponse)
+    async def cli_token_page(request: Request):
+        """Render the OAuth-backed CLI token page."""
+        return templates.TemplateResponse(request, "cli_token.html", {})
 
     # Health check
     @app.get("/health")

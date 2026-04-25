@@ -19,6 +19,9 @@ ENV_KEYS = [
     "PUBLIC_SHARE_TOKEN",
     "DEFAULT_SHARE_EXPIRES_IN",
     "USER_HEADER",
+    "CLI_TOKEN_SECRET",
+    "QUANTUMATLAS_CLI_TOKEN_SECRET",
+    "CLI_TOKEN_EXPIRES_IN",
     "QUANTUMATLAS_REQUIRE_RELEASE_TAG",
     "REQUIRE_RELEASE_TAG",
     "OPENAI_API_KEY",
@@ -64,6 +67,8 @@ def test_server_config_reads_all_supported_env_vars_from_dotenv(tmp_path, monkey
                 "SHARE_ACCESS_TOKEN=share-secret",
                 "DEFAULT_SHARE_EXPIRES_IN=3600",
                 "USER_HEADER=X-Forwarded-User",
+                "CLI_TOKEN_SECRET=cli-secret",
+                "CLI_TOKEN_EXPIRES_IN=1800",
                 "QUANTUMATLAS_REQUIRE_RELEASE_TAG=true",
                 "OPENAI_API_KEY=openai-key",
                 "ANTHROPIC_API_KEY=anthropic-key",
@@ -98,6 +103,8 @@ def test_server_config_reads_all_supported_env_vars_from_dotenv(tmp_path, monkey
     assert config.share_access_token == "share-secret"
     assert config.default_share_expires_in == 3600
     assert config.user_header == "X-Forwarded-User"
+    assert config.cli_token_secret == "cli-secret"
+    assert config.cli_token_expires_in == 1800
     assert config.require_release_tag is True
     assert config.openai_api_key == "openai-key"
     assert config.anthropic_api_key == "anthropic-key"
