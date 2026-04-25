@@ -53,6 +53,7 @@ uv run -m atlas.server
 ```bash
 # 作为全局工具安装
 uv tool install . --editable --force
+qatlas --help
 
 # 论文摄入
 qatlas ingest quant-ph/9508027 --no-extract --no-sync-neo4j
