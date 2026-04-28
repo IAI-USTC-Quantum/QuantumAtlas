@@ -189,7 +189,7 @@ class TestAPIRoutes:
             "public_base_url": None,
             "share_access_token_enabled": False,
         }
-        assert data["audit"] == {"user_header_enabled": True}
+        assert data["audit"] == {"user_header_enabled": False}
         assert str(tmp_path) not in response.text
 
     def test_server_startup_writes_code_version_manifests(self, tmp_path):
@@ -344,7 +344,13 @@ class TestAPIRoutes:
 class TestPageNotFound:
     """Tests for 404 handling."""
 
-    def test_wiki_page_not_found(self, client):
-        """Test 404 for non-existent wiki page."""
+    def test_wiki_page_deep_link_serves_web_shell(self, client):
+        """Wiki deep links are handled by the web shell."""
         response = client.get("/wiki/page/non-existent-page-12345")
+        assert response.status_code == 200
+        assert b"QuantumAtlas" in response.content
+
+    def test_missing_wiki_page_api_returns_404(self, client):
+        """The JSON API still reports missing wiki pages as 404."""
+        response = client.get("/api/pages/non-existent-page-12345")
         assert response.status_code == 404

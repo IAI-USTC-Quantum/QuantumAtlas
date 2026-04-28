@@ -71,7 +71,6 @@ SERVER_HOST=127.0.0.1
 SERVER_PORT=4200
 PUBLIC_BASE_URL=https://atlas.example.com
 SHARE_ACCESS_TOKEN=replace-with-a-long-random-string
-CLI_TOKEN_SECRET=replace-with-a-different-long-random-string
 ```
 
 建议：
@@ -94,9 +93,7 @@ CLI_TOKEN_SECRET=replace-with-a-different-long-random-string
 | `DATA_DIR` | 任务、share、ingest 状态目录 |
 | `PUBLIC_BASE_URL` | 对外唯一根地址，client、share 链接和 MinerU URL 都基于它 |
 | `SHARE_ACCESS_TOKEN` | 可选的常驻 share token；用于公开资源访问 |
-| `USER_HEADER` | 上游注入的用户头，默认是 `X-Forwarded-User` |
-| `CLI_TOKEN_SECRET` | CLI bearer token 的签名密钥 |
-| `CLI_TOKEN_EXPIRES_IN` | CLI token 默认有效期 |
+| `USER_HEADER` | 可选的上游用户头；留空时 QuantumAtlas 不读取用户头 |
 | `SERVER_HOST` / `SERVER_PORT` | QuantumAtlas 服务监听地址和端口 |
 | `NEO4J_URI` / `NEO4J_USER` / `NEO4J_PASSWORD` | 图数据库连接配置 |
 | `MINERU_*` | 使用 MinerU 解析时的可选配置 |
@@ -106,79 +103,104 @@ CLI_TOKEN_SECRET=replace-with-a-different-long-random-string
 QuantumAtlas 自己不负责浏览器 OAuth 登录流程。更推荐的方式是：
 
 - 由反向代理、SSO 或 API gateway 负责浏览器登录。
-- 登录成功后，由上游把可信用户标识注入 `USER_HEADER`。
-- QuantumAtlas 只读取这个用户头做审计和 CLI token 签发。
+- 登录成功后，上游可以把已认证用户标识注入一个用户头，例如 `X-Token-Subject`。
+- QuantumAtlas 默认不读取用户头；只有显式设置 `USER_HEADER` 时才把它用于日志/审计，不用于鉴权。
 
 推荐的路径边界：
 
 - `/share/*` 公开，只校验 share token，不要求 OAuth。
 - `/health` 可以按需要对负载均衡或监控开放。
-- `/cli-token` 和 `/api/auth/cli-token` 必须要求已登录用户访问。
-- `/api/*` 对浏览器请求可以走 OAuth；对带 `Authorization: Bearer ...` 的 CLI 请求可以直接转发，让 QuantumAtlas 自己验签。
+- `/token` 必须要求已登录用户访问。
+- `/api/*` 对浏览器和 CLI 请求都应经过鉴权层；如需审计用户，再由反向代理或 SSO 层注入你显式配置的 `USER_HEADER`。
 
-## 脱敏 Caddy 示例
+## Caddy 示例
 
-下面这个示例假设：
+下面是一个 caddy-security 的最小模板。它只表达推荐的路径边界，不绑定具体机器、云厂商、内网地址或个人域名：
 
-- QuantumAtlas 监听在 `127.0.0.1:4200`。
-- 另有一个独立的 OAuth 网关监听在 `127.0.0.1:4180`。
-- OAuth 网关认证通过后，会返回 `X-Auth-Request-User`。
-- QuantumAtlas 期望从 `X-Forwarded-User` 读取可信用户标识。
+- `atlas.example.com` 代表你的公网域名。
+- QuantumAtlas 示例监听在 `127.0.0.1:4200`。
+- 使用这个模板时，QuantumAtlas 默认不读取用户头；如需审计用户，可显式设置 `USER_HEADER=X-Token-Subject`，或改用 `X-Token-User-Name` / `X-Token-User-Email`。
+- QuantumAtlas 已不需要自己实现 CLI bearer token 认证；如果历史部署还保留相关配置，删掉即可，不删也不会影响 caddy-security 的入口鉴权。
+- caddy-security 可以同时接受浏览器 cookie 和 `Authorization: Bearer ...`：`set token sources header cookie` 表示从请求头或 cookie 取 token，`validate bearer header` 表示允许并校验 bearer header。
+- 下面示例把 auth portal 挂在 `/auth/*` 下；也可以改成独立的 auth 子域名。重点是让 portal 路径和 QuantumAtlas 自己的 `/api/*`、前端 `/assets/*`、业务页面分开。
 
 ```caddyfile
+{
+    order authenticate before respond
+    order authorize before basicauth
+
+    security {
+        oauth identity provider github {
+            realm github
+            driver github
+            client_id {env.GITHUB_CLIENT_ID}
+            client_secret {env.GITHUB_CLIENT_SECRET}
+            scopes openid email profile
+        }
+
+        authentication portal atlas_portal {
+            crypto default token lifetime 604800
+            crypto key sign-verify {env.ATLAS_AUTH_SECRET}
+            enable identity provider github
+
+            # Optional: only set this when sharing login across subdomains.
+            # cookie domain example.com
+
+            transform user {
+                match realm github
+                regex match sub "github.com/(your-github-login-or-org-user)"
+                action add role authp/user
+                action add role authp/atlas
+            }
+        }
+
+        authorization policy atlas {
+            set auth url https://atlas.example.com/auth/
+            set forbidden url https://atlas.example.com/forbidden
+            crypto key verify {env.ATLAS_AUTH_SECRET}
+            allow roles authp/atlas
+            set token sources header cookie
+            validate bearer header
+            set user identity subject
+            inject headers with claims
+        }
+    }
+}
+
 atlas.example.com {
-    encode zstd gzip
+    request_header -X-Token-User-Name
+    request_header -X-Token-Subject
+    request_header -X-Token-User-Email
 
-    # OAuth gateway endpoints (example: oauth2-proxy / auth portal)
-    handle /oauth2/* {
-        reverse_proxy 127.0.0.1:4180
+    handle /auth/* {
+        authenticate with atlas_portal
     }
 
-    # Public paths: share links and health checks stay outside browser login.
-    @public {
-        path /health /share/*
+    handle /forbidden {
+        error "Unauthorized" 401
     }
-    handle @public {
+
+    handle /health {
         reverse_proxy 127.0.0.1:4200
     }
 
-    # CLI/API requests that already carry a bearer token can go straight through.
-    @api_with_bearer {
-        path /api/*
-        header Authorization *
-    }
-    handle @api_with_bearer {
+    handle /share/* {
         reverse_proxy 127.0.0.1:4200
     }
 
-    # Browser-facing routes that require an authenticated user.
-    @needs_login {
-        path / /wiki* /graph* /api/* /cli-token /api/auth/cli-token
-    }
-    handle @needs_login {
-        forward_auth 127.0.0.1:4180 {
-            uri /oauth2/auth
-            copy_headers X-Auth-Request-User
-        }
-
-        reverse_proxy 127.0.0.1:4200 {
-            header_up -X-Forwarded-User
-            header_up X-Forwarded-User {http.request.header.X-Auth-Request-User}
-        }
-    }
-
-    # Optional: make the landing page public by changing the matcher above.
     handle {
-        reverse_proxy 127.0.0.1:4200
+        authorize with atlas
+        reverse_proxy 127.0.0.1:4200 {
+            header_up -Authorization
+        }
     }
 }
 ```
 
-这个示例只表达部署边界，不绑定某个具体域名、云厂商、内网网段或主机名。你可以把 `127.0.0.1:4180` 换成任何能够完成 OAuth/SSO 的上游服务。
-
 ## 运行建议
 
-- 不要信任来自公网客户端自己带上的 `X-Forwarded-User`；应由反向代理清理后重新注入。
+- 不要信任来自公网客户端自己带上的用户身份头；反向代理应先清理可能由客户端伪造的身份头，再注入已认证用户信息。
+- `/api/*` 必须经过鉴权层；不要把 API 放到未执行 `authorize` 的公开 `handle` 里。
+- 对已经由 `authorize with atlas` 验证过的 QuantumAtlas 请求，建议在对应的 `reverse_proxy` 中使用 `header_up -Authorization`，避免把入口 bearer token 继续传给应用。
 - `/share/*` 公开并不意味着管理接口也应公开；`/api/shares` 仍应受保护。
-- `CLI_TOKEN_SECRET` 必须是与 `SHARE_ACCESS_TOKEN` 不同的独立随机串。
 - 如果启用了 MinerU，并且它需要回拉 PDF，`PUBLIC_BASE_URL` 必须能从 MinerU 所在环境访问到。

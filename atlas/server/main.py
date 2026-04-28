@@ -1,21 +1,15 @@
-"""
-FastAPI Application Entry Point
+"""FastAPI application entry point."""
 
-Main application for QuantumAtlas web interface.
-"""
-
-import os
 from contextlib import asynccontextmanager
+import html
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 
 from atlas import __version__
-from atlas.server.auth import verify_cli_token
 
 from .config import ServerConfig, get_config
 
@@ -41,7 +35,7 @@ async def lifespan(app: FastAPI):
     app.state.share_store = ShareStore(data_root / "shares")
     app.state.ingest_store = IngestStore(data_root / "ingests")
 
-    print(f"🚀 QuantumAtlas Server starting...")
+    print("🚀 QuantumAtlas Server starting...")
     print(f"   Wiki directory: {config.wiki_dir}")
     print(f"   Neo4j URI: {config.neo4j_uri}")
 
@@ -71,80 +65,60 @@ def create_app(config: Optional[ServerConfig] = None) -> FastAPI:
     # Store config
     app.state.config = config
 
-    @app.middleware("http")
-    async def cli_bearer_auth(request: Request, call_next):
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.lower().startswith("bearer "):
-            return await call_next(request)
-
-        token = auth_header.split(" ", 1)[1].strip()
-        try:
-            subject = verify_cli_token(config, token)
-        except HTTPException as exc:
-            return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
-
-        if config.user_header:
-            headers = list(request.scope["headers"])
-            headers.append((config.user_header.lower().encode("latin-1"), subject.encode("utf-8")))
-            request.scope["headers"] = headers
-        request.state.cli_user = subject
-        return await call_next(request)
-
-    # Setup templates
-    template_dir = Path(__file__).parent / "templates"
-    templates = Jinja2Templates(directory=str(template_dir))
-    templates.env.globals["app_version"] = __version__
-    app.state.templates = templates
-
     # Mount static files
     static_dir = Path(__file__).parent / "static"
     if static_dir.exists():
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
     # Register routers
-    from .routers import api, auth, downloads, graph, shares, wiki
+    from .routers import api, downloads, shares
 
-    app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
-    app.include_router(wiki.router, prefix="/wiki", tags=["wiki"])
-    app.include_router(graph.router, prefix="/graph", tags=["graph"])
     app.include_router(api.router, prefix="/api", tags=["api"])
     app.include_router(downloads.router, prefix="/api", tags=["paper-resources"])
     app.include_router(shares.api_router, prefix="/api/shares", tags=["shares"])
     app.include_router(shares.public_router, tags=["shares-public"])
 
-    # Home page route
-    @app.get("/", response_class=HTMLResponse)
-    async def home(request: Request):
-        """Render home page."""
-        # Get wiki stats
-        try:
-            from atlas.wiki.engine import WikiEngine
-
-            wiki_engine = WikiEngine(
-                wiki_dir=config.wiki_dir,
-                raw_dir=config.raw_dir,
-                enable_neo4j_sync=False,
+    def web_index(request: Request) -> HTMLResponse:
+        """Serve the Vite web shell and inject the Caddy token cookie."""
+        index_path = static_dir / "web" / "index.html"
+        if not index_path.is_file():
+            return HTMLResponse(
+                "<!doctype html><title>QuantumAtlas</title><div id=\"root\">QuantumAtlas</div>"
             )
-            stats = wiki_engine.get_stats()
-            recent_pages = wiki_engine.querier.get_recent_pages(5)
-        except Exception:
-            stats = {"total_pages": 0, "by_type": {}, "by_status": {}}
-            recent_pages = []
+        content = index_path.read_text(encoding="utf-8")
+        token = html.escape(request.cookies.get("AUTHP_ACCESS_TOKEN", ""), quote=True)
+        content = content.replace('meta name="qatlas-token" content=""', f'meta name="qatlas-token" content="{token}"')
+        return HTMLResponse(content)
 
-        return templates.TemplateResponse(
-            request,
-            "index.html",
-            {
-                "stats": stats,
-                "recent_pages": recent_pages,
-                "config": config,
-            },
-        )
+    @app.get("/", response_class=HTMLResponse)
+    async def web_home(request: Request):
+        return web_index(request)
 
-    @app.get("/cli-token", response_class=HTMLResponse)
-    async def cli_token_page(request: Request):
-        """Render the OAuth-backed CLI token page."""
-        return templates.TemplateResponse(request, "cli_token.html", {})
+    @app.get("/token", response_class=HTMLResponse)
+    async def web_token(request: Request):
+        return web_index(request)
+
+    @app.get("/wiki", response_class=HTMLResponse)
+    @app.get("/wiki/", response_class=HTMLResponse)
+    async def web_wiki(request: Request):
+        return web_index(request)
+
+    @app.get("/wiki/search", response_class=HTMLResponse)
+    async def web_wiki_search(request: Request):
+        return web_index(request)
+
+    @app.get("/wiki/page/{page_id:path}", response_class=HTMLResponse)
+    async def web_wiki_page(request: Request, page_id: str):
+        return web_index(request)
+
+    @app.get("/graph", response_class=HTMLResponse)
+    @app.get("/graph/", response_class=HTMLResponse)
+    async def web_graph(request: Request):
+        return web_index(request)
+
+    @app.get("/graph/node/{node_path:path}", response_class=HTMLResponse)
+    async def web_graph_node(request: Request, node_path: str):
+        return web_index(request)
 
     # Health check
     @app.get("/health")

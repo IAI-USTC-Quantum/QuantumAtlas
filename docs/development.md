@@ -63,7 +63,6 @@ uv run mypy atlas
 
 ### 协作与分享
 
-- `POST /api/auth/cli-token`
 - `GET /api/papers/{id}/resources`
 - `POST /api/shares`
 - `GET /api/shares`
@@ -126,5 +125,5 @@ QUANTUMATLAS_REQUIRE_RELEASE_TAG=true
 ## 协作时的注意点
 
 - Wiki 内容和应用代码可以分开演进，不必同频发版。
-- 分享链接和 CLI token 是两套权限模型，不应混用同一个密钥。
+- 分享链接只用于公开资源访问；登录用户身份由反向代理、SSO 或 API gateway 注入。
 - 远程协作者优先通过 API 和 Wiki Git 仓库协作，而不是直接依赖服务器文件系统权限。

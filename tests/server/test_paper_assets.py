@@ -129,7 +129,7 @@ def test_server_config_reads_raw_dir_from_dotenv(tmp_path, monkeypatch):
     assert config.raw_dir == '/tmp/quantum-atlas-raw'
 
 
-def test_server_config_defaults_user_header_to_forwarded_user(tmp_path, monkeypatch):
+def test_server_config_defaults_user_header_to_none(tmp_path, monkeypatch):
     env_path = tmp_path / '.env'
     env_path.write_text('', encoding='utf-8')
 
@@ -140,4 +140,4 @@ def test_server_config_defaults_user_header_to_forwarded_user(tmp_path, monkeypa
     from atlas.server.config import ServerConfig
 
     config = ServerConfig.from_env()
-    assert config.user_header == 'X-Forwarded-User'
+    assert config.user_header is None

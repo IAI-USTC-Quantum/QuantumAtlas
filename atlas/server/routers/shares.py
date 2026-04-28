@@ -193,7 +193,7 @@ async def create_share(request: Request, body: ShareRequest):
         paths=body.paths,
         label=body.label,
         expires_in=body.expires_in,
-        created_by=request.headers.get(config.user_header),
+        created_by=request.headers.get(config.user_header) if config.user_header else None,
     )
 
 
