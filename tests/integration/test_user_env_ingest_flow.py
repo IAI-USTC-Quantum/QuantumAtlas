@@ -210,12 +210,12 @@ def test_user_dotenv_services_complete_full_ingest_flow(user_env_live_server):
     assert task["steps"]["fetch"]["status"] == "succeeded"
     assert task["steps"]["parse"]["status"] == "succeeded"
     assert task["steps"]["extract"]["status"] == "succeeded"
-    assert task["steps"]["wiki"]["status"] == "succeeded"
-    assert task["steps"]["neo4j"]["status"] == "succeeded"
+    assert task["steps"]["wiki"]["status"] == "skipped"
+    assert task["steps"]["wiki"]["message"] == "wiki creation skipped on server"
+    assert task["steps"]["neo4j"]["status"] == "skipped"
     assert task["steps"]["fetch"]["progress"]["percent"] == 1.0
     assert task["steps"]["parse"]["progress"]["percent"] == 1.0
     assert task["steps"]["extract"]["result"]["algorithm_id"]
-    assert task["steps"]["wiki"]["result"]["page_ids"]
 
 
 def test_user_dotenv_can_resume_existing_pdf_with_mineru(user_env_public_base_server):

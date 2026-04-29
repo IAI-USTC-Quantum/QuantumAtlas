@@ -122,18 +122,15 @@ def test_live_server_ingest_and_paper_share_links_work(live_server, arxiv_id, ex
     assert ingest_task["status"] == "succeeded"
     assert ingest_task["steps"]["fetch"]["status"] == "succeeded"
     assert ingest_task["steps"]["parse"]["status"] == "succeeded"
-    assert ingest_task["steps"]["wiki"]["status"] == "succeeded"
+    assert ingest_task["steps"]["wiki"]["status"] == "skipped"
+    assert ingest_task["steps"]["wiki"]["message"] == "wiki creation skipped on server"
     assert ingest_task["steps"]["neo4j"]["status"] == "skipped"
-    assert expected_page_id in ingest_task["steps"]["wiki"]["result"]["page_ids"]
 
     page_response = requests.get(f"{base_url}/api/pages/{expected_page_id}", timeout=20)
-    page_response.raise_for_status()
-    page_payload = page_response.json()
-    assert page_payload["id"] == expected_page_id
-    assert page_payload["type"] == "source"
+    assert page_response.status_code == 404
 
     page_path = live_server["tmp_path"] / "wiki" / "sources" / "papers" / f"{expected_page_id}.md"
-    assert page_path.is_file()
+    assert not page_path.exists()
 
     resources_response = requests.get(f"{base_url}/api/papers/{arxiv_id}/resources", timeout=20)
     resources_response.raise_for_status()
@@ -163,7 +160,6 @@ def test_live_server_ingest_and_paper_share_links_work(live_server, arxiv_id, ex
     assert metadata["arxiv_id"] == arxiv_id
     assert metadata["title"]
     assert metadata["title"] in markdown_text
-    assert page_payload["title"] == metadata["title"]
 
     share_path = urlparse(pdf_asset["url"]).path.strip("/").split("/")
     share_token = share_path[1]

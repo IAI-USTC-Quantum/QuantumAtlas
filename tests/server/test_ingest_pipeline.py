@@ -65,7 +65,7 @@ def _arxiv_metadata(arxiv_id: str = "9508027") -> dict:
     }
 
 
-def test_ingest_can_resume_from_existing_assets_and_create_wiki(tmp_path):
+def test_ingest_can_resume_from_existing_assets_without_server_wiki_write(tmp_path):
     raw_dir = tmp_path / "raw"
     _seed_paper_assets(raw_dir, markdown=True)
 
@@ -98,9 +98,9 @@ def test_ingest_can_resume_from_existing_assets_and_create_wiki(tmp_path):
     assert task["steps"]["fetch"]["result"]["reused"] is True
     assert task["steps"]["parse"]["status"] == "succeeded"
     assert task["steps"]["parse"]["message"] == "markdown ready"
-    assert task["steps"]["wiki"]["status"] == "succeeded"
-    assert "paper-arxiv-9508027" in task["steps"]["wiki"]["result"]["page_ids"]
-    assert (tmp_path / "wiki" / "sources" / "papers" / "paper-arxiv-9508027.md").is_file()
+    assert task["steps"]["wiki"]["status"] == "skipped"
+    assert task["steps"]["wiki"]["message"] == "wiki creation skipped on server"
+    assert not (tmp_path / "wiki").exists()
 
 
 def test_ingest_stages_selects_exact_steps_and_reuses_assets(tmp_path):
@@ -132,9 +132,9 @@ def test_ingest_stages_selects_exact_steps_and_reuses_assets(tmp_path):
     assert task["steps"]["parse"]["status"] == "skipped"
     assert task["steps"]["parse"]["result"]["reused"] is True
     assert task["steps"]["extract"]["status"] == "skipped"
-    assert task["steps"]["wiki"]["status"] == "succeeded"
+    assert task["steps"]["wiki"]["status"] == "skipped"
+    assert task["steps"]["wiki"]["message"] == "wiki creation skipped on server"
     assert task["steps"]["neo4j"]["status"] == "skipped"
-    assert "paper-arxiv-9508027" in task["steps"]["wiki"]["result"]["page_ids"]
 
 
 def test_ingest_stop_after_parse_exposes_stage_status(tmp_path):
@@ -216,8 +216,8 @@ def test_ingest_continue_runs_regular_remaining_stages_from_local_assets(tmp_pat
     assert task["steps"]["fetch"]["result"]["reused"] is True
     assert task["steps"]["parse"]["status"] == "succeeded"
     assert task["steps"]["extract"]["status"] == "skipped"
-    assert task["steps"]["wiki"]["status"] == "succeeded"
-    assert "paper-arxiv-9508027" in task["steps"]["wiki"]["result"]["page_ids"]
+    assert task["steps"]["wiki"]["status"] == "skipped"
+    assert task["steps"]["wiki"]["message"] == "wiki creation skipped on server"
 
 
 def test_ingest_fetch_retries_three_times_then_stops(tmp_path, monkeypatch):
@@ -432,7 +432,8 @@ def test_ingest_can_parse_existing_pdf_with_mineru_share_url(tmp_path, monkeypat
     assert task["steps"]["parse"]["status"] == "succeeded"
     assert task["steps"]["parse"]["progress"]["parser"] == "mineru"
     assert task["steps"]["parse"]["progress"]["state"] == "done"
-    assert task["steps"]["wiki"]["status"] == "succeeded"
+    assert task["steps"]["wiki"]["status"] == "skipped"
+    assert task["steps"]["wiki"]["message"] == "wiki creation skipped on server"
     assert (
         (raw_dir / "markdown" / "9508027.md")
         .read_text(encoding="utf-8")
@@ -616,7 +617,7 @@ def test_ingest_mineru_retry_can_recover(tmp_path, monkeypatch):
     )
 
 
-def test_ingest_accepts_client_reviewed_extraction_and_creates_wiki(tmp_path, monkeypatch):
+def test_ingest_accepts_client_reviewed_extraction_without_server_wiki_write(tmp_path, monkeypatch):
     raw_dir = tmp_path / "raw"
     _seed_paper_assets(raw_dir, markdown=True)
 
@@ -669,19 +670,10 @@ def test_ingest_accepts_client_reviewed_extraction_and_creates_wiki(tmp_path, mo
     assert task["steps"]["extract"]["status"] == "succeeded"
     assert task["steps"]["extract"]["result"]["source"] == "client"
     assert task["steps"]["extract"]["result"]["reviewed_by"] == "alice"
-    assert task["steps"]["wiki"]["status"] == "succeeded"
-    assert "paper-arxiv-9508027" in task["steps"]["wiki"]["result"]["page_ids"]
-    assert "algo-reviewed-search" in task["steps"]["wiki"]["result"]["page_ids"]
+    assert task["steps"]["wiki"]["status"] == "skipped"
+    assert task["steps"]["wiki"]["message"] == "wiki creation skipped on server"
     assert task["steps"]["neo4j"]["status"] == "skipped"
-
-    algo_page = tmp_path / "wiki" / "entities" / "algorithms" / "algo-reviewed-search.md"
-    algo_text = algo_page.read_text(encoding="utf-8")
-    assert "Client-reviewed algorithm description." in algo_text
-    assert "**Problem**: unstructured_search" in algo_text
-    assert "- Time: O(sqrt(N))" in algo_text
-    assert "[[prim-qft]]" in algo_text
-    assert "[[prim-amplitude-amplification]]" in algo_text
-    assert "repeat amplitude amplification" in algo_text
+    assert not (tmp_path / "wiki").exists()
 
 
 def test_ingest_continue_accepts_reviewed_extraction_after_parse(tmp_path, monkeypatch):
@@ -740,8 +732,8 @@ def test_ingest_continue_accepts_reviewed_extraction_after_parse(tmp_path, monke
     assert task["steps"]["parse"]["status"] == "skipped"
     assert task["steps"]["extract"]["status"] == "succeeded"
     assert task["steps"]["extract"]["result"]["reviewed_by"] == "alice"
-    assert task["steps"]["wiki"]["status"] == "succeeded"
-    assert "algo-continued-search" in task["steps"]["wiki"]["result"]["page_ids"]
+    assert task["steps"]["wiki"]["status"] == "skipped"
+    assert task["steps"]["wiki"]["message"] == "wiki creation skipped on server"
 
 
 def test_ingest_reviewed_extraction_requires_algorithm_identity(tmp_path):

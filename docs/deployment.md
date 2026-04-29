@@ -2,7 +2,7 @@
 
 ## 适用范围
 
-这份文档描述的是 QuantumAtlas 服务本体的部署方式，而不是某一台具体机器的私有配置。
+这份文档描述的是 QuantumAtlas 服务的部署方式。
 
 目标是把下面几件事拆清楚：
 
@@ -63,20 +63,21 @@ uv run -m atlas.server.service install \
 开发环境可以直接用仓库内默认目录，但生产更建议外置运行时数据：
 
 ```env
-WIKI_DIR=/srv/quantumatlas/wiki
-RAW_DIR=/srv/quantumatlas/raw
-DATA_DIR=/srv/quantumatlas/data
+WIKI_DIR=/srv/quantumatlas-wiki
+RAW_DIR=/srv/quantumatlas-raw
+DATA_DIR=/srv/quantumatlas-data
 NEO4J_URI=bolt://127.0.0.1:7687
 SERVER_HOST=127.0.0.1
 SERVER_PORT=4200
 PUBLIC_BASE_URL=https://atlas.example.com
-SHARE_ACCESS_TOKEN=replace-with-a-long-random-string
 ```
 
 建议：
 
 - 应用仓库按 release tag 或受控分支部署。
 - Wiki 仓库单独 checkout，并允许更高频更新；server 侧 checkout 应保持干净，只通过 `git pull --ff-only` 消费远端内容。
+- 运行 QuantumAtlas 的服务用户默认只需要读取 `WIKI_DIR`；如果启用 `/api/wiki/sync/pull`，还需要对该 Git checkout 有 fast-forward 更新权限。服务端不会生成或修改 Wiki 页面，Wiki 内容修改应在用户端或独立的 `QuantumAtlas-Wiki` checkout 中完成。
+- 运行 QuantumAtlas 的服务用户应对 `RAW_DIR` 和 `DATA_DIR` 有写权限：`RAW_DIR` 用于保存论文资产，`DATA_DIR` 用于保存 share、ingest 状态和版本 manifest。
 - 内容生产、LLM 生成、人工编辑和审阅走 `QuantumAtlas-Wiki` 的普通 Git 流程；QuantumAtlas server 不提供 push API，也不通过 Web UI 直接写 Wiki 页面。
 - 若 `/api/wiki/sync/status` 提示 Wiki checkout 不在 `main` 或 `master`，应检查部署分支是否符合预期。
 - Neo4j 仅对后端服务暴露，不直接开放到公网。
@@ -84,7 +85,7 @@ SHARE_ACCESS_TOKEN=replace-with-a-long-random-string
 
 ## 核心环境变量
 
-完整默认值以 `.env.example` 和 `atlas/server/config.py` 为准。公网部署通常最关心下面这些：
+完整内置默认值以 `atlas/server/config.py` 为准；`.env.example` 只是覆盖模板，不应直接当成生产默认配置。公网部署通常最关心下面这些：
 
 | 变量 | 说明 |
 |------|------|
@@ -92,7 +93,7 @@ SHARE_ACCESS_TOKEN=replace-with-a-long-random-string
 | `RAW_DIR` | canonical 论文资产根目录 |
 | `DATA_DIR` | 任务、share、ingest 状态目录 |
 | `PUBLIC_BASE_URL` | 对外唯一根地址，client、share 链接和 MinerU URL 都基于它 |
-| `SHARE_ACCESS_TOKEN` | 可选的常驻 share token；用于公开资源访问 |
+| `SHARE_ACCESS_TOKEN` | 可选的常驻 share token；只在你需要稳定分享链接时显式设置 |
 | `USER_HEADER` | 可选的上游用户头；留空时 QuantumAtlas 不读取用户头 |
 | `SERVER_HOST` / `SERVER_PORT` | QuantumAtlas 服务监听地址和端口 |
 | `NEO4J_URI` / `NEO4J_USER` / `NEO4J_PASSWORD` | 图数据库连接配置 |
@@ -112,6 +113,22 @@ QuantumAtlas 自己不负责浏览器 OAuth 登录流程。更推荐的方式是
 - `/health` 可以按需要对负载均衡或监控开放。
 - `/token` 必须要求已登录用户访问。
 - `/api/*` 对浏览器和 CLI 请求都应经过鉴权层；如需审计用户，再由反向代理或 SSO 层注入你显式配置的 `USER_HEADER`。
+
+## Share 机制
+
+QuantumAtlas 的 share 是“按路径授权的公开链接”，不是用户登录态，也不是 API 鉴权。`/share/{token}` 和 `/share/{token}/{path}` 默认应允许公网访问；任何拿到 share URL 的人都能访问该 token 允许的资源。
+
+当前有两类 share token：
+
+- 登录用户创建的动态 share token：已登录用户通过受保护的 `POST /api/shares` 创建，记录保存在 `DATA_DIR/shares`。请求里可以指定 `paths`、`label` 和 `expires_in`；如果没有指定 `expires_in`，服务使用 `DEFAULT_SHARE_EXPIRES_IN`。这些 token 可以通过 `GET /api/shares` 查看、通过 `DELETE /api/shares/{token}` 撤销。
+- 部署者配置的 `SHARE_ACCESS_TOKEN`：这是额外的、可选的、用户自定义的稳定分享入口。设置后，QuantumAtlas 会把它当作一个不写入 `DATA_DIR/shares`、不自动过期的内置 share token，用于访问 canonical paper assets：`papers/pdf`、`papers/markdown`、`papers/json`、`papers/images`。不需要稳定公开链接时不要设置它。
+
+安全边界：
+
+- `/api/shares` 是管理接口，必须在 Caddy、SSO 或 API gateway 层要求登录。
+- `/share/*` 是公开资源入口，只校验 share token，不校验登录用户。
+- share token 只授权配置记录中的资源路径；路径必须是相对路径，不能包含绝对路径、反斜杠或 `..`。
+- `SHARE_ACCESS_TOKEN` 应使用足够长的随机值；不要用示例值、短词或可猜测字符串。
 
 ## Caddy 示例
 

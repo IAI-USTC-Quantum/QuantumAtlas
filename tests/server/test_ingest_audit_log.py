@@ -4,7 +4,7 @@ from atlas.server.config import ServerConfig
 from atlas.server.main import create_app
 
 
-def test_ingest_queue_logs_requester_header(tmp_path, monkeypatch):
+def test_ingest_queue_records_requester_header_without_wiki_log(tmp_path, monkeypatch):
     config = ServerConfig(
         wiki_dir=str(tmp_path / "wiki"),
         raw_dir=str(tmp_path / "raw"),
@@ -28,11 +28,10 @@ def test_ingest_queue_logs_requester_header(tmp_path, monkeypatch):
         assert task is not None
         assert task.requester == "alice"
 
-    log_text = (tmp_path / "wiki" / "log.md").read_text(encoding="utf-8")
-    assert f"[INGEST] 9508027 queued by alice (task {task_id})" in log_text
+    assert not (tmp_path / "wiki").exists()
 
 
-def test_ingest_queue_logs_anonymous_without_requester_header(tmp_path, monkeypatch):
+def test_ingest_queue_records_anonymous_without_wiki_log(tmp_path, monkeypatch):
     config = ServerConfig(
         wiki_dir=str(tmp_path / "wiki"),
         raw_dir=str(tmp_path / "raw"),
@@ -54,5 +53,4 @@ def test_ingest_queue_logs_anonymous_without_requester_header(tmp_path, monkeypa
         assert task is not None
         assert task.requester is None
 
-    log_text = (tmp_path / "wiki" / "log.md").read_text(encoding="utf-8")
-    assert f"[INGEST] 9508027 queued by anonymous (task {task_id})" in log_text
+    assert not (tmp_path / "wiki").exists()

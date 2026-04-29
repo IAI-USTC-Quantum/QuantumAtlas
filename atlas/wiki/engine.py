@@ -44,6 +44,10 @@ logger = logging.getLogger(__name__)
 SYSTEM_MARKDOWN_FILES = {"index.md", "log.md", "README.md"}
 
 
+class WikiWriteDisabledError(RuntimeError):
+    """Raised when code attempts to modify Wiki content through a guarded engine."""
+
+
 class WikiEngine:
     """
     Main wiki engine for QuantumAtlas knowledge base.
@@ -89,6 +93,8 @@ class WikiEngine:
         raw_dir: Optional[str] = None,
         enable_neo4j_sync: bool = True,
         project_root: Optional[str] = None,
+        ensure_directories: bool = True,
+        wiki_content_writable: bool = True,
     ):
         """
         Initialize wiki engine.
@@ -98,6 +104,8 @@ class WikiEngine:
             raw_dir: Path to canonical raw asset directory (default: ./raw)
             enable_neo4j_sync: Whether to enable Neo4j synchronization
             project_root: Project root directory (auto-detected if None)
+            ensure_directories: Whether to create wiki/raw directory skeletons
+            wiki_content_writable: Whether this engine may modify Wiki content files
         """
         # Auto-detect project root
         if project_root is None:
@@ -116,9 +124,10 @@ class WikiEngine:
         # through the environment, while tests and embedded callers pass them explicitly.
         self.wiki_dir = self._resolve_path(wiki_dir or os.getenv("WIKI_DIR", "wiki"))
         self.raw_dir = self._resolve_path(raw_dir or os.getenv("RAW_DIR", "raw"))
+        self.wiki_content_writable = wiki_content_writable
 
-        # Ensure directory structure exists
-        self._ensure_directories()
+        if ensure_directories:
+            self._ensure_directories()
 
         # Initialize workflow components (lazy)
         self._ingester = None
@@ -139,8 +148,17 @@ class WikiEngine:
             candidate = self.project_root / candidate
         return candidate.resolve()
 
+    def _require_wiki_content_writable(self, action: str) -> None:
+        """Prevent server/content-guarded engines from mutating Wiki files."""
+        if not self.wiki_content_writable:
+            raise WikiWriteDisabledError(
+                f"cannot {action}: this WikiEngine cannot modify Wiki content"
+            )
+
     def _ensure_directories(self) -> None:
         """Create wiki and raw asset directory structure if not exists."""
+        self._require_wiki_content_writable("initialize wiki directories")
+
         # Wiki subdirectories
         wiki_subdirs = [
             "concepts",
@@ -243,6 +261,8 @@ class WikiEngine:
         Returns:
             Path to saved file
         """
+        self._require_wiki_content_writable("save wiki page")
+
         if subdir is None:
             subdir = self._get_subdir_for_page(page)
 
@@ -267,6 +287,8 @@ class WikiEngine:
         Returns:
             True if page was deleted, False if not found
         """
+        self._require_wiki_content_writable("delete wiki page")
+
         filepath = self._find_page_file(page_id)
         if filepath:
             filepath.unlink()
@@ -544,6 +566,8 @@ class WikiEngine:
         Args:
             message: Log message to append
         """
+        self._require_wiki_content_writable("append wiki log")
+
         log_path = self.wiki_dir / "log.md"
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
 
@@ -558,6 +582,8 @@ class WikiEngine:
 
         Regenerates the index.md file with current page counts.
         """
+        self._require_wiki_content_writable("update wiki index")
+
         stats = self.get_stats()
         index_path = self.wiki_dir / "index.md"
 

@@ -36,8 +36,8 @@ STAGE_DESCRIPTIONS: Dict[StageName, str] = {
     "fetch": "Fetch arXiv metadata and PDF into the local paper asset store.",
     "parse": "Parse the local PDF into Markdown with PyMuPDF or MinerU.",
     "extract": "Extract structured algorithm information, either server-side or client-reviewed.",
-    "wiki": "Create or update Wiki pages from the fetched metadata and extraction result.",
-    "neo4j": "Sync the resulting Wiki pages into Neo4j.",
+    "wiki": "Skipped by the server; create or update Wiki pages from a writable client checkout.",
+    "neo4j": "Sync existing Wiki pages into Neo4j when a writable Wiki workflow has produced them.",
 }
 FETCH_MAX_ATTEMPTS = 3
 MINERU_MAX_ATTEMPTS = 2
@@ -51,6 +51,8 @@ def _configured_wiki_engine(config: ServerConfig, *, enable_neo4j_sync: bool = F
         wiki_dir=config.wiki_dir,
         raw_dir=config.raw_dir,
         enable_neo4j_sync=enable_neo4j_sync,
+        ensure_directories=False,
+        wiki_content_writable=False,
     )
 
 
@@ -655,12 +657,6 @@ def _friendly_extract_error(exc: Exception) -> str:
     return f"LLM extraction failed: {exc}"
 
 
-def _friendly_wiki_error(exc: Exception) -> str:
-    if "No space left" in str(exc) or getattr(exc, "errno", None) == 28:
-        return f"Failed to write wiki page: {exc}"
-    return f"Wiki page creation failed: {exc}"
-
-
 def _friendly_neo4j_error(exc: Exception) -> str:
     low = str(exc).lower()
     if "refused" in low or "could not connect" in low:
@@ -701,14 +697,6 @@ def _retry_progress(
     if extra:
         progress.update(extra)
     return progress
-
-
-def _requester_label(requester: Optional[str]) -> str:
-    """Return a stable display label for requesters in audit logs."""
-    if requester is None:
-        return "anonymous"
-    cleaned = requester.strip()
-    return cleaned or "anonymous"
 
 
 def _touch_ingest(
@@ -1347,16 +1335,14 @@ def execute_reviewed_extraction(
     ingest_store: IngestStore,
     config: ServerConfig,
 ) -> None:
-    """Create wiki/graph artifacts from a client-reviewed extraction payload."""
+    """Persist reviewed extraction metadata without writing Wiki files on the server."""
     task = ingest_store.get(task_id)
     if task is None:
         return
 
     enable_sync = bool(task.options.get("sync_neo4j", True))
     wiki = _configured_wiki_engine(config, enable_neo4j_sync=enable_sync)
-    ingester = wiki.ingester
     ingest_result: Dict[str, Any] = {"steps": {}}
-    actor = _requester_label(task.requester)
 
     task.status = "running"
     task.started_at = _utc_now_iso()
@@ -1414,39 +1400,12 @@ def execute_reviewed_extraction(
     _touch_ingest(task, ingest_store, st.message)
 
     if task.options.get("create_wiki", True):
-        if "fetch" in ingest_result["steps"] and "extract" in ingest_result["steps"]:
-            st = task.steps["wiki"]
-            st.status = "running"
-            st.started_at = _utc_now_iso()
-            st.message = "creating wiki pages from reviewed extraction"
-            _touch_ingest(task, ingest_store, st.message)
-            try:
-                pages = ingester._create_wiki_pages(task.arxiv_id, ingest_result)
-                st.status = "succeeded"
-                st.message = "wiki pages created from reviewed extraction"
-                st.result = {
-                    "pages_created": len(pages),
-                    "page_ids": [p.frontmatter.id for p in pages],
-                }
-                wiki.update_index()
-                wiki.append_to_log(
-                    f"[INGEST] {task.arxiv_id}: Applied reviewed extraction "
-                    f"({len(pages)} wiki pages, task {task_id}, requested by {actor})"
-                )
-            except Exception as e:
-                logger.exception("reviewed extraction wiki creation failed")
-                st.status = "failed"
-                st.message = "wiki page creation failed"
-                st.error = _friendly_wiki_error(e)
-            st.finished_at = _utc_now_iso()
-            _touch_ingest(task, ingest_store, st.message)
-        else:
-            st = task.steps["wiki"]
-            st.status = "skipped"
-            st.message = "wiki creation skipped"
-            st.error = "skipped because metadata or reviewed extraction is missing"
-            st.finished_at = _utc_now_iso()
-            _touch_ingest(task, ingest_store, st.message)
+        st = task.steps["wiki"]
+        st.status = "skipped"
+        st.message = "wiki creation skipped on server"
+        st.error = "server does not write WIKI_DIR; apply reviewed extraction from a writable client checkout"
+        st.finished_at = _utc_now_iso()
+        _touch_ingest(task, ingest_store, st.message)
     else:
         st = task.steps["wiki"]
         st.status = "skipped"
@@ -1512,7 +1471,6 @@ def execute_ingest(task_id: str, ingest_store: IngestStore, config: ServerConfig
     wiki = _configured_wiki_engine(config, enable_neo4j_sync=enable_sync)
     ingester = wiki.ingester
     ingest_result: Dict[str, Any] = {"steps": {}}
-    actor = _requester_label(task.requester)
 
     task.status = "running"
     task.started_at = _utc_now_iso()
@@ -1687,46 +1645,16 @@ def execute_ingest(task_id: str, ingest_store: IngestStore, config: ServerConfig
 
     # --- wiki ---
     if task.options.get("create_wiki", True):
+        st = task.steps["wiki"]
+        st.status = "skipped"
+        st.finished_at = _utc_now_iso()
         if _any_failed(task, ("fetch", "parse", "extract")):
-            st = task.steps["wiki"]
-            st.status = "skipped"
             st.message = "wiki creation skipped"
             st.error = "skipped because an earlier ingest stage failed"
-            st.finished_at = _utc_now_iso()
-            _touch_ingest(task, ingest_store, st.message)
-        elif "fetch" in ingest_result["steps"]:
-            st = task.steps["wiki"]
-            st.status = "running"
-            st.started_at = _utc_now_iso()
-            st.message = "creating wiki pages"
-            _touch_ingest(task, ingest_store, st.message)
-            try:
-                pages = ingester._create_wiki_pages(task.arxiv_id, ingest_result)
-                st.status = "succeeded"
-                st.message = "wiki pages created"
-                st.result = {
-                    "pages_created": len(pages),
-                    "page_ids": [p.frontmatter.id for p in pages],
-                }
-                wiki.update_index()
-                wiki.append_to_log(
-                    f"[INGEST] {task.arxiv_id}: Created {len(pages)} wiki pages "
-                    f"(task {task_id}, requested by {actor})"
-                )
-            except Exception as e:
-                logger.exception("ingest wiki failed")
-                st.status = "failed"
-                st.message = "wiki page creation failed"
-                st.error = _friendly_wiki_error(e)
-            st.finished_at = _utc_now_iso()
-            _touch_ingest(task, ingest_store, st.message)
         else:
-            st = task.steps["wiki"]
-            st.status = "skipped"
-            st.message = "wiki creation skipped"
-            st.error = "skipped because fetch metadata is missing"
-            st.finished_at = _utc_now_iso()
-            _touch_ingest(task, ingest_store, st.message)
+            st.message = "wiki creation skipped on server"
+            st.error = "server does not write WIKI_DIR; create or update wiki pages from a writable client checkout"
+        _touch_ingest(task, ingest_store, st.message)
     else:
         st = task.steps["wiki"]
         st.status = "skipped"
@@ -1803,7 +1731,7 @@ async def ingest_paper(
     body: IngestRequest,
     background_tasks: BackgroundTasks,
 ):
-    """Queue full paper ingestion (fetch → parse → extract → wiki → optional Neo4j)."""
+    """Queue paper ingestion for server-managed raw assets and task state."""
     config: ServerConfig = request.app.state.config
     ingest_store: IngestStore = request.app.state.ingest_store
 
@@ -1815,7 +1743,6 @@ async def ingest_paper(
     task_id = str(uuid.uuid4())[:8]
     now = _utc_now_iso()
     requester = request.headers.get(config.user_header) if config.user_header else None
-    actor = _requester_label(requester)
 
     flags = _flags_from_stage_control(
         stages=body.stages,
@@ -1851,12 +1778,6 @@ async def ingest_paper(
         submitted_at=now,
     )
     ingest_store.save(task)
-    try:
-        _configured_wiki_engine(config, enable_neo4j_sync=False).append_to_log(
-            f"[INGEST] {arxiv_norm} queued by {actor} (task {task_id})"
-        )
-    except Exception as exc:
-        logger.warning("failed to append ingest audit log for task %s: %s", task_id, exc)
     background_tasks.add_task(execute_ingest, task_id, ingest_store, config)
 
     return IngestQueuedResponse(
@@ -1876,7 +1797,7 @@ async def ingest_reviewed_extraction(
     body: ReviewedExtractionRequest,
     background_tasks: BackgroundTasks,
 ):
-    """Queue wiki/graph ingest from client-side LLM extraction after human review."""
+    """Queue server-side persistence for client-reviewed extraction after human review."""
     config: ServerConfig = request.app.state.config
     ingest_store: IngestStore = request.app.state.ingest_store
 
@@ -1891,7 +1812,6 @@ async def ingest_reviewed_extraction(
 
     task_id = str(uuid.uuid4())[:8]
     now = _utc_now_iso()
-    actor = _requester_label(requester)
 
     options: Dict[str, Any] = {
         "source": "client_reviewed_extraction",
@@ -1920,16 +1840,6 @@ async def ingest_reviewed_extraction(
         updated_at=now,
     )
     ingest_store.save(task)
-    try:
-        _configured_wiki_engine(config, enable_neo4j_sync=False).append_to_log(
-            f"[INGEST] {arxiv_norm} reviewed extraction queued by {actor} (task {task_id})"
-        )
-    except Exception as exc:
-        logger.warning(
-            "failed to append reviewed extraction audit log for task %s: %s",
-            task_id,
-            exc,
-        )
     background_tasks.add_task(execute_reviewed_extraction, task_id, ingest_store, config)
 
     return IngestQueuedResponse(
@@ -2084,6 +1994,11 @@ async def list_ingest_tasks(request: Request, limit: int = Query(50, ge=1, le=50
 @router.get("/lint")
 async def run_lint(request: Request, fix: bool = False):
     """Run wiki lint checks."""
+    if fix:
+        raise HTTPException(
+            status_code=400,
+            detail="server-side wiki fixes are disabled; run wiki lint fixes from a writable client checkout",
+        )
     wiki = _configured_wiki_engine(request.app.state.config, enable_neo4j_sync=False)
     result = wiki.lint(fix=fix)
 

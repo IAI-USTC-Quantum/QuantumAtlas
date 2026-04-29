@@ -98,6 +98,22 @@ qatlas estimator circuit_ir.json --format markdown
 
 当前仓库更偏向“研究基础设施”而不是静态资料库。默认目录适合本地开发和测试；生产或多人协作时，通常会把 `WIKI_DIR`、`RAW_DIR`、`DATA_DIR` 配到仓库之外，让代码版本、论文资产、Wiki 内容和运行状态有各自的生命周期。
 
+如果打算用 Git 维护正式 Wiki，推荐把 Wiki 仓库作为应用仓库的兄弟目录 checkout，而不是嵌套放进 `QuantumAtlas/` 里面：
+
+```text
+~/work/
+├── QuantumAtlas/          # 应用代码仓库
+└── QuantumAtlas-Wiki/     # Wiki 内容仓库
+```
+
+然后在 `QuantumAtlas/.env` 中指向这个 Wiki checkout：
+
+```env
+WIKI_DIR=../QuantumAtlas-Wiki
+```
+
+这样协作边界会更清楚：`QuantumAtlas` 管应用代码和服务能力，`QuantumAtlas-Wiki` 管知识页面；Wiki 的创建、编辑、review、回滚和发布都走普通 Git commit / push / pull / PR 流程。应用仓库内的 `wiki/` 只适合作为本地测试或临时目录，不建议作为正式知识库。
+
 推荐的协作节奏是：
 
 1. 摄入论文或资料，保留 Raw Sources。

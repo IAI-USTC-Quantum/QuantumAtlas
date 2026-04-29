@@ -106,7 +106,7 @@ QuantumAtlas 对外分享原始资源时统一走 `/api/shares` 和 `/share/{tok
 
 QuantumAtlas 既可以作为服务端运行，也可以作为远程客户端使用。
 
-- server 模式负责读取本机 `WIKI_DIR`，读写 `RAW_DIR` / `DATA_DIR`，并提供 Wiki 浏览、share、图谱和摄入能力。
+- server 模式负责读取本机 `WIKI_DIR`，读写 `RAW_DIR` / `DATA_DIR`，并提供 Wiki 浏览、share、图谱和摄入能力。服务端不会生成或修改 Wiki 页面；如果启用 Wiki 同步接口，它只对 clean checkout 执行 fast-forward 更新。
 - client 模式通过 HTTP API 使用这些能力，不要求拿到服务器文件系统权限。
 
 协作时的推荐主边界不是服务器 shell，而是 `QuantumAtlas-Wiki` 仓库本身：
@@ -128,9 +128,9 @@ DATA_DIR=data
 生产环境更推荐外置：
 
 ```env
-WIKI_DIR=/srv/quantumatlas/wiki
-RAW_DIR=/srv/quantumatlas/raw
-DATA_DIR=/srv/quantumatlas/data
+WIKI_DIR=/srv/quantumatlas-wiki
+RAW_DIR=/srv/quantumatlas-raw
+DATA_DIR=/srv/quantumatlas-data
 ```
 
 ## 设计上的取舍

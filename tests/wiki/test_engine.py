@@ -7,7 +7,7 @@ import pytest
 import tempfile
 from pathlib import Path
 
-from atlas.wiki.engine import WikiEngine
+from atlas.wiki.engine import WikiEngine, WikiWriteDisabledError
 from atlas.wiki.page import WikiPage, WikiFrontmatter
 
 
@@ -34,6 +34,49 @@ class TestWikiEngine:
         assert temp_wiki.raw_dir.exists()
         assert (temp_wiki.wiki_dir / "concepts").exists()
         assert (temp_wiki.wiki_dir / "entities" / "algorithms").exists()
+
+    def test_content_guarded_engine_does_not_initialize_directories(self, tmp_path):
+        """Content-guarded engines can inspect paths without creating a Wiki checkout."""
+        engine = WikiEngine(
+            wiki_dir=str(tmp_path / "wiki"),
+            raw_dir=str(tmp_path / "raw"),
+            enable_neo4j_sync=False,
+            project_root=str(tmp_path),
+            ensure_directories=False,
+            wiki_content_writable=False,
+        )
+
+        assert engine.wiki_content_writable is False
+        assert not (tmp_path / "wiki").exists()
+        assert not (tmp_path / "raw").exists()
+
+    def test_content_guarded_engine_rejects_wiki_mutations(self, tmp_path):
+        """Server-style engines fail loudly if code tries to mutate WIKI_DIR."""
+        engine = WikiEngine(
+            wiki_dir=str(tmp_path / "wiki"),
+            raw_dir=str(tmp_path / "raw"),
+            enable_neo4j_sync=False,
+            project_root=str(tmp_path),
+            ensure_directories=False,
+            wiki_content_writable=False,
+        )
+        page = WikiPage(
+            frontmatter=WikiFrontmatter(
+                id="content-guarded",
+                title="Content Guarded",
+                type="concept",
+            ),
+            content="No writes.",
+        )
+
+        with pytest.raises(WikiWriteDisabledError):
+            engine.save_page(page)
+        with pytest.raises(WikiWriteDisabledError):
+            engine.delete_page("content-guarded")
+        with pytest.raises(WikiWriteDisabledError):
+            engine.append_to_log("blocked")
+        with pytest.raises(WikiWriteDisabledError):
+            engine.update_index()
 
     def test_save_and_get_page(self, temp_wiki):
         """Test saving and retrieving a page."""

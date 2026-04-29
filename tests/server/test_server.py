@@ -112,7 +112,7 @@ class TestWikiRoutes:
         assert response.status_code == 200
 
     def test_wiki_write_forms_are_not_exposed(self, client):
-        """Wiki server pages are read-only; edits go through the Git workflow."""
+        """Wiki server pages do not expose content-editing routes."""
         assert client.get("/wiki/new").status_code == 404
         assert client.post("/wiki/new").status_code == 404
         assert client.get("/wiki/edit/test-page").status_code == 404
@@ -163,6 +163,38 @@ class TestAPIRoutes:
         """Test API lint endpoint."""
         response = client.get("/api/lint")
         assert response.status_code == 200
+
+    def test_api_lint_fix_is_not_exposed(self, client):
+        """Server lint can report issues but must not modify Wiki files."""
+        response = client.get("/api/lint?fix=true")
+        assert response.status_code == 400
+        assert "server-side wiki fixes are disabled" in response.json()["detail"]
+
+    def test_configured_wiki_engine_blocks_server_content_mutations(self, tmp_path):
+        """Server code gets an engine that cannot create or edit Wiki content."""
+        from atlas.server.config import ServerConfig
+        from atlas.server.routers.api import _configured_wiki_engine
+        from atlas.wiki.engine import WikiWriteDisabledError
+        from atlas.wiki.page import WikiFrontmatter, WikiPage
+
+        config = ServerConfig(
+            wiki_dir=str(tmp_path / "wiki"),
+            raw_dir=str(tmp_path / "raw"),
+            data_dir=str(tmp_path / "data"),
+        )
+        wiki = _configured_wiki_engine(config, enable_neo4j_sync=False)
+        page = WikiPage(
+            frontmatter=WikiFrontmatter(
+                id="server-write",
+                title="Server Write",
+                type="concept",
+            ),
+            content="blocked",
+        )
+
+        assert wiki.wiki_content_writable is False
+        with pytest.raises(WikiWriteDisabledError):
+            wiki.save_page(page)
 
     def test_download_api_is_not_exposed(self, client):
         """Downloads are handled as the fetch stage of ingest, not as a standalone API."""
