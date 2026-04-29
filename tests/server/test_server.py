@@ -85,6 +85,18 @@ class TestHomePage:
         response = client.get("/")
         assert b"QuantumAtlas" in response.content
 
+    def test_web_shell_does_not_embed_auth_token(self, client):
+        """Web shell routes should not expose the auth cookie in page HTML."""
+        client.cookies.set("AUTHP_ACCESS_TOKEN", "secret-token")
+
+        response = client.get("/")
+        assert response.status_code == 200
+        assert "secret-token" not in response.text
+
+        response = client.get("/token")
+        assert response.status_code == 200
+        assert "secret-token" not in response.text
+
     def test_health_check(self, client):
         """Test health endpoint."""
         response = client.get("/health")
@@ -223,6 +235,71 @@ class TestAPIRoutes:
         }
         assert data["audit"] == {"user_header_enabled": False}
         assert str(tmp_path) not in response.text
+
+    def test_session_token_endpoint_returns_current_auth_cookie(self, client):
+        """Token copy endpoint returns only the current session token and is not cacheable."""
+        client.cookies.set("AUTHP_ACCESS_TOKEN", "secret-token")
+
+        response = client.get("/api/session/token")
+        assert response.status_code == 200
+        assert response.json() == {"token": "secret-token"}
+        assert response.headers["cache-control"] == "no-store"
+        assert response.headers["pragma"] == "no-cache"
+
+    def test_graph_stats_returns_dashboard_shape(self, client, monkeypatch):
+        """Graph stats endpoint adapts Neo4j label counts for the web dashboard."""
+
+        class FakeResult:
+            def single(self):
+                return {"count": 7}
+
+        class FakeSession:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def run(self, query):
+                assert query == "MATCH ()-[r]->() RETURN count(r) as count"
+                return FakeResult()
+
+        class FakeNeo4jClient:
+            def __init__(self, **kwargs):
+                pass
+
+            def connect(self):
+                pass
+
+            def get_stats(self):
+                return {
+                    "Primitive": 2,
+                    "Algorithm": 3,
+                    "Paper": 1,
+                    "Implementation": 0,
+                }
+
+            def session(self):
+                return FakeSession()
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr("atlas.knowledge.neo4j_client.Neo4jClient", FakeNeo4jClient)
+
+        response = client.get("/api/graph/stats")
+        assert response.status_code == 200
+        assert response.json() == {
+            "nodes": 6,
+            "relationships": 7,
+            "labels": ["Primitive", "Algorithm", "Paper", "Implementation"],
+            "label_counts": {
+                "Primitive": 2,
+                "Algorithm": 3,
+                "Paper": 1,
+                "Implementation": 0,
+            },
+        }
 
     def test_server_startup_writes_code_version_manifests(self, tmp_path):
         """Test raw and data stores include the serving code version."""

@@ -409,6 +409,18 @@ def wiki_sync_status(request: Request):
     return _wiki_sync_status(request.app.state.config)
 
 
+@router.get("/session/token")
+def session_token(request: Request):
+    """Return the current Caddy token for explicit copy-to-CLI workflows."""
+    return JSONResponse(
+        {"token": request.cookies.get("AUTHP_ACCESS_TOKEN", "")},
+        headers={
+            "Cache-Control": "no-store",
+            "Pragma": "no-cache",
+        },
+    )
+
+
 @router.post("/wiki/sync/pull")
 def wiki_sync_pull(request: Request):
     """Fetch and fast-forward the configured Wiki repository."""
@@ -556,9 +568,17 @@ async def graph_stats():
             password=config.neo4j_password,
         )
         client.connect()
-        stats = client.get_stats()
+        label_counts = client.get_stats()
+        with client.session() as session:
+            result = session.run("MATCH ()-[r]->() RETURN count(r) as count")
+            relationships = result.single()["count"]
         client.close()
-        return stats
+        return {
+            "nodes": sum(label_counts.values()),
+            "relationships": relationships,
+            "labels": list(label_counts.keys()),
+            "label_counts": label_counts,
+        }
     except Exception as e:
         return {"error": str(e)}
 

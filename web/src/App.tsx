@@ -55,13 +55,13 @@ type GraphStats = {
   nodes?: number
   relationships?: number
   labels?: string[]
+  label_counts?: Record<string, number>
   error?: string
+  [key: string]: number | string | string[] | Record<string, number> | undefined
 }
 
-function readToken() {
-  return document
-    .querySelector<HTMLMetaElement>('meta[name="qatlas-token"]')
-    ?.content.trim() ?? ''
+type SessionToken = {
+  token: string
 }
 
 function shortToken(token: string) {
@@ -125,6 +125,22 @@ function statValue(stats: Stats | null, group: keyof Stats, key: string) {
   const value = stats?.[group]
   if (!value || typeof value !== 'object') return 0
   return (value as Record<string, number>)[key] ?? 0
+}
+
+function graphLabelCounts(stats: GraphStats | null) {
+  if (!stats) return {}
+  if (stats.label_counts) return stats.label_counts
+
+  const counts: Record<string, number> = {}
+  for (const [key, value] of Object.entries(stats)) {
+    if (['nodes', 'relationships', 'labels', 'error'].includes(key)) continue
+    if (typeof value === 'number') counts[key] = value
+  }
+  return counts
+}
+
+function sumCounts(counts: Record<string, number>) {
+  return Object.values(counts).reduce((total, count) => total + count, 0)
 }
 
 function navigate(path: string) {
@@ -431,7 +447,10 @@ function WikiDetailPage({ pageId }: { pageId: string }) {
 
 function GraphPage() {
   const stats = useJson<GraphStats>('/api/graph/stats')
-  const labels = stats.data?.labels ?? []
+  const labelCounts = graphLabelCounts(stats.data)
+  const labels = stats.data?.labels ?? Object.keys(labelCounts)
+  const nodes = stats.data?.nodes ?? sumCounts(labelCounts)
+  const relationships = stats.data?.relationships ?? 0
 
   return (
     <section className="stack">
@@ -441,14 +460,17 @@ function GraphPage() {
         copy="Neo4j-backed topology and schema health for the quantum knowledge graph."
       />
       <div className="metrics">
-        <div className="metric"><Database size={18} /><span>Nodes</span><strong>{stats.data?.nodes ?? 0}</strong></div>
-        <div className="metric"><GitBranch size={18} /><span>Relationships</span><strong>{stats.data?.relationships ?? 0}</strong></div>
+        <div className="metric"><Database size={18} /><span>Nodes</span><strong>{nodes}</strong></div>
+        <div className="metric"><GitBranch size={18} /><span>Relationships</span><strong>{relationships}</strong></div>
         <div className="metric"><Layers3 size={18} /><span>Labels</span><strong>{labels.length}</strong></div>
       </div>
       {stats.data?.error && <div className="notice danger">{stats.data.error}</div>}
       <Panel title="Node labels" icon={Network}>
         <div className="chips">
-          {labels.length ? labels.map((label) => <span key={label}>{label}</span>) : <span>No labels reported</span>}
+          {labels.length ? labels.map((label) => {
+            const count = labelCounts[label]
+            return <span key={label}>{typeof count === 'number' ? `${label} ${count}` : label}</span>
+          }) : <span>No labels reported</span>}
         </div>
       </Panel>
       <Panel title="Explorer" icon={CircleDot}>
@@ -465,7 +487,8 @@ function GraphPage() {
 }
 
 function GraphNodePage({ path }: { path: string }) {
-  const [, nodeType = 'node', nodeId = 'unknown'] = path.replace('/graph/node/', '').split('/')
+  const [nodeType = 'node', ...nodeIdParts] = path.replace('/graph/node/', '').split('/')
+  const nodeId = nodeIdParts.join('/') || 'unknown'
   return (
     <section className="stack">
       <PageHeader eyebrow="Graph node" title={decodeURIComponent(nodeId)} copy={`Type: ${decodeURIComponent(nodeType)}`} />
@@ -477,11 +500,13 @@ function GraphNodePage({ path }: { path: string }) {
 }
 
 function TokenPage() {
-  const token = useMemo(readToken, [])
+  const session = useJson<SessionToken>('/api/session/token')
+  const token = session.data?.token ?? ''
   const [copied, setCopied] = useState<string>('')
   const [revealed, setRevealed] = useState(false)
   const origin = window.location.origin
   const curlCommand = `curl -k -H 'Authorization: Bearer ${token}' ${origin}/api/server/info`
+  const tokenStatus = session.loading ? 'Loading' : token ? 'Active' : 'Missing'
 
   async function copy(text: string, label: string) {
     await navigator.clipboard.writeText(text)
@@ -507,10 +532,11 @@ function TokenPage() {
         <div className="panel-heading">
           <div>
             <p className="eyebrow">Access token</p>
-            <h2>{token ? 'Ready for CLI use' : 'Sign in required'}</h2>
+            <h2>{session.loading ? 'Loading session' : token ? 'Ready for CLI use' : 'Sign in required'}</h2>
           </div>
-          <span className={token ? 'status good' : 'status'}>{token ? 'Active' : 'Missing'}</span>
+          <span className={token ? 'status good' : 'status'}>{tokenStatus}</span>
         </div>
+        {session.error && <div className="notice danger">{session.error}</div>}
         <div className="token-box">{shortToken(token)}</div>
         <div className="field-row">
           <label htmlFor="token-value">Token value</label>

@@ -1,7 +1,6 @@
 """FastAPI application entry point."""
 
 from contextlib import asynccontextmanager
-import html
 from pathlib import Path
 from typing import Optional
 
@@ -79,15 +78,13 @@ def create_app(config: Optional[ServerConfig] = None) -> FastAPI:
     app.include_router(shares.public_router, tags=["shares-public"])
 
     def web_index(request: Request) -> HTMLResponse:
-        """Serve the Vite web shell and inject the Caddy token cookie."""
+        """Serve the Vite web shell."""
         index_path = static_dir / "web" / "index.html"
         if not index_path.is_file():
             return HTMLResponse(
                 "<!doctype html><title>QuantumAtlas</title><div id=\"root\">QuantumAtlas</div>"
             )
         content = index_path.read_text(encoding="utf-8")
-        token = html.escape(request.cookies.get("AUTHP_ACCESS_TOKEN", ""), quote=True)
-        content = content.replace('meta name="qatlas-token" content=""', f'meta name="qatlas-token" content="{token}"')
         return HTMLResponse(content)
 
     @app.get("/", response_class=HTMLResponse)
