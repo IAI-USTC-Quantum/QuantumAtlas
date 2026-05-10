@@ -34,7 +34,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Type
 
-from atlas.paper_assets import safe_paper_key
+from atlas.paper_assets import paper_asset_path
 
 from .page import WikiPage, WikiFrontmatter
 from .templates import PageTemplate
@@ -184,16 +184,7 @@ class WikiEngine:
 
     def get_paper_asset_path(self, kind: str, arxiv_id: str) -> Path:
         """Return the canonical asset path for a paper."""
-        key = safe_paper_key(arxiv_id)
-        if kind == "pdf":
-            return self.get_paper_asset_dir("pdf") / f"{key}.pdf"
-        if kind == "markdown":
-            return self.get_paper_asset_dir("markdown") / f"{key}.md"
-        if kind == "json":
-            return self.get_paper_asset_dir("json") / f"{key}.json"
-        if kind == "images":
-            return self.get_paper_asset_dir("images") / key
-        raise ValueError(f"unknown paper asset kind: {kind}")
+        return paper_asset_path(self.raw_dir, kind, arxiv_id)
 
     # === Page CRUD Operations ===
 

@@ -3,7 +3,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from atlas.paper_assets import resolve_paper_assets, safe_paper_key
+from atlas.paper_assets import paper_asset_path, resolve_paper_assets, safe_paper_key
 from atlas.server.config import ServerConfig
 from atlas.server.main import create_app
 
@@ -48,6 +48,35 @@ def test_resolve_paper_assets_finds_single_versioned_old_style_asset(tmp_path):
     assert resolved["pdf_path"] == raw_root / "pdf" / f"{key}.pdf"
     assert resolved["markdown_path"] == raw_root / "markdown" / f"{key}.md"
     assert resolved["json_path"] == raw_root / "json" / f"{key}.json"
+
+
+def test_resolve_paper_assets_supports_sharded_numeric_assets(tmp_path):
+    raw_root = tmp_path / "raw"
+    key = "9508027v2"
+
+    _write(raw_root / "pdf" / "9508" / f"{key}.pdf", b"%PDF-1.4")
+    _write(raw_root / "markdown" / "9508" / f"{key}.md", "# parsed")
+    _write(raw_root / "json" / "9508" / f"{key}.json", "{}")
+    _write(raw_root / "images" / "9508" / key / "figure-1.png", b"png")
+
+    resolved = resolve_paper_assets(raw_root, "quant-ph/9508027")
+
+    assert resolved["key"] == key
+    assert resolved["pdf_path"] == raw_root / "pdf" / "9508" / f"{key}.pdf"
+    assert resolved["markdown_path"] == raw_root / "markdown" / "9508" / f"{key}.md"
+    assert resolved["json_path"] == raw_root / "json" / "9508" / f"{key}.json"
+    assert resolved["images_dir"] == raw_root / "images" / "9508" / key
+
+
+def test_paper_asset_path_writes_sharded_assets(tmp_path):
+    raw_root = tmp_path / "raw"
+
+    assert paper_asset_path(raw_root, "pdf", "quant-ph/9508027v2") == (
+        raw_root / "pdf" / "9508" / "9508027v2.pdf"
+    )
+    assert paper_asset_path(raw_root, "markdown", "0704.0046v1") == (
+        raw_root / "markdown" / "0704" / "0704.0046v1.md"
+    )
 
 
 def test_paper_resources_route_uses_configured_raw_root(tmp_path):
@@ -113,6 +142,41 @@ def test_paper_resources_can_use_permanent_share_token_and_public_base_url(tmp_p
         shared_pdf = client.get("/share/permanent-token/papers/pdf/9508027v1.pdf")
         assert shared_pdf.status_code == 200
         assert list((data_root / "shares").glob("*.json")) == []
+
+
+def test_paper_resources_route_serves_sharded_assets(tmp_path):
+    wiki_root = tmp_path / "wiki"
+    data_root = tmp_path / "data"
+    raw_root = tmp_path / "mounted" / "raw"
+    key = "9508027v2"
+
+    _write(raw_root / "pdf" / "9508" / f"{key}.pdf", b"%PDF-1.4 test")
+    _write(raw_root / "markdown" / "9508" / f"{key}.md", "# parsed")
+    _write(raw_root / "json" / "9508" / f"{key}.json", '{"arxiv_id": "quant-ph/9508027v2"}')
+    _write(raw_root / "images" / "9508" / key / "figure-1.png", b"png")
+
+    app = create_app(
+        ServerConfig(
+            wiki_dir=str(wiki_root),
+            raw_dir=str(raw_root),
+            data_dir=str(data_root),
+            share_access_token="permanent-token",
+        )
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/api/papers/quant-ph/9508027/resources")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["assets"]["pdf"]["exists"] is True
+        assert data["assets"]["pdf"]["url"] == (
+            "/share/permanent-token/papers/pdf/9508/9508027v2.pdf"
+        )
+        assert (
+            data["images"][0]["url"]
+            == "/share/permanent-token/papers/images/9508/9508027v2/figure-1.png"
+        )
+        assert client.get("/share/permanent-token/papers/pdf/9508/9508027v2.pdf").status_code == 200
 
 
 def test_server_config_reads_raw_dir_from_dotenv(tmp_path, monkeypatch):

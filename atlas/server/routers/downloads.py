@@ -64,10 +64,24 @@ async def get_paper_resources(request: Request, arxiv_id: str):
     for kind in ("pdf", "markdown", "json"):
         path = resolved[f"{kind}_path"]
         if path is not None and Path(path).is_file():
-            share_paths.append(share_path_for_asset(kind, key))
+            share_paths.append(
+                share_path_for_asset(
+                    kind,
+                    key,
+                    asset_path=Path(path),
+                    paper_assets_root=config.get_raw_root(),
+                )
+            )
     images_dir = resolved["images_dir"]
     if images_dir is not None and Path(images_dir).is_dir():
-        share_paths.append(share_path_for_asset("images", key))
+        share_paths.append(
+            share_path_for_asset(
+                "images",
+                key,
+                asset_path=Path(images_dir),
+                paper_assets_root=config.get_raw_root(),
+            )
+        )
 
     share = None
     share_token = config.share_access_token
@@ -89,7 +103,12 @@ async def get_paper_resources(request: Request, arxiv_id: str):
         url: Optional[str] = None
         size: Optional[int] = None
         if exists and share_token is not None and path is not None:
-            rel = share_path_for_asset(kind, key)
+            rel = share_path_for_asset(
+                kind,
+                key,
+                asset_path=path,
+                paper_assets_root=config.get_raw_root(),
+            )
             url = build_share_url(share_token, rel, base_url=share_base_url)
             size = path.stat().st_size
         return PaperAsset(exists=exists, url=url, size=size)
@@ -104,7 +123,12 @@ async def get_paper_resources(request: Request, arxiv_id: str):
                     name=image_path.name,
                     url=build_share_url(
                         share_token,
-                        share_path_for_asset("images", key, image_path.name),
+                        share_path_for_asset(
+                            "images",
+                            key,
+                            asset_path=image_path,
+                            paper_assets_root=config.get_raw_root(),
+                        ),
                         base_url=share_base_url,
                     ),
                     size=image_path.stat().st_size,
