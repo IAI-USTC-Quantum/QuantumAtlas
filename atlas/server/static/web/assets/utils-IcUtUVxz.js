@@ -1,0 +1,1 @@
+function t(e){return e.length<=28?e||"No token found":`${e.slice(0,18)}...${e.slice(-12)}`}function n(e){return e?`${e.slice(0,12)}${"*".repeat(24)}${e.slice(-10)}`:""}function u(e){return e.charAt(0).toUpperCase()+e.slice(1)}function c(e){return Object.values(e).reduce((r,s)=>r+s,0)}export{c as a,n as m,t as s,u as t};
