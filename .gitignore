@@ -216,5 +216,10 @@ wiki/log.md
 # Runtime data (tasks, shares)
 /data/
 
+# Quantum Algorithm Zoo tooling cache (regenerate with uv run --script tmp/zoo/fetch_zoo.py)
+tmp/zoo/zoo.html
+tmp/zoo/__pycache__/
+
 # Local AI assistant guidance
 CLAUDE.md
+.codex

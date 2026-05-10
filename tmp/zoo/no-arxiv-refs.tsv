@@ -1,0 +1,92 @@
+ref_id	ref_number	citation
+Ambainis_matrix	6	A. Ambainis, H. Buhrman, P. Høyer, M. Karpinizki, and P. Kurur Quantum matrix verification. Unpublished Manuscript, 2002.
+Bernstein_Vazirani	11	Ethan Bernstein and Umesh Vazirani Quantum complexity theory. In Proceedings of the 25th ACM Symposium on the Theory of Computing , pages 11-20, 1993.
+Berzina	13	A. Berzina, A. Dubrovsky, R. Frivalds, L. Lace, and O. Scegulnaja Quantum query complexity for some graph problems. In Proceedings of the 30th Conference on Current Trends in Theory and Practive of Computer Science , pages 140-150, 2004.
+BL95	14	D. Boneh and R. J. Lipton Quantum cryptanalysis of hidden linear functions. In Don Coppersmith, editor, CRYPTO '95 , Lecture Notes in Computer Science, pages 424-437. Springer-Verlag, 1995.
+BBHT98	15	M. Boyer, G. Brassard, P. Høyer, and A. Tapp Tight bounds on quantum searching. Fortschritte der Physik , 46:493-505, 1998.
+Childs_thesis	25	Andrew M. Childs Quantum information processing in continuous time . PhD thesis, MIT, 2004.
+Deutsch	32	David Deutsch Quantum theory, the Church-Turing principle, and the universal quantum computer. Proceedings of the Royal Society of London Series A , 400:97-117, 1985.
+Deutsch_Jozsa	33	David Deutsch and Richard Jozsa Rapid solution of problems by quantum computation. Proceedings of the Royal Society of London Series A , 493:553-558, 1992.
+Feynman	40	Richard P. Feynman Simulating physics with computers. International Journal of Theoretical Physics , 21(6/7):467-488, 1982.
+Freedman2	41	Michael Freedman, Alexei Kitaev, and Zhenghan Wang Simulation of topological field theories by quantum computers. Communications in Mathematical Physics , 227:587-603, 2002.
+G_NAHS	44	D. Gavinsky Quantum solution to the hidden subgroup problem for poly-near-Hamiltonian-groups. Quantum Information and Computation , 4:229-235, 2004.
+Hallgren_Pell	49	Sean Hallgren Polynomial-time quantum algorithms for Pell's equation and the principal ideal problem. In Proceedings of the 34th ACM Symposium on Theory of Computing , 2002.
+Hallgren_unit	50	Sean Hallgren Fast quantum algorithms for computing the unit group and class group of a number field. In Proceedings of the 37th ACM Symposium on Theory of Computing , 2005.
+Hallgren_Russell	51	Sean Hallgren, Alexander Russell, and Amnon Ta-Shma Normal subgroup reconstruction and quantum computation using group representations. SIAM Journal on Computing , 32(4):916-934, 2003.
+Mos98	73	M. Mosca Quantum searching, counting, and amplitude amplification by eigenvector analysis. In R. Freivalds, editor, Proceedings of International Workshop on Randomized Algorithms , pages 90-100, 1998.
+Mosca_thesis	74	Michele Mosca Quantum Computer Algorithms . PhD thesis, University of Oxford, 1999.
+Nielsen_Chuang	76	Michael A. Nielsen and Isaac L. Chuang. Quantum Computation and Quantum Information . Cambridge University Press, Cambridge, UK, 2000.
+Szegedy	85	M. Szegedy Quantum speed-up of Markov chain based algorithms. In Proceedings of the 45th IEEE Symposium on Foundations of Computer Science , pg. 32, 2004.
+Yao	94	Andrew Yao On computing the minima of quadratic forms. In Proceedings of the 7th ACM Symposium on Theory of Computing , pages 23-26, 1975.
+Simon	108	D. Simon On the Power of Quantum Computation. In Proceedings of the 35th Symposium on Foundations of Computer Science , pg. 116-123, 1994.
+Schmidt	116	Arthur Schmidt and Ulrich Vollmer Polynomial time quantum algorithm for the computation of the unit group of a number field. In Proceedings of the 37th Symposium on the Theory of Computing , pg. 475-480, 2005.
+Arvind	119	V. Arvind, Bireswar Das, and Partha Mukhopadhyay The complexity of black-box ring problems. In Proceedings of COCCOON 2006 , pg 126-145.
+Arvind2	120	V. Arvind and Partha Mukhopadhyay Quantum query complexity of multilinear identity testing. In Proceedings of STACS 2009 , pg. 87-98.
+Babai	124	Laszlo Babai, Robert Beals, and Akos Seress Polynomial-time theory of matrix groups. In Proceedings of STOC 2009 , pg. 55-64.
+Shor_factoring94	125	Peter Shor Algorithms for Quantum Computation: Discrete Logarithms and Factoring. In Proceedings of FOCS 1994 , pg. 124-134.
+CGF	134	Nicolas J. Cerf, Lov K. Grover, and Colin P. Williams Nested quantum search and NP-hard problems. Applicable Algebra in Engineering, Communication and Computing , 10 (4-5):311-338, 2000.
+Hogg	147	Tad Hogg Highly structured searches with quantum computers. Physical Review Letters 80: 2473, 1998.
+Hunziker_Meyer	148	Markus Hunziker and David A. Meyer Quantum algorithms for highly structured search problems. Quantum Information Processing , Vol. 1, No. 3, pg. 321-341, 2002.
+Dorn	151	Sebastian Dörn and Thomas Thierauf The quantum query complexity of the determinant. Information Processing Letters Vol. 109, No. 6, pg. 305-328, 2009.
+LeGall_Matrix	155	François Le Gall Improved output-sensitive quantum algorithms for Boolean matrix multiplication. In Proceedings of the 23rd Annual ACM-SIAM Symposium on Discrete Algorithms (SODA '12) , 2012.
+Williams_Williams	157	Virginia Vassilevska Williams and Ryan Williams Subcubic equivalences between path, matrix, and triangle problems. In 51st IEEE Symposium on Foundations of Computer Science (FOCS '10) pg. 645 - 654, 2010.
+GZL12	176	Silvano Garnerone, Paolo Zanardi, and Daniel A. Lidar Adiabatic quantum algorithm for search engine ranking. Physical Review Letters 108:230506, 2012.
+BJLM13	178	Daniel J. Bernstein, Stacey Jeffery, Tanja Lange, and Alexander Meurer Quantum algorithms for the subset-sum problem. from cr.yp.to .
+R04	180	Ben Reichardt The quantum adiabatic optimization algorithm and local minima. In Proceedings of STOC 2004 , pg. 502-510. [ Erratum ].
+Beals_general	196	Robert Beals Quantum computation of Fourier transforms over symmetric groups. In Proceedings of STOC 1997 , pg. 48-53.
+MN08	198	S. Morita, H. Nishimori Mathematical foundation of quantum annealing. Journal of Methematical Physics , 49(12):125210, 2008.
+FGSSD94	199	A. B. Finnila, M. A. Gomez, C. Sebenik, C. Stenson, J. D. Doll Quantum annealing: a new method for minimizing multidimensional functions. Chemical Physics Letters , 219:343-348, 1994.
+EHKS14	213	Kirsten Eisenträger, Sean Hallgren, Alexei Kitaev, and Fang Song A quantum algorithm for computing the unit group of an arbitrary degree number field In Proceedings of STOC 2014 pg. 293-302.
+Ta-Shma13	220	Amnon Ta-Shma Inverting well conditioned matrices in quantum logspace In Proceedings of STOC 2013 pg. 881-890.
+BZ98	239	Alexander Barg and Shiyu Zhou A quantum decoding algorithm of the simplex code Proceedings of the 36th Annual Allerton Conference, 1998 Available at author's homepage .
+Aa15	246	Scott Aaronson Read the fine print Nature Physics 11:291-293, 2015. [ fulltext ]
+BBD09	248	Daniel J. Bernstein, Johannes Buchmann, and Erik Dahmen, Eds. Post-Quantum Cryptography Springer , 2009.
+Pol	252	J. M. Pollard Theorems on factorization and primality testing Proceedings of the Cambridge Philosophical Society. 76:521-228, 1974.
+BBS09	253	L. Babai, R. Beals, and A. Seress Polynomial-time theory of matrix groups In Proceedings of STOC 2009 , pg. 55-64.
+KLPF08	255	L. A. B. Kowada, C. Lavor, R. Portugal, and C. M. H. de Figueiredo A new quantum algorithm for solving the minimum searching problem International Journal of Quantum Information, Vol. 6, No. 3, pg. 427-436 , 2008.
+F15	287	Scott Fluhrer Quantum Cryptanalysis of NTRU Cryptology ePrint Archive: Report 2015/676 , 2015.
+KM10	289	H. Kuwakado and M. Morii Quantum distinguisher between the 3-round Feistel cipher and the random permutation In Proceedings of IEEE International Symposium on Information Theory (ISIT) , pg. 2682-2685, 2010.
+KM12	290	H. Kuwakado and M. Morii Security on the quantum-type Even-Mansour cipher In Proceedings of International Symposium on Information Theory and its Applications (ISITA) , pg. 312-316, 2012.
+BHT98b	315	Gilles Brassard, Peter Høyer, and Alain Tapp Quantum cryptanalysis of hash and claw-free functions In Proceedings of the 3rd Latin American symposium on Theoretical Informatics (LATIN'98) , pg. 163-169, 1998.
+B09	316	Daniel J. Bernstein Cost analysis of hash collisions: Will quantum computers make SHARCS obsolete? In Proceedings of the 4th Workshop on Special-purpose Hardware for Attacking Cryptographic Systems (SHARCS'09) , pg. 105-116, 2009. [available here ]
+LS15	320	F. Le Gall and N. Shogo Quantum algorithm for triangle finding in sparse graphs In Proceedings of the 26th International Symposium on Algorithms and Computation (ISAAC'15) , pg. 590-600, 2015.
+Biasse_Song16	329	Jean-François Biasse and Fang Song Efficient quantum algorithms for computing class groups and solving the principal ideal problem in arbitrary degree number fields Proceedings of the 27th Annual ACM-SIAM Symposium on Discrete Algorithms (SODA '16) , pg. 893-902, 2016.
+QMLbook	331	Peter Wittek Quantum Machine Learning: what quantum computing means to data mining Academic Press, 2014.
+ABG06	334	Esma Aïmeur, Gilles Brassard, and Sébastien Gambs Machine learning in a quantum world In Advances in Artificial Intelligence: 19th Conference of the Canadian Society for Computational Studies of Intelligence pg. 431-442, Springer, 2006.
+DTB16	335	Vedran Dunjko, Jacob Taylor, and Hans Briegel Quantum-enhanced machine learning Phys. Rev. Lett 117:130501, 2016.
+ABG13	340	Esma Aïmeur, Gilles Brassard, and Sébastien Gambs Quantum speed-up for unsupervised learning Machine Learning , 90(2):261-287, 2013.
+DCLT08	343	Daoyi Dong, Chunlin Chen, Hanxiong Li, and Tzyh-Jong Tarn Quantum reinforcement learning IEEE Transactions on Systems, Man, and Cybernetics- Part B (Cybernetics) 38(5):1207, 2008.
+BJ99	350	N. H. Bshouty and J. C. Jackson Learning DNF over the uniform distribution using a quantum example oracle SIAM Journal on Computing 28(3):1136-1153, 1999.
+SG04	352	Rocco A. Servedio and Steven J. Gortler Equivalences and separations between quantum and classical learnability SIAM Journal on Computing , 33(5):1067-1092, 2017.
+ABG07	358	Esma Aïmeur, Gilles Brassard, and Sébastien Gambs Quantum clustering algorithms In Proceedings of the 24th International Conference on Machine Learning (ICML) , pg. 1-8, 2007.
+interp1	360	Dan Boneh and Mark Zhandry Quantum-secure message authentication codes In Proceedings of Eurocrypt , pg. 592-608, 2013.
+Stras	362	Volker Strassen Einige Resultate über Berechnungskomplexität In Jahresbericht der Deutschen Mathematiker-Vereinigung , 78(1):1-8, 1976/1977.
+Jefferythesis	363	Stacey Jeffery Frameworks for Quantum Algorithms PhD thesis, U. Waterloo, 2014.
+IwamaKawachi	365	K. Iwama and A. Kawachi A new quantum claw-finding algorithm for three functions New Generation Computing , 21(4):319-327, 2003.
+PQRSA	366	D. J. Bernstein, N. Heninger, P. Lou, and L. Valenta Post-quantum RSA IACR e-print 2017/351 , 2017.
+DPCSC15	379	R. Di Candia, J. S. Pedernales, A. del Campo, E. Solano, and J. Casanova Quantum simulation of dissipative processes without reservoir engineering Scientific Reports 5:9981, 2015.
+EH17	384	M. Ekerå and J. Håstad Quantum Algorithms for Computing Short Discrete Logarithms and Factoring RSA Integers Proceedings of PQCrypto 2017 , pg. 347-363. (LNCS Volume 10346), 2017.
+E17	385	M. Ekerå On post-processing in the quantum algorithm for computing short discrete logarithms IACR ePrint Archive Report 2017/1122 , 2017.
+BBM17	386	D. J. Bernstein, J.-F. Biasse, and M. Mosca A low-resource quantum factoring algorithm Proceedings of PQCrypto 2017 , pg. 330-346 (LNCS Volume 10346), 2017.
+Hales_Hallgren	388	Lisa Hales and Sean Hallgren An improved quantum Fourier transform algorithm and applications. In Proceedings of FOCS 2000 , pg. 515-525.
+SW07	389	Igor Shparlinski and Arne Winterhof Quantum period reconstruction of approximate sequences Information Processing Letters , 103:211-215, 2007.
+RS04	390	Alexander Russell and Igor E. Shparlinski Classical and quantum function reconstruction via character evaluation Journal of Complexity , 20:404-422, 2004.
+HRS05	391	Sean Hallgren, Alexander Russell, and Igor Shparlinski Quantum noisy rational function reconstruction Proceedings of COCOON 2005 , pg. 420-429.
+IKS17	392	G. Ivanyos, M. Karpinski, M. Santha, N. Saxena, and I. Shparlinski Polynomial interpolation and identity testing from high powers over finite fields Algorithmica , 80:560-575, 2017.
+AKS1	393	Qi Cheng Primality Proving via One Round in ECPP and One Iteration in AKS Journal of Cryptology , Volume 20, Issue 3, pg. 375-387, July 2007.
+AKS2	394	Daniel J. Bernstein Proving primality in essentially quartic random time Mathematics of Computation , Vol. 76, pg. 389-403, 2007.
+ECPP	395	F. Morain Implementing the asymptotically fast version of the elliptic curve primality proving algorithm Mathematics of Computation , Vol. 76, pg. 493-505, 2007.
+HVDH	398	David Harvey and Joris Van Der Hoeven Integer multiplication in time \( O(n \log \ n) \) hal-02070778 , 2019.
+Greathouse	399	Charles Greathouse personal communication , 2019.
+BCJ11	404	Anja Becker, Jean-Sebastien Coron, and Antoine Joux Improved generic algorithms for hard knapsacks Proceedings of Eurocrypt 2011 pg. 364-385 [ IACR eprint 2011/474 ]
+NN21	435	Pradeep Niroula and Yunseong Nam A quantum algorithm for string matching NPJ Quantum Information , 7:37, 2021.
+XDG18	444	G. Xu, A. J. Daley, P. Givi, and R. D. Somma Turbulent mixing simulation via a quantum algorithm AIAA Journal 56(2):687-699, 2018.
+XDG19	445	G. Xu, A. J. Daley, P. Givi, and R. D. Somma Quantum algorithm for the computation of the reactant conversion rate in homogeneous turbulence Combustion Theory and Modelling 23(6):1090-1104, 2018.
+WW24	501	Peter L. Walters and Fei Wang Path integral quantum algorithm for simulating non-Markovian quantum dynamics in open quantum systems Physical Review Research , 6:013135, 2024.
+MSK22	504	Mekena Metcalf, Emma Stone, Katherine Klymko, Alexander F Kemper, Mohan Sarovar, and Wibe A de Jong Quantum Markov chain Monte Carlo with digital dissipative dynamics on quantum computers Quantum Science and Technology , 7(2):025017, 2022.
+PW23	505	Dhrumil Patel and Mark M. Wilde Wave Matrix Lindbladization I: Quantum Programs for Simulating Markovian Dynamics Open Systems & Information Dynamics , 30(2):2350010, 2023.
+PW23b	506	Dhrumil Patel and Mark M. Wilde Wave Matrix Lindbladization II: General Lindbladians, Linear Combinations, and Polynomials Open Systems & Information Dynamics , 30(2):2350014, 2023.
+LW23	507	Xiantao Li and Chunhao Wang Succinct Description and Efficient Simulation of Non-Markovian Open Quantum Systems Communications in Mathematical Physics , 401:147-183, 2023.
+YS22	508	Bin Yan and Nikolai A. Sinitsyn Analytical solution for nonadiabatic quantum annealing to arbitrary Ising spin Hamiltonian Nature Communications , 13:2212, 2022.
+HM12	521	Uwe Helmke and John B. Moore Optimization and Dynamical Systems Springer Science & Business Media , 2012.
+DW21	538	Leo Ducas and Wessel van Woerden A note on a Claim of Eldar and Hallgren: LLL already solves it github , 2021.

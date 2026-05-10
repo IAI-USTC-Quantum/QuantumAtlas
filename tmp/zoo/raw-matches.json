@@ -1,0 +1,6373 @@
+{
+  "0704.2988": {
+    "status": "ok",
+    "cited_by": [
+      "Hidden Shift"
+    ],
+    "paper_key": "0704.2988v1",
+    "arxiv_id_in_db": "0704.2988",
+    "version": "v1",
+    "title": "On solving systems of random linear disequations",
+    "authors": "Gabor Ivanyos",
+    "pdf_path": "pdf/0704/0704.2988v1.pdf",
+    "markdown_path": "markdown/0704/0704.2988v1.md",
+    "json_path": "json/0704/0704.2988v1.json"
+  },
+  "0704.3628": {
+    "status": "ok",
+    "cited_by": [
+      "Formula Evaluation"
+    ],
+    "paper_key": "0704.3628v1",
+    "arxiv_id_in_db": "0704.3628",
+    "version": "v1",
+    "title": "A nearly optimal discrete query quantum algorithm for evaluating NAND\n  formulas",
+    "authors": "Andris Ambainis",
+    "pdf_path": "pdf/0704/0704.3628v1.pdf",
+    "markdown_path": "markdown/0704/0704.3628v1.md",
+    "json_path": "json/0704/0704.3628v1.json"
+  },
+  "0705.1180": {
+    "status": "ok",
+    "cited_by": [
+      "String Rewriting"
+    ],
+    "paper_key": "0705.1180v2",
+    "arxiv_id_in_db": "0705.1180",
+    "version": "v2",
+    "title": "A PromiseBQP-complete String Rewriting Problem",
+    "authors": "Dominik Janzing and Pawel Wocjan",
+    "pdf_path": "pdf/0705/0705.1180v2.pdf",
+    "markdown_path": "markdown/0705/0705.1180v2.md",
+    "json_path": "json/0705/0705.1180v2.json"
+  },
+  "0705.2784": {
+    "status": "ok",
+    "cited_by": [
+      "Hidden Nonlinear Structures",
+      "Machine Learning"
+    ],
+    "paper_key": "0705.2784v1",
+    "arxiv_id_in_db": "0705.2784",
+    "version": "v1",
+    "title": "Quantum algorithms for hidden nonlinear structures",
+    "authors": "Andrew M. Childs, Leonard J. Schulman, Umesh V. Vazirani",
+    "pdf_path": "pdf/0705/0705.2784v1.pdf",
+    "markdown_path": "markdown/0705/0705.2784v1.md",
+    "json_path": "json/0705/0705.2784v1.json"
+  },
+  "0706.1219": {
+    "status": "ok",
+    "cited_by": [
+      "Hidden Nonlinear Structures",
+      "Machine Learning"
+    ],
+    "paper_key": "0706.1219v3",
+    "arxiv_id_in_db": "0706.1219",
+    "version": "v3",
+    "title": "Efficient Quantum Algorithm for Identifying Hidden Polynomials",
+    "authors": "Thomas Decker, Jan Draisma, Pawel Wocjan",
+    "pdf_path": "pdf/0706/0706.1219v3.pdf",
+    "markdown_path": "markdown/0706/0706.1219v3.md",
+    "json_path": "json/0706/0706.1219v3.json"
+  },
+  "0707.1260": {
+    "status": "ok",
+    "cited_by": [
+      "Non-Abelian Hidden Subgroup"
+    ],
+    "paper_key": "0707.1260v1",
+    "arxiv_id_in_db": "0707.1260",
+    "version": "v1",
+    "title": "An efficient quantum algorithm for the hidden subgroup problem in nil-2\n  groups",
+    "authors": "G\\'abor Ivanyos, Luc Sanselme and Miklos Santha",
+    "pdf_path": "pdf/0707/0707.1260v1.pdf",
+    "markdown_path": "markdown/0707/0707.1260v1.md",
+    "json_path": "json/0707/0707.1260v1.json"
+  },
+  "0707.2831": {
+    "status": "ok",
+    "cited_by": [
+      "Knot Invariants"
+    ],
+    "paper_key": "0707.2831v3",
+    "arxiv_id_in_db": "0707.2831",
+    "version": "v3",
+    "title": "Estimating Jones polynomials is a complete problem for one clean qubit",
+    "authors": "Peter W. Shor and Stephen P. Jordan",
+    "pdf_path": "pdf/0707/0707.2831v3.pdf",
+    "markdown_path": "markdown/0707/0707.2831v3.md",
+    "json_path": "json/0707/0707.2831v3.json"
+  },
+  "0707.3479": {
+    "status": "ok",
+    "cited_by": [
+      "Junta Testing and Group Testing"
+    ],
+    "paper_key": "0707.3479v1",
+    "arxiv_id_in_db": "0707.3479",
+    "version": "v1",
+    "title": "Quantum Algorithms for Learning and Testing Juntas",
+    "authors": "Alp Atici, Rocco A. Servedio",
+    "pdf_path": "pdf/0707/0707.3479v1.pdf",
+    "markdown_path": "markdown/0707/0707.3479v1.md",
+    "json_path": "json/0707/0707.3479v1.json"
+  },
+  "0708.2584": {
+    "status": "ok",
+    "cited_by": [
+      "Collision Finding and Element Distinctness"
+    ],
+    "paper_key": "0708.2584v2",
+    "arxiv_id_in_db": "0708.2584",
+    "version": "v2",
+    "title": "Claw Finding Algorithms Using Quantum Walk",
+    "authors": "Seiichiro Tani",
+    "pdf_path": "pdf/0708/0708.2584v2.pdf",
+    "markdown_path": "markdown/0708/0708.2584v2.md",
+    "json_path": "json/0708/0708.2584v2.json"
+  },
+  "0708.3396": {
+    "status": "ok",
+    "cited_by": [
+      "Ordered Search"
+    ],
+    "paper_key": "0708.3396v1",
+    "arxiv_id_in_db": "0708.3396",
+    "version": "v1",
+    "title": "Optimal quantum adversary lower bounds for ordered search",
+    "authors": "Andrew M. Childs, Troy Lee",
+    "pdf_path": "pdf/0708/0708.3396v1.pdf",
+    "markdown_path": "markdown/0708/0708.3396v1.md",
+    "json_path": "json/0708/0708.3396v1.json"
+  },
+  "0710.2630": {
+    "status": "ok",
+    "cited_by": [
+      "Formula Evaluation"
+    ],
+    "paper_key": "0710.2630v3",
+    "arxiv_id_in_db": "0710.2630",
+    "version": "v3",
+    "title": "Span-program-based quantum algorithm for evaluating formulas",
+    "authors": "Ben W. Reichardt, Robert Spalek",
+    "pdf_path": "pdf/0710/0710.2630v3.pdf",
+    "markdown_path": "markdown/0710/0710.2630v3.md",
+    "json_path": "json/0710/0710.2630v3.json"
+  },
+  "0710.5794": {
+    "status": "ok",
+    "cited_by": [
+      "Formula Evaluation"
+    ],
+    "paper_key": "0710.5794v2",
+    "arxiv_id_in_db": "0710.5794",
+    "version": "v2",
+    "title": "Quantum Algorithms for Evaluating MIN-MAX Trees",
+    "authors": "Richard Cleve, Dmytro Gavinsky, David L. Yonge-Mallo",
+    "pdf_path": "pdf/0710/0710.5794v2.pdf",
+    "markdown_path": "markdown/0710/0710.5794v2.md",
+    "json_path": "json/0710/0710.5794v2.json"
+  },
+  "0712.1008": {
+    "status": "ok",
+    "cited_by": [
+      "Simulated Annealing"
+    ],
+    "paper_key": "0712.1008v1",
+    "arxiv_id_in_db": "0712.1008",
+    "version": "v1",
+    "title": "Quantum Simulated Annealing",
+    "authors": "R. Somma, S. Boixo and H. Barnum",
+    "pdf_path": "pdf/0712/0712.1008v1.pdf",
+    "markdown_path": "markdown/0712/0712.1008v1.md",
+    "json_path": "json/0712/0712.1008v1.json"
+  },
+  "0801.2986": {
+    "status": "ok",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "0801.2986v3",
+    "arxiv_id_in_db": "0801.2986",
+    "version": "v3",
+    "title": "Polynomial-time quantum algorithm for the simulation of chemical\n  dynamics",
+    "authors": "Ivan Kassal, Stephen P. Jordan, Peter J. Love, Masoud Mohseni, Al\\'an\n  Aspuru-Guzik",
+    "pdf_path": "pdf/0801/0801.2986v3.pdf",
+    "markdown_path": "markdown/0801/0801.2986v3.md",
+    "json_path": "json/0801/0801.2986v3.json"
+  },
+  "0801.4833": {
+    "status": "ok",
+    "cited_by": [
+      "Partition Functions",
+      "Weight Enumerators"
+    ],
+    "paper_key": "0801.4833v3",
+    "arxiv_id_in_db": "0801.4833",
+    "version": "v3",
+    "title": "A BQP-complete problem related to the Ising model partition function via\n  a new connection between quantum circuits and graphs",
+    "authors": "Joseph Geraci",
+    "pdf_path": "pdf/0801/0801.4833v3.pdf",
+    "markdown_path": "markdown/0801/0801.4833v3.md",
+    "json_path": "json/0801/0801.4833v3.json"
+  },
+  "0804.1109": {
+    "status": "ok",
+    "cited_by": [
+      "Solving Exponential Congruences"
+    ],
+    "paper_key": "0804.1109v1",
+    "arxiv_id_in_db": "0804.1109",
+    "version": "v1",
+    "title": "Classical and Quantum Algorithms for Exponential Congruences",
+    "authors": "Wim van Dam and Igor E. Shparlinski",
+    "pdf_path": "pdf/0804/0804.1109v1.pdf",
+    "markdown_path": "markdown/0804/0804.1109v1.md",
+    "json_path": "json/0804/0804.1109v1.json"
+  },
+  "0804.1571": {
+    "status": "ok",
+    "cited_by": [
+      "Simulated Annealing"
+    ],
+    "paper_key": "0804.1571v1",
+    "arxiv_id_in_db": "0804.1571",
+    "version": "v1",
+    "title": "Quantum Simulations of Classical Annealing Processes",
+    "authors": "R. D. Somma, S. Boixo, H. Barnum, E. Knill",
+    "pdf_path": "pdf/0804/0804.1571v1.pdf",
+    "markdown_path": "markdown/0804/0804.1571v1.md",
+    "json_path": "json/0804/0804.1571v1.json"
+  },
+  "0805.0007": {
+    "status": "ok",
+    "cited_by": [
+      "Bernstein-Vazirani"
+    ],
+    "paper_key": "0805.0007v2",
+    "arxiv_id_in_db": "0805.0007",
+    "version": "v2",
+    "title": "Superpolynomial speedups based on almost any quantum circuit",
+    "authors": "Sean Hallgren and Aram W. Harrow",
+    "pdf_path": "pdf/0805/0805.0007v2.pdf",
+    "markdown_path": "markdown/0805/0805.0007v2.md",
+    "json_path": "json/0805/0805.0007v2.json"
+  },
+  "0805.0040": {
+    "status": "ok",
+    "cited_by": [
+      "Partition Functions"
+    ],
+    "paper_key": "0805.0040v3",
+    "arxiv_id_in_db": "0805.0040",
+    "version": "v3",
+    "title": "Quantum computation and the evaluation of tensor networks",
+    "authors": "Itai Arad, Zeph Landau",
+    "pdf_path": "pdf/0805/0805.0040v3.pdf",
+    "markdown_path": "markdown/0805/0805.0040v3.md",
+    "json_path": "json/0805/0805.0040v3.json"
+  },
+  "0805.1214": {
+    "status": "ok",
+    "cited_by": [
+      "Partition Functions"
+    ],
+    "paper_key": "0805.1214v1",
+    "arxiv_id_in_db": "0805.1214",
+    "version": "v1",
+    "title": "Quantum algorithms for spin models and simulable gate sets for quantum\n  computation",
+    "authors": "M. Van den Nest, W. D\\\"ur, R. Raussendorf and H. J. Briegel",
+    "pdf_path": "pdf/0805/0805.1214v1.pdf",
+    "markdown_path": "markdown/0805/0805.1214v1.md",
+    "json_path": "json/0805/0805.1214v1.json"
+  },
+  "0809.0847": {
+    "status": "ok",
+    "cited_by": [
+      "Probabilistic Sampling"
+    ],
+    "paper_key": "0809.0847v3",
+    "arxiv_id_in_db": "0809.0847",
+    "version": "v3",
+    "title": "Instantaneous Quantum Computation",
+    "authors": "Dan Shepherd and Michael J. Bremner",
+    "pdf_path": "pdf/0809/0809.0847v3.pdf",
+    "markdown_path": "markdown/0809/0809.0847v3.md",
+    "json_path": "json/0809/0809.0847v3.json"
+  },
+  "0809.2307": {
+    "status": "ok",
+    "cited_by": [
+      "Gradient Estimation and Learning Polynomials"
+    ],
+    "paper_key": "0809.2307v1",
+    "arxiv_id_in_db": "0809.2307",
+    "version": "v1",
+    "title": "Quantum Computation Beyond the Circuit Model",
+    "authors": "Stephen P. Jordan",
+    "pdf_path": "pdf/0809/0809.2307v1.pdf",
+    "markdown_path": "markdown/0809/0809.2307v1.md",
+    "json_path": "json/0809/0809.2307v1.json"
+  },
+  "0809.2445": {
+    "status": "ok",
+    "cited_by": [
+      "Non-Abelian Hidden Subgroup"
+    ],
+    "paper_key": "0809.2445v5",
+    "arxiv_id_in_db": "0809.2445",
+    "version": "v5",
+    "title": "Finding conjugate stabilizer subgroups in PSL(2; q) and related groups",
+    "authors": "Aaron Denney, Cristopher Moore, Alexander Russell",
+    "pdf_path": "pdf/0809/0809.2445v5.pdf",
+    "markdown_path": "markdown/0809/0809.2445v5.md",
+    "json_path": "json/0809/0809.2445v5.json"
+  },
+  "0810.4968": {
+    "status": "ok",
+    "cited_by": [
+      "Center of Radial Function"
+    ],
+    "paper_key": "0810.4968v2",
+    "arxiv_id_in_db": "0810.4968",
+    "version": "v2",
+    "title": "Quantum Algorithms Using the Curvelet Transform",
+    "authors": "Yi-Kai Liu",
+    "pdf_path": "pdf/0810/0810.4968v2.pdf",
+    "markdown_path": "markdown/0810/0810.4968v2.md",
+    "json_path": "json/0810/0810.4968v2.json"
+  },
+  "0811.0416": {
+    "status": "ok",
+    "cited_by": [
+      "Adiabatic Algorithms",
+      "Machine Learning"
+    ],
+    "paper_key": "0811.0416v1",
+    "arxiv_id_in_db": "0811.0416",
+    "version": "v1",
+    "title": "Training a Binary Classifier with the Quantum Adiabatic Algorithm",
+    "authors": "Hartmut Neven, Vasil S. Denchev, Geordie Rose, William G. Macready",
+    "pdf_path": "pdf/0811/0811.0416v1.pdf",
+    "markdown_path": "markdown/0811/0811.0416v1.md",
+    "json_path": "json/0811/0811.0416v1.json"
+  },
+  "0811.0562": {
+    "status": "ok",
+    "cited_by": [
+      "Matrix Elements and Multiplicity Coefficients of Group Representations"
+    ],
+    "paper_key": "0811.0562v2",
+    "arxiv_id_in_db": "0811.0562",
+    "version": "v2",
+    "title": "Fast quantum algorithms for approximating some irreducible\n  representations of groups",
+    "authors": "Stephen P. Jordan",
+    "pdf_path": "pdf/0811/0811.0562v2.pdf",
+    "markdown_path": "markdown/0811/0811.0562v2.md",
+    "json_path": "json/0811/0811.0562v2.json"
+  },
+  "0811.0596": {
+    "status": "ok",
+    "cited_by": [
+      "Partition Functions"
+    ],
+    "paper_key": "0811.0596v3",
+    "arxiv_id_in_db": "0811.0596",
+    "version": "v3",
+    "title": "Quantum Speed-up for Approximating Partition Functions",
+    "authors": "Pawel Wocjan, Chen-Fu Chiang, Anura Abeyesinghe, Daniel Nagaj",
+    "pdf_path": "pdf/0811/0811.0596v3.pdf",
+    "markdown_path": "markdown/0811/0811.0596v3.md",
+    "json_path": "json/0811/0811.0596v3.json"
+  },
+  "0811.3171": {
+    "status": "ok",
+    "cited_by": [
+      "Electrical Resistance",
+      "Linear Systems",
+      "Machine Learning",
+      "Solving Linear Differential Equations"
+    ],
+    "paper_key": "0811.3171v3",
+    "arxiv_id_in_db": "0811.3171",
+    "version": "v3",
+    "title": "Quantum algorithm for solving linear systems of equations",
+    "authors": "Aram W. Harrow, Avinatan Hassidim and Seth Lloyd",
+    "pdf_path": "pdf/0811/0811.3171v3.pdf",
+    "markdown_path": "markdown/0811/0811.3171v3.md",
+    "json_path": "json/0811/0811.3171v3.json"
+  },
+  "0811.3208": {
+    "status": "ok",
+    "cited_by": [
+      "Hidden Shift"
+    ],
+    "paper_key": "0811.3208v2",
+    "arxiv_id_in_db": "0811.3208",
+    "version": "v2",
+    "title": "Quantum algorithms for highly non-linear Boolean functions",
+    "authors": "Martin Roetteler",
+    "pdf_path": "pdf/0811/0811.3208v2.pdf",
+    "markdown_path": "markdown/0811/0811.3208v2.md",
+    "json_path": "json/0811/0811.3208v2.json"
+  },
+  "0812.4423": {
+    "status": "ok",
+    "cited_by": [
+      "Solving Nonlinear Differential Equations"
+    ],
+    "paper_key": "0812.4423v1",
+    "arxiv_id_in_db": "0812.4423",
+    "version": "v1",
+    "title": "A quantum algorithm to solve nonlinear differential equations",
+    "authors": "Sarah K. Leyton and Tobias J. Osborne",
+    "pdf_path": "pdf/0812/0812.4423v1.pdf",
+    "markdown_path": "markdown/0812/0812.4423v1.md",
+    "json_path": "json/0812/0812.4423v1.json"
+  },
+  "0903.0543": {
+    "status": "ok",
+    "cited_by": [
+      "Machine Learning"
+    ],
+    "paper_key": "0903.0543v2",
+    "arxiv_id_in_db": "0903.0543",
+    "version": "v2",
+    "title": "Optimal quantum learning of a unitary transformation",
+    "authors": "A. Bisio, G. Chiribella, G. M. D'Ariano, S. Facchini, and P. Perinotti",
+    "pdf_path": "pdf/0903/0903.0543v2.pdf",
+    "markdown_path": "markdown/0903/0903.0543v2.md",
+    "json_path": "json/0903/0903.0543v2.json"
+  },
+  "0904.2759": {
+    "status": "ok",
+    "cited_by": [
+      "Formula Evaluation",
+      "Matrix Rank"
+    ],
+    "paper_key": "0904.2759v1",
+    "arxiv_id_in_db": "0904.2759",
+    "version": "v1",
+    "title": "Span programs and quantum query complexity: The general adversary bound\n  is nearly tight for every boolean function",
+    "authors": "Ben W. Reichardt",
+    "pdf_path": "pdf/0904/0904.2759v1.pdf",
+    "markdown_path": "markdown/0904/0904.2759v1.md",
+    "json_path": "json/0904/0904.2759v1.json"
+  },
+  "0905.2199": {
+    "status": "ok",
+    "cited_by": [
+      "Preparing Eigenstates and Thermal States",
+      "Partition Functions",
+      "Semidefinite Programming"
+    ],
+    "paper_key": "0905.2199v2",
+    "arxiv_id_in_db": "0905.2199",
+    "version": "v2",
+    "title": "Sampling from the thermal quantum Gibbs state and evaluating partition\n  functions with a quantum computer",
+    "authors": "David Poulin and Pawel Wocjan",
+    "pdf_path": "pdf/0905/0905.2199v2.pdf",
+    "markdown_path": "markdown/0905/0905.2199v2.md",
+    "json_path": "json/0905/0905.2199v2.json"
+  },
+  "0907.0854": {
+    "status": "ok",
+    "cited_by": [
+      "Preparing Eigenstates and Thermal States"
+    ],
+    "paper_key": "0907.0854v1",
+    "arxiv_id_in_db": "0907.0854",
+    "version": "v1",
+    "title": "Quantum Algorithm for Obtaining the Energy Spectrum of Molecular Systems",
+    "authors": "Hefeng Wang, Sabre Kais, Al\\'an Aspuru-Guzik and Mark R. Hoffmann",
+    "pdf_path": "pdf/0907/0907.0854v1.pdf",
+    "markdown_path": "markdown/0907/0907.0854v1.md",
+    "json_path": "json/0907/0907.0854v1.json"
+  },
+  "0907.1622": {
+    "status": "ok",
+    "cited_by": [
+      "Formula Evaluation"
+    ],
+    "paper_key": "0907.1622v1",
+    "arxiv_id_in_db": "0907.1622",
+    "version": "v1",
+    "title": "Span-program-based quantum algorithm for evaluating unbalanced formulas",
+    "authors": "Ben W. Reichardt",
+    "pdf_path": "pdf/0907/0907.1622v1.pdf",
+    "markdown_path": "markdown/0907/0907.1622v1.md",
+    "json_path": "json/0907/0907.1622v1.json"
+  },
+  "0907.1623": {
+    "status": "ok",
+    "cited_by": [
+      "Formula Evaluation"
+    ],
+    "paper_key": "0907.1623v1",
+    "arxiv_id_in_db": "0907.1623",
+    "version": "v1",
+    "title": "Faster quantum algorithm for evaluating game trees",
+    "authors": "Ben W. Reichardt",
+    "pdf_path": "pdf/0907/0907.1623v1.pdf",
+    "markdown_path": "markdown/0907/0907.1623v1.md",
+    "json_path": "json/0907/0907.1623v1.json"
+  },
+  "0907.3920": {
+    "status": "ok",
+    "cited_by": [
+      "Statistical Difference"
+    ],
+    "paper_key": "0907.3920v1",
+    "arxiv_id_in_db": "0907.3920",
+    "version": "v1",
+    "title": "Quantum algorithms for testing properties of distributions",
+    "authors": "Sergey Bravyi, Aram W. Harrow, and Avinatan Hassidim",
+    "pdf_path": "pdf/0907/0907.3920v1.pdf",
+    "markdown_path": "markdown/0907/0907.3920v1.md",
+    "json_path": "json/0907/0907.3920v1.json"
+  },
+  "0908.0022": {
+    "status": "ok",
+    "cited_by": [
+      "Finite Rings and Ideals"
+    ],
+    "paper_key": "0908.0022v2",
+    "arxiv_id_in_db": "0908.0022",
+    "version": "v2",
+    "title": "Efficient quantum processing of ideals in finite rings",
+    "authors": "Pawel M. Wocjan, Stephen P. Jordan, Hamed Ahmadi, and Joseph P.\n  Brennan",
+    "pdf_path": "pdf/0908/0908.0022v2.pdf",
+    "markdown_path": "markdown/0908/0908.0022v2.md",
+    "json_path": "json/0908/0908.0022v2.json"
+  },
+  "0908.1921": {
+    "status": "ok",
+    "cited_by": [
+      "Preparing Eigenstates and Thermal States"
+    ],
+    "paper_key": "0908.1921v1",
+    "arxiv_id_in_db": "0908.1921",
+    "version": "v1",
+    "title": "Quantum Algorithm for Molecular Properties and Geometry Optimization",
+    "authors": "Ivan Kassal, Al\\'an Aspuru-Guzik",
+    "pdf_path": "pdf/0908/0908.1921v1.pdf",
+    "markdown_path": "markdown/0908/0908.1921v1.md",
+    "json_path": "json/0908/0908.1921v1.json"
+  },
+  "0908.3066": {
+    "status": "ok",
+    "cited_by": [
+      "Searching"
+    ],
+    "paper_key": "0908.3066v1",
+    "arxiv_id_in_db": "0908.3066",
+    "version": "v1",
+    "title": "Quantum search with advice",
+    "authors": "Ashley Montanaro",
+    "pdf_path": "pdf/0908/0908.3066v1.pdf",
+    "markdown_path": "markdown/0908/0908.3066v1.md",
+    "json_path": "json/0908/0908.3066v1.json"
+  },
+  "0909.4766": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Adiabatic Algorithms"
+    ],
+    "paper_key": "0909.4766v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0909/0909.4766v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "0911.3635": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Preparing Eigenstates and Thermal States"
+    ],
+    "paper_key": "0911.3635v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0911/0911.3635v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "0911.4724": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Hidden Shift",
+      "Convex Optimization"
+    ],
+    "paper_key": "0911.4724v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0911/0911.4724v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "0912.0583": {
+    "status": "ok",
+    "cited_by": [
+      "Convex Optimization"
+    ],
+    "paper_key": "0912.0583v1",
+    "arxiv_id_in_db": "0912.0583",
+    "version": "v1",
+    "title": "Single query learning from abelian and non-abelian Hamming distance\n  oracles",
+    "authors": "David A. Meyer, James Pommersheim",
+    "pdf_path": "pdf/0912/0912.0583v1.pdf",
+    "markdown_path": "markdown/0912/0912.0583v1.md",
+    "json_path": "json/0912/0912.0583v1.json"
+  },
+  "0912.0746": {
+    "status": "ok",
+    "cited_by": [
+      "Adiabatic Algorithms"
+    ],
+    "paper_key": "0912.0746v1",
+    "arxiv_id_in_db": "0912.0746",
+    "version": "v1",
+    "title": "Anderson localization casts clouds over adiabatic quantum optimization",
+    "authors": "Boris Altshuler, Hari Krovi and Jeremie Roland",
+    "pdf_path": "pdf/0912/0912.0746v1.pdf",
+    "markdown_path": "markdown/0912/0912.0746v1.md",
+    "json_path": "json/0912/0912.0746v1.json"
+  },
+  "0912.4807": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Principal Ideal"
+    ],
+    "paper_key": "0912.4807v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0912/0912.4807v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1001.0608": {
+    "status": "ok",
+    "cited_by": [
+      "Group Isomorphism"
+    ],
+    "paper_key": "1001.0608v1",
+    "arxiv_id_in_db": "1001.0608",
+    "version": "v1",
+    "title": "An Efficient Quantum Algorithm for some Instances of the Group\n  Isomorphism Problem",
+    "authors": "Fran\\c{c}ois Le Gall",
+    "pdf_path": "pdf/1001/1001.0608v1.pdf",
+    "markdown_path": "markdown/1001/1001.0608v1.md",
+    "json_path": "json/1001/1001.0608v1.json"
+  },
+  "1001.3855": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Preparing Eigenstates and Thermal States"
+    ],
+    "paper_key": "1001.3855v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1001/1001.3855v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1003.0923": {
+    "status": "ok",
+    "cited_by": [
+      "Three-manifold Invariants"
+    ],
+    "paper_key": "1003.0923v1",
+    "arxiv_id_in_db": "1003.0923",
+    "version": "v1",
+    "title": "Approximating Turaev-Viro 3-manifold invariants is universal for quantum\n  computation",
+    "authors": "Gorjan Alagic, Stephen P. Jordan, Robert Koenig, Ben W. Reichardt",
+    "pdf_path": "pdf/1003/1003.0923v1.pdf",
+    "markdown_path": "markdown/1003/1003.0923v1.md",
+    "json_path": "json/1003/1003.0923v1.json"
+  },
+  "1005.1601": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Formula Evaluation"
+    ],
+    "paper_key": "1005.1601v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1005/1005.1601v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1009.0416": {
+    "status": "ok",
+    "cited_by": [
+      "Counterfeit Coins"
+    ],
+    "paper_key": "1009.0416v1",
+    "arxiv_id_in_db": "1009.0416",
+    "version": "v1",
+    "title": "Quantum Counterfeit Coin Problems",
+    "authors": "Kazuo Iwama, Harumichi Nishimura, Rudy Raymond, Junichi Teruyama",
+    "pdf_path": "pdf/1009/1009.0416v1.pdf",
+    "markdown_path": "markdown/1009/1009.0416v1.md",
+    "json_path": "json/1009/1009.0416v1.json"
+  },
+  "1010.0009": {
+    "status": "ok",
+    "cited_by": [
+      "Adiabatic Algorithms"
+    ],
+    "paper_key": "1010.0009v1",
+    "arxiv_id_in_db": "1010.0009",
+    "version": "v1",
+    "title": "Unstructured Randomness, Small Gaps and Localization",
+    "authors": "Edward Farhi, Jeffrey Goldstone, David Gosset, Sam Gutmann, and Peter\n  Shor",
+    "pdf_path": "pdf/1010/1010.0009v1.pdf",
+    "markdown_path": "markdown/1010/1010.0009v1.md",
+    "json_path": "json/1010/1010.0009v1.json"
+  },
+  "1010.2745": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Linear Systems",
+      "Solving Linear Differential Equations"
+    ],
+    "paper_key": "1010.2745v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1010/1010.2745v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1010.3654": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Bernstein-Vazirani"
+    ],
+    "paper_key": "1010.3654v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1010/1010.3654v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1010.4458": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Searching",
+      "Linear Systems"
+    ],
+    "paper_key": "1010.4458v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1010/1010.4458v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1011.1443": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Graph Properties in the Adjacency Matrix Model"
+    ],
+    "paper_key": "1011.1443v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1011/1011.1443v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1011.3245": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Probabilistic Sampling"
+    ],
+    "paper_key": "1011.3245v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1011/1011.3245v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1012.3174": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Graph Properties in the Adjacency List Model"
+    ],
+    "paper_key": "1012.3174v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1012/1012.3174v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1012.4019": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Quantum Cryptanalysis"
+    ],
+    "paper_key": "1012.4019v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1012/1012.4019v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1101.0796": {
+    "status": "ok",
+    "cited_by": [
+      "Formula Evaluation"
+    ],
+    "paper_key": "1101.0796v3",
+    "arxiv_id_in_db": "1101.0796",
+    "version": "v3",
+    "title": "Super-Polynomial Quantum Speed-ups for Boolean Evaluation Trees with\n  Hidden Structure",
+    "authors": "Bohua Zhan, Shelby Kimmel, Avinatan Hassidim",
+    "pdf_path": "pdf/1101/1101.0796v3.pdf",
+    "markdown_path": "markdown/1101/1101.0796v3.md",
+    "json_path": "json/1101/1101.0796v3.json"
+  },
+  "1101.0797": {
+    "status": "ok",
+    "cited_by": [
+      "Formula Evaluation"
+    ],
+    "paper_key": "1101.0797v5",
+    "arxiv_id_in_db": "1101.0797",
+    "version": "v5",
+    "title": "Quantum Adversary (Upper) Bound",
+    "authors": "Shelby Kimmel",
+    "pdf_path": "pdf/1101/1101.0797v5.pdf",
+    "markdown_path": "markdown/1101/1101.0797v5.md",
+    "json_path": "json/1101/1101.0797v5.json"
+  },
+  "1102.1360": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "1102.1360v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1102/1102.1360v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1102.2389": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Preparing Eigenstates and Thermal States"
+    ],
+    "paper_key": "1102.2389v4",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1102/1102.2389v4.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1103.0842": {
+    "status": "ok",
+    "cited_by": [
+      "Matrix Rank"
+    ],
+    "paper_key": "1103.0842v1",
+    "arxiv_id_in_db": "1103.0842",
+    "version": "v1",
+    "title": "Span-program-based quantum algorithm for the rank problem",
+    "authors": "Aleksandrs Belovs",
+    "pdf_path": "pdf/1103/1103.0842v1.pdf",
+    "markdown_path": "markdown/1103/1103.0842v1.md",
+    "json_path": "json/1103/1103.0842v1.json"
+  },
+  "1103.1345": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Adiabatic Algorithms"
+    ],
+    "paper_key": "1103.1345v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1103/1103.1345v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1103.3017": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Hidden Shift"
+    ],
+    "paper_key": "1103.3017v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1103/1103.3017v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1104.1410": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Preparing Eigenstates and Thermal States"
+    ],
+    "paper_key": "1104.1410v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1104/1104.1410v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1105.3310": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Convex Optimization",
+      "Machine Learning"
+    ],
+    "paper_key": "1105.3310v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1105/1105.3310v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1105.3986": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "1105.3986v4",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1105/1105.3986v4.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1105.4024": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Graph Properties in the Adjacency Matrix Model"
+    ],
+    "paper_key": "1105.4024v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1105/1105.4024v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1108.3022": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Collision Finding and Element Distinctness"
+    ],
+    "paper_key": "1108.3022v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1108/1108.3022v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1109.0325": {
+    "status": "ok",
+    "cited_by": [
+      "Adiabatic Algorithms",
+      "Machine Learning"
+    ],
+    "paper_key": "1109.0325v1",
+    "arxiv_id_in_db": "1109.0325",
+    "version": "v1",
+    "title": "Quantum adiabatic machine learning",
+    "authors": "Kristen L. Pudenz, Daniel A. Lidar",
+    "pdf_path": "pdf/1109/1109.0325v1.pdf",
+    "markdown_path": "markdown/1109/1109.0325v1.md",
+    "json_path": "json/1109/1109.0325v1.json"
+  },
+  "1109.5135": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Graph Properties in the Adjacency Matrix Model"
+    ],
+    "paper_key": "1109.5135v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1109/1109.5135v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1110.2494": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Adiabatic Algorithms"
+    ],
+    "paper_key": "1110.2494v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1110/1110.2494v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1111.1462": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Machine Learning"
+    ],
+    "paper_key": "1111.1462v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1111/1111.1462v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1111.3633": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "1111.3633v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1111/1111.3633v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1112.0548": {
+    "status": "ok",
+    "cited_by": [
+      "Formula Evaluation"
+    ],
+    "paper_key": "1112.0548v1",
+    "arxiv_id_in_db": "1112.0548",
+    "version": "v1",
+    "title": "The quantum query complexity of read-many formulas",
+    "authors": "Andrew M. Childs, Shelby Kimmel and Robin Kothari",
+    "pdf_path": "pdf/1112/1112.0548v1.pdf",
+    "markdown_path": "markdown/1112/1112.0548v1.md",
+    "json_path": "json/1112/1112.0548v1.json"
+  },
+  "1112.3333": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Non-Abelian Hidden Subgroup"
+    ],
+    "paper_key": "1112.3333v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1112/1112.3333v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1112.4833": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "1112.4833v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1112/1112.4833v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1112.5855": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Graph Collision",
+      "Matrix Multiplication over Semirings"
+    ],
+    "paper_key": "1112.5855v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1112/1112.5855v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1202.5822": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "1202.5822v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1202/1202.5822v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1203.2603": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Graph Properties in the Adjacency Matrix Model"
+    ],
+    "paper_key": "1203.2603v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1203/1203.2603v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1204.1527": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Graph Collision"
+    ],
+    "paper_key": "1204.1527v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1204/1204.1527v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1204.2318": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Adiabatic Algorithms"
+    ],
+    "paper_key": "1204.2318v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1204/1204.2318v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1204.5242": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Linear Systems"
+    ],
+    "paper_key": "1204.5242v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1204/1204.5242v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1205.1534": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Collision Finding and Element Distinctness",
+      "Graph Collision"
+    ],
+    "paper_key": "1205.1534v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1205/1205.1534v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1206.6528": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Subset finding"
+    ],
+    "paper_key": "1206.6528v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1206/1206.6528v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1207.2485": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Solving Linear Differential Equations"
+    ],
+    "paper_key": "1207.2485v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1207/1207.2485v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1208.3757": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Adiabatic Algorithms"
+    ],
+    "paper_key": "1208.3757v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1208/1208.3757v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1210.1014": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Graph Properties in the Adjacency Matrix Model"
+    ],
+    "paper_key": "1210.1014v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1210/1210.1014v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1210.1148": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Search with Wildcards",
+      "Junta Testing and Group Testing"
+    ],
+    "paper_key": "1210.1148v4",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1210/1210.1148v4.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1210.1199": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Graph Properties in the Adjacency Matrix Model"
+    ],
+    "paper_key": "1210.1199v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1210/1210.1199v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1210.1550": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Knot Invariants"
+    ],
+    "paper_key": "1210.1550v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1210/1210.1550v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1211.4050": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Preparing Eigenstates and Thermal States"
+    ],
+    "paper_key": "1211.4050v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1211/1211.4050v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1301.2340": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Linear Systems",
+      "Solving Linear Differential Equations"
+    ],
+    "paper_key": "1301.2340v4",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1301/1301.2340v4.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1301.6176": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Quantum Cryptanalysis",
+      "Searching"
+    ],
+    "paper_key": "1301.6176v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1301/1301.6176v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1302.7316": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Collision Finding and Element Distinctness"
+    ],
+    "paper_key": "1302.7316v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1302/1302.7316v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1303.6055": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Machine Learning"
+    ],
+    "paper_key": "1303.6055v4",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1303/1303.6055v4.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1304.5773": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Adiabatic Algorithms"
+    ],
+    "paper_key": "1304.5773v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1304/1304.5773v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1305.1021": {
+    "status": "ok",
+    "cited_by": [
+      "Graph Collision"
+    ],
+    "paper_key": "1305.1021v1",
+    "arxiv_id_in_db": "1305.1021",
+    "version": "v1",
+    "title": "Parameterized Quantum Query Complexity of Graph Collision",
+    "authors": "Andris Ambainis, Kaspars Balodis, J\\=anis Iraids, Raitis Ozols, Juris\n  Smotrovs",
+    "pdf_path": "pdf/1305/1305.1021v1.pdf",
+    "markdown_path": "markdown/1305/1305.1021v1.md",
+    "json_path": "json/1305/1305.1021v1.json"
+  },
+  "1305.1327": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Group Isomorphism"
+    ],
+    "paper_key": "1305.1327v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1305/1305.1327v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1305.1543": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Hidden Nonlinear Structures",
+      "Machine Learning"
+    ],
+    "paper_key": "1305.1543v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1305/1305.1543v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1306.1147": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Preparing Eigenstates and Thermal States"
+    ],
+    "paper_key": "1306.1147v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1306/1306.1147v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1306.2301": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Quantum Cryptanalysis"
+    ],
+    "paper_key": "1306.2301v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1306/1306.2301v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1307.0401": {
+    "status": "ok",
+    "cited_by": [
+      "Linear Systems",
+      "Machine Learning",
+      "Double-bracket quantum algorithms"
+    ],
+    "paper_key": "1307.0401v2",
+    "arxiv_id_in_db": "1307.0401",
+    "version": "v2",
+    "title": "Quantum principal component analysis",
+    "authors": "Seth Lloyd, Masoud Mohseni, Patrick Rebentrost",
+    "pdf_path": "pdf/1307/1307.0401v2.pdf",
+    "markdown_path": "markdown/1307/1307.0401v2.md",
+    "json_path": "json/1307/1307.0401v2.json"
+  },
+  "1307.0411": {
+    "status": "ok",
+    "cited_by": [
+      "Linear Systems",
+      "Machine Learning"
+    ],
+    "paper_key": "1307.0411v2",
+    "arxiv_id_in_db": "1307.0411",
+    "version": "v2",
+    "title": "Quantum algorithms for supervised and unsupervised machine learning",
+    "authors": "Seth Lloyd, Masoud Mohseni, Patrick Rebentrost",
+    "pdf_path": "pdf/1307/1307.0411v2.pdf",
+    "markdown_path": "markdown/1307/1307.0411v2.md",
+    "json_path": "json/1307/1307.0411v2.json"
+  },
+  "1307.0471": {
+    "status": "ok",
+    "cited_by": [
+      "Linear Systems",
+      "Machine Learning"
+    ],
+    "paper_key": "1307.0471v3",
+    "arxiv_id_in_db": "1307.0471",
+    "version": "v3",
+    "title": "Quantum support vector machine for big data classification",
+    "authors": "Patrick Rebentrost, Masoud Mohseni, Seth Lloyd",
+    "pdf_path": "pdf/1307/1307.0471v3.pdf",
+    "markdown_path": "markdown/1307/1307.0471v3.md",
+    "json_path": "json/1307/1307.0471v3.json"
+  },
+  "1307.3595": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "1307.3595v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1307/1307.3595v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1308.1415": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Non-Abelian Hidden Subgroup"
+    ],
+    "paper_key": "1308.1415v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1308/1308.1415v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1308.5424": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "1308.5424v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1308/1308.5424v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1309.7713": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Graph Properties in the Adjacency Matrix Model"
+    ],
+    "paper_key": "1309.7713v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1309/1309.7713v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1310.3898": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Matrix Multiplication over Semirings"
+    ],
+    "paper_key": "1310.3898v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1310/1310.3898v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1310.4127": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Graph Properties in the Adjacency Matrix Model"
+    ],
+    "paper_key": "1310.4127v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1310/1310.4127v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1310.6238": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Discrete-log"
+    ],
+    "paper_key": "1310.6238v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1310/1310.6238v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1310.7766": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Preparing Eigenstates and Thermal States"
+    ],
+    "paper_key": "1310.7766v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1310/1310.7766v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1310.7903": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Discrete-log"
+    ],
+    "paper_key": "1310.7903v4",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1310/1310.7903v4.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1311.1851": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Electrical Resistance",
+      "Linear Systems"
+    ],
+    "paper_key": "1311.1851v10",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1311/1311.1851v10.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1311.6474": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Preparing Eigenstates and Thermal States"
+    ],
+    "paper_key": "1311.6474v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1311/1311.6474v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1311.6777": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Junta Testing and Group Testing"
+    ],
+    "paper_key": "1311.6777v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1311/1311.6777v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1312.1414": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "1312.1414v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1312/1312.1414v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1312.2579": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Preparing Eigenstates and Thermal States"
+    ],
+    "paper_key": "1312.2579v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1312/1312.2579v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1401.2142": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Machine Learning"
+    ],
+    "paper_key": "1401.2142v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1401/1401.2142v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1401.4997": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Machine Learning"
+    ],
+    "paper_key": "1401.4997v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1401/1401.4997v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1403.1539": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "1403.1539v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1403/1403.1539v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1403.2228": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Searching"
+    ],
+    "paper_key": "1403.2228v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1403/1403.2228v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1403.2975": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Factoring"
+    ],
+    "paper_key": "1403.2975v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1403/1403.2975v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1403.5861": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Deutsch-Jozsa"
+    ],
+    "paper_key": "1403.5861v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1403/1403.5861v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1404.7115": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "1404.7115v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1404/1404.7115v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1405.7479": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Decoding"
+    ],
+    "paper_key": "1405.7479v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1405/1405.7479v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1406.0190": {
+    "status": "ok",
+    "cited_by": [
+      "Searching"
+    ],
+    "paper_key": "1406.0190v1",
+    "arxiv_id_in_db": "1406.0190",
+    "version": "v1",
+    "title": "Amplified Quantum Transforms",
+    "authors": "David Cornwell",
+    "pdf_path": "pdf/1406/1406.0190v1.pdf",
+    "markdown_path": "markdown/1406/1406.0190v1.md",
+    "json_path": "json/1406/1406.0190v1.json"
+  },
+  "1407.0085": {
+    "status": "ok",
+    "cited_by": [
+      "Graph Properties in the Adjacency Matrix Model"
+    ],
+    "paper_key": "1407.0085v2",
+    "arxiv_id_in_db": "1407.0085",
+    "version": "v2",
+    "title": "Improved Quantum Algorithm for Triangle Finding via Combinatorial\n  Arguments",
+    "authors": "Fran\\c{c}ois Le Gall",
+    "pdf_path": "pdf/1407/1407.0085v2.pdf",
+    "markdown_path": "markdown/1407/1407.0085v2.md",
+    "json_path": "json/1407/1407.0085v2.json"
+  },
+  "1407.5088": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Machine Learning"
+    ],
+    "paper_key": "1407.5088v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1407/1407.5088v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1408.1816": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Pattern matching"
+    ],
+    "paper_key": "1408.1816v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1408/1408.1816v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1408.3106": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Linear Systems",
+      "Machine Learning"
+    ],
+    "paper_key": "1408.3106v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1408/1408.3106v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1409.3097": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Machine Learning"
+    ],
+    "paper_key": "1409.3097v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1409/1409.3097v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1409.3435": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Preparing Eigenstates and Thermal States"
+    ],
+    "paper_key": "1409.3435v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1409/1409.3435v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1409.5876": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Searching"
+    ],
+    "paper_key": "1409.5876v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1409/1409.5876v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1410.1434": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Quantum Cryptanalysis"
+    ],
+    "paper_key": "1410.1434v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1410/1410.1434v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1411.4028": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Quantum Approximate Optimization"
+    ],
+    "paper_key": "1411.4028v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1411/1411.4028v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1411.5729": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Bernstein-Vazirani"
+    ],
+    "paper_key": "1411.5729v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1411/1411.5729v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1412.0750": {
+    "status": "ok",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "1412.0750v1",
+    "arxiv_id_in_db": "1412.0750",
+    "version": "v1",
+    "title": "Multi-scale quantum simulation of quantum field theory using wavelets",
+    "authors": "Gavin K. Brennen, Peter Rohde, Barry C. Sanders, Sukhwinder Singh",
+    "pdf_path": "pdf/1412/1412.0750v1.pdf",
+    "markdown_path": "markdown/1412/1412.0750v1.md",
+    "json_path": "json/1412/1412.0750v1.json"
+  },
+  "1412.3489": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Machine Learning"
+    ],
+    "paper_key": "1412.3489v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1412/1412.3489v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1412.4687": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "1412.4687v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1412/1412.4687v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1412.6062": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Quantum Approximate Optimization"
+    ],
+    "paper_key": "1412.6062v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1412/1412.6062v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1501.01715": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics",
+      "Solving Linear Differential Equations"
+    ],
+    "paper_key": "1501.01715v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1501/1501.01715v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1503.06319": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "1503.06319v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1503/1503.06319v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1504.06987": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Statistical Difference",
+      "Partition Functions",
+      "Simulated Annealing"
+    ],
+    "paper_key": "1504.06987v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1504/1504.06987v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1505.00113": {
+    "status": "ok",
+    "cited_by": [
+      "Collision Finding and Element Distinctness"
+    ],
+    "paper_key": "1505.00113v3",
+    "arxiv_id_in_db": "1505.00113",
+    "version": "v3",
+    "title": "The quantum complexity of approximating the frequency moments",
+    "authors": "Ashley Montanaro",
+    "pdf_path": "pdf/1505/1505.00113v3.pdf",
+    "markdown_path": "markdown/1505/1505.00113v3.md",
+    "json_path": "json/1505/1505.00113v3.json"
+  },
+  "1505.03424": {
+    "status": "not-in-raw",
+    "cited_by": [
+      "Quantum Approximate Optimization"
+    ]
+  },
+  "1505.06552": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Solving Linear Differential Equations"
+    ],
+    "paper_key": "1505.06552v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1505/1505.06552v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1507.00432": {
+    "status": "ok",
+    "cited_by": [
+      "Electrical Resistance"
+    ],
+    "paper_key": "1507.00432v1",
+    "arxiv_id_in_db": "1507.00432",
+    "version": "v1",
+    "title": "Approximate Span Programs",
+    "authors": "Tsuyoshi Ito, Stacey Jeffery",
+    "pdf_path": "pdf/1507/1507.00432v1.pdf",
+    "markdown_path": "markdown/1507/1507.00432v1.md",
+    "json_path": "json/1507/1507.00432v1.json"
+  },
+  "1507.03126": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Junta Testing and Group Testing"
+    ],
+    "paper_key": "1507.03126v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1507/1507.03126v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1508.00570": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Preparing Eigenstates and Thermal States"
+    ],
+    "paper_key": "1508.00570v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1508/1508.00570v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1508.01327": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Searching"
+    ],
+    "paper_key": "1508.01327v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1508/1508.01327v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1509.02374": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Polynomial Quantum Speedups for Constraint Satisfaction Problems"
+    ],
+    "paper_key": "1509.02374v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1509/1509.02374v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1509.05806": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Non-Abelian Hidden Subgroup"
+    ],
+    "paper_key": "1509.05806v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1509/1509.05806v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1509.09271": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Polynomial interpolation"
+    ],
+    "paper_key": "1509.09271v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1509/1509.09271v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1510.05836": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Quantum Cryptanalysis"
+    ],
+    "paper_key": "1510.05836v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1510/1510.05836v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1510.06356": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Machine Learning"
+    ],
+    "paper_key": "1510.06356v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1510/1510.06356v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1510.07825": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Graph Properties in the Adjacency Matrix Model"
+    ],
+    "paper_key": "1510.07825v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1510/1510.07825v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1511.01937": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Bernstein-Vazirani"
+    ],
+    "paper_key": "1511.01937v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1511/1511.01937v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1511.02235": {
+    "status": "ok",
+    "cited_by": [
+      "Formula Evaluation"
+    ],
+    "paper_key": "1511.02235v2",
+    "arxiv_id_in_db": "1511.02235",
+    "version": "v2",
+    "title": "NAND-Trees, Average Choice Complexity, and Effective Resistance",
+    "authors": "Stacey Jeffery and Shelby Kimmel",
+    "pdf_path": "pdf/1511/1511.02235v2.pdf",
+    "markdown_path": "markdown/1511/1511.02235v2.md",
+    "json_path": "json/1511/1511.02235v2.json"
+  },
+  "1511.02306": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Linear Systems"
+    ],
+    "paper_key": "1511.02306v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1511/1511.02306v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1511.04385": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Factoring"
+    ],
+    "paper_key": "1511.04385v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1511/1511.04385v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1512.00859": {
+    "status": "ok",
+    "cited_by": [
+      "Polynomial Quantum Speedups for Constraint Satisfaction Problems"
+    ],
+    "paper_key": "1512.00859v2",
+    "arxiv_id_in_db": "1512.00859",
+    "version": "v2",
+    "title": "Faster than Classical Quantum Algorithm for dense Formulas of Exact\n  Satisfiability and Occupation Problems",
+    "authors": "Salvatore Mandr\\`a, Gian Giacomo Guerreschi, Al\\'an Aspuru-Guzik",
+    "pdf_path": "pdf/1512/1512.00859v2.pdf",
+    "markdown_path": "markdown/1512/1512.00859v2.md",
+    "json_path": "json/1512/1512.00859v2.json"
+  },
+  "1512.02900": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Machine Learning"
+    ],
+    "paper_key": "1512.02900v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1512/1512.02900v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1512.03416": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "1512.03416v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1512/1512.03416v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1512.03929": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Machine Learning"
+    ],
+    "paper_key": "1512.03929v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1512/1512.03929v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1512.04965": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Quantum Cryptanalysis"
+    ],
+    "paper_key": "1512.04965v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1512/1512.04965v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1512.05903": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Linear Systems",
+      "Solving Linear Differential Equations"
+    ],
+    "paper_key": "1512.05903v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1512/1512.05903v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1601.01744": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Quantum Approximate Optimization"
+    ],
+    "paper_key": "1601.01744v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1601/1601.01744v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1601.02036": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Machine Learning"
+    ],
+    "paper_key": "1601.02036v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1601/1601.02036v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1601.04212": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Searching"
+    ],
+    "paper_key": "1601.04212v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1601/1601.04212v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1601.07823": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Machine Learning"
+    ],
+    "paper_key": "1601.07823v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1601/1601.07823v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1602.04799": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Machine Learning"
+    ],
+    "paper_key": "1602.04799v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1602/1602.04799v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1602.07674": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Quantum Approximate Optimization"
+    ],
+    "paper_key": "1602.07674v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1602/1602.07674v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1603.02940": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Preparing Eigenstates and Thermal States",
+      "Semidefinite Programming"
+    ],
+    "paper_key": "1603.02940v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1603/1603.02940v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1603.06985": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Preparing Eigenstates and Thermal States"
+    ],
+    "paper_key": "1603.06985v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1603/1603.06985v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1603.07856": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Quantum Cryptanalysis"
+    ],
+    "paper_key": "1603.07856v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1603/1603.07856v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1603.08675": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Linear Systems",
+      "Machine Learning"
+    ],
+    "paper_key": "1603.08675v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1603/1603.08675v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1603.09383": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Quantum Cryptanalysis"
+    ],
+    "paper_key": "1603.09383v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1603/1603.09383v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1604.01384": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Linear Systems"
+    ],
+    "paper_key": "1604.01384v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1604/1604.01384v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1605.03590": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "1605.03590v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1605/1605.03590v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1605.05370": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Quantum Approximate Optimization"
+    ],
+    "paper_key": "1605.05370v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1605/1605.05370v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1605.07541": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Machine Learning"
+    ],
+    "paper_key": "1605.07541v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1605/1605.07541v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1606.02685": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "1606.02685v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1606/1606.02685v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1606.03443": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "1606.03443v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1606/1606.03443v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1606.06301": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Preparing Eigenstates and Thermal States"
+    ],
+    "paper_key": "1606.06301v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1606/1606.06301v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1607.00932": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Machine Learning"
+    ],
+    "paper_key": "1607.00932v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1607/1607.00932v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1607.03236": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Non-Abelian Hidden Subgroup"
+    ],
+    "paper_key": "1607.03236v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1607/1607.03236v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1607.06473": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Quantum Approximate Optimization"
+    ],
+    "paper_key": "1607.06473v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1607/1607.06473v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1608.02005": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Non-Abelian Hidden Subgroup",
+      "Hidden Shift"
+    ],
+    "paper_key": "1608.02005v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1608/1608.02005v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1608.02184": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Linear Systems"
+    ],
+    "paper_key": "1608.02184v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1608/1608.02184v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1609.02542": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Machine Learning"
+    ],
+    "paper_key": "1609.02542v4",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1609/1609.02542v4.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1609.05537": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Semidefinite Programming"
+    ],
+    "paper_key": "1609.05537v5",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1609/1609.05537v5.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1609.07786": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Graph Properties in the Adjacency Matrix Model"
+    ],
+    "paper_key": "1609.07786v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1609/1609.07786v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1610.00581": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Graph Properties in the Adjacency Matrix Model",
+      "Graph Properties in the Adjacency List Model"
+    ],
+    "paper_key": "1610.00581v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1610/1610.00581v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1610.06546": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "1610.06546v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1610/1610.06546v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1611.05484": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "1611.05484v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1611/1611.05484v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1611.05543": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "1611.05543v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1611/1611.05543v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1611.08104": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Machine Learning"
+    ],
+    "paper_key": "1611.08104v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1611/1611.08104v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1611.09347": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Machine Learning"
+    ],
+    "paper_key": "1611.09347v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1611/1611.09347v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1612.05695": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Machine Learning"
+    ],
+    "paper_key": "1612.05695v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1612/1612.05695v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1612.08958": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Searching"
+    ],
+    "paper_key": "1612.08958v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1612/1612.08958v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1612.09512": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "1612.09512v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1612/1612.09512v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1701.03684": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Solving Linear Differential Equations"
+    ],
+    "paper_key": "1701.03684v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1701/1701.03684v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1701.03990": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Polynomial interpolation"
+    ],
+    "paper_key": "1701.03990v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1701/1701.03990v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1701.06806": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Machine Learning"
+    ],
+    "paper_key": "1701.06806v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1701/1701.06806v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1704.04992": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Machine Learning"
+    ],
+    "paper_key": "1704.04992v5",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1704/1704.04992v5.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1704.06174": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Linear Systems"
+    ],
+    "paper_key": "1704.06174v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1704/1704.06174v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1704.06774": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Polynomial Quantum Speedups for Constraint Satisfaction Problems"
+    ],
+    "paper_key": "1704.06774v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1704/1704.06774v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1705.01843": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Semidefinite Programming"
+    ],
+    "paper_key": "1705.01843v4",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1705/1705.01843v4.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1706.06752": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Discrete-log"
+    ],
+    "paper_key": "1706.06752v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1706/1706.06752v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1710.02581": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Semidefinite Programming"
+    ],
+    "paper_key": "1710.02581v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1710/1710.02581v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1711.00465": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Gradient Estimation and Learning Polynomials"
+    ],
+    "paper_key": "1711.00465v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1711/1711.00465v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1711.02616": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Primality Proving"
+    ],
+    "paper_key": "1711.02616v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1711/1711.02616v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1711.04006": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "1711.04006v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1711/1711.04006v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1711.05394": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics",
+      "Linear Systems",
+      "Solving Linear Differential Equations"
+    ],
+    "paper_key": "1711.05394v4",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1711/1711.05394v4.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1711.10460": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Preparing Eigenstates and Thermal States"
+    ],
+    "paper_key": "1711.10460v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1711/1711.10460v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1711.11025": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Preparing Eigenstates and Thermal States"
+    ],
+    "paper_key": "1711.11025v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1711/1711.11025v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1711.11336": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Collision Finding and Element Distinctness"
+    ],
+    "paper_key": "1711.11336v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1711/1711.11336v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1712.00446": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "1712.00446v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1712/1712.00446v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1712.03193": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Preparing Eigenstates and Thermal States"
+    ],
+    "paper_key": "1712.03193v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1712/1712.03193v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1712.06239": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Quantum Cryptanalysis"
+    ],
+    "paper_key": "1712.06239v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1712/1712.06239v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1801.03922": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "1801.03922v4",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1801/1801.03922v4.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1802.03856": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Quantum Cryptanalysis"
+    ],
+    "paper_key": "1802.03856v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1802/1802.03856v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1802.10124": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Searching",
+      "Polynomial Quantum Speedups for Constraint Satisfaction Problems"
+    ],
+    "paper_key": "1802.10124v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1802/1802.10124v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1805.00109": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Solving Nonlinear Differential Equations"
+    ],
+    "paper_key": "1805.00109v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1805/1805.00109v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1805.00582": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "1805.00582v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1805/1805.00582v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1805.00675": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "1805.00675v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1805/1805.00675v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1806.01838": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Searching",
+      "Preparing Eigenstates and Thermal States",
+      "Linear Systems",
+      "Machine Learning"
+    ],
+    "paper_key": "1806.01838v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1806/1806.01838v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1806.09660": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Hidden Shift"
+    ],
+    "paper_key": "1806.09660v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1806/1806.09660v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1806.11463": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Machine Learning"
+    ],
+    "paper_key": "1806.11463v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1806/1806.11463v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1807.04271": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Linear Systems",
+      "Machine Learning"
+    ],
+    "paper_key": "1807.04271v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1807/1807.04271v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1807.05209": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Quantum Dynamic Programming for path-in-the-hypercube"
+    ],
+    "paper_key": "1807.05209v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1807/1807.05209v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1809.00643": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Convex Optimization"
+    ],
+    "paper_key": "1809.00643v4",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1809/1809.00643v4.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1809.01731": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Convex Optimization"
+    ],
+    "paper_key": "1809.01731v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1809/1809.01731v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1809.02622": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Solving Linear Differential Equations"
+    ],
+    "paper_key": "1809.02622v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1809/1809.02622v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1811.00414": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Linear Systems",
+      "Machine Learning"
+    ],
+    "paper_key": "1811.00414v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1811/1811.00414v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1901.00564": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "1901.00564v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1901/1901.00564v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1901.00961": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Solving Linear Differential Equations"
+    ],
+    "paper_key": "1901.00961v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1901/1901.00961v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1901.07653": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Preparing Eigenstates and Thermal States"
+    ],
+    "paper_key": "1901.07653v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1901/1901.07653v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1902.07890": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Adiabatic Algorithms"
+    ],
+    "paper_key": "1902.07890v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1902/1902.07890v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1904.03180": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Approximating Nash Equilibria"
+    ],
+    "paper_key": "1904.03180v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1904/1904.03180v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1905.09749": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Factoring"
+    ],
+    "paper_key": "1905.09749v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1905/1905.09749v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1906.07115": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "1906.07115v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1906/1906.07115v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1907.09418": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Solving Nonlinear Differential Equations"
+    ],
+    "paper_key": "1907.09418v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1907/1907.09418v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1907.12724": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Tensor Principal Component Analysis"
+    ],
+    "paper_key": "1907.12724v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1907/1907.12724v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1908.03903": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Convex Optimization"
+    ],
+    "paper_key": "1908.03903v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1908/1908.03903v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1908.04171": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Searching"
+    ],
+    "paper_key": "1908.04171v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1908/1908.04171v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1909.04613": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Polynomial Quantum Speedups for Constraint Satisfaction Problems"
+    ],
+    "paper_key": "1909.04613v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1909/1909.04613v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1909.05500": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Adiabatic Algorithms"
+    ],
+    "paper_key": "1909.05500v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1909/1909.05500v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1909.13528": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Gradient Estimation and Learning Polynomials"
+    ],
+    "paper_key": "1909.13528v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1909/1909.13528v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1910.06151": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Semidefinite Programming"
+    ],
+    "paper_key": "1910.06151v4",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1910/1910.06151v4.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "1910.09756": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Solving Linear Differential Equations"
+    ],
+    "paper_key": "1910.09756v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/1910/1910.09756v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2002.07868": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Solving Linear Differential Equations"
+    ],
+    "paper_key": "2002.07868v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2002/2002.07868v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2004.06516": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Solving Linear Differential Equations"
+    ],
+    "paper_key": "2004.06516v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2004/2004.06516v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2004.11086": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Gradient Estimation and Learning Polynomials"
+    ],
+    "paper_key": "2004.11086v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2004/2004.11086v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2005.03791": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Adiabatic Algorithms"
+    ],
+    "paper_key": "2005.03791v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2005/2005.03791v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2006.02660": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "2006.02660v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2006/2006.02660v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2008.07133": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Preparing Eigenstates and Thermal States"
+    ],
+    "paper_key": "2008.07133v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2008/2008.07133v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2010.01801": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Convex Optimization"
+    ],
+    "paper_key": "2010.01801v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2010/2010.01801v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2010.02174": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Machine Learning"
+    ],
+    "paper_key": "2010.02174v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2010/2010.02174v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2011.02165": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Solving Nonlinear Differential Equations"
+    ],
+    "paper_key": "2011.02165v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2011/2011.02165v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2011.03185": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Solving Nonlinear Differential Equations"
+    ],
+    "paper_key": "2011.03185v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2011/2011.03185v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2011.06475": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Estimating Determinants and Other Spectral Sums"
+    ],
+    "paper_key": "2011.06475v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2011/2011.06475v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2011.06492": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Solving Nonlinear Differential Equations"
+    ],
+    "paper_key": "2011.06492v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2011/2011.06492v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2011.06571": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Solving Nonlinear Differential Equations"
+    ],
+    "paper_key": "2011.06571v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2011/2011.06571v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2012.06283": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Solving Nonlinear Differential Equations"
+    ],
+    "paper_key": "2012.06283v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2012/2012.06283v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2101.04023": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Solving Nonlinear Differential Equations"
+    ],
+    "paper_key": "2101.04023v4",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2101/2101.04023v4.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2102.12655": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "2102.12655v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2102/2102.12655v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2105.05608": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Quantum Cryptanalysis"
+    ],
+    "paper_key": "2105.05608v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2105/2105.05608v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2105.11105": {
+    "status": "not-in-raw",
+    "cited_by": [
+      "Factoring"
+    ]
+  },
+  "2107.00011": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Knot Invariants"
+    ],
+    "paper_key": "2107.00011v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2107/2107.00011v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2108.11015": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Lattice Problems by Filtering"
+    ],
+    "paper_key": "2108.11015v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2108/2108.11015v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2109.14214": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "2109.14214v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2109/2109.14214v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2110.06942": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "2110.06942v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2110/2110.06942v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2110.13086": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Convex Optimization"
+    ],
+    "paper_key": "2110.13086v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2110/2110.13086v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2110.14206": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Quantum Approximate Optimization"
+    ],
+    "paper_key": "2110.14206v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2110/2110.14206v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2111.00405": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Quantum Cryptanalysis"
+    ],
+    "paper_key": "2111.00405v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2111/2111.00405v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2111.08152": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Adiabatic Algorithms",
+      "Linear Systems"
+    ],
+    "paper_key": "2111.08152v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2111/2111.08152v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2111.09787": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Searching"
+    ],
+    "paper_key": "2111.09787v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2111/2111.09787v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2201.13450": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Quantum Cryptanalysis"
+    ],
+    "paper_key": "2201.13450v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2201/2201.13450v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2202.01054": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Solving Nonlinear Differential Equations"
+    ],
+    "paper_key": "2202.01054v5",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2202/2202.01054v5.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2202.12965": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Machine Learning"
+    ],
+    "paper_key": "2202.12965v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2202/2202.12965v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2203.08882": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Preparing Eigenstates and Thermal States"
+    ],
+    "paper_key": "2203.08882v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2203/2203.08882v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2204.02063": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Optimization by Decoded Quantum Interferometry"
+    ],
+    "paper_key": "2204.02063v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2204/2204.02063v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2205.01141": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Solving Nonlinear Differential Equations"
+    ],
+    "paper_key": "2205.01141v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2205/2205.01141v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2205.14023": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Collision Finding and Element Distinctness"
+    ],
+    "paper_key": "2205.14023v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2205/2205.14023v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2206.11772": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Double-bracket quantum algorithms"
+    ],
+    "paper_key": "2206.11772v4",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2206/2206.11772v4.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2206.14736": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "2206.14736v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2206/2206.14736v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2207.08643": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Partition Functions"
+    ],
+    "paper_key": "2207.08643v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2207/2207.08643v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2208.06909": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Quantum Approximate Optimization"
+    ],
+    "paper_key": "2208.06909v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2208/2208.06909v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2208.07544": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Searching"
+    ],
+    "paper_key": "2208.07544v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2208/2208.07544v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2208.13492": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Collision Finding and Element Distinctness"
+    ],
+    "paper_key": "2208.13492v4",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2208/2208.13492v4.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2209.05048": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "2209.05048v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2209/2209.05048v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2209.12887": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Machine Learning"
+    ],
+    "paper_key": "2209.12887v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2209/2209.12887v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2209.13581": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Machine Learning"
+    ],
+    "paper_key": "2209.13581v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2209/2209.13581v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2210.06539": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Probabilistic Sampling"
+    ],
+    "paper_key": "2210.06539v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2210/2210.06539v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2212.01513": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Searching",
+      "Polynomial Quantum Speedups for Constraint Satisfaction Problems"
+    ],
+    "paper_key": "2212.01513v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2212/2212.01513v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2212.14781": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Linear Systems"
+    ],
+    "paper_key": "2212.14781v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2212/2212.14781v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2301.03763": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Approximating Nash Equilibria"
+    ],
+    "paper_key": "2301.03763v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2301/2301.03763v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2302.03394": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Preparing Eigenstates and Thermal States"
+    ],
+    "paper_key": "2302.03394v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2302/2302.03394v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2302.11454": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Matrix Elements and Multiplicity Coefficients of Group Representations"
+    ],
+    "paper_key": "2302.11454v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2302/2302.11454v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2303.01029": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "2303.01029v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2303/2303.01029v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2303.01471": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Adiabatic Algorithms"
+    ],
+    "paper_key": "2303.01471v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2303/2303.01471v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2303.13012": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Solving Linear Differential Equations"
+    ],
+    "paper_key": "2303.13012v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2303/2303.13012v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2303.18224": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Preparing Eigenstates and Thermal States"
+    ],
+    "paper_key": "2303.18224v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2303/2303.18224v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2308.02342": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Quantum Approximate Optimization"
+    ],
+    "paper_key": "2308.02342v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2308/2308.02342v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2308.07956": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Double-bracket quantum algorithms"
+    ],
+    "paper_key": "2308.07956v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2308/2308.07956v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2310.20651": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Optimization by Decoded Quantum Interferometry"
+    ],
+    "paper_key": "2310.20651v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2310/2310.20651v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2311.00811": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Adiabatic Algorithms"
+    ],
+    "paper_key": "2311.00811v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2311/2311.00811v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2311.03215": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Convex Optimization"
+    ],
+    "paper_key": "2311.03215v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2311/2311.03215v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2311.03408": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Machine Learning"
+    ],
+    "paper_key": "2311.03408v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2311/2311.03408v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2311.09207": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Preparing Eigenstates and Thermal States"
+    ],
+    "paper_key": "2311.09207v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2311/2311.09207v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2312.05371": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "2312.05371v4",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2312/2312.05371v4.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2312.08867": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "2312.08867v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2312/2312.08867v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2401.06240": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Solving Linear Differential Equations"
+    ],
+    "paper_key": "2401.06240v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2401/2401.06240v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2401.17255": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "2401.17255v4",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2401/2401.17255v4.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2402.10362": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "2402.10362v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2402/2402.10362v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2403.09187": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Double-bracket quantum algorithms"
+    ],
+    "paper_key": "2403.09187v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2403/2403.09187v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2405.14765": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Computing the Principal Eigenvector"
+    ],
+    "paper_key": "2405.14765v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2405/2405.14765v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2406.16023": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Preparing Eigenstates and Thermal States"
+    ],
+    "paper_key": "2406.16023v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2406/2406.16023v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2406.19378": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Optimization by Decoded Quantum Interferometry"
+    ],
+    "paper_key": "2406.19378v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2406/2406.19378v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2407.03833": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Gradient Estimation and Learning Polynomials"
+    ],
+    "paper_key": "2407.03833v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2407/2407.03833v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2407.06290": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Solving Linear Differential Equations"
+    ],
+    "paper_key": "2407.06290v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2407/2407.06290v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2407.17649": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Matrix Elements and Multiplicity Coefficients of Group Representations"
+    ],
+    "paper_key": "2407.17649v5",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2407/2407.17649v5.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2407.21775": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Solving Linear Differential Equations"
+    ],
+    "paper_key": "2407.21775v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2407/2407.21775v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2408.08292": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Optimization by Decoded Quantum Interferometry"
+    ],
+    "paper_key": "2408.08292v5",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2408/2408.08292v5.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2409.04550": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Solving Linear Differential Equations"
+    ],
+    "paper_key": "2409.04550v4",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2409/2409.04550v4.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2411.12553": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Optimization by Decoded Quantum Interferometry"
+    ],
+    "paper_key": "2411.12553v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2411/2411.12553v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2412.04554": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Double-bracket quantum algorithms"
+    ],
+    "paper_key": "2412.04554v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2412/2412.04554v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2501.12378": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Knot Invariants"
+    ],
+    "paper_key": "2501.12378v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2501/2501.12378v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2502.20253": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Matrix Elements and Multiplicity Coefficients of Group Representations"
+    ],
+    "paper_key": "2502.20253v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2502/2502.20253v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2503.12789": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Quantum Approximate Optimization"
+    ],
+    "paper_key": "2503.12789v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2503/2503.12789v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2504.01065": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Double-bracket quantum algorithms"
+    ],
+    "paper_key": "2504.01065v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2504/2504.01065v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2504.11049": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Estimating Determinants and Other Spectral Sums"
+    ],
+    "paper_key": "2504.11049v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2504/2504.11049v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2505.07929": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Quantum Approximate Optimization"
+    ],
+    "paper_key": "2505.07929v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2505/2505.07929v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2509.19966": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Optimization by Decoded Quantum Interferometry"
+    ],
+    "paper_key": "2509.19966v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2509/2509.19966v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2509.24796": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Optimization by Decoded Quantum Interferometry"
+    ],
+    "paper_key": "2509.24796v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2509/2509.24796v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2510.06097": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Optimization by Decoded Quantum Interferometry"
+    ],
+    "paper_key": "2510.06097v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2510/2510.06097v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2510.07298": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Optimization by Decoded Quantum Interferometry"
+    ],
+    "paper_key": "2510.07298v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2510/2510.07298v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2510.07913": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Optimization by Decoded Quantum Interferometry"
+    ],
+    "paper_key": "2510.07913v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2510/2510.07913v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "2510.08061": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Optimization by Decoded Quantum Interferometry"
+    ],
+    "paper_key": "2510.08061v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/2510/2510.08061v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "cond-mat/0012334": {
+    "status": "not-in-raw",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ]
+  },
+  "cond-mat/9804280": {
+    "status": "not-in-raw",
+    "cited_by": [
+      "Adiabatic Algorithms"
+    ]
+  },
+  "cs/0101004": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Group Isomorphism"
+    ],
+    "paper_key": "0101004v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0101/0101004v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "cs/0304005": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Non-Abelian Hidden Subgroup",
+      "Optimization by Decoded Quantum Interferometry",
+      "Lattice Problems by Filtering"
+    ],
+    "paper_key": "0304005v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0304/0304005v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "cs/0703129": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Weight Enumerators"
+    ],
+    "paper_key": "0703129v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0703/0703129v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "math/0411623": {
+    "status": "not-in-raw",
+    "cited_by": [
+      "Zeta Functions"
+    ]
+  },
+  "quant-ph/0001106": {
+    "status": "ok",
+    "cited_by": [
+      "Adiabatic Algorithms"
+    ],
+    "paper_key": "0001106v1",
+    "arxiv_id_in_db": "quant-ph/0001106",
+    "version": "v1",
+    "title": "Quantum Computation by Adiabatic Evolution",
+    "authors": "Edward Farhi, Jeffrey Goldstone, Sam Gutmann, and Michael Sipser",
+    "pdf_path": "pdf/0001/0001106v1.pdf",
+    "markdown_path": "markdown/0001/0001106v1.md",
+    "json_path": "json/0001/0001106v1.json"
+  },
+  "quant-ph/0001108": {
+    "status": "ok",
+    "cited_by": [
+      "Knot Invariants"
+    ],
+    "paper_key": "0001108v2",
+    "arxiv_id_in_db": "quant-ph/0001108",
+    "version": "v2",
+    "title": "A modular functor which is universal for quantum computation",
+    "authors": "Michael Freedman, Michael Larsen, and Zhenghan Wang",
+    "pdf_path": "pdf/0001/0001108v2.pdf",
+    "markdown_path": "markdown/0001/0001108v2.md",
+    "json_path": "json/0001/0001108v2.json"
+  },
+  "quant-ph/0005055": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Searching"
+    ],
+    "paper_key": "0005055v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0005/0005055v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0007016": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Graph Properties in the Adjacency Matrix Model",
+      "Collision Finding and Element Distinctness"
+    ],
+    "paper_key": "0007016v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0007/0007016v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0008059": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Hidden Shift"
+    ],
+    "paper_key": "0008059v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0008/0008059v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0008124": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Searching"
+    ],
+    "paper_key": "0008124v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0008/0008124v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0010077": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Searching"
+    ],
+    "paper_key": "0010077v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0010/0010077v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0011023": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Group Order and Membership"
+    ],
+    "paper_key": "0011023v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0011/0011023v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0011049": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Pattern matching"
+    ],
+    "paper_key": "0011049v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0011/0011049v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0011065": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Abelian Hidden Subgroup"
+    ],
+    "paper_key": "0011065v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0011/0011065v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0011067": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Hidden Shift"
+    ],
+    "paper_key": "0011067v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0011/0011067v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0102014": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Non-Abelian Hidden Subgroup"
+    ],
+    "paper_key": "0102014v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0102/0102014v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0102020": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Machine Learning"
+    ],
+    "paper_key": "0102020v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0102/0102020v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0102078": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Ordered Search"
+    ],
+    "paper_key": "0102078v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0102/0102078v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0104129": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Adiabatic Algorithms"
+    ],
+    "paper_key": "0104129v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0104/0104129v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0107015": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Adiabatic Algorithms"
+    ],
+    "paper_key": "0107015v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0107/0107015v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0108110": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "0108110v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0108/0108110v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0201031": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Adiabatic Algorithms"
+    ],
+    "paper_key": "0201031v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0201/0201031v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0202173": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Machine Learning"
+    ],
+    "paper_key": "0202173v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0202/0202173v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0206003": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Adiabatic Algorithms"
+    ],
+    "paper_key": "0206003v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0206/0206003v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0207131": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Gauss Sums"
+    ],
+    "paper_key": "0207131v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0207/0207131v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0208135": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Adiabatic Algorithms"
+    ],
+    "paper_key": "0208135v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0208/0208135v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0209131": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Welded Tree"
+    ],
+    "paper_key": "0209131v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0209/0209131v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0211091": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Non-Abelian Hidden Subgroup",
+      "Hidden Shift"
+    ],
+    "paper_key": "0211091v4",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0211/0211091v4.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0211124": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Non-Abelian Hidden Subgroup"
+    ],
+    "paper_key": "0211124v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0211/0211124v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0211140": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Hidden Shift",
+      "Polynomial interpolation"
+    ],
+    "paper_key": "0211140v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0211/0211140v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0301023": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics",
+      "Optimization by Decoded Quantum Interferometry",
+      "Lattice Problems by Filtering"
+    ],
+    "paper_key": "0301023v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0301/0301023v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0301141": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Discrete-log",
+      "Quantum Cryptanalysis"
+    ],
+    "paper_key": "0301141v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0301/0301141v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0302112": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Non-Abelian Hidden Subgroup",
+      "Hidden Shift",
+      "Pattern matching"
+    ],
+    "paper_key": "0302112v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0302/0302112v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0303131": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Graph Properties in the Adjacency Matrix Model"
+    ],
+    "paper_key": "0303131v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0303/0303131v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0303169": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Graph Properties in the Adjacency Matrix Model"
+    ],
+    "paper_key": "0303169v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0303/0303169v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0306054": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Searching"
+    ],
+    "paper_key": "0306054v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0306/0306054v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0309059": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Machine Learning"
+    ],
+    "paper_key": "0309059v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0309/0309059v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0309064": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Partition Functions",
+      "Weight Enumerators"
+    ],
+    "paper_key": "0309064v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0309/0309064v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0310134": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Graph Properties in the Adjacency Matrix Model",
+      "Graph Collision"
+    ],
+    "paper_key": "0310134v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0310/0310134v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0311001": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Subset-sum",
+      "Collision Finding and Element Distinctness",
+      "Subset finding"
+    ],
+    "paper_key": "0311001v9",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0311/0311001v9.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0311038": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Subset finding"
+    ],
+    "paper_key": "0311038v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0311/0311038v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0401053": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulated Annealing"
+    ],
+    "paper_key": "0401053v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0401/0401053v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0401083": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Non-Abelian Hidden Subgroup"
+    ],
+    "paper_key": "0401083v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0401/0401083v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0401091": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Graph Properties in the Adjacency Matrix Model",
+      "Graph Properties in the Adjacency List Model"
+    ],
+    "paper_key": "0401091v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0401/0401091v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0405081": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Zeta Functions"
+    ],
+    "paper_key": "0405081v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0405/0405081v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0405098": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Adiabatic Algorithms"
+    ],
+    "paper_key": "0405098v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0405/0405098v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0405146": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Gradient Estimation and Learning Polynomials"
+    ],
+    "paper_key": "0405146v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0405/0405146v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0406151": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Non-Abelian Hidden Subgroup"
+    ],
+    "paper_key": "0406151v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0406/0406151v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0409035": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Verifying Matrix Products",
+      "Matrix Multiplication over Semirings"
+    ],
+    "paper_key": "0409035v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0409/0409035v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0411037": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Non-Abelian Hidden Subgroup"
+    ],
+    "paper_key": "0411037v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0411/0411037v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0412033": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Non-Abelian Hidden Subgroup"
+    ],
+    "paper_key": "0412033v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0412/0412033v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0501096": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Preparing Eigenstates and Thermal States"
+    ],
+    "paper_key": "0501096v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0501/0501096v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0503205": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Searching"
+    ],
+    "paper_key": "0503205v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0503/0503205v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0504012": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Searching",
+      "Polynomial Quantum Speedups for Constraint Satisfaction Problems"
+    ],
+    "paper_key": "0504012v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0504/0504012v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0504083": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Non-Abelian Hidden Subgroup"
+    ],
+    "paper_key": "0504083v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0504/0504083v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0505007": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Searching"
+    ],
+    "paper_key": "0505007v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0505/0505007v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0506265": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Group Commutativity"
+    ],
+    "paper_key": "0506265v4",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0506/0506265v4.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0507190": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Non-Abelian Hidden Subgroup"
+    ],
+    "paper_key": "0507190v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0507/0507190v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0507193": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Gradient Estimation and Learning Polynomials"
+    ],
+    "paper_key": "0507193v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0507/0507193v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0508139": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "0508139v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0508/0508139v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0508205": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Network flows"
+    ],
+    "paper_key": "0508205v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0508/0508205v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0509206": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Matrix Commutativity"
+    ],
+    "paper_key": "0509206v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0509/0509206v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0510027": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "0510027v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0510/0510027v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0511096": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Knot Invariants"
+    ],
+    "paper_key": "0511096v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0511/0511096v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0512159": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Adiabatic Algorithms"
+    ],
+    "paper_key": "0512159v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0512/0512159v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0601001": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Matrix Elements and Multiplicity Coefficients of Group Representations"
+    ],
+    "paper_key": "0601001v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0601/0601001v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0603069": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Knot Invariants"
+    ],
+    "paper_key": "0603069v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0603/0603069v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0603175": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Adiabatic Algorithms"
+    ],
+    "paper_key": "0603175v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0603/0603175v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0604172": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Non-Abelian Hidden Subgroup"
+    ],
+    "paper_key": "0604172v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0604/0604172v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0604193": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Preparing Eigenstates and Thermal States"
+    ],
+    "paper_key": "0604193v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0604/0604193v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0605181": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Knot Invariants"
+    ],
+    "paper_key": "0605181v5",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0605/0605181v5.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0606114": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Three-manifold Invariants"
+    ],
+    "paper_key": "0606114v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0606/0606114v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0606140": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Adiabatic Algorithms"
+    ],
+    "paper_key": "0606140v4",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0606/0606140v4.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0606229": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Matrix Powers"
+    ],
+    "paper_key": "0606229v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0606/0606229v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0608026": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Graph Properties in the Adjacency Matrix Model"
+    ],
+    "paper_key": "0608026v4",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0608/0608026v4.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0608161": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Ordered Search"
+    ],
+    "paper_key": "0608161v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0608/0608161v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0610235": {
+    "status": "pdf-only",
+    "cited_by": [
+      "String Rewriting"
+    ],
+    "paper_key": "0610235v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0610/0610235v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0612101": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Preparing Eigenstates and Thermal States"
+    ],
+    "paper_key": "0612101v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0612/0612101v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0701235": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Non-Abelian Hidden Subgroup"
+    ],
+    "paper_key": "0701235v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0701/0701235v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0702008": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Knot Invariants",
+      "Partition Functions"
+    ],
+    "paper_key": "0702008v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0702/0702008v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0702144": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Formula Evaluation"
+    ],
+    "paper_key": "0702144v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0702/0702144v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0702160": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Formula Evaluation"
+    ],
+    "paper_key": "0702160v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0702/0702160v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0702241": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Adiabatic Algorithms"
+    ],
+    "paper_key": "0702241v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0702/0702241v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0703015": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Formula Evaluation"
+    ],
+    "paper_key": "0703015v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0703/0703015v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0703023": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Gauss Sums",
+      "Partition Functions"
+    ],
+    "paper_key": "0703023v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0703/0703023v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0703037": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Three-manifold Invariants"
+    ],
+    "paper_key": "0703037v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0703/0703037v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0703223": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Non-Abelian Hidden Subgroup"
+    ],
+    "paper_key": "0703223v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0703/0703223v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/0703231": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Ordered Search"
+    ],
+    "paper_key": "0703231v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/0703/0703231v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/9508005": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Primality Proving"
+    ],
+    "paper_key": "9508005v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/9508/9508005v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/9508027": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Factoring",
+      "Discrete-log",
+      "Quantum Cryptanalysis"
+    ],
+    "paper_key": "9508027v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/9508/9508027v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/9603026": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "9603026v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/9603/9603026v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/9603028": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "9603028v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/9603/9603028v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/9605043": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Searching"
+    ],
+    "paper_key": "9605043v3",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/9605/9605043v3.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/9607014": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Searching",
+      "Graph Properties in the Adjacency Matrix Model"
+    ],
+    "paper_key": "9607014v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/9607/9607014v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/9701001": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Searching",
+      "Pattern matching"
+    ],
+    "paper_key": "9701001v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/9701/9701001v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/9701019": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "9701019v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/9701/9701019v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/9703054": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "9703054v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/9703/9703054v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/9705002": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Collision Finding and Element Distinctness"
+    ],
+    "paper_key": "9705002v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/9705/9705002v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/9705041": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Counterfeit Coins"
+    ],
+    "paper_key": "9705041v4",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/9705/9705041v4.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/9804066": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Searching"
+    ],
+    "paper_key": "9804066v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/9804/9804066v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/9805082": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Searching",
+      "Statistical Difference"
+    ],
+    "paper_key": "9805082v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/9805/9805082v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/9807009": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Simulating Quantum Hamiltonian Dynamics"
+    ],
+    "paper_key": "9807009v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/9807/9807009v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/9807027": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Searching"
+    ],
+    "paper_key": "9807027v2",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/9807/9807027v2.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/9807029": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Hidden Shift"
+    ],
+    "paper_key": "9807029v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/9807/9807029v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/9812070": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Non-Abelian Hidden Subgroup"
+    ],
+    "paper_key": "9812070v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/9812/9812070v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/9901059": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Ordered Search"
+    ],
+    "paper_key": "9901059v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/9901/9901059v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  },
+  "quant-ph/9909094": {
+    "status": "pdf-only",
+    "cited_by": [
+      "Weight Enumerators"
+    ],
+    "paper_key": "9909094v1",
+    "arxiv_id_in_db": null,
+    "version": null,
+    "title": null,
+    "authors": null,
+    "pdf_path": "pdf/9909/9909094v1.pdf",
+    "markdown_path": null,
+    "json_path": null
+  }
+}
