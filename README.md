@@ -126,6 +126,7 @@ WIKI_DIR=../QuantumAtlas-Wiki
 - [docs/architecture.md](docs/architecture.md): 项目的分层模型、source of truth、Wiki/Raw/Neo4j 边界，以及协作方式。
 - [docs/deployment.md](docs/deployment.md): 本地启动、单机部署、systemd、环境变量、反向代理与鉴权示例。
 - [docs/development.md](docs/development.md): 开发命令、API 概览、仓库结构、测试与发版流程。
+- [docs/graph-visualization-research.md](docs/graph-visualization-research.md): 图谱可视化前端选型调研（待实现）。
 - [QUANTUM_ATLAS.md](QUANTUM_ATLAS.md): Wiki 页面编写规范。
 
 ## 仓库概览
