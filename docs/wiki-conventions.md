@@ -54,6 +54,16 @@ Formal or mathematical definition.
 
 记录算法、原语、人物、机构等实体。
 
+**为什么分成 algorithm / primitive / person 三类**：
+
+- **algorithm**：问题导向的"完整配方"。生命周期短，会因新论文衍生新变体（如多种 Shor 变体、HHL 改进版本）。
+- **primitive**：可被多个算法复用的子例程（QFT、QPE、Amplitude Amplification、Block Encoding、QSVT…）。复杂度/定义稳定，是图谱里的复用节点。
+- **person**：作者节点，让 paper → author → paper 的二跳查询成立。
+
+之所以**必须把算法和原语分开**：算法 ↔ 原语是 N:M 多对多关系，分开后更新一个原语不会污染所有引用它的算法页，也避免在每个算法页里重复粘贴 QFT 这样的定义。这是 Quantum Algorithm Zoo / Qiskit / QuICT 等主流知识库的通行切法。
+
+三层中只有 **primitive 被代码消费**（`atlas/knowledge_graph/primitives/*.yaml` 给 loader / designer 使用）。algorithm 和 person 只活在 Wiki + Neo4j，新增/修改算法和人物只改 Wiki；新增/修改原语必须同步更新 YAML 与 Wiki 两层。
+
 子目录：
 
 - `entities/algorithms/` — 算法实体
@@ -101,6 +111,40 @@ Step-by-step explanation...
 
 *Auto-generated from knowledge graph*
 ```
+
+#### 算法页面写作规范（重要）
+
+Wiki 不是论文综述。`entities/algorithms/algo-*.md` 的 `## Algorithm Description` 一节**不是**复述论文做了什么或讲故事，而是要做到：
+
+1. **中文**写作。下游使用者（实现者、综合器、designer）以中文沟通，算法描述要直接可读。
+2. **面向落地**。读完这一节，应当能据此写出 OriginIR / OpenQASM / cirq 等可运行电路，或至少能给电路综合器一份清晰的步骤说明。不要停留在"该算法实现了 Shor 因子分解"这种综述句。
+3. **讲"怎么做"而不是"做了什么"**。必须包含：
+   - **输入与输出**：寄存器划分、量子比特数、经典输入/输出格式；
+   - **子例程拼装**：调用了哪些 `[[prim-*]]`，按什么顺序、传什么参数；
+   - **关键步骤**：每一步对应的酉算子或测量，必要时写出矩阵 / 电路图 / 伪代码；
+   - **复杂度与资源**：门数、深度、辅助比特、查询次数（区分 query 模型与门模型）。
+4. **不重复 RAW**。论文原文的机器解析在 `$RAW_DIR/markdown/{key}.md`，wiki 不要粘贴整段原文；引用具体步骤时给 `[[paper-arxiv-{id}#section]]` 即可。
+5. **如果某一步落不到具体酉算子或经典处理上，必须落到一个 `[[prim-*]]`**——既能说清"这一步靠某原语做"，也暴露出该原语暂缺的话需要新建。`[[prim-*]]` 是落地链路的最低粒度兜底。
+6. **找不到落地细节时**保持 `status: draft` 并在页面顶部用 `> TODO:` 行标记缺口，不要用论文摘要凑数。
+
+**反例**（不要这样写）：
+
+> Shor 算法在 1994 年由 Peter Shor 提出，是首个能在多项式时间内分解整数的量子算法，对现代密码学造成重大影响……
+
+**正例**：
+
+> **输入**：待分解整数 N（n = ⌈log₂ N⌉ bit），随机选 a < N 与 N 互素。
+> 
+> **寄存器**：工作寄存器 2n 量子比特，目标寄存器 n 量子比特。
+> 
+> **步骤**：
+> 1. 工作寄存器 H^⊗2n 制备均匀叠加；
+> 2. 调用 [[prim-modular-exp]] 计算 |x⟩|0⟩ → |x⟩|aˣ mod N⟩；
+> 3. 对工作寄存器作 [[prim-qft]]^†；
+> 4. 测量工作寄存器，得 c/2^(2n)，连分数展开求阶 r；
+> 5. 经典后处理：若 r 偶且 a^(r/2) ≠ −1 mod N，则 gcd(a^(r/2) ± 1, N) 给出非平凡因子。
+> 
+> **复杂度**：O(n³) 门，O(n) 调用 [[prim-modular-exp]]。
 
 **原语实体模板：**
 
@@ -187,6 +231,23 @@ Important insights from the paper...
 
 - [[paper-cited-paper]]
 ```
+
+#### 什么样的论文该进 wiki
+
+`wiki/sources/papers/` 是**人工 curation 节点**，不是 RAW 资产的索引。RAW 已经在 `$RAW_DIR/markdown/{key}.md` 提供论文全文的机器解析，wiki 不要重复这件事。
+
+满足**任一**条件才该建 `paper-arxiv-{id}.md`：
+
+- **被 ≥1 个 `algo-*.md` / `prim-*.md` 用 `[[paper-arxiv-*]]` 形式引用**，且该 wiki 链接确实有 curation 价值（例如指向论文里的具体小节、说明该实现选用了哪个版本）；
+- 论文本身**引入一个原语或算法的新原始定义**，需要在 wiki 里挂一个稳定锚点供未来引用；
+- 有人工写下的 **`## Key Contributions` 或 `## Key Insights`** 内容（哪怕一两句），即真正添加了 RAW 之外的信息。
+
+下列情况**不要**为论文单独建 wiki 页：
+
+- 仅仅因为论文进了 RAW 就为它建占位页；
+- frontmatter 里 `raw_status: pdf-only` 且正文只有 `## Metadata / ## Curation note: PDF is present but markdown has not been parsed`——这种页面没有 curation 价值，应让算法页通过 frontmatter 字段 `raw_paper_key` 直接指向 RAW，不必走 wiki 节点。
+
+> 历史上的 zoo backfill 批量生成了 400+ 个不满足条件的占位 source 页，后续会清理；新增内容必须按本规则执行。
 
 ### Comparisons (`wiki/comparisons/`)
 
@@ -349,7 +410,7 @@ QuantumAtlas/
 │
 ├── wiki/                             # Wiki 页面
 │   ├── index.md                      # 主索引
-│   ├── log.md                        # 活动日志
+│   ├── log.md                        # 活动日志（gitignore，本地未跟踪）
 │   ├── concepts/                     # 概念定义
 │   ├── entities/
 │   │   ├── algorithms/               # 算法实体
