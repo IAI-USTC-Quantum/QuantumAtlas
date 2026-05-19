@@ -134,7 +134,7 @@ def render_index(algos: list[dict], existing_algo_ids: set[str], existing_prim_i
     lines.append("- **Sources** (`sources/papers/`) are wiki-ified summaries of the cited papers; full PDFs and parsed markdown live in `RAW_DIR`, not in this repo.")
     lines.append("- **Comparisons** (`comparisons/`) put algorithms side by side along complexity, qubit, or depth axes.")
     lines.append("")
-    lines.append("Wiki links use the `[[page-id]]` form. Frontmatter and lint rules are documented in [QUANTUM_ATLAS.md](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/QUANTUM_ATLAS.md) of the application repository.")
+    lines.append("Wiki links use the `[[page-id]]` form. Frontmatter and lint rules are documented in [docs/wiki-conventions.md](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/docs/wiki-conventions.md) of the application repository.")
     lines.append("")
     if primitives:
         lines.append("## Featured primitives")

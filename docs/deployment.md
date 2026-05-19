@@ -60,12 +60,12 @@ uv run -m atlas.server.service install \
 
 ## 推荐的单机生产目录
 
-开发环境可以直接用仓库内默认目录，但生产更建议外置运行时数据：
+只把 Wiki 外置到独立 Git checkout（方便多人 PR / review）；论文资产（`RAW_DIR`）和运行状态（`DATA_DIR`）默认就在仓库内即可，不必单独搬迁路径：
 
 ```env
-WIKI_DIR=/srv/quantumatlas-wiki
-RAW_DIR=/srv/quantumatlas-raw
-DATA_DIR=/srv/quantumatlas-data
+WIKI_DIR=../QuantumAtlas-Wiki
+# RAW_DIR=raw          # 默认值，通常不必显式设置
+# DATA_DIR=data        # 默认值
 NEO4J_URI=bolt://127.0.0.1:7687
 SERVER_HOST=127.0.0.1
 SERVER_PORT=4200
@@ -77,7 +77,7 @@ PUBLIC_BASE_URL=https://atlas.example.com
 - 应用仓库按 release tag 或受控分支部署。
 - Wiki 仓库单独 checkout，并允许更高频更新；server 侧 checkout 应保持干净，只通过 `git pull --ff-only` 消费远端内容。
 - 运行 QuantumAtlas 的服务用户默认只需要读取 `WIKI_DIR`；如果启用 `/api/wiki/sync/pull`，还需要对该 Git checkout 有 fast-forward 更新权限。服务端不会生成或修改 Wiki 页面，Wiki 内容修改应在用户端或独立的 `QuantumAtlas-Wiki` checkout 中完成。
-- 运行 QuantumAtlas 的服务用户应对 `RAW_DIR` 和 `DATA_DIR` 有写权限：`RAW_DIR` 用于保存论文资产，`DATA_DIR` 用于保存 share、ingest 状态和版本 manifest。
+- 运行 QuantumAtlas 的服务用户应对 `RAW_DIR` 和 `DATA_DIR` 有写权限：`RAW_DIR` 用于保存论文资产，`DATA_DIR` 用于保存 share、ingest 状态和版本 manifest。如果要外置（例如挂载到大容量盘），可以显式覆盖，但**不是必需的**。
 - 内容生产、LLM 生成、人工编辑和审阅走 `QuantumAtlas-Wiki` 的普通 Git 流程；QuantumAtlas server 不提供 push API，也不通过 Web UI 直接写 Wiki 页面。
 - 若 `/api/wiki/sync/status` 提示 Wiki checkout 不在 `main` 或 `master`，应检查部署分支是否符合预期。
 - Neo4j 仅对后端服务暴露，不直接开放到公网。
