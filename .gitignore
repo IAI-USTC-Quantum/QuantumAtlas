@@ -223,3 +223,9 @@ tmp/zoo/__pycache__/
 # Local AI assistant guidance
 CLAUDE.md
 .codex
+
+# Local scratch scripts not meant for the shared repo
+tmp/migrate_kb_assets.py
+scripts/*cifs*.sh
+scripts/setup_quantum_team_*.sh
+scripts/test_quantum_team_*.sh
