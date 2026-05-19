@@ -26,6 +26,14 @@ class Command:
 
 COMMANDS: Mapping[str, Command] = {
     "ingest": Command("atlas.client.__main__", "Submit paper ingest tasks over HTTP"),
+    "upload": Command(
+        "atlas.client.upload",
+        "Upload contributed PDF or parsed Markdown to the server",
+    ),
+    "mineru": Command(
+        "atlas.client.mineru",
+        "Run MinerU locally with your own token and push the result to the server",
+    ),
     "parser": Command("atlas.parser.__main__", "Fetch and parse arXiv papers", False),
     "wiki": Command("atlas.wiki.__main__", "Browse, lint, and sync wiki pages", False),
     "designer": Command("atlas.designer.__main__", "Design circuits from algorithms"),
@@ -81,6 +89,9 @@ Aliases:
 
 Examples:
   qatlas ingest quant-ph/9508027 --no-extract --no-sync-neo4j
+  qatlas upload pdf quant-ph/9508027v1 --pdf paper.pdf --metadata meta.json
+  qatlas upload markdown 2501.00010v1 --markdown paper.md --source mineru
+  qatlas mineru quant-ph/9508027v1 --push-pdf
   qatlas designer <kg_algorithm_id> -o circuit_ir.json
   qatlas codegen circuit_ir.json --backend qiskit -o output.py
   qatlas validator circuit_ir.json --compare-with qft

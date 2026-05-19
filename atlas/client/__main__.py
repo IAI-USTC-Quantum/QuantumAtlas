@@ -11,39 +11,32 @@ from typing import Any
 
 import requests
 
-from atlas.server.config import ServerConfig
+from atlas.client._common import (
+    add_common_http_args,
+    default_base_url,
+    print_json,
+    request_verify,
+    run_with_request_errors,
+)
 
 
 TERMINAL_STATUSES = {"succeeded", "failed", "partial", "cancelled"}
 
 
 def _default_base_url() -> str:
-    config = ServerConfig.from_env()
-    public_base_url = config.get_public_base_url()
-    if public_base_url:
-        return public_base_url
-    host = "127.0.0.1" if config.host in {"0.0.0.0", "::"} else config.host
-    return f"http://{host}:{config.port}"
-
-
-def _print_json(payload: dict[str, Any]) -> None:
-    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    """Resolve default server base URL; kept as a module-local wrapper so tests
+    can monkey-patch ``atlas.client.__main__._default_base_url``."""
+    return default_base_url()
 
 
 def _base_url_from_args(args: argparse.Namespace) -> str:
+    """Honor an explicit --base-url, otherwise call the module-local default."""
     return args.base_url.rstrip("/") if args.base_url else _default_base_url()
 
 
-def _request_verify(args: argparse.Namespace) -> bool:
-    if not getattr(args, "insecure", False):
-        return True
-    if not getattr(args, "_insecure_warning_shown", False):
-        requests.packages.urllib3.disable_warnings(  # type: ignore[attr-defined]
-            category=requests.packages.urllib3.exceptions.InsecureRequestWarning
-        )
-        print("Warning: TLS certificate verification is disabled.", file=sys.stderr)
-        args._insecure_warning_shown = True
-    return False
+# Legacy aliases kept for any callers that imported these private names.
+_print_json = print_json
+_request_verify = request_verify
 
 
 def _load_json_object(path: str) -> dict[str, Any]:
@@ -77,17 +70,17 @@ def _poll_task(base_url: str, task_id: str, args: argparse.Namespace) -> int:
         task_response = requests.get(
             f"{base_url}/api/ingest/{task_id}",
             timeout=args.request_timeout,
-            verify=_request_verify(args),
+            verify=request_verify(args),
         )
         task_response.raise_for_status()
         task = task_response.json()
         if task.get("status") in TERMINAL_STATUSES:
-            _print_json(task)
+            print_json(task)
             return 0 if task.get("status") == "succeeded" else 1
         time.sleep(args.poll_interval)
 
     print(f"Timed out waiting for ingest task {task_id}", file=sys.stderr)
-    _print_json(task)
+    print_json(task)
     return 1
 
 
@@ -115,14 +108,14 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         f"{base_url}/api/ingest/paper",
         json=body,
         timeout=args.request_timeout,
-        verify=_request_verify(args),
+        verify=request_verify(args),
     )
     response.raise_for_status()
     queued = response.json()
     task_id = queued["task_id"]
 
     if args.no_poll:
-        _print_json(queued)
+        print_json(queued)
         return 0
 
     return _poll_task(base_url, task_id, args)
@@ -144,12 +137,12 @@ def cmd_continue(args: argparse.Namespace) -> int:
         f"{base_url}/api/ingest/{args.task_id}/continue",
         json=body,
         timeout=args.request_timeout,
-        verify=_request_verify(args),
+        verify=request_verify(args),
     )
     response.raise_for_status()
     queued = response.json()
     if args.no_poll:
-        _print_json(queued)
+        print_json(queued)
         return 0
     return _poll_task(base_url, queued["task_id"], args)
 
@@ -167,12 +160,12 @@ def cmd_reviewed(args: argparse.Namespace) -> int:
         f"{base_url}/api/ingest/paper/reviewed-extraction",
         json=body,
         timeout=args.request_timeout,
-        verify=_request_verify(args),
+        verify=request_verify(args),
     )
     response.raise_for_status()
     queued = response.json()
     if args.no_poll:
-        _print_json(queued)
+        print_json(queued)
         return 0
     return _poll_task(base_url, queued["task_id"], args)
 
@@ -182,24 +175,15 @@ def cmd_status(args: argparse.Namespace) -> int:
     response = requests.get(
         f"{base_url}/api/ingest/{args.task_id}",
         timeout=args.request_timeout,
-        verify=_request_verify(args),
+        verify=request_verify(args),
     )
     response.raise_for_status()
-    _print_json(response.json())
+    print_json(response.json())
     return 0
 
 
 def _add_common_http_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--base-url",
-        help="Server base URL; defaults to PUBLIC_BASE_URL, then .env host/port",
-    )
-    parser.add_argument("--request-timeout", type=float, default=30.0)
-    parser.add_argument(
-        "--insecure",
-        action="store_true",
-        help="Skip TLS certificate verification for self-signed HTTPS endpoints",
-    )
+    add_common_http_args(parser)
 
 
 def _add_poll_args(parser: argparse.ArgumentParser) -> None:
@@ -295,14 +279,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         parser = build_parser()
     args = parser.parse_args(argv)
-    try:
-        return args.func(args)
-    except ValueError as exc:
-        print(f"Invalid input: {exc}", file=sys.stderr)
-        return 2
-    except requests.RequestException as exc:
-        print(f"Request failed: {exc}", file=sys.stderr)
-        return 1
+    return run_with_request_errors(args.func, args)
 
 
 if __name__ == "__main__":

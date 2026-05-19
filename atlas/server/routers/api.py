@@ -7,24 +7,32 @@ REST API endpoints for programmatic access.
 import json
 import logging
 import os
+import re
 import subprocess
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
 import requests
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from atlas.paper_assets import normalize_arxiv_identifier, resolve_paper_assets
+from atlas.paper_assets import (
+    normalize_arxiv_identifier,
+    paper_asset_path,
+    paper_shard,
+    paper_storage_key,
+    resolve_paper_assets,
+    share_path_for_asset,
+)
 from atlas.parser.arxiv_fetcher import ArxivFetcher
 from atlas.parser.mineru_client import MinerUClient
 from atlas.runtime_metadata import code_git_info
 from atlas.server.config import ServerConfig, get_project_root
-from atlas.server.routers.shares import build_external_share_url, create_share_record
+from atlas.server.routers.shares import build_external_share_url, build_share_url, create_share_record
 from atlas.server.tasks import IngestStore, IngestTask, ShareStore, StepStatus
 
 router = APIRouter()
@@ -478,6 +486,595 @@ def wiki_sync_pull(request: Request):
         "old_commit": old_commit,
         "new_commit": new_commit,
         **_wiki_sync_status(config),
+    }
+
+
+# === Paper asset uploads ===
+
+# Strict arXiv ID patterns for uploads. Version suffix (vN) is required so the
+# stored filename matches the canonical RAW_DIR layout (e.g. 9508027v1.pdf,
+# 2501.00010v1.pdf) used elsewhere in the project.
+_NEW_STYLE_ARXIV_RE = re.compile(r"^\d{4}\.\d{4,6}v\d+$")
+_OLD_STYLE_ARXIV_RE = re.compile(r"^[a-z][a-z\-]*(?:\.[A-Z]{2})?/\d{7}v\d+$")
+_UPLOAD_MAX_PDF_BYTES = 100 * 1024 * 1024
+_UPLOAD_MAX_MARKDOWN_BYTES = 25 * 1024 * 1024
+_UPLOAD_MAX_METADATA_BYTES = 2 * 1024 * 1024
+
+
+def _normalize_arxiv_for_upload(arxiv_id: str) -> str:
+    """Normalize and strictly validate an arXiv id submitted for upload.
+
+    Accepts the two officially-documented arXiv id schemes:
+      * New style (post April 2007): ``YYMM.NNNN`` or ``YYMM.NNNNN`` (4-5 digit
+        sequence), e.g. ``2501.00010``.
+      * Old style (pre April 2007): ``category/YYMMNNN`` where ``category`` is
+        the lowercase archive name with optional ``.XX`` subject class,
+        e.g. ``quant-ph/9508027`` or ``cond-mat.str-el/0701123``.
+
+    A trailing version suffix (``vN``) is required so the file name on disk
+    unambiguously identifies which arXiv revision is being contributed. The
+    storage layout in ``RAW_DIR`` always carries the version, e.g.
+    ``raw/pdf/9508/9508027v1.pdf`` or ``raw/pdf/2501/2501.00010v1.pdf``.
+    """
+    canonical = normalize_arxiv_identifier(arxiv_id)
+    if _NEW_STYLE_ARXIV_RE.match(canonical) or _OLD_STYLE_ARXIV_RE.match(canonical):
+        return canonical
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            f"invalid arxiv_id for upload: {arxiv_id!r}. "
+            "Expected new-style 'YYMM.NNNNNvN' (post April 2007, e.g. '2501.00010v1') "
+            "or old-style 'category/YYMMNNNvN' (pre April 2007, e.g. 'quant-ph/9508027v1'). "
+            "An explicit version suffix is required."
+        ),
+    )
+
+
+async def _save_upload_file(
+    *,
+    upload: UploadFile,
+    destination: Path,
+    max_bytes: int,
+    label: str,
+) -> int:
+    """Stream an UploadFile to disk with a hard size cap. Returns bytes written."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = destination.with_suffix(destination.suffix + ".part")
+    bytes_written = 0
+    try:
+        with tmp_path.open("wb") as out:
+            while True:
+                chunk = await upload.read(1 << 20)
+                if not chunk:
+                    break
+                bytes_written += len(chunk)
+                if bytes_written > max_bytes:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"{label} exceeds maximum upload size of {max_bytes} bytes",
+                    )
+                out.write(chunk)
+        if bytes_written == 0:
+            raise HTTPException(status_code=400, detail=f"{label} upload was empty")
+        tmp_path.replace(destination)
+    except HTTPException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+    finally:
+        await upload.close()
+    return bytes_written
+
+
+def _relative_raw_path(path: Path, raw_root: Path) -> str:
+    try:
+        return path.relative_to(raw_root).as_posix()
+    except ValueError:
+        return str(path)
+
+
+# === MinerU claim / lease ===
+
+# A "claim" is a short-lived lease declaring that a specific contributor is
+# currently running MinerU against a paper's PDF and will upload the resulting
+# markdown shortly. The point is to keep concurrent contributors from
+# redundantly burning their own MinerU quota on the same paper.
+#
+# Storage: one JSON file per arxiv_id under DATA_DIR/mineru-claims/{key}.json.
+# Atomicity is achieved by O_EXCL create; expired claims are overwritten via a
+# tmp + posix_rename swap. Successful upload-markdown deletes the claim.
+
+_CLAIM_DEFAULT_TTL_SECONDS = 1800  # 30 minutes
+_CLAIM_MIN_TTL_SECONDS = 60
+_CLAIM_MAX_TTL_SECONDS = 7200  # 2 hours
+
+
+def _claims_dir(config: ServerConfig) -> Path:
+    return config.get_data_root() / "mineru-claims"
+
+
+def _claim_path(config: ServerConfig, arxiv_id: str) -> Path:
+    return _claims_dir(config) / f"{paper_storage_key(arxiv_id)}.json"
+
+
+def _read_claim(path: Path) -> Optional[Dict[str, Any]]:
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    return data
+
+
+def _claim_is_active(claim: Optional[Dict[str, Any]], now: datetime) -> bool:
+    if claim is None:
+        return False
+    expires_raw = claim.get("expires_at")
+    if not isinstance(expires_raw, str):
+        return False
+    try:
+        expires = datetime.fromisoformat(expires_raw)
+    except ValueError:
+        return False
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    return expires > now
+
+
+def _delete_claim(config: ServerConfig, arxiv_id: str) -> None:
+    """Best-effort delete of any claim for this paper (used by upload-markdown)."""
+    try:
+        _claim_path(config, arxiv_id).unlink(missing_ok=True)
+    except OSError:
+        logger.warning("failed to remove mineru claim for %s", arxiv_id, exc_info=True)
+
+
+def _enumerate_needs_mineru(
+    raw_root: Path,
+    config: ServerConfig,
+    *,
+    limit: int,
+    include_claimed: bool,
+) -> tuple[List[Dict[str, Any]], int, int]:
+    """Walk RAW_DIR/pdf and return papers with PDF but no markdown.
+
+    Returns (papers, total_unclaimed, total_with_claims).
+    """
+    pdf_root = raw_root / "pdf"
+    md_root = raw_root / "markdown"
+    if not pdf_root.is_dir():
+        return [], 0, 0
+
+    now = datetime.now(timezone.utc)
+    papers: List[Dict[str, Any]] = []
+    total_unclaimed = 0
+    total_claimed = 0
+
+    pdf_files = sorted(pdf_root.glob("*/*.pdf")) + sorted(pdf_root.glob("*.pdf"))
+    seen_keys: set[str] = set()
+    for pdf_path in pdf_files:
+        key = pdf_path.stem
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+
+        shard = paper_shard(key)
+        md_candidates = [md_root / f"{key}.md"]
+        if shard:
+            md_candidates.append(md_root / shard / f"{key}.md")
+        if any(c.is_file() for c in md_candidates):
+            continue
+
+        canonical = _canonical_arxiv_from_key(key)
+        claim = _read_claim(_claim_path(config, canonical))
+        claimed = _claim_is_active(claim, now)
+        if claimed:
+            total_claimed += 1
+        else:
+            total_unclaimed += 1
+
+        if claimed and not include_claimed:
+            continue
+        if len(papers) >= limit:
+            # Keep counting totals but stop collecting.
+            continue
+
+        papers.append(
+            {
+                "arxiv_id": canonical,
+                "key": key,
+                "pdf_path": _relative_raw_path(pdf_path, raw_root),
+                "claimed": claimed,
+                "claim_expires_at": claim.get("expires_at") if claim and claimed else None,
+                "claim_requester": claim.get("requester") if claim and claimed else None,
+            }
+        )
+
+    return papers, total_unclaimed, total_claimed
+
+
+def _canonical_arxiv_from_key(key: str) -> str:
+    """Reverse paper_storage_key for old-style ids to the form expected on the wire.
+
+    Old-style storage keys drop the category prefix (e.g. 9508027v1). Without
+    talking to the metadata layer we can't reliably know the category, so we
+    just return the storage key as-is for both old and new style; clients that
+    need to interact with the paper resources endpoint can use either form,
+    since resolve_paper_assets accepts both.
+    """
+    return key
+
+
+@router.get("/papers/needs-mineru")
+async def list_needs_mineru(
+    request: Request,
+    limit: int = Query(10, ge=1, le=100, description="Maximum papers to return"),
+    include_claimed: bool = Query(
+        False,
+        description="When true, include papers that are currently claimed by another contributor.",
+    ),
+):
+    """List papers that have a PDF in RAW_DIR but no parsed markdown yet.
+
+    By default only returns papers that no one else is currently working on
+    (i.e., no active mineru claim). Use ``include_claimed=true`` to also see
+    in-flight work for diagnostics.
+    """
+    config: ServerConfig = request.app.state.config
+    papers, total_unclaimed, total_claimed = _enumerate_needs_mineru(
+        config.get_raw_root(),
+        config,
+        limit=limit,
+        include_claimed=include_claimed,
+    )
+    return {
+        "papers": papers,
+        "returned": len(papers),
+        "total_unclaimed": total_unclaimed,
+        "total_claimed": total_claimed,
+    }
+
+
+def _build_pdf_share_url(config: ServerConfig, share_store, arxiv_id: str) -> Optional[str]:
+    """Return the share URL for a paper's PDF when it exists in RAW_DIR.
+
+    Mirrors the logic in routers/downloads.py for the PDF-only case, so the
+    mineru claim response can hand the contributor a directly-fetchable URL
+    without a second round-trip.
+    """
+    resolved = resolve_paper_assets(config.get_raw_root(), arxiv_id)
+    pdf_path = resolved.get("pdf_path")
+    if not isinstance(pdf_path, Path) or not pdf_path.is_file():
+        return None
+    share_path = share_path_for_asset(
+        "pdf",
+        resolved["key"],
+        asset_path=pdf_path,
+        paper_assets_root=config.get_raw_root(),
+    )
+    share_token = config.share_access_token
+    share_base_url = config.get_public_base_url() if share_token else None
+    if share_token is None:
+        share = create_share_record(
+            share_store=share_store,
+            config=config,
+            paths=[share_path],
+            label=f"mineru pdf: {arxiv_id}",
+            expires_in=None,
+            created_by=None,
+        )
+        share_token = share["token"]
+    return build_share_url(share_token, share_path, base_url=share_base_url)
+
+
+@router.post("/papers/{arxiv_id:path}/mineru-claim", status_code=201)
+async def claim_mineru(
+    request: Request,
+    arxiv_id: str,
+    ttl_seconds: int = Query(
+        _CLAIM_DEFAULT_TTL_SECONDS,
+        ge=_CLAIM_MIN_TTL_SECONDS,
+        le=_CLAIM_MAX_TTL_SECONDS,
+        description=(
+            "Lease duration in seconds. Other contributors will see this paper "
+            "as 'claimed' until the TTL expires or the claim is released."
+        ),
+    ),
+):
+    """Atomically claim a paper for MinerU processing.
+
+    Returns the share URL of the PDF (ready to feed to MinerU) and a claim id
+    that releases the lease either implicitly (on successful upload-markdown)
+    or explicitly via DELETE.
+
+    Status codes:
+      * 201 — claim granted.
+      * 404 — no PDF exists for this arxiv_id; nothing to claim.
+      * 409 — markdown already exists, or another contributor holds an active
+        claim. The response body includes ``claim_expires_at`` so the caller
+        can decide whether to wait or skip.
+    """
+    canonical = _normalize_arxiv_for_upload(arxiv_id)
+    config: ServerConfig = request.app.state.config
+    raw_root = config.get_raw_root()
+
+    # PDF presence is the precondition; refuse to claim a paper we cannot serve.
+    pdf_path = paper_asset_path(raw_root, "pdf", canonical)
+    pdf_exists = pdf_path.is_file()
+    if not pdf_exists:
+        # Try versionless / sharded lookup before failing.
+        resolved = resolve_paper_assets(raw_root, canonical)
+        resolved_pdf = resolved.get("pdf_path")
+        if isinstance(resolved_pdf, Path) and resolved_pdf.is_file():
+            pdf_path = resolved_pdf
+            pdf_exists = True
+    if not pdf_exists:
+        raise HTTPException(
+            status_code=404,
+            detail=f"no PDF in RAW_DIR for {canonical}; upload it first via /api/papers/{{arxiv_id}}/upload-pdf",
+        )
+
+    # No work to do if a markdown is already present.
+    md_path = paper_asset_path(raw_root, "markdown", canonical)
+    md_resolved = resolve_paper_assets(raw_root, canonical).get("markdown_path")
+    if md_path.is_file() or (isinstance(md_resolved, Path) and md_resolved.is_file()):
+        raise HTTPException(
+            status_code=409,
+            detail=f"markdown already exists for {canonical}; nothing to do",
+        )
+
+    claim_path = _claim_path(config, canonical)
+    claim_path.parent.mkdir(parents=True, exist_ok=True)
+
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(seconds=ttl_seconds)
+    claim_id = uuid.uuid4().hex
+    requester = request.headers.get(config.user_header) if config.user_header else None
+
+    share_url = _build_pdf_share_url(config, request.app.state.share_store, canonical)
+    if share_url is None:
+        raise HTTPException(status_code=500, detail="failed to build share URL for PDF")
+
+    payload: Dict[str, Any] = {
+        "claim_id": claim_id,
+        "arxiv_id": canonical,
+        "key": paper_storage_key(canonical),
+        "requester": requester,
+        "created_at": now.isoformat(),
+        "expires_at": expires_at.isoformat(),
+        "ttl_seconds": ttl_seconds,
+        "pdf_url": share_url,
+    }
+
+    # Atomic O_EXCL create; if it exists, validate or overwrite-on-expiry.
+    serialized = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    try:
+        fd = os.open(claim_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    except FileExistsError:
+        existing = _read_claim(claim_path)
+        if _claim_is_active(existing, now):
+            assert existing is not None
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": f"{canonical} is already claimed",
+                    "claim_id": existing.get("claim_id"),
+                    "claim_expires_at": existing.get("expires_at"),
+                    "claim_requester": existing.get("requester"),
+                },
+            )
+        # Expired or corrupt; replace atomically.
+        tmp = claim_path.with_suffix(".json.tmp")
+        tmp.write_bytes(serialized)
+        tmp.replace(claim_path)
+    else:
+        try:
+            os.write(fd, serialized)
+        finally:
+            os.close(fd)
+
+    logger.info(
+        "mineru claim granted for %s to %s (claim_id=%s, ttl=%ss)",
+        canonical,
+        requester or "anonymous",
+        claim_id,
+        ttl_seconds,
+    )
+    return payload
+
+
+@router.delete("/papers/{arxiv_id:path}/mineru-claim/{claim_id}", status_code=204)
+async def release_mineru_claim(request: Request, arxiv_id: str, claim_id: str):
+    """Explicitly release a mineru claim (e.g. when the client aborted).
+
+    Idempotent: releasing a non-existent or already-expired claim returns 204.
+    Mismatched claim_id returns 409 to avoid accidentally killing someone
+    else's active claim.
+    """
+    canonical = _normalize_arxiv_for_upload(arxiv_id)
+    config: ServerConfig = request.app.state.config
+    claim_path = _claim_path(config, canonical)
+    existing = _read_claim(claim_path)
+    if existing is None:
+        return JSONResponse(status_code=204, content=None)
+    if existing.get("claim_id") != claim_id:
+        # Don't let one client release another's lease.
+        if _claim_is_active(existing, datetime.now(timezone.utc)):
+            raise HTTPException(
+                status_code=409,
+                detail="claim_id does not match the active claim",
+            )
+    try:
+        claim_path.unlink(missing_ok=True)
+    except OSError:
+        logger.warning("failed to remove mineru claim file for %s", canonical, exc_info=True)
+    return JSONResponse(status_code=204, content=None)
+
+
+@router.post("/papers/{arxiv_id:path}/upload-pdf", status_code=201)
+async def upload_paper_pdf(
+    request: Request,
+    arxiv_id: str,
+    pdf: UploadFile = File(..., description="The paper PDF, multipart/form-data field 'pdf'"),
+    metadata: Optional[UploadFile] = File(
+        None,
+        description=(
+            "Optional arXiv metadata JSON (title, authors, abstract, ...), multipart "
+            "field 'metadata'. Will be stored at RAW_DIR/json/<key>.json."
+        ),
+    ),
+    overwrite: bool = Query(
+        False,
+        description="Replace existing PDF/JSON when true; otherwise 409 if a file is already present.",
+    ),
+):
+    """Accept a contributed paper PDF (and optional metadata) into RAW_DIR.
+
+    The arXiv id in the path must include a version suffix (e.g. ``quant-ph/9508027v1``
+    or ``2501.00010v1``). Files are stored at the canonical sharded paths used
+    by ``paper_asset_path``: ``RAW_DIR/pdf/<shard>/<key>.pdf`` and, when
+    metadata is provided, ``RAW_DIR/json/<shard>/<key>.json``.
+    """
+    canonical = _normalize_arxiv_for_upload(arxiv_id)
+    config: ServerConfig = request.app.state.config
+    raw_root = config.get_raw_root()
+
+    pdf_path = paper_asset_path(raw_root, "pdf", canonical)
+    json_path = paper_asset_path(raw_root, "json", canonical) if metadata is not None else None
+
+    if pdf_path.exists() and not overwrite:
+        raise HTTPException(
+            status_code=409,
+            detail=f"PDF already exists at {_relative_raw_path(pdf_path, raw_root)}; pass overwrite=true to replace",
+        )
+    if json_path is not None and json_path.exists() and not overwrite:
+        raise HTTPException(
+            status_code=409,
+            detail=f"metadata already exists at {_relative_raw_path(json_path, raw_root)}; pass overwrite=true to replace",
+        )
+
+    content_type = (pdf.content_type or "").lower()
+    if content_type and "pdf" not in content_type and content_type != "application/octet-stream":
+        raise HTTPException(
+            status_code=415,
+            detail=f"expected application/pdf for 'pdf' part, got {pdf.content_type!r}",
+        )
+
+    pdf_bytes = await _save_upload_file(
+        upload=pdf, destination=pdf_path, max_bytes=_UPLOAD_MAX_PDF_BYTES, label="pdf"
+    )
+    if not pdf_path.read_bytes()[:5].startswith(b"%PDF-"):
+        pdf_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail="uploaded file does not look like a PDF (missing %PDF- header)")
+
+    metadata_bytes = 0
+    if metadata is not None and json_path is not None:
+        metadata_bytes = await _save_upload_file(
+            upload=metadata,
+            destination=json_path,
+            max_bytes=_UPLOAD_MAX_METADATA_BYTES,
+            label="metadata",
+        )
+        try:
+            json.loads(json_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            json_path.unlink(missing_ok=True)
+            raise HTTPException(status_code=400, detail=f"metadata must be valid utf-8 JSON: {exc}") from None
+
+    requester = request.headers.get(config.user_header) if config.user_header else None
+    logger.info(
+        "uploaded pdf for %s by %s (%d bytes, metadata=%d bytes) -> %s",
+        canonical,
+        requester or "anonymous",
+        pdf_bytes,
+        metadata_bytes,
+        pdf_path,
+    )
+
+    return {
+        "arxiv_id": canonical,
+        "key": paper_storage_key(canonical),
+        "pdf_path": _relative_raw_path(pdf_path, raw_root),
+        "pdf_bytes": pdf_bytes,
+        "metadata_path": _relative_raw_path(json_path, raw_root) if json_path is not None else None,
+        "metadata_bytes": metadata_bytes or None,
+        "uploaded_by": requester,
+        "overwritten": bool(overwrite and pdf_path.exists()),
+    }
+
+
+@router.post("/papers/{arxiv_id:path}/upload-markdown", status_code=201)
+async def upload_paper_markdown(
+    request: Request,
+    arxiv_id: str,
+    markdown: UploadFile = File(
+        ..., description="Parsed markdown, multipart/form-data field 'markdown'"
+    ),
+    overwrite: bool = Query(
+        False,
+        description="Replace existing markdown when true; otherwise 409 if a file is already present.",
+    ),
+    source: Optional[str] = Query(
+        None,
+        max_length=64,
+        description="Tool that produced the markdown, e.g. 'mineru' or 'pymupdf'. Recorded in audit log only.",
+    ),
+):
+    """Accept a contributed parsed markdown into RAW_DIR/markdown/.
+
+    Typically used by clients that ran MinerU locally with their own API token,
+    or by reviewers who hand-edited a parse result. The arXiv id in the path
+    must include a version suffix.
+    """
+    canonical = _normalize_arxiv_for_upload(arxiv_id)
+    config: ServerConfig = request.app.state.config
+    raw_root = config.get_raw_root()
+
+    md_path = paper_asset_path(raw_root, "markdown", canonical)
+    if md_path.exists() and not overwrite:
+        raise HTTPException(
+            status_code=409,
+            detail=f"markdown already exists at {_relative_raw_path(md_path, raw_root)}; pass overwrite=true to replace",
+        )
+
+    md_bytes = await _save_upload_file(
+        upload=markdown,
+        destination=md_path,
+        max_bytes=_UPLOAD_MAX_MARKDOWN_BYTES,
+        label="markdown",
+    )
+    try:
+        md_path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        md_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=f"markdown must be valid utf-8: {exc}") from None
+
+    requester = request.headers.get(config.user_header) if config.user_header else None
+    logger.info(
+        "uploaded markdown for %s by %s (source=%s, %d bytes) -> %s",
+        canonical,
+        requester or "anonymous",
+        source or "unspecified",
+        md_bytes,
+        md_path,
+    )
+
+    # Successful markdown upload releases any outstanding mineru claim.
+    _delete_claim(config, canonical)
+
+    return {
+        "arxiv_id": canonical,
+        "key": paper_storage_key(canonical),
+        "markdown_path": _relative_raw_path(md_path, raw_root),
+        "markdown_bytes": md_bytes,
+        "source": source,
+        "uploaded_by": requester,
+        "overwritten": bool(overwrite),
     }
 
 
