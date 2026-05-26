@@ -154,7 +154,7 @@ def migrate_papers(
         Migration statistics
     """
     old_papers_dir = project_root / "papers"
-    raw_dir = Path(os.getenv("RAW_DIR", "raw"))
+    raw_dir = Path(os.getenv("QATLAS_RAW_DIR") or os.getenv("RAW_DIR", "raw"))
     if not raw_dir.is_absolute():
         raw_dir = project_root / raw_dir
     wiki_sources_dir = project_root / "wiki" / "sources" / "papers"

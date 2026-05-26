@@ -78,7 +78,7 @@ def live_server(tmp_path):
         wiki_dir=str(tmp_path / "wiki"),
         raw_dir=str(tmp_path / "raw"),
         data_dir=str(tmp_path / "data"),
-        public_base_url=base_url,
+        server_url=base_url,
         default_share_expires_in=3600,
     )
     app = create_app(config)

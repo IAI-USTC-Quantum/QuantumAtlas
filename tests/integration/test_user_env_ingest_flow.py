@@ -117,6 +117,7 @@ def _load_project_dotenv(
 
     for key in CONFIG_ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
+    monkeypatch.delenv("QATLAS_SKIP_DOTENV", raising=False)
     monkeypatch.delenv("QUANTUMATLAS_SKIP_DOTENV", raising=False)
 
     config = ServerConfig.from_env()

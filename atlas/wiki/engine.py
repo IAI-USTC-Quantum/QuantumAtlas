@@ -121,9 +121,18 @@ class WikiEngine:
         self.project_root = Path(project_root)
 
         # Set directories relative to project root. CLI callers usually configure these
-        # through the environment, while tests and embedded callers pass them explicitly.
-        self.wiki_dir = self._resolve_path(wiki_dir or os.getenv("WIKI_DIR", "wiki"))
-        self.raw_dir = self._resolve_path(raw_dir or os.getenv("RAW_DIR", "raw"))
+        # through the environment (preferring QATLAS_* names; legacy bare names still work),
+        # while tests and embedded callers pass them explicitly.
+        self.wiki_dir = self._resolve_path(
+            wiki_dir
+            or os.getenv("QATLAS_WIKI_DIR")
+            or os.getenv("WIKI_DIR", "wiki")
+        )
+        self.raw_dir = self._resolve_path(
+            raw_dir
+            or os.getenv("QATLAS_RAW_DIR")
+            or os.getenv("RAW_DIR", "raw")
+        )
         self.wiki_content_writable = wiki_content_writable
 
         if ensure_directories:

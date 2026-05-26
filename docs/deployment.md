@@ -60,17 +60,19 @@ uv run -m atlas.server.service install \
 
 ## 推荐的单机生产目录
 
-只把 Wiki 外置到独立 Git checkout（方便多人 PR / review）；论文资产（`RAW_DIR`）和运行状态（`DATA_DIR`）默认就在仓库内即可，不必单独搬迁路径：
+只把 Wiki 外置到独立 Git checkout（方便多人 PR / review）；论文资产（`QATLAS_RAW_DIR`）和运行状态（`QATLAS_DATA_DIR`）默认就在仓库内即可，不必单独搬迁路径：
 
 ```env
-WIKI_DIR=../QuantumAtlas-Wiki
-# RAW_DIR=raw          # 默认值，通常不必显式设置
-# DATA_DIR=data        # 默认值
+QATLAS_WIKI_DIR=../QuantumAtlas-Wiki
+# QATLAS_RAW_DIR=raw          # 默认值，通常不必显式设置
+# QATLAS_DATA_DIR=data        # 默认值
 NEO4J_URI=bolt://127.0.0.1:7687
-SERVER_HOST=127.0.0.1
-SERVER_PORT=4200
-PUBLIC_BASE_URL=https://atlas.example.com
+QATLAS_SERVER_HOST=127.0.0.1
+QATLAS_SERVER_PORT=4200
+QATLAS_SERVER_URL=https://atlas.example.com
 ```
+
+> 旧名（`WIKI_DIR` / `RAW_DIR` / `DATA_DIR` / `SERVER_HOST` / `SERVER_PORT` / `PUBLIC_BASE_URL` / `SHARE_ACCESS_TOKEN` / `USER_HEADER` / `DEFAULT_SHARE_EXPIRES_IN` / `QUANTUMATLAS_REQUIRE_RELEASE_TAG`）仍作 alias 保留，新部署推荐用 `QATLAS_*` 前缀。`NEO4J_*` / `OPENAI_*` / `ANTHROPIC_*` / `MINERU_*` 等第三方 SDK 标准名保持原样。
 
 建议：
 
@@ -81,7 +83,7 @@ PUBLIC_BASE_URL=https://atlas.example.com
 - 内容生产、LLM 生成、人工编辑和审阅走 `QuantumAtlas-Wiki` 的普通 Git 流程；QuantumAtlas server 不提供 push API，也不通过 Web UI 直接写 Wiki 页面。
 - 若 `/api/wiki/sync/status` 提示 Wiki checkout 不在 `main` 或 `master`，应检查部署分支是否符合预期。
 - Neo4j 仅对后端服务暴露，不直接开放到公网。
-- 公开访问统一走 `PUBLIC_BASE_URL`。
+- 公开访问统一走 `QATLAS_SERVER_URL`。
 
 ## 核心环境变量
 
@@ -89,15 +91,16 @@ PUBLIC_BASE_URL=https://atlas.example.com
 
 | 变量 | 说明 |
 |------|------|
-| `WIKI_DIR` | Wiki 知识库目录，推荐指向独立 Git checkout |
-| `RAW_DIR` | canonical 论文资产根目录 |
-| `DATA_DIR` | 任务、share、ingest 状态目录 |
-| `PUBLIC_BASE_URL` | 对外唯一根地址，client、share 链接和 MinerU URL 都基于它 |
-| `SHARE_ACCESS_TOKEN` | 可选的常驻 share token；只在你需要稳定分享链接时显式设置 |
-| `USER_HEADER` | 可选的上游用户头；留空时 QuantumAtlas 不读取用户头 |
-| `SERVER_HOST` / `SERVER_PORT` | QuantumAtlas 服务监听地址和端口 |
-| `NEO4J_URI` / `NEO4J_USER` / `NEO4J_PASSWORD` | 图数据库连接配置 |
-| `MINERU_*` | 使用 MinerU 解析时的可选配置 |
+| `QATLAS_WIKI_DIR` | Wiki 知识库目录，推荐指向独立 Git checkout（alias: `WIKI_DIR`） |
+| `QATLAS_RAW_DIR` | canonical 论文资产根目录（alias: `RAW_DIR`） |
+| `QATLAS_DATA_DIR` | 任务、share、ingest 状态目录（alias: `DATA_DIR`） |
+| `QATLAS_SERVER_URL` | 对外唯一根地址，client、share 链接和 MinerU URL 都基于它（alias: `PUBLIC_BASE_URL`） |
+| `QATLAS_INSECURE` | client 跳过 TLS 校验的开关；等价于客户端 CLI 加 `--insecure` |
+| `QATLAS_SHARE_ACCESS_TOKEN` | 可选的常驻 share token；只在你需要稳定分享链接时显式设置（alias: `SHARE_ACCESS_TOKEN`） |
+| `QATLAS_USER_HEADER` | 可选的上游用户头；留空时 QuantumAtlas 不读取用户头（alias: `USER_HEADER`） |
+| `QATLAS_SERVER_HOST` / `QATLAS_SERVER_PORT` | QuantumAtlas 服务监听地址和端口（alias: `SERVER_HOST` / `SERVER_PORT`） |
+| `NEO4J_URI` / `NEO4J_USER` / `NEO4J_PASSWORD` | 图数据库连接配置（保留 Neo4j 官方驱动标准名） |
+| `MINERU_*` | 使用 MinerU 解析时的可选配置（保留 MinerU 厂家标准名） |
 
 ## 反向代理与鉴权边界
 
@@ -220,4 +223,4 @@ atlas.example.com {
 - `/api/*` 必须经过鉴权层；不要把 API 放到未执行 `authorize` 的公开 `handle` 里。
 - 对已经由 `authorize with atlas` 验证过的 QuantumAtlas 请求，建议在对应的 `reverse_proxy` 中使用 `header_up -Authorization`，避免把入口 bearer token 继续传给应用。
 - `/share/*` 公开并不意味着管理接口也应公开；`/api/shares` 仍应受保护。
-- 如果启用了 MinerU，并且它需要回拉 PDF，`PUBLIC_BASE_URL` 必须能从 MinerU 所在环境访问到。
+- 如果启用了 MinerU，并且它需要回拉 PDF，`QATLAS_SERVER_URL` 必须能从 MinerU 所在环境访问到。

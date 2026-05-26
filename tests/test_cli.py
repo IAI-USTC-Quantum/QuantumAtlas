@@ -171,6 +171,7 @@ def test_ingest_client_defaults_to_public_base_url(tmp_path, monkeypatch):
         "PUBLIC_BASE_URL=https://atlas.example\nSERVER_PORT=9000\n",
         encoding="utf-8",
     )
+    monkeypatch.delenv("QATLAS_SKIP_DOTENV", raising=False)
     monkeypatch.delenv("QUANTUMATLAS_SKIP_DOTENV", raising=False)
     monkeypatch.setattr("atlas.server.config.get_project_root", lambda: tmp_path)
 

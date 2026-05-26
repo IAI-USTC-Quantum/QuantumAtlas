@@ -22,8 +22,15 @@ def get_project_root() -> Path:
 
 
 def _skip_dotenv() -> bool:
-    """Return whether repository .env loading is disabled for the current process."""
-    return os.getenv("QUANTUMATLAS_SKIP_DOTENV", "").lower() in {"1", "true", "yes"}
+    """Return whether repository .env loading is disabled for the current process.
+
+    Honors ``QATLAS_SKIP_DOTENV`` first; falls back to the legacy
+    ``QUANTUMATLAS_SKIP_DOTENV`` for back-compat.
+    """
+    for key in ("QATLAS_SKIP_DOTENV", "QUANTUMATLAS_SKIP_DOTENV"):
+        if os.getenv(key, "").lower() in {"1", "true", "yes"}:
+            return True
+    return False
 
 
 class ServerConfig(BaseSettings):
@@ -36,38 +43,81 @@ class ServerConfig(BaseSettings):
         populate_by_name=True,
     )
 
-    # Server settings
-    host: str = Field("127.0.0.1", validation_alias="SERVER_HOST")
-    port: int = Field(4200, validation_alias="SERVER_PORT")
-    debug: bool = Field(False, validation_alias="SERVER_DEBUG")
+    # ─── Our own settings: prefer QATLAS_* names; legacy bare names kept as aliases ───
+    # Server settings (server only)
+    host: str = Field(
+        "127.0.0.1",
+        validation_alias=AliasChoices("QATLAS_SERVER_HOST", "SERVER_HOST"),
+    )
+    port: int = Field(
+        4200,
+        validation_alias=AliasChoices("QATLAS_SERVER_PORT", "SERVER_PORT"),
+    )
+    debug: bool = Field(
+        False,
+        validation_alias=AliasChoices("QATLAS_SERVER_DEBUG", "SERVER_DEBUG"),
+    )
 
-    # Neo4j settings
+    # Neo4j settings (use vendor-standard names; no QATLAS_ prefix)
     neo4j_uri: str = Field("bolt://localhost:7687", validation_alias="NEO4J_URI")
     neo4j_user: str = Field("neo4j", validation_alias="NEO4J_USER")
     neo4j_password: str = Field("", validation_alias="NEO4J_PASSWORD")
 
-    # Wiki settings
-    wiki_dir: str = Field("wiki", validation_alias="WIKI_DIR")
-    raw_dir: str = Field("raw", validation_alias="RAW_DIR")
+    # Wiki / raw / data dirs
+    wiki_dir: str = Field(
+        "wiki",
+        validation_alias=AliasChoices("QATLAS_WIKI_DIR", "WIKI_DIR"),
+    )
+    raw_dir: str = Field(
+        "raw",
+        validation_alias=AliasChoices("QATLAS_RAW_DIR", "RAW_DIR"),
+    )
+    data_dir: str = Field(
+        "data",
+        validation_alias=AliasChoices("QATLAS_DATA_DIR", "DATA_DIR"),
+    )
 
-    # Collaboration / raw exposure
-    data_dir: str = Field("data", validation_alias="DATA_DIR")
-    public_base_url: Optional[str] = Field(None, validation_alias="PUBLIC_BASE_URL")
+    # Collaboration / outward-facing URLs
+    # Renamed: PUBLIC_BASE_URL → QATLAS_SERVER_URL (clearer in client context).
+    server_url: Optional[str] = Field(
+        None,
+        validation_alias=AliasChoices("QATLAS_SERVER_URL", "PUBLIC_BASE_URL"),
+    )
+    # Client-only: skip TLS certificate verification (for self-signed servers).
+    insecure: bool = Field(
+        False,
+        validation_alias="QATLAS_INSECURE",
+    )
     share_access_token: Optional[str] = Field(
         None,
-        validation_alias=AliasChoices("SHARE_ACCESS_TOKEN", "PUBLIC_SHARE_TOKEN"),
+        validation_alias=AliasChoices(
+            "QATLAS_SHARE_ACCESS_TOKEN",
+            "SHARE_ACCESS_TOKEN",
+            "PUBLIC_SHARE_TOKEN",
+        ),
     )
     default_share_expires_in: Optional[int] = Field(
-        600, validation_alias="DEFAULT_SHARE_EXPIRES_IN"
+        600,
+        validation_alias=AliasChoices(
+            "QATLAS_DEFAULT_SHARE_EXPIRES_IN", "DEFAULT_SHARE_EXPIRES_IN"
+        ),
     )
-    user_header: Optional[str] = Field(None, validation_alias="USER_HEADER")
+    user_header: Optional[str] = Field(
+        None,
+        validation_alias=AliasChoices("QATLAS_USER_HEADER", "USER_HEADER"),
+    )
     require_release_tag: bool = Field(
         False,
-        validation_alias=AliasChoices("QUANTUMATLAS_REQUIRE_RELEASE_TAG", "REQUIRE_RELEASE_TAG"),
+        validation_alias=AliasChoices(
+            "QATLAS_REQUIRE_RELEASE_TAG",
+            "QUANTUMATLAS_REQUIRE_RELEASE_TAG",
+            "REQUIRE_RELEASE_TAG",
+        ),
     )
-    # LLM settings
+    # LLM settings (vendor-standard names; no QATLAS_ prefix)
     openai_api_key: Optional[str] = Field(None, validation_alias="OPENAI_API_KEY")
     anthropic_api_key: Optional[str] = Field(None, validation_alias="ANTHROPIC_API_KEY")
+    # MinerU PDF parser (third-party vendor name; no QATLAS_ prefix)
     mineru_api_token: Optional[str] = Field(None, validation_alias="MINERU_API_TOKEN")
     mineru_api_base_url: str = Field("https://mineru.net", validation_alias="MINERU_API_BASE_URL")
     mineru_model_version: str = Field("vlm", validation_alias="MINERU_MODEL_VERSION")
@@ -77,6 +127,11 @@ class ServerConfig(BaseSettings):
     mineru_enable_table: bool = Field(True, validation_alias="MINERU_ENABLE_TABLE")
     mineru_poll_interval: float = Field(3.0, validation_alias="MINERU_POLL_INTERVAL")
     mineru_timeout: int = Field(1800, validation_alias="MINERU_TIMEOUT")
+
+    @property
+    def public_base_url(self) -> Optional[str]:
+        """Back-compat shim: server_url used to be called public_base_url."""
+        return self.server_url
 
     @field_validator(
         "debug",
@@ -94,7 +149,7 @@ class ServerConfig(BaseSettings):
         return value
 
     @field_validator(
-        "public_base_url",
+        "server_url",
         "share_access_token",
         mode="before",
     )
@@ -134,9 +189,13 @@ class ServerConfig(BaseSettings):
 
     def get_public_base_url(self) -> Optional[str]:
         """Return the external service base URL when configured."""
-        if self.public_base_url:
-            return self.public_base_url.rstrip("/")
+        if self.server_url:
+            return self.server_url.rstrip("/")
         return None
+
+    def get_server_url(self) -> Optional[str]:
+        """Alias of get_public_base_url(); preferred name in new code."""
+        return self.get_public_base_url()
 
     def get_paper_asset_dir(self, kind: str) -> Path:
         """Resolve one canonical paper asset subdirectory under RAW_DIR."""

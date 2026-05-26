@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from typing import Any
 
@@ -13,11 +14,13 @@ from atlas.server.config import ServerConfig
 
 
 def default_base_url() -> str:
-    """Resolve the server base URL from PUBLIC_BASE_URL or .env host/port."""
+    """Resolve the server base URL from QATLAS_SERVER_URL (legacy PUBLIC_BASE_URL)
+    or fall back to .env host/port (for local dev where the client targets a
+    locally-running server)."""
     config = ServerConfig.from_env()
-    public_base_url = config.get_public_base_url()
-    if public_base_url:
-        return public_base_url
+    server_url = config.get_server_url()
+    if server_url:
+        return server_url
     host = "127.0.0.1" if config.host in {"0.0.0.0", "::"} else config.host
     return f"http://{host}:{config.port}"
 
@@ -27,9 +30,18 @@ def base_url_from_args(args: argparse.Namespace) -> str:
     return args.base_url.rstrip("/") if args.base_url else default_base_url()
 
 
+def _env_insecure_default() -> bool:
+    """QATLAS_INSECURE=1 makes the client default to skipping TLS verification."""
+    return os.getenv("QATLAS_INSECURE", "").strip().lower() in {"1", "true", "yes"}
+
+
 def request_verify(args: argparse.Namespace) -> bool:
-    """Honor --insecure to disable TLS verification, warn once per invocation."""
-    if not getattr(args, "insecure", False):
+    """Honor --insecure (or QATLAS_INSECURE=1) to disable TLS verification.
+
+    Precedence: explicit ``--insecure`` flag > ``QATLAS_INSECURE`` env > default (verify).
+    """
+    insecure = bool(getattr(args, "insecure", False)) or _env_insecure_default()
+    if not insecure:
         return True
     if not getattr(args, "_insecure_warning_shown", False):
         requests.packages.urllib3.disable_warnings(  # type: ignore[attr-defined]
@@ -47,13 +59,13 @@ def print_json(payload: dict[str, Any]) -> None:
 def add_common_http_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--base-url",
-        help="Server base URL; defaults to PUBLIC_BASE_URL, then .env host/port",
+        help="Server base URL; defaults to QATLAS_SERVER_URL (legacy PUBLIC_BASE_URL), then .env host/port",
     )
     parser.add_argument("--request-timeout", type=float, default=120.0)
     parser.add_argument(
         "--insecure",
         action="store_true",
-        help="Skip TLS certificate verification for self-signed HTTPS endpoints",
+        help="Skip TLS certificate verification (also enabled by QATLAS_INSECURE=1)",
     )
 
 

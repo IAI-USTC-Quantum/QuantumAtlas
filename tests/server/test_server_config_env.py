@@ -5,6 +5,20 @@ import pytest
 from atlas.server.config import ServerConfig
 
 ENV_KEYS = [
+    # New QATLAS_* names
+    "QATLAS_SERVER_HOST",
+    "QATLAS_SERVER_PORT",
+    "QATLAS_SERVER_DEBUG",
+    "QATLAS_WIKI_DIR",
+    "QATLAS_RAW_DIR",
+    "QATLAS_DATA_DIR",
+    "QATLAS_SERVER_URL",
+    "QATLAS_INSECURE",
+    "QATLAS_SHARE_ACCESS_TOKEN",
+    "QATLAS_DEFAULT_SHARE_EXPIRES_IN",
+    "QATLAS_USER_HEADER",
+    "QATLAS_REQUIRE_RELEASE_TAG",
+    # Legacy bare aliases
     "SERVER_HOST",
     "SERVER_PORT",
     "SERVER_DEBUG",
@@ -36,6 +50,7 @@ ENV_KEYS = [
 
 
 def _reset_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("QATLAS_SKIP_DOTENV", raising=False)
     monkeypatch.delenv("QUANTUMATLAS_SKIP_DOTENV", raising=False)
     for key in ENV_KEYS:
         monkeypatch.delenv(key, raising=False)

@@ -25,7 +25,7 @@ def client(tmp_path):
         data_dir=str(tmp_path / "data"),
         user_header="X-Forwarded-User",
         share_access_token="test-share-token",
-        public_base_url="http://test.local",
+        server_url="http://test.local",
     )
     with TestClient(create_app(config)) as test_client:
         test_client._raw_root = (tmp_path / "raw").resolve()  # type: ignore[attr-defined]

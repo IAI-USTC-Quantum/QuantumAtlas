@@ -126,7 +126,7 @@ def test_paper_resources_can_use_permanent_share_token_and_public_base_url(tmp_p
             wiki_dir=str(wiki_root),
             raw_dir=str(raw_root),
             data_dir=str(data_root),
-            public_base_url="https://atlas.example",
+            server_url="https://atlas.example",
             share_access_token="permanent-token",
         )
     )
@@ -183,8 +183,10 @@ def test_server_config_reads_raw_dir_from_dotenv(tmp_path, monkeypatch):
     env_path = tmp_path / '.env'
     env_path.write_text('RAW_DIR=/tmp/quantum-atlas-raw\n', encoding='utf-8')
 
+    monkeypatch.delenv('QATLAS_SKIP_DOTENV', raising=False)
     monkeypatch.delenv('QUANTUMATLAS_SKIP_DOTENV', raising=False)
     monkeypatch.delenv('RAW_DIR', raising=False)
+    monkeypatch.delenv('QATLAS_RAW_DIR', raising=False)
     monkeypatch.setattr('atlas.server.config.get_project_root', lambda: tmp_path)
 
     from atlas.server.config import ServerConfig
@@ -197,8 +199,10 @@ def test_server_config_defaults_user_header_to_none(tmp_path, monkeypatch):
     env_path = tmp_path / '.env'
     env_path.write_text('', encoding='utf-8')
 
+    monkeypatch.delenv('QATLAS_SKIP_DOTENV', raising=False)
     monkeypatch.delenv('QUANTUMATLAS_SKIP_DOTENV', raising=False)
     monkeypatch.delenv('USER_HEADER', raising=False)
+    monkeypatch.delenv('QATLAS_USER_HEADER', raising=False)
     monkeypatch.setattr('atlas.server.config.get_project_root', lambda: tmp_path)
 
     from atlas.server.config import ServerConfig
