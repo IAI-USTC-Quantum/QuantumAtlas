@@ -55,7 +55,7 @@ def _parse_targets() -> list[Target]:
     raw = os.environ.get("QATLAS_SERVER_TARGETS", "").strip()
     if raw:
         targets: list[Target] = []
-        for chunk in raw.replace("\n", ",").split(","):
+        for chunk in raw.replace("\r\n", "\n").replace("\n", ",").split(","):
             entry = chunk.strip()
             if not entry:
                 continue
@@ -64,7 +64,12 @@ def _parse_targets() -> list[Target]:
                 insecure = any(f.strip().lower() == "insecure" for f in flags)
             else:
                 url, insecure = entry, False
-            targets.append(Target(url.rstrip("/"), insecure))
+            url = url.strip().rstrip("/")
+            if not url.startswith(("http://", "https://")):
+                raise ValueError(
+                    f"QATLAS_SERVER_TARGETS entry is missing http(s):// scheme: {url!r}"
+                )
+            targets.append(Target(url, insecure))
         return targets
 
     legacy_url = os.environ.get("QATLAS_SERVER_URL") or os.environ.get(
