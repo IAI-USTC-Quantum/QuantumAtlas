@@ -1,11 +1,16 @@
 """
-Manual smoke test for the repository .env-backed ingest path.
+Live ingest smoke test against the repository .env.
 
-Run with:
-    uv run pytest -m user_env tests/integration/test_user_env_ingest_flow.py
+This test loads the project's local ``.env`` (or GitHub-injected env in CI),
+boots the server in-process, and exercises the **fetch + parse** stages
+(the only stages the server runs under the ff-only architecture). It hits
+``export.arxiv.org`` and optionally MinerU, so it is gated on the ``e2e``
++ ``network`` + ``slow`` markers.
+
+Run locally:
+    uv run pytest -m e2e tests/integration/test_user_env_ingest_flow.py
 """
 
-import os
 import socket
 import threading
 import time
@@ -18,14 +23,13 @@ from atlas.server.config import ServerConfig, get_project_root
 from atlas.server.main import create_app
 
 pytestmark = [
-    pytest.mark.integration,
+    pytest.mark.e2e,
+    pytest.mark.network,
     pytest.mark.slow,
-    pytest.mark.user_env,
-    pytest.mark.skipif(bool(os.getenv("CI")), reason="user_env tests are excluded from CI"),
 ]
 
 TEST_ARXIV_ID = "quant-ph/9508027v1"
-REQUIRED_DOTENV_KEYS = ["OPENAI_API_KEY", "NEO4J_PASSWORD"]
+REQUIRED_DOTENV_KEYS: list[str] = []  # fetch+parse only needs MINERU for the mineru path
 CONFIG_ENV_KEYS = [
     "SERVER_HOST",
     "SERVER_PORT",
@@ -33,15 +37,6 @@ CONFIG_ENV_KEYS = [
     "WIKI_DIR",
     "RAW_DIR",
     "DATA_DIR",
-    "OPENAI_API_KEY",
-    "OPENAI_BASE_URL",
-    "OPENAI_ORG_ID",
-    "OPENAI_PROJECT",
-    "ANTHROPIC_API_KEY",
-    "ANTHROPIC_BASE_URL",
-    "NEO4J_URI",
-    "NEO4J_USER",
-    "NEO4J_PASSWORD",
     "PUBLIC_BASE_URL",
     "SHARE_ACCESS_TOKEN",
     "DEFAULT_SHARE_EXPIRES_IN",
@@ -122,8 +117,6 @@ def _load_project_dotenv(
 
     config = ServerConfig.from_env()
     config_values = {
-        "OPENAI_API_KEY": config.openai_api_key,
-        "NEO4J_PASSWORD": config.neo4j_password,
         "MINERU_API_TOKEN": config.mineru_api_token,
     }
 
@@ -164,9 +157,7 @@ def user_env_live_server(tmp_path, monkeypatch):
 
 @pytest.fixture
 def user_env_public_base_server(tmp_path, monkeypatch):
-    env_config = _load_project_dotenv(monkeypatch, required_keys=[])
-    if not os.getenv("MINERU_API_TOKEN"):
-        pytest.skip("repository .env is missing MINERU_API_TOKEN")
+    env_config = _load_project_dotenv(monkeypatch, required_keys=["MINERU_API_TOKEN"])
     if not env_config.get_public_base_url():
         pytest.skip("PUBLIC_BASE_URL must be set for MinerU")
     if not _port_available(env_config.port):
@@ -196,10 +187,10 @@ def user_env_public_base_server(tmp_path, monkeypatch):
         thread.join(timeout=10)
 
 
-def test_user_dotenv_services_complete_full_ingest_flow(user_env_live_server):
+def test_user_dotenv_fetch_and_parse_complete(user_env_live_server):
     response = requests.post(
         f"{user_env_live_server}/api/ingest/paper",
-        json={"arxiv_id": TEST_ARXIV_ID, "extract": True, "sync_neo4j": True},
+        json={"arxiv_id": TEST_ARXIV_ID, "parser": "pymupdf"},
         timeout=30,
     )
     response.raise_for_status()
@@ -210,13 +201,12 @@ def test_user_dotenv_services_complete_full_ingest_flow(user_env_live_server):
     assert task["message"] == "ingest succeeded"
     assert task["steps"]["fetch"]["status"] == "succeeded"
     assert task["steps"]["parse"]["status"] == "succeeded"
-    assert task["steps"]["extract"]["status"] == "succeeded"
-    assert task["steps"]["wiki"]["status"] == "skipped"
-    assert task["steps"]["wiki"]["message"] == "wiki creation skipped on server"
-    assert task["steps"]["neo4j"]["status"] == "skipped"
     assert task["steps"]["fetch"]["progress"]["percent"] == 1.0
     assert task["steps"]["parse"]["progress"]["percent"] == 1.0
-    assert task["steps"]["extract"]["result"]["algorithm_id"]
+    # ff-only: server must NOT produce extract/wiki/neo4j steps
+    assert "extract" not in task["steps"]
+    assert "wiki" not in task["steps"]
+    assert "neo4j" not in task["steps"]
 
 
 def test_user_dotenv_can_resume_existing_pdf_with_mineru(user_env_public_base_server):
@@ -224,6 +214,7 @@ def test_user_dotenv_can_resume_existing_pdf_with_mineru(user_env_public_base_se
         f"{user_env_public_base_server}/api/ingest/paper",
         json={
             "arxiv_id": TEST_ARXIV_ID,
+            "parser": "pymupdf",
             "stop_after": "fetch",
         },
         timeout=30,
@@ -243,8 +234,6 @@ def test_user_dotenv_can_resume_existing_pdf_with_mineru(user_env_public_base_se
             "arxiv_id": TEST_ARXIV_ID,
             "fetch": False,
             "parser": "mineru",
-            "extract": False,
-            "sync_neo4j": False,
             "mineru_no_cache": True,
         },
         timeout=30,
@@ -261,4 +250,4 @@ def test_user_dotenv_can_resume_existing_pdf_with_mineru(user_env_public_base_se
     assert mineru_task["steps"]["parse"]["status"] == "succeeded"
     assert mineru_task["steps"]["parse"]["progress"]["parser"] == "mineru"
     assert mineru_task["steps"]["parse"]["progress"]["state"] == "done"
-    assert mineru_task["steps"]["wiki"]["status"] == "succeeded"
+

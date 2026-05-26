@@ -176,7 +176,7 @@ class TestArxivFetcher:
         assert pdf_path.name == "quant-ph__9508027.pdf"
         assert returned_metadata["arxiv_id"] == "quant-ph/9508027v1"
 
-    @pytest.mark.integration
+    @pytest.mark.network
     def test_fetch_metadata_shors_paper(self):
         """Test fetching metadata for Shor's algorithm paper."""
         fetcher = ArxivFetcher()
@@ -195,7 +195,7 @@ class TestArxivFetcher:
         assert len(metadata["abstract"]) > 0
         assert "quant-ph" in metadata["categories"]
     
-    @pytest.mark.integration
+    @pytest.mark.network
     def test_fetch_metadata_old_style_paper(self):
         """Test fetching metadata for an old-style arXiv paper id."""
         fetcher = ArxivFetcher()

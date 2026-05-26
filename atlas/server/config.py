@@ -114,9 +114,6 @@ class ServerConfig(BaseSettings):
             "REQUIRE_RELEASE_TAG",
         ),
     )
-    # LLM settings (vendor-standard names; no QATLAS_ prefix)
-    openai_api_key: Optional[str] = Field(None, validation_alias="OPENAI_API_KEY")
-    anthropic_api_key: Optional[str] = Field(None, validation_alias="ANTHROPIC_API_KEY")
     # MinerU PDF parser (third-party vendor name; no QATLAS_ prefix)
     mineru_api_token: Optional[str] = Field(None, validation_alias="MINERU_API_TOKEN")
     mineru_api_base_url: str = Field("https://mineru.net", validation_alias="MINERU_API_BASE_URL")

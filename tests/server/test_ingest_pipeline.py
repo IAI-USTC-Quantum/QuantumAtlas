@@ -1,760 +1,375 @@
-import json
-from pathlib import Path
+"""Narrow unit tests for ingest API helpers and route validation.
+
+These tests intentionally do NOT exercise the full ingest pipeline (no
+fetch → parse chain) and never touch external services such as
+``export.arxiv.org`` or MinerU. End-to-end pipeline coverage lives under
+``tests/integration/``.
+
+Scope:
+    * Pure helper functions in ``atlas.server.routers.api`` (error
+      formatting, retry classification, continue-stage logic).
+    * FastAPI route behaviour that completes synchronously:
+        - request validation (400)
+        - read-only endpoints (200/404)
+        - 202 task enqueue path with ``execute_ingest`` stubbed out so
+          the background worker performs no real work.
+"""
+
+from __future__ import annotations
 
 import requests
 from fastapi.testclient import TestClient
 
-from atlas.paper_assets import safe_paper_key
 from atlas.server.config import ServerConfig
 from atlas.server.main import create_app
+from atlas.server.routers import api as api_module
+from atlas.server.routers.api import (
+    STAGE_ORDER,
+    _friendly_fetch_error,
+    _friendly_parse_error,
+    _is_retryable_fetch_error,
+    _remaining_stage_flags,
+    _stage_done_for_continue,
+)
+from atlas.server.tasks import IngestTask, StepStatus
 
 
-def _seed_paper_assets(
-    raw_dir: Path,
-    arxiv_id: str = "9508027",
-    *,
-    markdown: bool = True,
-) -> dict:
-    key = safe_paper_key(arxiv_id)
-    metadata = {
-        "arxiv_id": arxiv_id,
-        "title": "A Fast Quantum Mechanical Algorithm for Database Search",
-        "authors": ["Lov K. Grover"],
-        "abstract": "A test abstract.",
-        "published": "1996-11-19T00:00:00Z",
-        "categories": ["quant-ph"],
-    }
-    (raw_dir / "pdf").mkdir(parents=True, exist_ok=True)
-    (raw_dir / "json").mkdir(parents=True, exist_ok=True)
-    (raw_dir / "pdf" / f"{key}.pdf").write_bytes(b"%PDF-1.4\n% test pdf\n")
-    (raw_dir / "json" / f"{key}.json").write_text(
-        json.dumps(metadata),
-        encoding="utf-8",
+# === Pure helper tests ============================================
+
+
+class TestFriendlyFetchError:
+    def test_404_message_is_user_friendly(self):
+        exc = requests.HTTPError("404 Client Error: Not Found")
+        assert _friendly_fetch_error(exc, "9508027") == "Paper not found on arXiv: 9508027"
+
+    def test_timeout_exception_is_recognised(self):
+        assert _friendly_fetch_error(
+            requests.Timeout("read timed out"), "9508027"
+        ) == "Failed to download PDF: connection or read timeout"
+
+    def test_timeout_keyword_in_message_is_recognised(self):
+        exc = RuntimeError("connection timeout while contacting arxiv")
+        assert "timeout" in _friendly_fetch_error(exc, "9508027").lower()
+
+    def test_unknown_error_falls_back_to_generic_message(self):
+        msg = _friendly_fetch_error(RuntimeError("boom"), "9508027")
+        assert msg.startswith("Failed to fetch paper:")
+        assert "boom" in msg
+
+
+class TestFriendlyParseError:
+    def test_mineru_error_is_tagged(self):
+        msg = _friendly_parse_error(RuntimeError("MinerU upstream returned 500"))
+        assert msg.startswith("MinerU parsing failed:")
+
+    def test_pymupdf_error_suggests_install(self):
+        msg = _friendly_parse_error(ImportError("No module named 'pymupdf'"))
+        assert msg == "PDF parser unavailable: pymupdf may not be installed"
+
+    def test_encrypted_pdf_is_explained(self):
+        msg = _friendly_parse_error(RuntimeError("file appears encrypted"))
+        assert "corrupted or encrypted" in msg
+
+    def test_public_base_url_error_is_passed_through(self):
+        msg = _friendly_parse_error(ValueError("public_base_url is required for sharing"))
+        assert msg == "public_base_url is required for sharing"
+
+
+class TestIsRetryableFetchError:
+    def test_timeout_is_retryable(self):
+        assert _is_retryable_fetch_error(requests.Timeout("slow")) is True
+
+    def test_connection_error_is_retryable(self):
+        assert _is_retryable_fetch_error(requests.ConnectionError("reset")) is True
+
+    def test_429_and_5xx_http_errors_are_retryable(self):
+        for status in (408, 429, 500, 502, 503, 504):
+            response = requests.Response()
+            response.status_code = status
+            exc = requests.HTTPError(f"{status} Server Error", response=response)
+            assert _is_retryable_fetch_error(exc) is True, status
+
+    def test_4xx_other_than_408_429_is_not_retryable(self):
+        for status in (400, 401, 403, 404):
+            response = requests.Response()
+            response.status_code = status
+            exc = requests.HTTPError(f"{status} Client Error", response=response)
+            assert _is_retryable_fetch_error(exc) is False, status
+
+    def test_unrelated_exception_is_not_retryable(self):
+        assert _is_retryable_fetch_error(ValueError("nope")) is False
+
+
+# === IngestTask continuation logic ================================
+
+
+def _task_with_steps(**step_kwargs: StepStatus) -> IngestTask:
+    """Build an in-memory IngestTask with the given step statuses."""
+    steps = {stage: StepStatus() for stage in STAGE_ORDER}
+    steps.update(step_kwargs)
+    return IngestTask(
+        task_id="t1",
+        arxiv_id="9508027",
+        status="queued",
+        submitted_at="2026-01-01T00:00:00Z",
+        steps=steps,
     )
-    if markdown:
-        (raw_dir / "markdown").mkdir(parents=True, exist_ok=True)
-        (raw_dir / "markdown" / f"{key}.md").write_text(
-            "# A Fast Quantum Mechanical Algorithm for Database Search\n\n"
-            "## Abstract\n\nA test abstract.\n",
-            encoding="utf-8",
+
+
+class TestStageDoneForContinue:
+    def test_succeeded_step_is_done(self):
+        task = _task_with_steps(parse=StepStatus(status="succeeded"))
+        assert _stage_done_for_continue(task, "parse") is True
+
+    def test_pending_step_is_not_done(self):
+        task = _task_with_steps()
+        assert _stage_done_for_continue(task, "parse") is False
+
+    def test_failed_step_is_not_done(self):
+        task = _task_with_steps(parse=StepStatus(status="failed"))
+        assert _stage_done_for_continue(task, "parse") is False
+
+    def test_skipped_fetch_with_pdf_path_counts_as_done(self):
+        task = _task_with_steps(
+            fetch=StepStatus(status="skipped", result={"pdf_path": "/tmp/x.pdf"}),
         )
-    return metadata
+        assert _stage_done_for_continue(task, "fetch") is True
+
+    def test_skipped_fetch_without_pdf_path_is_not_done(self):
+        task = _task_with_steps(fetch=StepStatus(status="skipped", result={}))
+        assert _stage_done_for_continue(task, "fetch") is False
+
+    def test_skipped_non_fetch_stage_is_not_done(self):
+        task = _task_with_steps(parse=StepStatus(status="skipped"))
+        assert _stage_done_for_continue(task, "parse") is False
 
 
-class _FakePDFResponse:
-    status_code = 200
-    headers = {"content-length": "13"}
+class TestRemainingStageFlags:
+    def test_all_stages_when_nothing_finished(self):
+        task = _task_with_steps()
+        flags = _remaining_stage_flags(task)
+        assert flags == {stage: True for stage in STAGE_ORDER}
 
-    def raise_for_status(self):
-        return None
-
-    def iter_content(self, chunk_size):
-        yield b"%PDF-1.4\n"
-        yield b"test\n"
-
-
-def _arxiv_metadata(arxiv_id: str = "9508027") -> dict:
-    return {
-        "arxiv_id": arxiv_id,
-        "title": "A Fast Quantum Mechanical Algorithm for Database Search",
-        "authors": ["Lov K. Grover"],
-        "abstract": "A test abstract.",
-        "published": "1996-11-19T00:00:00Z",
-        "categories": ["quant-ph"],
-        "pdf_url": f"https://arxiv.org/pdf/{arxiv_id}.pdf",
-    }
-
-
-def test_ingest_can_resume_from_existing_assets_without_server_wiki_write(tmp_path):
-    raw_dir = tmp_path / "raw"
-    _seed_paper_assets(raw_dir, markdown=True)
-
-    config = ServerConfig(
-        wiki_dir=str(tmp_path / "wiki"),
-        raw_dir=str(raw_dir),
-        data_dir=str(tmp_path / "data"),
-    )
-    app = create_app(config)
-
-    with TestClient(app) as client:
-        response = client.post(
-            "/api/ingest/paper",
-            json={
-                "arxiv_id": "9508027",
-                "fetch": False,
-                "parse": True,
-                "extract": False,
-                "create_wiki": True,
-                "sync_neo4j": False,
-            },
+    def test_resumes_from_first_unfinished_stage(self):
+        task = _task_with_steps(
+            fetch=StepStatus(status="succeeded"),
         )
-        assert response.status_code == 202
+        flags = _remaining_stage_flags(task)
+        assert flags == {"fetch": False, "parse": True}
 
-        task_response = client.get(f"/api/ingest/{response.json()['task_id']}")
-        task = task_response.json()
-
-    assert task["status"] == "succeeded"
-    assert task["steps"]["fetch"]["status"] == "skipped"
-    assert task["steps"]["fetch"]["result"]["reused"] is True
-    assert task["steps"]["parse"]["status"] == "succeeded"
-    assert task["steps"]["parse"]["message"] == "markdown ready"
-    assert task["steps"]["wiki"]["status"] == "skipped"
-    assert task["steps"]["wiki"]["message"] == "wiki creation skipped on server"
-    assert not (tmp_path / "wiki").exists()
-
-
-def test_ingest_stages_selects_exact_steps_and_reuses_assets(tmp_path):
-    raw_dir = tmp_path / "raw"
-    _seed_paper_assets(raw_dir, markdown=True)
-
-    config = ServerConfig(
-        wiki_dir=str(tmp_path / "wiki"),
-        raw_dir=str(raw_dir),
-        data_dir=str(tmp_path / "data"),
-    )
-    app = create_app(config)
-
-    with TestClient(app) as client:
-        response = client.post(
-            "/api/ingest/paper",
-            json={
-                "arxiv_id": "9508027",
-                "stages": ["wiki"],
-            },
+    def test_failure_in_parse_resumes_from_parse(self):
+        task = _task_with_steps(
+            fetch=StepStatus(status="succeeded"),
+            parse=StepStatus(status="failed"),
         )
-        assert response.status_code == 202
-        task = client.get(f"/api/ingest/{response.json()['task_id']}").json()
-
-    assert task["status"] == "succeeded"
-    assert task["options"]["requested_stages"] == ["wiki"]
-    assert task["steps"]["fetch"]["status"] == "skipped"
-    assert task["steps"]["fetch"]["result"]["reused"] is True
-    assert task["steps"]["parse"]["status"] == "skipped"
-    assert task["steps"]["parse"]["result"]["reused"] is True
-    assert task["steps"]["extract"]["status"] == "skipped"
-    assert task["steps"]["wiki"]["status"] == "skipped"
-    assert task["steps"]["wiki"]["message"] == "wiki creation skipped on server"
-    assert task["steps"]["neo4j"]["status"] == "skipped"
+        flags = _remaining_stage_flags(task)
+        assert flags == {"fetch": False, "parse": True}
 
 
-def test_ingest_stop_after_parse_exposes_stage_status(tmp_path):
-    raw_dir = tmp_path / "raw"
-    _seed_paper_assets(raw_dir, markdown=True)
-
-    config = ServerConfig(
-        wiki_dir=str(tmp_path / "wiki"),
-        raw_dir=str(raw_dir),
-        data_dir=str(tmp_path / "data"),
-    )
-    app = create_app(config)
-
-    with TestClient(app) as client:
-        stages_response = client.get("/api/ingest/stages")
-        assert stages_response.status_code == 200
-        assert stages_response.json()["order"] == ["fetch", "parse", "extract", "wiki", "neo4j"]
-
-        response = client.post(
-            "/api/ingest/paper",
-            json={
-                "arxiv_id": "9508027",
-                "fetch": False,
-                "stop_after": "parse",
-            },
-        )
-        assert response.status_code == 202
-        task = client.get(f"/api/ingest/{response.json()['task_id']}").json()
-
-    assert task["status"] == "succeeded"
-    assert task["options"]["stop_after"] == "parse"
-    assert task["steps"]["fetch"]["status"] == "succeeded"
-    assert task["steps"]["fetch"]["result"]["reused"] is True
-    assert task["steps"]["parse"]["status"] == "succeeded"
-    assert task["steps"]["extract"]["status"] == "skipped"
-    assert task["steps"]["wiki"]["status"] == "skipped"
-    assert task["steps"]["neo4j"]["status"] == "skipped"
+# === FastAPI route tests ==========================================
 
 
-def test_ingest_continue_runs_regular_remaining_stages_from_local_assets(tmp_path):
-    raw_dir = tmp_path / "raw"
-    _seed_paper_assets(raw_dir, markdown=True)
-
-    config = ServerConfig(
-        wiki_dir=str(tmp_path / "wiki"),
-        raw_dir=str(raw_dir),
-        data_dir=str(tmp_path / "data"),
-    )
-    app = create_app(config)
-
-    with TestClient(app) as client:
-        first = client.post(
-            "/api/ingest/paper",
-            json={
-                "arxiv_id": "9508027",
-                "fetch": False,
-                "stop_after": "fetch",
-            },
-        )
-        assert first.status_code == 202
-        first_task_id = first.json()["task_id"]
-        first_task = client.get(f"/api/ingest/{first_task_id}").json()
-        assert first_task["steps"]["fetch"]["status"] == "succeeded"
-        assert first_task["steps"]["parse"]["status"] == "skipped"
-
-        response = client.post(
-            f"/api/ingest/{first_task_id}/continue",
-            json={
-                "stages": ["parse", "wiki"],
-            },
-        )
-        assert response.status_code == 202
-        task = client.get(f"/api/ingest/{response.json()['task_id']}").json()
-
-    assert task["status"] == "succeeded"
-    assert task["options"]["source_task_id"] == first_task_id
-    assert task["options"]["requested_stages"] == ["parse", "wiki"]
-    assert task["steps"]["fetch"]["status"] == "skipped"
-    assert task["steps"]["fetch"]["result"]["reused"] is True
-    assert task["steps"]["parse"]["status"] == "succeeded"
-    assert task["steps"]["extract"]["status"] == "skipped"
-    assert task["steps"]["wiki"]["status"] == "skipped"
-    assert task["steps"]["wiki"]["message"] == "wiki creation skipped on server"
-
-
-def test_ingest_fetch_retries_three_times_then_stops(tmp_path, monkeypatch):
-    calls = {"metadata": 0}
-    monkeypatch.setattr("atlas.server.routers.api.RETRY_DELAY_SECONDS", 0)
-
-    def timeout_metadata(self, arxiv_id):
-        calls["metadata"] += 1
-        raise requests.Timeout("temporary network timeout")
-
-    monkeypatch.setattr(
-        "atlas.parser.arxiv_fetcher.ArxivFetcher.fetch_metadata",
-        timeout_metadata,
-    )
+def _make_client(tmp_path, monkeypatch, **extra_config):
+    """Create a TestClient with execute_* stubs so no real work happens."""
+    monkeypatch.setattr(api_module, "execute_ingest", lambda *a, **kw: None)
 
     config = ServerConfig(
         wiki_dir=str(tmp_path / "wiki"),
         raw_dir=str(tmp_path / "raw"),
         data_dir=str(tmp_path / "data"),
+        **extra_config,
     )
     app = create_app(config)
-
-    with TestClient(app) as client:
-        response = client.post(
-            "/api/ingest/paper",
-            json={
-                "arxiv_id": "9508027",
-                "stop_after": "fetch",
-            },
-        )
-        assert response.status_code == 202
-        task = client.get(f"/api/ingest/{response.json()['task_id']}").json()
-
-    assert calls["metadata"] == 3
-    assert task["status"] == "failed"
-    assert task["steps"]["fetch"]["status"] == "failed"
-    assert task["steps"]["fetch"]["progress"]["phase"] == "metadata"
-    assert task["steps"]["fetch"]["progress"]["attempt"] == 3
-    assert task["steps"]["fetch"]["progress"]["max_attempts"] == 3
-    assert task["steps"]["fetch"]["progress"]["will_retry"] is False
-    assert "timeout" in task["steps"]["fetch"]["error"].lower()
-    assert task["steps"]["parse"]["status"] == "skipped"
+    return TestClient(app), app
 
 
-def test_ingest_metadata_retry_can_recover_and_finish_fetch(tmp_path, monkeypatch):
-    calls = {"metadata": 0, "download": 0}
-    monkeypatch.setattr("atlas.server.routers.api.RETRY_DELAY_SECONDS", 0)
-
-    def flaky_metadata(self, arxiv_id):
-        calls["metadata"] += 1
-        if calls["metadata"] < 3:
-            raise requests.Timeout("temporary metadata timeout")
-        return _arxiv_metadata(arxiv_id)
-
-    def download_success(self, *args, **kwargs):
-        calls["download"] += 1
-        return _FakePDFResponse()
-
-    monkeypatch.setattr(
-        "atlas.parser.arxiv_fetcher.ArxivFetcher.fetch_metadata",
-        flaky_metadata,
-    )
-    monkeypatch.setattr("requests.Session.get", download_success)
-
-    config = ServerConfig(
-        wiki_dir=str(tmp_path / "wiki"),
-        raw_dir=str(tmp_path / "raw"),
-        data_dir=str(tmp_path / "data"),
-    )
-    app = create_app(config)
-
-    with TestClient(app) as client:
-        response = client.post(
-            "/api/ingest/paper",
-            json={
-                "arxiv_id": "9508027",
-                "stop_after": "fetch",
-            },
-        )
-        assert response.status_code == 202
-        task = client.get(f"/api/ingest/{response.json()['task_id']}").json()
-
-    assert calls == {"metadata": 3, "download": 1}
-    assert task["status"] == "succeeded"
-    assert task["steps"]["fetch"]["status"] == "succeeded"
-    assert task["steps"]["fetch"]["result"]["reused"] is False
-    assert task["steps"]["fetch"]["progress"]["phase"] == "complete"
-    assert task["steps"]["fetch"]["progress"]["attempt"] == 1
-    assert task["steps"]["fetch"]["progress"]["max_attempts"] == 3
-    assert (tmp_path / "raw" / "pdf" / "9508027.pdf").read_bytes().startswith(b"%PDF")
+class TestIngestStagesEndpoint:
+    def test_returns_canonical_stage_order(self, tmp_path, monkeypatch):
+        client, _ = _make_client(tmp_path, monkeypatch)
+        with client:
+            response = client.get("/api/ingest/stages")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["order"] == ["fetch", "parse"]
+        assert [s["name"] for s in body["stages"]] == ["fetch", "parse"]
+        assert "stop_after" in body["controls"]
+        assert "stages" in body["controls"]
 
 
-def test_ingest_pdf_download_retry_can_recover(tmp_path, monkeypatch):
-    calls = {"metadata": 0, "download": 0}
-    monkeypatch.setattr("atlas.server.routers.api.RETRY_DELAY_SECONDS", 0)
-
-    def metadata_success(self, arxiv_id):
-        calls["metadata"] += 1
-        return _arxiv_metadata(arxiv_id)
-
-    def flaky_download(self, *args, **kwargs):
-        calls["download"] += 1
-        if calls["download"] < 3:
-            raise requests.Timeout("temporary pdf timeout")
-        return _FakePDFResponse()
-
-    monkeypatch.setattr(
-        "atlas.parser.arxiv_fetcher.ArxivFetcher.fetch_metadata",
-        metadata_success,
-    )
-    monkeypatch.setattr("requests.Session.get", flaky_download)
-
-    config = ServerConfig(
-        wiki_dir=str(tmp_path / "wiki"),
-        raw_dir=str(tmp_path / "raw"),
-        data_dir=str(tmp_path / "data"),
-    )
-    app = create_app(config)
-
-    with TestClient(app) as client:
-        response = client.post(
-            "/api/ingest/paper",
-            json={
-                "arxiv_id": "9508027",
-                "stop_after": "fetch",
-            },
-        )
-        assert response.status_code == 202
-        task = client.get(f"/api/ingest/{response.json()['task_id']}").json()
-
-    assert calls == {"metadata": 1, "download": 3}
-    assert task["status"] == "succeeded"
-    assert task["steps"]["fetch"]["status"] == "succeeded"
-    assert task["steps"]["fetch"]["progress"]["phase"] == "complete"
-    assert task["steps"]["fetch"]["progress"]["attempt"] == 3
-    assert task["steps"]["fetch"]["progress"]["max_attempts"] == 3
-    assert (tmp_path / "raw" / "pdf" / "9508027.pdf").is_file()
-
-
-def test_ingest_can_parse_existing_pdf_with_mineru_share_url(tmp_path, monkeypatch):
-    raw_dir = tmp_path / "raw"
-    _seed_paper_assets(raw_dir, markdown=False)
-    captured = {}
-
-    class FakeMinerUClient:
-        def __init__(self, token, *, base_url="https://mineru.net"):
-            captured["token"] = token
-            captured["base_url"] = base_url
-
-        def submit_url_task(self, **kwargs):
-            captured["submit"] = kwargs
-            return "mineru-task-1"
-
-        def get_task(self, task_id):
-            captured["task_id"] = task_id
-            return {
-                "state": "done",
-                "full_zip_url": "https://cdn.example/full.zip",
-                "extract_progress": {"extracted_pages": 2, "total_pages": 2},
-            }
-
-        def download_markdown_from_zip(self, full_zip_url, output_path):
-            captured["full_zip_url"] = full_zip_url
-            Path(output_path).write_text(
-                "# MinerU Markdown\n\n## Abstract\n\nParsed by MinerU.\n",
-                encoding="utf-8",
+class TestIngestPaperValidation:
+    def test_invalid_arxiv_id_returns_400(self, tmp_path, monkeypatch):
+        client, _ = _make_client(tmp_path, monkeypatch)
+        with client:
+            response = client.post(
+                "/api/ingest/paper",
+                json={"arxiv_id": "not-an-arxiv-id!!", "parser": "pymupdf"},
             )
+        assert response.status_code == 400
+        assert "invalid arxiv_id" in response.json()["detail"].lower()
 
-    monkeypatch.setattr("atlas.server.routers.api.MinerUClient", FakeMinerUClient)
+    def test_all_stages_disabled_returns_400(self, tmp_path, monkeypatch):
+        client, _ = _make_client(tmp_path, monkeypatch)
+        with client:
+            response = client.post(
+                "/api/ingest/paper",
+                json={
+                    "arxiv_id": "9508027",
+                    "parser": "pymupdf",
+                    "fetch": False,
+                    "parse": False,
+                },
+            )
+        assert response.status_code == 400
+        assert "no ingest stages selected" in response.json()["detail"]
 
-    config = ServerConfig(
-        wiki_dir=str(tmp_path / "wiki"),
-        raw_dir=str(raw_dir),
-        data_dir=str(tmp_path / "data"),
-        public_base_url="https://public.example",
-        share_access_token="super-long-share-token",
-        mineru_api_token="mineru-token",
-        mineru_api_base_url="https://mineru.example",
-        mineru_poll_interval=1,
-    )
-    app = create_app(config)
-
-    with TestClient(app) as client:
-        share_response = client.get(
-            "/share/super-long-share-token/papers/pdf/9508027.pdf"
-        )
-        assert share_response.status_code == 200
-        assert client.get("/share/wrong-token/papers/pdf/9508027.pdf").status_code == 404
-
-        response = client.post(
-            "/api/ingest/paper",
-            json={
-                "arxiv_id": "9508027",
-                "fetch": False,
-                "parser": "mineru",
-                "extract": False,
-                "sync_neo4j": False,
-            },
-        )
-        assert response.status_code == 202
-        task = client.get(f"/api/ingest/{response.json()['task_id']}").json()
-
-    assert captured["token"] == "mineru-token"
-    assert captured["base_url"] == "https://mineru.example"
-    assert (
-        captured["submit"]["url"]
-        == "https://public.example/share/super-long-share-token/papers/pdf/9508027.pdf"
-    )
-    assert captured["submit"]["is_ocr"] is False
-    assert captured["submit"]["model_version"] == "vlm"
-    assert task["status"] == "succeeded"
-    assert task["steps"]["parse"]["status"] == "succeeded"
-    assert task["steps"]["parse"]["progress"]["parser"] == "mineru"
-    assert task["steps"]["parse"]["progress"]["state"] == "done"
-    assert task["steps"]["wiki"]["status"] == "skipped"
-    assert task["steps"]["wiki"]["message"] == "wiki creation skipped on server"
-    assert (
-        (raw_dir / "markdown" / "9508027.md")
-        .read_text(encoding="utf-8")
-        .startswith("# MinerU Markdown")
-    )
-
-
-def test_ingest_mineru_can_enable_ocr_from_config(tmp_path, monkeypatch):
-    raw_dir = tmp_path / "raw"
-    _seed_paper_assets(raw_dir, markdown=False)
-    captured = {}
-
-    class FakeMinerUClient:
-        def __init__(self, token, *, base_url="https://mineru.net"):
-            pass
-
-        def submit_url_task(self, **kwargs):
-            captured["submit"] = kwargs
-            return "mineru-task-ocr"
-
-        def get_task(self, task_id):
-            return {
-                "state": "done",
-                "full_zip_url": "https://cdn.example/full.zip",
-                "extract_progress": {"extracted_pages": 1, "total_pages": 1},
-            }
-
-        def download_markdown_from_zip(self, full_zip_url, output_path):
-            Path(output_path).write_text("# OCR Markdown\n", encoding="utf-8")
-
-    monkeypatch.setattr("atlas.server.routers.api.MinerUClient", FakeMinerUClient)
-
-    config = ServerConfig(
-        wiki_dir=str(tmp_path / "wiki"),
-        raw_dir=str(raw_dir),
-        data_dir=str(tmp_path / "data"),
-        public_base_url="https://public.example",
-        mineru_api_token="mineru-token",
-        mineru_is_ocr=True,
-    )
-    app = create_app(config)
-
-    with TestClient(app) as client:
-        response = client.post(
-            "/api/ingest/paper",
-            json={
-                "arxiv_id": "9508027",
-                "fetch": False,
-                "parser": "mineru",
-                "extract": False,
-                "sync_neo4j": False,
-            },
-        )
-        assert response.status_code == 202
-
-    assert captured["submit"]["is_ocr"] is True
-
-
-def test_ingest_mineru_retries_once_then_stops_on_api_failure(tmp_path, monkeypatch):
-    raw_dir = tmp_path / "raw"
-    _seed_paper_assets(raw_dir, markdown=False)
-    captured = {"submits": 0}
-    monkeypatch.setattr("atlas.server.routers.api.RETRY_DELAY_SECONDS", 0)
-
-    class FailingMinerUClient:
-        def __init__(self, token, *, base_url="https://mineru.net"):
-            pass
-
-        def submit_url_task(self, **kwargs):
-            captured["submits"] += 1
-            return f"mineru-failed-{captured['submits']}"
-
-        def get_task(self, task_id):
-            return {
-                "state": "failed",
-                "err_msg": "upstream parse failed",
-                "extract_progress": {"extracted_pages": 0, "total_pages": 2},
-            }
-
-    monkeypatch.setattr("atlas.server.routers.api.MinerUClient", FailingMinerUClient)
-
-    config = ServerConfig(
-        wiki_dir=str(tmp_path / "wiki"),
-        raw_dir=str(raw_dir),
-        data_dir=str(tmp_path / "data"),
-        public_base_url="https://public.example",
-        mineru_api_token="mineru-token",
-        mineru_poll_interval=1,
-    )
-    app = create_app(config)
-
-    with TestClient(app) as client:
-        response = client.post(
-            "/api/ingest/paper",
-            json={
-                "arxiv_id": "9508027",
-                "fetch": False,
-                "parser": "mineru",
-                "extract": False,
-                "sync_neo4j": False,
-            },
-        )
-        assert response.status_code == 202
-        task = client.get(f"/api/ingest/{response.json()['task_id']}").json()
-
-    assert captured["submits"] == 2
-    assert task["status"] == "failed"
-    assert task["steps"]["parse"]["status"] == "failed"
-    assert task["steps"]["parse"]["progress"]["attempt"] == 2
-    assert task["steps"]["parse"]["progress"]["max_attempts"] == 2
-    assert task["steps"]["parse"]["progress"]["will_retry"] is False
-    assert "upstream parse failed" in task["steps"]["parse"]["error"]
-    assert task["steps"]["wiki"]["status"] == "skipped"
-    assert task["steps"]["wiki"]["error"] == "skipped because an earlier ingest stage failed"
-
-
-def test_ingest_mineru_retry_can_recover(tmp_path, monkeypatch):
-    raw_dir = tmp_path / "raw"
-    _seed_paper_assets(raw_dir, markdown=False)
-    captured = {"submits": 0}
-    monkeypatch.setattr("atlas.server.routers.api.RETRY_DELAY_SECONDS", 0)
-
-    class FlakyMinerUClient:
-        def __init__(self, token, *, base_url="https://mineru.net"):
-            pass
-
-        def submit_url_task(self, **kwargs):
-            captured["submits"] += 1
-            return f"mineru-task-{captured['submits']}"
-
-        def get_task(self, task_id):
-            if task_id == "mineru-task-1":
-                return {
-                    "state": "failed",
-                    "err_msg": "temporary MinerU parse failure",
-                    "extract_progress": {"extracted_pages": 0, "total_pages": 2},
-                }
-            return {
-                "state": "done",
-                "full_zip_url": "https://cdn.example/full.zip",
-                "extract_progress": {"extracted_pages": 2, "total_pages": 2},
-            }
-
-        def download_markdown_from_zip(self, full_zip_url, output_path):
-            Path(output_path).write_text("# MinerU recovered\n", encoding="utf-8")
-
-    monkeypatch.setattr("atlas.server.routers.api.MinerUClient", FlakyMinerUClient)
-
-    config = ServerConfig(
-        wiki_dir=str(tmp_path / "wiki"),
-        raw_dir=str(raw_dir),
-        data_dir=str(tmp_path / "data"),
-        public_base_url="https://public.example",
-        mineru_api_token="mineru-token",
-        mineru_poll_interval=1,
-    )
-    app = create_app(config)
-
-    with TestClient(app) as client:
-        response = client.post(
-            "/api/ingest/paper",
-            json={
-                "arxiv_id": "9508027",
-                "fetch": False,
-                "parser": "mineru",
-                "extract": False,
-                "sync_neo4j": False,
-            },
-        )
-        assert response.status_code == 202
-        task = client.get(f"/api/ingest/{response.json()['task_id']}").json()
-
-    assert captured["submits"] == 2
-    assert task["status"] == "succeeded"
-    assert task["steps"]["parse"]["status"] == "succeeded"
-    assert task["steps"]["parse"]["progress"]["attempt"] == 2
-    assert task["steps"]["parse"]["progress"]["max_attempts"] == 2
-    assert task["steps"]["parse"]["progress"]["state"] == "done"
-    assert (raw_dir / "markdown" / "9508027.md").read_text(encoding="utf-8").startswith(
-        "# MinerU recovered"
-    )
-
-
-def test_ingest_accepts_client_reviewed_extraction_without_server_wiki_write(tmp_path, monkeypatch):
-    raw_dir = tmp_path / "raw"
-    _seed_paper_assets(raw_dir, markdown=True)
-
-    def fail_if_server_extracts(*args, **kwargs):
-        raise AssertionError("server-side LLM extraction should not run")
-
-    monkeypatch.setattr(
-        "atlas.wiki.ingester.WikiIngester._extract_algorithm",
-        fail_if_server_extracts,
-    )
-
-    config = ServerConfig(
-        wiki_dir=str(tmp_path / "wiki"),
-        raw_dir=str(raw_dir),
-        data_dir=str(tmp_path / "data"),
-    )
-    app = create_app(config)
-
-    with TestClient(app) as client:
-        response = client.post(
-            "/api/ingest/paper/reviewed-extraction",
-            json={
-                "arxiv_id": "9508027",
-                "reviewed_by": "alice",
-                "algorithm": {
-                    "id": "reviewed_search",
-                    "name": "Reviewed Quantum Search",
-                    "description": "Client-reviewed algorithm description.",
-                    "problem_type": "unstructured_search",
-                    "primitives": ["prim-qft", "primitive_amplitude_amplification"],
-                    "complexity": {
-                        "time": "O(sqrt(N))",
-                        "space": "O(log N)",
-                        "gate_count": "O(sqrt(N))",
-                        "circuit_depth": "O(sqrt(N))",
-                        "qubit_count": "O(log N)",
+    def test_extra_fields_are_rejected(self, tmp_path, monkeypatch):
+        """ff-only: extract / create_wiki / sync_neo4j must NOT be accepted."""
+        client, _ = _make_client(tmp_path, monkeypatch)
+        with client:
+            for field in ("extract", "create_wiki", "sync_neo4j", "llm_provider"):
+                response = client.post(
+                    "/api/ingest/paper",
+                    json={
+                        "arxiv_id": "9508027",
+                        "parser": "pymupdf",
+                        field: False if field != "llm_provider" else "openai",
                     },
-                    "pseudocode": "prepare superposition\nrepeat amplitude amplification",
-                },
-                "sync_neo4j": False,
-            },
-        )
+                )
+                assert response.status_code == 422, f"{field} should be rejected"
+
+    def test_parser_field_is_required(self, tmp_path, monkeypatch):
+        """Refuse silent pymupdf fallback: parser must be explicitly chosen."""
+        client, _ = _make_client(tmp_path, monkeypatch)
+        with client:
+            response = client.post(
+                "/api/ingest/paper",
+                json={"arxiv_id": "9508027"},
+            )
+        assert response.status_code == 422
+        detail = response.json()["detail"]
+        assert any("parser" in str(err.get("loc", [])) for err in detail), detail
+
+    def test_valid_request_returns_202_and_persists_task(self, tmp_path, monkeypatch):
+        client, app = _make_client(tmp_path, monkeypatch)
+        with client:
+            response = client.post(
+                "/api/ingest/paper",
+                json={"arxiv_id": "9508027", "parser": "pymupdf"},
+            )
         assert response.status_code == 202
-        task = client.get(f"/api/ingest/{response.json()['task_id']}").json()
-
-    assert task["status"] == "succeeded"
-    assert task["steps"]["fetch"]["status"] == "skipped"
-    assert task["steps"]["fetch"]["result"]["metadata_source"] == "local_json"
-    assert task["steps"]["parse"]["status"] == "skipped"
-    assert task["steps"]["extract"]["status"] == "succeeded"
-    assert task["steps"]["extract"]["result"]["source"] == "client"
-    assert task["steps"]["extract"]["result"]["reviewed_by"] == "alice"
-    assert task["steps"]["wiki"]["status"] == "skipped"
-    assert task["steps"]["wiki"]["message"] == "wiki creation skipped on server"
-    assert task["steps"]["neo4j"]["status"] == "skipped"
-    assert not (tmp_path / "wiki").exists()
+        payload = response.json()
+        assert payload["status"] == "queued"
+        task = app.state.ingest_store.get(payload["task_id"])
+        assert task is not None
+        assert task.arxiv_id == "9508027"
+        assert task.status == "queued"
+        assert task.options["parser"] == "pymupdf"
 
 
-def test_ingest_continue_accepts_reviewed_extraction_after_parse(tmp_path, monkeypatch):
-    raw_dir = tmp_path / "raw"
-    _seed_paper_assets(raw_dir, markdown=True)
+class TestReviewedExtractionEndpointRemoved:
+    """ff-only: server must not expose the reviewed-extraction endpoint."""
 
-    def fail_if_server_extracts(*args, **kwargs):
-        raise AssertionError("server-side LLM extraction should not run")
+    def test_endpoint_is_not_registered(self, tmp_path, monkeypatch):
+        client, _ = _make_client(tmp_path, monkeypatch)
+        with client:
+            response = client.post(
+                "/api/ingest/paper/reviewed-extraction",
+                json={"arxiv_id": "9508027"},
+            )
+        assert response.status_code == 404
 
-    monkeypatch.setattr(
-        "atlas.wiki.ingester.WikiIngester._extract_algorithm",
-        fail_if_server_extracts,
-    )
 
-    config = ServerConfig(
-        wiki_dir=str(tmp_path / "wiki"),
-        raw_dir=str(raw_dir),
-        data_dir=str(tmp_path / "data"),
-    )
-    app = create_app(config)
+class TestIngestTaskQueries:
+    def test_get_unknown_task_returns_404(self, tmp_path, monkeypatch):
+        client, _ = _make_client(tmp_path, monkeypatch)
+        with client:
+            response = client.get("/api/ingest/does-not-exist")
+        assert response.status_code == 404
 
-    with TestClient(app) as client:
-        first = client.post(
-            "/api/ingest/paper",
-            json={
-                "arxiv_id": "9508027",
-                "fetch": False,
-                "stop_after": "parse",
-            },
+    def test_get_known_task_returns_payload(self, tmp_path, monkeypatch):
+        client, app = _make_client(tmp_path, monkeypatch)
+        task = IngestTask(
+            task_id="known01",
+            arxiv_id="9508027",
+            status="succeeded",
+            submitted_at="2026-01-01T00:00:00Z",
         )
-        assert first.status_code == 202
-        first_task_id = first.json()["task_id"]
-        first_task = client.get(f"/api/ingest/{first_task_id}").json()
-        assert first_task["steps"]["parse"]["status"] == "succeeded"
+        with client:
+            app.state.ingest_store.save(task)
+            response = client.get("/api/ingest/known01")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["task_id"] == "known01"
+        assert body["arxiv_id"] == "9508027"
+        assert body["status"] == "succeeded"
 
-        response = client.post(
-            f"/api/ingest/{first_task_id}/continue",
-            json={
-                "reviewed_by": "alice",
-                "algorithm": {
-                    "id": "continued_search",
-                    "name": "Continued Quantum Search",
-                    "problem_type": "unstructured_search",
-                    "primitives": [],
-                    "complexity": {},
-                },
-                "sync_neo4j": False,
-            },
+    def test_list_ingest_tasks_is_empty_initially(self, tmp_path, monkeypatch):
+        client, _ = _make_client(tmp_path, monkeypatch)
+        with client:
+            response = client.get("/api/ingests")
+        assert response.status_code == 200
+        assert response.json() == {"total": 0, "tasks": []}
+
+    def test_list_ingest_tasks_respects_limit(self, tmp_path, monkeypatch):
+        client, app = _make_client(tmp_path, monkeypatch)
+        with client:
+            for i in range(5):
+                app.state.ingest_store.save(
+                    IngestTask(
+                        task_id=f"task{i:02d}",
+                        arxiv_id="9508027",
+                        status="queued",
+                        submitted_at=f"2026-01-0{i + 1}T00:00:00Z",
+                    )
+                )
+            response = client.get("/api/ingests?limit=3")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["total"] == 3
+        assert len(body["tasks"]) == 3
+
+
+class TestContinueIngestValidation:
+    def test_unknown_source_task_returns_404(self, tmp_path, monkeypatch):
+        client, _ = _make_client(tmp_path, monkeypatch)
+        with client:
+            response = client.post(
+                "/api/ingest/does-not-exist/continue",
+                json={"stages": ["parse"], "parser": "pymupdf"},
+            )
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+
+    def test_extra_reviewed_fields_are_rejected(self, tmp_path, monkeypatch):
+        """ff-only: continue must NOT accept reviewed-extraction fields."""
+        client, app = _make_client(tmp_path, monkeypatch)
+        task = IngestTask(
+            task_id="seed01",
+            arxiv_id="9508027",
+            status="succeeded",
+            submitted_at="2026-01-01T00:00:00Z",
         )
-        assert response.status_code == 202
-        task = client.get(f"/api/ingest/{response.json()['task_id']}").json()
+        with client:
+            app.state.ingest_store.save(task)
+            for field in ("algorithm", "algorithm_ir", "create_wiki", "sync_neo4j", "llm_provider"):
+                response = client.post(
+                    f"/api/ingest/seed01/continue",
+                    json={
+                        "parser": "pymupdf",
+                        field: {} if field in ("algorithm", "algorithm_ir") else False,
+                    },
+                )
+                assert response.status_code == 422, f"{field} should be rejected"
 
-    assert task["status"] == "succeeded"
-    assert task["options"]["source_task_id"] == first_task_id
-    assert task["steps"]["fetch"]["result"]["metadata_source"] == "local_json"
-    assert task["steps"]["parse"]["status"] == "skipped"
-    assert task["steps"]["extract"]["status"] == "succeeded"
-    assert task["steps"]["extract"]["result"]["reviewed_by"] == "alice"
-    assert task["steps"]["wiki"]["status"] == "skipped"
-    assert task["steps"]["wiki"]["message"] == "wiki creation skipped on server"
+    def test_parser_field_is_required(self, tmp_path, monkeypatch):
+        """Refuse silent pymupdf fallback on continue too."""
+        client, _ = _make_client(tmp_path, monkeypatch)
+        with client:
+            response = client.post(
+                "/api/ingest/does-not-exist/continue",
+                json={"stages": ["parse"]},
+            )
+        assert response.status_code == 422
+        detail = response.json()["detail"]
+        assert any("parser" in str(err.get("loc", [])) for err in detail), detail
 
-
-def test_ingest_reviewed_extraction_requires_algorithm_identity(tmp_path):
-    raw_dir = tmp_path / "raw"
-    _seed_paper_assets(raw_dir, markdown=True)
-
-    config = ServerConfig(
-        wiki_dir=str(tmp_path / "wiki"),
-        raw_dir=str(raw_dir),
-        data_dir=str(tmp_path / "data"),
-    )
-    app = create_app(config)
-
-    with TestClient(app) as client:
-        response = client.post(
-            "/api/ingest/paper/reviewed-extraction",
-            json={
-                "arxiv_id": "9508027",
-                "algorithm": {"name": "Missing ID"},
-            },
-        )
-
-    assert response.status_code == 400
-    assert "algorithm_id/id" in response.json()["detail"]

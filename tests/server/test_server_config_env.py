@@ -35,8 +35,6 @@ ENV_KEYS = [
     "USER_HEADER",
     "QUANTUMATLAS_REQUIRE_RELEASE_TAG",
     "REQUIRE_RELEASE_TAG",
-    "OPENAI_API_KEY",
-    "ANTHROPIC_API_KEY",
     "MINERU_API_TOKEN",
     "MINERU_API_BASE_URL",
     "MINERU_MODEL_VERSION",
@@ -80,8 +78,6 @@ def test_server_config_reads_all_supported_env_vars_from_dotenv(tmp_path, monkey
                 "DEFAULT_SHARE_EXPIRES_IN=3600",
                 "USER_HEADER=X-From-Dotenv",
                 "QUANTUMATLAS_REQUIRE_RELEASE_TAG=true",
-                "OPENAI_API_KEY=openai-key",
-                "ANTHROPIC_API_KEY=anthropic-key",
                 "MINERU_API_TOKEN=mineru-token",
                 "MINERU_API_BASE_URL=https://mineru.example",
                 "MINERU_MODEL_VERSION=vlm",
@@ -114,8 +110,6 @@ def test_server_config_reads_all_supported_env_vars_from_dotenv(tmp_path, monkey
     assert config.default_share_expires_in == 3600
     assert config.user_header == "X-From-Dotenv"
     assert config.require_release_tag is True
-    assert config.openai_api_key == "openai-key"
-    assert config.anthropic_api_key == "anthropic-key"
     assert config.mineru_api_token == "mineru-token"
     assert config.mineru_api_base_url == "https://mineru.example"
     assert config.mineru_model_version == "vlm"

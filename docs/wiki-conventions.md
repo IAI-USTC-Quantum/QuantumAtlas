@@ -289,40 +289,41 @@ When to use each algorithm...
 
 ### 1. Ingest 工作流
 
+服务端 ingest 是 **ff-only**：只 fetch + parse，不写 wiki，不写 Neo4j。LLM 抽取与 Wiki 页面生成由独立的人工/客户端流程完成（提交 PR），服务端不再产生 wiki 写入。
+
 ```
 Paper (arXiv ID)
     │
-    ├─► Fetch PDF → RAW_DIR/pdf/{paper_key}.pdf
+    ├─► Fetch PDF → RAW_DIR/{paper_key}/pdf/{paper_key}.pdf
     │
-    ├─► Parse PDF → RAW_DIR/markdown/{paper_key}.md
+    ├─► Parse PDF → RAW_DIR/{paper_key}/markdown/{paper_key}.md
     │
-    ├─► Store Metadata → RAW_DIR/json/{paper_key}.json
+    └─► Store Metadata → RAW_DIR/{paper_key}/json/{paper_key}.json
+
+(downstream, OUT of server scope)
     │
-    ├─► LLM Extraction → AlgorithmIR
+    ├─► (Manual / future CLI) LLM Extraction → AlgorithmIR
     │
-    ├─► Create Wiki Pages:
+    ├─► (Manual / future CLI) Create Wiki Pages:
     │     ├─ wiki/sources/papers/paper-arxiv-{id}.md
     │     ├─ wiki/entities/algorithms/algo-{name}.md
     │     └─ wiki/entities/primitives/prim-{name}.md (if new)
     │
-    ├─► Update wiki/index.md
+    ├─► (Manual) Update wiki/index.md, append wiki/log.md
     │
-    ├─► Append to wiki/log.md
-    │
-    └─► Sync to Neo4j (async)
+    └─► (Manual) Wiki PR review → fast-forward merge → CI syncs Neo4j
 ```
 
-服务端会把这条流水线包装成异步 ingest 任务。每个阶段独立维护 status、message、时间戳和 progress 负载，客户端可以轮询 `GET /api/ingest/{task_id}`，不必阻塞在长时下载或解析任务上。
+服务端把 fetch + parse 包装成异步 ingest 任务。每个阶段独立维护 status、message、时间戳和 progress 负载，客户端可以轮询 `GET /api/ingest/{task_id}`，不必阻塞在长时下载或解析任务上。
 
 按阶段可恢复执行：
 
 - 只拉取 PDF：`stop_after=fetch`。
-- 解析后停下来交给客户端审阅：`stop_after=parse`。
-- 用本地资产续跑：调用 `POST /api/ingest/{task_id}/continue`，或者把请求里 `fetch=false`；服务端会复用 `RAW_DIR/pdf`、`RAW_DIR/json`、`RAW_DIR/markdown` 中已有的产物。
-- 基于已有 PDF 重解析：`stages=["parse"]`、`fetch=false`、`force_parse=true`。
+- 解析后停下来：`stop_after=parse`（这是最后一个阶段，等价于跑完）。
+- 用本地资产续跑：调用 `POST /api/ingest/{task_id}/continue`；服务端会复用 `RAW_DIR/{paper_key}/pdf`、`RAW_DIR/{paper_key}/json`、`RAW_DIR/{paper_key}/markdown` 中已有的产物。
+- 基于已有 PDF 重解析：`stages=["parse"]`、`force_parse=true`。
 - 强制重新下载/重新解析：`force_fetch=true` 或 `force_parse=true`。
 - 使用 MinerU 解析：`parser=mineru`；服务端会把公网 raw URL 提交给 MinerU，OCR 关闭。
-- 使用客户端审阅过的 LLM 抽取结果：调用 `POST /api/ingest/{task_id}/continue` 或 `POST /api/ingest/paper/reviewed-extraction`，附带审阅好的 `algorithm` 或 `algorithm_ir`；服务端将跳过自带的 LLM 抽取器，只写 Wiki 页面并按需同步 Neo4j。
 
 ### 2. Query 工作流
 

@@ -18,7 +18,7 @@ def test_ingest_queue_records_requester_header_without_wiki_log(tmp_path, monkey
     with TestClient(app) as client:
         response = client.post(
             "/api/ingest/paper",
-            json={"arxiv_id": "9508027", "extract": False, "sync_neo4j": False},
+            json={"arxiv_id": "9508027", "parser": "pymupdf"},
             headers={"X-Token-User-Name": "alice"},
         )
 
@@ -44,7 +44,7 @@ def test_ingest_queue_records_anonymous_without_wiki_log(tmp_path, monkeypatch):
     with TestClient(app) as client:
         response = client.post(
             "/api/ingest/paper",
-            json={"arxiv_id": "9508027", "extract": False, "sync_neo4j": False},
+            json={"arxiv_id": "9508027", "parser": "pymupdf"},
         )
 
         assert response.status_code == 202
@@ -54,3 +54,4 @@ def test_ingest_queue_records_anonymous_without_wiki_log(tmp_path, monkeypatch):
         assert task.requester is None
 
     assert not (tmp_path / "wiki").exists()
+

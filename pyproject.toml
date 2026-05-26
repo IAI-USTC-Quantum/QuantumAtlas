@@ -65,12 +65,11 @@ testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = ["-v", "--tb=short", "--strict-markers", "-m", "not user_env"]
+addopts = ["-v", "--tb=short", "--strict-markers"]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-    "integration: marks tests as integration tests",
-    "unit: marks tests as unit tests",
-    "user_env: manual tests that intentionally load the repository .env",
+    "network: tests that require outbound network access (e.g. arXiv API)",
+    "e2e: end-to-end tests that load the repository .env and exercise real external services",
 ]
 
 [tool.black]

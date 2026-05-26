@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Literal, Optional
 import requests
 from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from atlas.paper_assets import (
     normalize_arxiv_identifier,
@@ -38,14 +38,11 @@ from atlas.server.tasks import IngestStore, IngestTask, ShareStore, StepStatus
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-StageName = Literal["fetch", "parse", "extract", "wiki", "neo4j"]
-STAGE_ORDER: tuple[StageName, ...] = ("fetch", "parse", "extract", "wiki", "neo4j")
+StageName = Literal["fetch", "parse"]
+STAGE_ORDER: tuple[StageName, ...] = ("fetch", "parse")
 STAGE_DESCRIPTIONS: Dict[StageName, str] = {
     "fetch": "Fetch arXiv metadata and PDF into the local paper asset store.",
     "parse": "Parse the local PDF into Markdown with PyMuPDF or MinerU.",
-    "extract": "Extract structured algorithm information, either server-side or client-reviewed.",
-    "wiki": "Skipped by the server; create or update Wiki pages from a writable client checkout.",
-    "neo4j": "Sync existing Wiki pages into Neo4j when a writable Wiki workflow has produced them.",
 }
 FETCH_MAX_ATTEMPTS = 3
 MINERU_MAX_ATTEMPTS = 2
@@ -85,70 +82,32 @@ class PageListResponse(BaseModel):
 
 
 class IngestRequest(BaseModel):
+    """Server-side ingest is bounded to fetch + parse (ff-only wiki policy)."""
+
+    model_config = ConfigDict(extra="forbid")
+
     arxiv_id: str
     fetch: bool = True
     parse: bool = True
-    extract: bool = True
-    create_wiki: bool = True
-    sync_neo4j: bool = True
     stages: Optional[List[StageName]] = None
     stop_after: Optional[StageName] = None
-    parser: Literal["pymupdf", "mineru"] = "pymupdf"
-    llm_provider: str = "openai"
+    parser: Literal["pymupdf", "mineru"]
     force_fetch: bool = False
     force_parse: bool = False
     mineru_no_cache: bool = False
-
-
-class ClientReviewedAlgorithm(BaseModel):
-    """Algorithm extraction reviewed outside the server."""
-
-    id: Optional[str] = None
-    name: Optional[str] = None
-    algorithm_id: Optional[str] = None
-    algorithm_name: Optional[str] = None
-    description: Optional[str] = None
-    problem_type: str = "unknown"
-    primitives: List[str] = []
-    complexity: Dict[str, Any] = {}
-    pseudocode: Optional[str] = None
-    input_params: List[str] = []
-    output_params: List[str] = []
-    assumptions: List[str] = []
-
-
-class ReviewedExtractionRequest(BaseModel):
-    """Submit client-side LLM extraction after human review."""
-
-    arxiv_id: str
-    algorithm: Optional[ClientReviewedAlgorithm] = None
-    algorithm_ir: Optional[Dict[str, Any]] = None
-    metadata: Optional[Dict[str, Any]] = None
-    create_wiki: bool = True
-    sync_neo4j: bool = True
-    reviewed_by: Optional[str] = None
-    source: str = "client"
-    notes: Optional[str] = None
 
 
 class ContinueIngestRequest(BaseModel):
     """Continue an earlier ingest task from local results."""
 
+    model_config = ConfigDict(extra="forbid")
+
     stages: Optional[List[StageName]] = None
     stop_after: Optional[StageName] = None
-    parser: Literal["pymupdf", "mineru"] = "pymupdf"
-    llm_provider: str = "openai"
+    parser: Literal["pymupdf", "mineru"]
     force_fetch: bool = False
     force_parse: bool = False
     mineru_no_cache: bool = False
-    algorithm: Optional[ClientReviewedAlgorithm] = None
-    algorithm_ir: Optional[Dict[str, Any]] = None
-    metadata: Optional[Dict[str, Any]] = None
-    create_wiki: bool = True
-    sync_neo4j: bool = True
-    reviewed_by: Optional[str] = None
-    source: str = "client"
-    notes: Optional[str] = None
 
 
 class IngestQueuedResponse(BaseModel):
@@ -187,7 +146,6 @@ def _stage_options(
     *,
     flags: Dict[StageName, bool],
     parser: str,
-    llm_provider: str,
     force_fetch: bool,
     force_parse: bool,
     mineru_no_cache: bool,
@@ -196,11 +154,7 @@ def _stage_options(
     options: Dict[str, Any] = {
         "fetch": flags["fetch"],
         "parse": flags["parse"],
-        "extract": flags["extract"],
-        "create_wiki": flags["wiki"],
-        "sync_neo4j": flags["neo4j"],
         "parser": parser,
-        "llm_provider": llm_provider,
         "force_fetch": force_fetch,
         "force_parse": force_parse,
         "mineru_no_cache": mineru_no_cache,
@@ -1265,22 +1219,6 @@ def _friendly_parse_error(exc: Exception) -> str:
     return f"PDF parsing failed: {exc}"
 
 
-def _friendly_extract_error(exc: Exception) -> str:
-    msg = str(exc).lower()
-    if "api_key" in msg or "openai" in msg or "anthropic" in msg:
-        return "LLM extraction requires OPENAI_API_KEY or ANTHROPIC_API_KEY"
-    if "rate" in msg or "429" in msg:
-        return "LLM API rate limited, please retry later"
-    return f"LLM extraction failed: {exc}"
-
-
-def _friendly_neo4j_error(exc: Exception) -> str:
-    low = str(exc).lower()
-    if "refused" in low or "could not connect" in low:
-        return f"Neo4j connection failed: {exc}"
-    return f"Neo4j sync failed: {exc}"
-
-
 def _is_retryable_fetch_error(exc: Exception) -> bool:
     if isinstance(exc, requests.HTTPError):
         status_code = getattr(exc.response, "status_code", None)
@@ -1812,11 +1750,11 @@ def _parse_paper_for_ingest(
             ingest_store,
             "parse",
             message="reusing existing markdown",
-            progress={"parser": task.options.get("parser", "pymupdf"), "percent": 1.0},
+            progress={"parser": task.options["parser"], "percent": 1.0},
         )
         return markdown_path
 
-    parser = task.options.get("parser", "pymupdf")
+    parser = task.options["parser"]
     if parser == "mineru":
         if not pdf_path:
             raise FileNotFoundError("PDF not found for MinerU parsing")
@@ -1839,244 +1777,6 @@ def _parse_paper_for_ingest(
     return ingester._parse_pdf(task.arxiv_id, metadata, pdf_path=pdf_path)
 
 
-def _reviewed_extraction_step(
-    body: ReviewedExtractionRequest,
-    *,
-    reviewer: Optional[str],
-) -> Dict[str, Any]:
-    payload: Dict[str, Any] = {}
-    if body.algorithm_ir:
-        payload.update(body.algorithm_ir)
-    if body.algorithm:
-        payload.update(body.algorithm.model_dump(exclude_none=True))
-
-    algorithm_id = payload.get("algorithm_id") or payload.get("id")
-    algorithm_name = payload.get("algorithm_name") or payload.get("name")
-    if not algorithm_id or not algorithm_name:
-        raise HTTPException(
-            status_code=400,
-            detail="reviewed extraction requires algorithm_id/id and algorithm_name/name",
-        )
-
-    primitives = payload.get("primitives") or []
-    if not isinstance(primitives, list):
-        raise HTTPException(status_code=400, detail="reviewed extraction primitives must be a list")
-
-    complexity = payload.get("complexity") or {}
-    if not isinstance(complexity, dict):
-        raise HTTPException(
-            status_code=400, detail="reviewed extraction complexity must be an object"
-        )
-
-    return {
-        "algorithm_id": str(algorithm_id),
-        "algorithm_name": str(algorithm_name),
-        "description": payload.get("description"),
-        "problem_type": payload.get("problem_type") or "unknown",
-        "primitives": [str(p) for p in primitives],
-        "complexity": complexity,
-        "pseudocode": payload.get("pseudocode"),
-        "input_params": payload.get("input_params") or [],
-        "output_params": payload.get("output_params") or [],
-        "assumptions": payload.get("assumptions") or [],
-        "algorithm_ir": payload,
-        "source": body.source,
-        "reviewed": True,
-        "reviewed_by": reviewer,
-        "review_notes": body.notes,
-    }
-
-
-def _metadata_for_reviewed_submission(
-    wiki,
-    arxiv_id: str,
-    submitted_metadata: Optional[Dict[str, Any]],
-) -> Dict[str, Any]:
-    metadata = dict(submitted_metadata or {})
-    if not metadata:
-        resolved = resolve_paper_assets(wiki.raw_dir, arxiv_id)
-        json_path = resolved.get("json_path")
-        if isinstance(json_path, Path):
-            loaded = _load_json_file(json_path)
-            if loaded:
-                metadata = loaded
-
-    if not metadata:
-        raise FileNotFoundError(
-            "reviewed extraction needs local raw/json metadata or metadata in the request"
-        )
-
-    metadata.setdefault("arxiv_id", normalize_arxiv_identifier(arxiv_id))
-    metadata.setdefault("title", "Unknown Title")
-    metadata.setdefault("authors", [])
-    metadata.setdefault("abstract", "")
-    metadata.setdefault("categories", [])
-
-    json_path = wiki.get_paper_asset_path("json", metadata["arxiv_id"])
-    json_path.parent.mkdir(parents=True, exist_ok=True)
-    if submitted_metadata:
-        json_path.write_text(json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8")
-
-    resolved = resolve_paper_assets(wiki.raw_dir, arxiv_id)
-    pdf_path = resolved.get("pdf_path")
-    return {
-        "metadata": metadata,
-        "pdf_path": str(pdf_path) if isinstance(pdf_path, Path) else None,
-        "json_path": str(json_path),
-        "metadata_source": "request" if submitted_metadata else "local_json",
-    }
-
-
-def _finish_ingest_task(task: IngestTask, ingest_store: IngestStore) -> None:
-    statuses = [s.status for s in task.steps.values()]
-    if all(s in ("succeeded", "skipped") for s in statuses):
-        task.status = "succeeded"
-    elif any(s == "failed" for s in statuses) and any(s == "succeeded" for s in statuses):
-        task.status = "partial"
-    elif any(s == "failed" for s in statuses):
-        task.status = "failed"
-    else:
-        task.status = "succeeded"
-
-    task.finished_at = _utc_now_iso()
-    task.message = f"ingest {task.status}"
-    _touch_ingest(task, ingest_store, task.message)
-
-
-def _any_failed(task: IngestTask, stages: tuple[str, ...]) -> bool:
-    return any(task.steps.get(stage) and task.steps[stage].status == "failed" for stage in stages)
-
-
-def execute_reviewed_extraction(
-    task_id: str,
-    ingest_store: IngestStore,
-    config: ServerConfig,
-) -> None:
-    """Persist reviewed extraction metadata without writing Wiki files on the server."""
-    task = ingest_store.get(task_id)
-    if task is None:
-        return
-
-    enable_sync = bool(task.options.get("sync_neo4j", True))
-    wiki = _configured_wiki_engine(config, enable_neo4j_sync=enable_sync)
-    ingest_result: Dict[str, Any] = {"steps": {}}
-
-    task.status = "running"
-    task.started_at = _utc_now_iso()
-    _touch_ingest(task, ingest_store, "reviewed extraction ingest started")
-
-    # Existing metadata replaces the fetch/download layer for this client-driven path.
-    st = task.steps["fetch"]
-    st.status = "skipped"
-    st.started_at = _utc_now_iso()
-    st.message = "fetch skipped; using reviewed extraction metadata"
-    try:
-        fetch_result = _metadata_for_reviewed_submission(
-            wiki,
-            task.arxiv_id,
-            task.options.get("metadata"),
-        )
-        metadata = fetch_result["metadata"]
-        st.result = {
-            "pdf_path": fetch_result.get("pdf_path"),
-            "json_path": fetch_result.get("json_path"),
-            "title": metadata.get("title"),
-            "metadata_source": fetch_result.get("metadata_source"),
-        }
-        ingest_result["steps"]["fetch"] = {
-            "pdf_path": fetch_result.get("pdf_path"),
-            "metadata": metadata,
-        }
-    except Exception as e:
-        logger.exception("reviewed extraction metadata load failed")
-        st.status = "failed"
-        st.message = "metadata load failed"
-        st.error = _friendly_fetch_error(e, task.arxiv_id)
-    st.finished_at = _utc_now_iso()
-    _touch_ingest(task, ingest_store, st.message)
-
-    st = task.steps["parse"]
-    st.status = "skipped"
-    st.started_at = _utc_now_iso()
-    st.finished_at = _utc_now_iso()
-    st.message = "parse skipped; client supplied reviewed extraction"
-    _touch_ingest(task, ingest_store, st.message)
-
-    st = task.steps["extract"]
-    st.started_at = _utc_now_iso()
-    if task.steps["fetch"].status in ("skipped", "succeeded") and "fetch" in ingest_result["steps"]:
-        st.status = "succeeded"
-        st.message = "reviewed client extraction accepted"
-        st.result = task.options["reviewed_extraction"]
-        ingest_result["steps"]["extract"] = task.options["reviewed_extraction"]
-    else:
-        st.status = "skipped"
-        st.message = "reviewed extraction skipped"
-        st.error = "skipped because metadata is missing"
-    st.finished_at = _utc_now_iso()
-    _touch_ingest(task, ingest_store, st.message)
-
-    if task.options.get("create_wiki", True):
-        st = task.steps["wiki"]
-        st.status = "skipped"
-        st.message = "wiki creation skipped on server"
-        st.error = "server does not write WIKI_DIR; apply reviewed extraction from a writable client checkout"
-        st.finished_at = _utc_now_iso()
-        _touch_ingest(task, ingest_store, st.message)
-    else:
-        st = task.steps["wiki"]
-        st.status = "skipped"
-        st.message = "wiki creation skipped by request"
-        st.finished_at = _utc_now_iso()
-        _touch_ingest(task, ingest_store, st.message)
-
-    if task.options.get("sync_neo4j", True):
-        if task.steps["wiki"].status == "succeeded":
-            st = task.steps["neo4j"]
-            st.status = "running"
-            st.started_at = _utc_now_iso()
-            st.message = "syncing reviewed extraction pages to Neo4j"
-            _touch_ingest(task, ingest_store, st.message)
-            try:
-                sync_result = wiki.sync_to_neo4j()
-                if isinstance(sync_result, dict) and sync_result.get("success") is False:
-                    st.status = "failed"
-                    st.message = "Neo4j sync failed"
-                    st.error = sync_result.get("error", "Neo4j sync failed")
-                elif isinstance(sync_result, dict) and sync_result.get("failed", 0) > 0:
-                    st.status = "failed"
-                    st.message = "Neo4j sync failed"
-                    st.error = f"{sync_result.get('failed')} page(s) failed to sync"
-                    st.result = sync_result
-                else:
-                    st.status = "succeeded"
-                    st.message = "Neo4j sync completed"
-                    st.result = (
-                        sync_result if isinstance(sync_result, dict) else {"result": sync_result}
-                    )
-            except Exception as e:
-                logger.exception("reviewed extraction neo4j sync failed")
-                st.status = "failed"
-                st.message = "Neo4j sync failed"
-                st.error = _friendly_neo4j_error(e)
-            st.finished_at = _utc_now_iso()
-            _touch_ingest(task, ingest_store, st.message)
-        else:
-            st = task.steps["neo4j"]
-            st.status = "skipped"
-            st.message = "Neo4j sync skipped"
-            st.error = "skipped because wiki step did not succeed"
-            st.finished_at = _utc_now_iso()
-            _touch_ingest(task, ingest_store, st.message)
-    else:
-        st = task.steps["neo4j"]
-        st.status = "skipped"
-        st.message = "Neo4j sync skipped by request"
-        st.finished_at = _utc_now_iso()
-        _touch_ingest(task, ingest_store, st.message)
-
-    _finish_ingest_task(task, ingest_store)
-
 
 def execute_ingest(task_id: str, ingest_store: IngestStore, config: ServerConfig) -> None:
     """Background ingest with per-step persistence (runs in a worker thread)."""
@@ -2084,8 +1784,7 @@ def execute_ingest(task_id: str, ingest_store: IngestStore, config: ServerConfig
     if task is None:
         return
 
-    enable_sync = bool(task.options.get("sync_neo4j", True))
-    wiki = _configured_wiki_engine(config, enable_neo4j_sync=enable_sync)
+    wiki = _configured_wiki_engine(config, enable_neo4j_sync=False)
     ingester = wiki.ingester
     ingest_result: Dict[str, Any] = {"steps": {}}
 
@@ -2181,7 +1880,7 @@ def execute_ingest(task_id: str, ingest_store: IngestStore, config: ServerConfig
                 }
                 st.result = {
                     "markdown_path": str(md_path),
-                    "parser": task.options.get("parser", "pymupdf"),
+                    "parser": task.options["parser"],
                 }
                 ingest_result["steps"]["parse"] = {"markdown_path": str(md_path)}
             except Exception as e:
@@ -2215,116 +1914,6 @@ def execute_ingest(task_id: str, ingest_store: IngestStore, config: ServerConfig
             ingest_result["steps"]["parse"] = {
                 "markdown_path": existing_parse["markdown_path"],
             }
-        _touch_ingest(task, ingest_store, st.message)
-
-    # --- extract ---
-    if task.options.get("extract", True):
-        if task.steps["parse"].status == "succeeded" or "parse" in ingest_result["steps"]:
-            st = task.steps["extract"]
-            st.status = "running"
-            st.started_at = _utc_now_iso()
-            st.message = "LLM extraction started"
-            _touch_ingest(task, ingest_store, st.message)
-            try:
-                algorithm_ir = ingester._extract_algorithm(
-                    task.arxiv_id,
-                    task.options.get("llm_provider", "openai"),
-                )
-                extract_step = {
-                    "algorithm_id": algorithm_ir.id,
-                    "algorithm_name": algorithm_ir.name,
-                    "primitives": algorithm_ir.primitives,
-                }
-                ingest_result["steps"]["extract"] = extract_step
-                st.status = "succeeded"
-                st.message = "LLM extraction completed"
-                st.result = extract_step
-            except Exception as e:
-                logger.exception("ingest extract failed")
-                st.status = "failed"
-                st.message = "LLM extraction failed"
-                st.error = _friendly_extract_error(e)
-            st.finished_at = _utc_now_iso()
-            _touch_ingest(task, ingest_store, st.message)
-        else:
-            st = task.steps["extract"]
-            st.status = "skipped"
-            st.message = "LLM extraction skipped"
-            st.error = "skipped because parse did not succeed"
-            st.finished_at = _utc_now_iso()
-            _touch_ingest(task, ingest_store, st.message)
-    else:
-        st = task.steps["extract"]
-        st.status = "skipped"
-        st.message = "LLM extraction skipped by request"
-        st.finished_at = _utc_now_iso()
-        _touch_ingest(task, ingest_store, st.message)
-
-    # --- wiki ---
-    if task.options.get("create_wiki", True):
-        st = task.steps["wiki"]
-        st.status = "skipped"
-        st.finished_at = _utc_now_iso()
-        if _any_failed(task, ("fetch", "parse", "extract")):
-            st.message = "wiki creation skipped"
-            st.error = "skipped because an earlier ingest stage failed"
-        else:
-            st.message = "wiki creation skipped on server"
-            st.error = "server does not write WIKI_DIR; create or update wiki pages from a writable client checkout"
-        _touch_ingest(task, ingest_store, st.message)
-    else:
-        st = task.steps["wiki"]
-        st.status = "skipped"
-        st.message = "wiki creation skipped by request"
-        st.finished_at = _utc_now_iso()
-        _touch_ingest(task, ingest_store, st.message)
-
-    # --- neo4j ---
-    if task.options.get("sync_neo4j", True):
-        if task.steps["wiki"].status == "succeeded":
-            st = task.steps["neo4j"]
-            st.status = "running"
-            st.started_at = _utc_now_iso()
-            st.message = "syncing wiki to Neo4j"
-            _touch_ingest(task, ingest_store, st.message)
-            try:
-                sync_result = wiki.sync_to_neo4j()
-                if not isinstance(sync_result, dict):
-                    st.status = "succeeded"
-                    st.message = "Neo4j sync completed"
-                    st.result = {"result": sync_result}
-                elif sync_result.get("success") is False:
-                    st.status = "failed"
-                    st.message = "Neo4j sync failed"
-                    st.error = sync_result.get("error", "Neo4j sync failed")
-                elif sync_result.get("failed", 0) > 0:
-                    st.status = "failed"
-                    st.message = "Neo4j sync failed"
-                    st.error = f"{sync_result.get('failed')} page(s) failed to sync"
-                    st.result = sync_result
-                else:
-                    st.status = "succeeded"
-                    st.message = "Neo4j sync completed"
-                    st.result = sync_result
-            except Exception as e:
-                logger.exception("ingest neo4j failed")
-                st.status = "failed"
-                st.message = "Neo4j sync failed"
-                st.error = _friendly_neo4j_error(e)
-            st.finished_at = _utc_now_iso()
-            _touch_ingest(task, ingest_store, st.message)
-        else:
-            st = task.steps["neo4j"]
-            st.status = "skipped"
-            st.message = "Neo4j sync skipped"
-            st.error = "skipped because wiki step did not succeed"
-            st.finished_at = _utc_now_iso()
-            _touch_ingest(task, ingest_store, st.message)
-    else:
-        st = task.steps["neo4j"]
-        st.status = "skipped"
-        st.message = "Neo4j sync skipped by request"
-        st.finished_at = _utc_now_iso()
         _touch_ingest(task, ingest_store, st.message)
 
     statuses = [s.status for s in task.steps.values()]
@@ -2367,9 +1956,6 @@ async def ingest_paper(
         fallback={
             "fetch": body.fetch,
             "parse": body.parse,
-            "extract": body.extract,
-            "wiki": body.create_wiki,
-            "neo4j": body.sync_neo4j,
         },
     )
     if not any(flags.values()):
@@ -2377,7 +1963,6 @@ async def ingest_paper(
     options = _stage_options(
         flags=flags,
         parser=body.parser,
-        llm_provider=body.llm_provider,
         force_fetch=body.force_fetch,
         force_parse=body.force_parse,
         mineru_no_cache=body.mineru_no_cache,
@@ -2403,67 +1988,6 @@ async def ingest_paper(
         message="ingest queued; poll GET /api/ingest/{task_id}",
     )
 
-
-@router.post(
-    "/ingest/paper/reviewed-extraction",
-    response_model=IngestQueuedResponse,
-    status_code=202,
-)
-async def ingest_reviewed_extraction(
-    request: Request,
-    body: ReviewedExtractionRequest,
-    background_tasks: BackgroundTasks,
-):
-    """Queue server-side persistence for client-reviewed extraction after human review."""
-    config: ServerConfig = request.app.state.config
-    ingest_store: IngestStore = request.app.state.ingest_store
-
-    fetcher = ArxivFetcher()
-    arxiv_norm = fetcher._normalize_arxiv_id(body.arxiv_id)
-    if not fetcher._is_valid_arxiv_id(arxiv_norm):
-        raise HTTPException(status_code=400, detail="invalid arxiv_id format")
-
-    requester = request.headers.get(config.user_header) if config.user_header else None
-    reviewer = body.reviewed_by or requester
-    reviewed_extraction = _reviewed_extraction_step(body, reviewer=reviewer)
-
-    task_id = str(uuid.uuid4())[:8]
-    now = _utc_now_iso()
-
-    options: Dict[str, Any] = {
-        "source": "client_reviewed_extraction",
-        "reviewed_extraction": reviewed_extraction,
-        "metadata": body.metadata,
-        "create_wiki": body.create_wiki,
-        "sync_neo4j": body.sync_neo4j,
-    }
-
-    steps = {
-        "fetch": StepStatus(),
-        "parse": StepStatus(),
-        "extract": StepStatus(),
-        "wiki": StepStatus(),
-        "neo4j": StepStatus(),
-    }
-    task = IngestTask(
-        task_id=task_id,
-        arxiv_id=arxiv_norm,
-        status="queued",
-        message="reviewed extraction queued",
-        requester=requester,
-        options=options,
-        steps=steps,
-        submitted_at=now,
-        updated_at=now,
-    )
-    ingest_store.save(task)
-    background_tasks.add_task(execute_reviewed_extraction, task_id, ingest_store, config)
-
-    return IngestQueuedResponse(
-        task_id=task_id,
-        status="queued",
-        message="reviewed extraction queued; poll GET /api/ingest/{task_id}",
-    )
 
 
 @router.get("/ingest/stages")
@@ -2506,46 +2030,8 @@ async def continue_ingest_task(
         raise HTTPException(status_code=404, detail="ingest task not found")
 
     requester = request.headers.get(config.user_header) if config.user_header else None
-    reviewer = body.reviewed_by or requester
     new_task_id = str(uuid.uuid4())[:8]
     now = _utc_now_iso()
-
-    if body.algorithm is not None or body.algorithm_ir is not None:
-        reviewed_body = ReviewedExtractionRequest(
-            arxiv_id=previous.arxiv_id,
-            algorithm=body.algorithm,
-            algorithm_ir=body.algorithm_ir,
-            metadata=body.metadata,
-            create_wiki=body.create_wiki,
-            sync_neo4j=body.sync_neo4j,
-            reviewed_by=body.reviewed_by,
-            source=body.source,
-            notes=body.notes,
-        )
-        reviewed_extraction = _reviewed_extraction_step(reviewed_body, reviewer=reviewer)
-        options: Dict[str, Any] = {
-            "source": "continued_client_reviewed_extraction",
-            "source_task_id": task_id,
-            "reviewed_extraction": reviewed_extraction,
-            "metadata": body.metadata,
-            "create_wiki": body.create_wiki,
-            "sync_neo4j": body.sync_neo4j,
-        }
-        task = _new_ingest_task(
-            task_id=new_task_id,
-            arxiv_id=previous.arxiv_id,
-            requester=requester,
-            options=options,
-            submitted_at=now,
-            message="reviewed extraction continuation queued",
-        )
-        ingest_store.save(task)
-        background_tasks.add_task(execute_reviewed_extraction, new_task_id, ingest_store, config)
-        return IngestQueuedResponse(
-            task_id=new_task_id,
-            status="queued",
-            message="reviewed extraction continuation queued; poll GET /api/ingest/{task_id}",
-        )
 
     flags = _continue_stage_flags(
         previous,
@@ -2558,7 +2044,6 @@ async def continue_ingest_task(
     options = _stage_options(
         flags=flags,
         parser=body.parser,
-        llm_provider=body.llm_provider,
         force_fetch=body.force_fetch,
         force_parse=body.force_parse,
         mineru_no_cache=body.mineru_no_cache,

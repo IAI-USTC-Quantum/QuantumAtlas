@@ -34,5 +34,5 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev --frozen
 
-      - name: Run pytest
-        run: uv run pytest -rs
+      - name: Run pytest (offline)
+        run: uv run pytest -rs -m "not network and not e2e"

@@ -180,13 +180,16 @@ uv run pytest -rs -m "network or e2e"
 
 | Secret | 用途 | 不设置会怎样 |
 |---|---|---|
-| `QATLAS_SERVER_URL` | 线上服务公网入口（含 scheme），例如 `https://atlas.example.com` | `test_production_smoke.py` 全部 `skip`（不会让 job 红） |
+| `QATLAS_SERVER_TARGETS` | 线上服务公网入口列表，**逗号或换行分隔**。每条可写成 `URL` 或 `URL\|insecure`（后者跳过 TLS 校验，给自签证书 / 直连 IP 用）。示例：`https://quantum-atlas.ai`<br>`https://47.102.36.175\|insecure` | `test_production_smoke.py` 全部 `skip`（不会让 job 红） |
 | `MINERU_API_TOKEN` | MinerU API token，被部分用例兜底使用（如本地启 server 测 mineru 路径） | 仅本地启 server 走 mineru 的 e2e 用例会 `skip` |
 
-加 secret 的方法：repo Settings → Secrets and variables → Actions → New repository secret；或 `gh secret set <NAME> --repo <owner>/<repo>`。
+> 配多个 target 时，每个测试都会按 target 各跑一次（pytest 参数化），id 就是 URL 本身。
+> 兼容老配置：`QATLAS_SERVER_URL` 单个 URL + `QATLAS_INSECURE=1` 仍然生效。
+
+加 secret 的方法：repo Settings → Secrets and variables → Actions → New repository secret；或 `gh secret set <NAME> --repo <owner>/<repo>`（多行值从 stdin 读）。
 
 > **为什么 nightly 跑得起来 production 烟测、本地却不太需要打开**
-> 线上服务有公网入口、跑着完整的 `.env`；本地开发盒子通常没必要每次都拉真的论文。本地想跑一次：`QATLAS_SERVER_URL=https://atlas.example.com uv run pytest -m e2e tests/integration/test_production_smoke.py`。
+> 线上服务有公网入口、跑着完整的 `.env`；本地开发盒子通常没必要每次都拉真的论文。本地想跑一次：`QATLAS_SERVER_TARGETS=https://atlas.example.com uv run pytest -m e2e tests/integration/test_production_smoke.py`。
 
 ## 版本与发布
 

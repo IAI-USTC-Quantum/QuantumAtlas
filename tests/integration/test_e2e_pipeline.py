@@ -166,7 +166,6 @@ def create_quantum_ir_from_algorithm(algorithm_data: Dict[str, Any]) -> QuantumI
 
 # === Test Classes ===
 
-@pytest.mark.integration
 class TestE2EBellState:
     """End-to-end tests for Bell State algorithm."""
 
@@ -225,7 +224,6 @@ class TestE2EBellState:
         assert "QPanda" in code or "pyQPanda" in code or "qalloc" in code
 
 
-@pytest.mark.integration
 class TestE2EQFT:
     """End-to-end tests for QFT algorithm."""
 
@@ -247,7 +245,6 @@ class TestE2EQFT:
         # This tests the pipeline flow, not the estimator specifically
 
 
-@pytest.mark.integration
 class TestE2EGrover:
     """End-to-end tests for Grover's algorithm."""
 
@@ -272,7 +269,6 @@ class TestE2EGrover:
         assert report is not None
 
 
-@pytest.mark.integration
 class TestQuantumIRSerialization:
     """Tests for Quantum IR serialization and deserialization."""
 
@@ -315,7 +311,6 @@ class TestQuantumIRSerialization:
         assert loaded_ir.algorithm_id == quantum_ir.algorithm_id
 
 
-@pytest.mark.integration
 class TestCodeGenerationBackends:
     """Tests for different code generation backends."""
 
@@ -346,7 +341,6 @@ class TestCodeGenerationBackends:
             CodeGenerator(backend="invalid_backend")
 
 
-@pytest.mark.integration
 class TestResourceEstimation:
     """Tests for resource estimation."""
 

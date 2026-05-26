@@ -1,0 +1,41 @@
+name: Nightly production smoke
+
+on:
+  schedule:
+    - cron: '0 18 * * *'   # UTC 18:00 = 北京时间次日 02:00
+  workflow_dispatch:        # 也允许手动从 Actions 页面触发
+
+jobs:
+  smoke:
+    name: Hit live production targets
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: uv sync --extra dev --frozen
+
+      - name: Run e2e + network tests against production
+        env:
+          # 多目标：逗号或换行分隔。每条目可写成
+          #   - https://atlas.example.com
+          #   - https://1.2.3.4|insecure   (跳过 TLS 校验，给自签证书/IP 用)
+          # 没设置时所有 production_smoke 用例会自动 skip。
+          QATLAS_SERVER_TARGETS: ${{ secrets.QATLAS_SERVER_TARGETS }}
+          # 线上服务自己 .env 已经管 MINERU_API_TOKEN；CI runner 只在需要
+          # 本地启 server 的 e2e 变种里用到它，所以仍然注入一份兜底。
+          MINERU_API_TOKEN: ${{ secrets.MINERU_API_TOKEN }}
+        run: uv run pytest -rs -m "network or e2e"
+

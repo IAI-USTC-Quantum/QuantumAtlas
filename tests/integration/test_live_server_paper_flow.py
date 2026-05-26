@@ -104,7 +104,7 @@ def live_server(tmp_path):
         thread.join(timeout=10)
 
 
-@pytest.mark.integration
+@pytest.mark.network
 @pytest.mark.slow
 @pytest.mark.parametrize(("arxiv_id", "expected_page_id"), TEST_PAPERS)
 def test_live_server_ingest_and_paper_share_links_work(live_server, arxiv_id, expected_page_id):
@@ -112,7 +112,7 @@ def test_live_server_ingest_and_paper_share_links_work(live_server, arxiv_id, ex
 
     ingest_response = requests.post(
         f"{base_url}/api/ingest/paper",
-        json={"arxiv_id": arxiv_id, "extract": False, "sync_neo4j": False},
+        json={"arxiv_id": arxiv_id, "parser": "pymupdf"},
         timeout=20,
     )
     ingest_response.raise_for_status()
@@ -122,9 +122,8 @@ def test_live_server_ingest_and_paper_share_links_work(live_server, arxiv_id, ex
     assert ingest_task["status"] == "succeeded"
     assert ingest_task["steps"]["fetch"]["status"] == "succeeded"
     assert ingest_task["steps"]["parse"]["status"] == "succeeded"
-    assert ingest_task["steps"]["wiki"]["status"] == "skipped"
-    assert ingest_task["steps"]["wiki"]["message"] == "wiki creation skipped on server"
-    assert ingest_task["steps"]["neo4j"]["status"] == "skipped"
+    assert "wiki" not in ingest_task["steps"]
+    assert "neo4j" not in ingest_task["steps"]
 
     page_response = requests.get(f"{base_url}/api/pages/{expected_page_id}", timeout=20)
     assert page_response.status_code == 404

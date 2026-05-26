@@ -88,7 +88,7 @@ Aliases:
   validate -> validator, estimate -> estimator, extract -> extractor
 
 Examples:
-  qatlas ingest quant-ph/9508027 --no-extract --no-sync-neo4j
+  qatlas ingest quant-ph/9508027 --parser pymupdf --stop-after parse
   qatlas upload pdf quant-ph/9508027v1 --pdf paper.pdf --metadata meta.json
   qatlas upload markdown 2501.00010v1 --markdown paper.md --source mineru
   qatlas mineru quant-ph/9508027v1 --push-pdf

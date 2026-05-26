@@ -5,6 +5,8 @@ import sys
 import tomllib
 from pathlib import Path
 
+import pytest
+
 from atlas import __version__, cli
 from atlas.client import __main__ as client_cli
 
@@ -129,14 +131,14 @@ def test_dispatches_ingest_to_http_client(monkeypatch):
 
     monkeypatch.setattr(runpy, "run_module", fake_run_module)
 
-    result = cli.main(["ingest", "quant-ph/9508027", "--no-extract"])
+    result = cli.main(["ingest", "quant-ph/9508027", "--no-poll"])
 
     assert result == 0
     assert calls == [
         (
             "atlas.client.__main__",
             "__main__",
-            ["qatlas ingest", "quant-ph/9508027", "--no-extract"],
+            ["qatlas ingest", "quant-ph/9508027", "--no-poll"],
         )
     ]
 
@@ -178,36 +180,6 @@ def test_ingest_client_defaults_to_public_base_url(tmp_path, monkeypatch):
     assert client_cli._default_base_url() == "https://atlas.example"
 
 
-def test_ingest_client_can_disable_wiki_stage(monkeypatch):
-    captured = {}
-
-    class FakeResponse:
-        def __init__(self, payload):
-            self._payload = payload
-
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return self._payload
-
-    def fake_post(url, json, timeout, verify):
-        captured["url"] = url
-        captured["json"] = json
-        captured["verify"] = verify
-        return FakeResponse({"task_id": "task-1", "status": "queued"})
-
-    monkeypatch.setattr(client_cli, "_default_base_url", lambda: "http://server")
-    monkeypatch.setattr(client_cli.requests, "post", fake_post)
-
-    result = client_cli.main(["quant-ph/9508027", "--no-wiki", "--no-poll"])
-
-    assert result == 0
-    assert captured["url"] == "http://server/api/ingest/paper"
-    assert captured["json"]["create_wiki"] is False
-    assert captured["verify"] is True
-
-
 def test_ingest_status_can_skip_tls_verification(monkeypatch, capsys):
     captured = {}
 
@@ -242,12 +214,7 @@ def test_ingest_status_can_skip_tls_verification(monkeypatch, capsys):
     assert "TLS certificate verification is disabled" in captured_output.err
 
 
-def test_ingest_continue_accepts_reviewed_json(tmp_path, monkeypatch):
-    reviewed_path = tmp_path / "reviewed.json"
-    reviewed_path.write_text(
-        '{"id":"reviewed_search","name":"Reviewed Search"}',
-        encoding="utf-8",
-    )
+def test_ingest_client_uses_continue_endpoint_with_stages(tmp_path, monkeypatch):
     captured = {}
 
     class FakeResponse:
@@ -271,60 +238,30 @@ def test_ingest_continue_accepts_reviewed_json(tmp_path, monkeypatch):
         [
             "continue",
             "task-1",
-            "--reviewed-json",
-            str(reviewed_path),
-            "--reviewed-by",
-            "alice",
-            "--no-sync-neo4j",
+            "--parser",
+            "pymupdf",
+            "--stages",
+            "parse",
             "--no-poll",
         ]
     )
 
     assert result == 0
     assert captured["url"] == "http://server/api/ingest/task-1/continue"
-    assert captured["json"]["algorithm"] == {"id": "reviewed_search", "name": "Reviewed Search"}
-    assert captured["json"]["reviewed_by"] == "alice"
-    assert captured["json"]["sync_neo4j"] is False
+    assert captured["json"]["stages"] == ["parse"]
+    assert captured["json"]["parser"] == "pymupdf"
+    # ff-only: client must NOT send reviewed-extraction fields
+    assert "algorithm" not in captured["json"]
+    assert "create_wiki" not in captured["json"]
+    assert "sync_neo4j" not in captured["json"]
     assert captured["verify"] is True
 
 
-def test_ingest_reviewed_uses_reviewed_extraction_endpoint(tmp_path, monkeypatch):
-    reviewed_path = tmp_path / "reviewed-body.json"
-    reviewed_path.write_text(
-        '{"algorithm":{"id":"direct_search","name":"Direct Search"},"metadata":{"title":"T"}}',
-        encoding="utf-8",
-    )
-    captured = {}
-
-    class FakeResponse:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {"task_id": "task-3", "status": "queued"}
-
-    def fake_post(url, json, timeout, verify):
-        captured["url"] = url
-        captured["json"] = json
-        captured["verify"] = verify
-        return FakeResponse()
-
+def test_ingest_client_refuses_silent_parser_default(monkeypatch, capsys):
     monkeypatch.setattr(client_cli, "_default_base_url", lambda: "http://server")
-    monkeypatch.setattr(client_cli.requests, "post", fake_post)
+    with pytest.raises(SystemExit) as excinfo:
+        client_cli.main(["quant-ph/9508027", "--no-poll"])
+    assert excinfo.value.code != 0
+    captured_output = capsys.readouterr()
+    assert "--parser" in captured_output.err
 
-    result = client_cli.main(
-        [
-            "reviewed",
-            "quant-ph/9508027",
-            "--reviewed-json",
-            str(reviewed_path),
-            "--no-poll",
-        ]
-    )
-
-    assert result == 0
-    assert captured["url"] == "http://server/api/ingest/paper/reviewed-extraction"
-    assert captured["json"]["arxiv_id"] == "quant-ph/9508027"
-    assert captured["json"]["algorithm"] == {"id": "direct_search", "name": "Direct Search"}
-    assert captured["json"]["metadata"] == {"title": "T"}
-    assert captured["verify"] is True
