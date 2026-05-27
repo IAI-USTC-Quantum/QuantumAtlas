@@ -43,10 +43,11 @@ jobs:
           # box. If the secret is set it overrides this default — e.g. for
           # a one-off test against a staging URL.
           QATLAS_SERVER_TARGETS: ${{ secrets.QATLAS_SERVER_TARGETS || 'https://quantum-atlas.ai,https://47.102.36.175|insecure' }}
-          # Phase-A write-token gate: lets test_write_endpoint_accepts_phase_a_secret
-          # verify the gate's accept path (handler 400 instead of guard 401).
-          # If the secret isn't configured, that one test self-skips.
-          QATLAS_WRITE_TOKEN: ${{ secrets.QATLAS_WRITE_TOKEN }}
+          # Optional long-lived PocketBase user token for a dedicated
+          # CI account, used by test_write_endpoint_accepts_user_token to
+          # verify the gate's accept path (handler 400 instead of guard
+          # 401). If absent that one test self-skips.
+          QATLAS_TOKEN: ${{ secrets.QATLAS_CI_TOKEN }}
           # 'legacy' marker covers the old FastAPI-only ingest/* tests that
           # the Go server intentionally does not implement; they must NOT
           # be selected by this nightly run.

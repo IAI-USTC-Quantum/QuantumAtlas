@@ -1,4 +1,4 @@
-"""Production smoke tests for the QuantumAtlas Go server (P11).
+"""Production smoke tests for the QuantumAtlas Go server (P12).
 
 Targets are configured through ``QATLAS_SERVER_TARGETS`` — a comma- or
 newline-separated list of ``URL`` / ``URL|insecure`` entries (see the
@@ -8,12 +8,13 @@ target, every test in this file is skipped.
 Typical local invocation::
 
     QATLAS_SERVER_TARGETS=$'https://quantum-atlas.ai\\nhttps://47.102.36.175|insecure' \\
-    QATLAS_WRITE_TOKEN=<the_phase_A_shared_secret> \\
+    QATLAS_TOKEN=<your_pocketbase_user_token_from_/token_page> \\
         uv run pytest -m e2e tests/integration/test_production_smoke.py
 
-The nightly CI workflow injects both targets and the write token from
-GitHub Actions secrets, so this file is the canonical regression harness
-for the publicly exposed surface.
+The nightly CI workflow injects both targets and (optionally) a long-lived
+service-account PocketBase token from GitHub Actions secrets. Without
+``QATLAS_TOKEN`` the accept-path write test self-skips and the other
+checks still run.
 
 What this exercises against each target:
 
@@ -25,9 +26,8 @@ What this exercises against each target:
     old /static/web/... path that broke after the vite.config.ts fix).
   * authGuard enforcement on write endpoints — POST /api/shares/ must
     return 401 with no Authorization, 401 with a wrong bearer, and (only
-    when QATLAS_WRITE_TOKEN is supplied) move on to validate the JSON
-    body (400 "paths required" instead of 401). The latter doubles as
-    a regression test for the Phase-A interim shared-secret path.
+    when QATLAS_TOKEN is supplied with a real PocketBase user token)
+    move on to validate the JSON body (400 "paths required").
 
 The /api/ingest/* endpoints intentionally do **not** appear here. The Go
 server does not implement that surface (see HANDOFF.md §"Things
@@ -239,12 +239,13 @@ def test_write_endpoint_rejects_wrong_bearer(target: Target):
     assert response.status_code == 401, response.text
 
 
-def test_write_endpoint_accepts_phase_a_secret(target: Target):
-    """If a shared-secret is configured locally, prove that the gate lets
-    us through (400 from the body parser, not 401 from authGuard)."""
-    token = os.environ.get("QATLAS_WRITE_TOKEN", "").strip()
+def test_write_endpoint_accepts_user_token(target: Target):
+    """If a real PocketBase user token is configured (QATLAS_TOKEN), prove
+    that the gate lets us through (400 from the body parser, not 401
+    from authGuard). Self-skips without a token."""
+    token = os.environ.get("QATLAS_TOKEN", "").strip()
     if not token:
-        pytest.skip("QATLAS_WRITE_TOKEN not set; cannot validate accepted path")
+        pytest.skip("QATLAS_TOKEN not set; cannot validate accepted path")
 
     response = _post(
         target,
@@ -255,9 +256,9 @@ def test_write_endpoint_accepts_phase_a_secret(target: Target):
             "Authorization": f"Bearer {token}",
         },
     )
+    # 401 = the supplied PocketBase token wasn't accepted (expired? wrong
+    # collection?). Re-fetch from /token page and try again.
     # 400 = passed authGuard and reached the handler's body validator.
-    # 401 here would mean either the env var isn't actually deployed,
-    # or the running server is older than the P9 auth gate.
     assert response.status_code == 400, (
         f"expected 400 (handler validation), got {response.status_code}: {response.text}"
     )

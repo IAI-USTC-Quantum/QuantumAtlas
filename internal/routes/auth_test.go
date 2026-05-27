@@ -24,94 +24,19 @@ func makeRE(authHeader string) *core.RequestEvent {
 	return re
 }
 
-func TestBearerToken(t *testing.T) {
-	cases := []struct {
-		in, want string
-	}{
-		{"", ""},
-		{"Bearer", ""},
-		{"Bearer abc", "abc"},
-		{"bearer xyz", "xyz"},
-		{"BEARER  trim  ", "trim"},
-		{"Basic abcdef==", ""},
+func TestIsAuthorized_NoAuthRejected(t *testing.T) {
+	if isAuthorized(makeRE("")) {
+		t.Fatal("expected rejection with no Authorization header")
 	}
-	for _, tc := range cases {
-		if got := bearerToken(tc.in); got != tc.want {
-			t.Errorf("bearerToken(%q) = %q, want %q", tc.in, got, tc.want)
-		}
+	if isAuthorized(makeRE("Bearer something")) {
+		t.Fatal("expected rejection when re.Auth is nil even with a bearer")
+	}
+	if isAuthorized(makeRE("Basic abcdef==")) {
+		t.Fatal("expected rejection of non-bearer scheme")
 	}
 }
 
-func TestConstantTimeEq(t *testing.T) {
-	cases := []struct {
-		a, b string
-		want bool
-	}{
-		{"", "", true},
-		{"abc", "abc", true},
-		{"abc", "abd", false},
-		{"abc", "ab", false}, // length mismatch short-circuit
-		{"", "abc", false},
-	}
-	for _, tc := range cases {
-		if got := constantTimeEq(tc.a, tc.b); got != tc.want {
-			t.Errorf("constantTimeEq(%q,%q) = %v, want %v", tc.a, tc.b, got, tc.want)
-		}
-	}
-}
-
-func TestIsAuthorized_WriteTokenFallback(t *testing.T) {
-	t.Setenv("QATLAS_WRITE_TOKEN", "shared-secret-xyz")
-
-	t.Run("missing header rejected", func(t *testing.T) {
-		if isAuthorized(makeRE("")) {
-			t.Fatal("expected rejection with no Authorization header")
-		}
-	})
-
-	t.Run("wrong token rejected", func(t *testing.T) {
-		if isAuthorized(makeRE("Bearer not-the-token")) {
-			t.Fatal("expected rejection with mismatched token")
-		}
-	})
-
-	t.Run("correct token accepted", func(t *testing.T) {
-		if !isAuthorized(makeRE("Bearer shared-secret-xyz")) {
-			t.Fatal("expected accept with matching write token")
-		}
-	})
-
-	t.Run("non-bearer scheme rejected", func(t *testing.T) {
-		if isAuthorized(makeRE("Basic shared-secret-xyz")) {
-			t.Fatal("expected rejection of Basic scheme")
-		}
-	})
-
-	t.Run("scheme case-insensitive", func(t *testing.T) {
-		if !isAuthorized(makeRE("bearer shared-secret-xyz")) {
-			t.Fatal("expected accept regardless of scheme case")
-		}
-	})
-}
-
-func TestIsAuthorized_WriteTokenEmpty(t *testing.T) {
-	t.Setenv("QATLAS_WRITE_TOKEN", "")
-
-	if isAuthorized(makeRE("Bearer anything")) {
-		t.Fatal("with QATLAS_WRITE_TOKEN unset, any bearer must be rejected")
-	}
-}
-
-func TestIsAuthorized_TrimsWhitespace(t *testing.T) {
-	t.Setenv("QATLAS_WRITE_TOKEN", "  trimmed-secret  ")
-
-	if !isAuthorized(makeRE("Bearer trimmed-secret")) {
-		t.Fatal("expected env value to be trimmed before comparison")
-	}
-}
-
-func TestAuthGuard_RejectsAndPassesThrough(t *testing.T) {
-	t.Setenv("QATLAS_WRITE_TOKEN", "guard-secret")
+func TestAuthGuard_RejectAndPass(t *testing.T) {
 	called := false
 	inner := func(re *core.RequestEvent) error {
 		called = true
@@ -119,7 +44,6 @@ func TestAuthGuard_RejectsAndPassesThrough(t *testing.T) {
 	}
 	wrapped := authGuard(inner)
 
-	// reject path
 	re := makeRE("")
 	if err := wrapped(re); err != nil {
 		t.Fatalf("wrapped() returned err on reject path: %v", err)
@@ -131,17 +55,16 @@ func TestAuthGuard_RejectsAndPassesThrough(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401, got %d", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), "authentication required") {
-		t.Errorf("expected error body to mention authentication, got %q", rec.Body.String())
+	body := rec.Body.String()
+	if !strings.Contains(body, "authentication required") {
+		t.Errorf("expected error body to mention authentication, got %q", body)
+	}
+	if !strings.Contains(body, "/login") || !strings.Contains(body, "/token") {
+		t.Errorf("expected error body to point caller at /login and /token, got %q", body)
 	}
 
-	// accept path
-	called = false
-	re2 := makeRE("Bearer guard-secret")
-	if err := wrapped(re2); err != nil {
-		t.Fatalf("wrapped() returned err on accept path: %v", err)
-	}
-	if !called {
-		t.Fatal("inner handler was not called on authorized request")
-	}
+	// The accept-path needs a real PocketBase auth record on re.Auth,
+	// which requires more setup than this unit test buys us. The
+	// happy-path is covered end-to-end by
+	// tests/integration/test_production_smoke.py.
 }

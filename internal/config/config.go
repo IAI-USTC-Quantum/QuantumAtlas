@@ -59,9 +59,23 @@ type Config struct {
 
 // Load resolves the configuration from process environment.
 //
+// dotenvPath, if non-empty, is the absolute path to the .env file from
+// which env vars were loaded by the caller. We use its parent directory
+// as the anchor for resolving relative filesystem paths (WikiDir /
+// RawDir / DataDir). This way a .env entry like
+// `WIKI_DIR=../QuantumAtlas-Wiki` resolves consistently regardless of
+// the systemd WorkingDirectory or shell CWD. If dotenvPath is empty
+// (e.g. when env is provided entirely by systemd / shell), we fall back
+// to the process CWD as the anchor — preserving the previous behavior.
+//
 // Lookup order for each logical field follows the QATLAS_* alias chain
 // documented in .env.example. The first non-empty match wins.
-func Load() (*Config, error) {
+func Load(dotenvPath string) (*Config, error) {
+	anchor := ""
+	if dotenvPath != "" {
+		anchor = filepath.Dir(dotenvPath)
+	}
+
 	cfg := &Config{
 		HTTPAddr:              firstEnv("QATLAS_HTTP_ADDR"),
 		WikiDir:               firstEnv("QATLAS_WIKI_DIR", "WIKI_DIR"),
@@ -100,10 +114,10 @@ func Load() (*Config, error) {
 		}
 	}
 
-	// Normalize filesystem paths: resolve ~ and relative-to-CWD.
-	cfg.WikiDir = expandPath(cfg.WikiDir)
-	cfg.RawDir = expandPath(cfg.RawDir)
-	cfg.DataDir = expandPath(cfg.DataDir)
+	// Normalize filesystem paths: resolve ~ and relative-to-anchor.
+	cfg.WikiDir = expandPath(cfg.WikiDir, anchor)
+	cfg.RawDir = expandPath(cfg.RawDir, anchor)
+	cfg.DataDir = expandPath(cfg.DataDir, anchor)
 
 	return cfg, nil
 }
@@ -153,9 +167,12 @@ func firstEnvBool(names ...string) bool {
 	}
 }
 
-// expandPath resolves ~ and converts relative paths to absolute (using CWD).
-// Empty input returns empty output.
-func expandPath(p string) string {
+// expandPath resolves ~ and converts relative paths to absolute.
+//
+// If anchor is non-empty, relative paths resolve against it (typically
+// the .env file's directory). Otherwise they fall back to the process
+// CWD. Empty input returns empty output.
+func expandPath(p, anchor string) string {
 	if p == "" {
 		return ""
 	}
@@ -165,7 +182,9 @@ func expandPath(p string) string {
 		}
 	}
 	if !filepath.IsAbs(p) {
-		if cwd, err := os.Getwd(); err == nil {
+		if anchor != "" {
+			p = filepath.Join(anchor, p)
+		} else if cwd, err := os.Getwd(); err == nil {
 			p = filepath.Join(cwd, p)
 		}
 	}

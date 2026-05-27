@@ -234,6 +234,28 @@ pb_data/
 # Go build cache (pixi-managed go writes here)
 .gocache/
 
+# ============================================================================
+# Go (GitHub gitignore template, https://github.com/github/gitignore/blob/main/Go.gitignore)
+# ============================================================================
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.dylib
+# *.so and *.test omitted: *.so already covered by the Python section above.
+# *.test would also collide with Python __init__.py-style fixture dirs.
+*.test
+
+# Code coverage profiles and other test artifacts
+*.out
+coverage.*
+*.coverprofile
+profile.cov
+
+# Go workspace file
+go.work
+go.work.sum
+
 # Re-include embed targets
 !internal/webui/dist/
 !internal/webui/dist/**

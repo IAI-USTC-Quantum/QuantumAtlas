@@ -169,24 +169,26 @@ qatlas mineru 2501.00010v1 --no-push
 
 服务器使用 PocketBase 内嵌的 GitHub OAuth 流程做浏览器登录，并通过 `authGuard`（`internal/routes/auth.go`）门禁写操作。读口（wiki / pages / stats / search / graph / lint / share）保持公开（因为 wiki 仓库本身就是公开的）。
 
+`authGuard` **只接受 PocketBase 用户 token**——一种凭据，没有共享密钥后门。要拿 token：
+
+1. 浏览器打开 `https://<server>/`，被引导到 `/login`；
+2. 点 "Continue with GitHub"，授权后回到 SPA；
+3. 进 `/token` 页面，复制 `Authorization: Bearer ...` 或 `export QATLAS_TOKEN=...`；
+4. PocketBase 默认 token 有 14 天有效期，到期再回 `/token` 重新拷。
+
 涉及到的服务端配置：
 
-- `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`：用来在启动时把 GitHub OAuth provider 注入 users collection（`internal/auth/oauth.go::syncGitHubProvider`，幂等）。
+- `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`：启动时把 GitHub OAuth provider 注入 users collection（`internal/auth/oauth.go::syncGitHubProvider`，幂等）。
 - `QATLAS_ADMIN_GITHUB_LOGINS`：GitHub 用户名白名单（逗号分隔），未来用于自动 admin 提权（handler 待补）。
-- `QATLAS_WRITE_TOKEN`：Phase-A 临时共享密钥。`authGuard` 接受 `Authorization: Bearer <这个>` 作为写口凭据，作为 Step 7（CLI 改走 PocketBase 用户 token）落地前的兜底。
 - `QATLAS_USER_HEADER`：仍可用，反代/SSO 注入审计头时由 upload 端点写入 `uploaded_by` 字段；与 PocketBase auth 并行，不互斥。
 
 客户端 CLI 调用写口时，要带 bearer token：
 
 ```bash
-# 方法 A — 从浏览器 /token 页面复制（PocketBase 用户 token，长期推荐）：
 export QATLAS_SERVER_URL=https://quantum-atlas.ai
 export QATLAS_TOKEN=$(pbcopy 出来的串)            # 或 --token 命令行覆盖
 
 qatlas upload pdf quant-ph/9508027v1 --pdf paper.pdf
-
-# 方法 B — Phase-A 共享密钥（CLI 临时机制，仅服务端 .env 持有；走运维通道发到 CLI 用户）：
-qatlas upload pdf 2501.00010v1 --pdf paper.pdf --token "$QATLAS_WRITE_TOKEN"
 
 # 直接 curl 也行：
 curl -X POST -H "Authorization: Bearer $QATLAS_TOKEN" \

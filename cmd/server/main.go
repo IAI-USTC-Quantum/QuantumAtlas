@@ -15,6 +15,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -27,6 +28,7 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/shares"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/webui"
 
+	"github.com/joho/godotenv"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
@@ -40,7 +42,18 @@ import (
 var Version = "0.2.2-go"
 
 func main() {
-	cfg, err := config.Load()
+	// Load .env BEFORE config.Load so any vars it sets win over
+	// preset systemd environment (godotenv.Load skips existing keys,
+	// which is correct for the "real env beats file" precedence we want).
+	//
+	// Why we load it ourselves instead of relying on systemd's
+	// EnvironmentFile= directive: the latter strips the file path, so
+	// the server can't know where the .env lives and therefore can't
+	// resolve relative paths like WIKI_DIR=../QuantumAtlas-Wiki against
+	// the .env directory. Loading it ourselves lets config.Load() use
+	// the .env directory as the anchor for relative paths.
+	dotenvPath := loadDotEnv()
+	cfg, err := config.Load(dotenvPath)
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
@@ -147,12 +160,9 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, share
 		})
 	})
 
-	// /api/session/token — return the empty stub for now; PocketBase's
-	// built-in auth flow replaces the Caddy AUTHP_ACCESS_TOKEN cookie path.
-	se.Router.GET("/api/session/token", func(re *core.RequestEvent) error {
-		re.Response.Header().Set("Cache-Control", "no-store")
-		return re.JSON(200, map[string]string{"token": ""})
-	})
+	// (P12 removed: /api/session/token. It was a caddy-security-era stub
+	// that returned an empty string. The SPA now reads pb.authStore.token
+	// directly; CLI users pull their bearer from the /token page.)
 
 	// Wiki / pages / stats / search / lint — see internal/routes/wiki.go.
 	routes.RegisterWiki(se, cfg)
@@ -217,4 +227,52 @@ func maybeIPv4Listener(addr string) (net.Listener, error) {
 		return nil, err
 	}
 	return net.ListenTCP("tcp4", tcpAddr)
+}
+
+// loadDotEnv finds and loads the .env file for the running server.
+// Returns the absolute path of the file loaded, or "" if none was found
+// (also OK — the operator can still set env via systemd or shell).
+//
+// Resolution order (first hit wins):
+//  1. $QATLAS_DOTENV — explicit override; required for systemd installs
+//     where CWD is not the .env-containing dir.
+//  2. ./.env — relative to CWD, for ad-hoc dev `quantumatlas serve`
+//     invocations from the project directory.
+//
+// We deliberately do NOT walk up the filesystem looking for any .env —
+// that's how a stray $HOME/.env from an unrelated tool can poison the
+// process environment (anchor for relative paths, WIKI_DIR, etc.). If
+// the operator needs the server to find a .env outside CWD, they must
+// set $QATLAS_DOTENV explicitly.
+//
+// Once located, godotenv.Load is used with the "don't overwrite existing
+// vars" semantic so an env var already set in the process environment
+// (systemd, shell export, k8s ConfigMap) always wins. The .env is only
+// a fallback / convenience for dev machines.
+func loadDotEnv() string {
+	candidates := []string{}
+	if explicit := strings.TrimSpace(os.Getenv("QATLAS_DOTENV")); explicit != "" {
+		candidates = append(candidates, explicit)
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		candidates = append(candidates, filepath.Join(cwd, ".env"))
+	}
+
+	for _, path := range candidates {
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			if err := godotenv.Load(path); err != nil {
+				slog.Warn("found .env but could not load it", "path", path, "error", err)
+				return ""
+			}
+			absPath, err := filepath.Abs(path)
+			if err != nil {
+				absPath = path
+			}
+			slog.Info("loaded .env", "path", absPath)
+			return absPath
+		}
+	}
+
+	slog.Debug("no .env located; relying on process environment alone")
+	return ""
 }
