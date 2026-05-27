@@ -92,6 +92,100 @@ journalctl -u qatlas -f         # 读，免 sudo
 sudo systemctl restart qatlas   # 写，要 sudo
 ```
 
+## 加新 PAT scope（P14 之后）
+
+PAT scope 系统数据驱动——加一条新 scope 走一个 5–6 文件的小回路，**不需要碰任何 handler 的 import**。背景见 `docs/contribution-workflow.md` §2 的用户视角文档，本节是开发者的 step-by-step。
+
+### 词表设计
+
+scope 命名遵循 `<resource>:<action>` 约定：
+
+- `resource` = 资源类名复数（`papers` / `shares` / `wiki`...），跟 URL 路径段对齐
+- `action` = 动词原形（`read` / `write` / 将来可能的 `admin` / `delete`），跟 HTTP method 大致对齐
+- **`write` 默认 imply `read`**（在 `scopePolicies` 表里加两行即可，下面有示例）
+
+不要随意加 `manage` / `full` 这种泛化动词；总是优先拆出更细粒度的 read/write。`*` 通配符**只用作内部 session-token 的隐式 scope**，外部输入由 `ValidateScopes` 拒绝。
+
+### 加一条新 scope 的清单
+
+以"加一个 `wiki:write` scope 允许 PAT 持有者调将来的 `POST /api/wiki/sync/pull`"为例：
+
+**1. `internal/pat/scopes.go`** —— 加常量 + 描述 + 词表项 + 策略行：
+
+```go
+const (
+    // ...existing scopes...
+    ScopeWikiWrite = "wiki:write"
+)
+
+var ScopeDescription = map[string]string{
+    // ...
+    ScopeWikiWrite: "Trigger wiki sync (git pull) from the SPA or CLI",
+}
+
+var AllScopes = []string{
+    // ...existing order...
+    ScopeWikiWrite,
+}
+
+var scopePolicies = [][3]string{
+    // ...existing...
+    {ScopeWikiWrite, "wiki", "write"},
+    // 若 wiki:write 应隐式包含将来加的 wiki:read，再加一行:
+    // {ScopeWikiWrite, "wiki", "read"},
+}
+```
+
+**2. `internal/pat/scopes_test.go`** —— 给 `TestNewEnforcer` / `TestAllows` 各加几行（直接抄已有的 `papers:write` 模式），确认拿到新 scope 时 `(wiki, write)` 通过，不拿时拒绝：
+
+```go
+{ScopeWikiWrite, "wiki", "write", true},
+{ScopeWikiWrite, "papers", "write", false}, // 不串扰别的 resource
+```
+
+`TestScopeDescription_Coverage` 是循环检测的——只要 1 行 desc map 加好就自动覆盖到。
+
+**3. `internal/routes/<对应 file>.go`** —— 把新 endpoint 用 `scopeGuard(enforcer, "wiki", "write", ...)` 包起来。注意三个参数：
+
+- `enforcer`：从 `Register<Module>` 函数签名拿（如果模块还没接 enforcer，去 `cmd/server/main.go::registerRoutes` 加一个传参，参考 `RegisterPapers` / `RegisterShares` 的写法）
+- `obj` / `act`：必须跟 `scopePolicies` 表里的 obj/act **严格一致**（字符串匹配，无歧义），不要写成 scope 名 `wiki:write`——那是用户面的 label，不是 enforcer 的 (obj, act) 元组
+
+**4. 重启 server 验证**（**不需要写 migration**——scope 字段是 JSON 字符串，存什么值由 `ValidateScopes` 在入口拦截，加新 scope 只是放宽 validator）：
+
+```bash
+pixi run build && pixi run test-go && pixi run vet
+# 重启后浏览器 /pat 页面应该看到新 scope 出现在 checkbox 列表（因为 GET /api/pat/scopes 自动暴露 AllScopes）
+```
+
+**5. e2e**（可选，建议）—— 抄 `tests/integration/test_production_smoke.py::test_pat_scope_enforcement` 加一个 case：mint 只带新 scope 的 PAT → 调 `POST /api/wiki/sync/pull` → 期望 200/4xx（不是 403）；mint 不带 → 期望 403 且 detail 含 `wiki:write`。
+
+### 不需要做的事
+
+- **不用改 SPA**：`web/src/routes/pat.tsx` 通过 `GET /api/pat/scopes` 拉词表，新 scope 自动出现在 checkbox 里。前端**没有任何 hardcoded scope 字符串**。
+- **不用改用户文档**（除非 scope 语义复杂到需要专门解释）：scope 的一行描述就是 `ScopeDescription` map 那一行，会同时显示在 UI 和 `/api/pat/scopes` JSON 里。
+- **不用迁移**：`pat_tokens.scopes` 是开放 schema 的 JSON 字符串，validator 在 input 端把关，老数据自然继续有效。
+
+### 进阶：path-pattern scope（将来）
+
+当前 matcher 是字符串相等：
+
+```
+[matchers]
+m = r.scope == p.scope && r.obj == p.obj && r.act == p.act
+```
+
+未来想加"`papers:quant-ph:write` 只允许写 `/api/papers/quant-ph/*`"这种细粒度，把 matcher 换成 casbin 内建的 `keyMatch`：
+
+```
+m = r.scope == p.scope && keyMatch(r.obj, p.obj) && r.act == p.act
+```
+
+policies 写成 `{ScopePapersQuantPhWrite, "papers/quant-ph/*", "write"}`，端点调 `scopeGuard(enforcer, "papers/" + arxivNamespace, "write", ...)`。`Allows` helper、`ValidateScopes`、SPA 词表展示**全都不用改**——keyMatch 是 casbin 自带函数，模型字符串改一行就够。
+
+### 关于 sessionGuard
+
+`scopeGuard` 是给"PAT 也能调"的写口用的。如果新加的端点是 PAT 不应该能调的（如各种 admin 操作），用 `sessionGuard` 替代——它只接受浏览器 session token，PAT-auth 一律 403。`/api/pat` 系列就是这么处理的（防 leaked PAT 自我复制）。判断标准：**这件事一个长寿命的 token 该不该有权做**。能批量上传论文？是，PAT OK，scopeGuard。能管理别的 PAT、改用户权限、删 collection？不是，sessionGuard。
+
 ## 旧版 Python server 开发命令
 
 下面这些命令针对 `atlas/server/` 这套 FastAPI server，它仍在仓库里但
