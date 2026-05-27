@@ -96,6 +96,9 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config) {
 
 	// Wiki / pages / stats / search / lint — see internal/routes/wiki.go.
 	routes.RegisterWiki(se, cfg)
+
+	// Graph (Neo4j) — see internal/routes/graph.go.
+	routes.RegisterGraph(se, cfg)
 }
 
 // injectHTTPFlag mutates os.Args to add --http=<addr> when the user invokes
