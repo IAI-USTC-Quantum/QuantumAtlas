@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate, useRouter } from '@tanstack/react-router'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { Github, Loader2, Sparkles } from 'lucide-react'
 import { loginWithGitHub, useAuth } from '@/lib/auth'
@@ -15,7 +15,6 @@ export const Route = createFileRoute('/login')({
 function LoginPage() {
   const auth = useAuth()
   const navigate = useNavigate()
-  const router = useRouter()
   const search = Route.useSearch()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>('')
@@ -31,12 +30,14 @@ function LoginPage() {
     setBusy(true)
     setError('')
     try {
-      await loginWithGitHub()
-      router.invalidate()
+      // On success this navigates the whole tab to github.com; the promise
+      // never resolves from this page's perspective because the document is
+      // torn down. We only land in catch if the provider lookup fails
+      // synchronously (network / config error).
+      await loginWithGitHub(search.from)
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e)
       setError(message || 'GitHub login failed')
-    } finally {
       setBusy(false)
     }
   }
@@ -54,12 +55,12 @@ function LoginPage() {
           onClick={handleLogin}
         >
           {busy ? <Loader2 className="spin" size={18} /> : <Github size={18} />}
-          {busy ? 'Opening GitHub...' : 'Continue with GitHub'}
+          {busy ? 'Redirecting to GitHub…' : 'Continue with GitHub'}
         </button>
         {error && <div className="notice danger">{error}</div>}
         <p className="muted small">
-          A popup will open to github.com. Allow popups for this domain if it
-          does not appear. After authorizing, you will be redirected back here.
+          You will be redirected to github.com to authorize, then sent back
+          here automatically.
         </p>
       </div>
     </div>

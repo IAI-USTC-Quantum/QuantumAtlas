@@ -1,34 +1,51 @@
 import { Outlet, createRootRoute, useNavigate, useRouterState } from '@tanstack/react-router'
 import { useEffect } from 'react'
+import { Loader2 } from 'lucide-react'
 import { Sidebar } from '@/components/Sidebar'
 import { Topbar } from '@/components/Topbar'
-import { useAuth } from '@/lib/auth'
+import { ensureAuthBootstrap, useAuth } from '@/lib/auth'
 
 export const Route = createRootRoute({
   component: RootLayout,
   notFoundComponent: NotFoundView,
 })
 
+const ANON_ROUTES = new Set(['/login', '/auth/callback'])
+
 function RootLayout() {
   const auth = useAuth()
   const navigate = useNavigate()
   const pathname = useRouterState({ select: (state) => state.location.pathname })
-  const onLoginRoute = pathname === '/login'
+  const onAnonRoute = ANON_ROUTES.has(pathname)
 
   useEffect(() => {
-    if (!auth.isAuthed && !onLoginRoute) {
+    ensureAuthBootstrap()
+  }, [])
+
+  useEffect(() => {
+    if (auth.isChecking) return
+    if (!auth.isAuthed && !onAnonRoute) {
       navigate({
         to: '/login',
         search: { from: pathname === '/' ? undefined : pathname },
       })
     }
-  }, [auth.isAuthed, onLoginRoute, navigate, pathname])
+  }, [auth.isChecking, auth.isAuthed, onAnonRoute, navigate, pathname])
 
-  if (!auth.isAuthed && !onLoginRoute) {
+  if (auth.isChecking) {
+    return (
+      <div className="auth-bootstrap">
+        <Loader2 className="spin" size={28} />
+        <p>Restoring your session…</p>
+      </div>
+    )
+  }
+
+  if (!auth.isAuthed && !onAnonRoute) {
     return null
   }
 
-  if (onLoginRoute) {
+  if (onAnonRoute) {
     return <Outlet />
   }
 

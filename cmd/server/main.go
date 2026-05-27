@@ -27,7 +27,7 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/pat"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/routes"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/shares"
-	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/webui"
+	qweb "github.com/IAI-USTC-Quantum/QuantumAtlas/web"
 
 	"github.com/casbin/casbin/v2"
 	"github.com/joho/godotenv"
@@ -133,7 +133,7 @@ func main() {
 		// indexFallback=true means any path that doesn't match a real
 		// file falls back to /index.html — exactly the SPA-client-router
 		// behavior the React app needs for /wiki, /graph, /token, etc.
-		se.Router.GET("/{path...}", apis.Static(webui.MustFS(), true))
+		se.Router.GET("/{path...}", apis.Static(qweb.MustFS(), true))
 
 		return se.Next()
 	})

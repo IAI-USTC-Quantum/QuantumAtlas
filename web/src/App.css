@@ -771,6 +771,23 @@ textarea {
   to { transform: rotate(360deg); }
 }
 
+.auth-bootstrap {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 14px;
+  background: linear-gradient(135deg, #111b16 0%, #1a2f23 70%);
+  color: #cfe1d6;
+  text-align: center;
+}
+
+.auth-bootstrap p {
+  margin: 0;
+  font-size: 14px;
+  color: #9fb5aa;
+}
+
 .notice.danger {
   width: 100%;
   padding: 10px 12px;

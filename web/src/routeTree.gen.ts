@@ -16,6 +16,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as WikiIndexRouteImport } from './routes/wiki.index'
 import { Route as GraphIndexRouteImport } from './routes/graph.index'
 import { Route as WikiSearchRouteImport } from './routes/wiki.search'
+import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
 import { Route as WikiPageSplatRouteImport } from './routes/wiki.page.$'
 import { Route as GraphNodeSplatRouteImport } from './routes/graph.node.$'
 
@@ -54,6 +55,11 @@ const WikiSearchRoute = WikiSearchRouteImport.update({
   path: '/wiki/search',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthCallbackRoute = AuthCallbackRouteImport.update({
+  id: '/auth/callback',
+  path: '/auth/callback',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const WikiPageSplatRoute = WikiPageSplatRouteImport.update({
   id: '/wiki/page/$',
   path: '/wiki/page/$',
@@ -70,6 +76,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/pat': typeof PatRoute
   '/token': typeof TokenRoute
+  '/auth/callback': typeof AuthCallbackRoute
   '/wiki/search': typeof WikiSearchRoute
   '/graph/': typeof GraphIndexRoute
   '/wiki/': typeof WikiIndexRoute
@@ -81,6 +88,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/pat': typeof PatRoute
   '/token': typeof TokenRoute
+  '/auth/callback': typeof AuthCallbackRoute
   '/wiki/search': typeof WikiSearchRoute
   '/graph': typeof GraphIndexRoute
   '/wiki': typeof WikiIndexRoute
@@ -93,6 +101,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/pat': typeof PatRoute
   '/token': typeof TokenRoute
+  '/auth/callback': typeof AuthCallbackRoute
   '/wiki/search': typeof WikiSearchRoute
   '/graph/': typeof GraphIndexRoute
   '/wiki/': typeof WikiIndexRoute
@@ -106,6 +115,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/pat'
     | '/token'
+    | '/auth/callback'
     | '/wiki/search'
     | '/graph/'
     | '/wiki/'
@@ -117,6 +127,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/pat'
     | '/token'
+    | '/auth/callback'
     | '/wiki/search'
     | '/graph'
     | '/wiki'
@@ -128,6 +139,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/pat'
     | '/token'
+    | '/auth/callback'
     | '/wiki/search'
     | '/graph/'
     | '/wiki/'
@@ -140,6 +152,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   PatRoute: typeof PatRoute
   TokenRoute: typeof TokenRoute
+  AuthCallbackRoute: typeof AuthCallbackRoute
   WikiSearchRoute: typeof WikiSearchRoute
   GraphIndexRoute: typeof GraphIndexRoute
   WikiIndexRoute: typeof WikiIndexRoute
@@ -198,6 +211,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WikiSearchRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/auth/callback': {
+      id: '/auth/callback'
+      path: '/auth/callback'
+      fullPath: '/auth/callback'
+      preLoaderRoute: typeof AuthCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/wiki/page/$': {
       id: '/wiki/page/$'
       path: '/wiki/page/$'
@@ -220,6 +240,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   PatRoute: PatRoute,
   TokenRoute: TokenRoute,
+  AuthCallbackRoute: AuthCallbackRoute,
   WikiSearchRoute: WikiSearchRoute,
   GraphIndexRoute: GraphIndexRoute,
   WikiIndexRoute: WikiIndexRoute,
