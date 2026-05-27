@@ -14,17 +14,21 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/shares"
 
+	"github.com/casbin/casbin/v2"
 	"github.com/pocketbase/pocketbase/core"
 )
 
 // RegisterShares wires the /api/shares CRUD plus the public
 // /share/{token}* serving routes. Both groups share the same Store so
 // the public route can validate / resolve tokens against the same
-// on-disk records the admin API mutates.
-func RegisterShares(se *core.ServeEvent, cfg *config.Config, store *shares.Store) {
+// on-disk records the admin API mutates. enforcer is the process-wide
+// casbin enforcer used to gate write endpoints by PAT scope;
+// shares:read covers list, shares:write covers POST/DELETE (and
+// implies read).
+func RegisterShares(se *core.ServeEvent, cfg *config.Config, store *shares.Store, enforcer *casbin.Enforcer) {
 	// --- /api/shares CRUD --------------------------------------------------
 
-	se.Router.POST("/api/shares/", authGuard(func(re *core.RequestEvent) error {
+	se.Router.POST("/api/shares/", scopeGuard(enforcer, "shares", "write", func(re *core.RequestEvent) error {
 		var body struct {
 			Paths     []string `json:"paths"`
 			Label     string   `json:"label"`
@@ -63,7 +67,7 @@ func RegisterShares(se *core.ServeEvent, cfg *config.Config, store *shares.Store
 		})
 	}))
 
-	se.Router.GET("/api/shares/", authGuard(func(re *core.RequestEvent) error {
+	se.Router.GET("/api/shares/", scopeGuard(enforcer, "shares", "read", func(re *core.RequestEvent) error {
 		records, err := store.ListAll()
 		if err != nil {
 			return re.JSON(http.StatusInternalServerError, map[string]string{"detail": err.Error()})
@@ -71,7 +75,7 @@ func RegisterShares(se *core.ServeEvent, cfg *config.Config, store *shares.Store
 		return re.JSON(http.StatusOK, map[string]any{"shares": records})
 	}))
 
-	se.Router.DELETE("/api/shares/{token}", authGuard(func(re *core.RequestEvent) error {
+	se.Router.DELETE("/api/shares/{token}", scopeGuard(enforcer, "shares", "write", func(re *core.RequestEvent) error {
 		token := re.Request.PathValue("token")
 		ok, err := store.Delete(token)
 		if err != nil {

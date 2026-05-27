@@ -20,12 +20,16 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperassets"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/shares"
 
+	"github.com/casbin/casbin/v2"
 	"github.com/pocketbase/pocketbase/core"
 )
 
 // RegisterPapers wires the /api/papers/* endpoints. cfg supplies the
 // RAW_DIR / DATA_DIR roots; shareStore + claimStore are pre-initialized
-// by main.go and shared with the shares routes.
+// by main.go and shared with the shares routes. enforcer is the
+// process-wide casbin enforcer used to gate write endpoints by PAT
+// scope (session-token callers bypass via the ScopeMaster
+// short-circuit in pat.Allows).
 //
 // We can't use a Go ServeMux pattern with the wildcard in the middle of
 // the path (e.g. /api/papers/{arxiv_id...}/upload-pdf), but the Python
@@ -35,7 +39,13 @@ import (
 // DELETE) and dispatch on the trailing path segment(s) inside the
 // handler. Special case: GET /api/papers/needs-mineru is path-only with
 // no arxiv_id, dispatched first.
-func RegisterPapers(se *core.ServeEvent, cfg *config.Config, shareStore *shares.Store, claimStore *mineruclaim.Store) {
+//
+// Scope wiring: all POST/DELETE actions require pat.ScopePapersWrite
+// ("papers:write"). The scope check happens *before* the path
+// dispatch so callers without the scope get a clean 403 regardless of
+// which sub-action they target — they aren't told that
+// /api/papers/.../upload-pdf even exists if they can't use it.
+func RegisterPapers(se *core.ServeEvent, cfg *config.Config, shareStore *shares.Store, claimStore *mineruclaim.Store, enforcer *casbin.Enforcer) {
 	se.Router.GET("/api/papers/{path...}", func(re *core.RequestEvent) error {
 		raw := re.Request.PathValue("path")
 		// /api/papers/needs-mineru (no arxiv id)
@@ -55,7 +65,7 @@ func RegisterPapers(se *core.ServeEvent, cfg *config.Config, shareStore *shares.
 		})
 	})
 
-	se.Router.POST("/api/papers/{path...}", authGuard(func(re *core.RequestEvent) error {
+	se.Router.POST("/api/papers/{path...}", scopeGuard(enforcer, "papers", "write", func(re *core.RequestEvent) error {
 		raw := re.Request.PathValue("path")
 		arxiv, action := splitPapersPath(raw)
 		switch action {
@@ -75,7 +85,7 @@ func RegisterPapers(se *core.ServeEvent, cfg *config.Config, shareStore *shares.
 		})
 	}))
 
-	se.Router.DELETE("/api/papers/{path...}", authGuard(func(re *core.RequestEvent) error {
+	se.Router.DELETE("/api/papers/{path...}", scopeGuard(enforcer, "papers", "write", func(re *core.RequestEvent) error {
 		raw := re.Request.PathValue("path")
 		// mineru-claim DELETE: <arxiv...>/mineru-claim/<claim_id>
 		arxiv, claimID, ok := splitMineruClaimRelease(raw)

@@ -296,12 +296,19 @@ def test_pat_lifecycle(target: Target):
     if not session_token:
         pytest.skip("QATLAS_TOKEN not set; cannot bootstrap a PAT")
 
-    # Step 1: mint the PAT using the session token.
+    # Step 1: mint the PAT using the session token. We grant
+    # shares:write so subsequent step 2 lands on the body validator
+    # (400 paths required) not the scope guard (403).
     name = f"smoke-test-{os.getpid()}"
     create_resp = _post(
         target,
         "/api/pat",
-        json={"name": name, "description": "ephemeral smoke test PAT"},
+        json={
+            "name": name,
+            "description": "ephemeral smoke test PAT",
+            "scopes": ["shares:write"],
+            "expires_in_days": 1,  # min lifetime — auto-cleanup if test crashes mid-flight
+        },
         headers={
             "Content-Type": "application/json",
             "Authorization": f"Bearer {session_token}",
@@ -316,6 +323,9 @@ def test_pat_lifecycle(target: Target):
     assert plaintext.startswith("qat_"), f"plaintext shape wrong: {plaintext[:8]!r}..."
     assert len(plaintext) >= 12, f"plaintext too short: {len(plaintext)}"
     assert token_id, created
+    # P14 contract: server echoes back granted scopes + computed expiry.
+    assert created.get("scopes") == ["shares:write"], created
+    assert created.get("expires_at"), "expires_at missing from response"
 
     # Pre-register a best-effort cleanup so a failing assertion below
     # doesn't leak a real PAT on production. The DELETE runs both as the
@@ -367,6 +377,164 @@ def test_pat_lifecycle(target: Target):
         )
     finally:
         # Best-effort idempotent cleanup. 404 means step 3 already ran.
+        _delete(
+            target,
+            f"/api/pat/{token_id}",
+            headers={"Authorization": f"Bearer {session_token}"},
+        )
+
+
+# ---------------------------------------------------------------------------
+# PAT fine-grained scope enforcement (P14)
+# ---------------------------------------------------------------------------
+
+
+def test_pat_create_rejects_no_expiry(target: Target):
+    """Server must refuse to mint a perpetual PAT (P14 GitHub-style
+    contract: expires_in_days is mandatory, max 365)."""
+    session_token = os.environ.get("QATLAS_TOKEN", "").strip()
+    if not session_token:
+        pytest.skip("QATLAS_TOKEN not set")
+
+    no_expiry = _post(
+        target,
+        "/api/pat",
+        json={"name": f"smoke-no-expiry-{os.getpid()}", "scopes": []},
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {session_token}",
+        },
+    )
+    assert no_expiry.status_code == 400, no_expiry.text
+    assert "expires_in_days" in no_expiry.json().get("detail", ""), no_expiry.text
+
+    over_max = _post(
+        target,
+        "/api/pat",
+        json={
+            "name": f"smoke-over-max-{os.getpid()}",
+            "scopes": [],
+            "expires_in_days": 999,
+        },
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {session_token}",
+        },
+    )
+    assert over_max.status_code == 400, over_max.text
+    assert "365" in over_max.json().get("detail", ""), over_max.text
+
+
+def test_pat_scope_enforcement(target: Target):
+    """A PAT minted without shares:write must 403 on POST /api/shares/
+    (the scopeGuard fires before the handler's body validator). This
+    is the headline P14 guarantee: default-deny scope semantics."""
+    session_token = os.environ.get("QATLAS_TOKEN", "").strip()
+    if not session_token:
+        pytest.skip("QATLAS_TOKEN not set")
+
+    # Mint a scope-less PAT (allowed — see scope picker UX note in pat.tsx).
+    create_resp = _post(
+        target,
+        "/api/pat",
+        json={
+            "name": f"smoke-scope-{os.getpid()}",
+            "scopes": [],
+            "expires_in_days": 1,
+        },
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {session_token}",
+        },
+    )
+    assert create_resp.status_code == 200, create_resp.text
+    created = create_resp.json()
+    plaintext, token_id = created["plaintext"], created["id"]
+
+    try:
+        # Use it on /api/shares/ -> expect 403 (insufficient scope),
+        # NOT 400 (handler validator) and NOT 401 (auth failed).
+        resp = _post(
+            target,
+            "/api/shares/",
+            json={},
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {plaintext}",
+            },
+        )
+        assert resp.status_code == 403, (
+            f"scope-less PAT should 403, got {resp.status_code}: {resp.text}"
+        )
+        detail = resp.json().get("detail", "")
+        assert "shares:write" in detail, (
+            f"403 should name the missing scope; got: {detail!r}"
+        )
+    finally:
+        _delete(
+            target,
+            f"/api/pat/{token_id}",
+            headers={"Authorization": f"Bearer {session_token}"},
+        )
+
+
+def test_pat_management_rejects_pat_auth(target: Target):
+    """A leaked PAT must not be able to mint or revoke other PATs.
+    sessionGuard enforces this: /api/pat returns 403 when the caller
+    presents a PAT instead of a browser session token."""
+    session_token = os.environ.get("QATLAS_TOKEN", "").strip()
+    if not session_token:
+        pytest.skip("QATLAS_TOKEN not set")
+
+    # Bootstrap: mint a PAT with full scopes via session token.
+    create_resp = _post(
+        target,
+        "/api/pat",
+        json={
+            "name": f"smoke-noselfmint-{os.getpid()}",
+            "scopes": ["papers:write", "shares:write"],
+            "expires_in_days": 1,
+        },
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {session_token}",
+        },
+    )
+    assert create_resp.status_code == 200, create_resp.text
+    created = create_resp.json()
+    plaintext, token_id = created["plaintext"], created["id"]
+
+    try:
+        # Attempt to use the PAT to mint a SECOND PAT — must be 403.
+        # (401 here would mean auth failed entirely; we want a clear
+        # "authenticated but not allowed for this endpoint" signal.)
+        second_resp = _post(
+            target,
+            "/api/pat",
+            json={
+                "name": "should-not-exist",
+                "scopes": [],
+                "expires_in_days": 1,
+            },
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {plaintext}",
+            },
+        )
+        assert second_resp.status_code == 403, (
+            f"PAT-authed POST /api/pat should 403, got {second_resp.status_code}: "
+            f"{second_resp.text}"
+        )
+        # GET should also refuse — PATs can't even enumerate the user's
+        # other PATs, which would be a useful reconnaissance step.
+        list_resp = requests.get(
+            f"{target.url}/api/pat",
+            timeout=15,
+            verify=target.verify,
+            headers={"Authorization": f"Bearer {plaintext}"},
+        )
+        assert list_resp.status_code == 403, list_resp.text
+    finally:
         _delete(
             target,
             f"/api/pat/{token_id}",

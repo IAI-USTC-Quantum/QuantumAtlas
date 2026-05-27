@@ -171,19 +171,35 @@ qatlas mineru 2501.00010v1 --no-push
 
 `authGuard` 接受 **两种**凭据，按到达顺序检查：
 
-1. **Personal Access Token (PAT)** —— bearer 以 `qat_` 开头，从 SPA `/pat` 页面创建，明文一次性显示，自选过期时间（默认永不过期）。撤销 = 同页 Revoke。**CI、nightly、长跑脚本推荐用这条路径。**
-2. **PocketBase 用户 session token** —— OAuth 登录后从 `/token` 页面复制，默认 14 天有效，到期再回页面拷一次。适合人手浏览器调用。
+1. **Personal Access Token (PAT)** —— bearer 以 `qat_` 开头，从 SPA `/pat` 页面创建，明文一次性显示。**强制设置过期时间**（7 / 30 / 60 / 90 / 365 天，最长 1 年）。**每条 PAT 携带显式 scope 列表**，默认空集 = 什么写口都调不了，必须勾选具体 scope 才能用。撤销 = 同页 Revoke。**CI、nightly、长跑脚本推荐用这条路径。**
+2. **PocketBase 用户 session token** —— OAuth 登录后从 `/token` 页面复制，默认 14 天有效，到期再回页面拷一次。**隐式拥有全部权限**（"在浏览器里能干啥，从 /token 拷的就能干啥"），跳过 scope 检查。适合人手浏览器调用。
 
 任何写口都同时接受这两种形式；CLI / curl 在 `Authorization: Bearer <...>` 里塞哪种都行。
 
-获取 (1) PAT：
+### Scope 词表
+
+参考 GitHub fine-grained PAT 设计。**没勾任何 scope 的 PAT 调写口直接 403**——这是有意为之的安全默认。
+
+| Scope | 覆盖端点 | 说明 |
+|---|---|---|
+| `papers:write` | `POST /api/papers/.../upload-pdf` / `upload-markdown` / `mineru-claim`，`DELETE .../mineru-claim/{id}` | 上传 PDF / Markdown、跑 MinerU 任务 |
+| `shares:read` | `GET /api/shares/` | 列出已创建的 share token |
+| `shares:write` | `POST /api/shares/`、`DELETE /api/shares/{token}` | 创建 / 撤销 share token（自动包含 read） |
+
+scope 的 obj/act 在 `scopeGuard` 抛 403 时会回显在 `detail` 里——CLI 报错能直接告诉你"该 PAT 缺 `papers:write` scope，去 /pat 重发一条"。
+
+底层用 [casbin](https://casbin.org/) 做 enforce，model + policies 都 hardcode 在 `internal/pat/scopes.go`（不外置文件，部署简单）；将来加 path-pattern scope（如"仅允许 quant-ph/* 命名空间"）改 matcher 为 `keyMatch` 即可，调用方代码无需动。
+
+### 获取 (1) PAT
 
 1. 浏览器登录后打开 `https://<server>/pat`；
-2. "New token" → 填名字（如 `nightly-ci`）+ 可选 description + 可选过期天数（留空 = 永不过期）；
+2. "New token" → 填名字（如 `nightly-ci`）+ 可选 description + 必选过期天数（默认 90 天）+ 勾选需要的 scope；
 3. 服务器返回的明文**只显示一次**——立即拷到 GH Actions secret / systemd `EnvironmentFile` / 本地 `.env`；
-4. 之后这条 PAT 在列表里只显示前缀（`qat_xxxxxxxx…`）和 last-used 时间戳，需要换号就 Revoke 再创建一条。
+4. 之后这条 PAT 在列表里只显示前缀（`qat_xxxxxxxx…`）、scope 标签和 last-used 时间戳，需要换号就 Revoke 再创建一条。
 
-获取 (2) session token：
+**PAT 不能用来管理 PAT**：`/api/pat` 端点用 `sessionGuard` 而非 `authGuard`——只接受浏览器 session token，PAT auth 一律 403。这跟 GitHub fine-grained PAT 一致：一条 PAT 即便泄露也不能 mint 出更多 PAT，限制爆炸半径。
+
+### 获取 (2) session token
 
 1. 浏览器打开 `https://<server>/`，被引导到 `/login`；
 2. 点 "Continue with GitHub"，授权后回到 SPA；
@@ -196,7 +212,7 @@ qatlas mineru 2501.00010v1 --no-push
 - `QATLAS_ADMIN_GITHUB_LOGINS`：GitHub 用户名白名单（逗号分隔），未来用于自动 admin 提权（handler 待补）。
 - `QATLAS_USER_HEADER`：仍可用，反代/SSO 注入审计头时由 upload 端点写入 `uploaded_by` 字段；与 PocketBase auth 并行，不互斥。
 
-PAT 的实现说明：每条 PAT 在 SQLite `pat_tokens` 集合里只存 bcrypt 哈希（`token_hash` 字段 hidden=true，admin UI 都不显示），明文从不持久化；过期时间由 `expires_at` 控制，留空 = 永不过期；服务端用 `last_used_at` 记录每次成功认证的时间戳。代码见 `internal/pat/` 和 `internal/routes/pat.go`。
+PAT 的实现说明：每条 PAT 在 SQLite `pat_tokens` 集合里只存 bcrypt 哈希（`token_hash` 字段 hidden=true，admin UI 都不显示），明文从不持久化；scope 列表以 JSON 字符串存在 `scopes` 字段；过期时间存 `expires_at`（强制非空）；服务端用 `last_used_at` 记录每次成功认证的时间戳。代码见 `internal/pat/{pat.go,scopes.go,migrations.go}` 和 `internal/routes/{pat.go,auth.go,scope_guard.go}`。
 
 客户端 CLI 调用写口时，要带 bearer token：
 

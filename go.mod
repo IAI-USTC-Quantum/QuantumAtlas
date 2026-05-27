@@ -3,6 +3,7 @@ module github.com/IAI-USTC-Quantum/QuantumAtlas
 go 1.26.2
 
 require (
+	github.com/casbin/casbin/v2 v2.135.0
 	github.com/joho/godotenv v1.5.1
 	github.com/neo4j/neo4j-go-driver/v6 v6.1.0
 	github.com/pocketbase/dbx v1.12.0
@@ -13,6 +14,8 @@ require (
 
 require (
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 // indirect
+	github.com/bmatcuk/doublestar/v4 v4.6.1 // indirect
+	github.com/casbin/govaluate v1.3.0 // indirect
 	github.com/disintegration/imaging v1.6.2 // indirect
 	github.com/domodwyer/mailyak/v3 v3.6.2 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect

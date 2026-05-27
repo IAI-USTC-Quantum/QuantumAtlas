@@ -40,6 +40,7 @@ import (
 
 func init() {
 	core.AppMigrations.Register(upCreatePATTokens, downCreatePATTokens, "1748400000_create_pat_tokens.go")
+	core.AppMigrations.Register(upAddScopesField, downAddScopesField, "1748500000_add_scopes_to_pat_tokens.go")
 }
 
 // upCreatePATTokens creates the pat_tokens collection. Idempotent: if
@@ -132,4 +133,46 @@ func downCreatePATTokens(app core.App) error {
 		return nil // already absent — treat as success
 	}
 	return app.Delete(existing)
+}
+
+// upAddScopesField adds a "scopes" text column to the pat_tokens
+// collection. The column stores a JSON-encoded []string of granted
+// scopes (e.g. `["papers:write","shares:read"]`). New PATs default to
+// the empty list, which means "this token can call no write
+// endpoint" — the same default-deny behaviour as GitHub fine-grained
+// PATs. Bumping this to a non-empty list is an explicit opt-in done
+// by the user via the SPA's /pat create modal.
+//
+// Idempotent: skipped when the field already exists (operator may
+// have added it manually before this migration ran).
+func upAddScopesField(app core.App) error {
+	col, err := app.FindCollectionByNameOrId(CollectionName)
+	if err != nil {
+		return err
+	}
+	if col.Fields.GetByName("scopes") != nil {
+		return nil
+	}
+	col.Fields.Add(&core.TextField{
+		Name: "scopes",
+		Max:  500, // ample headroom for ~30 scope strings of avg 15 chars
+	})
+	return app.Save(col)
+}
+
+// downAddScopesField removes the column added by the up. PocketBase
+// requires symmetric migrations; field removal here also drops the
+// stored JSON values, which is the right inverse for a schema
+// rollback (the field is meaningless without the enforcement code).
+func downAddScopesField(app core.App) error {
+	col, err := app.FindCollectionByNameOrId(CollectionName)
+	if err != nil {
+		return nil
+	}
+	field := col.Fields.GetByName("scopes")
+	if field == nil {
+		return nil
+	}
+	col.Fields.RemoveById(field.GetId())
+	return app.Save(col)
 }

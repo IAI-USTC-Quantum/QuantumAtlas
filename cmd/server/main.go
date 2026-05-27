@@ -24,14 +24,12 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/auth"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineruclaim"
-	// pat is imported for its init()-time AppMigrations.Register side
-	// effect that adds the pat_tokens collection to the migration list.
-	// The package's exported API is consumed via internal/routes/pat.go.
-	_ "github.com/IAI-USTC-Quantum/QuantumAtlas/internal/pat"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/pat"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/routes"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/shares"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/webui"
 
+	"github.com/casbin/casbin/v2"
 	"github.com/joho/godotenv"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/apis"
@@ -89,6 +87,15 @@ func main() {
 		log.Fatalf("init mineru claim store: %v", err)
 	}
 
+	// Build the casbin enforcer once at startup. The policy table is
+	// static (defined in internal/pat/scopes.go), so a single shared
+	// instance is enough — Enforce() is safe for concurrent reads.
+	// Failing here is fatal: every write endpoint depends on it.
+	enforcer, err := pat.NewEnforcer()
+	if err != nil {
+		log.Fatalf("build PAT scope enforcer: %v", err)
+	}
+
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
 		// Optional: force a tcp4-native listener when the operator opts
 		// in via QATLAS_FORCE_TCP4=1. Background:
@@ -120,7 +127,7 @@ func main() {
 			}
 		}
 
-		registerRoutes(se, app, cfg, shareStore, claimStore)
+		registerRoutes(se, app, cfg, shareStore, claimStore, enforcer)
 
 		// Serve the embedded SPA last as the catch-all. apis.Static's
 		// indexFallback=true means any path that doesn't match a real
@@ -153,7 +160,7 @@ func initClaimStore(cfg *config.Config) (*mineruclaim.Store, error) {
 // registerRoutes wires the QuantumAtlas /api/* surface. Most endpoints are
 // implemented under internal/routes/ and pulled in by their respective
 // Register* helpers as we migrate each module in subsequent phases.
-func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, shareStore *shares.Store, claimStore *mineruclaim.Store) {
+func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, shareStore *shares.Store, claimStore *mineruclaim.Store, enforcer *casbin.Enforcer) {
 	// /health — uptime probe (Python server compat). PocketBase already
 	// owns /api/health, so we expose this at the root to match the old
 	// FastAPI surface used by smoke tests and Caddy health probes.
@@ -185,12 +192,14 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, share
 	routes.RegisterGraph(se, cfg)
 
 	// Papers (resources, upload, mineru-claim) — see internal/routes/papers.go.
-	routes.RegisterPapers(se, cfg, shareStore, claimStore)
+	routes.RegisterPapers(se, cfg, shareStore, claimStore, enforcer)
 
 	// Shares CRUD + public /share/{token}* — see internal/routes/shares.go.
-	routes.RegisterShares(se, cfg, shareStore)
+	routes.RegisterShares(se, cfg, shareStore, enforcer)
 
 	// Personal Access Tokens — see internal/routes/pat.go.
+	// /api/pat is session-token-only (PAT auth refused by sessionGuard);
+	// no enforcer needed because there's no scope-gated endpoint here.
 	routes.RegisterPAT(se, app)
 }
 
