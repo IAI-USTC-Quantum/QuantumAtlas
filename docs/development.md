@@ -57,7 +57,14 @@ uv run pytest -m "not e2e and not network and not legacy"
    目录。**不**用 systemd `EnvironmentFile=` 因为后者只 inject env vars，
    server 拿不到文件路径就没法做 anchor。
 
-4. **Go 1.26.3 vs pixi env**：`go.mod` 写 `go 1.26.2`，pixi 装到 1.26.3。
+4. **`go vet ./...` 在本地工作树里会卡死**——不是 Go 本身的问题，是
+   `raw/` 目录是 rclone FUSE 挂载（指向云端 Team 网盘）。`go list/vet
+   ./...` 默认会遍历所有子目录 `stat .go` 文件，触发 FUSE→网络拉云端
+   listing，10+ 分钟都不一定回。**永远走 `pixi run vet`**（task 已经
+   窄到 `./internal/... ./cmd/...`，不碰 raw/）。`go build ./cmd/server`
+   单包指定也安全。底线：本地任何 Go 命令都**别用 `./...` glob**。
+
+5. **Go 1.26.3 vs pixi env**：`go.mod` 写 `go 1.26.2`，pixi 装到 1.26.3。
    升 go.mod 前先 `pixi search -c conda-forge go` 确认 conda-forge 有匹配
    版本；conda go 包默认 `GOTOOLCHAIN=local`（在 `.pixi/envs/default/etc/
    conda/env_vars.d/go.json`）禁止自动下载新 toolchain，go.mod 要求更高
