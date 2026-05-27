@@ -23,6 +23,7 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineruclaim"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/routes"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/shares"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/webui"
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/apis"
@@ -65,10 +66,11 @@ func main() {
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
 		registerRoutes(se, app, cfg, shareStore, claimStore)
 
-		// Serve the embedded SPA + assets last (catch-all fallback).
-		// In dev pb_public/ may be empty; that's fine — the static handler
-		// just 404s on misses and the API routes still work.
-		se.Router.GET("/{path...}", apis.Static(os.DirFS("./pb_public"), false))
+		// Serve the embedded SPA last as the catch-all. apis.Static's
+		// indexFallback=true means any path that doesn't match a real
+		// file falls back to /index.html — exactly the SPA-client-router
+		// behavior the React app needs for /wiki, /graph, /token, etc.
+		se.Router.GET("/{path...}", apis.Static(webui.MustFS(), true))
 
 		return se.Next()
 	})

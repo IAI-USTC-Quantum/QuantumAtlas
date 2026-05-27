@@ -233,3 +233,7 @@ pb_data/
 
 # Go build cache (pixi-managed go writes here)
 .gocache/
+
+# Re-include embed targets
+!internal/webui/dist/
+!internal/webui/dist/**
