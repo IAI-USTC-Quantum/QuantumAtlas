@@ -15,11 +15,14 @@ package main
 import (
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/auth"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineruclaim"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/routes"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/shares"
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/apis"
@@ -47,8 +50,20 @@ func main() {
 
 	auth.Register(app, cfg)
 
+	// Initialize on-disk JSON stores up-front so route handlers can
+	// share single instances. Both stores no-op when their dirs already
+	// exist, so this is safe to call on every boot.
+	shareStore, err := initShareStore(cfg)
+	if err != nil {
+		log.Fatalf("init share store: %v", err)
+	}
+	claimStore, err := initClaimStore(cfg)
+	if err != nil {
+		log.Fatalf("init mineru claim store: %v", err)
+	}
+
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
-		registerRoutes(se, app, cfg)
+		registerRoutes(se, app, cfg, shareStore, claimStore)
 
 		// Serve the embedded SPA + assets last (catch-all fallback).
 		// In dev pb_public/ may be empty; that's fine — the static handler
@@ -63,10 +78,30 @@ func main() {
 	}
 }
 
+// initShareStore returns a ready-to-use ShareStore rooted at
+// {DATA_DIR}/shares (or a sensible default when DATA_DIR is unset).
+func initShareStore(cfg *config.Config) (*shares.Store, error) {
+	root := cfg.DataDir
+	if root == "" {
+		root = "./pb_data/qatlas_data"
+	}
+	return shares.NewStore(filepath.Join(root, "shares"))
+}
+
+// initClaimStore returns a ready-to-use mineru claim store rooted at
+// {DATA_DIR}/mineru-claims (or a sensible default when DATA_DIR is unset).
+func initClaimStore(cfg *config.Config) (*mineruclaim.Store, error) {
+	root := cfg.DataDir
+	if root == "" {
+		root = "./pb_data/qatlas_data"
+	}
+	return mineruclaim.NewStore(filepath.Join(root, "mineru-claims"))
+}
+
 // registerRoutes wires the QuantumAtlas /api/* surface. Most endpoints are
 // implemented under internal/routes/ and pulled in by their respective
 // Register* helpers as we migrate each module in subsequent phases.
-func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config) {
+func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, shareStore *shares.Store, claimStore *mineruclaim.Store) {
 	// /health — uptime probe (Python server compat). PocketBase already
 	// owns /api/health, so we expose this at the root to match the old
 	// FastAPI surface used by smoke tests and Caddy health probes.
@@ -99,6 +134,12 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config) {
 
 	// Graph (Neo4j) — see internal/routes/graph.go.
 	routes.RegisterGraph(se, cfg)
+
+	// Papers (resources, upload, mineru-claim) — see internal/routes/papers.go.
+	routes.RegisterPapers(se, cfg, shareStore, claimStore)
+
+	// Shares CRUD + public /share/{token}* — see internal/routes/shares.go.
+	routes.RegisterShares(se, cfg, shareStore)
 }
 
 // injectHTTPFlag mutates os.Args to add --http=<addr> when the user invokes
