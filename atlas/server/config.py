@@ -114,6 +114,28 @@ class ServerConfig(BaseSettings):
             "REQUIRE_RELEASE_TAG",
         ),
     )
+    # PocketBase (IdP / PAT management)
+    pocketbase_url: str = Field(
+        "http://127.0.0.1:8090",
+        validation_alias=AliasChoices("QATLAS_POCKETBASE_URL", "POCKETBASE_URL"),
+    )
+    pocketbase_data_dir: Optional[str] = Field(
+        None,
+        validation_alias="QATLAS_POCKETBASE_DATA_DIR",
+    )
+    pocketbase_port: Optional[str] = Field(
+        None,
+        validation_alias="QATLAS_POCKETBASE_PORT",
+    )
+    session_secret: Optional[str] = Field(
+        None,
+        validation_alias="QATLAS_SESSION_SECRET",
+    )
+    admin_github_logins: Optional[str] = Field(
+        None,
+        validation_alias="QATLAS_ADMIN_GITHUB_LOGINS",
+    )
+
     # MinerU PDF parser (third-party vendor name; no QATLAS_ prefix)
     mineru_api_token: Optional[str] = Field(None, validation_alias="MINERU_API_TOKEN")
     mineru_api_base_url: str = Field("https://mineru.net", validation_alias="MINERU_API_BASE_URL")
