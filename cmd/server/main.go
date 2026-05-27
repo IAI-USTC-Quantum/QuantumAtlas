@@ -79,24 +79,33 @@ func main() {
 	}
 
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
-		// Force an IPv4-native listener when the bind addr is a v4
-		// literal (0.0.0.0:NNNN or 127.0.0.1:NNNN). PocketBase's default
-		// `net.Listen("tcp", "0.0.0.0:4200")` on modern Go binds the
-		// dual-stack v6 socket; on WSL2 + Windows netsh portproxy the
-		// inbound IPv4 packet on the mesh IP (10.144.18.10:4200) never
-		// matches a real v4 listener and the kernel RSTs the connection.
-		// Explicitly listening on tcp4 puts the entry in /proc/net/tcp
-		// (not /tcp6) and unblocks the mesh path.
+		// Optional: force a tcp4-native listener when the operator opts
+		// in via QATLAS_FORCE_TCP4=1. Background:
 		//
-		// Pull the addr from se.Server (already populated from --http),
-		// not cfg.HTTPAddr, so we always honor whatever the operator
-		// actually told PocketBase to bind to.
-		if se.Listener == nil && se.Server != nil {
+		// On modern Go (1.21+), net.Listen("tcp", "0.0.0.0:4200") returns
+		// a dual-stack v6 socket with IPV6_V6ONLY=0 — visible in
+		// /proc/<pid>/net/tcp6 but absent from /proc/<pid>/net/tcp.
+		// IPv4 clients normally still reach it via IPv4-mapped IPv6.
+		//
+		// On regular Linux cloud VMs this is fine and serves both v4 and
+		// v6 clients out of one socket. **Don't** flip this on by default
+		// for community deployments — you would shut out v6-only callers.
+		//
+		// WSL2 + Windows netsh portproxy is the exception: the v4-only
+		// portproxy rule (10.144.18.10:4200 -> 127.0.0.1:4200) injects
+		// raw v4 SYNs into the WSL2 NAT layer which then cannot match a
+		// pure v6 socket, even with bindv6only=0. Edge Caddy reverse-
+		// proxying through the mesh sees endless 502s while curl from
+		// inside WSL2 to 127.0.0.1:4200 works. The fix is to bind a
+		// tcp4 socket ourselves and inject it into ServeEvent.
+		//
+		// Toggled on for our 1810 systemd unit; unset for everyone else.
+		if forceTCP4() && se.Listener == nil && se.Server != nil {
 			if l, err := maybeIPv4Listener(se.Server.Addr); err == nil && l != nil {
 				se.Listener = l
-				log.Printf("forced tcp4 listener on %s", se.Server.Addr)
+				log.Printf("QATLAS_FORCE_TCP4=1: forced tcp4 listener on %s", se.Server.Addr)
 			} else if err != nil {
-				log.Printf("force-ipv4 listener failed: %v (falling back to PocketBase default)", err)
+				log.Printf("QATLAS_FORCE_TCP4=1 but listener bind failed: %v (falling back to PocketBase default)", err)
 			}
 		}
 
@@ -192,6 +201,21 @@ func injectHTTPFlag(cfg *config.Config) {
 	os.Args = append(os.Args, "--http="+cfg.HTTPAddr)
 }
 
+// forceTCP4 returns true when the operator has opted in via
+// QATLAS_FORCE_TCP4. Off by default so community deployments retain
+// PocketBase's dual-stack v6 socket and serve both v4 + v6 callers out
+// of one bind. Set to "1" / "true" / "yes" on hosts behind a v4-only
+// portproxy (notably WSL2 + Windows netsh).
+func forceTCP4() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("QATLAS_FORCE_TCP4")))
+	switch v {
+	case "1", "true", "yes", "on", "y", "t":
+		return true
+	default:
+		return false
+	}
+}
+
 // maybeIPv4Listener returns a tcp4-bound listener when addr is a literal
 // IPv4 bind expression ("0.0.0.0:NNNN" or "127.0.0.1:NNNN" etc.). For
 // hostnames, empty hosts, or IPv6 literals it returns (nil, nil) so the
@@ -201,6 +225,8 @@ func injectHTTPFlag(cfg *config.Config) {
 // rule from the host-side EasyTier mesh IP can't reach a v6-only socket
 // (even with bindv6only=0) because Windows' portproxy forwards into the
 // WSL2 NAT layer as raw v4 SYNs that need a real v4 listener.
+//
+// Only invoked when forceTCP4() returns true.
 func maybeIPv4Listener(addr string) (net.Listener, error) {
 	if addr == "" {
 		return nil, nil

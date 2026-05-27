@@ -41,13 +41,15 @@ uv run pytest -m "not e2e and not network and not legacy"
    显式带 `--dir=/home/timidly/QuantumAtlas-go/pb_data`。**任何手动起
    server 也要带这个 flag**，否则 PocketBase 在当前 CWD 下默写 pb_data。
 
-2. **PocketBase 默认走 `net.Listen("tcp", "0.0.0.0:4200")`，创建 v6-only
-   socket**（可在 `/proc/net/tcp6` 看到，但 `/proc/net/tcp` 里没有）。
-   WSL2 + Windows 主机的 `netsh interface portproxy` 是 v4-only 的，
-   把请求转到 v6-only 监听 = 直接 reject。修法：`cmd/server/main.go::
-   maybeIPv4Listener` 检测到 IPv4 字面量 bind addr 时显式 `net.Listen(
-   "tcp4", ...)`，强制 v4 socket。日志会打 `forced tcp4 listener on
-   0.0.0.0:4200`。
+2. **PocketBase 默认 `net.Listen("tcp", "0.0.0.0:NNNN")` 在 modern Go 上
+   返回 dual-stack v6 socket**（在 `/proc/<pid>/net/tcp6` 可见，`tcp`
+   里没有）。普通 Linux 上 v4 客户端走 IPv4-mapped IPv6 还是能进来，
+   所以默认 fine。**但 WSL2 + Windows netsh portproxy** 的 v4-only
+   转发规则会把 v4 SYN 投到 v6 socket 时 WSL2 NAT 层拒掉 — edge Caddy
+   反代过来全 502。修法：`QATLAS_FORCE_TCP4=1` 触发
+   `cmd/server/main.go::maybeIPv4Listener` 显式 `net.Listen("tcp4", ...)`。
+   **默认 off**，社区部署不需要打开；只在 WSL2 portproxy 场景设
+   `Environment=QATLAS_FORCE_TCP4=1` 到 systemd unit。
 
 3. **`.env` 通过 godotenv 加载，路径由 `QATLAS_DOTENV` env 决定**（systemd
    unit 里 `Environment=QATLAS_DOTENV=/home/timidly/QuantumAtlas/.env`）。
