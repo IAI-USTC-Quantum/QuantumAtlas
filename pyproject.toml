@@ -136,14 +136,28 @@ channels = ["conda-forge"]
 platforms = ["linux-64"]
 
 [tool.pixi.dependencies]
-# `go` from conda-forge ships a baked-in CC=x86_64-conda-linux-gnu-cc;
-# adding `gxx` puts that compiler on PATH so cgo lookups succeed without
-# us touching CGO_ENABLED. Pure-Go builds (modernc.org/sqlite-backed
-# PocketBase) don't strictly need it, but having it avoids surprise
-# cc-not-found errors if someone imports a cgo-using library later.
+# Why both `go` *and* `gxx`?
 #
-# Pin to 1.26.x — go.mod says `go 1.26.2`. Bump both together when
-# upgrading. conda-forge tracks upstream Go releases within a few days.
+# conda-forge's `go` package is compiled with `CC=x86_64-conda-linux-gnu-cc`
+# baked into its internal/cfg (Go records the build-time C compiler so
+# cgo invocations know what to call). At runtime, anything that touches
+# the cgo code path — `go vet ./...`, `go build ./...`, even `go list`
+# in some configurations — will try to exec `x86_64-conda-linux-gnu-cc`
+# and hang or fail if it can't find it.
+#
+# `gxx` is the conda-forge meta-package for the GNU C/C++ toolchain. It
+# drops `x86_64-conda-linux-gnu-cc` + `gcc` + `cc` shims (all linking to
+# the same real GCC) into .pixi/envs/default/bin/, satisfying the
+# baked-in lookup.
+#
+# Our actual code is pure-Go (modernc.org/sqlite, no cgo imports), so
+# `CGO_ENABLED=0 go build ./cmd/server` would also work — but that
+# requires every dev to remember the env var. Bundling `gxx` keeps the
+# cgo lookup happy "by default" and stays correct if anyone later
+# imports a cgo-using library.
+#
+# Version pin: 1.26.x matches go.mod's `go 1.26.2`. Bump both together
+# when upgrading. conda-forge tracks upstream Go releases within ~days.
 go = "1.26.*"
 gxx = "*"
 
@@ -151,8 +165,21 @@ gxx = "*"
 build = "go build -o build/quantumatlas ./cmd/server"
 test-go = "go test ./internal/... ./cmd/..."
 test-py = "uv run pytest -m 'not e2e and not legacy and not network'"
-# Scoped to our own code only. `go vet ./...` would walk through the
-# entire dep tree (PocketBase pulls 200+ transitive packages) and take
-# ~5 minutes on the first run while populating .gocache/build. Anything
-# upstream is presumed vet-clean by its maintainers.
+# `go vet ./internal/... ./cmd/...` is intentionally scoped to *our*
+# packages, not the conventional `./...`. Reasoning:
+#
+# `go vet`'s analyzer phase only runs on the packages you ask for, but
+# its typecheck phase (a lightweight build) has to compile every
+# transitive import. PocketBase pulls in ~200 indirect deps, so the
+# cold-cache typecheck of `./...` takes 10+ minutes; even after the
+# build cache (.gocache/build, ~540MB) is warm, running analyzers
+# against test-only packages adds noise without catching production
+# bugs.
+#
+# Narrowing to ./internal/... ./cmd/... gives:
+#   cold cache: 15s  (typecheck deps once, populate cache)
+#   warm cache: 0.15s (cache hit, analyzers fly)
+#
+# CI (when we add it) can afford `./...` with actions/cache; daily
+# local dev cannot.
 vet = "go vet ./internal/... ./cmd/..."
