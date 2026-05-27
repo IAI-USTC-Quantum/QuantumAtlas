@@ -11,7 +11,7 @@ pixi install
 
 # 常用任务（pyproject.toml [tool.pixi.tasks]）
 pixi run build        # 构建 server binary -> build/quantumatlas
-pixi run vet          # go vet（窄到自己代码，秒级；首次冷 build 走 ~1 分钟填 .gocache/build）
+pixi run vet          # go vet（窄到自己代码，秒级；首次冷 cache ~15s 填 .gocache/build）
 pixi run test-go      # go test ./internal/... ./cmd/...
 pixi run test-py      # uv run pytest -m 'not e2e and not legacy and not network'
 
