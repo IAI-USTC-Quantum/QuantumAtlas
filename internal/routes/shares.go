@@ -24,7 +24,7 @@ import (
 func RegisterShares(se *core.ServeEvent, cfg *config.Config, store *shares.Store) {
 	// --- /api/shares CRUD --------------------------------------------------
 
-	se.Router.POST("/api/shares/", func(re *core.RequestEvent) error {
+	se.Router.POST("/api/shares/", authGuard(func(re *core.RequestEvent) error {
 		var body struct {
 			Paths     []string `json:"paths"`
 			Label     string   `json:"label"`
@@ -61,17 +61,17 @@ func RegisterShares(se *core.ServeEvent, cfg *config.Config, store *shares.Store
 			"expires_at":  rec.ExpiresAt,
 			"label":       rec.Label,
 		})
-	})
+	}))
 
-	se.Router.GET("/api/shares/", func(re *core.RequestEvent) error {
+	se.Router.GET("/api/shares/", authGuard(func(re *core.RequestEvent) error {
 		records, err := store.ListAll()
 		if err != nil {
 			return re.JSON(http.StatusInternalServerError, map[string]string{"detail": err.Error()})
 		}
 		return re.JSON(http.StatusOK, map[string]any{"shares": records})
-	})
+	}))
 
-	se.Router.DELETE("/api/shares/{token}", func(re *core.RequestEvent) error {
+	se.Router.DELETE("/api/shares/{token}", authGuard(func(re *core.RequestEvent) error {
 		token := re.Request.PathValue("token")
 		ok, err := store.Delete(token)
 		if err != nil {
@@ -81,7 +81,7 @@ func RegisterShares(se *core.ServeEvent, cfg *config.Config, store *shares.Store
 			return re.JSON(http.StatusNotFound, map[string]string{"detail": "share not found"})
 		}
 		return re.JSON(http.StatusOK, map[string]bool{"ok": true})
-	})
+	}))
 
 	// --- Public /share/{token}{,/{path...}} -------------------------------
 

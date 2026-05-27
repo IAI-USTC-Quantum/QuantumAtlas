@@ -55,7 +55,7 @@ func RegisterPapers(se *core.ServeEvent, cfg *config.Config, shareStore *shares.
 		})
 	})
 
-	se.Router.POST("/api/papers/{path...}", func(re *core.RequestEvent) error {
+	se.Router.POST("/api/papers/{path...}", authGuard(func(re *core.RequestEvent) error {
 		raw := re.Request.PathValue("path")
 		arxiv, action := splitPapersPath(raw)
 		switch action {
@@ -73,9 +73,9 @@ func RegisterPapers(se *core.ServeEvent, cfg *config.Config, shareStore *shares.
 		return re.JSON(http.StatusNotFound, map[string]string{
 			"detail": fmt.Sprintf("no POST handler for /api/papers/%s", raw),
 		})
-	})
+	}))
 
-	se.Router.DELETE("/api/papers/{path...}", func(re *core.RequestEvent) error {
+	se.Router.DELETE("/api/papers/{path...}", authGuard(func(re *core.RequestEvent) error {
 		raw := re.Request.PathValue("path")
 		// mineru-claim DELETE: <arxiv...>/mineru-claim/<claim_id>
 		arxiv, claimID, ok := splitMineruClaimRelease(raw)
@@ -85,7 +85,7 @@ func RegisterPapers(se *core.ServeEvent, cfg *config.Config, shareStore *shares.
 			})
 		}
 		return mineruClaimReleaseHandler(re, cfg, claimStore, arxiv, claimID)
-	})
+	}))
 }
 
 // splitPapersPath splits "<arxiv_id>/<action>" into the parts. arxiv_id
