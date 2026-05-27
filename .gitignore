@@ -230,3 +230,6 @@ scripts/test_quantum_team_*.sh
 
 # PocketBase runtime data (managed by docker volume or local binary)
 pb_data/
+
+# Go build cache (pixi-managed go writes here)
+.gocache/
