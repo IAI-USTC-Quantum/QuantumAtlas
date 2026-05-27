@@ -24,6 +24,10 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/auth"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineruclaim"
+	// pat is imported for its init()-time AppMigrations.Register side
+	// effect that adds the pat_tokens collection to the migration list.
+	// The package's exported API is consumed via internal/routes/pat.go.
+	_ "github.com/IAI-USTC-Quantum/QuantumAtlas/internal/pat"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/routes"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/shares"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/webui"
@@ -184,6 +188,9 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, share
 
 	// Shares CRUD + public /share/{token}* — see internal/routes/shares.go.
 	routes.RegisterShares(se, cfg, shareStore)
+
+	// Personal Access Tokens — see internal/routes/pat.go.
+	routes.RegisterPAT(se, app)
 }
 
 // injectHTTPFlag mutates os.Args to add --http=<addr> when the user invokes

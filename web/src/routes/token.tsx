@@ -1,6 +1,6 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import { useState } from 'react'
-import { Clipboard, Code2, KeyRound } from 'lucide-react'
+import { Clipboard, Code2, Key, KeyRound } from 'lucide-react'
 import { useAuth } from '@/lib/auth'
 import { maskToken, shortToken } from '@/lib/utils'
 
@@ -38,6 +38,11 @@ function TokenPage() {
         <p className="eyebrow">PocketBase-authenticated access</p>
         <h1>QuantumAtlas Token</h1>
         <p>Copy your current PocketBase-issued bearer token for API calls from trusted terminals.</p>
+        <p className="muted" style={{ marginTop: 12 }}>
+          <Key size={14} style={{ verticalAlign: '-2px' }} /> Tired of rotating
+          this every 14 days? Mint a long-lived <Link to="/pat">Personal Access Token</Link>
+          {' '}instead — it works in the same <code>Authorization: Bearer</code> header.
+        </p>
         <dl>
           <div><dt>Scope</dt><dd>QuantumAtlas API</dd></div>
           <div><dt>Identity</dt><dd>{auth.user?.email || auth.user?.username || 'unknown'}</dd></div>

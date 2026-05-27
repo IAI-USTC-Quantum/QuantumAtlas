@@ -1,5 +1,5 @@
 import { Link, useRouterState } from '@tanstack/react-router'
-import { BookOpen, Home, KeyRound, Network, Search, Sparkles, type LucideIcon } from 'lucide-react'
+import { BookOpen, Home, Key, KeyRound, Network, Search, Sparkles, type LucideIcon } from 'lucide-react'
 
 type NavLink = {
   to: string
@@ -15,6 +15,7 @@ const links: NavLink[] = [
   { to: '/wiki/search', label: 'Search', icon: Search },
   { to: '/graph', label: 'Graph', icon: Network, matchPrefix: '/graph' },
   { to: '/token', label: 'Token', icon: KeyRound },
+  { to: '/pat', label: 'PATs', icon: Key },
 ]
 
 export function Sidebar() {

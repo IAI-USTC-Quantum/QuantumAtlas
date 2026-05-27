@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as TokenRouteImport } from './routes/token'
+import { Route as PatRouteImport } from './routes/pat'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as WikiIndexRouteImport } from './routes/wiki.index'
@@ -21,6 +22,11 @@ import { Route as GraphNodeSplatRouteImport } from './routes/graph.node.$'
 const TokenRoute = TokenRouteImport.update({
   id: '/token',
   path: '/token',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PatRoute = PatRouteImport.update({
+  id: '/pat',
+  path: '/pat',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -62,6 +68,7 @@ const GraphNodeSplatRoute = GraphNodeSplatRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/pat': typeof PatRoute
   '/token': typeof TokenRoute
   '/wiki/search': typeof WikiSearchRoute
   '/graph/': typeof GraphIndexRoute
@@ -72,6 +79,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/pat': typeof PatRoute
   '/token': typeof TokenRoute
   '/wiki/search': typeof WikiSearchRoute
   '/graph': typeof GraphIndexRoute
@@ -83,6 +91,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/pat': typeof PatRoute
   '/token': typeof TokenRoute
   '/wiki/search': typeof WikiSearchRoute
   '/graph/': typeof GraphIndexRoute
@@ -95,6 +104,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/login'
+    | '/pat'
     | '/token'
     | '/wiki/search'
     | '/graph/'
@@ -105,6 +115,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/login'
+    | '/pat'
     | '/token'
     | '/wiki/search'
     | '/graph'
@@ -115,6 +126,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/login'
+    | '/pat'
     | '/token'
     | '/wiki/search'
     | '/graph/'
@@ -126,6 +138,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   LoginRoute: typeof LoginRoute
+  PatRoute: typeof PatRoute
   TokenRoute: typeof TokenRoute
   WikiSearchRoute: typeof WikiSearchRoute
   GraphIndexRoute: typeof GraphIndexRoute
@@ -141,6 +154,13 @@ declare module '@tanstack/react-router' {
       path: '/token'
       fullPath: '/token'
       preLoaderRoute: typeof TokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pat': {
+      id: '/pat'
+      path: '/pat'
+      fullPath: '/pat'
+      preLoaderRoute: typeof PatRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -198,6 +218,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   LoginRoute: LoginRoute,
+  PatRoute: PatRoute,
   TokenRoute: TokenRoute,
   WikiSearchRoute: WikiSearchRoute,
   GraphIndexRoute: GraphIndexRoute,

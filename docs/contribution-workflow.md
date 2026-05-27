@@ -169,7 +169,21 @@ qatlas mineru 2501.00010v1 --no-push
 
 服务器使用 PocketBase 内嵌的 GitHub OAuth 流程做浏览器登录，并通过 `authGuard`（`internal/routes/auth.go`）门禁写操作。读口（wiki / pages / stats / search / graph / lint / share）保持公开（因为 wiki 仓库本身就是公开的）。
 
-`authGuard` **只接受 PocketBase 用户 token**——一种凭据，没有共享密钥后门。要拿 token：
+`authGuard` 接受 **两种**凭据，按到达顺序检查：
+
+1. **Personal Access Token (PAT)** —— bearer 以 `qat_` 开头，从 SPA `/pat` 页面创建，明文一次性显示，自选过期时间（默认永不过期）。撤销 = 同页 Revoke。**CI、nightly、长跑脚本推荐用这条路径。**
+2. **PocketBase 用户 session token** —— OAuth 登录后从 `/token` 页面复制，默认 14 天有效，到期再回页面拷一次。适合人手浏览器调用。
+
+任何写口都同时接受这两种形式；CLI / curl 在 `Authorization: Bearer <...>` 里塞哪种都行。
+
+获取 (1) PAT：
+
+1. 浏览器登录后打开 `https://<server>/pat`；
+2. "New token" → 填名字（如 `nightly-ci`）+ 可选 description + 可选过期天数（留空 = 永不过期）；
+3. 服务器返回的明文**只显示一次**——立即拷到 GH Actions secret / systemd `EnvironmentFile` / 本地 `.env`；
+4. 之后这条 PAT 在列表里只显示前缀（`qat_xxxxxxxx…`）和 last-used 时间戳，需要换号就 Revoke 再创建一条。
+
+获取 (2) session token：
 
 1. 浏览器打开 `https://<server>/`，被引导到 `/login`；
 2. 点 "Continue with GitHub"，授权后回到 SPA；
@@ -181,6 +195,8 @@ qatlas mineru 2501.00010v1 --no-push
 - `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`：启动时把 GitHub OAuth provider 注入 users collection（`internal/auth/oauth.go::syncGitHubProvider`，幂等）。
 - `QATLAS_ADMIN_GITHUB_LOGINS`：GitHub 用户名白名单（逗号分隔），未来用于自动 admin 提权（handler 待补）。
 - `QATLAS_USER_HEADER`：仍可用，反代/SSO 注入审计头时由 upload 端点写入 `uploaded_by` 字段；与 PocketBase auth 并行，不互斥。
+
+PAT 的实现说明：每条 PAT 在 SQLite `pat_tokens` 集合里只存 bcrypt 哈希（`token_hash` 字段 hidden=true，admin UI 都不显示），明文从不持久化；过期时间由 `expires_at` 控制，留空 = 永不过期；服务端用 `last_used_at` 记录每次成功认证的时间戳。代码见 `internal/pat/` 和 `internal/routes/pat.go`。
 
 客户端 CLI 调用写口时，要带 bearer token：
 

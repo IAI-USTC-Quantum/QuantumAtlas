@@ -264,3 +264,111 @@ def test_write_endpoint_accepts_user_token(target: Target):
     )
     body = response.json()
     assert body.get("detail") == "paths required", body
+
+
+# ---------------------------------------------------------------------------
+# PAT lifecycle — create, use, revoke
+# ---------------------------------------------------------------------------
+
+
+def _delete(target: Target, path: str, **kw) -> requests.Response:
+    kw.setdefault("timeout", 15)
+    kw.setdefault("verify", target.verify)
+    return requests.delete(f"{target.url}{path}", **kw)
+
+
+def test_pat_lifecycle(target: Target):
+    """End-to-end exercise of the PAT system (P13):
+
+      1. Mint a PAT using the existing PocketBase session token in
+         QATLAS_TOKEN (the only way to bootstrap, since we don't have a
+         CLI for "log in").
+      2. The created PAT plaintext starts with the documented "qat_"
+         prefix and is a sane length.
+      3. The PAT itself is accepted as a write-endpoint credential
+         (POST /api/shares/ -> 400 paths required, not 401).
+      4. After DELETE /api/pat/{id} the same PAT immediately stops
+         working (401 from authGuard).
+
+    Self-skips when QATLAS_TOKEN is not configured (the bootstrap path).
+    """
+    session_token = os.environ.get("QATLAS_TOKEN", "").strip()
+    if not session_token:
+        pytest.skip("QATLAS_TOKEN not set; cannot bootstrap a PAT")
+
+    # Step 1: mint the PAT using the session token.
+    name = f"smoke-test-{os.getpid()}"
+    create_resp = _post(
+        target,
+        "/api/pat",
+        json={"name": name, "description": "ephemeral smoke test PAT"},
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {session_token}",
+        },
+    )
+    assert create_resp.status_code == 200, (
+        f"POST /api/pat failed: {create_resp.status_code} {create_resp.text}"
+    )
+    created = create_resp.json()
+    plaintext = created.get("plaintext", "")
+    token_id = created.get("id", "")
+    assert plaintext.startswith("qat_"), f"plaintext shape wrong: {plaintext[:8]!r}..."
+    assert len(plaintext) >= 12, f"plaintext too short: {len(plaintext)}"
+    assert token_id, created
+
+    # Pre-register a best-effort cleanup so a failing assertion below
+    # doesn't leak a real PAT on production. The DELETE runs both as the
+    # primary assertion target (step 4) and again here in case step 4
+    # itself fails (idempotent: 404 is acceptable on the second call).
+    try:
+        # Step 2: confirm the PAT itself passes authGuard.
+        shares_resp = _post(
+            target,
+            "/api/shares/",
+            json={},  # missing 'paths' to trigger handler-level 400
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {plaintext}",
+            },
+        )
+        # 400 = passed authGuard, hit the body validator.
+        # 401 = PAT not accepted (regression in authGuard / pat.Lookup).
+        assert shares_resp.status_code == 400, (
+            f"PAT not accepted as write credential: "
+            f"{shares_resp.status_code} {shares_resp.text}"
+        )
+        assert shares_resp.json().get("detail") == "paths required", shares_resp.text
+
+        # Step 3: revoke it.
+        del_resp = _delete(
+            target,
+            f"/api/pat/{token_id}",
+            headers={"Authorization": f"Bearer {session_token}"},
+        )
+        assert del_resp.status_code == 200, (
+            f"DELETE /api/pat/{token_id} failed: "
+            f"{del_resp.status_code} {del_resp.text}"
+        )
+
+        # Step 4: revoked PAT now flunks authGuard.
+        post_revoke = _post(
+            target,
+            "/api/shares/",
+            json={},
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {plaintext}",
+            },
+        )
+        assert post_revoke.status_code == 401, (
+            f"revoked PAT still accepted: "
+            f"{post_revoke.status_code} {post_revoke.text}"
+        )
+    finally:
+        # Best-effort idempotent cleanup. 404 means step 3 already ran.
+        _delete(
+            target,
+            f"/api/pat/{token_id}",
+            headers={"Authorization": f"Bearer {session_token}"},
+        )
