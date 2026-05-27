@@ -227,3 +227,6 @@ CLAUDE.md
 scripts/*cifs*.sh
 scripts/setup_quantum_team_*.sh
 scripts/test_quantum_team_*.sh
+
+# PocketBase runtime data (managed by docker volume or local binary)
+pb_data/
