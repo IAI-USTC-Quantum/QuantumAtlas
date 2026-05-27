@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
 import { Clipboard, Code2, KeyRound } from 'lucide-react'
-import { useSessionToken } from '@/lib/queries'
+import { useAuth } from '@/lib/auth'
 import { maskToken, shortToken } from '@/lib/utils'
 
 export const Route = createFileRoute('/token')({
@@ -15,13 +15,14 @@ declare global {
 }
 
 function TokenPage() {
-  const session = useSessionToken()
-  const token = session.data?.token ?? ''
+  const auth = useAuth()
+  const token = auth.token
   const [copied, setCopied] = useState<string>('')
   const [revealed, setRevealed] = useState(false)
   const origin = typeof window !== 'undefined' ? window.location.origin : ''
   const curlCommand = `curl -k -H 'Authorization: Bearer ${token}' ${origin}/api/server/info`
-  const tokenStatus = session.isLoading ? 'Loading' : token ? 'Active' : 'Missing'
+  const cliExport = `export QATLAS_SERVER_URL=${origin}\nexport QATLAS_TOKEN=${token}`
+  const tokenStatus = token ? 'Active' : 'Missing'
 
   async function copy(text: string, label: string) {
     await navigator.clipboard.writeText(text)
@@ -34,24 +35,23 @@ function TokenPage() {
     <section className="token-layout">
       <div className="token-intro">
         <KeyRound size={34} />
-        <p className="eyebrow">Caddy-authenticated access</p>
+        <p className="eyebrow">PocketBase-authenticated access</p>
         <h1>QuantumAtlas Token</h1>
-        <p>Copy your current Caddy-issued bearer token for API calls from trusted terminals.</p>
+        <p>Copy your current PocketBase-issued bearer token for API calls from trusted terminals.</p>
         <dl>
           <div><dt>Scope</dt><dd>QuantumAtlas API</dd></div>
-          <div><dt>Lifetime</dt><dd>7 days</dd></div>
-          <div><dt>Source</dt><dd>Caddy auth session</dd></div>
+          <div><dt>Identity</dt><dd>{auth.user?.email || auth.user?.username || 'unknown'}</dd></div>
+          <div><dt>Source</dt><dd>PocketBase auth session</dd></div>
         </dl>
       </div>
       <div className="token-workspace">
         <div className="panel-heading">
           <div>
             <p className="eyebrow">Access token</p>
-            <h2>{session.isLoading ? 'Loading session' : token ? 'Ready for CLI use' : 'Sign in required'}</h2>
+            <h2>{token ? 'Ready for CLI use' : 'Sign in required'}</h2>
           </div>
           <span className={token ? 'status good' : 'status'}>{tokenStatus}</span>
         </div>
-        {session.error && <div className="notice danger">{session.error.message}</div>}
         <div className="token-box">{shortToken(token)}</div>
         <div className="field-row">
           <label htmlFor="token-value">Token value</label>
@@ -67,10 +67,13 @@ function TokenPage() {
           <button className="secondary" type="button" disabled={!token} onClick={() => copy(curlCommand, 'Command')}>
             <Code2 size={17} /> Copy curl
           </button>
+          <button className="secondary" type="button" disabled={!token} onClick={() => copy(cliExport, 'CLI env')}>
+            <Code2 size={17} /> Copy CLI env
+          </button>
           <span className="copy-state" aria-live="polite">{copied}</span>
         </div>
         <pre className="command-block"><code>{curlCommand}</code></pre>
-        <p className="muted">Treat this value like a password. It is signed by Caddy and expires with the auth policy.</p>
+        <p className="muted">Treat this value like a password. PocketBase issues it on GitHub OAuth login and rotates it when you sign in again.</p>
       </div>
     </section>
   )

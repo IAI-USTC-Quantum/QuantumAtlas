@@ -1,0 +1,1 @@
+import{j as s,L as t}from"./index-DiaMmV7M.js";import{B as r}from"./StatusBlock-88DYF75A.js";function a({page:i}){return s.jsxs(t,{to:"/wiki/page/$",params:{_splat:i.id},className:"list-item",children:[s.jsxs("span",{children:[s.jsx("strong",{children:i.title}),s.jsx("small",{children:i.id})]}),s.jsx(r,{children:i.type})]})}export{a as P};

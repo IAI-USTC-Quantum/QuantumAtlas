@@ -1,0 +1,1 @@
+import{j as e}from"./index-DiaMmV7M.js";function c({eyebrow:r,title:s,copy:a}){return e.jsxs("header",{className:"page-header",children:[e.jsx("p",{className:"eyebrow",children:r}),e.jsx("h1",{children:s}),e.jsx("p",{children:a})]})}export{c as P};

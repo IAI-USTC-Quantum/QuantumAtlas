@@ -1,6 +1,8 @@
-import { Outlet, createRootRoute } from '@tanstack/react-router'
+import { Outlet, createRootRoute, useNavigate, useRouterState } from '@tanstack/react-router'
+import { useEffect } from 'react'
 import { Sidebar } from '@/components/Sidebar'
 import { Topbar } from '@/components/Topbar'
+import { useAuth } from '@/lib/auth'
 
 export const Route = createRootRoute({
   component: RootLayout,
@@ -8,6 +10,28 @@ export const Route = createRootRoute({
 })
 
 function RootLayout() {
+  const auth = useAuth()
+  const navigate = useNavigate()
+  const pathname = useRouterState({ select: (state) => state.location.pathname })
+  const onLoginRoute = pathname === '/login'
+
+  useEffect(() => {
+    if (!auth.isAuthed && !onLoginRoute) {
+      navigate({
+        to: '/login',
+        search: { from: pathname === '/' ? undefined : pathname },
+      })
+    }
+  }, [auth.isAuthed, onLoginRoute, navigate, pathname])
+
+  if (!auth.isAuthed && !onLoginRoute) {
+    return null
+  }
+
+  if (onLoginRoute) {
+    return <Outlet />
+  }
+
   return (
     <div className="app-shell">
       <Sidebar />

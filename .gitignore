@@ -237,3 +237,8 @@ pb_data/
 # Re-include embed targets
 !internal/webui/dist/
 !internal/webui/dist/**
+
+# The Python packaging dist defaults at the top of this file (lib/, build/,
+# dist/) inadvertently catch SPA source under web/src/lib/. Restore it.
+!web/src/lib/
+!web/src/lib/**
