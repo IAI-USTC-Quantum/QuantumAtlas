@@ -11,6 +11,158 @@
 - 如何在公网入口前放置反向代理和鉴权层。
 - 如何在不暴露真实机器名、真实地址或私有路由结构的前提下，给出可复用的 Caddy 示例。
 
+> 本文不收录任何一次性 ops 脚本。生产部署时把"运维动作"通过本文档的
+> "思路 + 模板"自己拼出来；过往一次性脚本只保留在维护者 `/tmp/` 直到完成，
+> 然后丢弃。这样仓库不积累陈旧脚本，每次环境改动都强迫维护者重新理解。
+
+## Go server 部署（当前路径）
+
+QuantumAtlas server 是 Go binary（编译产物 `build/quantumatlas`，~35MB
+statically linked，CGO-free）。下游部署 = 把 binary 推到目标 host +
+装 systemd unit + 反代。这里给出一份**单机部署模板**，路径都用占位变量
+（`<USER>` / `<APP_HOME>` / `<WIKI_DIR>` / `<HTTP_PORT>`），运维替换后即可。
+
+### 1. 目录布局（推荐）
+
+按"运行用户家目录下、git checkout 与状态分离"的常规约定：
+
+```
+/home/<USER>/
+├── QuantumAtlas/            # git checkout (跟踪稳定分支)，主要给 server 读：
+│   ├── .env                 # 运行配置；server 用 godotenv 读这个文件
+│   ├── pb_data/             # PocketBase SQLite + uploads (gitignored)
+│   └── ...                  # 仓库源码 (server 不强依赖，但 /api/wiki/sync
+│                            # 操作的本地 wiki repo 路径相对此目录解析)
+├── QuantumAtlas-Wiki/       # 单独 checkout，给 server 当 wiki source
+└── .local/bin/
+    └── quantumatlas         # binary（user-writable，sudoless deploy）
+```
+
+为什么 binary 放 `~/.local/bin/` 而不是 `/usr/local/bin/`：
+
+- `~/.local/bin/` 归运行用户所有，**滚 binary 不需要 sudo**——本地
+  `scp build/quantumatlas TARGET:/tmp/quantumatlas-go` 后远端
+  `install -m 0755 /tmp/quantumatlas-go ~/.local/bin/quantumatlas`
+  全部以普通用户身份完成。
+- `/usr/local/bin/` 是 root-owned，每次 binary 滚动都得 sudo install。
+  在频繁迭代的项目里不必要。
+- systemd 单元可以引用任意路径——`ExecStart=/home/<USER>/.local/bin/quantumatlas`
+  跟 `/usr/local/bin/quantumatlas` 在 systemd 视角下完全等价。
+- 唯一仍需 sudo 的动作是 `systemctl restart qatlas`（system unit
+  归 root），这没法绕。一次性 `sudo systemctl restart qatlas` 比每次
+  滚 binary 都 sudo 安全得多。
+
+### 2. systemd unit 模板
+
+`/etc/systemd/system/qatlas.service`：
+
+```ini
+[Unit]
+Description=QuantumAtlas server (Go + PocketBase)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=<USER>
+Group=<USER>
+
+# Server 用 github.com/joho/godotenv 加载 .env。把绝对路径作为
+# QATLAS_DOTENV 传进来，server 会用它的所在目录作为相对路径 anchor
+# （WIKI_DIR=../QuantumAtlas-Wiki 因此能解析到 /home/<USER>/QuantumAtlas-Wiki）。
+# 不要用 systemd 的 EnvironmentFile= 指令 —— 那个只把内容注入 env，
+# 拿不到文件路径，server 就没办法做相对路径 anchor。
+Environment=QATLAS_DOTENV=/home/<USER>/QuantumAtlas/.env
+
+# 仅在被 v4-only portproxy 包裹的 host (典型: WSL2 + Windows netsh)
+# 才设这个。Plain Linux 云 VPS 不要打开，让 server 走 PocketBase 默认
+# dual-stack v6 socket 同时服务 v4 + v6 client。
+# Environment=QATLAS_FORCE_TCP4=1
+
+WorkingDirectory=/home/<USER>/QuantumAtlas
+
+# --dir= 必填：PocketBase 默认把 pb_data/ 写在 binary 同目录，
+# 而 ~/.local/bin/ 不是合适的 data 路径。显式指定到 git checkout 下的
+# pb_data/（.gitignore 已经过滤）。
+ExecStart=/home/<USER>/.local/bin/quantumatlas serve --http=0.0.0.0:<HTTP_PORT> --dir=/home/<USER>/QuantumAtlas/pb_data
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=15
+
+# Hardening：read-only 系统目录 + 只把数据/wiki/可选挂载点打开写权限。
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=no
+ReadWritePaths=/home/<USER>/QuantumAtlas /mnt/team
+LockPersonality=true
+RestrictRealtime=true
+
+[Install]
+WantedBy=multi-user.target
+```
+
+启用 + 起动：
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now qatlas.service
+sudo systemctl status qatlas.service
+```
+
+### 3. 日常 deploy 流程
+
+本地：
+
+```bash
+pixi run build                # 出 build/quantumatlas (CGO-free, static)
+scp build/quantumatlas TARGET:/tmp/quantumatlas-go
+ssh TARGET "install -m 0755 /tmp/quantumatlas-go ~/.local/bin/quantumatlas"
+ssh -t TARGET "sudo systemctl restart qatlas"
+```
+
+只有最后一步要 sudo。本地/远端读 systemd 状态（`systemctl status` /
+`journalctl -u qatlas`）不需要 sudo。
+
+### 4. .env 必填字段
+
+参考 `.env.example`。Server 侧最小集：
+
+```env
+QATLAS_SERVER_URL=https://your-domain.tld
+QATLAS_SERVER_HOST=0.0.0.0
+QATLAS_SERVER_PORT=4200
+WIKI_DIR=../QuantumAtlas-Wiki        # 相对 .env 所在目录
+RAW_DIR=/srv/quantum/raw             # 或挂载点
+DATA_DIR=/srv/quantum/data
+GITHUB_CLIENT_ID=<oauth_app_client_id>
+GITHUB_CLIENT_SECRET=<oauth_app_secret>
+QATLAS_ADMIN_GITHUB_LOGINS=alice,bob
+```
+
+GitHub OAuth App callback URL 配 `https://your-domain.tld/api/oauth2-redirect`。
+
+### 5. 从旧部署迁移到当前布局
+
+如果之前 binary 装在 `/usr/local/bin/`、unit 写死 system-wide 路径、或
+PocketBase data 放在某个跟仓库分开的"-go"目录——一次性迁移思路：
+
+1. `sudo systemctl stop qatlas.service`
+2. 把 binary 复制到 `~/.local/bin/quantumatlas`（user-writable）
+3. 把 pb_data 移到 `~/<repo>/pb_data/` （.gitignore 已过滤）
+4. 改 unit 的 `ExecStart` / `WorkingDirectory` / `--dir=` 指向新路径
+5. 删旧的系统 binary / 旧 data 目录
+6. `sudo systemctl daemon-reload && sudo systemctl start qatlas.service`
+7. 验证：`curl http://127.0.0.1:<HTTP_PORT>/health` 应 `{"status":"healthy"}`，
+   `curl /api/stats` 应 `total_pages` > 0（wiki 没丢）。
+
+每步都该有备份（`cp -a <file> <file>.bak-$(date +%s)`）。整个流程
+**不写成提交进仓库的脚本**——下次迁移环境可能完全不一样，强迫维护者
+重新读这一节比照本机情况自己拼脚本，更不容易把陈旧假设拷过去。
+
+## 旧版 Python 部署
+
 ## 最小本地启动
 
 ```bash
