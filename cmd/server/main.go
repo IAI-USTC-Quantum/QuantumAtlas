@@ -19,6 +19,7 @@ import (
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/auth"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/routes"
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/apis"
@@ -92,6 +93,9 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config) {
 		re.Response.Header().Set("Cache-Control", "no-store")
 		return re.JSON(200, map[string]string{"token": ""})
 	})
+
+	// Wiki / pages / stats / search / lint — see internal/routes/wiki.go.
+	routes.RegisterWiki(se, cfg)
 }
 
 // injectHTTPFlag mutates os.Args to add --http=<addr> when the user invokes
