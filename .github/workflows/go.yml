@@ -1,0 +1,77 @@
+name: Go (build + vet + test)
+
+on:
+  push:
+    branches: [main, feat/go-server]
+    paths:
+      - 'cmd/**'
+      - 'internal/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'pyproject.toml'
+      - 'pixi.lock'
+      - '.github/workflows/go.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'cmd/**'
+      - 'internal/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'pyproject.toml'
+      - 'pixi.lock'
+      - '.github/workflows/go.yml'
+  workflow_dispatch:
+
+jobs:
+  go:
+    name: Go (pixi-managed toolchain)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # Pixi keeps the Go toolchain (+ gxx for cc shims) pinned in
+      # pyproject.toml [tool.pixi.dependencies], matching what local
+      # devs use. Reproducible across CI / dev machines.
+      - name: Install pixi
+        uses: prefix-dev/setup-pixi@v0.8.10
+        with:
+          pixi-version: v0.68.0
+          cache: true
+
+      # Cache the Go module + build cache. GOCACHE/GOMODCACHE are pointed
+      # at .gocache/ via pixi's [tool.pixi.activation.env] so both live
+      # inside the repo and are cacheable by a single path entry.
+      # Key on go.sum so cache invalidates when deps change.
+      - name: Cache Go modules + build artifacts
+        uses: actions/cache@v4
+        with:
+          path: .gocache
+          key: gocache-${{ runner.os }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            gocache-${{ runner.os }}-
+
+      # 'pixi run vet' is scoped to ./internal/... ./cmd/... so it
+      # finishes fast even on cold cache. 'pixi run test-go' runs the
+      # unit suite (no network, no e2e). 'pixi run build' confirms the
+      # binary still links — caught in the past when go.mod's minimum
+      # Go version drifted above what conda-forge had available.
+      - name: pixi run vet
+        run: pixi run vet
+
+      - name: pixi run test-go
+        run: pixi run test-go
+
+      - name: pixi run build
+        run: pixi run build
+
+      - name: Upload server binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: quantumatlas-binary-${{ github.sha }}
+          path: build/quantumatlas
+          retention-days: 7
+          if-no-files-found: error

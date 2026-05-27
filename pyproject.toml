@@ -135,6 +135,17 @@ ignore_missing_imports = true
 channels = ["conda-forge"]
 platforms = ["linux-64"]
 
+[tool.pixi.activation.env]
+# Keep Go's build/module caches *inside* the repo so they live and die
+# with the project. Without this, Go defaults to ~/.cache/go-build and
+# ~/go/pkg/mod (user-global), which means every project on this machine
+# shares the same warm/cold state — a footgun when the user has many
+# Go projects with very different dep trees. Putting the cache under
+# .gocache/ also makes it cleanly ignorable in .gitignore.
+GOCACHE = "$PIXI_PROJECT_ROOT/.gocache/build"
+GOMODCACHE = "$PIXI_PROJECT_ROOT/.gocache/pkg/mod"
+GOPATH = "$PIXI_PROJECT_ROOT/.gocache"
+
 [tool.pixi.dependencies]
 # Why both `go` *and* `gxx`?
 #
