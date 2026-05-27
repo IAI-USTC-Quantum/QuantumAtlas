@@ -1,5 +1,89 @@
 # Development
 
+## Go server 开发环境（当前）
+
+Server 是 Go binary（`cmd/server/`），通过 pixi 管理 Go 工具链。前端 SPA
+在 `web/`（React + Vite）。
+
+```bash
+# 一次性 setup（pixi env 装 go + gxx，进 .pixi/）
+pixi install
+
+# 常用任务（pyproject.toml [tool.pixi.tasks]）
+pixi run build        # 构建 server binary -> build/quantumatlas
+pixi run vet          # go vet（首次 ~5 分钟编 PocketBase 依赖；后续秒级）
+pixi run test-go      # go test ./internal/... ./cmd/...
+pixi run test-py      # uv run pytest -m 'not e2e and not legacy and not network'
+
+# 前端
+cd web && npm install
+cd web && npm run build         # 出 dist/，复制到 internal/webui/dist/
+cd web && npm run dev           # vite dev server (端口 5173)
+
+# Python CLI（不变）
+uv sync --extra dev
+uv run pytest -m "not e2e and not network and not legacy"
+```
+
+> **不要在 pixi env 外手动 `go build`**：你机器上全局 go 是 pixi-managed
+> conda-forge build，自带 `CC=x86_64-conda-linux-gnu-cc` baked-in。pixi env
+> 里有匹配的 `gxx`，CGO 调用能成功；env 外没有，`go vet` / 任何走 cgo 的
+> path 都会卡在 cc not-found 的 futex 死锁上。如果一定要在 env 外编，
+> `CGO_ENABLED=0 go build ./cmd/server` 也行（本项目所有依赖都是 pure-Go）。
+
+### Known Go server gotchas
+
+这些坑都已经在 `cmd/server/main.go` 修了，但解释一下方便后人理解：
+
+1. **PocketBase 默认把 `pb_data/` 写在 binary 同目录**。我们 binary 装在
+   `/usr/local/bin/`（root-only）或 `~/.local/bin/`（user-writable 但仍是
+   per-user 散落），都不是合适的数据目录。修法：systemd unit `ExecStart`
+   显式带 `--dir=/home/timidly/QuantumAtlas-go/pb_data`。**任何手动起
+   server 也要带这个 flag**，否则 PocketBase 在当前 CWD 下默写 pb_data。
+
+2. **PocketBase 默认走 `net.Listen("tcp", "0.0.0.0:4200")`，创建 v6-only
+   socket**（可在 `/proc/net/tcp6` 看到，但 `/proc/net/tcp` 里没有）。
+   WSL2 + Windows 主机的 `netsh interface portproxy` 是 v4-only 的，
+   把请求转到 v6-only 监听 = 直接 reject。修法：`cmd/server/main.go::
+   maybeIPv4Listener` 检测到 IPv4 字面量 bind addr 时显式 `net.Listen(
+   "tcp4", ...)`，强制 v4 socket。日志会打 `forced tcp4 listener on
+   0.0.0.0:4200`。
+
+3. **`.env` 通过 godotenv 加载，路径由 `QATLAS_DOTENV` env 决定**（systemd
+   unit 里 `Environment=QATLAS_DOTENV=/home/timidly/QuantumAtlas/.env`）。
+   相对路径如 `WIKI_DIR=../QuantumAtlas-Wiki` 解析 anchor 是 `.env` 所在
+   目录。**不**用 systemd `EnvironmentFile=` 因为后者只 inject env vars，
+   server 拿不到文件路径就没法做 anchor。
+
+4. **Go 1.26.3 vs pixi env**：`go.mod` 写 `go 1.26.2`，pixi 装到 1.26.3。
+   升 go.mod 前先 `pixi search -c conda-forge go` 确认 conda-forge 有匹配
+   版本；conda go 包默认 `GOTOOLCHAIN=local`（在 `.pixi/envs/default/etc/
+   conda/env_vars.d/go.json`）禁止自动下载新 toolchain，go.mod 要求更高
+   就会卡死编不出来。
+
+### 部署到 1810 后端
+
+```bash
+pixi run build
+scp build/quantumatlas 1810:/tmp/quantumatlas-go
+ssh -t 1810 'sudo bash /tmp/qa-go-update-system.sh'
+```
+
+binary 在 `~/.local/bin/quantumatlas`（无 sudo 写入），systemd unit 在
+`/etc/systemd/system/qatlas.service` (`User=timidly`，sudo restart)。
+日常运维：
+
+```bash
+systemctl status qatlas         # 读，免 sudo
+journalctl -u qatlas -f         # 读，免 sudo
+sudo systemctl restart qatlas   # 写，要 sudo
+```
+
+## 旧版 Python server 开发命令
+
+下面这些命令针对 `atlas/server/` 这套 FastAPI server，它仍在仓库里但
+**不是生产路径**。当你只动 client 或想跑 FastAPI 兼容性测试时再用。
+
 ## 开发环境
 
 ```bash

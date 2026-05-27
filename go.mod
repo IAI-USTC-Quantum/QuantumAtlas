@@ -1,6 +1,6 @@
 module github.com/IAI-USTC-Quantum/QuantumAtlas
 
-go 1.26.3
+go 1.26.2
 
 require (
 	github.com/neo4j/neo4j-go-driver/v5 v5.28.4

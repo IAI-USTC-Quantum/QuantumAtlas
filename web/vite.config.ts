@@ -5,10 +5,8 @@ import tailwindcss from '@tailwindcss/vite'
 import { TanStackRouterVite } from '@tanstack/router-plugin/vite'
 
 export default defineConfig({
-  // Match the Go server's apis.Static mount at /{path...}. If you change
-  // this, also revisit cmd/server/main.go where the static handler is
-  // wired in.
-  base: '/',
+  // base defaults to '/', matching the Go server's apis.Static mount at
+  // /{path...}. No need to set it explicitly.
   plugins: [
     TanStackRouterVite({ target: 'react', autoCodeSplitting: true }),
     react(),

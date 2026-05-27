@@ -114,3 +114,45 @@ warn_no_return = true
 warn_unreachable = true
 strict_equality = true
 ignore_missing_imports = true
+
+# ============================================================================
+# Pixi project (manages the Go toolchain alongside Python)
+# ============================================================================
+# Why pixi at all? The Go binary needs to be cross-built locally before
+# scp'ing to the 1810 server. Pixi pins go's version + brings along the
+# matching cc shim so `go vet ./...` doesn't try (and fail) to call a
+# missing system gcc. Without this, agents would have to remember to
+# `go env -w CGO_ENABLED=0` on every fresh dev machine.
+#
+# Usage:
+#   pixi install        # one-time, creates .pixi/ env
+#   pixi shell          # enter env for ad-hoc commands
+#   pixi run build      # build the server binary
+#   pixi run test-go    # run Go test suite
+#   pixi run test-py    # run Python (pytest) suite
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+[tool.pixi.dependencies]
+# `go` from conda-forge ships a baked-in CC=x86_64-conda-linux-gnu-cc;
+# adding `gxx` puts that compiler on PATH so cgo lookups succeed without
+# us touching CGO_ENABLED. Pure-Go builds (modernc.org/sqlite-backed
+# PocketBase) don't strictly need it, but having it avoids surprise
+# cc-not-found errors if someone imports a cgo-using library later.
+#
+# Pin to 1.26.x — go.mod says `go 1.26.2`. Bump both together when
+# upgrading. conda-forge tracks upstream Go releases within a few days.
+go = "1.26.*"
+gxx = "*"
+
+[tool.pixi.tasks]
+build = "go build -o build/quantumatlas ./cmd/server"
+test-go = "go test ./internal/... ./cmd/..."
+test-py = "uv run pytest -m 'not e2e and not legacy and not network'"
+# Scoped to our own code only. `go vet ./...` would walk through the
+# entire dep tree (PocketBase pulls 200+ transitive packages) and take
+# ~5 minutes on the first run while populating .gocache/build. Anything
+# upstream is presumed vet-clean by its maintainers.
+vet = "go vet ./internal/... ./cmd/..."
