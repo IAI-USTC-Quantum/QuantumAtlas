@@ -13,7 +13,9 @@
 package main
 
 import (
+	"fmt"
 	"log"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,6 +66,27 @@ func main() {
 	}
 
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
+		// Force an IPv4-native listener when the bind addr is a v4
+		// literal (0.0.0.0:NNNN or 127.0.0.1:NNNN). PocketBase's default
+		// `net.Listen("tcp", "0.0.0.0:4200")` on modern Go binds the
+		// dual-stack v6 socket; on WSL2 + Windows netsh portproxy the
+		// inbound IPv4 packet on the mesh IP (10.144.18.10:4200) never
+		// matches a real v4 listener and the kernel RSTs the connection.
+		// Explicitly listening on tcp4 puts the entry in /proc/net/tcp
+		// (not /tcp6) and unblocks the mesh path.
+		//
+		// Pull the addr from se.Server (already populated from --http),
+		// not cfg.HTTPAddr, so we always honor whatever the operator
+		// actually told PocketBase to bind to.
+		if se.Listener == nil && se.Server != nil {
+			if l, err := maybeIPv4Listener(se.Server.Addr); err == nil && l != nil {
+				se.Listener = l
+				log.Printf("forced tcp4 listener on %s", se.Server.Addr)
+			} else if err != nil {
+				log.Printf("force-ipv4 listener failed: %v (falling back to PocketBase default)", err)
+			}
+		}
+
 		registerRoutes(se, app, cfg, shareStore, claimStore)
 
 		// Serve the embedded SPA last as the catch-all. apis.Static's
@@ -157,4 +180,41 @@ func injectHTTPFlag(cfg *config.Config) {
 		}
 	}
 	os.Args = append(os.Args, "--http="+cfg.HTTPAddr)
+}
+
+// maybeIPv4Listener returns a tcp4-bound listener when addr is a literal
+// IPv4 bind expression ("0.0.0.0:NNNN" or "127.0.0.1:NNNN" etc.). For
+// hostnames, empty hosts, or IPv6 literals it returns (nil, nil) so the
+// caller falls back to PocketBase's default tcp/v6 dual-stack listener.
+//
+// The motivation is WSL2 + Windows netsh portproxy: the v4-only forward
+// rule from the host-side EasyTier mesh IP can't reach a v6-only socket
+// (even with bindv6only=0) because Windows' portproxy forwards into the
+// WSL2 NAT layer as raw v4 SYNs that need a real v4 listener.
+func maybeIPv4Listener(addr string) (net.Listener, error) {
+	if addr == "" {
+		return nil, nil
+	}
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, fmt.Errorf("parse %q: %w", addr, err)
+	}
+	if host == "" {
+		// ":4200" / ":http" — leave to PocketBase's default behavior.
+		return nil, nil
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		// Hostname like "localhost" — let net.Listen pick a family.
+		return nil, nil
+	}
+	if ip.To4() == nil {
+		// IPv6 literal — caller wants v6 explicitly, respect it.
+		return nil, nil
+	}
+	tcpAddr, err := net.ResolveTCPAddr("tcp4", addr)
+	if err != nil {
+		return nil, err
+	}
+	return net.ListenTCP("tcp4", tcpAddr)
 }
