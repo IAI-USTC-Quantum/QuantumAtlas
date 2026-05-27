@@ -3,7 +3,7 @@ module github.com/IAI-USTC-Quantum/QuantumAtlas
 go 1.26.2
 
 require (
-	github.com/neo4j/neo4j-go-driver/v5 v5.28.4
+	github.com/neo4j/neo4j-go-driver/v6 v6.1.0
 	github.com/pocketbase/pocketbase v0.38.2
 	gopkg.in/yaml.v3 v3.0.1
 )

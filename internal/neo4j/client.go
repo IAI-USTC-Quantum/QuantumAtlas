@@ -1,4 +1,4 @@
-// Package neo4j wraps the official neo4j-go-driver/v5 with the small
+// Package neo4j wraps the official neo4j-go-driver/v6 with the small
 // slice of behavior QuantumAtlas actually needs: optional connection
 // (server still boots without it), label counts, schema introspection,
 // and arbitrary read-only Cypher with a hard LIMIT.
@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	driver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	driver "github.com/neo4j/neo4j-go-driver/v6/neo4j"
 )
 
 // DefaultLabels are the four node labels the wiki ingest pipeline writes
