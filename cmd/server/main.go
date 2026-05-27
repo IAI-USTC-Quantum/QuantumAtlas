@@ -17,6 +17,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/auth"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 
 	"github.com/pocketbase/pocketbase"
@@ -42,6 +43,8 @@ func main() {
 	// Inject --http from env if the operator didn't pass it explicitly.
 	// Matches the FastAPI uvicorn --host/--port behaviour driven by .env.
 	injectHTTPFlag(cfg)
+
+	auth.Register(app, cfg)
 
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
 		registerRoutes(se, app, cfg)
