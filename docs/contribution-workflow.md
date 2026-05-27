@@ -40,12 +40,12 @@ MINERU_API_TOKEN=mn_xxxxx
 
 ## 1. Raw 资产贡献的三条路径
 
-`RAW_DIR` 是论文资产的 canonical store。文件名遵循 arXiv 规范并按 YYMM 分片：
+`RAW_DIR` 是论文资产的 canonical store（默认 `${XDG_DATA_HOME:-$HOME/.local/share}/quantum-atlas/raw`，或显式 `QATLAS_RAW_DIR` 覆盖）。文件名遵循 arXiv 规范并按 YYMM 分片：
 
-| 风格 | 例子 | 存储路径 |
+| 风格 | 例子 | 存储路径（相对 `$RAW_DIR`） |
 |---|---|---|
-| 老式（pre-Apr 2007） | `quant-ph/9508027v1` | `raw/pdf/9508/9508027v1.pdf` |
-| 新式（post-Apr 2007） | `2501.00010v1` | `raw/pdf/2501/2501.00010v1.pdf` |
+| 老式（pre-Apr 2007） | `quant-ph/9508027v1` | `pdf/9508/9508027v1.pdf` |
+| 新式（post-Apr 2007） | `2501.00010v1` | `pdf/2501/2501.00010v1.pdf` |
 
 `markdown/` / `json/` / `images/` 子目录采用同样的分片布局。版本号 `vN` 是**强制**的——所有 upload 端点都拒绝不带版本的 ID。
 

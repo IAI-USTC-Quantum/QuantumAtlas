@@ -145,7 +145,13 @@ env.bak/
 venv.bak/
 
 # Local QuantumAtlas runtime/test data
-/wiki/
+#
+# Storage paths (WIKI_DIR / RAW_DIR / DATA_DIR / pb_data) now default
+# OUTSIDE the git checkout — see docs/migration-storage-layout.md.
+# A fresh clone therefore should NOT have wiki/raw/data/pb_data inside
+# the repo at all, so we no longer ignore those paths here. Existing
+# clones with leftover in-repo data should follow the migration guide
+# to move it to $XDG_DATA_HOME/quantum-atlas/ (or wherever).
 
 # Spyder project settings
 .spyderproject
@@ -210,11 +216,10 @@ marimo/_lsp/
 __marimo__/
 
 # Wiki and Raw directories (Issue #18)
-/raw/
-wiki/log.md
+# (now handled at the top of this file — defaults moved outside the repo)
 
 # Runtime data (tasks, shares)
-/data/
+# (same as above — DATA_DIR now defaults to $XDG_DATA_HOME/quantum-atlas/data)
 
 # Local scratch workspace
 /tmp/
@@ -228,8 +233,8 @@ scripts/*cifs*.sh
 scripts/setup_quantum_team_*.sh
 scripts/test_quantum_team_*.sh
 
-# PocketBase runtime data (managed by docker volume or local binary)
-pb_data/
+# PocketBase runtime data
+# (pb_data now defaults to $XDG_DATA_HOME/quantum-atlas/pb_data)
 
 # Go build cache (pixi-managed go writes here)
 .gocache/

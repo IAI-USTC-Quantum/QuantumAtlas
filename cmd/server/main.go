@@ -68,6 +68,13 @@ func main() {
 	// Matches the FastAPI uvicorn --host/--port behaviour driven by .env.
 	injectHTTPFlag(cfg)
 
+	// Inject --dir (PocketBase's pb_data root) when the operator didn't
+	// pass it explicitly. Without this, PocketBase falls back to a
+	// "./pb_data" next to the CWD — which for our typical systemd
+	// install is the git checkout, exactly where we don't want SQLite
+	// state to live. cfg.PBDataDir always has a value (XDG default).
+	injectPBDataDirFlag(cfg)
+
 	auth.Register(app, cfg)
 
 	// Initialize on-disk JSON stores up-front so route handlers can
@@ -130,23 +137,17 @@ func main() {
 }
 
 // initShareStore returns a ready-to-use ShareStore rooted at
-// {DATA_DIR}/shares (or a sensible default when DATA_DIR is unset).
+// {DATA_DIR}/shares. cfg.DataDir always carries a value (XDG default
+// applied in config.Load), so this no longer needs a "DATA_DIR unset"
+// fallback like it did before storage paths got proper defaults.
 func initShareStore(cfg *config.Config) (*shares.Store, error) {
-	root := cfg.DataDir
-	if root == "" {
-		root = "./pb_data/qatlas_data"
-	}
-	return shares.NewStore(filepath.Join(root, "shares"))
+	return shares.NewStore(filepath.Join(cfg.DataDir, "shares"))
 }
 
 // initClaimStore returns a ready-to-use mineru claim store rooted at
-// {DATA_DIR}/mineru-claims (or a sensible default when DATA_DIR is unset).
+// {DATA_DIR}/mineru-claims.
 func initClaimStore(cfg *config.Config) (*mineruclaim.Store, error) {
-	root := cfg.DataDir
-	if root == "" {
-		root = "./pb_data/qatlas_data"
-	}
-	return mineruclaim.NewStore(filepath.Join(root, "mineru-claims"))
+	return mineruclaim.NewStore(filepath.Join(cfg.DataDir, "mineru-claims"))
 }
 
 // registerRoutes wires the QuantumAtlas /api/* surface. Most endpoints are
@@ -206,6 +207,43 @@ func injectHTTPFlag(cfg *config.Config) {
 		}
 	}
 	os.Args = append(os.Args, "--http="+cfg.HTTPAddr)
+}
+
+// injectPBDataDirFlag mutates os.Args to add --dir=<cfg.PBDataDir> for
+// any PocketBase subcommand (serve / migrate / admin / superuser / etc.)
+// that doesn't already carry an explicit --dir. Mirrors the
+// injectHTTPFlag pattern.
+//
+// Why this matters: PocketBase's default for --dir is "./pb_data",
+// resolved against process CWD. For our typical systemd install the
+// CWD is the git checkout, so without an explicit --dir the SQLite
+// database lands inside the source tree. cfg.PBDataDir already has a
+// value (XDG default in config.Load), so injecting it makes
+//
+//	quantumatlas serve
+//
+// equivalent to
+//
+//	quantumatlas serve --dir=$HOME/.local/share/quantum-atlas/pb_data
+//
+// on a fresh box, while still respecting any operator-supplied --dir.
+//
+// Note: we apply this for every subcommand, not just `serve`. Migrate /
+// superuser / admin commands all need to point at the same pb_data root
+// or they'd silently operate on a freshly-created empty database.
+func injectPBDataDirFlag(cfg *config.Config) {
+	if len(os.Args) < 2 {
+		return
+	}
+	if cfg.PBDataDir == "" {
+		return
+	}
+	for _, a := range os.Args[1:] {
+		if a == "--dir" || strings.HasPrefix(a, "--dir=") {
+			return
+		}
+	}
+	os.Args = append(os.Args, "--dir="+cfg.PBDataDir)
 }
 
 // forceTCP4 returns true when the operator has opted in via

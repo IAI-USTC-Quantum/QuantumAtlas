@@ -35,11 +35,15 @@ uv run pytest -m "not e2e and not network and not legacy"
 
 这些坑都已经在 `cmd/server/main.go` 修了，但解释一下方便后人理解：
 
-1. **PocketBase 默认把 `pb_data/` 写在 binary 同目录**。我们 binary 装在
-   `/usr/local/bin/`（root-only）或 `~/.local/bin/`（user-writable 但仍是
-   per-user 散落），都不是合适的数据目录。修法：systemd unit `ExecStart`
-   显式带 `--dir=/home/timidly/QuantumAtlas-go/pb_data`。**任何手动起
-   server 也要带这个 flag**，否则 PocketBase 在当前 CWD 下默写 pb_data。
+1. **PocketBase 默认把 `pb_data/` 写在 binary 同目录的 `./pb_data`**。我们
+   binary 装在 `~/.local/bin/`，CWD 一旦不对（systemd unit 的
+   `WorkingDirectory` 通常是 git checkout），就会在 checkout 里默写
+   `pb_data/`。修法：`cmd/server/main.go::injectPBDataDirFlag` 启动
+   时检查 os.Args，没带 `--dir=` 就自动补 `--dir=$QATLAS_PB_DATA_DIR`。
+   后者默认 `$XDG_DATA_HOME/quantum-atlas/pb_data`（即
+   `$HOME/.local/share/quantum-atlas/pb_data`）。**仍然可以**用
+   `--dir=` 显式覆盖（systemd ExecStart 或命令行均可）；只是不再
+   "忘了写就掉到错位置"。
 
 2. **PocketBase 默认 `net.Listen("tcp", "0.0.0.0:NNNN")` 在 modern Go 上
    返回 dual-stack v6 socket**（在 `/proc/<pid>/net/tcp6` 可见，`tcp`

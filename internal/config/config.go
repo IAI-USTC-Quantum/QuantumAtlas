@@ -23,10 +23,18 @@ type Config struct {
 	// HTTP bind address (host:port). Defaults to 127.0.0.1:4200.
 	HTTPAddr string
 
-	// Filesystem roots.
-	WikiDir string // local clone of the Wiki repo (markdown + frontmatter).
-	RawDir  string // RAW asset store (PDFs, MinerU outputs, etc.).
-	DataDir string // server-managed metadata (shares.json, ingests/, etc.).
+	// Filesystem roots. Defaults are computed by Load when the
+	// corresponding env vars are unset:
+	//   - WikiDir   -> <anchor>/../QuantumAtlas-Wiki (sibling checkout)
+	//   - RawDir    -> ${XDG_DATA_HOME:-$HOME/.local/share}/quantum-atlas/raw
+	//   - DataDir   -> ${XDG_DATA_HOME:-$HOME/.local/share}/quantum-atlas/data
+	//   - PBDataDir -> ${XDG_DATA_HOME:-$HOME/.local/share}/quantum-atlas/pb_data
+	// "anchor" is the directory containing the .env loaded by the caller,
+	// or the process CWD when no .env was supplied.
+	WikiDir   string // local clone of the Wiki repo (markdown + frontmatter).
+	RawDir    string // RAW asset store (PDFs, MinerU outputs, etc.).
+	DataDir   string // server-managed metadata (shares.json, ingests/, etc.).
+	PBDataDir string // PocketBase pb_data (SQLite + uploads); passed to --dir=.
 
 	// Neo4j (server-only).
 	Neo4jURI      string
@@ -62,7 +70,7 @@ type Config struct {
 // dotenvPath, if non-empty, is the absolute path to the .env file from
 // which env vars were loaded by the caller. We use its parent directory
 // as the anchor for resolving relative filesystem paths (WikiDir /
-// RawDir / DataDir). This way a .env entry like
+// RawDir / DataDir / PBDataDir). This way a .env entry like
 // `WIKI_DIR=../QuantumAtlas-Wiki` resolves consistently regardless of
 // the systemd WorkingDirectory or shell CWD. If dotenvPath is empty
 // (e.g. when env is provided entirely by systemd / shell), we fall back
@@ -70,6 +78,16 @@ type Config struct {
 //
 // Lookup order for each logical field follows the QATLAS_* alias chain
 // documented in .env.example. The first non-empty match wins.
+//
+// Filesystem defaults (applied when both alias names are unset):
+//   - WikiDir   -> "<anchor>/../QuantumAtlas-Wiki"
+//   - RawDir    -> "${XDG_DATA_HOME:-$HOME/.local/share}/quantum-atlas/raw"
+//   - DataDir   -> "${XDG_DATA_HOME:-$HOME/.local/share}/quantum-atlas/data"
+//   - PBDataDir -> "${XDG_DATA_HOME:-$HOME/.local/share}/quantum-atlas/pb_data"
+//
+// These defaults intentionally land *outside* the git checkout so a
+// fresh `git clone` stays clean; see docs/migration-storage-layout.md
+// for how to move existing in-repo data.
 func Load(dotenvPath string) (*Config, error) {
 	anchor := ""
 	if dotenvPath != "" {
@@ -81,6 +99,7 @@ func Load(dotenvPath string) (*Config, error) {
 		WikiDir:               firstEnv("QATLAS_WIKI_DIR", "WIKI_DIR"),
 		RawDir:                firstEnv("QATLAS_RAW_DIR", "RAW_DIR"),
 		DataDir:               firstEnv("QATLAS_DATA_DIR", "DATA_DIR"),
+		PBDataDir:             firstEnv("QATLAS_PB_DATA_DIR", "PB_DATA_DIR"),
 		Neo4jURI:              firstEnv("NEO4J_URI"),
 		Neo4jUser:             firstEnv("NEO4J_USERNAME", "NEO4J_USER"),
 		Neo4jPassword:         firstEnv("NEO4J_PASSWORD"),
@@ -115,9 +134,14 @@ func Load(dotenvPath string) (*Config, error) {
 	}
 
 	// Normalize filesystem paths: resolve ~ and relative-to-anchor.
-	cfg.WikiDir = expandPath(cfg.WikiDir, anchor)
-	cfg.RawDir = expandPath(cfg.RawDir, anchor)
-	cfg.DataDir = expandPath(cfg.DataDir, anchor)
+	// Apply XDG / sibling-checkout defaults when an env var is unset so
+	// stateful directories never accidentally land inside the git
+	// checkout (no more `wiki/`, `raw/`, `data/`, `pb_data/` showing up
+	// in `git status` after a clean clone).
+	cfg.WikiDir = expandPath(defaultIfEmpty(cfg.WikiDir, defaultWikiDir()), anchor)
+	cfg.RawDir = expandPath(defaultIfEmpty(cfg.RawDir, defaultXDGSubdir("raw")), anchor)
+	cfg.DataDir = expandPath(defaultIfEmpty(cfg.DataDir, defaultXDGSubdir("data")), anchor)
+	cfg.PBDataDir = expandPath(defaultIfEmpty(cfg.PBDataDir, defaultXDGSubdir("pb_data")), anchor)
 
 	return cfg, nil
 }
@@ -189,4 +213,49 @@ func expandPath(p, anchor string) string {
 		}
 	}
 	return filepath.Clean(p)
+}
+
+// defaultIfEmpty returns def when v is empty, otherwise v. Trivial
+// helper but it makes the Load() default-application section read
+// linearly without nesting ternaries.
+func defaultIfEmpty(v, def string) string {
+	if v == "" {
+		return def
+	}
+	return v
+}
+
+// defaultWikiDir returns the conventional wiki location relative to the
+// .env anchor: a sibling "../QuantumAtlas-Wiki" checkout. The returned
+// path is intentionally relative so that expandPath resolves it against
+// the same anchor a user-supplied `WIKI_DIR=../QuantumAtlas-Wiki` would
+// use — guaranteeing the auto-default and the explicit override are
+// indistinguishable.
+func defaultWikiDir() string {
+	return filepath.Join("..", "QuantumAtlas-Wiki")
+}
+
+// defaultXDGSubdir returns the XDG_DATA_HOME-rooted default location
+// for the named QuantumAtlas subdirectory (raw / data / pb_data).
+//
+// Lookup order:
+//  1. $XDG_DATA_HOME, when set and absolute (per XDG spec — relative
+//     values are explicitly invalid).
+//  2. $HOME/.local/share, the spec's documented fallback.
+//  3. ./.quantum-atlas-<name>, a last-resort relative path when even
+//     $HOME is missing (e.g. minimal container). This still beats
+//     emitting an absolute root like "/quantum-atlas/raw" that would
+//     fail with EACCES on the first write.
+//
+// All returned values are absolute when paths #1 or #2 apply.
+func defaultXDGSubdir(name string) string {
+	base := strings.TrimSpace(os.Getenv("XDG_DATA_HOME"))
+	if base == "" || !filepath.IsAbs(base) {
+		if home, err := os.UserHomeDir(); err == nil && home != "" {
+			base = filepath.Join(home, ".local", "share")
+		} else {
+			return filepath.Join(".quantum-atlas-"+name) // tiny last-resort
+		}
+	}
+	return filepath.Join(base, "quantum-atlas", name)
 }
