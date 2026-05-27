@@ -79,7 +79,60 @@ raw / data / pb_data 默认塞进 git checkout 内。
 
 ### 2. systemd unit 模板
 
-`/etc/systemd/system/qatlas.service`：
+**推荐：user-mode systemd unit**（`~/.config/systemd/user/qatlas.service`，
+跟 binary 一起 user-owned，**daily restart 不需要 sudo**）：
+
+```ini
+[Unit]
+Description=QuantumAtlas server (Go + PocketBase)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# Server 用 github.com/joho/godotenv 加载 .env。把绝对路径作为
+# QATLAS_DOTENV 传进来，server 会用它的所在目录作为相对路径 anchor
+# （WIKI_DIR=../QuantumAtlas-Wiki 因此能解析到 %h/QuantumAtlas-Wiki）。
+# 不要用 systemd 的 EnvironmentFile= 指令 —— 那个只把内容注入 env，
+# 拿不到文件路径，server 就没办法做相对路径 anchor。
+# %h 在 user-mode unit 里展开成 $HOME。
+Environment=QATLAS_DOTENV=%h/QuantumAtlas/.env
+
+# 仅在被 v4-only portproxy 包裹的 host (典型: WSL2 + Windows netsh)
+# 才设这个。Plain Linux 云 VPS 不要打开，让 server 走 PocketBase 默认
+# dual-stack v6 socket 同时服务 v4 + v6 client。
+# Environment=QATLAS_FORCE_TCP4=1
+
+WorkingDirectory=%h/QuantumAtlas
+
+# `--dir=` 不再硬写：server 在 main.go 里会按下面这条规则自己补 --dir：
+#   1. 如果 ExecStart 显式带了 --dir=<path>，按 PocketBase 默认走那个。
+#   2. 否则注入 --dir=$QATLAS_PB_DATA_DIR；后者默认
+#      $XDG_DATA_HOME/quantum-atlas/pb_data （即
+#      $HOME/.local/share/quantum-atlas/pb_data），也可在 .env 里
+#      覆盖到挂载盘 / 系统路径。
+ExecStart=%h/.local/bin/quantumatlas serve --http=0.0.0.0:<HTTP_PORT>
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=15
+
+[Install]
+WantedBy=default.target
+```
+
+启用 + 起动（**无 sudo**）：
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now qatlas.service
+systemctl --user status qatlas.service
+loginctl enable-linger "$USER"   # 一次性：未登录也保活
+```
+
+**替代：system-mode systemd unit**（`/etc/systemd/system/qatlas.service`，
+多用户共享 / 严格 hardening 场景）：
 
 ```ini
 [Unit]
@@ -92,29 +145,10 @@ Type=simple
 User=<USER>
 Group=<USER>
 
-# Server 用 github.com/joho/godotenv 加载 .env。把绝对路径作为
-# QATLAS_DOTENV 传进来，server 会用它的所在目录作为相对路径 anchor
-# （WIKI_DIR=../QuantumAtlas-Wiki 因此能解析到 /home/<USER>/QuantumAtlas-Wiki）。
-# 不要用 systemd 的 EnvironmentFile= 指令 —— 那个只把内容注入 env，
-# 拿不到文件路径，server 就没办法做相对路径 anchor。
 Environment=QATLAS_DOTENV=/home/<USER>/QuantumAtlas/.env
-
-# 仅在被 v4-only portproxy 包裹的 host (典型: WSL2 + Windows netsh)
-# 才设这个。Plain Linux 云 VPS 不要打开，让 server 走 PocketBase 默认
-# dual-stack v6 socket 同时服务 v4 + v6 client。
 # Environment=QATLAS_FORCE_TCP4=1
 
 WorkingDirectory=/home/<USER>/QuantumAtlas
-
-# `--dir=` 不再硬写：server 在 main.go 里会按下面这条规则自己补 --dir：
-#   1. 如果 ExecStart 显式带了 --dir=<path>，按 PocketBase 默认走那个。
-#   2. 否则注入 --dir=$QATLAS_PB_DATA_DIR；后者默认
-#      $XDG_DATA_HOME/quantum-atlas/pb_data （即
-#      /home/<USER>/.local/share/quantum-atlas/pb_data），也可在 .env
-#      里覆盖到 /var/lib/... 或挂载盘。
-# 注意 systemd 跑 user= 不同时，$HOME / $XDG_DATA_HOME 会跟着切；
-# 测试时 `sudo -u <USER> ~/.local/bin/quantumatlas serve` 拿到的就是
-# 这个用户的 XDG 默认。
 ExecStart=/home/<USER>/.local/bin/quantumatlas serve --http=0.0.0.0:<HTTP_PORT>
 Restart=on-failure
 RestartSec=5
@@ -136,7 +170,7 @@ RestrictRealtime=true
 WantedBy=multi-user.target
 ```
 
-启用 + 起动：
+启用 + 起动（需要 sudo）：
 
 ```bash
 sudo systemctl daemon-reload
@@ -146,17 +180,25 @@ sudo systemctl status qatlas.service
 
 ### 3. 日常 deploy 流程
 
-本地：
+**user-mode（推荐）**——零 sudo：
 
 ```bash
 pixi run build                # 出 build/quantumatlas (CGO-free, static)
+scp build/quantumatlas TARGET:/tmp/quantumatlas-go
+ssh TARGET "install -m 0755 /tmp/quantumatlas-go ~/.local/bin/quantumatlas && systemctl --user restart qatlas"
+```
+
+**system-mode**——最后一步需 sudo：
+
+```bash
+pixi run build
 scp build/quantumatlas TARGET:/tmp/quantumatlas-go
 ssh TARGET "install -m 0755 /tmp/quantumatlas-go ~/.local/bin/quantumatlas"
 ssh -t TARGET "sudo systemctl restart qatlas"
 ```
 
-只有最后一步要 sudo。本地/远端读 systemd 状态（`systemctl status` /
-`journalctl -u qatlas`）不需要 sudo。
+两种模式下，读 systemd 状态（`systemctl [--user] status` /
+`journalctl [--user] -u qatlas`）都不需要 sudo。
 
 ### 4. .env 必填字段
 

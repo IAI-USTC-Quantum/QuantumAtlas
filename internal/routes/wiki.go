@@ -197,15 +197,12 @@ func RegisterWiki(se *core.ServeEvent, cfg *config.Config) {
 // status map shape the /api/wiki/sync/status endpoint exposes. We compute
 // both at once because every wiki route needs to know "does the dir
 // even exist" before doing real work.
+//
+// cfg.WikiDir is guaranteed non-empty by config.Load (it falls back to
+// the sibling-checkout default "<.env dir>/../QuantumAtlas-Wiki" when
+// no env var is set), so no in-handler fallback is needed.
 func resolveWikiDir(cfg *config.Config) (string, map[string]any) {
 	dir := cfg.WikiDir
-	if dir == "" {
-		// Mirror the Python default project-relative behavior so
-		// a `wiki/` directory next to CWD still works during dev.
-		if cwd, err := os.Getwd(); err == nil {
-			dir = filepath.Join(cwd, "wiki")
-		}
-	}
 	exists := false
 	if info, err := os.Stat(dir); err == nil && info.IsDir() {
 		exists = true
