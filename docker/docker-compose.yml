@@ -1,0 +1,19 @@
+services:
+  pocketbase:
+    image: ghcr.io/muchobien/pocketbase:${PB_VERSION:?set PB_VERSION in .env}
+    container_name: quantum-atlas-pocketbase
+    restart: unless-stopped
+    command: ["--http", "0.0.0.0:8090"]
+    volumes:
+      - pb_data:/pb_data
+      - ../pocketbase/pb_hooks:/pb_hooks:ro
+      - ../pocketbase/pb_migrations:/pb_migrations:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8090/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  pb_data:
