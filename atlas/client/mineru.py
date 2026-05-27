@@ -36,6 +36,7 @@ import requests
 
 from atlas.client._common import (
     add_common_http_args,
+    auth_headers,
     base_url_from_args,
     print_json,
     request_verify,
@@ -60,6 +61,7 @@ def _claim_one(
     *,
     request_timeout: float,
     verify: bool,
+    headers: dict[str, str],
     ttl_seconds: Optional[int],
 ) -> tuple[Optional[dict[str, Any]], Optional[str]]:
     """Try to claim one paper. Returns (claim_payload, skip_reason).
@@ -77,6 +79,7 @@ def _claim_one(
         resp = requests.post(
             f"{base_url}/api/papers/{arxiv_id}/mineru-claim",
             params=params or None,
+            headers=headers,
             timeout=request_timeout,
             verify=verify,
         )
@@ -100,10 +103,12 @@ def _release_claim(
     *,
     request_timeout: float,
     verify: bool,
+    headers: dict[str, str],
 ) -> None:
     try:
         requests.delete(
             f"{base_url}/api/papers/{arxiv_id}/mineru-claim/{claim_id}",
+            headers=headers,
             timeout=request_timeout,
             verify=verify,
         )
@@ -173,6 +178,7 @@ def _upload_markdown(
     overwrite: bool,
     request_timeout: float,
     verify: bool,
+    headers: dict[str, str],
 ) -> tuple[bool, Any]:
     params: dict[str, str] = {"source": "mineru"}
     if overwrite:
@@ -183,6 +189,7 @@ def _upload_markdown(
             f"{base_url}/api/papers/{arxiv_id}/upload-markdown",
             files=files,
             params=params,
+            headers=headers,
             timeout=request_timeout,
             verify=verify,
         )
@@ -197,6 +204,7 @@ def _process_one(
     config: ServerConfig,
     arxiv_id: str,
     verify: bool,
+    headers: dict[str, str],
 ) -> int:
     """Process exactly one arxiv_id. Returns 0 on success/skip, 1 on hard error."""
     _print_err(f"--- {arxiv_id} ---")
@@ -205,6 +213,7 @@ def _process_one(
         arxiv_id,
         request_timeout=args.request_timeout,
         verify=verify,
+        headers=headers,
         ttl_seconds=args.ttl_seconds,
     )
     if claim is None:
@@ -232,6 +241,7 @@ def _process_one(
                 claim_id,
                 request_timeout=args.request_timeout,
                 verify=verify,
+                headers=headers,
             )
             return 1
 
@@ -243,6 +253,7 @@ def _process_one(
                 claim_id,
                 request_timeout=args.request_timeout,
                 verify=verify,
+                headers=headers,
             )
             return 0
 
@@ -253,6 +264,7 @@ def _process_one(
             overwrite=args.overwrite,
             request_timeout=args.request_timeout,
             verify=verify,
+            headers=headers,
         )
         if not ok:
             _print_err(payload)
@@ -262,6 +274,7 @@ def _process_one(
                 claim_id,
                 request_timeout=args.request_timeout,
                 verify=verify,
+                headers=headers,
             )
             return 1
         print_json(payload)
@@ -273,6 +286,7 @@ def _process_one(
             claim_id,
             request_timeout=args.request_timeout,
             verify=verify,
+            headers=headers,
         )
         raise
 
@@ -285,14 +299,16 @@ def cmd_mineru(args: argparse.Namespace) -> int:
 
     base_url = base_url_from_args(args)
     verify = request_verify(args)
+    headers = auth_headers(args)
 
     if args.arxiv_id:
-        return _process_one(args, base_url, config, args.arxiv_id, verify)
+        return _process_one(args, base_url, config, args.arxiv_id, verify, headers)
 
     # Queue mode: iterate the server's needs-mineru list.
     list_resp = requests.get(
         f"{base_url}/api/papers/needs-mineru",
         params={"limit": args.max},
+        headers=headers,
         timeout=args.request_timeout,
         verify=verify,
     )
@@ -313,7 +329,7 @@ def cmd_mineru(args: argparse.Namespace) -> int:
 
     failures = 0
     for paper in candidates:
-        rc = _process_one(args, base_url, config, paper["arxiv_id"], verify)
+        rc = _process_one(args, base_url, config, paper["arxiv_id"], verify, headers)
         if rc != 0:
             failures += 1
             if not args.continue_on_error:

@@ -52,6 +52,35 @@ def request_verify(args: argparse.Namespace) -> bool:
     return False
 
 
+def resolve_token(args: argparse.Namespace) -> str:
+    """Resolve the bearer credential.
+
+    Precedence: --token CLI flag > QATLAS_TOKEN env > "" (no auth header).
+
+    Empty string means the caller will not send an Authorization header; the
+    server then either accepts the call (open read endpoints) or rejects with
+    401 (write endpoints gated by authGuard). The user gets a clear error
+    pointing them at /token in the SPA either way.
+    """
+    explicit = getattr(args, "token", None)
+    if explicit:
+        return explicit.strip()
+    return os.getenv("QATLAS_TOKEN", "").strip()
+
+
+def auth_headers(args: argparse.Namespace) -> dict[str, str]:
+    """Build the Authorization header for a CLI request.
+
+    Returns an empty dict when no token is configured so the caller can use
+    ``headers={**auth_headers(args), ...other...}`` without worrying about
+    overriding an explicit Authorization (there is none to override).
+    """
+    token = resolve_token(args)
+    if not token:
+        return {}
+    return {"Authorization": f"Bearer {token}"}
+
+
 def print_json(payload: dict[str, Any]) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
@@ -66,6 +95,16 @@ def add_common_http_args(parser: argparse.ArgumentParser) -> None:
         "--insecure",
         action="store_true",
         help="Skip TLS certificate verification (also enabled by QATLAS_INSECURE=1)",
+    )
+    parser.add_argument(
+        "--token",
+        default=None,
+        help=(
+            "Bearer token sent as 'Authorization: Bearer <token>' on every "
+            "request. Defaults to QATLAS_TOKEN env. Get one from "
+            "https://<server>/token after signing in with GitHub, or use the "
+            "interim QATLAS_WRITE_TOKEN shared secret while Step 7 lands."
+        ),
     )
 
 

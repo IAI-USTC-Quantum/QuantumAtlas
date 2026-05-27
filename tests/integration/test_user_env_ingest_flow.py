@@ -26,6 +26,7 @@ pytestmark = [
     pytest.mark.e2e,
     pytest.mark.network,
     pytest.mark.slow,
+    pytest.mark.legacy,
 ]
 
 TEST_ARXIV_ID = "quant-ph/9508027v1"

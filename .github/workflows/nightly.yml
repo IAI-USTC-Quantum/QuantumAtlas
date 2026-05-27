@@ -1,5 +1,15 @@
 name: Nightly production smoke
 
+# Hits the live QuantumAtlas Go server (cmd/server) through both edges
+# every night:
+#   - https://quantum-atlas.ai            (RackNerd, real LE cert)
+#   - https://47.102.36.175 | insecure    (Alibaba, tls internal self-signed)
+#
+# Both targets reverse-proxy back to 1810 over EasyTier mesh
+# (10.144.18.10:4200). Failures here usually mean either the user-mode
+# qatlas.service on 1810 fell over, or a Caddy reload broke the public
+# vhost.
+
 on:
   schedule:
     - cron: '0 18 * * *'   # UTC 18:00 = 北京时间次日 02:00
@@ -7,9 +17,9 @@ on:
 
 jobs:
   smoke:
-    name: Hit live production targets
+    name: Hit live production targets (Go server)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v4
@@ -27,15 +37,18 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev --frozen
 
-      - name: Run e2e + network tests against production
+      - name: Run production smoke against both edges
         env:
-          # 多目标：逗号或换行分隔。每条目可写成
-          #   - https://atlas.example.com
-          #   - https://1.2.3.4|insecure   (跳过 TLS 校验，给自签证书/IP 用)
-          # 没设置时所有 production_smoke 用例会自动 skip。
-          QATLAS_SERVER_TARGETS: ${{ secrets.QATLAS_SERVER_TARGETS }}
-          # 线上服务自己 .env 已经管 MINERU_API_TOKEN；CI runner 只在需要
-          # 本地启 server 的 e2e 变种里用到它，所以仍然注入一份兜底。
-          MINERU_API_TOKEN: ${{ secrets.MINERU_API_TOKEN }}
-        run: uv run pytest -rs -m "network or e2e"
+          # Default to both edges so the nightly is meaningful out of the
+          # box. If the secret is set it overrides this default — e.g. for
+          # a one-off test against a staging URL.
+          QATLAS_SERVER_TARGETS: ${{ secrets.QATLAS_SERVER_TARGETS || 'https://quantum-atlas.ai,https://47.102.36.175|insecure' }}
+          # Phase-A write-token gate: lets test_write_endpoint_accepts_phase_a_secret
+          # verify the gate's accept path (handler 400 instead of guard 401).
+          # If the secret isn't configured, that one test self-skips.
+          QATLAS_WRITE_TOKEN: ${{ secrets.QATLAS_WRITE_TOKEN }}
+          # 'legacy' marker covers the old FastAPI-only ingest/* tests that
+          # the Go server intentionally does not implement; they must NOT
+          # be selected by this nightly run.
+        run: uv run pytest -rs -m "e2e and not legacy"
 

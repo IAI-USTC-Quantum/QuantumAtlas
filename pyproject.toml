@@ -70,6 +70,7 @@ markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "network: tests that require outbound network access (e.g. arXiv API)",
     "e2e: end-to-end tests that load the repository .env and exercise real external services",
+    "legacy: targets only the legacy FastAPI server (atlas/server/), not the current Go server (cmd/server). Excluded by default.",
 ]
 
 [tool.black]

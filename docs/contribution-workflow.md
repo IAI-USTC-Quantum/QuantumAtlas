@@ -167,27 +167,39 @@ qatlas mineru 2501.00010v1 --no-push
 
 ## 2. 鉴权与审计
 
-服务器自身不内置浏览器登录流程。生产部署通常由 Caddy 等反向代理在前面完成 OAuth / cookie / bearer 鉴权后，再把用户身份注入 HTTP 请求头。
+服务器使用 PocketBase 内嵌的 GitHub OAuth 流程做浏览器登录，并通过 `authGuard`（`internal/routes/auth.go`）门禁写操作。读口（wiki / pages / stats / search / graph / lint / share）保持公开（因为 wiki 仓库本身就是公开的）。
 
 涉及到的服务端配置：
 
-- `QATLAS_USER_HEADER`：服务器读取的用户名 header 名（例如 `X-Forwarded-User`，alias: `USER_HEADER`）。upload 端点会把这个值记到响应 `uploaded_by` 字段和日志里。
-- 服务器自身不验证 token——它信任反代已经鉴权过。
+- `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`：用来在启动时把 GitHub OAuth provider 注入 users collection（`internal/auth/oauth.go::syncGitHubProvider`，幂等）。
+- `QATLAS_ADMIN_GITHUB_LOGINS`：GitHub 用户名白名单（逗号分隔），未来用于自动 admin 提权（handler 待补）。
+- `QATLAS_WRITE_TOKEN`：Phase-A 临时共享密钥。`authGuard` 接受 `Authorization: Bearer <这个>` 作为写口凭据，作为 Step 7（CLI 改走 PocketBase 用户 token）落地前的兜底。
+- `QATLAS_USER_HEADER`：仍可用，反代/SSO 注入审计头时由 upload 端点写入 `uploaded_by` 字段；与 PocketBase auth 并行，不互斥。
 
-客户端 CLI 调用时，把反代签发的 bearer token 加到 `Authorization` 头：
+客户端 CLI 调用写口时，要带 bearer token：
 
 ```bash
-TOKEN=$(curl -s -b "AUTHP_ACCESS_TOKEN=$AUTHP_TOKEN" https://atlas.example/api/session/token \
-        | python3 -c 'import sys,json; print(json.load(sys.stdin)["token"])')
+# 方法 A — 从浏览器 /token 页面复制（PocketBase 用户 token，长期推荐）：
+export QATLAS_SERVER_URL=https://quantum-atlas.ai
+export QATLAS_TOKEN=$(pbcopy 出来的串)            # 或 --token 命令行覆盖
 
-curl -X POST -H "Authorization: Bearer $TOKEN" \
+qatlas upload pdf quant-ph/9508027v1 --pdf paper.pdf
+
+# 方法 B — Phase-A 共享密钥（CLI 临时机制，仅服务端 .env 持有；走运维通道发到 CLI 用户）：
+qatlas upload pdf 2501.00010v1 --pdf paper.pdf --token "$QATLAS_WRITE_TOKEN"
+
+# 直接 curl 也行：
+curl -X POST -H "Authorization: Bearer $QATLAS_TOKEN" \
   -F pdf=@paper.pdf -F metadata=@meta.json \
-  "https://atlas.example/api/papers/quant-ph/9508027v1/upload-pdf?overwrite=true"
+  "https://quantum-atlas.ai/api/papers/quant-ph/9508027v1/upload-pdf?overwrite=true"
 ```
 
-Web UI 的 Token 页面（`/token`）直接提供「Copy curl」按钮，复制出来的命令已经带好 `Authorization` 头。
+Web UI 的 Token 页面（`https://<server>/token`，登录后访问）提供:
+- "Copy token"：纯 token 字符串；
+- "Copy curl"：完整 curl 命令；
+- "Copy CLI env"：`export QATLAS_SERVER_URL=... && export QATLAS_TOKEN=...` 一对环境变量，粘到 shell 直接配好 CLI。
 
-具体反代配置（Caddy + caddy-security 的样例）在 [deployment.md](deployment.md)。
+具体反代配置（Caddy 现在已经是纯 reverse_proxy）见 [deployment.md](deployment.md)。
 
 ---
 

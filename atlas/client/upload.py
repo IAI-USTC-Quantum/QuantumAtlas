@@ -22,6 +22,7 @@ import requests
 
 from atlas.client._common import (
     add_common_http_args,
+    auth_headers,
     base_url_from_args,
     print_json,
     request_verify,
@@ -68,6 +69,7 @@ def cmd_upload_pdf(args: argparse.Namespace) -> int:
             url,
             files=files,
             params=params,
+            headers=auth_headers(args),
             timeout=args.request_timeout,
             verify=request_verify(args),
         )
@@ -105,6 +107,7 @@ def cmd_upload_markdown(args: argparse.Namespace) -> int:
             url,
             files=files,
             params=params,
+            headers=auth_headers(args),
             timeout=args.request_timeout,
             verify=request_verify(args),
         )

@@ -11,6 +11,12 @@ from atlas.server.config import ServerConfig
 from atlas.server.main import create_app
 
 
+# Legacy Python-only ingest pipeline: only valid against atlas.server, not
+# the current Go server (which has no /api/ingest/*). Marked legacy so the
+# default suite and the nightly Go-server smoke ignore this file.
+pytestmark = [pytest.mark.legacy]
+
+
 TEST_PAPERS = [
     (
         "quant-ph/9508027v1",

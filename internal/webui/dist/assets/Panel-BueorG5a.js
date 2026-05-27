@@ -1,1 +1,0 @@
-import{j as s}from"./index-DiaMmV7M.js";function c({title:n,icon:a,suffix:e,children:i}){return s.jsxs("section",{className:"panel",children:[s.jsxs("div",{className:"panel-heading",children:[s.jsxs("h2",{children:[s.jsx(a,{size:18})," ",n]}),e&&s.jsx("span",{className:"panel-suffix",children:e})]}),i]})}export{c as P};
