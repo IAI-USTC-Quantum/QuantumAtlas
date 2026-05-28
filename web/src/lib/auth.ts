@@ -47,11 +47,38 @@ let bootstrapDone = !pb.authStore.token
 let bootstrapPromise: Promise<void> | null = null
 const readyListeners = new Set<() => void>()
 
+// Dev-only escape hatch: when VITE_DEV_FAKE_AUTH=1 in `vite dev`, useAuth()
+// returns a stub authed state so UI work on protected routes can proceed
+// without going through GitHub OAuth (esp. useful when the dev server is
+// reverse-proxied through a different origin than the production qatlas
+// instance, so prod localStorage tokens don't transfer). Backend-dependent
+// data (papers, search, share) will 401 — this only unblocks the chrome.
+// Production builds strip this branch entirely via dead-code elimination
+// because `import.meta.env.DEV` is statically `false` at build time, so it
+// cannot leak past `vite dev`.
+const FAKE_AUTH =
+  import.meta.env.DEV && import.meta.env.VITE_DEV_FAKE_AUTH === '1'
+
+const FAKE_USER: AuthUser = {
+  id: 'dev_fake_user',
+  email: 'dev@local',
+  name: 'Dev User',
+  username: 'dev',
+}
+
+if (FAKE_AUTH) {
+  bootstrapDone = true
+  console.warn(
+    '[auth] VITE_DEV_FAKE_AUTH=1 — bypassing PocketBase auth. UI gates will pass; API calls will still 401.',
+  )
+}
+
 function notifyReady() {
   for (const listener of readyListeners) listener()
 }
 
 export function ensureAuthBootstrap(): Promise<void> {
+  if (FAKE_AUTH) return Promise.resolve()
   if (bootstrapDone) return Promise.resolve()
   if (bootstrapPromise) return bootstrapPromise
   bootstrapPromise = (async () => {
@@ -71,6 +98,14 @@ export function ensureAuthBootstrap(): Promise<void> {
 }
 
 function snapshot(): AuthState {
+  if (FAKE_AUTH) {
+    return {
+      isAuthed: true,
+      isChecking: false,
+      token: 'dev_fake_token',
+      user: FAKE_USER,
+    }
+  }
   const record = pb.authStore.record as Record<string, unknown> | null
   return {
     isAuthed: bootstrapDone && pb.authStore.isValid,
