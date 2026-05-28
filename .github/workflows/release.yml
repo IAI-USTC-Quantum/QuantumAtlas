@@ -86,13 +86,44 @@ jobs:
           python -m build
 
       # ------------------------------------------------------------------
+      # Frontend SPA — must build before the Go binary because web/embed.go
+      # uses //go:embed all:dist, which fails the Go build if web/dist/
+      # doesn't exist. The Go binary embeds the built SPA directly so
+      # there's only one artifact to ship to end users.
+      # ------------------------------------------------------------------
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build web frontend
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      # ------------------------------------------------------------------
       # Go server binaries — published to the GitHub Release so end users
       # can `curl quantum-atlas.ai/install-server.sh | sh` and get the
       # right artifact for their platform. This is the QuantumAtlas-only
       # step that qalgo doesn't have (pure-Python project).
       #
-      # CGO_ENABLED=0 keeps binaries fully static + portable
-      # (modernc.org/sqlite is pure Go, see AGENTS.md).
+      # CGO_ENABLED=1 is required since the paperindex package added a
+      # cgo binding to libduckdb (marcboeker/go-duckdb). The resulting
+      # binary is still self-contained at runtime — libduckdb is
+      # statically linked — but cgo cross-compilation needs the target's
+      # C toolchain at build time.
+      #
+      # TODO(paperindex): the ubuntu-latest runner only has the native
+      # x86_64 gcc, so cross-compilation to linux/arm64 + darwin/* will
+      # currently FAIL. Either (a) split this into a matrix-per-runner
+      # job (macos-latest for darwin, separate arm64 runner for linux),
+      # or (b) install cross-toolchains here (zig / clang). For now we
+      # ship linux/amd64 only — both production edges (RackNerd +
+      # Alibaba) are linux/amd64, so this covers prod. Non-prod targets
+      # will be re-enabled in a follow-up.
       #
       # pixi pulls the same Go toolchain as go.yml — avoids setup-go
       # version drift between CI workflows.
@@ -105,7 +136,7 @@ jobs:
 
       - name: Cross-compile qatlas-server binaries
         env:
-          CGO_ENABLED: "0"
+          CGO_ENABLED: "1"
         run: |
           set -euo pipefail
           mkdir -p dist/bin
@@ -121,10 +152,12 @@ jobs:
               -o "$out" ./cmd/qatlas-server
           }
 
+          # cgo: only the runner's native target works without extra
+          # cross-toolchain setup. See TODO above.
           build linux  amd64
-          build linux  arm64
-          build darwin amd64
-          build darwin arm64
+          # build linux  arm64       # disabled: cgo cross-compile
+          # build darwin amd64       # disabled: cgo cross-compile
+          # build darwin arm64       # disabled: cgo cross-compile
 
       - name: Generate checksums.txt
         run: |
