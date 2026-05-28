@@ -1,0 +1,7 @@
+# mkdocs deps —— RTD 通过 .readthedocs.yaml 装这份。
+# 本地预览：pip install -r docs/requirements.txt && mkdocs serve
+#
+# 与运行时 deps 分离，避免污染 pyproject.toml 的 dev / runtime 集合。
+mkdocs-material>=9.6
+mkdocstrings[python]>=0.26
+mkdocs-awesome-pages-plugin>=2.9

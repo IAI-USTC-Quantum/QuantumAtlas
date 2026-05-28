@@ -1,0 +1,69 @@
+site_name: QuantumAtlas Documentation
+site_description: 把量子算法论文从「PDF 和笔记」推进到「可查询的知识、可浏览的 Wiki、可同步的图谱，以及可生成的实现代码」
+site_author: IAI-USTC-Quantum
+site_url: https://quantum-atlas.readthedocs.io/
+
+repo_name: IAI-USTC-Quantum/QuantumAtlas
+repo_url: https://github.com/IAI-USTC-Quantum/QuantumAtlas
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  language: zh
+  features:
+    - navigation.indexes
+    - navigation.sections
+    - navigation.top
+    - toc.follow
+    - content.code.copy
+    - content.action.edit
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: 切换到暗色模式
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: 切换到浅色模式
+
+plugins:
+  - search
+  - awesome-pages
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [atlas]
+
+# requirements.txt 是给 RTD 装依赖用的，不应该被当作文档资源复制到 site/
+exclude_docs: |
+  requirements.txt
+
+markdown_extensions:
+  - toc:
+      permalink: true
+  - attr_list
+  - admonition
+  - tables
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.arithmatex:
+      generic: true
+
+# KaTeX 数学公式渲染（轻量，加载更快；和 qalgo 同款）
+extra_javascript:
+  - javascripts/katex.js
+  - https://unpkg.com/katex@0/dist/katex.min.js
+  - https://unpkg.com/katex@0/dist/contrib/auto-render.min.js
+
+extra_css:
+  - https://unpkg.com/katex@0/dist/katex.min.css
