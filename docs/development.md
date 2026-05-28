@@ -25,6 +25,54 @@ uv sync --extra dev
 uv run pytest -m "not e2e and not network and not legacy"
 ```
 
+### 前端 dev server（`npm run dev`）
+
+Vite 只 serve SPA bundle，**没有内置后端**。直接打 `/api/...` 会被 SPA
+fallback 接走返回 `index.html`，前端 `fetch().json()` 立刻崩成
+`Unexpected token '<', "<!doctype "... is not valid JSON`。Vite 必须
+反代到一个真 qatlas-server 实例。约定走 `web/.env.development.local`
+（被 `*.local` gitignore，本地私货）：
+
+```bash
+cp web/.env.development.example web/.env.development.local
+# 编辑 web/.env.development.local，三个 dev-only 变量：
+```
+
+| 变量 | 作用 |
+|---|---|
+| `VITE_DEV_API_TARGET` | **必填**。vite 把 `/api`、`/_`、`/share` 反代到这。可指本地 `http://127.0.0.1:4200`（同时改 Go handler 时）或任何远端 qatlas-server（只动前端时）。自签证书自动放过（`proxy.secure=false`）。 |
+| `VITE_DEV_FAKE_AUTH=1` | 跳过 SPA 自身的 PocketBase 登录页（`web/src/lib/auth.ts::FAKE_AUTH`），让 UI 工作不被 OAuth flow 卡住。读口走 proxy 拿真数据，写口仍 401（无真 PocketBase session）。**只在 `import.meta.env.DEV` 真时生效**，`vite build` 时 dead-code 消除，**不会泄漏到 prod bundle**。 |
+| `VITE_DEV_ALLOWED_HOSTS` | 逗号分隔额外允许的 `Host` header（vite 5+ 默认拒非 localhost）。仅在用反代把 dev server 暴露到 LAN/公网做实时预览时需要。 |
+
+完整字段说明见 `web/.env.development.example` 顶部注释。
+
+> 不用 build + scp + 重启的 in-loop 迭代：改前端 → vite HMR 自动刷；
+> 改 Go handler → 本地起 qatlas-server（`pixi run -- go run ./cmd/qatlas-server serve --http=127.0.0.1:4200`）+ vite proxy 指 `127.0.0.1:4200`。**生产部署永远走 CI release pipeline，不要本地编译 binary scp 上去**（细节见下"部署 / Binary 来源"段）。
+
+### 部署 / Binary 来源
+
+**生产 qatlas-server binary 始终走 GitHub Actions release pipeline 出**——
+不要 `go build` 本地编完 `scp` 到 RackNerd / Alibaba。原因：
+
+- **复现性**：CI build 在干净 ubuntu-latest 上跑 `pixi install` + 锁定的
+  toolchain；本机 build 受当前 env / dirty checkout / 未 commit 改动污染。
+- **multi-platform**：CI 矩阵出 `linux/amd64 linux/arm64 darwin/arm64`，
+  本机只能编自己 host arch。
+- **可追溯**：每个 release artifact 跟一个 git tag 一一对应，能直接对
+  source；本地 binary 没这条链。
+
+发版流程：
+
+1. 本地 `cz bump` → 改 `pyproject.toml` + `CHANGELOG.md` + commit + tag
+2. push main → `.github/workflows/release.yml` 自动跑：cross-compile 4 个
+   平台 binary + sha256 → publish 到 GitHub Release + PyPI
+3. RackNerd / Alibaba 上 `curl -fsSL https://quantum-atlas.ai/install-server.sh
+   | sh -s -- --version v0.X.Y` 拉对应 tag → `sudo systemctl restart qatlas-server.service`
+
+`install-server.sh` 自带 SHA256 校验（由 release pipeline 生成 + 上传到 release），
+确保拉下来的 binary 跟 CI 出的一致。**本机 build 出来的 binary 没这个校验链**，
+是禁止上线的核心原因。
+
 > **不要在 pixi env 外手动 `go build`**：你机器上全局 go 是 pixi-managed
 > conda-forge build，自带 `CC=x86_64-conda-linux-gnu-cc` baked-in。pixi env
 > 里有匹配的 `gxx`，CGO 调用能成功；env 外没有，`go vet` / 任何走 cgo 的
