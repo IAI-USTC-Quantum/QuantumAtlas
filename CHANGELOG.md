@@ -4,6 +4,57 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.2.3 (2026-05-28)
+
+### Feat
+
+- **release**: PyPI publishing + cross-compiled Go binaries + /install-server.sh
+- **server**: race-safe uploads + concurrency/stability hardening
+- **objstore**: dual-endpoint S3 client for split internal/public presign
+- **go-server**: rename binary to qatlas-server + add `service install` subcommand
+- **go-server**: storage prune CLI + versioned-delete IAM perms
+- **test,ci**: per-target tokens in QATLAS_SERVER_TARGETS for active-active
+- **go-server**: sha256 dedup + qatlas-managed bucket versioning
+- **client**: qatlas auth login/logout/status/token with per-host store
+- **server**: qatlas-server pat CLI + default PAT rate-limit rules
+- **go-server**: migrate-raw-to-s3 one-shot tool
+- **go-server**: P15 objstore abstraction + S3/RustFS backend
+- **web**: redirect-flow GitHub OAuth + relocate SPA embed to web/
+- **go-server**: P14 GitHub-style fine-grained PAT scopes (casbin)
+- **go-server**: P13 Personal Access Tokens
+- **go-server**: P11 CLI bearer-token + e2e regression suite + sudoless deploy docs
+- **go-server**: P9 gate write endpoints on auth (interim QATLAS_WRITE_TOKEN + PocketBase token)
+- **go-server**: P8 SPA PocketBase OAuth login UI + bearer auth header
+- **go-server**: P7-prep force tcp4 listener on IPv4 bind addr
+- **go-server**: P6 embed React SPA into binary
+- **go-server**: P5 papers + shares + mineru-claim
+- **go-server**: P4 Neo4j graph endpoints
+- **go-server**: P3 wiki + pages + stats + search + lint stub
+- **go-server**: P2 GitHub OAuth provider auto-injection
+- **go-server**: P1 PocketBase skeleton + config + minimal routes
+- **contrib**: raw asset uploads + MinerU claim/lease workflow
+- **paper-assets**: sharded RAW paths and resilient asset resolution
+
+### Fix
+
+- **service install**: refuse `sudo ... --mode user` upfront
+- **service install**: sudo-aware home resolution for ReadWritePaths
+- **pat**: close zero-expiry bypass, harden helpers, fix last_used_at race
+- **go-server**: make tcp4-force opt-in via QATLAS_FORCE_TCP4
+- **nightly-smoke**: require explicit scheme in QATLAS_SERVER_TARGETS
+- 修复 token 暴露和图谱页面回归
+
+### Refactor
+
+- **go-server**: route papers/shares through objstore
+- **go-server**: post-storage-refactor cleanup
+- **go-server**: default storage paths outside git checkout (XDG + sibling)
+- **go-server**: P12 drop QATLAS_WRITE_TOKEN backdoor, godotenv-based .env loading
+- **server,cli**: enforce ff-only ingest + split CI into push/nightly
+- **config**: introduce QATLAS_* env namespace with legacy aliases
+- enforce server wiki content boundary
+- move UI into web app
+
 ## v0.2.2 (2026-04-25)
 
 ### Added
