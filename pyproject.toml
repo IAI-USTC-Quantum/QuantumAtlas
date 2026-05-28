@@ -133,7 +133,14 @@ ignore_missing_imports = true
 
 [tool.pixi.workspace]
 channels = ["conda-forge"]
-platforms = ["linux-64"]
+# All four target platforms for which we publish qatlas-server binaries
+# in the release workflow. Adding a platform here just tells pixi to
+# resolve the lockfile on that arch — the conda-forge `go` and `gxx`
+# packages are available for every entry. Without this, pixi refuses to
+# install on non-listed runners ("unsupported-platform" error), which
+# is what release.yml's binary-build matrix ran into the first time it
+# tried macos-* / ubuntu-*-arm runners.
+platforms = ["linux-64", "linux-aarch64", "osx-64", "osx-arm64"]
 
 [tool.pixi.activation.env]
 # Keep Go's build/module caches *inside* the repo so they live and die
