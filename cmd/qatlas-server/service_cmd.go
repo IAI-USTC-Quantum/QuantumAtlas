@@ -260,7 +260,7 @@ func resolveDotenvPath(opts *serviceInstallOpts, tty bool) error {
 
 func autodetectDotenvCandidates() []string {
 	out := []string{}
-	if home, err := os.UserHomeDir(); err == nil {
+	if home := effectiveHomeDir(); home != "" {
 		out = append(out, filepath.Join(home, "QuantumAtlas", ".env"))
 	}
 	if cwd, err := os.Getwd(); err == nil {
@@ -280,6 +280,30 @@ func validateDotenvPath(path string) error {
 	return nil
 }
 
+// effectiveHomeDir returns the home directory of the user the server will
+// actually run as, NOT the home of the current process. The distinction
+// matters under sudo: sudo resets $HOME to /root by default (see sudoers(5)
+// `env_reset`), so a plain os.UserHomeDir() during
+// `sudo qatlas-server service install --mode system` would yield /root,
+// poisoning ReadWritePaths (and the .env autodetect candidates) with
+// /root/.local/share/quantum-atlas — a path the eventual `User=<sudo-user>`
+// daemon will never write to, making the hardening grant useless.
+//
+// Resolution order:
+//  1. $SUDO_USER set + lookup succeeds → that user's home (the sudo case)
+//  2. plain os.UserHomeDir() → reads $HOME (the normal case)
+//
+// Returns empty string if both fail; callers gate on that.
+func effectiveHomeDir() string {
+	if sudoUser := strings.TrimSpace(os.Getenv("SUDO_USER")); sudoUser != "" {
+		if u, err := user.Lookup(sudoUser); err == nil && u.HomeDir != "" {
+			return u.HomeDir
+		}
+	}
+	home, _ := os.UserHomeDir()
+	return home
+}
+
 // computeReadWritePaths returns the paths systemd should grant write access
 // to under ReadWritePaths=. We include:
 //   - the .env directory (server may rewrite .env in future migrations)
@@ -287,10 +311,13 @@ func validateDotenvPath(path string) error {
 //   - ~/QuantumAtlas-Wiki if it exists (git fetch writes refs)
 //
 // Duplicates are removed. Order is preserved for stable test snapshots.
+//
+// "Home" here resolves via effectiveHomeDir so sudo invocations target the
+// real daemon-user's home, not /root — see effectiveHomeDir docs.
 func computeReadWritePaths(absDotenv string) []string {
 	paths := []string{filepath.Dir(absDotenv)}
 
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
+	if home := effectiveHomeDir(); home != "" {
 		share := strings.TrimSpace(os.Getenv("XDG_DATA_HOME"))
 		if share == "" {
 			share = filepath.Join(home, ".local", "share")
@@ -356,6 +383,9 @@ func buildServiceConfig(opts serviceInstallOpts) (*service.Config, error) {
 // Prefers $SUDO_USER (operator ran `sudo qatlas-server service install`),
 // falls back to the username corresponding to the current effective uid,
 // finally empty (caller will run as root, not recommended but allowed).
+//
+// Sibling of effectiveHomeDir — same sudo-aware resolution philosophy, but
+// returns a username string rather than a home directory path.
 func resolveSystemUser() string {
 	if u := strings.TrimSpace(os.Getenv("SUDO_USER")); u != "" {
 		return u

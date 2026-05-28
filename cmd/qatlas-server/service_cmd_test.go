@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -218,5 +219,96 @@ func TestValidateDotenvPathRejectsDirectory(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "is a directory") {
 		t.Errorf("expected 'is a directory' in error, got: %v", err)
+	}
+}
+
+// TestEffectiveHomeDirPrefersSudoUser verifies the sudo-aware fallback:
+// when $SUDO_USER points to a real account, effectiveHomeDir returns that
+// account's home, NOT the current process's $HOME.
+//
+// Regression target: pre-fix `computeReadWritePaths` called os.UserHomeDir
+// directly, which under `sudo qatlas-server service install` returns /root
+// (sudo's default HOME reset). The resulting ReadWritePaths granted writes
+// to /root/.local/share/quantum-atlas — a path the eventual User=<sudo-user>
+// daemon never touches, leaving the *actual* state dir blocked by
+// ProtectSystem=full.
+//
+// The test impersonates a sudo invocation by setting $HOME to a junk dir
+// and $SUDO_USER to the current process's username (guaranteed to be
+// lookup-able on any host that runs `go test`; we deliberately do NOT
+// hardcode a project-specific username).
+func TestEffectiveHomeDirPrefersSudoUser(t *testing.T) {
+	current, err := user.Current()
+	if err != nil {
+		t.Skipf("user.Current failed (cannot run in this environment): %v", err)
+	}
+	if current.HomeDir == "" {
+		t.Skip("current user has no HomeDir; cannot run")
+	}
+
+	junkHome := t.TempDir()
+	t.Setenv("HOME", junkHome) // simulate sudo's HOME reset
+	t.Setenv("SUDO_USER", current.Username)
+
+	got := effectiveHomeDir()
+	if got != current.HomeDir {
+		t.Errorf("effectiveHomeDir() = %q, want %q (resolved via $SUDO_USER, not $HOME=%q)",
+			got, current.HomeDir, junkHome)
+	}
+}
+
+// TestEffectiveHomeDirFallsBackToEnvHome verifies the non-sudo path:
+// no $SUDO_USER -> effectiveHomeDir returns $HOME as-is.
+func TestEffectiveHomeDirFallsBackToEnvHome(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+	t.Setenv("SUDO_USER", "") // explicitly unset to defeat any inherited sudo context
+
+	got := effectiveHomeDir()
+	if got != tempHome {
+		t.Errorf("effectiveHomeDir() = %q, want %q (no $SUDO_USER, should mirror $HOME)",
+			got, tempHome)
+	}
+}
+
+// TestComputeReadWritePathsUnderSimulatedSudo is the integration-level
+// guard against the same bug: with $HOME pointing at a junk dir but
+// $SUDO_USER naming a real account, the resulting ReadWritePaths must
+// include the real account's $XDG_DATA_HOME/quantum-atlas, not the junk
+// HOME's. This is the path that ultimately lands in the systemd unit.
+func TestComputeReadWritePathsUnderSimulatedSudo(t *testing.T) {
+	current, err := user.Current()
+	if err != nil || current.HomeDir == "" {
+		t.Skipf("cannot resolve current user (env limitation): %v", err)
+	}
+
+	junkHome := t.TempDir()
+	t.Setenv("HOME", junkHome)
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("SUDO_USER", current.Username)
+
+	// Use a .env under junkHome (a "wrong" dir) — the dotenv directory
+	// is computed straight from absDotenv, not from $HOME, so it should
+	// still appear correctly. What matters is the *share-derived* path:
+	// it should resolve under the SUDO_USER's real home, not under
+	// junkHome.
+	dotenvPath := filepath.Join(junkHome, ".env")
+	if err := os.WriteFile(dotenvPath, []byte("# fixture\n"), 0o600); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+
+	paths := computeReadWritePaths(dotenvPath)
+	joined := strings.Join(paths, " ")
+
+	wantShare := filepath.Join(current.HomeDir, ".local/share/quantum-atlas")
+	unwantedShare := filepath.Join(junkHome, ".local/share/quantum-atlas")
+
+	if !strings.Contains(joined, wantShare) {
+		t.Errorf("expected ReadWritePaths to include %q (real SUDO_USER home), got: %s",
+			wantShare, joined)
+	}
+	if strings.Contains(joined, unwantedShare) {
+		t.Errorf("ReadWritePaths leaked junk $HOME path %q (sudo HOME bug regression); got: %s",
+			unwantedShare, joined)
 	}
 }
