@@ -25,7 +25,7 @@
 // user record on re.Auth.
 //
 // Read endpoints (wiki, pages, stats, search, graph, /api/server/info,
-// /api/oauth2-redirect, /share/{token}, /health) stay open without
+// /api/oauth2-redirect, /share/{token}, /api/health) stay open without
 // auth. The wiki repo is public so no sensitive data leaks; only
 // write-side abuse of the public surface needs blocking.
 //

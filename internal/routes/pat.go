@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/pat"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/safego"
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/types"
@@ -272,6 +273,12 @@ func patDeleteHandler(app core.App) func(re *core.RequestEvent) error {
 			slog.Error("pat: delete record failed", "id", id, "user_id", user.Id, "error", err)
 			return re.JSON(http.StatusInternalServerError, map[string]string{"detail": "internal server error"})
 		}
+		// Drop any cached verifies for this PAT immediately so the
+		// revocation takes effect on this node within ms instead of
+		// up to TTL (default 60s) later. Cross-node revocation lag
+		// is still bounded by TTL on the other edge — there's no
+		// cross-node invalidation channel today.
+		pat.InvalidateVerifyCache(id)
 		return re.JSON(http.StatusOK, map[string]bool{"ok": true})
 	}
 }
@@ -308,12 +315,17 @@ func nonZeroDate(dt types.DateTime) string {
 // request; failures are logged but never block the response. Kept
 // here (next to the handlers it complements) so the auth.go file
 // doesn't grow a pat-package import just for one line of bookkeeping.
+//
+// The goroutine is launched via safego.Go so a panic in pat.MarkUsed
+// (or anywhere down the SQL stack) is logged with a stack trace
+// instead of crashing the qatlas process — important because this
+// fires on every authenticated write request.
 func markPATUsed(app core.App, rec *core.Record) {
-	go func() {
+	safego.Go("pat.MarkUsed", func() {
 		if err := pat.MarkUsed(app, rec); err != nil {
 			slog.Warn("pat: failed to mark token used", "id", rec.Id, "error", err)
 		}
-	}()
+	})
 }
 
 // itoa avoids pulling strconv into a file that otherwise has no

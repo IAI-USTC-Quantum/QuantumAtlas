@@ -181,17 +181,62 @@ curl -X POST \
 For `upload-pdf` with metadata, the metadata part has its own param:
 `?expected_metadata_sha256=<hex>`.
 
-## Multipart atomicity
+## Concurrency &amp; race-safety
+
+Two clients uploading the SAME `arxiv_id` at the same time (different
+bytes, neither passing `--overwrite`) must get a clean winner-loser
+outcome — never silent last-writer-wins. The handler enforces this by
+sending S3 `If-None-Match: "*"` conditional PUTs instead of the
+naïve "Stat first, then Put if absent" pattern (which has a TOCTOU
+window large enough to lose data in practice).
+
+Wire-level guarantees:
+
+- **Concurrent SAME bytes**: ≤ 1 client gets `201`, the rest get
+  `200 {unchanged: true}`. Never 409, never 500.
+- **Concurrent DIFFERENT bytes**: exactly 1 client gets `201`, the
+  rest get `409` with both hashes in the body. The bytes that end up
+  in the bucket always belong to the `201` winner.
+- **Overwrite path** (`?overwrite=true`): unconditional PUT after a
+  sha-match short-circuit check. Bucket versioning preserves the prior
+  version as a recoverable noncurrent version (see operator section
+  below). Two simultaneous `--overwrite`s land as two versions, last
+  one wins as current, neither is lost.
+
+Behind the scenes this rides on RustFS' S3 conditional-write semantics
+(`If-None-Match: *` returning `412 PreconditionFailed` when the key
+already exists). The dev-mode `LocalStore` emulates the same contract
+with atomic `os.Link` so test suites running against either backend
+see identical concurrency behavior.
+
+## Multipart atomicity (per-key, not cross-key)
 
 `POST /api/papers/.../upload-pdf` accepts two form parts: `pdf` and
-optional `metadata`. The server stages BOTH parts and runs ALL
-conflict checks BEFORE any PutObject. So a metadata-side 409 never
-leaves a half-uploaded PDF on the bucket. Either both writes happen
-or neither does.
+optional `metadata`. The server stages BOTH parts to memory + computes
+sha256 + validates `?expected_sha256=` BEFORE touching the bucket, so
+input-side failures (bad PDF header, corrupt JSON, transit corruption)
+never write anything.
 
-This matters when retrying after a partial failure: the second
-attempt sees a clean "neither exists" state, not "PDF exists but
-metadata doesn't" which would force confusing `--overwrite` semantics.
+Each part then runs the conditional-PUT flow **independently**:
+
+- Both keys succeed → `201` with `pdf_path` + `metadata_path` set.
+- PDF key conflicts (different bytes already there, no `--overwrite`)
+  → the server SHORT-CIRCUITS before attempting the metadata write and
+  returns `409` naming the PDF conflict.
+- PDF succeeds but metadata key conflicts → response is `409` with
+  `metadata_conflict: true`. The PDF write that already happened stays
+  — but that's safe to retry: the next attempt with the same PDF bytes
+  sees `pdf_unchanged: true` (sha256 short-circuit), so the only thing
+  that actually needs resolving is the metadata conflict (pass
+  `--overwrite` or update your metadata to match).
+
+This is a deliberate relaxation from the older "stage both, decide
+both, write both atomically" model: that model still had a TOCTOU
+window between the Stat and the Put, so it wasn't really atomic — it
+just *looked* atomic until two clients raced. The new per-key contract
+is genuinely race-safe at each key, and the multi-key idempotency
+property (retries converge to the desired state) is preserved by
+sha256 dedup.
 
 ## Recovering an overwritten version (operator side)
 

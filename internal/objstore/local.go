@@ -2,16 +2,25 @@ package objstore
 
 import (
 	"context"
+	crand "crypto/rand"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
-	"maps"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+)
+
+// jsonMarshal/jsonUnmarshal aliases keep the sidecar JSON wire format
+// in one place — easy to swap to a compact / canonical encoder later.
+var (
+	jsonMarshal   = json.Marshal
+	jsonUnmarshal = json.Unmarshal
 )
 
 // LocalStore is the filesystem-backed Store implementation. Keys are
@@ -71,22 +80,46 @@ func (s *LocalStore) Put(ctx context.Context, key string, r io.Reader, size int6
 	return s.PutWithMeta(ctx, key, r, size, contentType, nil)
 }
 
-// PutWithMeta delegates to Put and silently discards metadata. The
-// local backend has no native sidecar metadata store (xattr is Linux-
-// only and breaks on macOS/Windows without setup); writing a parallel
-// `.meta.json` would invite races and bloat the dev workflow. Callers
-// that need metadata for correctness (e.g. sha256 dedup) MUST tolerate
-// nil ObjectInfo.Metadata on reads.
+// PutWithMeta delegates to PutWithOptions. LocalStore persists metadata
+// as a sidecar JSON file (<key>.meta.json) alongside the object so the
+// content-aware idempotency path (Stat → compare sha256 metadata) works
+// identically to the S3 backend in dev. This keeps dev-vs-prod fidelity
+// for the upload handler's race-safe flow at the cost of one extra small
+// write per Put.
+func (s *LocalStore) PutWithMeta(ctx context.Context, key string, r io.Reader, size int64, contentType string, metadata map[string]string) (int64, error) {
+	return s.PutWithOptions(ctx, key, r, size, PutOptions{
+		ContentType: contentType,
+		Metadata:    metadata,
+	})
+}
+
+// PutWithOptions writes to BaseDir/key. Supports a constrained subset
+// of preconditions:
 //
-// We log once-per-process via sync.Once below so devs notice when
-// they're running in a degraded mode, without spamming.
-func (s *LocalStore) PutWithMeta(_ context.Context, key string, r io.Reader, _ int64, _ string, metadata map[string]string) (int64, error) {
-	if len(metadata) > 0 {
-		localMetadataDropOnce.Do(func() {
-			slog.Warn("LocalStore drops user metadata; dedup features that rely on it are disabled. Switch to S3Store for full functionality.",
-				"first_dropped_keys", maps.Keys(metadata))
-		})
+//   - IfNoneMatch == "*"  → atomic create-if-not-exists via os.Link
+//     (POSIX guarantees EEXIST when the target already exists). Returns
+//     ErrPreconditionFailed when the file is already there.
+//   - IfMatch != "" or IfNoneMatch != "" (non-"*") → returns
+//     ErrPreconditionUnsupported. LocalStore has no ETag and is dev-
+//     only/single-process, so emulating CAS here would either lie about
+//     concurrency safety or require a sidecar lock file. The handler is
+//     expected to fall back to an unconditional write (matching legacy
+//     behaviour) when it sees ErrPreconditionUnsupported.
+//   - Empty preconditions → unconditional write, identical to old
+//     PutWithMeta semantics (write via .part + rename).
+//
+// Metadata is persisted as a sidecar JSON file (<dest>.meta.json) only
+// after the primary object is successfully in place — so a 412
+// (precondition failed) leaves no orphan sidecars. The sidecar write
+// uses the same .part + rename atomicity dance to avoid partial files.
+func (s *LocalStore) PutWithOptions(_ context.Context, key string, r io.Reader, _ int64, po PutOptions) (int64, error) {
+	if po.IfMatch != "" {
+		return 0, fmt.Errorf("objstore: LocalStore IfMatch %q: %w", po.IfMatch, ErrPreconditionUnsupported)
 	}
+	if po.IfNoneMatch != "" && po.IfNoneMatch != "*" {
+		return 0, fmt.Errorf("objstore: LocalStore IfNoneMatch %q: %w (only \"*\" is supported)", po.IfNoneMatch, ErrPreconditionUnsupported)
+	}
+
 	dest, err := s.resolve(key)
 	if err != nil {
 		return 0, err
@@ -94,13 +127,18 @@ func (s *LocalStore) PutWithMeta(_ context.Context, key string, r io.Reader, _ i
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return 0, err
 	}
-	tmp := dest + ".part"
-	out, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	// Per-call unique tmp suffix so two concurrent writers don't trample
+	// each other's staged bytes under the same dest+".part" name. Random
+	// hex is cheap and avoids needing a process-wide counter.
+	var nonce [8]byte
+	if _, err := crand.Read(nonce[:]); err != nil {
+		return 0, fmt.Errorf("objstore: tmp nonce: %w", err)
+	}
+	tmp := fmt.Sprintf("%s.%s.part", dest, hex.EncodeToString(nonce[:]))
+	out, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return 0, err
 	}
-	// Defer order matters: the rename happens before the cleanup runs.
-	// We only nuke the .part file if it still exists (i.e. rename failed).
 	cleanup := func() { _ = os.Remove(tmp) }
 	written, copyErr := io.Copy(out, r)
 	if cerr := out.Close(); cerr != nil && copyErr == nil {
@@ -110,18 +148,96 @@ func (s *LocalStore) PutWithMeta(_ context.Context, key string, r io.Reader, _ i
 		cleanup()
 		return 0, copyErr
 	}
+
+	if po.IfNoneMatch == "*" {
+		// Atomic create-if-not-exists: os.Link returns EEXIST when dest
+		// already exists. On success we still own tmp and must remove it.
+		if err := os.Link(tmp, dest); err != nil {
+			cleanup()
+			if errors.Is(err, os.ErrExist) {
+				return 0, fmt.Errorf("objstore: put %s: %w", key, ErrPreconditionFailed)
+			}
+			return 0, err
+		}
+		cleanup()
+		if err := s.writeSidecar(dest, po.Metadata); err != nil {
+			return 0, fmt.Errorf("objstore: write sidecar for %s: %w", key, err)
+		}
+		return written, nil
+	}
+
+	// Unconditional path: rename overwrites any existing file atomically.
 	if err := os.Rename(tmp, dest); err != nil {
 		cleanup()
 		return 0, err
 	}
+	if err := s.writeSidecar(dest, po.Metadata); err != nil {
+		return 0, fmt.Errorf("objstore: write sidecar for %s: %w", key, err)
+	}
 	return written, nil
 }
 
-// localMetadataDropOnce gates the one-time warn when PutWithMeta is
-// called with non-empty metadata on a LocalStore. We do this here
-// (file-scope) rather than inside the struct so multiple LocalStore
-// instances in tests don't spam the log.
-var localMetadataDropOnce sync.Once
+// writeSidecar atomically persists metadata as <dest>.meta.json. When
+// metadata is empty/nil we remove any pre-existing sidecar so a Put
+// without metadata behaves as "clear metadata", matching how an S3
+// PutObject without x-amz-meta-* headers replaces the prior metadata.
+func (s *LocalStore) writeSidecar(dest string, metadata map[string]string) error {
+	sidecar := dest + sidecarExt
+	if len(metadata) == 0 {
+		if err := os.Remove(sidecar); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+	body, err := jsonMarshal(metadata)
+	if err != nil {
+		return err
+	}
+	var nonce [8]byte
+	if _, err := crand.Read(nonce[:]); err != nil {
+		return err
+	}
+	tmp := fmt.Sprintf("%s.%s.part", sidecar, hex.EncodeToString(nonce[:]))
+	if err := os.WriteFile(tmp, body, 0o644); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, sidecar); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+// readSidecar returns the metadata persisted alongside dest, or nil
+// when no sidecar exists. Corrupt sidecars are treated as "no metadata"
+// (with a one-shot warning) rather than failing reads — the object
+// itself is still usable and we'd rather degrade to legacy semantics
+// than 500 the caller.
+func (s *LocalStore) readSidecar(dest string) map[string]string {
+	body, err := os.ReadFile(dest + sidecarExt)
+	if err != nil {
+		return nil
+	}
+	var m map[string]string
+	if err := jsonUnmarshal(body, &m); err != nil {
+		localSidecarCorruptOnce.Do(func() {
+			slog.Warn("LocalStore sidecar corrupt; ignoring metadata", "path", dest+sidecarExt, "err", err)
+		})
+		return nil
+	}
+	return m
+}
+
+// sidecarExt is the suffix LocalStore appends to per-object metadata
+// sidecar files. It must not appear in any real storage key (see
+// ListPrefix filter) — ".meta.json" satisfies that because our keys are
+// driven by paperassets.AssetKey which uses ".pdf"/".json"/".md".
+const sidecarExt = ".meta.json"
+
+// localSidecarCorruptOnce throttles the warn for corrupt sidecars. A
+// single bad upload shouldn't flood the log; we tolerate the situation
+// by returning empty metadata (legacy behaviour).
+var localSidecarCorruptOnce sync.Once
 
 // Get opens BaseDir/key for reading. Returns ErrNotFound if absent.
 func (s *LocalStore) Get(_ context.Context, key string) (io.ReadCloser, ObjectInfo, error) {
@@ -145,12 +261,24 @@ func (s *LocalStore) Get(_ context.Context, key string) (io.ReadCloser, ObjectIn
 		Key:       key,
 		Size:      info.Size(),
 		UpdatedAt: info.ModTime().UTC(),
+		Metadata:  s.readSidecar(path),
 	}, nil
 }
 
-// Stat reports whether BaseDir/key exists and, when it does, its size
-// and modtime. Distinguishes "absent" (exists=false, err=nil) from
-// "lookup failed" (err non-nil).
+// Stat reports whether BaseDir/key exists and, when it does, its size,
+// modtime, and any persisted sidecar metadata. Distinguishes "absent"
+// (exists=false, err=nil) from "lookup failed" (err non-nil).
+//
+// Because the sidecar is published AFTER the primary file (see
+// PutWithOptions), there is a microsecond-scale window where the data
+// file is visible but its sidecar hasn't been renamed into place yet.
+// When that happens we briefly poll for the sidecar to land before
+// returning — bounded to a handful of millisecond-scale tries — so the
+// upload handler's content-aware idempotency (Stat → compare sha256
+// metadata) doesn't return false-positive 409s under concurrent same-
+// content uploads. After the budget is exhausted we return whatever
+// metadata is there (nil for legacy objects with no sidecar at all),
+// matching the legacy semantics.
 func (s *LocalStore) Stat(_ context.Context, key string) (ObjectInfo, bool, error) {
 	path, err := s.resolve(key)
 	if err != nil {
@@ -169,20 +297,42 @@ func (s *LocalStore) Stat(_ context.Context, key string) (ObjectInfo, bool, erro
 	if !info.Mode().IsRegular() {
 		return ObjectInfo{}, false, nil
 	}
+	meta := s.readSidecar(path)
+	if meta == nil {
+		// Close the publish-window race: see if the sidecar arrives
+		// shortly. The total budget is ~25ms which is huge compared to
+		// the typical ~10µs gap between os.Link(data) and os.Rename
+		// (sidecar); legacy objects without sidecars at all will fully
+		// exhaust this and still return nil — same as before.
+		const tries = 5
+		const sleep = 5 * time.Millisecond
+		for i := 0; i < tries; i++ {
+			time.Sleep(sleep)
+			meta = s.readSidecar(path)
+			if meta != nil {
+				break
+			}
+		}
+	}
 	return ObjectInfo{
 		Key:       key,
 		Size:      info.Size(),
 		UpdatedAt: info.ModTime().UTC(),
+		Metadata:  meta,
 	}, true, nil
 }
 
-// Delete removes BaseDir/key. Missing key = no error.
+// Delete removes BaseDir/key and any sidecar metadata file. Missing
+// key = no error; missing sidecar = no error.
 func (s *LocalStore) Delete(_ context.Context, key string) error {
 	path, err := s.resolve(key)
 	if err != nil {
 		return err
 	}
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := os.Remove(path + sidecarExt); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	return nil
@@ -239,6 +389,10 @@ func (s *LocalStore) ListPrefix(_ context.Context, prefix string, limit int) ([]
 			return nil
 		}
 		if !info.Mode().IsRegular() {
+			return nil
+		}
+		// Don't surface our own sidecar metadata files as objects.
+		if strings.HasSuffix(filepath.Base(path), sidecarExt) {
 			return nil
 		}
 		if stemFilter != "" && !strings.HasPrefix(filepath.Base(path), stemFilter) {

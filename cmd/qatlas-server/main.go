@@ -86,7 +86,13 @@ func main() {
 	injectHTTPFlag(cfg)
 	injectPBDataDirFlag(cfg)
 
-	app := pocketbase.New()
+	app := pocketbase.NewWithConfig(pocketbase.Config{
+		// Custom SQLite tuning — see sqlite_tuning.go for the rationale
+		// behind each pragma. Falls back to PB's DefaultDBConnect when
+		// this returns an error (so a typo here can't brick startup
+		// silently; PB will log and try the default path).
+		DBConnect: qatlasDBConnect,
+	})
 
 	auth.Register(app, cfg)
 
@@ -114,6 +120,9 @@ func main() {
 		if err := e.Next(); err != nil {
 			return err
 		}
+		// Log effective SQLite pragmas + run startup WAL checkpoint.
+		// Done after e.Next so PB has finished opening connections.
+		logSQLitePragmas(context.Background(), app)
 		changed, err := pat.EnsureDefaults(app)
 		if err != nil {
 			// Non-fatal: starting the server without rate limits is
@@ -181,7 +190,7 @@ func main() {
 
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
 		// Capture process start time the first time a serve event
-		// fires. /health uses this to report uptime_seconds.
+		// fires. /api/health uses this to report uptime_seconds.
 		serverStarted := time.Now()
 
 		// Optional: force a tcp4-native listener when the operator opts
@@ -275,26 +284,47 @@ func initRawStore(cfg *config.Config) (objstore.Store, error) {
 // implemented under internal/routes/ and pulled in by their respective
 // Register* helpers as we migrate each module in subsequent phases.
 func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawStore objstore.Store, shareStore *shares.Store, claimStore *mineruclaim.Store, enforcer *casbin.Enforcer, started time.Time) {
-	// /health — dependency-aware liveness probe. PocketBase already
-	// owns /api/health, so we expose this at the root to match the old
-	// FastAPI surface used by smoke tests and Caddy health probes.
-	//
-	// Returns aggregated status of:
-	//   - rawstore  (RustFS BucketExists or local fs)
-	//   - neo4j     (Bolt VerifyConnectivity)
-	//   - wiki      (git HEAD short SHA + commit time)
-	//
-	// Always 200 — `status` in the body is the source of truth. See
-	// internal/healthz for the shape and aggregation rules.
 	probes := healthz.Probes{
 		Cfg:      cfg,
 		RawStore: rawStore,
 		Version:  Version,
 		Started:  started,
 	}
-	se.Router.GET("/health", func(re *core.RequestEvent) error {
-		res := healthz.Run(re.Request.Context(), probes)
-		return re.JSON(200, res)
+
+	// Override PocketBase's built-in /api/health with our dependency-
+	// aware version. Implementation note:
+	//
+	// PocketBase registers /api/health in apis.NewRouter() (apis/base.go
+	// line 50, bindHealthApi), which runs BEFORE the OnServe hook fires.
+	// The router has no "remove route" API; the tools/router package
+	// will panic on duplicate-route registration at BuildMux() time.
+	// So we can't `se.Router.GET("/api/health", ...)` here.
+	//
+	// The router DOES support per-router middleware via BindFunc,
+	// which runs before any matched route handler. By short-circuiting
+	// the request (writing the response and returning nil without
+	// calling e.Next()), we replace PocketBase's healthCheck handler
+	// for this path. PocketBase's handler still exists in the route
+	// tree but is never reached.
+	//
+	// Why we replace rather than supplement: we want exactly ONE
+	// health endpoint with ONE response shape across the project, so
+	// monitoring + PocketBase SDK + ops scripts can't disagree about
+	// what "healthy" means. The response is a PocketBase-shape
+	// superset (see healthz.PBResult): {code, message, data:{...}}
+	// keeps SDK compat, with our checks/version/uptime nested in
+	// `data`. PocketBase's original `data` is just `{}` (or three
+	// trivial superuser-only fields), so the superset is non-lossy
+	// for unauthenticated callers.
+	//
+	// The path comparison is a const-time string equality on every
+	// request — cheap, and only the /api/health requests hit the
+	// healthz.RunPB call. The rest fall through via e.Next().
+	se.Router.BindFunc(func(re *core.RequestEvent) error {
+		if re.Request.Method == "GET" && re.Request.URL.Path == "/api/health" {
+			return re.JSON(200, healthz.RunPB(re.Request.Context(), probes))
+		}
+		return re.Next()
 	})
 
 	// /install-server.sh — public installer that downloads the latest

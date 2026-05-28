@@ -19,14 +19,15 @@ import (
 // Python _git_info() return shape exactly so the JSON payload is
 // byte-compatible with the existing UI.
 type GitInfo struct {
-	Enabled  bool         `json:"enabled"`
-	Branch   string       `json:"branch,omitempty"`
-	Commit   string       `json:"commit,omitempty"`
-	Upstream string       `json:"upstream,omitempty"`
-	Ahead    *int         `json:"ahead,omitempty"`
-	Behind   *int         `json:"behind,omitempty"`
-	Dirty    *bool        `json:"dirty,omitempty"`
-	Warnings []GitWarning `json:"warnings,omitempty"`
+	Enabled    bool         `json:"enabled"`
+	Branch     string       `json:"branch,omitempty"`
+	Commit     string       `json:"commit,omitempty"`
+	CommitTime string       `json:"commit_time,omitempty"` // ISO 8601, from `git log -1 --format=%cI HEAD`
+	Upstream   string       `json:"upstream,omitempty"`
+	Ahead      *int         `json:"ahead,omitempty"`
+	Behind     *int         `json:"behind,omitempty"`
+	Dirty      *bool        `json:"dirty,omitempty"`
+	Warnings   []GitWarning `json:"warnings,omitempty"`
 }
 
 // GitWarning is one structured warning entry under GitInfo.Warnings.
@@ -82,6 +83,9 @@ func ReadGitInfo(dir string) GitInfo {
 	info := GitInfo{Enabled: true}
 	info.Branch = gitOutput(dir, "branch", "--show-current")
 	info.Commit = gitOutput(dir, "rev-parse", "--short", "HEAD")
+	// %cI is the committer date in strict ISO 8601 (RFC 3339). Falls
+	// back to empty string when HEAD doesn't exist (fresh / empty repo).
+	info.CommitTime = gitOutput(dir, "log", "-1", "--format=%cI", "HEAD")
 	info.Upstream = gitOutput(dir, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
 	info.Ahead, info.Behind = gitCounts(dir, info.Upstream)
 

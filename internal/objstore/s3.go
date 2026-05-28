@@ -142,22 +142,23 @@ func validateKey(key string) error {
 // Ping verifies the configured bucket is reachable and accessible by
 // the current credentials. Uses BucketExists which translates to a
 // cheap HEAD-bucket call (no listing, no read of any object). Used by
-// the /health endpoint to surface RustFS reachability without paying
-// per-object I/O. The boolean signals "bucket exists" specifically —
-// false with err=nil means credentials are valid but the bucket is
-// missing (still an unhealthy state for callers expecting it).
+// the /api/health endpoint to surface RustFS reachability without
+// paying per-object I/O. The boolean signals "bucket exists"
+// specifically — false with err=nil means credentials are valid but
+// the bucket is missing (still an unhealthy state for callers
+// expecting it).
 func (s *S3Store) Ping(ctx context.Context) (exists bool, err error) {
 	return s.client.BucketExists(ctx, s.bucket)
 }
 
-// Bucket returns the configured bucket name. Used by /health to
+// Bucket returns the configured bucket name. Used by /api/health to
 // include the bucket identity in the response without exposing
 // credentials.
 func (s *S3Store) Bucket() string { return s.bucket }
 
 // EndpointURL returns the internal endpoint URL the client was built
-// with (host[:port], no scheme). Used by /health for surfacing what
-// the server is actually talking to. We reconstruct it from the
+// with (host[:port], no scheme). Used by /api/health for surfacing
+// what the server is actually talking to. We reconstruct it from the
 // minio.Client's EndpointURL() to avoid duplicating the field.
 func (s *S3Store) EndpointURL() string {
 	if s == nil || s.client == nil {

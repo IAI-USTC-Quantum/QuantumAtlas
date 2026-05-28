@@ -323,3 +323,185 @@ func TestS3Store_EnsureVersioning_Idempotent(t *testing.T) {
 		t.Errorf("second call prior=%q; want %q", prior, "Enabled")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Conditional writes (RustFS / S3 If-None-Match / If-Match)
+// ---------------------------------------------------------------------------
+
+// TestS3Store_PutWithOptions_IfNoneMatchAbsent: first writer with
+// If-None-Match=* against a non-existent key must succeed. This is the
+// happy path of the create-only handler flow.
+func TestS3Store_PutWithOptions_IfNoneMatchAbsent(t *testing.T) {
+	s, prefix := newS3(t)
+	ctx := context.Background()
+	key := path.Join(prefix, "cw/create-only.bin")
+	body := []byte("first-writer")
+	n, err := s.PutWithOptions(ctx, key, bytes.NewReader(body), int64(len(body)),
+		PutOptions{ContentType: "application/octet-stream", IfNoneMatch: "*"})
+	if err != nil {
+		t.Fatalf("PutWithOptions: %v", err)
+	}
+	if n != int64(len(body)) {
+		t.Errorf("wrote %d, want %d", n, len(body))
+	}
+}
+
+// TestS3Store_PutWithOptions_IfNoneMatchExisting: second writer trying
+// to create-only an already-present key must get ErrPreconditionFailed
+// and MUST NOT overwrite the existing bytes. This is the core TOCTOU
+// guarantee RustFS provides.
+func TestS3Store_PutWithOptions_IfNoneMatchExisting(t *testing.T) {
+	s, prefix := newS3(t)
+	ctx := context.Background()
+	key := path.Join(prefix, "cw/exists.bin")
+	first := []byte("first")
+	if _, err := s.Put(ctx, key, bytes.NewReader(first), int64(len(first)), ""); err != nil {
+		t.Fatalf("seed Put: %v", err)
+	}
+	_, err := s.PutWithOptions(ctx, key, bytes.NewReader([]byte("second")), 6,
+		PutOptions{IfNoneMatch: "*"})
+	if !IsPreconditionFailed(err) {
+		t.Fatalf("err = %v, want ErrPreconditionFailed", err)
+	}
+	rc, _, err := s.Get(ctx, key)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	defer rc.Close()
+	got, _ := io.ReadAll(rc)
+	if !bytes.Equal(got, first) {
+		t.Errorf("bytes after failed CAS = %q, want %q (object overwritten despite 412!)", got, first)
+	}
+}
+
+// TestS3Store_PutWithOptions_IfMatchMatching: CAS succeeds when caller
+// presents the current ETag.
+func TestS3Store_PutWithOptions_IfMatchMatching(t *testing.T) {
+	s, prefix := newS3(t)
+	ctx := context.Background()
+	key := path.Join(prefix, "cw/cas-ok.bin")
+	if _, err := s.Put(ctx, key, bytes.NewReader([]byte("v1")), 2, ""); err != nil {
+		t.Fatalf("seed Put: %v", err)
+	}
+	info, exists, err := s.Stat(ctx, key)
+	if err != nil || !exists {
+		t.Fatalf("Stat: err=%v exists=%v", err, exists)
+	}
+	if info.ETag == "" {
+		t.Fatalf("Stat returned empty ETag; CAS path requires backend ETag support")
+	}
+	_, err = s.PutWithOptions(ctx, key, bytes.NewReader([]byte("v2")), 2,
+		PutOptions{IfMatch: info.ETag})
+	if err != nil {
+		t.Fatalf("PutWithOptions: %v", err)
+	}
+	rc, _, _ := s.Get(ctx, key)
+	defer rc.Close()
+	got, _ := io.ReadAll(rc)
+	if string(got) != "v2" {
+		t.Errorf("after CAS Put, got %q, want %q", got, "v2")
+	}
+}
+
+// TestS3Store_PutWithOptions_IfMatchStale: CAS fails with
+// ErrPreconditionFailed when the presented ETag is stale (another writer
+// overwrote between caller's Stat and Put).
+func TestS3Store_PutWithOptions_IfMatchStale(t *testing.T) {
+	s, prefix := newS3(t)
+	ctx := context.Background()
+	key := path.Join(prefix, "cw/cas-stale.bin")
+	if _, err := s.Put(ctx, key, bytes.NewReader([]byte("v1")), 2, ""); err != nil {
+		t.Fatalf("seed Put: %v", err)
+	}
+	_, err := s.PutWithOptions(ctx, key, bytes.NewReader([]byte("v2")), 2,
+		PutOptions{IfMatch: "deadbeefdeadbeefdeadbeefdeadbeef"})
+	if !IsPreconditionFailed(err) {
+		t.Fatalf("err = %v, want ErrPreconditionFailed", err)
+	}
+	rc, _, _ := s.Get(ctx, key)
+	defer rc.Close()
+	got, _ := io.ReadAll(rc)
+	if string(got) != "v1" {
+		t.Errorf("after stale-CAS, got %q, want %q (object overwritten despite 412!)", got, "v1")
+	}
+}
+
+// TestS3Store_PutWithOptions_IfMatchOnMissingKey: RustFS returns
+// NoSuchKey + 404 in this case, but for the handler the distinction
+// vs "etag stale" is immaterial — both mean "your CAS lost, re-Stat".
+// S3Store normalises both to ErrPreconditionFailed.
+func TestS3Store_PutWithOptions_IfMatchOnMissingKey(t *testing.T) {
+	s, prefix := newS3(t)
+	ctx := context.Background()
+	key := path.Join(prefix, "cw/never-existed.bin")
+	_, err := s.PutWithOptions(ctx, key, bytes.NewReader([]byte("x")), 1,
+		PutOptions{IfMatch: "deadbeef"})
+	if !IsPreconditionFailed(err) {
+		t.Fatalf("err = %v, want ErrPreconditionFailed", err)
+	}
+}
+
+// TestS3Store_PutWithOptions_ConcurrentIfNoneMatchSerializes is the
+// integration counterpart to the LocalStore concurrency test. Multiple
+// goroutines race to create-only the same key. Exactly one must win
+// according to RustFS's S3 semantics; this is what protects us from
+// the active-active race across RackNerd + Alibaba edge nodes sharing
+// one bucket.
+func TestS3Store_PutWithOptions_ConcurrentIfNoneMatchSerializes(t *testing.T) {
+	s, prefix := newS3(t)
+	ctx := context.Background()
+	key := path.Join(prefix, "cw/contest.bin")
+	const N = 8
+	results := make(chan error, N)
+	for i := 0; i < N; i++ {
+		body := []byte{byte('A' + i)}
+		go func() {
+			_, err := s.PutWithOptions(ctx, key, bytes.NewReader(body), 1,
+				PutOptions{IfNoneMatch: "*"})
+			results <- err
+		}()
+	}
+	wins, losses := 0, 0
+	for i := 0; i < N; i++ {
+		err := <-results
+		switch {
+		case err == nil:
+			wins++
+		case IsPreconditionFailed(err):
+			losses++
+		default:
+			t.Errorf("unexpected error: %v", err)
+		}
+	}
+	if wins != 1 {
+		t.Errorf("got %d winners, want exactly 1 (TOCTOU — multiple writers committed!)", wins)
+	}
+	if losses != N-1 {
+		t.Errorf("got %d losers, want %d", losses, N-1)
+	}
+}
+
+// TestS3Store_StatExposesETag: required by the overwrite-with-CAS path
+// in the upload handler. If a future SDK upgrade stops returning ETag,
+// this catches it before the handler silently falls back to
+// last-write-wins.
+func TestS3Store_StatExposesETag(t *testing.T) {
+	s, prefix := newS3(t)
+	ctx := context.Background()
+	key := path.Join(prefix, "etag-target")
+	if _, err := s.Put(ctx, key, bytes.NewReader([]byte("hello")), 5, ""); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	info, exists, err := s.Stat(ctx, key)
+	if err != nil || !exists {
+		t.Fatalf("Stat: err=%v exists=%v", err, exists)
+	}
+	if info.ETag == "" {
+		t.Errorf("Stat returned empty ETag — S3 backend should always expose one")
+	}
+	// And ETag must round-trip: passing it back into IfMatch must succeed.
+	if _, err := s.PutWithOptions(ctx, key, bytes.NewReader([]byte("hello2")), 6,
+		PutOptions{IfMatch: info.ETag}); err != nil {
+		t.Errorf("ETag round-trip CAS failed: %v", err)
+	}
+}

@@ -25,6 +25,7 @@ package pat
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"strings"
@@ -151,6 +152,14 @@ func PrefixOf(plaintext string) string {
 // exactly one row. We still loop defensively so a once-in-a-trillion
 // duplicate doesn't lock anyone out.
 //
+// Cache fast path: before any DB / bcrypt work we consult the package-
+// level verify cache (see cache.go) keyed by sha256(plaintext). On hit,
+// we re-fetch the linked user record from the DB (so callers see a
+// fresh record with current email / verified flag / etc.) but skip
+// both the FindAllRecords prefix scan AND the bcrypt compare. This
+// collapses repeat verifies of the same hot PAT (typical CI traffic
+// pattern) to a single SQL SELECT per request instead of N×bcrypt.
+//
 // Returns:
 //   - record:     the pat_tokens record (caller may call MarkUsed)
 //   - userRecord: the linked users record (caller assigns to re.Auth)
@@ -162,6 +171,28 @@ func PrefixOf(plaintext string) string {
 func Lookup(app core.App, plaintext string) (*core.Record, *core.Record, error) {
 	if !Looks(plaintext) {
 		return nil, nil, ErrNotFound
+	}
+
+	// Fast path: cache hit. We still need the live pat_tokens record
+	// (for MarkUsed) and the live users record (for re.Auth), so we
+	// do two FindRecordById calls — both indexed primary-key lookups,
+	// no bcrypt — instead of the prefix scan + bcrypt loop. If either
+	// disappears we fall through to the slow path and treat as
+	// ErrNotFound so a cache entry can't outlive its referent.
+	cache := initVerifyCache()
+	if entry, ok := cache.Get(plaintext); ok {
+		patRec, err := app.FindRecordById(CollectionName, entry.PATRecordID)
+		if err == nil && patRec != nil {
+			userRec, err := app.FindRecordById("users", entry.UserID)
+			if err == nil && userRec != nil {
+				return patRec, userRec, nil
+			}
+		}
+		// Stale entry — referenced record disappeared. Drop it and
+		// fall through to the authoritative slow path. We can't tell
+		// from FindRecordById whether the error is "not found" vs
+		// "DB unavailable", but either way the slow path is correct.
+		cache.lru.Remove(sha256.Sum256([]byte(plaintext)))
 	}
 
 	records, err := app.FindAllRecords(
@@ -205,6 +236,19 @@ func Lookup(app core.App, plaintext string) (*core.Record, *core.Record, error) 
 		if err != nil {
 			return rec, nil, fmt.Errorf("pat: load linked user %s: %w", userID, err)
 		}
+
+		// Populate the cache only on full success. We never cache
+		// ErrNotFound (negative results aren't worth the timing-leak
+		// risk) or ErrExpired (the slow path is already cheap when
+		// the prefix scan finds zero matches, and re-checking expiry
+		// every time is the safer default).
+		cache.Put(plaintext, verifyCacheEntry{
+			PATRecordID:  rec.Id,
+			UserID:       userID,
+			ScopesRaw:    rec.GetString("scopes"),
+			PATExpiresAt: expires,
+		})
+
 		return rec, userRec, nil
 	}
 

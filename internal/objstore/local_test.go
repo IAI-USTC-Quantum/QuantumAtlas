@@ -248,5 +248,111 @@ func equalStrings(a, b []string) bool {
 // Compile-time guard: LocalStore implements Store.
 var _ Store = (*LocalStore)(nil)
 
+// ---------------------------------------------------------------------------
+// PutWithOptions / conditional writes
+// ---------------------------------------------------------------------------
+
+// IfNoneMatch="*" must atomically create-or-fail. Two writers racing on
+// the same key — exactly one wins with bytes-on-disk, the other gets
+// ErrPreconditionFailed.
+func TestLocalStore_PutWithOptions_IfNoneMatchCreatesWhenAbsent(t *testing.T) {
+	s := newLocal(t)
+	ctx := context.Background()
+	body := []byte("first")
+	n, err := s.PutWithOptions(ctx, "race/key.bin", bytes.NewReader(body), int64(len(body)),
+		PutOptions{IfNoneMatch: "*"})
+	if err != nil {
+		t.Fatalf("PutWithOptions: %v", err)
+	}
+	if n != int64(len(body)) {
+		t.Errorf("wrote %d, want %d", n, len(body))
+	}
+	if _, exists, _ := s.Stat(ctx, "race/key.bin"); !exists {
+		t.Errorf("after successful create-only Put, key absent")
+	}
+}
+
+func TestLocalStore_PutWithOptions_IfNoneMatchRejectsExisting(t *testing.T) {
+	s := newLocal(t)
+	ctx := context.Background()
+	if _, err := s.Put(ctx, "race/key.bin", bytes.NewReader([]byte("first")), 5, ""); err != nil {
+		t.Fatalf("seed Put: %v", err)
+	}
+	_, err := s.PutWithOptions(ctx, "race/key.bin", bytes.NewReader([]byte("second")), 6,
+		PutOptions{IfNoneMatch: "*"})
+	if !IsPreconditionFailed(err) {
+		t.Fatalf("err = %v, want ErrPreconditionFailed", err)
+	}
+	// Original bytes untouched.
+	rc, _, err := s.Get(ctx, "race/key.bin")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	defer rc.Close()
+	got, _ := io.ReadAll(rc)
+	if string(got) != "first" {
+		t.Errorf("after failed create-only Put, content = %q, want %q", got, "first")
+	}
+}
+
+func TestLocalStore_PutWithOptions_IfMatchUnsupported(t *testing.T) {
+	s := newLocal(t)
+	ctx := context.Background()
+	_, err := s.PutWithOptions(ctx, "k", bytes.NewReader([]byte("x")), 1,
+		PutOptions{IfMatch: "abc"})
+	if !IsPreconditionUnsupported(err) {
+		t.Errorf("err = %v, want ErrPreconditionUnsupported", err)
+	}
+}
+
+func TestLocalStore_PutWithOptions_IfNoneMatchEtagUnsupported(t *testing.T) {
+	// Only "*" is supported. A literal etag value would require an
+	// ETag store LocalStore doesn't have, so we explicitly refuse.
+	s := newLocal(t)
+	ctx := context.Background()
+	_, err := s.PutWithOptions(ctx, "k", bytes.NewReader([]byte("x")), 1,
+		PutOptions{IfNoneMatch: "some-etag"})
+	if !IsPreconditionUnsupported(err) {
+		t.Errorf("err = %v, want ErrPreconditionUnsupported", err)
+	}
+}
+
+// Concurrent IfNoneMatch="*" Puts on the same key: exactly one must win.
+// This is the primary correctness property the conditional write was
+// added to provide.
+func TestLocalStore_PutWithOptions_ConcurrentIfNoneMatchSerializes(t *testing.T) {
+	s := newLocal(t)
+	ctx := context.Background()
+	const N = 8
+	results := make(chan error, N)
+	for i := 0; i < N; i++ {
+		body := []byte{byte('A' + i)}
+		go func() {
+			_, err := s.PutWithOptions(ctx, "race/contest.bin", bytes.NewReader(body), 1,
+				PutOptions{IfNoneMatch: "*"})
+			results <- err
+		}()
+	}
+	wins := 0
+	losses := 0
+	for i := 0; i < N; i++ {
+		err := <-results
+		switch {
+		case err == nil:
+			wins++
+		case IsPreconditionFailed(err):
+			losses++
+		default:
+			t.Errorf("unexpected error: %v", err)
+		}
+	}
+	if wins != 1 {
+		t.Errorf("got %d winners, want exactly 1", wins)
+	}
+	if losses != N-1 {
+		t.Errorf("got %d losers, want %d", losses, N-1)
+	}
+}
+
 // strings used in tests but the lint may complain otherwise.
 var _ = strings.Contains
