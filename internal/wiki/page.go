@@ -73,6 +73,14 @@ type Frontmatter struct {
 	ExternalLinks  []ExternalLink `yaml:"external_links,omitempty" json:"external_links"`
 	Neo4jSynced    bool           `yaml:"neo4j_synced,omitempty" json:"neo4j_synced"`
 	Neo4jID        string         `yaml:"neo4j_id,omitempty" json:"neo4j_id,omitempty"`
+	// DOI enrichment fields. Bare DOI string (no scheme/host prefix).
+	// `doi_source` values: arxiv | crossref | openalex | semantic-scholar | manual | unresolved.
+	// `doi_confidence` values: high | medium | low.
+	// Mirrors atlas/wiki/page.py:WikiFrontmatter.
+	DOI            string         `yaml:"doi,omitempty" json:"doi,omitempty"`
+	DOISource      string         `yaml:"doi_source,omitempty" json:"doi_source,omitempty"`
+	DOIConfidence  string         `yaml:"doi_confidence,omitempty" json:"doi_confidence,omitempty"`
+	DOIResolvedAt  *FlexTime      `yaml:"doi_resolved_at,omitempty" json:"doi_resolved_at,omitempty"`
 }
 
 // Page is one parsed wiki page (frontmatter + markdown body + source path).
@@ -231,6 +239,12 @@ type ListFilter struct {
 	Status   string
 }
 
+// IsEmpty reports whether no fields on f are set, i.e. it matches every
+// page. Used by Cache.Pages to short-circuit the filter loop.
+func (f ListFilter) IsEmpty() bool {
+	return f.Type == "" && f.Category == "" && f.Status == "" && len(f.Tags) == 0
+}
+
 // matches reports whether page satisfies all set fields on f.
 func (f ListFilter) matches(p *Page) bool {
 	if f.Type != "" && p.Frontmatter.Type != f.Type {
@@ -260,14 +274,6 @@ func (f ListFilter) matches(p *Page) bool {
 		}
 	}
 	return true
-}
-
-// IsEmpty reports whether f is the zero filter (every page matches).
-// Used by Cache.Pages as a fast-path to skip per-page matches() when
-// no filtering is requested — callers can then return the underlying
-// slice directly.
-func (f ListFilter) IsEmpty() bool {
-	return f.Type == "" && f.Category == "" && f.Status == "" && len(f.Tags) == 0
 }
 
 // ListPages returns every page under wikiDir matching f, with parse errors

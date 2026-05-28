@@ -46,15 +46,24 @@ def test_release_workflow_publishes_python_and_go_artifacts():
     assert "Create release tag" in release_workflow
     assert "softprops/action-gh-release@v2" in release_workflow
 
-    # 3-job split mirroring TMYTiMidlY/QuantumAlgorithm
-    assert "release-build:" in release_workflow
+    # 5-job DAG (renamed from earlier 3-job split: prep+python+binary
+    # for the build half, create+pypi for the publish half)
+    assert "prep:" in release_workflow
+    assert "python-build:" in release_workflow
+    assert "binary-build:" in release_workflow
     assert "create-release:" in release_workflow
     assert "pypi-publish:" in release_workflow
 
-    # Go binaries are cross-compiled for both OSes and arches
-    assert "qatlas-server-${goos}-${goarch}" in release_workflow
-    assert "build linux  amd64" in release_workflow
-    assert "build darwin arm64" in release_workflow
+    # Go binaries are cross-compiled via the matrix over (OS, arch).
+    # Each matrix entry runs on its native runner (no cross-toolchain
+    # juggling) and is named after its qatlas-server-<target> artifact.
+    assert "- target: linux-amd64" in release_workflow
+    assert "- target: linux-arm64" in release_workflow
+    assert "- target: darwin-arm64" in release_workflow
+    assert "qatlas-server-${{ matrix.target }}" in release_workflow
+    # Linux targets use -extldflags=-static so binaries are portable
+    # across distros (e.g. Alibaba Cloud Linux 3 with old libstdc++).
+    assert "-extldflags=-static" in release_workflow
 
     # PyPI uses Trusted Publishing (no token, OIDC via environment + id-token)
     assert "pypa/gh-action-pypi-publish@release/v1" in release_workflow

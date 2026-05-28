@@ -54,6 +54,23 @@ jobs:
           restore-keys: |
             gocache-${{ runner.os }}-
 
+      # web/embed.go does //go:embed all:dist, so the entire Go build
+      # chain (vet/test/build) fails if web/dist/ is missing. Set up
+      # Node and run the SPA build first. Cached on web/package-lock.json
+      # so re-runs avoid the npm install round-trip.
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build web frontend (needed for go:embed all:dist)
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
       # 'pixi run vet' is scoped to ./internal/... ./cmd/... so it
       # finishes fast even on cold cache. 'pixi run test-go' runs the
       # unit suite (no network, no e2e). 'pixi run build' confirms the
