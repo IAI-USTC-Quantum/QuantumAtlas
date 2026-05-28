@@ -7,6 +7,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![PocketBase v0.38](https://img.shields.io/badge/PocketBase-v0.38-B8DBE4?style=flat&logo=pocketbase&logoColor=black)](https://pocketbase.io/)
 [![Neo4j](https://img.shields.io/badge/Neo4j-5.15+-008CC1?style=flat&logo=neo4j&logoColor=white)](https://neo4j.com/)
+[![Documentation Status](https://app.readthedocs.org/projects/quantum-atlas/badge/?version=latest)](https://quantum-atlas.readthedocs.io/zh-cn/latest/)
+
+> 📚 **完整文档：<https://quantum-atlas.readthedocs.io>** — 安装、架构、贡献、部署、API 参考都在这里。
 
 QuantumAtlas 是一个面向量子算法研究的分层知识库和实现工作台。它把论文摄入、Wiki 沉淀、图数据库同步，以及电路设计、代码生成、验证、资源估计串成一条可持续迭代的链路。
 
@@ -67,18 +70,24 @@ QuantumAtlas 分两个交付物：
 
 ```bash
 # 一行装：自动检测 OS/arch、下载最新 binary 到 ~/.local/bin、
-# 在 TTY 下问你要不要一并注册成 systemd 服务
+# SHA256 校验。这步只装 binary 本身。
 curl -fsSL https://quantum-atlas.ai/install-server.sh | sh
 
-# CI / agent 全自动模式（不问任何问题，装完直接 systemd enable）
-curl -fsSL https://quantum-atlas.ai/install-server.sh | sh -s -- \
-    --yes --service --mode user --dotenv-path ~/QuantumAtlas/.env
-
-# 只装 binary，跳过 service install
-curl -fsSL https://quantum-atlas.ai/install-server.sh | sh -s -- --no-service
+# 钉版本 / 改安装路径
+curl -fsSL https://quantum-atlas.ai/install-server.sh | sh -s -- --version v0.2.5
+curl -fsSL https://quantum-atlas.ai/install-server.sh | sh -s -- --dir /opt/qatlas/bin
 ```
 
-支持 `linux/{amd64,arm64}` + `darwin/arm64` 三个平台（Intel Mac 用 [`go install`](docs/deployment.md#b-go-install) 路径）。脚本会自动校验 SHA256。
+支持 `linux/{amd64,arm64}` + `darwin/arm64` 三个平台（Intel Mac 用 [`go install`](docs/deployment.md#b-go-install) 路径）。
+
+装完后**手动**注册成 systemd 服务（脚本不再链式调用，保证在 dash / busybox 等流式 parser 上稳定）：
+
+```bash
+qatlas-server service install                    # 交互模式，问你要 mode + .env path
+# 或全自动：
+qatlas-server service install \
+    --mode user --dotenv-path ~/QuantumAtlas/.env --force
+```
 
 ### 装 client (`qatlas` CLI)
 
@@ -127,7 +136,7 @@ cp .env.example .env
 
 - 首页 / SPA：`http://localhost:4200`
 - PocketBase admin UI：`http://localhost:4200/_/`
-- 个人 token / PAT 页：`http://localhost:4200/token`、`/pat`
+- PAT 管理页：`http://localhost:4200/pat`（CLI bearer 走 PAT，更细的 scope/过期/审计）
 
 生产部署、systemd 安装、反向代理和鉴权边界请看 [docs/deployment.md](docs/deployment.md)。
 

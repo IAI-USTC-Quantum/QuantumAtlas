@@ -34,18 +34,11 @@ CI release pipeline 已经把 3 平台预编译 binary（`linux/amd64`、`linux/
 `<your-server>/install-server.sh`，会自动选 OS/arch、下载、SHA256 校验：
 
 ```bash
-# 默认交互模式：装 binary 后问你要不要一并 systemd install
+# 装 binary 到 ~/.local/bin/qatlas-server，自动校验 SHA256
 curl -fsSL https://quantum-atlas.ai/install-server.sh | sh
 
-# 全自动（CI / agent / 无 TTY）：装 binary + 注册 systemd 一气呵成
-curl -fsSL https://quantum-atlas.ai/install-server.sh | sh -s -- \
-    --yes --service --mode user --dotenv-path ~/QuantumAtlas/.env
-
-# 只装 binary 跳过 service 注册
-curl -fsSL https://quantum-atlas.ai/install-server.sh | sh -s -- --no-service
-
 # 钉 release tag
-curl -fsSL https://quantum-atlas.ai/install-server.sh | sh -s -- --version v0.2.3
+curl -fsSL https://quantum-atlas.ai/install-server.sh | sh -s -- --version v0.2.5
 
 # 改安装目录
 curl -fsSL https://quantum-atlas.ai/install-server.sh | sh -s -- --dir /opt/qatlas/bin
@@ -54,10 +47,30 @@ curl -fsSL https://quantum-atlas.ai/install-server.sh | sh -s -- --dir /opt/qatl
 支持的环境变量：`QATLAS_INSTALL_DIR`（默认 `~/.local/bin`）、`QATLAS_VERSION`
 （默认 latest）、`QATLAS_REPO`（默认 `IAI-USTC-Quantum/QuantumAtlas`）。
 
+装完 binary 后**手动**注册成 systemd 服务（脚本本身刻意不链式调用 `service
+install`——见下文"为什么 install-server.sh 不自动起服务"）：
+
+```bash
+qatlas-server service install                    # 交互模式，问 mode + .env path
+# 或全自动：
+qatlas-server service install \
+    --mode user --dotenv-path ~/QuantumAtlas/.env --force
+```
+
 底层就是从 `github.com/IAI-USTC-Quantum/QuantumAtlas/releases/<tag>` 下
 `qatlas-server-<os>-<arch>` 那个 asset，所以**目标机不需要装任何 toolchain**——
 连 Go / npm / pixi 都不要，只要 `curl` 或 `wget` + `install`。也可以走 B/C/D
 本地编译，但只在你想钉未发布 commit、或在隔离环境里复现 build 时才需要。
+
+> **为什么 install-server.sh 不自动起服务**：早期版本里 `curl|sh` 会在 binary
+> 装完后顺手 chain 进 `qatlas-server service install`。在 dash（Debian / Ubuntu
+> 的 `/bin/sh`）上这条链不可靠——dash 是流式 parser，会在执行到 `exec </dev/tty`
+> 切换 stdin 之前已经从 pipe 预读了大量未消费字节，切换后这些字节既不能用作
+> 脚本继续解析也不能用作终端输入，要么 hang 要么报 `Syntax error: word
+> unexpected`。bash 因为预读整个脚本不受影响，但我们不能假设目标机有 bash
+> （Alpine / BusyBox / macOS sh 都是 dash 风格的 POSIX shell）。所以拆成两步：
+> install-server.sh **只装 binary**；service install 由 cobra 程序自己稳定处理
+> TTY，没有 shell parser 冲突。
 
 #### B. `go install`
 
@@ -413,8 +426,8 @@ Go server 通过 `internal/objstore` 抽象层接 minio-go SDK，**填齐
 启动直接报错退出，避免 reader / writer 跑两套后端。
 
 物理部署、bucket / IAM user / policy 的创建、rotate 流程，以及配套的
-幂等 bootstrap 脚本 [`scripts/rustfs_bootstrap.sh`](../scripts/rustfs_bootstrap.sh)
-统一收录在 [docs/storage-design.md `## RustFS 部署后置`](storage-design.md#rustfs-部署后置bucket--user--policy-自助配置)。
+幂等 bootstrap 脚本 [`scripts/rustfs_bootstrap.sh`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/scripts/rustfs_bootstrap.sh)
+统一收录在 [`storage-design.md` 的 RustFS 部署后置一节](storage-design.md#rustfs-bucket-user-policy)。
 
 简言之：
 
@@ -486,7 +499,7 @@ NEO4J_URI=bolt://127.0.0.1:7687
 ## 核心环境变量
 
 字段语义、是否必填、是否分 client/server 角色等完整说明以
-[`.env.example`](../.env.example) 顶部对照表为准（同时也是 client / server
+[`.env.example`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.env.example) 顶部对照表为准（同时也是 client / server
 共享的 canonical 文档；Go server 的运行时默认在
 `internal/config/config.go`）。本节只列出公网部署最容易踩的几个：
 
