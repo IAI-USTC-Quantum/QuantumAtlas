@@ -81,23 +81,40 @@ func Shard(key string) string {
 // "pdf" | "markdown" | "json" | "images". Returns empty string for
 // unknown kinds (callers must validate).
 func AssetPath(rawRoot, kind, arxivID string) string {
+	key := AssetKey(kind, arxivID)
+	if key == "" {
+		return ""
+	}
+	return filepath.Join(rawRoot, filepath.FromSlash(key))
+}
+
+// AssetKey returns the canonical forward-slash object key for an asset
+// of kind "pdf" | "markdown" | "json" | "images". This is AssetPath
+// without the RawDir prefix — i.e. the key suitable for direct use
+// against the objstore.Store interface (S3 object name OR local path
+// suffix). Returns empty string for unknown kinds.
+//
+// The exact string layout (with shard) matches the on-disk layout from
+// the Python era so a single bucket / RawDir can be read by either
+// implementation during the transition.
+func AssetKey(kind, arxivID string) string {
 	key := StorageKey(arxivID)
 	shard := Shard(key)
 	var dir string
 	if shard != "" {
-		dir = filepath.Join(rawRoot, kind, shard)
+		dir = kind + "/" + shard
 	} else {
-		dir = filepath.Join(rawRoot, kind)
+		dir = kind
 	}
 	switch kind {
 	case "pdf":
-		return filepath.Join(dir, key+".pdf")
+		return dir + "/" + key + ".pdf"
 	case "markdown":
-		return filepath.Join(dir, key+".md")
+		return dir + "/" + key + ".md"
 	case "json":
-		return filepath.Join(dir, key+".json")
+		return dir + "/" + key + ".json"
 	case "images":
-		return filepath.Join(dir, key)
+		return dir + "/" + key
 	default:
 		return ""
 	}

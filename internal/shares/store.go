@@ -1,16 +1,17 @@
 package shares
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
 )
 
 // URLPrefix is the public route prefix for share content.
@@ -120,46 +121,72 @@ func IsUnderShare(path string, allowedRoots []string) bool {
 	return false
 }
 
-// ResolveTarget maps a share-relative path to its real on-disk location.
-// Returns ("", err) when the path escapes its allowed root.
+// ResolveKey maps a share-relative path to its corresponding object key
+// in the raw objstore. Returns ("", err) when the path escapes its
+// allowed root.
 //
-// The share path scheme is:
+// Share path scheme:
 //
-//	papers/{pdf|markdown|json|images}/<asset rel>  ->  paperAssetDir(kind)/<asset rel>
-//	<other>                                        ->  rawRoot/<other>
+//	papers/{pdf|markdown|json|images}/<rest>   ->   {pdf|...}/<rest>
+//	<other>                                    ->   <other>          (verbatim)
 //
-// Both layers reject ".." traversal.
-func ResolveTarget(cfg *config.Config, relPath string) (string, error) {
+// All paths are validated against ".." traversal regardless of which
+// branch they fall into; the per-kind prefix is just a namespace marker
+// the share API expects, the underlying object key drops the "papers/"
+// for compatibility with the objstore layout.
+func ResolveKey(relPath string) (string, error) {
 	rel := strings.Trim(relPath, "/")
+	if rel == "" {
+		return "", errors.New("share path must be non-empty")
+	}
+	if strings.Contains(rel, "..") || strings.Contains(rel, "\\") {
+		return "", errors.New("share path must not contain '..' or backslashes")
+	}
 	for _, kind := range []string{"pdf", "markdown", "json", "images"} {
 		prefix := "papers/" + kind
-		if rel == prefix || strings.HasPrefix(rel, prefix+"/") {
+		if rel == prefix {
+			return kind, nil
+		}
+		if strings.HasPrefix(rel, prefix+"/") {
 			suffix := strings.TrimPrefix(rel[len(prefix):], "/")
-			return safeJoin(filepath.Join(cfg.RawDir, kind), suffix,
-				"path not under paper "+kind+" directory")
+			return kind + "/" + suffix, nil
 		}
 	}
-	return safeJoin(cfg.RawDir, rel, "path not under RAW_DIR")
+	// Out-of-scheme paths (the historical "RAW_DIR catch-all" branch)
+	// map directly to the same key string. Caller should treat this
+	// path as a key into the raw store.
+	return rel, nil
 }
 
-// safeJoin joins root + rel, then verifies the result still lives
-// under root after symlink/.. resolution. Returns errMsg as the error
-// message on escape.
-func safeJoin(root, rel, errMsg string) (string, error) {
-	abs := filepath.Join(root, rel)
-	cleanRoot := filepath.Clean(root)
+// ResolveTarget maps a share-relative path to its real on-disk location
+// under cfg.RawDir. This is retained for paths that genuinely need a
+// filesystem path (e.g. backup/scrub tooling); HTTP handlers should use
+// ResolveKey + objstore.Store instead so the same code path serves both
+// local and S3 backends.
+func ResolveTarget(cfg *config.Config, relPath string) (string, error) {
+	key, err := ResolveKey(relPath)
+	if err != nil {
+		return "", err
+	}
+	abs := filepath.Join(cfg.RawDir, filepath.FromSlash(key))
+	cleanRoot := filepath.Clean(cfg.RawDir)
 	cleanAbs := filepath.Clean(abs)
 	rrel, err := filepath.Rel(cleanRoot, cleanAbs)
 	if err != nil || strings.HasPrefix(rrel, "..") {
-		return "", errors.New(errMsg)
+		return "", errors.New("path escapes RAW_DIR")
 	}
 	return cleanAbs, nil
 }
 
 // CreateRecord persists a new share record and returns the inserted row.
-// Validates every path fragment up front and refuses to persist a record
-// pointing at a non-existent file (matches the Python 400 behavior).
-func CreateRecord(store *Store, cfg *config.Config, opts CreateOptions) (*Record, error) {
+// Validates every path fragment up front and verifies (via store.Stat)
+// that the underlying object actually exists — matches the historical
+// "400 on missing path" behaviour from the FastAPI implementation.
+//
+// store can be nil when the caller doesn't want the existence check
+// (e.g. permanent / wildcard shares created from config). When non-nil,
+// every cleaned path is Stat'd as an object key derived via ResolveKey.
+func CreateRecord(s *Store, cfg *config.Config, opts CreateOptions, store objstore.Store) (*Record, error) {
 	cleaned := make([]string, 0, len(opts.Paths))
 	for _, p := range opts.Paths {
 		if err := validateFragment(p); err != nil {
@@ -167,12 +194,24 @@ func CreateRecord(store *Store, cfg *config.Config, opts CreateOptions) (*Record
 		}
 		cleaned = append(cleaned, strings.TrimSpace(p))
 	}
-	for _, p := range cleaned {
-		fs, err := ResolveTarget(cfg, p)
-		if err != nil {
-			return nil, fmt.Errorf("path does not exist: %s", p)
-		}
-		if !pathExists(fs) {
+	if store != nil {
+		ctx := context.Background()
+		for _, p := range cleaned {
+			key, err := ResolveKey(p)
+			if err != nil {
+				return nil, fmt.Errorf("path does not exist: %s", p)
+			}
+			// File-shaped key: try Stat directly. If that misses, fall
+			// back to a 1-result ListPrefix(key+"/") so images
+			// "directory" keys still pass the existence check on both
+			// local and S3 backends.
+			if _, exists, _ := store.Stat(ctx, key); exists {
+				continue
+			}
+			listed, _ := store.ListPrefix(ctx, key+"/", 1)
+			if len(listed) > 0 {
+				continue
+			}
 			return nil, fmt.Errorf("path does not exist: %s", p)
 		}
 	}
@@ -197,13 +236,8 @@ func CreateRecord(store *Store, cfg *config.Config, opts CreateOptions) (*Record
 	if ttl > 0 {
 		rec.ExpiresAt = now.Add(time.Duration(ttl) * time.Second).Format(time.RFC3339)
 	}
-	if err := store.Save(rec); err != nil {
+	if err := s.Save(rec); err != nil {
 		return nil, err
 	}
 	return rec, nil
-}
-
-func pathExists(p string) bool {
-	_, err := os.Stat(p)
-	return err == nil
 }
