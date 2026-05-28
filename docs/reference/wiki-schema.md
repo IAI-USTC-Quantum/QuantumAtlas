@@ -1,6 +1,6 @@
 # Wiki Conventions
 
-本文档定义 QuantumAtlas Wiki 的页面类型、frontmatter schema、命名规范、工作流以及 lint 规则。Wiki 与图谱、论文资产、应用代码的分层关系参见 [architecture.md](architecture.md)。
+本文档定义 QuantumAtlas Wiki 的页面类型、frontmatter schema、命名规范、工作流以及 lint 规则。Wiki 与图谱、论文资产、应用代码的分层关系参见 [architecture.md](../concepts/three-layer.md)。
 
 ## 四层结构回顾
 
@@ -201,6 +201,10 @@ tags: [arxiv, quant-ph]
 created_at: YYYY-MM-DD
 status: published
 related: [algo-introduced]
+doi: 10.xxxx/xxxxx                # bare DOI, no scheme/host
+doi_source: arxiv                 # arxiv | crossref | openalex | semantic-scholar | manual | unresolved
+doi_confidence: high              # high | medium | low
+doi_resolved_at: YYYY-MM-DD       # when a resolver last tried
 ---
 
 ## Metadata
@@ -231,6 +235,15 @@ Important insights from the paper...
 
 - [[paper-cited-paper]]
 ```
+
+**DOI 字段语义**（详见 `atlas/parser/doi/`）：
+
+- `doi`：去掉 `https://doi.org/` 前缀的裸 DOI（如 `10.1103/PhysRevLett.103.150502`）。模板和 Neo4j 同步自己负责拼回 URL。
+- `doi_source`：标记 DOI 来源。`unresolved` 表示"`qatlas wiki enrich-doi` 跑过但没匹配到"——用来跟"从没尝试过"区分，重跑 enrich 时不会浪费 API 配额。
+- `doi_confidence`：`high` = 标题精确匹配 + 至少一个作者姓氏交集；`medium` = 仅标题匹配；`low` = 当前没用到。
+- `doi_resolved_at`：上一次跑 resolver 的日期。
+
+四个字段都是可选的；没有 DOI 也不影响页面渲染，只是 lint W009（INFO 级）会提醒一下。运行 `qatlas wiki enrich-doi --mailto you@example.org` 即可批量补全。
 
 #### 什么样的论文该进 wiki
 
@@ -486,13 +499,13 @@ neo4j_id: string              # Optional: Corresponding Neo4j node ID
 
 ---
 
-## 附录：Crossref 元数据参考
+## 附录：Crossref / OpenAlex 元数据参考
 
 写 paper source 页面时如果想补充期刊、卷期、DOI、被引数等较硬的元数据，可以查 [Crossref](https://www.crossref.org/) ——它是学术 DOI 的最大注册商（约 1.5 亿条），出版商发表论文时会把元数据（标题、作者、期刊、卷期、日期等）灌进去。相比 arXiv 的 `Journal reference`（作者自报），Crossref 的数据更可靠一档。
 
-> 这只是 paper source 页面的可选元数据补充参考，目前 QuantumAtlas 代码里**没有**做 Crossref 集成；以下用法是给手工写 Wiki 的人提供的参考。
+> **DOI 解析已集成到 CLI**：跑 `qatlas wiki enrich-doi --mailto you@example.org` 会按 `arxiv-self → Crossref → OpenAlex` 顺序匹配所有 paper 页面的 DOI，结果写回 frontmatter 的 `doi*` 四个字段。匹配策略是**严格的**：标题归一化后精确相等才算命中，再叠加作者姓氏交集做 high/medium 分级——不做 Levenshtein 等模糊匹配，宁可漏不可错。`doi_source=unresolved` 是显式的"试过但没匹配到"标记，下一次 enrich 时不会重复浪费 API 配额。详见 `atlas/parser/doi/`。
 
-REST API 完全免费、无需 token：
+REST API 完全免费、无需 token，下面是手工查询的常用配方：
 
 ```bash
 # 用 DOI 查单篇论文元数据
@@ -513,4 +526,4 @@ curl -s "https://api.crossref.org/works?query=quantum+error+mitigation&rows=5" \
 
 常用字段：`container-title`（期刊名）、`volume/issue/article-number`、`issued.date-parts`、`publisher`、`reference`（参考文献列表）、`is-referenced-by-count`（被引数）。
 
-**局限**：Crossref 只收交了登记费的出版商，arXiv preprint 不在库；MDPI 等开放获取期刊覆盖较好，部分会议论文集和较老期刊可能查不到。
+**局限**：Crossref 只收交了登记费的出版商，arXiv preprint 不在库；MDPI 等开放获取期刊覆盖较好，部分会议论文集和较老期刊可能查不到。`enrich-doi` 命令会自动 fallback 到 [OpenAlex](https://openalex.org/)（覆盖面更广，包含 preprint、conference proceedings）兜底。

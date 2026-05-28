@@ -3,8 +3,10 @@
 # 与 qalgo 的差异：
 #  - 单独 `docs/requirements.txt`（不混进运行时 deps，QA 已有自己的 pyproject 体系）
 #  - mkdocs 配置入口仍是仓库根的 mkdocs.yml
+#  - post_checkout 把 shallow clone 拉成 full clone，让
+#    git-revision-date-localized-plugin 能拿到真实 commit time
 #
-# 触发：RTD 自己挂 GitHub webhook 处理 PR / 主分支 build。仓库内不另起 docs CI。
+# 触发：RTD 自己挂 GitHub App，仓库内不另起 docs CI。
 
 version: 2
 
@@ -12,6 +14,11 @@ build:
   os: "ubuntu-24.04"
   tools:
     python: "3"
+  jobs:
+    post_checkout:
+      # 把 shallow clone 拉成 full clone，git-revision-date-localized-plugin
+      # 才能拿到每个文件的真实最后修改时间；失败不影响 build
+      - git fetch --unshallow || true
 
 python:
   install:

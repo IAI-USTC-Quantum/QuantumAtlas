@@ -1,0 +1,15 @@
+nav:
+  - 概览: index.md
+  - 装机:
+    - 安装与 service: install.md
+    - 反向代理: reverse-proxy.md
+  - 依赖服务:
+    - GitHub OAuth: github-oauth.md
+    - Neo4j: neo4j.md
+    - RustFS / S3: rustfs.md
+  - 日常运维:
+    - 健康检查与监控: health-and-monitoring.md
+    - 备份与升级: backup-and-upgrade.md
+  - 完整参考:
+    - 运维 ops 参考: operations.md
+    - 存储布局迁移: migration-storage-layout.md

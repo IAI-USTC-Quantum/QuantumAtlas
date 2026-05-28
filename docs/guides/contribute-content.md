@@ -5,7 +5,7 @@
 - **Raw 资产贡献**：把论文 PDF、解析 Markdown、元数据落到 `RAW_DIR`。
 - **Wiki 协作**：在独立 Git 仓库里编辑知识页面，按需触发服务器拉取。
 
-如果你想理解项目分层和设计动机，先看 [architecture.md](architecture.md)。如果你只想跑起来一个服务，看 [deployment.md](deployment.md)。本文档定位是「内容贡献的 how-to」。
+如果你想理解项目分层和设计动机，先看 [architecture.md](../concepts/three-layer.md)。如果你只想跑起来一个服务，看 [deployment.md](../deployment/operations.md)。本文档定位是「内容贡献的 how-to」。
 
 ---
 
@@ -34,7 +34,7 @@ MINERU_API_TOKEN=mn_xxxxx
 
 不需要在客户端写 `QATLAS_SERVER_HOST` / `QATLAS_SERVER_PORT` / `NEO4J_*` / `QATLAS_RAW_DIR` / `QATLAS_DATA_DIR` 这些纯服务端字段——它们在客户端 .env 里出现也无害，但毫无意义。`QATLAS_WIKI_DIR` 在 client 上也有用，指向本地 clone 的 wiki 仓库。
 
-服务端的 `.env` 见 [deployment.md](deployment.md) 的「推荐的单机生产目录」段。
+服务端的 `.env` 见 [deployment.md](../deployment/operations.md) 的「推荐的单机生产目录」段。
 
 ---
 
@@ -273,7 +273,7 @@ Web UI 的 Token 页面（`https://<server>/token`，登录后访问）提供:
 - "Copy curl"：完整 curl 命令；
 - "Copy CLI env"：`export QATLAS_SERVER_URL=... && export QATLAS_TOKEN=...` 一对环境变量，粘到 shell 直接配好 CLI。
 
-具体反代配置（Caddy 现在已经是纯 reverse_proxy）见 [deployment.md](deployment.md)。
+具体反代配置（Caddy 现在已经是纯 reverse_proxy）见 [deployment.md](../deployment/operations.md)。
 
 ---
 
@@ -311,7 +311,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 
 当前状态可以通过 `GET /api/wiki/sync/status` 查看（只读本地 Git 信息，不访问远端）。如果服务器 checkout 不在 `main` / `master` 分支，状态会带 warning。
 
-Wiki 页面本身的格式规范（页面类型、frontmatter schema、命名前缀、lint 错误码）见 [wiki-conventions.md](wiki-conventions.md)。
+Wiki 页面本身的格式规范（页面类型、frontmatter schema、命名前缀、lint 错误码）见 [wiki-conventions.md](../reference/wiki-schema.md)。
 
 ---
 

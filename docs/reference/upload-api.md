@@ -8,7 +8,7 @@
 >
 > Storage / ops perspective (RustFS env vars, IAM policy, bucket
 > versioning lifecycle, `qatlas-server storage prune` operator guide)
-> lives in [storage-rustfs.md](storage-rustfs.md).
+> lives in [storage-rustfs.md](../deployment/rustfs.md).
 
 ## Endpoints
 
@@ -19,7 +19,7 @@
 
 Both routes require auth: either a browser session token or a PAT
 (`Authorization: Bearer qat_…`) whose scopes include `papers:write`.
-See [contribution-workflow.md](contribution-workflow.md) for how to
+See [contribution-workflow.md](../guides/contribute-content.md) for how to
 mint a PAT.
 
 `{arxiv_id}` MUST include the explicit `vN` version suffix. Both
@@ -240,7 +240,7 @@ sha256 dedup.
 
 ## Recovering an overwritten version (operator side)
 
-Bucket versioning is enabled (see [storage-rustfs.md](storage-rustfs.md)).
+Bucket versioning is enabled (see [storage-rustfs.md](../deployment/rustfs.md)).
 When `--overwrite` replaces an object, the prior version becomes
 noncurrent and stays on disk. Ops can recover it:
 

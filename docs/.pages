@@ -1,18 +1,9 @@
 nav:
   - 概览: index.md
   - 入门: getting-started.md
-  - 架构: architecture.md
-  - 贡献与协作:
-    - contribution-workflow.md
-    - upload-api.md
-    - wiki-conventions.md
-  - 部署与运维:
-    - deployment.md
-    - storage-design.md
-    - storage-rustfs.md
-    - migration-storage-layout.md
-  - 开发: development.md
-  - 参考:
-    - graph-visualization-research.md
-    - python-legacy.md
-  - 关于: about.md
+  - 概念: concepts
+  - 操作指南: guides
+  - 参考手册: reference
+  - 部署运维: deployment
+  - 贡献: contributing.md
+  - 关于: about

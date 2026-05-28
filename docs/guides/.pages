@@ -1,0 +1,14 @@
+nav:
+  - 概览: index.md
+  - 论文摄入:
+    - 从 arXiv 摄入: ingest-papers.md
+    - 上传资产: upload-assets.md
+    - 用 MinerU 解析: parse-with-mineru.md
+  - Wiki 内容:
+    - 写 Wiki 页面: write-wiki-pages.md
+    - Lint 与校验: lint-wiki.md
+    - 贡献流程: contribute-content.md
+  - 协作:
+    - 分享与下载: share-and-download.md
+    - 管理凭据: manage-credentials.md
+  - 电路工具链: circuit-toolchain.md
