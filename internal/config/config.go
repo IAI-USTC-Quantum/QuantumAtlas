@@ -67,14 +67,34 @@ type Config struct {
 
 	// Object storage (RustFS / S3-compatible) for the RAW asset bucket.
 	// When S3Endpoint is empty the server falls back to RawDir on the
-	// local filesystem. When set, all four fields must be non-empty —
-	// see invariant check at the end of Load().
+	// local filesystem. When set, all four required fields must be
+	// non-empty — see invariant check at the end of Load().
 	//
 	// Endpoint must include scheme (https://raw.example.tld) so the
 	// minio-go client can decide TLS vs plaintext deterministically.
 	// We don't use AWS path-style heuristics; for vendor flexibility
 	// the bucket is always supplied as a separate parameter.
+	//
+	// S3PublicEndpoint (optional) splits the network roles:
+	//   - S3Endpoint        is used for server↔RustFS traffic (mesh,
+	//                       intranet, anything cheap & fast).
+	//   - S3PublicEndpoint  is used ONLY when minting presigned URLs
+	//                       for end users. The URL host the browser
+	//                       hits = this value. Must front the same
+	//                       bucket + credentials as S3Endpoint.
+	//
+	// Per-edge example (production):
+	//   RackNerd .env: S3Endpoint=http://10.144.18.10:9000
+	//                  S3PublicEndpoint=https://raw.quantum-atlas.ai
+	//   Alibaba  .env: S3Endpoint=http://10.144.18.10:9000
+	//                  S3PublicEndpoint=https://47.102.36.175:9000
+	//
+	// When empty (or equal to S3Endpoint), presigned URLs reuse the
+	// internal endpoint — handy for single-network dev setups but
+	// useless for any deployment where clients can't reach the
+	// internal host.
 	S3Endpoint        string
+	S3PublicEndpoint  string
 	S3Bucket          string
 	S3AccessKeyID     string
 	S3SecretAccessKey string
@@ -129,6 +149,7 @@ func Load(dotenvPath string) (*Config, error) {
 		GitHubClientID:        firstEnv("GITHUB_CLIENT_ID"),
 		GitHubClientSecret:    firstEnv("GITHUB_CLIENT_SECRET"),
 		S3Endpoint:            firstEnv("QATLAS_S3_ENDPOINT"),
+		S3PublicEndpoint:      firstEnv("QATLAS_S3_PUBLIC_ENDPOINT"),
 		S3Bucket:              firstEnv("QATLAS_S3_BUCKET"),
 		S3AccessKeyID:         firstEnv("QATLAS_S3_ACCESS_KEY_ID"),
 		S3SecretAccessKey:     firstEnv("QATLAS_S3_SECRET_ACCESS_KEY"),

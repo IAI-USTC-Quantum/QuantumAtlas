@@ -24,22 +24,84 @@ import (
 //
 // All methods are safe for concurrent use; minio.Client maintains its
 // own connection pool internally.
+//
+// presignClient (optional) is a second minio.Client bound to the same
+// bucket + credentials but a different endpoint host/scheme. It is
+// used ONLY by PresignGet, so the public-facing URLs handed to
+// end-user clients can point at a public ingress (e.g.
+// https://raw.quantum-atlas.ai or http://47.102.36.175:9000) while
+// server↔RustFS traffic stays on the internal mesh endpoint (e.g.
+// http://10.144.18.10:9000). When nil, PresignGet falls back to
+// client. See NewS3StoreDual for the wiring rationale.
 type S3Store struct {
-	client *minio.Client
-	bucket string
+	client        *minio.Client
+	presignClient *minio.Client
+	bucket        string
 }
 
-// NewS3Store builds an S3Store against the given endpoint + bucket.
+// NewS3Store is the single-endpoint convenience constructor: it uses
+// the same endpoint for both server↔RustFS traffic AND for signing
+// presigned URLs handed to clients. Equivalent to
+// NewS3StoreDual(endpoint, "", bucket, key, secret).
 //
-// endpoint must include scheme (https:// or http://). The scheme picks
-// TLS-or-not for the underlying minio-go client; we don't second-guess
-// what the operator wrote. region is optional (S3 requires it for
-// AWS-flavoured signing, RustFS ignores it); we pass "us-east-1" as a
-// safe default when not supplied.
+// Suitable for single-network deployments (everything on one LAN) and
+// for the storage prune subcommand which never presigns. Production
+// edge servers that split internal / public networks should call
+// NewS3StoreDual directly.
 func NewS3Store(endpoint, bucket, accessKeyID, secretAccessKey string) (*S3Store, error) {
-	if endpoint == "" || bucket == "" || accessKeyID == "" || secretAccessKey == "" {
+	return NewS3StoreDual(endpoint, "", bucket, accessKeyID, secretAccessKey)
+}
+
+// NewS3StoreDual builds an S3Store with separate internal + public
+// endpoints. internalEndpoint is used for all server-initiated S3
+// operations (Put/Get/Stat/List/versioning/prune); publicEndpoint is
+// used ONLY when computing presigned URLs via PresignGet.
+//
+// Both endpoints must include scheme (http:// or https://). The scheme
+// picks TLS-or-not for the underlying minio-go client; we don't
+// second-guess what the operator wrote. credentials and bucket are
+// shared — the two endpoints must front the same RustFS / S3 backend.
+//
+// When publicEndpoint is "" or string-equal to internalEndpoint, the
+// dual-client setup collapses to the single-client behaviour (no
+// presignClient, PresignGet uses client). This keeps the zero-config
+// path identical to NewS3Store.
+//
+// Wire model:
+//
+//	server ──internalEndpoint──► RustFS  (Put / Get / Stat / List)
+//	browser ──publicEndpoint──► RustFS  (presigned GET only)
+//
+// SigV4 requires the Host header at request time to match the Host
+// used to compute the signature. minio-go signs each presigned URL
+// with the endpoint configured on the client that issues it; the
+// downstream reverse proxy (Caddy on edge VPS) MUST preserve the
+// inbound Host header when forwarding to the internal RustFS port,
+// otherwise RustFS will reject with SignatureDoesNotMatch.
+func NewS3StoreDual(internalEndpoint, publicEndpoint, bucket, accessKeyID, secretAccessKey string) (*S3Store, error) {
+	if internalEndpoint == "" || bucket == "" || accessKeyID == "" || secretAccessKey == "" {
 		return nil, errors.New("objstore: S3Store endpoint, bucket and credentials required")
 	}
+	client, err := buildMinioClient(internalEndpoint, accessKeyID, secretAccessKey)
+	if err != nil {
+		return nil, err
+	}
+	s := &S3Store{client: client, bucket: bucket}
+	if publicEndpoint != "" && publicEndpoint != internalEndpoint {
+		pub, err := buildMinioClient(publicEndpoint, accessKeyID, secretAccessKey)
+		if err != nil {
+			return nil, fmt.Errorf("objstore: build public-endpoint client: %w", err)
+		}
+		s.presignClient = pub
+	}
+	return s, nil
+}
+
+// buildMinioClient is the shared minio.New wrapper used by both the
+// internal and the optional public-endpoint constructors. It centralises
+// scheme parsing, host validation, and the fixed "us-east-1" region —
+// see NewS3Store doc for why we hardcode the region.
+func buildMinioClient(endpoint, accessKeyID, secretAccessKey string) (*minio.Client, error) {
 	u, err := url.Parse(endpoint)
 	if err != nil {
 		return nil, fmt.Errorf("objstore: parse endpoint %q: %w", endpoint, err)
@@ -62,7 +124,7 @@ func NewS3Store(endpoint, bucket, accessKeyID, secretAccessKey string) (*S3Store
 	if err != nil {
 		return nil, fmt.Errorf("objstore: minio.New: %w", err)
 	}
-	return &S3Store{client: client, bucket: bucket}, nil
+	return client, nil
 }
 
 // validateKey enforces the same traversal rejection as LocalStore so the
@@ -75,6 +137,37 @@ func validateKey(key string) error {
 		return fmt.Errorf("objstore: invalid key %q", key)
 	}
 	return nil
+}
+
+// Ping verifies the configured bucket is reachable and accessible by
+// the current credentials. Uses BucketExists which translates to a
+// cheap HEAD-bucket call (no listing, no read of any object). Used by
+// the /health endpoint to surface RustFS reachability without paying
+// per-object I/O. The boolean signals "bucket exists" specifically —
+// false with err=nil means credentials are valid but the bucket is
+// missing (still an unhealthy state for callers expecting it).
+func (s *S3Store) Ping(ctx context.Context) (exists bool, err error) {
+	return s.client.BucketExists(ctx, s.bucket)
+}
+
+// Bucket returns the configured bucket name. Used by /health to
+// include the bucket identity in the response without exposing
+// credentials.
+func (s *S3Store) Bucket() string { return s.bucket }
+
+// EndpointURL returns the internal endpoint URL the client was built
+// with (host[:port], no scheme). Used by /health for surfacing what
+// the server is actually talking to. We reconstruct it from the
+// minio.Client's EndpointURL() to avoid duplicating the field.
+func (s *S3Store) EndpointURL() string {
+	if s == nil || s.client == nil {
+		return ""
+	}
+	u := s.client.EndpointURL()
+	if u == nil {
+		return ""
+	}
+	return u.String()
 }
 
 // Put streams r into the bucket at key. When size >= 0 minio-go uses a
@@ -95,23 +188,67 @@ func (s *S3Store) Put(ctx context.Context, key string, r io.Reader, size int64, 
 // CamelCase keys back via Stat returns lowercase, which has burned
 // us once before.
 func (s *S3Store) PutWithMeta(ctx context.Context, key string, r io.Reader, size int64, contentType string, metadata map[string]string) (int64, error) {
+	return s.PutWithOptions(ctx, key, r, size, PutOptions{
+		ContentType: contentType,
+		Metadata:    metadata,
+	})
+}
+
+// PutWithOptions is the conditional-write capable PUT. It honours
+// PutOptions.IfNoneMatch and PutOptions.IfMatch via minio-go's
+// SetMatchETagExcept / SetMatchETag setters, which translate to the
+// S3 If-None-Match / If-Match request headers verbatim. RustFS
+// enforces both ends of the spec (see e2e_test/src/reliant/
+// conditional_writes.rs in the rustfs repo for the matrix it verifies),
+// so:
+//
+//   - IfNoneMatch="*" + object absent → 200/201, write happens.
+//   - IfNoneMatch="*" + object exists → 412, returns ErrPreconditionFailed,
+//     S3 does NOT write.
+//   - IfMatch="<etag>" + etag matches  → 200/201, write replaces object.
+//   - IfMatch="<etag>" + etag stale    → 412, returns ErrPreconditionFailed.
+//   - IfMatch="<etag>" + object absent → "NoSuchKey", also normalised to
+//     ErrPreconditionFailed because for the caller the distinction
+//     between "didn't exist" and "had a different etag" doesn't matter
+//     — both mean "your CAS lost, re-Stat and decide".
+//
+// On AWS, minio-go also rewrites the request to send Content-MD5 for
+// the conditional path. We don't compute one client-side — RustFS
+// accepts the request without it.
+func (s *S3Store) PutWithOptions(ctx context.Context, key string, r io.Reader, size int64, po PutOptions) (int64, error) {
 	if err := validateKey(key); err != nil {
 		return 0, err
 	}
 	opts := minio.PutObjectOptions{}
-	if contentType != "" {
-		opts.ContentType = contentType
+	if po.ContentType != "" {
+		opts.ContentType = po.ContentType
 	}
-	if len(metadata) > 0 {
+	if len(po.Metadata) > 0 {
 		// minio-go mutates the map; copy so callers can reuse theirs.
-		md := make(map[string]string, len(metadata))
-		for k, v := range metadata {
+		md := make(map[string]string, len(po.Metadata))
+		for k, v := range po.Metadata {
 			md[k] = v
 		}
 		opts.UserMetadata = md
 	}
+	if po.IfNoneMatch != "" {
+		opts.SetMatchETagExcept(po.IfNoneMatch)
+	}
+	if po.IfMatch != "" {
+		opts.SetMatchETag(po.IfMatch)
+	}
 	info, err := s.client.PutObject(ctx, s.bucket, key, r, size, opts)
 	if err != nil {
+		if isPreconditionFailed(err) {
+			return 0, fmt.Errorf("objstore: put %s: %w", key, ErrPreconditionFailed)
+		}
+		// IfMatch against a missing key is semantically a CAS loss
+		// (someone deleted between our Stat and our Put). RustFS
+		// surfaces this as NoSuchKey + 404, not 412 — normalise so
+		// the caller only branches on ErrPreconditionFailed.
+		if po.IfMatch != "" && isNoSuchKey(err) {
+			return 0, fmt.Errorf("objstore: put %s: %w", key, ErrPreconditionFailed)
+		}
 		return 0, fmt.Errorf("objstore: put %s: %w", key, err)
 	}
 	return info.Size, nil
@@ -145,6 +282,7 @@ func (s *S3Store) Get(ctx context.Context, key string) (io.ReadCloser, ObjectInf
 		Size:        stat.Size,
 		UpdatedAt:   stat.LastModified.UTC(),
 		ContentType: stat.ContentType,
+		ETag:        normaliseETag(stat.ETag),
 		Metadata:    copyUserMeta(stat.UserMetadata),
 	}, nil
 }
@@ -167,6 +305,7 @@ func (s *S3Store) Stat(ctx context.Context, key string) (ObjectInfo, bool, error
 		Size:        stat.Size,
 		UpdatedAt:   stat.LastModified.UTC(),
 		ContentType: stat.ContentType,
+		ETag:        normaliseETag(stat.ETag),
 		Metadata:    copyUserMeta(stat.UserMetadata),
 	}, true, nil
 }
@@ -221,6 +360,12 @@ func (s *S3Store) ListPrefix(ctx context.Context, prefix string, limit int) ([]O
 // signs the entire request (host + path + query), so the caller can
 // hand it to a browser, curl, or downstream client without re-auth.
 //
+// When the store was constructed via NewS3StoreDual with a distinct
+// publicEndpoint, the URL is signed against that public host so
+// browsers can fetch directly without traversing the internal mesh
+// (server↔RustFS keeps using the internal endpoint). Otherwise the
+// URL points at the same endpoint used for server-side operations.
+//
 // ttl is clamped to [1s, 7d] — minio-go's PresignedGetObject errors
 // out below 1s, and 7 days is the AWS S3 maximum for v4 sig. Operators
 // who need longer should use a permanent share-token instead.
@@ -234,7 +379,11 @@ func (s *S3Store) PresignGet(ctx context.Context, key string, ttl time.Duration)
 	if ttl > 7*24*time.Hour {
 		ttl = 7 * 24 * time.Hour
 	}
-	u, err := s.client.PresignedGetObject(ctx, s.bucket, key, ttl, nil)
+	c := s.client
+	if s.presignClient != nil {
+		c = s.presignClient
+	}
+	u, err := c.PresignedGetObject(ctx, s.bucket, key, ttl, nil)
 	if err != nil {
 		return "", false, fmt.Errorf("objstore: presign %s: %w", key, err)
 	}
@@ -382,6 +531,36 @@ func isNoSuchKey(err error) bool {
 		}
 	}
 	return false
+}
+
+// isPreconditionFailed detects S3 412 PreconditionFailed responses
+// (both IfMatch-stale and IfNoneMatch-collision) as well as the
+// special-case "IfMatch on a key that doesn't exist" reply which
+// RustFS surfaces as NoSuchKey + 404 but is semantically a precondition
+// rejection for our handlers — both mean "your CAS lost, re-Stat and
+// decide". We collapse them so callers only branch on one sentinel.
+func isPreconditionFailed(err error) bool {
+	if err == nil {
+		return false
+	}
+	var er minio.ErrorResponse
+	if errors.As(err, &er) {
+		if er.Code == "PreconditionFailed" || er.StatusCode == 412 {
+			return true
+		}
+	}
+	return false
+}
+
+// normaliseETag strips the surrounding double quotes S3 wire-format
+// puts around ETag values. minio-go usually does this for us in
+// StatObject, but we run it again to be defensive — passing a quoted
+// ETag back into SetMatchETag would double-quote it on the next request.
+func normaliseETag(etag string) string {
+	if len(etag) >= 2 && etag[0] == '"' && etag[len(etag)-1] == '"' {
+		return etag[1 : len(etag)-1]
+	}
+	return etag
 }
 
 // Compile-time guard: S3Store implements Store.
