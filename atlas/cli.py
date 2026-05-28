@@ -34,6 +34,10 @@ COMMANDS: Mapping[str, Command] = {
         "atlas.client.mineru",
         "Run MinerU locally with your own token and push the result to the server",
     ),
+    "auth": Command(
+        "atlas.client.auth",
+        "Manage saved PATs / session tokens per host (login, status, token, logout)",
+    ),
     "parser": Command("atlas.parser.__main__", "Fetch and parse arXiv papers", False),
     "wiki": Command("atlas.wiki.__main__", "Browse, lint, and sync wiki pages", False),
     "designer": Command("atlas.designer.__main__", "Design circuits from algorithms"),

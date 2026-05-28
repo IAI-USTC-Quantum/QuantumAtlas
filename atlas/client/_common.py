@@ -55,7 +55,13 @@ def request_verify(args: argparse.Namespace) -> bool:
 def resolve_token(args: argparse.Namespace) -> str:
     """Resolve the bearer credential.
 
-    Precedence: --token CLI flag > QATLAS_TOKEN env > "" (no auth header).
+    Precedence (mirrors gh CLI):
+      1. ``--token`` CLI flag (explicit per-call override)
+      2. ``QATLAS_TOKEN`` environment variable (per-shell override)
+      3. ``~/.config/qatlas/hosts.yml`` entry for the request's host
+         (populated by ``qatlas auth login``)
+      4. "" — no Authorization header, server replies 401 for write
+         endpoints
 
     Empty string means the caller will not send an Authorization header; the
     server then either accepts the call (open read endpoints) or rejects with
@@ -65,7 +71,20 @@ def resolve_token(args: argparse.Namespace) -> str:
     explicit = getattr(args, "token", None)
     if explicit:
         return explicit.strip()
-    return os.getenv("QATLAS_TOKEN", "").strip()
+    env_token = os.getenv("QATLAS_TOKEN", "").strip()
+    if env_token:
+        return env_token
+    # Fallback: per-host credential file populated by `qatlas auth login`.
+    # We deliberately resolve the host the SAME way base_url_from_args does
+    # so the lookup keys match what the user typed at login time.
+    try:
+        from atlas.client.auth import get_stored_token  # local import to avoid cycle
+
+        return get_stored_token(base_url_from_args(args))
+    except Exception:
+        # Defensive: never let a config-file glitch break unrelated commands.
+        # The user can still set --token / QATLAS_TOKEN to bypass.
+        return ""
 
 
 def auth_headers(args: argparse.Namespace) -> dict[str, str]:
