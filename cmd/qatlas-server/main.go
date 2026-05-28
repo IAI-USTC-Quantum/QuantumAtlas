@@ -33,6 +33,7 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/pat"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/routes"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/shares"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/wiki"
 	qweb "github.com/IAI-USTC-Quantum/QuantumAtlas/web"
 
 	"github.com/casbin/casbin/v2"
@@ -206,6 +207,21 @@ func main() {
 	// Store starts up empty and queries return zero.
 	paperIndex := initPaperIndex(cfg)
 
+	// Build the wiki in-memory cache. Walks cfg.WikiDir once at
+	// startup so the first /api/pages request hits warm data; a
+	// background ticker re-walks every 60s when `git rev-parse HEAD`
+	// shows a different commit (covers out-of-band `git pull` /
+	// direct edits). /api/wiki/sync/pull also forces a synchronous
+	// refresh so the response reflects the just-pulled commit.
+	// Always non-nil — initial-load failures degrade to empty
+	// responses, not crashes.
+	wikiCache := wiki.NewCache(cfg.WikiDir, 60*time.Second)
+	log.Printf("wiki: cache initialized (dir=%s)", cfg.WikiDir)
+	app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
+		wikiCache.Stop()
+		return e.Next()
+	})
+
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
 		// Capture process start time the first time a serve event
 		// fires. /api/health uses this to report uptime_seconds.
@@ -241,7 +257,7 @@ func main() {
 			}
 		}
 
-		registerRoutes(se, app, cfg, rawStore, shareStore, claimStore, paperIndex, enforcer, serverStarted)
+		registerRoutes(se, app, cfg, rawStore, shareStore, claimStore, paperIndex, wikiCache, enforcer, serverStarted)
 
 		// Serve the embedded SPA last as the catch-all. apis.Static's
 		// indexFallback=true means any path that doesn't match a real
@@ -335,7 +351,7 @@ func initPaperIndex(cfg *config.Config) *paperindex.Store {
 // registerRoutes wires the QuantumAtlas /api/* surface. Most endpoints are
 // implemented under internal/routes/ and pulled in by their respective
 // Register* helpers as we migrate each module in subsequent phases.
-func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawStore objstore.Store, shareStore *shares.Store, claimStore *mineruclaim.Store, paperIndex *paperindex.Store, enforcer *casbin.Enforcer, started time.Time) {
+func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawStore objstore.Store, shareStore *shares.Store, claimStore *mineruclaim.Store, paperIndex *paperindex.Store, wikiCache *wiki.Cache, enforcer *casbin.Enforcer, started time.Time) {
 	probes := healthz.Probes{
 		Cfg:      cfg,
 		RawStore: rawStore,
@@ -406,7 +422,7 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// directly; CLI users pull their bearer from the /token page.)
 
 	// Wiki / pages / stats / search / lint — see internal/routes/wiki.go.
-	routes.RegisterWiki(se, cfg)
+	routes.RegisterWiki(se, cfg, wikiCache)
 
 	// Graph (Neo4j) — see internal/routes/graph.go.
 	routes.RegisterGraph(se, cfg)

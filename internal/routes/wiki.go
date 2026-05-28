@@ -21,7 +21,13 @@ import (
 
 // RegisterWiki registers the /api/wiki/*, /api/pages*, /api/stats and
 // /api/search routes on se.Router. cfg supplies the wiki_dir resolution.
-func RegisterWiki(se *core.ServeEvent, cfg *config.Config) {
+//
+// cache MUST be non-nil and already constructed (NewCache happens in
+// main.go at startup so the first request hits warm data). All read
+// paths go through the cache; only /api/wiki/sync/pull writes (then
+// refreshes the cache synchronously so callers see fresh data on the
+// next request).
+func RegisterWiki(se *core.ServeEvent, cfg *config.Config, cache *wiki.Cache) {
 	se.Router.GET("/api/wiki/sync/status", func(re *core.RequestEvent) error {
 		return re.JSON(http.StatusOK, wikiSyncStatus(cfg))
 	})
@@ -38,6 +44,15 @@ func RegisterWiki(se *core.ServeEvent, cfg *config.Config) {
 			}
 			return re.JSON(http.StatusInternalServerError, map[string]string{"detail": err.Error()})
 		}
+		// Force a synchronous refresh so the next read sees the pulled
+		// commit immediately, not 60s later when the ticker would fire.
+		// Non-fatal: a refresh failure here is logged inside Refresh and
+		// the old snapshot keeps serving.
+		if _, refreshErr := cache.Refresh(true); refreshErr != nil {
+			// Don't fail the pull response — git pull DID succeed.
+			// The next ticker tick will retry the cache rebuild.
+			_ = refreshErr
+		}
 		// Merge git status into the response just like the Python handler.
 		out := map[string]any{
 			"status":     result.Status,
@@ -52,7 +67,7 @@ func RegisterWiki(se *core.ServeEvent, cfg *config.Config) {
 	})
 
 	se.Router.GET("/api/pages", func(re *core.RequestEvent) error {
-		dir, status := resolveWikiDir(cfg)
+		_, status := resolveWikiDir(cfg)
 		if !status["wiki"].(map[string]any)["exists"].(bool) {
 			return re.JSON(http.StatusOK, map[string]any{
 				"total": 0,
@@ -61,8 +76,8 @@ func RegisterWiki(se *core.ServeEvent, cfg *config.Config) {
 		}
 		req := re.Request
 		filter := wiki.ListFilter{
-			Type:     req.URL.Query().Get("page_type"),
-			Status:   req.URL.Query().Get("status"),
+			Type:   req.URL.Query().Get("page_type"),
+			Status: req.URL.Query().Get("status"),
 		}
 		if raw := req.URL.Query().Get("tags"); raw != "" {
 			for _, t := range strings.Split(raw, ",") {
@@ -72,10 +87,7 @@ func RegisterWiki(se *core.ServeEvent, cfg *config.Config) {
 				}
 			}
 		}
-		pages, _, err := wiki.ListPages(dir, filter)
-		if err != nil {
-			return re.JSON(http.StatusInternalServerError, map[string]string{"detail": err.Error()})
-		}
+		pages := cache.Pages(filter)
 		summaries := make([]map[string]any, 0, len(pages))
 		for _, p := range pages {
 			summaries = append(summaries, map[string]any{
@@ -95,16 +107,13 @@ func RegisterWiki(se *core.ServeEvent, cfg *config.Config) {
 
 	se.Router.GET("/api/pages/{page_id}", func(re *core.RequestEvent) error {
 		pageID := re.Request.PathValue("page_id")
-		dir, status := resolveWikiDir(cfg)
+		_, status := resolveWikiDir(cfg)
 		if !status["wiki"].(map[string]any)["exists"].(bool) {
 			return re.JSON(http.StatusNotFound, map[string]string{
 				"detail": "Page not found: " + pageID,
 			})
 		}
-		page, err := wiki.FindPage(dir, pageID)
-		if err != nil {
-			return re.JSON(http.StatusInternalServerError, map[string]string{"detail": err.Error()})
-		}
+		page := cache.FindPage(pageID)
 		if page == nil {
 			return re.JSON(http.StatusNotFound, map[string]string{
 				"detail": "Page not found: " + pageID,
@@ -129,7 +138,7 @@ func RegisterWiki(se *core.ServeEvent, cfg *config.Config) {
 	})
 
 	se.Router.GET("/api/stats", func(re *core.RequestEvent) error {
-		dir, status := resolveWikiDir(cfg)
+		_, status := resolveWikiDir(cfg)
 		if !status["wiki"].(map[string]any)["exists"].(bool) {
 			return re.JSON(http.StatusOK, map[string]any{
 				"total_pages":     0,
@@ -140,11 +149,8 @@ func RegisterWiki(se *core.ServeEvent, cfg *config.Config) {
 				"needs_sync":      0,
 			})
 		}
-		stats, err := wiki.ComputeStats(dir)
-		if err != nil {
-			return re.JSON(http.StatusInternalServerError, map[string]string{"detail": err.Error()})
-		}
-		return re.JSON(http.StatusOK, stats)
+		stats := cache.Stats()
+		return re.JSON(http.StatusOK, &stats)
 	})
 
 	se.Router.GET("/api/search", func(re *core.RequestEvent) error {
@@ -156,7 +162,7 @@ func RegisterWiki(se *core.ServeEvent, cfg *config.Config) {
 				limit = n
 			}
 		}
-		dir, status := resolveWikiDir(cfg)
+		_, status := resolveWikiDir(cfg)
 		if !status["wiki"].(map[string]any)["exists"].(bool) {
 			return re.JSON(http.StatusOK, map[string]any{
 				"query":   q,
@@ -164,10 +170,7 @@ func RegisterWiki(se *core.ServeEvent, cfg *config.Config) {
 				"results": []any{},
 			})
 		}
-		results, err := wiki.Search(dir, q, limit)
-		if err != nil {
-			return re.JSON(http.StatusInternalServerError, map[string]string{"detail": err.Error()})
-		}
+		results := cache.Search(q, limit)
 		if results == nil {
 			results = []wiki.SearchResult{}
 		}
