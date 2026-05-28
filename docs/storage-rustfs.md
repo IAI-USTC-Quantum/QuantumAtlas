@@ -1,8 +1,8 @@
 # QuantumAtlas ↔ RustFS integration
 
-> How the Go server (`cmd/server`) wires to RustFS (S3-compatible
+> How the Go server (`cmd/qatlas-server`) wires to RustFS (S3-compatible
 > object store) for paper assets. Covers env vars, IAM policy spec,
-> bucket layout, version lifecycle, the `quantumatlas storage prune`
+> bucket layout, version lifecycle, the `qatlas-server storage prune`
 > operator command, and known RustFS-vs-MinIO quirks.
 >
 > Application-level upload semantics (sha256 dedup, 409 conflict
@@ -36,7 +36,7 @@ on every boot. Without them it logs
 raw store: local backend /home/timidly/.local/share/quantum-atlas/raw
 ```
 
-The split is in `cmd/server/main.go::initRawStore` and the
+The split is in `cmd/qatlas-server/main.go::initRawStore` and the
 all-or-nothing rule is enforced by
 `internal/config/config.go::validateS3Config`.
 
@@ -91,9 +91,9 @@ What each permission is for:
 | `s3:GetObject` / `s3:PutObject`          | Routine PDF / markdown / JSON I/O via the upload handlers.                                                             |
 | `s3:DeleteObject`                        | Soft-delete via the (currently unimplemented) `DELETE /api/papers/*` route + admin cleanup.                            |
 | `s3:GetObjectVersion`                    | Reading a specific past version (for future rollback CLI; not yet exposed in HTTP).                                    |
-| `s3:DeleteObjectVersion`                 | **Required by `quantumatlas storage prune --yes`** — versioned deletes are a separate AWS perm from `s3:DeleteObject`. |
+| `s3:DeleteObjectVersion`                 | **Required by `qatlas-server storage prune --yes`** — versioned deletes are a separate AWS perm from `s3:DeleteObject`. |
 | `s3:ListBucket` / `s3:GetBucketLocation` | minio-go probes the endpoint and walks prefixes (e.g. enumerate-needs-mineru).                                         |
-| `s3:ListBucketVersions`                  | Powers `ObjectVersion`-aware listing — backs `quantumatlas storage prune` enumeration.                                 |
+| `s3:ListBucketVersions`                  | Powers `ObjectVersion`-aware listing — backs `qatlas-server storage prune` enumeration.                                 |
 | `s3:GetBucketVersioning` / `s3:PutBucketVersioning` | Lets qatlas self-manage versioning at boot (see "Versioning" below).                                                  |
 
 **Deliberately not granted** (re-test before adding):
@@ -128,7 +128,7 @@ listings manageable.
 
 User metadata always includes `x-amz-meta-sha256` (lowercase) with
 the hex digest of the bytes — see [upload-api.md](upload-api.md).
-This is the field `quantumatlas storage prune` and the upload handler
+This is the field `qatlas-server storage prune` and the upload handler
 both rely on for idempotency / dedup.
 
 ## Versioning: qatlas self-manages
@@ -179,7 +179,7 @@ Reasoning:
 - Auto-expiration windows are operationally fraught: pick 30d and
   you regret it the day someone needs to restore a 6-week-old
   draft; pick 365d and the cost picture matters again.
-- The ops side has full visibility + control via `quantumatlas
+- The ops side has full visibility + control via `qatlas-server
   storage prune` (see next section), so manual policy is just as
   good in our scale regime.
 
@@ -187,15 +187,15 @@ When (if ever) the bucket grows past a few hundred GB of noncurrent
 versions, revisit. RustFS may by then support the standard
 `s3:*LifecycleConfiguration` actions and we can add a rule.
 
-## `quantumatlas storage prune`
+## `qatlas-server storage prune`
 
 The on-server CLI for manual cleanup. Lives in
-`cmd/server/storage_cmd.go`; runs against whatever the server's
+`cmd/qatlas-server/storage_cmd.go`; runs against whatever the server's
 own env vars say (`QATLAS_S3_*` from the same `.env` qatlas reads at
 boot).
 
 ```
-quantumatlas storage prune [--prefix P]
+qatlas-server storage prune [--prefix P]
                            [--older-than DUR]
                            [--keep-last N]
                            [--yes]
@@ -215,7 +215,7 @@ Flags:
 | `--dry-run`      | preview only. Defaults to true; `--yes` is the only way to actually delete.                                                                                                                                                     |
 
 Hard safety invariants (enforced by `planPruneCandidates` + unit
-tested in `cmd/server/storage_cmd_test.go`):
+tested in `cmd/qatlas-server/storage_cmd_test.go`):
 
 - **Current (latest) versions are NEVER deleted.** No flag combination
   can override this.
@@ -248,7 +248,7 @@ sudo -u timidly $TARGET storage prune --older-than 1y --yes
 sudo -u timidly $TARGET storage prune --json | tee prune-$(date +%F).log
 ```
 
-`$TARGET` = the qatlas binary (`/home/timidly/.local/bin/quantumatlas`
+`$TARGET` = the qatlas binary (`/home/timidly/.local/bin/qatlas-server`
 on the production deploy). Run as the `timidly` user (the systemd
 unit's `User=`) so the env / file paths resolve identically to the
 running server.

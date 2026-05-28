@@ -1,6 +1,6 @@
 // Command-line management surface for QuantumAtlas Personal Access Tokens
 // (PATs). Mounted on the Go server binary's root cobra command, so the
-// same `quantumatlas` (or `qatlas-server`) executable that runs `serve`
+// same `qatlas-server` (or `qatlas-server`) executable that runs `serve`
 // also exposes `pat mint`, `pat list`, `pat revoke`, and `pat scopes`.
 //
 // Why a server-side CLI when /api/pat already exists?

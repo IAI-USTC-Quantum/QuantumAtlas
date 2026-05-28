@@ -70,7 +70,7 @@ markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "network: tests that require outbound network access (e.g. arXiv API)",
     "e2e: end-to-end tests that load the repository .env and exercise real external services",
-    "legacy: targets only the legacy FastAPI server (atlas/server/), not the current Go server (cmd/server). Excluded by default.",
+    "legacy: targets only the legacy FastAPI server (atlas/server/), not the current Go server (cmd/qatlas-server). Excluded by default.",
 ]
 
 [tool.black]
@@ -162,7 +162,7 @@ GOPATH = "$PIXI_PROJECT_ROOT/.gocache"
 # baked-in lookup.
 #
 # Our actual code is pure-Go (modernc.org/sqlite, no cgo imports), so
-# `CGO_ENABLED=0 go build ./cmd/server` would also work — but that
+# `CGO_ENABLED=0 go build ./cmd/qatlas-server` would also work — but that
 # requires every dev to remember the env var. Bundling `gxx` keeps the
 # cgo lookup happy "by default" and stays correct if anyone later
 # imports a cgo-using library.
@@ -173,7 +173,7 @@ go = "1.26.*"
 gxx = "*"
 
 [tool.pixi.tasks]
-build = "go build -o build/quantumatlas ./cmd/server"
+build = "go build -o build/qatlas-server ./cmd/qatlas-server"
 test-go = "go test ./internal/... ./cmd/..."
 test-py = "uv run pytest -m 'not e2e and not legacy and not network'"
 # `go vet ./internal/... ./cmd/...` is intentionally scoped to *our*

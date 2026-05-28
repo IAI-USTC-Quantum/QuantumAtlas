@@ -1,6 +1,6 @@
 name: Nightly production smoke
 
-# Hits the live QuantumAtlas Go server (cmd/server) through both edges
+# Hits the live QuantumAtlas Go server (cmd/qatlas-server) through both edges
 # every night:
 #   - https://quantum-atlas.ai            (RackNerd, real LE cert)
 #   - https://47.102.36.175 | insecure    (Alibaba, tls internal self-signed)
@@ -46,7 +46,7 @@ jobs:
           # has its own users DB and PATs don't cross-validate.
           QATLAS_SERVER_TARGETS: ${{ secrets.QATLAS_SERVER_TARGETS || 'https://quantum-atlas.ai|token-env=QATLAS_TOKEN_RACKNERD,https://47.102.36.175|insecure|token-env=QATLAS_TOKEN_ALIBABA' }}
           # Per-edge PATs. Mint each one on its own edge:
-          #   ssh <edge> sudo -u <user> /path/quantumatlas pat mint \
+          #   ssh <edge> sudo -u <user> /path/qatlas-server pat mint \
           #     --user <email> --name nightly-ci \
           #     --scopes shares:write --expires-in-days 365
           # The active-active topology means RackNerd and Alibaba have

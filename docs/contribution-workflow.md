@@ -192,7 +192,7 @@ scope 的 obj/act 在 `scopeGuard` 抛 403 时会回显在 `detail` 里——CLI
 
 **Scope 运维须知**（仅当你在改 scope 词表或部署 server 时需要看）：
 
-- enforcer 在 `cmd/server/main.go` 启动时一次性构建（`pat.NewEnforcer()`），失败 = `log.Fatalf` 进程退出，**没有降级路径**。启动日志里看到 `build PAT scope enforcer: ...` 是 fatal 不是 warning——通常意味着改 `scopes.go` 时引入了 model / policies 语法错误，回滚或修语法再重启。
+- enforcer 在 `cmd/qatlas-server/main.go` 启动时一次性构建（`pat.NewEnforcer()`），失败 = `log.Fatalf` 进程退出，**没有降级路径**。启动日志里看到 `build PAT scope enforcer: ...` 是 fatal 不是 warning——通常意味着改 `scopes.go` 时引入了 model / policies 语法错误，回滚或修语法再重启。
 - 词表是**编译时静态**的（`scopes.go::scopePolicies` 表 + `AllScopes` 切片），加 / 删 scope = 改代码 + 重新编译 + 重启 server，**不支持**运行时 `AddPolicy` / 热加载。也正因如此 enforcer 实例可以安全在所有 handler 间共享（`Enforce()` 并发读安全）。
 - 新加 endpoint 时如果忘记把 enforcer 传给 `scopeGuard`（传 `nil`），那个 endpoint 会对**每个**请求返回 500 `"scopeGuard: enforcer not configured (server wiring bug)"`——fail loud 而不是放行。code review 时确认所有 `RegisterXXX(se, cfg, ..., enforcer)` 签名一路传递。
 - `pat_tokens.scopes` 列 JSON 损坏时（手动编辑 / 迁移失误），`decodeScopes` 返回 nil，该 PAT 被视为"无 scope"，所有写口收到 403，**不会**返回 500。修复直接在 admin UI 或 SQLite CLI 改回合法 JSON。fail-closed 行为由 `internal/routes/auth_test.go::TestDecodeScopes` 钉住。
@@ -211,7 +211,7 @@ scope 的 obj/act 在 `scopeGuard` 抛 403 时会回显在 `detail` 里——CLI
 如果你 SSH 上了部署服务端二进制的主机，可以直接用 `qatlas-server pat` 子命令而不开浏览器：
 
 ```bash
-sudo -u quantumatlas /opt/quantum-atlas/qatlas-server pat mint \
+sudo -u qatlas-server /opt/quantum-atlas/qatlas-server pat mint \
     --user me@example.com --name nightly-ci \
     --scopes shares:write --expires-in-days 365
 # stdout: qat_xxxxxxxxxxxxxxxxxxxxxxxxxxx

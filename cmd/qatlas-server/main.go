@@ -1,12 +1,12 @@
-// Command quantumatlas is the Go + PocketBase rewrite of the QuantumAtlas
+// Command qatlas-server is the Go + PocketBase rewrite of the QuantumAtlas
 // FastAPI server. It embeds PocketBase as a Go library and exposes the same
 // /api/* surface that the existing Python CLI consumes.
 //
 // Usage:
 //
-//	quantumatlas serve --http=0.0.0.0:4200
-//	quantumatlas migrate up
-//	quantumatlas superuser upsert <email> <password>
+//	qatlas-server serve --http=0.0.0.0:4200
+//	qatlas-server migrate up
+//	qatlas-server superuser upsert <email> <password>
 //
 // All standard PocketBase subcommands are inherited. QuantumAtlas-specific
 // business routes are registered via the OnServe hook.
@@ -14,6 +14,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"log"
 	"log/slog"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/auth"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/healthz"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineruclaim"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/pat"
@@ -38,6 +40,16 @@ import (
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
 )
+
+// installServerScript is the shell installer served at
+// /install-server.sh. It detects OS/arch, downloads the latest
+// qatlas-server release artifact from GitHub, installs to
+// ~/.local/bin, and prints next-step pointers. Kept in a separate
+// file so it can be edited as a real .sh (syntax highlighting +
+// shellcheck) and reviewed standalone.
+//
+//go:embed install-server.sh
+var installServerScript string
 
 // Version is overridden at build time via:
 //
@@ -69,7 +81,7 @@ func main() {
 	// into the BaseApp. Anything we mutate after construction is
 	// ignored by the app instance even though cobra.Execute() does
 	// see it. Bug repro: setting QATLAS_PB_DATA_DIR and running
-	// `quantumatlas superuser upsert ...` used to silently write to
+	// `qatlas-server superuser upsert ...` used to silently write to
 	// ./build/pb_data because the injection happened post-New().
 	injectHTTPFlag(cfg)
 	injectPBDataDirFlag(cfg)
@@ -87,6 +99,12 @@ func main() {
 	// `storage prune` enumerates and deletes noncurrent S3 versions).
 	// Same registration timing constraint as pat above.
 	app.RootCmd.AddCommand(NewStorageCommand())
+
+	// Mount the `service` subcommand group (install / uninstall / start /
+	// stop / restart / status — wraps kardianos/service to manage the
+	// systemd unit / launchd plist / Windows SCM entry). Same timing
+	// constraint as pat / storage above.
+	app.RootCmd.AddCommand(NewServiceCommand())
 
 	// Install our default PAT-surface rate-limit rules. Done at
 	// OnBootstrap (after PocketBase has loaded settings from the DB)
@@ -162,6 +180,10 @@ func main() {
 	}
 
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
+		// Capture process start time the first time a serve event
+		// fires. /health uses this to report uptime_seconds.
+		serverStarted := time.Now()
+
 		// Optional: force a tcp4-native listener when the operator opts
 		// in via QATLAS_FORCE_TCP4=1. Background:
 		//
@@ -192,7 +214,7 @@ func main() {
 			}
 		}
 
-		registerRoutes(se, app, cfg, rawStore, shareStore, claimStore, enforcer)
+		registerRoutes(se, app, cfg, rawStore, shareStore, claimStore, enforcer, serverStarted)
 
 		// Serve the embedded SPA last as the catch-all. apis.Static's
 		// indexFallback=true means any path that doesn't match a real
@@ -227,10 +249,23 @@ func initClaimStore(cfg *config.Config) (*mineruclaim.Store, error) {
 // LocalStore (cfg.RawDir) and S3Store (QATLAS_S3_*) based on
 // cfg.S3Enabled() — see internal/config/config.go for the
 // invariant that guarantees this can't be half-configured.
+//
+// When cfg.S3PublicEndpoint is set and distinct from cfg.S3Endpoint we
+// use NewS3StoreDual so presigned URLs handed to end-user clients
+// point at the public endpoint (server↔RustFS still goes through the
+// internal endpoint). Empty / equal collapses to single-endpoint mode.
 func initRawStore(cfg *config.Config) (objstore.Store, error) {
 	if cfg.S3Enabled() {
-		log.Printf("raw store: S3 backend %s/%s", cfg.S3Endpoint, cfg.S3Bucket)
-		return objstore.NewS3Store(cfg.S3Endpoint, cfg.S3Bucket, cfg.S3AccessKeyID, cfg.S3SecretAccessKey)
+		if cfg.S3PublicEndpoint != "" && cfg.S3PublicEndpoint != cfg.S3Endpoint {
+			log.Printf("raw store: S3 backend %s/%s (presign via %s)",
+				cfg.S3Endpoint, cfg.S3Bucket, cfg.S3PublicEndpoint)
+		} else {
+			log.Printf("raw store: S3 backend %s/%s", cfg.S3Endpoint, cfg.S3Bucket)
+		}
+		return objstore.NewS3StoreDual(
+			cfg.S3Endpoint, cfg.S3PublicEndpoint,
+			cfg.S3Bucket, cfg.S3AccessKeyID, cfg.S3SecretAccessKey,
+		)
 	}
 	log.Printf("raw store: local backend %s", cfg.RawDir)
 	return objstore.NewLocalStore(cfg.RawDir)
@@ -239,15 +274,39 @@ func initRawStore(cfg *config.Config) (objstore.Store, error) {
 // registerRoutes wires the QuantumAtlas /api/* surface. Most endpoints are
 // implemented under internal/routes/ and pulled in by their respective
 // Register* helpers as we migrate each module in subsequent phases.
-func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawStore objstore.Store, shareStore *shares.Store, claimStore *mineruclaim.Store, enforcer *casbin.Enforcer) {
-	// /health — uptime probe (Python server compat). PocketBase already
+func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawStore objstore.Store, shareStore *shares.Store, claimStore *mineruclaim.Store, enforcer *casbin.Enforcer, started time.Time) {
+	// /health — dependency-aware liveness probe. PocketBase already
 	// owns /api/health, so we expose this at the root to match the old
 	// FastAPI surface used by smoke tests and Caddy health probes.
+	//
+	// Returns aggregated status of:
+	//   - rawstore  (RustFS BucketExists or local fs)
+	//   - neo4j     (Bolt VerifyConnectivity)
+	//   - wiki      (git HEAD short SHA + commit time)
+	//
+	// Always 200 — `status` in the body is the source of truth. See
+	// internal/healthz for the shape and aggregation rules.
+	probes := healthz.Probes{
+		Cfg:      cfg,
+		RawStore: rawStore,
+		Version:  Version,
+		Started:  started,
+	}
 	se.Router.GET("/health", func(re *core.RequestEvent) error {
-		return re.JSON(200, map[string]any{
-			"status":  "healthy",
-			"version": Version,
-		})
+		res := healthz.Run(re.Request.Context(), probes)
+		return re.JSON(200, res)
+	})
+
+	// /install-server.sh — public installer that downloads the latest
+	// qatlas-server binary from GitHub releases. Serves the static
+	// script verbatim. Caching: short max-age so a fresh release is
+	// picked up within ~5 min of cutover but we don't hammer the
+	// server for every curl|sh.
+	se.Router.GET("/install-server.sh", func(re *core.RequestEvent) error {
+		re.Response.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
+		re.Response.Header().Set("Cache-Control", "public, max-age=300")
+		_, err := re.Response.Write([]byte(installServerScript))
+		return err
 	})
 
 	// /api/server/info — minimal placeholder until internal/routes/info.go
@@ -284,7 +343,7 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 
 // injectHTTPFlag mutates os.Args to add --http=<addr> when the user invokes
 // the "serve" subcommand without supplying their own --http. This lets a
-// plain `quantumatlas serve` pick up QATLAS_SERVER_HOST/PORT from .env.
+// plain `qatlas-server serve` pick up QATLAS_SERVER_HOST/PORT from .env.
 func injectHTTPFlag(cfg *config.Config) {
 	if len(os.Args) < 2 || os.Args[1] != "serve" {
 		return
@@ -308,11 +367,11 @@ func injectHTTPFlag(cfg *config.Config) {
 // don't want SQLite state landing in. cfg.PBDataDir always carries a
 // value (XDG default in config.Load), so injecting it makes
 //
-//	quantumatlas serve
+//	qatlas-server serve
 //
 // equivalent to
 //
-//	quantumatlas --dir=$HOME/.local/share/quantum-atlas/pb_data serve
+//	qatlas-server --dir=$HOME/.local/share/quantum-atlas/pb_data serve
 //
 // on a fresh box, while still respecting any operator-supplied --dir.
 //
@@ -407,7 +466,7 @@ func maybeIPv4Listener(addr string) (net.Listener, error) {
 // Resolution order (first hit wins):
 //  1. $QATLAS_DOTENV — explicit override; required for systemd installs
 //     where CWD is not the .env-containing dir.
-//  2. ./.env — relative to CWD, for ad-hoc dev `quantumatlas serve`
+//  2. ./.env — relative to CWD, for ad-hoc dev `qatlas-server serve`
 //     invocations from the project directory.
 //
 // We deliberately do NOT walk up the filesystem looking for any .env —

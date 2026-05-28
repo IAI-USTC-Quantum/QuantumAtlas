@@ -1,0 +1,554 @@
+package main
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"os/user"
+	"path/filepath"
+	"strconv"
+	"strings"
+
+	"github.com/kardianos/service"
+	"github.com/spf13/cobra"
+)
+
+// defaultServiceName is the systemd unit / launchd plist / SCM service
+// name installed by `service install` when --name isn't passed.
+const defaultServiceName = "qatlas-server"
+
+// noopProgram satisfies service.Interface. The library requires this
+// interface to construct service.Service even for install/uninstall calls
+// that never invoke Run(). The actual daemon process is the existing
+// `qatlas-server serve` subcommand (PocketBase's HTTP server), not anything
+// the library spawns — so Start/Stop here are no-ops.
+type noopProgram struct{}
+
+func (noopProgram) Start(service.Service) error { return nil }
+func (noopProgram) Stop(service.Service) error  { return nil }
+
+// serviceInstallOpts captures the flags accepted by `service install`.
+type serviceInstallOpts struct {
+	Name       string
+	Mode       string // "user" | "system" | "" (autodetect)
+	DotenvPath string
+	Bind       string
+	DryRun     bool
+	Force      bool
+}
+
+// NewServiceCommand wires the `service` subcommand tree onto the
+// PocketBase root command. Registered from main.go::main() before
+// app.Start(), same registration timing constraint as `pat` and `storage`.
+func NewServiceCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "service",
+		Short: "Manage qatlas-server as a managed system service (systemd / launchd / SCM)",
+		Long: `Manage qatlas-server as a managed system service.
+
+Wraps github.com/kardianos/service to install a sandboxed systemd unit
+(or launchd plist / Windows SCM entry on other platforms). After install,
+service management goes through either this command (qatlas-server service
+start/stop/status) or natively via systemctl — they are equivalent because
+the library is just a thin systemctl wrapper that exits after Install().
+
+On Linux the installed unit ships with defense-in-depth hardening
+(NoNewPrivileges, PrivateTmp, ProtectSystem=full, ReadWritePaths,
+LockPersonality, RestrictRealtime). On macOS / Windows the library
+defaults are used and have not been production-tested — file an issue.`,
+	}
+	cmd.AddCommand(newServiceInstallCommand())
+	cmd.AddCommand(newServiceUninstallCommand())
+	cmd.AddCommand(newServiceStartCommand())
+	cmd.AddCommand(newServiceStopCommand())
+	cmd.AddCommand(newServiceRestartCommand())
+	cmd.AddCommand(newServiceStatusCommand())
+	return cmd
+}
+
+// install --------------------------------------------------------------------
+
+func newServiceInstallCommand() *cobra.Command {
+	opts := serviceInstallOpts{}
+	cmd := &cobra.Command{
+		Use:   "install",
+		Short: "Install qatlas-server as a managed service",
+		Long: `Install qatlas-server as a managed service.
+
+Interactive mode (default, TTY): prompts for mode (user/system), confirms
+the auto-detected .env path, renders the unit content for [Y/n] review,
+then writes the unit and starts the service.
+
+Non-interactive mode (no TTY, e.g. CI / piped stdin): --mode and --force
+are required, no prompts are issued.
+
+Examples:
+  # Interactive — auto-detect everything, prompt at each step
+  qatlas-server service install
+
+  # CI-style — fully explicit, no prompts
+  qatlas-server service install --mode user \
+      --dotenv-path ~/QuantumAtlas/.env --force
+
+  # Preview the rendered unit without writing
+  qatlas-server service install --dry-run --mode system \
+      --dotenv-path /etc/quantum-atlas/.env`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runServiceInstall(opts)
+		},
+	}
+	cmd.Flags().StringVar(&opts.Name, "name", defaultServiceName, "Service unit name (<name>.service on Linux)")
+	cmd.Flags().StringVar(&opts.Mode, "mode", "", `"user" or "system" (default: auto-detected from uid; prompted in TTY)`)
+	cmd.Flags().StringVar(&opts.DotenvPath, "dotenv-path", "", "Path to .env file (default: $QATLAS_DOTENV, then ~/QuantumAtlas/.env, then ./.env)")
+	cmd.Flags().StringVar(&opts.Bind, "bind", "127.0.0.1:4200", "HTTP bind address for `serve --http=...`")
+	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "Render the unit to stdout without writing or reloading systemd")
+	cmd.Flags().BoolVar(&opts.Force, "force", false, "Overwrite an existing unit without prompting; required in non-TTY contexts")
+	return cmd
+}
+
+func runServiceInstall(opts serviceInstallOpts) error {
+	tty := isTTY()
+	if !tty && (!opts.Force || opts.Mode == "") {
+		return errors.New("non-interactive install requires --mode and --force")
+	}
+	if err := resolveMode(&opts, tty); err != nil {
+		return err
+	}
+	if err := resolveDotenvPath(&opts, tty); err != nil {
+		return err
+	}
+
+	cfg, err := buildServiceConfig(opts)
+	if err != nil {
+		return err
+	}
+	execPath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("os.Executable: %w", err)
+	}
+
+	rendered, err := renderSystemdUnit(cfg, execPath)
+	if err != nil {
+		return fmt.Errorf("render unit: %w", err)
+	}
+	fmt.Println("--- rendered unit ---")
+	fmt.Print(rendered)
+	fmt.Println("--- end ---")
+
+	if opts.DryRun {
+		fmt.Println("(--dry-run: nothing written)")
+		return nil
+	}
+
+	if tty && !opts.Force {
+		ok, err := promptYesNo("Write this unit and start the service?", true)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return errors.New("aborted by user")
+		}
+	}
+
+	svc, err := service.New(noopProgram{}, cfg)
+	if err != nil {
+		return fmt.Errorf("construct service: %w", err)
+	}
+
+	// Detect existing unit and offer a nicer overwrite path than the
+	// library's "Init already exists" error from Install().
+	if status, statusErr := svc.Status(); statusErr == nil && status != service.StatusUnknown {
+		if !opts.Force {
+			if !tty {
+				return fmt.Errorf("service %s already installed; pass --force to overwrite", opts.Name)
+			}
+			ok, err := promptYesNo(fmt.Sprintf("Service %s is already installed. Overwrite?", opts.Name), false)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return errors.New("aborted by user")
+			}
+		}
+		_ = svc.Stop()
+		if err := svc.Uninstall(); err != nil {
+			return fmt.Errorf("remove existing unit: %w", err)
+		}
+	}
+
+	if err := svc.Install(); err != nil {
+		return fmt.Errorf("install: %w", err)
+	}
+	fmt.Printf("Installed service %s (mode=%s).\n", opts.Name, opts.Mode)
+
+	if err := svc.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: install succeeded but start failed: %v\n", err)
+		return nil
+	}
+	fmt.Printf("Started service %s. Manage via `qatlas-server service status` or `systemctl%s status %s`.\n",
+		opts.Name, userFlagFor(opts.Mode), opts.Name)
+	return nil
+}
+
+// resolveMode picks user vs system mode. Explicit --mode wins; otherwise
+// the uid is used as a hint (root -> system, else user), prompted for
+// confirmation in TTY contexts and rejected in non-TTY.
+func resolveMode(opts *serviceInstallOpts, tty bool) error {
+	if opts.Mode != "" {
+		switch opts.Mode {
+		case "user", "system":
+			return nil
+		default:
+			return fmt.Errorf("invalid --mode %q (want user|system)", opts.Mode)
+		}
+	}
+	suggested := "user"
+	if os.Geteuid() == 0 {
+		suggested = "system"
+	}
+	if !tty {
+		return fmt.Errorf("--mode required in non-interactive context (suggested: %s)", suggested)
+	}
+	ok, err := promptYesNo(fmt.Sprintf("Detected uid=%d, install in %s mode?", os.Geteuid(), suggested), true)
+	if err != nil {
+		return err
+	}
+	if ok {
+		opts.Mode = suggested
+	} else if suggested == "user" {
+		opts.Mode = "system"
+	} else {
+		opts.Mode = "user"
+	}
+	return nil
+}
+
+// resolveDotenvPath fills opts.DotenvPath: explicit flag > $QATLAS_DOTENV >
+// auto-detect, then validates the path exists and is a regular file.
+func resolveDotenvPath(opts *serviceInstallOpts, tty bool) error {
+	if opts.DotenvPath != "" {
+		return validateDotenvPath(opts.DotenvPath)
+	}
+	if env := strings.TrimSpace(os.Getenv("QATLAS_DOTENV")); env != "" {
+		opts.DotenvPath = env
+		return validateDotenvPath(env)
+	}
+	candidates := autodetectDotenvCandidates()
+	var found string
+	for _, c := range candidates {
+		if info, err := os.Stat(c); err == nil && !info.IsDir() {
+			found = c
+			break
+		}
+	}
+	if found == "" {
+		return fmt.Errorf("could not auto-detect .env file (tried: %s); pass --dotenv-path", strings.Join(candidates, ", "))
+	}
+	if tty {
+		ok, err := promptYesNo(fmt.Sprintf("Use .env at %s?", found), true)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return errors.New("aborted; pass --dotenv-path explicitly")
+		}
+	}
+	opts.DotenvPath = found
+	return nil
+}
+
+func autodetectDotenvCandidates() []string {
+	out := []string{}
+	if home, err := os.UserHomeDir(); err == nil {
+		out = append(out, filepath.Join(home, "QuantumAtlas", ".env"))
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		out = append(out, filepath.Join(cwd, ".env"))
+	}
+	return out
+}
+
+func validateDotenvPath(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("dotenv path %s: %w", path, err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("dotenv path %s is a directory, expected a regular file", path)
+	}
+	return nil
+}
+
+// computeReadWritePaths returns the paths systemd should grant write access
+// to under ReadWritePaths=. We include:
+//   - the .env directory (server may rewrite .env in future migrations)
+//   - $XDG_DATA_HOME/quantum-atlas (PB_DATA_DIR / DATA_DIR / RAW_DIR fallback)
+//   - ~/QuantumAtlas-Wiki if it exists (git fetch writes refs)
+//
+// Duplicates are removed. Order is preserved for stable test snapshots.
+func computeReadWritePaths(absDotenv string) []string {
+	paths := []string{filepath.Dir(absDotenv)}
+
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		share := strings.TrimSpace(os.Getenv("XDG_DATA_HOME"))
+		if share == "" {
+			share = filepath.Join(home, ".local", "share")
+		}
+		paths = append(paths, filepath.Join(share, "quantum-atlas"))
+
+		wiki := filepath.Join(home, "QuantumAtlas-Wiki")
+		if info, err := os.Stat(wiki); err == nil && info.IsDir() {
+			paths = append(paths, wiki)
+		}
+	}
+
+	seen := make(map[string]bool, len(paths))
+	out := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	return out
+}
+
+// buildServiceConfig assembles a *service.Config aligned with our template.
+// Exported (within the package) so tests can build a fixed config without
+// going through the interactive install flow.
+func buildServiceConfig(opts serviceInstallOpts) (*service.Config, error) {
+	absDotenv, err := filepath.Abs(opts.DotenvPath)
+	if err != nil {
+		return nil, fmt.Errorf("dotenv abs: %w", err)
+	}
+	workingDir := filepath.Dir(absDotenv)
+	rwPaths := computeReadWritePaths(absDotenv)
+
+	wantedBy := "default.target"
+	userName := ""
+	if opts.Mode == "system" {
+		wantedBy = "multi-user.target"
+		userName = resolveSystemUser()
+	}
+
+	return &service.Config{
+		Name:             opts.Name,
+		DisplayName:      "QuantumAtlas server",
+		Description:      "QuantumAtlas server (Go + PocketBase)",
+		UserName:         userName,
+		WorkingDirectory: workingDir,
+		Arguments:        []string{"serve", "--http=" + opts.Bind},
+		EnvVars: map[string]string{
+			"QATLAS_DOTENV": absDotenv,
+		},
+		Option: service.KeyValue{
+			"SystemdScript":  serviceUnitTemplate,
+			"UserService":    opts.Mode == "user",
+			"ReadWritePaths": strings.Join(rwPaths, " "),
+			"WantedBy":       wantedBy,
+		},
+	}, nil
+}
+
+// resolveSystemUser picks a sensible User= value for system-mode units.
+// Prefers $SUDO_USER (operator ran `sudo qatlas-server service install`),
+// falls back to the username corresponding to the current effective uid,
+// finally empty (caller will run as root, not recommended but allowed).
+func resolveSystemUser() string {
+	if u := strings.TrimSpace(os.Getenv("SUDO_USER")); u != "" {
+		return u
+	}
+	if u, err := user.LookupId(strconv.Itoa(os.Geteuid())); err == nil {
+		return u.Username
+	}
+	return ""
+}
+
+// lifecycle (uninstall / start / stop / restart / status) -------------------
+
+type serviceLifecycleOpts struct {
+	Name string
+	Mode string
+}
+
+func addLifecycleFlags(cmd *cobra.Command, opts *serviceLifecycleOpts) {
+	cmd.Flags().StringVar(&opts.Name, "name", defaultServiceName, "Service unit name")
+	cmd.Flags().StringVar(&opts.Mode, "mode", "", `"user" or "system" (default: auto-detected from uid)`)
+}
+
+// newManagedService builds a minimal service.Service for lifecycle calls
+// that don't need the full template-aware Config (start/stop/status only
+// need Name and the UserService Option to pick systemctl --user vs system).
+func newManagedService(opts serviceLifecycleOpts) (service.Service, error) {
+	userService := opts.Mode == "user" || (opts.Mode == "" && os.Geteuid() != 0)
+	cfg := &service.Config{
+		Name: opts.Name,
+		Option: service.KeyValue{
+			"UserService": userService,
+		},
+	}
+	return service.New(noopProgram{}, cfg)
+}
+
+func newServiceUninstallCommand() *cobra.Command {
+	opts := serviceLifecycleOpts{}
+	cmd := &cobra.Command{
+		Use:   "uninstall",
+		Short: "Stop and remove the installed service",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := newManagedService(opts)
+			if err != nil {
+				return err
+			}
+			_ = svc.Stop() // best-effort; may not be running
+			if err := svc.Uninstall(); err != nil {
+				return fmt.Errorf("uninstall: %w", err)
+			}
+			fmt.Printf("Uninstalled service %s.\n", opts.Name)
+			return nil
+		},
+	}
+	addLifecycleFlags(cmd, &opts)
+	return cmd
+}
+
+func newServiceStartCommand() *cobra.Command {
+	opts := serviceLifecycleOpts{}
+	cmd := &cobra.Command{
+		Use:   "start",
+		Short: "Start the installed service (equivalent to `systemctl start <name>`)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := newManagedService(opts)
+			if err != nil {
+				return err
+			}
+			return svc.Start()
+		},
+	}
+	addLifecycleFlags(cmd, &opts)
+	return cmd
+}
+
+func newServiceStopCommand() *cobra.Command {
+	opts := serviceLifecycleOpts{}
+	cmd := &cobra.Command{
+		Use:   "stop",
+		Short: "Stop the installed service (equivalent to `systemctl stop <name>`)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := newManagedService(opts)
+			if err != nil {
+				return err
+			}
+			return svc.Stop()
+		},
+	}
+	addLifecycleFlags(cmd, &opts)
+	return cmd
+}
+
+func newServiceRestartCommand() *cobra.Command {
+	opts := serviceLifecycleOpts{}
+	cmd := &cobra.Command{
+		Use:   "restart",
+		Short: "Restart the installed service",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := newManagedService(opts)
+			if err != nil {
+				return err
+			}
+			return svc.Restart()
+		},
+	}
+	addLifecycleFlags(cmd, &opts)
+	return cmd
+}
+
+func newServiceStatusCommand() *cobra.Command {
+	opts := serviceLifecycleOpts{}
+	cmd := &cobra.Command{
+		Use:   "status",
+		Short: "Show service status (passes through systemctl status output)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runServiceStatus(opts)
+		},
+	}
+	addLifecycleFlags(cmd, &opts)
+	return cmd
+}
+
+func runServiceStatus(opts serviceLifecycleOpts) error {
+	svc, err := newManagedService(opts)
+	if err != nil {
+		return err
+	}
+	status, statusErr := svc.Status()
+	label := "unknown"
+	switch status {
+	case service.StatusRunning:
+		label = "running"
+	case service.StatusStopped:
+		label = "stopped"
+	}
+	fmt.Printf("Service %s: %s\n", opts.Name, label)
+	if errors.Is(statusErr, service.ErrNotInstalled) {
+		fmt.Println("(not installed)")
+		return nil
+	}
+
+	// Pass through full systemctl status for richer info than the
+	// library's tri-state enum. Failure here is non-fatal — on macOS /
+	// Windows there's no systemctl to call.
+	args := []string{"status", opts.Name, "--no-pager"}
+	if opts.Mode == "user" || (opts.Mode == "" && os.Geteuid() != 0) {
+		args = append([]string{"--user"}, args...)
+	}
+	c := exec.Command("systemctl", args...)
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+	_ = c.Run()
+	return nil
+}
+
+// helpers --------------------------------------------------------------------
+
+func promptYesNo(question string, defaultYes bool) (bool, error) {
+	hint := "[Y/n]"
+	if !defaultYes {
+		hint = "[y/N]"
+	}
+	fmt.Printf("%s %s ", question, hint)
+	var line string
+	_, err := fmt.Scanln(&line)
+	if err != nil {
+		// Empty line surfaces as "unexpected newline" — treat as default.
+		if strings.Contains(err.Error(), "unexpected newline") {
+			return defaultYes, nil
+		}
+		return false, err
+	}
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "y", "yes":
+		return true, nil
+	case "n", "no":
+		return false, nil
+	default:
+		return defaultYes, nil
+	}
+}
+
+func isTTY() bool {
+	fi, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
+}
+
+func userFlagFor(mode string) string {
+	if mode == "user" {
+		return " --user"
+	}
+	return ""
+}

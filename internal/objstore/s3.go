@@ -243,7 +243,7 @@ func (s *S3Store) PresignGet(ctx context.Context, key string, ttl time.Duration)
 
 // EnsureVersioning makes sure bucket versioning is "Enabled" so a later
 // PutObject-with-same-key keeps the old version reachable via
-// ListObjectVersions / GetObject?versionId=. Called by cmd/server/main.go
+// ListObjectVersions / GetObject?versionId=. Called by cmd/qatlas-server/main.go
 // at boot.
 //
 // Idempotent: if status is already "Enabled" we skip the Set call to

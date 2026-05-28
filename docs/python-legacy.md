@@ -1,7 +1,7 @@
 # 旧版 Python server / FastAPI 路径（已下线）
 
 > 本文档收录 `atlas/server/` 这套 FastAPI server 相关的开发与部署命令。它仍
-> 在仓库里，但**已不是生产路径**——线上跑的是 Go binary（`cmd/server/`）+
+> 在仓库里，但**已不是生产路径**——线上跑的是 Go binary（`cmd/qatlas-server/`）+
 > 嵌入式 PocketBase。下面内容保留只是为了在以下三种场景下做兼容性参考：
 >
 > - 排查 Python 端 client（`atlas/`）行为时想本地起一个 FastAPI mock 端

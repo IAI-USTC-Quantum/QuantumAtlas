@@ -5,14 +5,14 @@
 //
 // Embedding the SPA from the same directory that owns the npm project
 // means there is no "copy build output into a sibling package" step:
-// `go build ./cmd/server` after `npm run build` always picks up the
+// `go build ./cmd/qatlas-server` after `npm run build` always picks up the
 // latest assets. Go's //go:embed rejects ".." path segments, so the
 // embed.go file must sit next to dist/ — putting it in web/ keeps
 // dist/ ownership with the package that produces it.
 //
 // The frontend is built with vite's default base of "/", so all asset
 // URLs are absolute root paths (/assets/index-*.js etc.). The static
-// handler in cmd/server/main.go falls back to /index.html on 404 to
+// handler in cmd/qatlas-server/main.go falls back to /index.html on 404 to
 // support SPA client-side routing.
 package web
 

@@ -5,10 +5,12 @@ go 1.26.2
 require (
 	github.com/casbin/casbin/v2 v2.135.0
 	github.com/joho/godotenv v1.5.1
+	github.com/kardianos/service v1.2.4
 	github.com/minio/minio-go/v7 v7.2.0
 	github.com/neo4j/neo4j-go-driver/v6 v6.1.0
 	github.com/pocketbase/dbx v1.12.0
 	github.com/pocketbase/pocketbase v0.38.2
+	github.com/spf13/cobra v1.10.2
 	golang.org/x/crypto v0.52.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -41,7 +43,6 @@ require (
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rs/xid v1.6.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
-	github.com/spf13/cobra v1.10.2 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/tinylib/msgp v1.6.1 // indirect
 	github.com/zeebo/xxh3 v1.1.0 // indirect

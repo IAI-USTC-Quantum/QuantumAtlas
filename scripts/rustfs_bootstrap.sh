@@ -81,7 +81,7 @@ echo "[3/6] ensure policy: $POLICY (scoped to bucket $BUCKET)"
 #      separate AWS perms from #1. Stat/Get on the current version
 #      works under s3:GetObject, but reading a specific version-id
 #      (?versionId=) needs s3:GetObjectVersion. Same split for delete.
-#      `quantumatlas storage prune` calls DeleteObject with a version-id
+#      `qatlas-server storage prune` calls DeleteObject with a version-id
 #      to drop noncurrent versions, so this perm is required.
 #   3. Bucket read (ListBucket/ListBucketVersions/GetBucketLocation):
 #      ListBucketVersions backs `storage prune`'s enumeration call.
@@ -96,7 +96,7 @@ echo "[3/6] ensure policy: $POLICY (scoped to bucket $BUCKET)"
 #     RustFS 1.0.0-beta.5 rejects these action names ("invalid action").
 #     We don't currently use lifecycle anyway — noncurrent versions are
 #     retained forever (Synology-Snapshot model), cleanup is via
-#     `quantumatlas storage prune` not automatic expiration.
+#     `qatlas-server storage prune` not automatic expiration.
 #   - s3:DeleteBucket / s3:PutBucketPolicy / s3:PutBucketAcl: bucket
 #     destruction and ACL changes are root-only ops, never qatlas's job.
 POLICY_FILE="$WORKDIR/${POLICY}.json"
