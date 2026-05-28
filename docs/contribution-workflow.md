@@ -199,12 +199,28 @@ scope 的 obj/act 在 `scopeGuard` 抛 403 时会回显在 `detail` 里——CLI
 
 ### 获取 (1) PAT
 
+**A. 浏览器（多数人）**
+
 1. 浏览器登录后打开 `https://<server>/pat`；
 2. "New token" → 填名字（如 `nightly-ci`）+ 可选 description + 必选过期天数（默认 90 天）+ 勾选需要的 scope；
 3. 服务器返回的明文**只显示一次**——立即拷到 GH Actions secret / systemd `EnvironmentFile` / 本地 `.env`；
 4. 之后这条 PAT 在列表里只显示前缀（`qat_xxxxxxxx…`）、scope 标签和 last-used 时间戳，需要换号就 Revoke 再创建一条。
 
-**PAT 不能用来管理 PAT**：`/api/pat` 端点用 `sessionGuard` 而非 `authGuard`——只接受浏览器 session token，PAT auth 一律 403。这跟 GitHub fine-grained PAT 一致：一条 PAT 即便泄露也不能 mint 出更多 PAT，限制爆炸半径。
+**B. 服务端 shell（运维 / CI 自动化）**
+
+如果你 SSH 上了部署服务端二进制的主机，可以直接用 `qatlas-server pat` 子命令而不开浏览器：
+
+```bash
+sudo -u quantumatlas /opt/quantum-atlas/qatlas-server pat mint \
+    --user me@example.com --name nightly-ci \
+    --scopes shares:write --expires-in-days 365
+# stdout: qat_xxxxxxxxxxxxxxxxxxxxxxxxxxx
+# stderr: minted PAT id=... prefix=qat_xxxx... user=me@example.com scopes=[shares:write] expires_at=...
+```
+
+`mint` 输出的明文走 stdout（可以 `SECRET=$(qatlas-server pat mint ...)` 直接捕获到变量），元数据走 stderr。配套 `list` / `revoke <id>` / `scopes` 三个子命令分别看现状、撤销、查 scope 词表。这条路径绕开 `sessionGuard`（前提：你已经是有 shell 权限的运维人，DB 文件你本来就能直接改），适合 nightly secret 之类不开浏览器的场景。
+
+**PAT 不能用来管理 PAT**：`/api/pat` HTTP 端点用 `sessionGuard` 而非 `authGuard`——只接受浏览器 session token，PAT auth 一律 403。这跟 GitHub fine-grained PAT 一致：一条 PAT 即便泄露也不能 mint 出更多 PAT，限制爆炸半径。服务端 CLI 之所以可以"绕过"，是因为执行者已经是 shell 权限持有者，跟 HTTP 远端调用是两套信任模型。
 
 ### 获取 (2) session token
 
@@ -221,11 +237,28 @@ scope 的 obj/act 在 `scopeGuard` 抛 403 时会回显在 `detail` 里——CLI
 
 PAT 的实现说明：每条 PAT 在 SQLite `pat_tokens` 集合里只存 bcrypt 哈希（`token_hash` 字段 hidden=true，admin UI 都不显示），明文从不持久化；scope 列表以 JSON 字符串存在 `scopes` 字段；过期时间存 `expires_at`（强制非空）；服务端用 `last_used_at` 记录每次成功认证的时间戳。代码见 `internal/pat/{pat.go,scopes.go,migrations.go}` 和 `internal/routes/{pat.go,auth.go,scope_guard.go}`。
 
-客户端 CLI 调用写口时，要带 bearer token：
+客户端 CLI 调用写口时，要带 bearer token。**推荐用 `qatlas auth login`**（类似 `gh auth login`），凭证存在 `~/.config/qatlas/hosts.yml`，之后任何 `qatlas` 子命令自动捡起来，不必每次 `export`：
+
+```bash
+# 一次性配置：
+qatlas auth login -H quantum-atlas.ai
+# Paste your PAT plaintext: <paste qat_... here, hidden input>
+
+qatlas auth status       # 查看已登录的所有 host
+qatlas auth token        # 打印当前 host 的 token，方便 pipe 给 curl
+qatlas auth logout -H quantum-atlas.ai   # 撤销本地凭证
+
+# 之后所有 qatlas 子命令直接用：
+qatlas upload pdf quant-ph/9508027v1 --pdf paper.pdf
+```
+
+token 解析优先级（同 `gh`）：`--token` 命令行 > `QATLAS_TOKEN` 环境变量 > `~/.config/qatlas/hosts.yml` 里匹配当前 host 的条目 > 无凭证。
+
+**纯环境变量方式**仍然支持（适合一次性脚本 / CI runner）：
 
 ```bash
 export QATLAS_SERVER_URL=https://quantum-atlas.ai
-export QATLAS_TOKEN=$(pbcopy 出来的串)            # 或 --token 命令行覆盖
+export QATLAS_TOKEN=qat_xxxxx                    # 或 --token 命令行覆盖
 
 qatlas upload pdf quant-ph/9508027v1 --pdf paper.pdf
 
