@@ -95,6 +95,21 @@ type Config struct {
 	S3Bucket          string
 	S3AccessKeyID     string
 	S3SecretAccessKey string
+
+	// Shared secret used to authenticate RustFS bucket-notification
+	// webhook calls into POST /api/_rustfs/event. RustFS adds it to
+	// every push as `Authorization: Bearer <token>` (per its
+	// notify_webhook target config); qatlas rejects requests whose
+	// header doesn't match this value with 401.
+	//
+	// Set the SAME value here AND in the RustFS container's
+	// RUSTFS_NOTIFY_WEBHOOK_AUTH_TOKEN_QATLAS env var. Generated
+	// once with `openssl rand -hex 32`.
+	//
+	// When empty, the /api/_rustfs/event handler refuses to mount —
+	// failing closed rather than accepting unauthenticated upserts
+	// into the paperindex catalog.
+	RustFSEventToken string
 }
 
 // Load resolves the configuration from process environment.
@@ -149,6 +164,7 @@ func Load(dotenvPath string) (*Config, error) {
 		S3Bucket:              firstEnv("QATLAS_S3_BUCKET"),
 		S3AccessKeyID:         firstEnv("QATLAS_S3_ACCESS_KEY_ID"),
 		S3SecretAccessKey:     firstEnv("QATLAS_S3_SECRET_ACCESS_KEY"),
+		RustFSEventToken:      firstEnv("QATLAS_RUSTFS_EVENT_TOKEN"),
 	}
 
 	// HTTP bind: assemble from QATLAS_SERVER_HOST + _PORT if QATLAS_HTTP_ADDR

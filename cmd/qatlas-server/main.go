@@ -205,7 +205,7 @@ func main() {
 	// section. The actual parquet must be (re)built via the
 	// bootstrap-index subcommand; if it doesn't exist yet, the
 	// Store starts up empty and queries return zero.
-	paperIndex := initPaperIndex(cfg)
+	paperIndex := initPaperIndex(cfg, rawStore)
 
 	// Build the wiki in-memory cache. Walks cfg.WikiDir once at
 	// startup so the first /api/pages request hits warm data; a
@@ -320,13 +320,18 @@ func initRawStore(cfg *config.Config) (objstore.Store, error) {
 // don't need the catalog — needs-mineru falls back to a trivial
 // LocalStore walk which is fast on a small dev RAW_DIR).
 //
+// Takes the already-constructed objstore.Store so paperindex shares
+// the exact same bucket/credentials/dual-endpoint configuration as the
+// /api/papers handlers — single source of truth for "how do we talk to
+// RustFS".
+//
 // Failure to build / load the catalog is non-fatal: we log a warning
 // and return nil so handlers fall back to the legacy slow-but-correct
 // store.ListPrefix path. The most common failure mode is "parquet
 // doesn't exist yet in the bucket" — Store.New handles that as a
 // soft-fail and starts with an empty catalog, so this returns
 // non-nil even then.
-func initPaperIndex(cfg *config.Config) *paperindex.Store {
+func initPaperIndex(cfg *config.Config, rawStore objstore.Store) *paperindex.Store {
 	if !cfg.S3Enabled() {
 		log.Printf("paperindex: skipped (S3 backend not enabled — handlers will fall back to LocalStore walks)")
 		return nil
@@ -334,10 +339,7 @@ func initPaperIndex(cfg *config.Config) *paperindex.Store {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	store, err := paperindex.New(ctx, paperindex.Config{
-		S3Endpoint:      cfg.S3Endpoint,
-		Bucket:          cfg.S3Bucket,
-		AccessKeyID:     cfg.S3AccessKeyID,
-		SecretAccessKey: cfg.S3SecretAccessKey,
+		Store: rawStore,
 	})
 	if err != nil {
 		log.Printf("paperindex: init failed (%v); handlers will fall back to legacy LIST-based impl", err)
@@ -437,6 +439,11 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// /api/pat is session-token-only (PAT auth refused by sessionGuard);
 	// no enforcer needed because there's no scope-gated endpoint here.
 	routes.RegisterPAT(se, app)
+
+	// RustFS bucket-notification webhook — see internal/routes/rustfs_event.go.
+	// No-op when cfg.RustFSEventToken is empty or paperIndex is nil
+	// (fail-closed against unauthenticated / un-applicable events).
+	routes.RegisterRustFSEvent(se, cfg, rawStore, paperIndex)
 }
 
 // injectHTTPFlag mutates os.Args to add --http=<addr> when the user invokes
