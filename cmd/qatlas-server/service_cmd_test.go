@@ -312,3 +312,51 @@ func TestComputeReadWritePathsUnderSimulatedSudo(t *testing.T) {
 			unwantedShare, joined)
 	}
 }
+
+// TestGuardSudoUserModeMismatchRejectsSudoPlusUser pins the refusal path:
+// when sudo (uid=0 + SUDO_USER set) and --mode user collide, install must
+// fail with an actionable error pointing the operator at the two correct
+// alternatives. Pure-function test — no live process state.
+func TestGuardSudoUserModeMismatchRejectsSudoPlusUser(t *testing.T) {
+	err := guardSudoUserModeMismatch("user", 0 /* root */, "deployer" /* sudo origin */)
+	if err == nil {
+		t.Fatal("expected refusal for sudo + --mode user; got nil")
+	}
+	msg := err.Error()
+	// Spot-check that the message tells the user both ways out so they're
+	// not left guessing. Two substrings, both must appear.
+	for _, want := range []string{"drop sudo", "--mode system"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error message missing hint %q; got: %s", want, msg)
+		}
+	}
+}
+
+// TestGuardSudoUserModeMismatchAllowsSudoSystem covers the production
+// happy path: sudo + system mode is the *intended* combination, never refused.
+func TestGuardSudoUserModeMismatchAllowsSudoSystem(t *testing.T) {
+	if err := guardSudoUserModeMismatch("system", 0, "deployer"); err != nil {
+		t.Errorf("sudo + --mode system must be allowed; got: %v", err)
+	}
+}
+
+// TestGuardSudoUserModeMismatchAllowsPlainUser covers the dev-machine
+// happy path: no sudo + user mode (the original kardianos/service flow,
+// fully supported).
+func TestGuardSudoUserModeMismatchAllowsPlainUser(t *testing.T) {
+	if err := guardSudoUserModeMismatch("user", 1000 /* non-root */, "" /* no sudo */); err != nil {
+		t.Errorf("non-sudo + --mode user must be allowed; got: %v", err)
+	}
+}
+
+// TestGuardSudoUserModeMismatchAllowsRealRootUserMode covers the edge case
+// of a real root login (uid=0 but no SUDO_USER, e.g. someone literally
+// logged in as root). User-mode under bare root is unusual but consistent —
+// the unit lands in /root/.config/systemd/user, which matches the daemon's
+// effective uid. The guard only triggers when SUDO_USER signals a uid-0
+// process that *should* have been a non-root install.
+func TestGuardSudoUserModeMismatchAllowsRealRootUserMode(t *testing.T) {
+	if err := guardSudoUserModeMismatch("user", 0, "" /* no SUDO_USER */); err != nil {
+		t.Errorf("real root + --mode user must be allowed (only sudo-from-non-root is refused); got: %v", err)
+	}
+}

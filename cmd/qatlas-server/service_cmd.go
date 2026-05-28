@@ -115,6 +115,9 @@ func runServiceInstall(opts serviceInstallOpts) error {
 	if err := resolveMode(&opts, tty); err != nil {
 		return err
 	}
+	if err := guardSudoUserModeMismatch(opts.Mode, os.Geteuid(), os.Getenv("SUDO_USER")); err != nil {
+		return err
+	}
 	if err := resolveDotenvPath(&opts, tty); err != nil {
 		return err
 	}
@@ -394,6 +397,35 @@ func resolveSystemUser() string {
 		return u.Username
 	}
 	return ""
+}
+
+// guardSudoUserModeMismatch refuses the broken `sudo qatlas-server service
+// install --mode user` combination upfront.
+//
+// Why it's broken: kardianos/service's user-mode backend computes the unit
+// path via os.UserHomeDir(), which under sudo returns /root (sudo's
+// env_reset). The unit ends up at /root/.config/systemd/user/<name>.service
+// — orphaned from the would-be daemon user's systemd --user instance, and
+// invisible to `systemctl --user`. The library bug is upstream; we can't fix
+// it from here, but we can stop the user before they create the orphan.
+//
+// The legitimate combinations are:
+//   - sudo + --mode system  (production daemon, writes to /etc/systemd/system)
+//   - no sudo + --mode user (per-user daemon, writes to ~/.config/systemd/user)
+// Both work cleanly after the effectiveHomeDir() fix.
+//
+// Pure function (no process state read) so it's trivially testable; the
+// install command supplies live values via os.Geteuid() / os.Getenv.
+func guardSudoUserModeMismatch(mode string, euid int, sudoUser string) error {
+	insideSudo := euid == 0 && strings.TrimSpace(sudoUser) != ""
+	if mode == "user" && insideSudo {
+		return fmt.Errorf("refusing `sudo ... service install --mode user`: " +
+			"sudo + user mode is not supported (the resulting unit would land in /root, not the invoking user's systemd --user dir). " +
+			"Use one of:\n" +
+			"  - to install a per-user service: drop sudo (`qatlas-server service install --mode user ...`)\n" +
+			"  - to install a system service: pass `--mode system` instead")
+	}
+	return nil
 }
 
 // lifecycle (uninstall / start / stop / restart / status) -------------------
