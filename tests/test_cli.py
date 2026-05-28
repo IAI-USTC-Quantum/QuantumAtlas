@@ -55,15 +55,25 @@ def test_release_workflow_publishes_python_and_go_artifacts():
     assert "pypi-publish:" in release_workflow
 
     # Go binaries are cross-compiled via the matrix over (OS, arch).
-    # Each matrix entry runs on its native runner (no cross-toolchain
-    # juggling) and is named after its qatlas-server-<target> artifact.
+    # Each matrix entry runs on its native runner; linux targets build
+    # INSIDE a manylinux2014 container so the binary is dynamic-linked
+    # against very old glibc/libstdc++ symbols (portable across every
+    # modern Linux). The earlier static-link workaround broke DuckDB's
+    # dlopen() in `INSTALL httpfs` at runtime — verify it's not back.
     assert "- target: linux-amd64" in release_workflow
     assert "- target: linux-arm64" in release_workflow
     assert "- target: darwin-arm64" in release_workflow
     assert "qatlas-server-${{ matrix.target }}" in release_workflow
-    # Linux targets use -extldflags=-static so binaries are portable
-    # across distros (e.g. Alibaba Cloud Linux 3 with old libstdc++).
-    assert "-extldflags=-static" in release_workflow
+    assert "manylinux2014_x86_64" in release_workflow
+    assert "manylinux2014_aarch64" in release_workflow
+    # Make sure the actual `go build` invocation does NOT pass the
+    # static-link extldflag (comments in release.yml about the past
+    # workaround are fine — we just match a substring uniquely tied to
+    # the real ldflags command line).
+    assert (
+        '-ldflags "-s -w -X main.Version=${{ needs.prep.outputs.version }}"'
+        in release_workflow
+    )
 
     # PyPI uses Trusted Publishing (no token, OIDC via environment + id-token)
     assert "pypa/gh-action-pypi-publish@release/v1" in release_workflow
