@@ -4,6 +4,7 @@ go 1.26.2
 
 require (
 	github.com/casbin/casbin/v2 v2.135.0
+	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/joho/godotenv v1.5.1
 	github.com/kardianos/service v1.2.4
 	github.com/minio/minio-go/v7 v7.2.0

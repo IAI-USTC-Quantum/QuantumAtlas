@@ -1,0 +1,189 @@
+{
+  "common": {
+    "brand": "QuantumAtlas",
+    "brandTagline": "Knowledge workbench",
+    "language": "Language",
+    "languageNames": { "zh": "中文", "en": "English" },
+    "theme": {
+      "toggle": "Toggle theme",
+      "light": "Light",
+      "dark": "Dark",
+      "system": "System"
+    },
+    "nav": {
+      "home": "Home",
+      "wiki": "Wiki",
+      "search": "Search",
+      "graph": "Graph",
+      "token": "Token",
+      "pat": "PATs"
+    },
+    "status": {
+      "loading": "Loading…",
+      "empty": "No records yet.",
+      "errorTitle": "Something went wrong",
+      "active": "Active",
+      "missing": "Missing"
+    },
+    "actions": {
+      "search": "Search",
+      "copy": "Copy",
+      "cancel": "Cancel",
+      "create": "Create",
+      "submit": "Submit",
+      "close": "Close",
+      "signOut": "Sign out",
+      "reveal": "Reveal",
+      "hide": "Hide",
+      "revoke": "Revoke"
+    },
+    "search": { "placeholder": "Search pages, primitives, algorithms" },
+    "topbar": {
+      "docsLink": "API docs",
+      "userMenu": {
+        "openLabel": "User menu",
+        "tokenLink": "View token",
+        "patLink": "Manage PATs",
+        "signOut": "Sign out"
+      }
+    },
+    "metrics": {
+      "totalPages": "Total pages",
+      "primitives": "Primitives",
+      "algorithms": "Algorithms",
+      "published": "Published",
+      "nodes": "Nodes",
+      "relationships": "Relationships",
+      "labels": "Labels"
+    },
+    "notFound": {
+      "eyebrow": "404",
+      "title": "Page not found",
+      "copy": "This route is not part of the web workspace."
+    }
+  },
+  "home": {
+    "eyebrow": "Quantum algorithm workspace",
+    "title": "QuantumAtlas",
+    "subtitle": "Browse extracted papers, inspect primitives, and hand API-ready tokens to trusted terminals.",
+    "ctaWiki": "Browse wiki",
+    "ctaGraph": "Explore graph",
+    "quickActions": "Quick actions",
+    "ingestPlaceholder": "arxiv-id",
+    "ingestSubmit": "Ingest",
+    "searchKnowledge": "Search knowledge",
+    "runLint": "Run lint check",
+    "recentPages": "Recent pages"
+  },
+  "wiki": {
+    "eyebrow": "Wiki",
+    "title": "Structured knowledge base",
+    "subtitle": "Pages are read from the Wiki Git checkout and rendered by the web app.",
+    "groupTitle": "{{type}}",
+    "searchEyebrow": "Search",
+    "searchTitle": "Find wiki pages",
+    "searchSubtitle": "Search titles, tags, page ids, and extracted content.",
+    "searchInputPlaceholder": "e.g. quantum Fourier transform",
+    "popularTopics": "Popular topics",
+    "resultsFor": "Results for \"{{query}}\"",
+    "detailMeta": { "draft": "draft" }
+  },
+  "graph": {
+    "eyebrow": "Graph",
+    "title": "Knowledge graph overview",
+    "subtitle": "Neo4j-backed topology and schema health for the quantum knowledge graph.",
+    "labelsPanel": "Node labels",
+    "labelsEmpty": "No labels reported",
+    "explorerPanel": "Sample view",
+    "explorerHint": "Typical Algorithm → Primitive → Paper relationship",
+    "nodeEyebrow": "Graph node",
+    "nodeType": "Type: {{type}}",
+    "nodeDetail": "Node detail",
+    "nodeDetailCopy": "Graph node detail pages now live in the web shell. Add a dedicated JSON endpoint when richer node payloads are needed."
+  },
+  "token": {
+    "eyebrow": "PocketBase-authenticated access",
+    "title": "QuantumAtlas Token",
+    "subtitle": "Copy your current PocketBase-issued bearer token for API calls from trusted terminals.",
+    "patHint": "Tired of rotating this every 14 days? Mint a long-lived <patLink>Personal Access Token</patLink> instead — it works in the same Authorization: Bearer header.",
+    "fields": {
+      "scope": "Scope",
+      "scopeValue": "QuantumAtlas API",
+      "identity": "Identity",
+      "source": "Source",
+      "sourceValue": "PocketBase auth session"
+    },
+    "panelEyebrow": "Access token",
+    "ready": "Ready for CLI use",
+    "needSignIn": "Sign in required",
+    "tokenLabel": "Token value",
+    "actions": {
+      "copyToken": "Copy token",
+      "copyCurl": "Copy curl",
+      "copyCliEnv": "Copy CLI env"
+    },
+    "warning": "Treat this value like a password. PocketBase issues it on GitHub OAuth login and rotates it when you sign in again.",
+    "copied": "{{label}} copied",
+    "copyLabels": {
+      "token": "Token",
+      "command": "Command",
+      "cliEnv": "CLI env"
+    }
+  },
+  "pat": {
+    "eyebrow": "Authentication",
+    "title": "Personal Access Tokens",
+    "subtitle": "Long-lived bearer tokens for CLI, CI, and other automation. Each PAT carries an explicit scope set (default deny) and a mandatory expiry (max 365 days), modelled after GitHub fine-grained PATs.",
+    "yourTokens": "Your tokens",
+    "newToken": "New token",
+    "noScopesWarning": "With no scopes selected, this token will be rejected (403) by every write endpoint.",
+    "noScopesBadge": "no scopes (can't call any write endpoint)",
+    "createTitle": "New token",
+    "fields": {
+      "name": "Name (required)",
+      "namePlaceholder": "e.g. nightly-ci",
+      "description": "Description (optional)",
+      "descriptionPlaceholder": "e.g. used by GitHub Actions",
+      "expires": "Expires in (required, max {{max}} days)",
+      "scopes": "Scopes (default deny — explicitly check what this token may do)"
+    },
+    "expiry": {
+      "year": "{{count}} year (max)",
+      "months": "≈ {{count}} months",
+      "month": "≈ {{count}} month",
+      "days": "{{count}} days"
+    },
+    "tokenMeta": {
+      "created": "Created",
+      "expiresAt": "Expires",
+      "lastUsed": "Last used",
+      "never": "Never"
+    },
+    "revokeConfirm": "Revoke token \"{{name}}\"? This cannot be undone — any script using it will start getting 401 immediately.",
+    "issued": {
+      "title": "Copy your token now",
+      "warning": "This is the only time you will see this value. After closing this dialog the server only keeps a one-way hash — there is no way to recover the plaintext.",
+      "copyToken": "Copy token",
+      "copyExport": "Copy export",
+      "use": "Use as Authorization: Bearer {{prefix}}… · expires {{expiresAt}}",
+      "closeHint": "I've copied it — close"
+    },
+    "copied": "Copied"
+  },
+  "login": {
+    "title": "QuantumAtlas",
+    "subtitle": "Sign in with your GitHub account to continue.",
+    "github": "Continue with GitHub",
+    "redirecting": "Redirecting to GitHub…",
+    "failed": "GitHub login failed",
+    "footer": "You will be redirected to github.com to authorize, then sent back here automatically."
+  },
+  "auth": {
+    "restoring": "Restoring your session…",
+    "finishing": "Finishing sign-in…",
+    "exchanging": "Exchanging the GitHub code with PocketBase.",
+    "failedTitle": "Sign-in failed",
+    "failedReturn": "<loginLink>Return to the sign-in page</loginLink> and try again.",
+    "missingCode": "Missing code or state in OAuth callback URL."
+  }
+}

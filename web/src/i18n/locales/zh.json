@@ -1,0 +1,189 @@
+{
+  "common": {
+    "brand": "QuantumAtlas",
+    "brandTagline": "知识工作台",
+    "language": "语言",
+    "languageNames": { "zh": "中文", "en": "English" },
+    "theme": {
+      "toggle": "切换主题",
+      "light": "浅色",
+      "dark": "深色",
+      "system": "跟随系统"
+    },
+    "nav": {
+      "home": "首页",
+      "wiki": "百科",
+      "search": "搜索",
+      "graph": "图谱",
+      "token": "Token",
+      "pat": "访问令牌"
+    },
+    "status": {
+      "loading": "加载中…",
+      "empty": "暂无数据",
+      "errorTitle": "发生错误",
+      "active": "正常",
+      "missing": "缺失"
+    },
+    "actions": {
+      "search": "搜索",
+      "copy": "复制",
+      "cancel": "取消",
+      "create": "创建",
+      "submit": "提交",
+      "close": "关闭",
+      "signOut": "退出登录",
+      "reveal": "显示",
+      "hide": "隐藏",
+      "revoke": "撤销"
+    },
+    "search": { "placeholder": "搜索页面、原语、算法" },
+    "topbar": {
+      "docsLink": "API 文档",
+      "userMenu": {
+        "openLabel": "用户菜单",
+        "tokenLink": "查看 Token",
+        "patLink": "管理 PAT",
+        "signOut": "退出登录"
+      }
+    },
+    "metrics": {
+      "totalPages": "页面总数",
+      "primitives": "原语",
+      "algorithms": "算法",
+      "published": "已发布",
+      "nodes": "节点数",
+      "relationships": "关系数",
+      "labels": "标签数"
+    },
+    "notFound": {
+      "eyebrow": "404",
+      "title": "页面未找到",
+      "copy": "该路由不属于当前工作区。"
+    }
+  },
+  "home": {
+    "eyebrow": "量子算法工作台",
+    "title": "QuantumAtlas",
+    "subtitle": "浏览解析后的论文、检查原语，并把可调用的 token 交给受信任的终端。",
+    "ctaWiki": "浏览百科",
+    "ctaGraph": "探索图谱",
+    "quickActions": "快捷操作",
+    "ingestPlaceholder": "arxiv-id",
+    "ingestSubmit": "导入",
+    "searchKnowledge": "搜索知识库",
+    "runLint": "运行 Lint 检查",
+    "recentPages": "近期页面"
+  },
+  "wiki": {
+    "eyebrow": "百科",
+    "title": "结构化知识库",
+    "subtitle": "页面来自 Wiki Git 仓库的 checkout，由 Web 应用直接渲染。",
+    "groupTitle": "{{type}}",
+    "searchEyebrow": "搜索",
+    "searchTitle": "查找 Wiki 页面",
+    "searchSubtitle": "在标题、标签、页面 ID 与提取内容中搜索。",
+    "searchInputPlaceholder": "例如：quantum Fourier transform",
+    "popularTopics": "热门主题",
+    "resultsFor": "「{{query}}」的搜索结果",
+    "detailMeta": { "draft": "草稿" }
+  },
+  "graph": {
+    "eyebrow": "图谱",
+    "title": "知识图谱概览",
+    "subtitle": "基于 Neo4j 的拓扑结构与 schema 健康度。",
+    "labelsPanel": "节点标签",
+    "labelsEmpty": "暂未报告标签",
+    "explorerPanel": "样例视图",
+    "explorerHint": "Algorithm → Primitive → Paper 的典型关系",
+    "nodeEyebrow": "图谱节点",
+    "nodeType": "类型：{{type}}",
+    "nodeDetail": "节点详情",
+    "nodeDetailCopy": "图谱节点详情页现已迁移到 Web Shell。若需要更丰富的节点数据，请新增专门的 JSON 接口。"
+  },
+  "token": {
+    "eyebrow": "PocketBase 认证访问",
+    "title": "QuantumAtlas Token",
+    "subtitle": "复制由 PocketBase 颁发的当前 bearer token，用于受信终端的 API 调用。",
+    "patHint": "厌倦了每 14 天轮换？去 <patLink>创建 PAT</patLink>，长效且同样使用 Authorization: Bearer 头部。",
+    "fields": {
+      "scope": "作用域",
+      "scopeValue": "QuantumAtlas API",
+      "identity": "身份",
+      "source": "来源",
+      "sourceValue": "PocketBase 认证会话"
+    },
+    "panelEyebrow": "访问令牌",
+    "ready": "可用于 CLI",
+    "needSignIn": "需要登录",
+    "tokenLabel": "Token 值",
+    "actions": {
+      "copyToken": "复制 Token",
+      "copyCurl": "复制 curl",
+      "copyCliEnv": "复制 CLI 环境变量"
+    },
+    "warning": "请像对待密码一样保管。PocketBase 在每次 GitHub OAuth 登录时颁发并轮换。",
+    "copied": "{{label}}已复制",
+    "copyLabels": {
+      "token": "Token",
+      "command": "命令",
+      "cliEnv": "CLI 环境变量"
+    }
+  },
+  "pat": {
+    "eyebrow": "认证",
+    "title": "个人访问令牌",
+    "subtitle": "供 CLI、CI 和其他自动化使用的长效 bearer token。每个 PAT 都带显式的 scope 集合（默认拒绝）和强制过期时间（最长 365 天），遵循 GitHub fine-grained PAT 设计。",
+    "yourTokens": "你的令牌",
+    "newToken": "新建令牌",
+    "noScopesWarning": "未选择任何 scope，该令牌将被所有写口拒绝（403）。",
+    "noScopesBadge": "无 scope（不能调用任何写口）",
+    "createTitle": "新建令牌",
+    "fields": {
+      "name": "名称（必填）",
+      "namePlaceholder": "例如：nightly-ci",
+      "description": "描述（可选）",
+      "descriptionPlaceholder": "例如：GitHub Actions 使用",
+      "expires": "过期时间（必填，最长 {{max}} 天）",
+      "scopes": "Scope（默认拒绝 — 显式勾选允许的操作）"
+    },
+    "expiry": {
+      "year": "{{count}} 年（上限）",
+      "months": "≈ {{count}} 个月",
+      "month": "≈ {{count}} 个月",
+      "days": "{{count}} 天"
+    },
+    "tokenMeta": {
+      "created": "创建于",
+      "expiresAt": "过期于",
+      "lastUsed": "最近使用",
+      "never": "从未使用"
+    },
+    "revokeConfirm": "确定撤销令牌「{{name}}」？此操作不可撤销，使用它的脚本会立即收到 401。",
+    "issued": {
+      "title": "立刻复制你的令牌",
+      "warning": "这是唯一一次能看到该令牌的机会。关闭此对话框后，服务端仅保留单向哈希，无法找回明文。",
+      "copyToken": "复制令牌",
+      "copyExport": "复制 export 命令",
+      "use": "在请求头中使用 Authorization: Bearer {{prefix}}… · 过期 {{expiresAt}}",
+      "closeHint": "我已复制 — 关闭"
+    },
+    "copied": "已复制"
+  },
+  "login": {
+    "title": "QuantumAtlas",
+    "subtitle": "使用你的 GitHub 账户登录以继续。",
+    "github": "使用 GitHub 登录",
+    "redirecting": "正在跳转到 GitHub…",
+    "failed": "GitHub 登录失败",
+    "footer": "你将被重定向到 github.com 完成授权，然后自动返回这里。"
+  },
+  "auth": {
+    "restoring": "正在恢复你的会话…",
+    "finishing": "正在完成登录…",
+    "exchanging": "正在与 PocketBase 交换 GitHub 授权码。",
+    "failedTitle": "登录失败",
+    "failedReturn": "<loginLink>返回登录页</loginLink>重试。",
+    "missingCode": "OAuth 回调缺失 code 或 state。"
+  }
+}

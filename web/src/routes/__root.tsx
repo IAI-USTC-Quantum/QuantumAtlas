@@ -1,8 +1,8 @@
 import { Outlet, createRootRoute, useNavigate, useRouterState } from '@tanstack/react-router'
 import { useEffect } from 'react'
 import { Loader2 } from 'lucide-react'
-import { Sidebar } from '@/components/Sidebar'
-import { Topbar } from '@/components/Topbar'
+import { useTranslation } from 'react-i18next'
+
 import { ensureAuthBootstrap, useAuth } from '@/lib/auth'
 
 export const Route = createRootRoute({
@@ -10,9 +10,14 @@ export const Route = createRootRoute({
   notFoundComponent: NotFoundView,
 })
 
+// Routes that don't require an authenticated session. These live at the
+// top level (no language prefix) because the OAuth flow happens before
+// we know the user's language preference, and bookmarks / external
+// redirects (e.g. GitHub callback) cannot encode a language.
 const ANON_ROUTES = new Set(['/login', '/auth/callback'])
 
 function RootLayout() {
+  const { t } = useTranslation('auth')
   const auth = useAuth()
   const navigate = useNavigate()
   const pathname = useRouterState({ select: (state) => state.location.pathname })
@@ -34,9 +39,9 @@ function RootLayout() {
 
   if (auth.isChecking) {
     return (
-      <div className="auth-bootstrap">
-        <Loader2 className="spin" size={28} />
-        <p>Restoring your session…</p>
+      <div className="flex min-h-svh flex-col items-center justify-center gap-3 text-muted-foreground">
+        <Loader2 className="size-7 animate-spin" />
+        <p className="text-sm">{t('restoring')}</p>
       </div>
     )
   }
@@ -45,37 +50,21 @@ function RootLayout() {
     return null
   }
 
-  if (onAnonRoute) {
-    return <Outlet />
-  }
-
-  return (
-    <div className="app-shell">
-      <Sidebar />
-      <main className="app-main">
-        <Topbar />
-        <div className="page-frame">
-          <Outlet />
-        </div>
-      </main>
-    </div>
-  )
+  // Both the anonymous routes and the localized $lang layout route render
+  // their own outer chrome. The root layout is intentionally chrome-free
+  // beyond the auth gate; the application shell (Sidebar + Topbar) lives
+  // in `routes/$lang.tsx` so it can see the active language.
+  return <Outlet />
 }
 
 function NotFoundView() {
   return (
-    <div className="app-shell">
-      <Sidebar />
-      <main className="app-main">
-        <Topbar />
-        <div className="page-frame">
-          <header className="page-header">
-            <p className="eyebrow">404</p>
-            <h1>Page not found</h1>
-            <p>This route is not part of the web workspace.</p>
-          </header>
-        </div>
-      </main>
+    <div className="flex min-h-svh flex-col items-center justify-center gap-2 px-6 text-center">
+      <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">404</p>
+      <h1 className="text-2xl font-semibold">Page not found</h1>
+      <p className="max-w-md text-sm text-muted-foreground">
+        This route is not part of the web workspace.
+      </p>
     </div>
   )
 }

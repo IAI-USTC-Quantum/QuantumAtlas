@@ -1,6 +1,18 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Github, Loader2, Sparkles } from 'lucide-react'
+
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
 import { loginWithGitHub, useAuth } from '@/lib/auth'
 
 type LoginSearch = { from?: string }
@@ -13,6 +25,7 @@ export const Route = createFileRoute('/login')({
 })
 
 function LoginPage() {
+  const { t } = useTranslation('login')
   const auth = useAuth()
   const navigate = useNavigate()
   const search = Route.useSearch()
@@ -37,32 +50,50 @@ function LoginPage() {
       await loginWithGitHub(search.from)
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e)
-      setError(message || 'GitHub login failed')
+      setError(message || t('failed'))
       setBusy(false)
     }
   }
 
   return (
-    <div className="login-shell">
-      <div className="login-card">
-        <span className="brand-mark"><Sparkles size={28} /></span>
-        <h1>QuantumAtlas</h1>
-        <p className="muted">Sign in with your GitHub account to continue.</p>
-        <button
-          type="button"
-          className="primary login-button"
-          disabled={busy}
-          onClick={handleLogin}
-        >
-          {busy ? <Loader2 className="spin" size={18} /> : <Github size={18} />}
-          {busy ? 'Redirecting to GitHub…' : 'Continue with GitHub'}
-        </button>
-        {error && <div className="notice danger">{error}</div>}
-        <p className="muted small">
-          You will be redirected to github.com to authorize, then sent back
-          here automatically.
-        </p>
-      </div>
+    <div className="flex min-h-svh items-center justify-center bg-gradient-to-br from-primary/10 via-background to-accent/30 p-6">
+      <Card className="w-full max-w-md">
+        <CardHeader className="items-center text-center">
+          <span className="mb-2 flex size-14 items-center justify-center rounded-2xl bg-primary/15 text-primary">
+            <Sparkles className="size-7" />
+          </span>
+          <CardTitle className="text-2xl">{t('title')}</CardTitle>
+          <CardDescription>{t('subtitle')}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <Button
+            type="button"
+            size="lg"
+            className="w-full"
+            disabled={busy}
+            onClick={handleLogin}
+          >
+            {busy ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Github className="size-4" />
+            )}
+            {busy ? t('redirecting') : t('github')}
+          </Button>
+          {error && (
+            <Alert variant="destructive">
+              <AlertTitle>{t('failed')}</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+        </CardContent>
+        <CardFooter>
+          <p className="text-center text-xs text-muted-foreground">
+            {t('footer')}
+          </p>
+        </CardFooter>
+      </Card>
     </div>
   )
 }
+

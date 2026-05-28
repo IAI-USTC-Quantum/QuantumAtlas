@@ -1,6 +1,16 @@
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
+import { Trans, useTranslation } from 'react-i18next'
 import { Loader2 } from 'lucide-react'
+
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
 import { completeOAuth2Login } from '@/lib/auth'
 
 type CallbackSearch = {
@@ -24,6 +34,7 @@ export const Route = createFileRoute('/auth/callback')({
 })
 
 function AuthCallbackPage() {
+  const { t } = useTranslation('auth')
   const navigate = useNavigate()
   const search = Route.useSearch()
   const [error, setError] = useState<string>('')
@@ -41,7 +52,7 @@ function AuthCallbackPage() {
       return
     }
     if (!search.code || !search.state) {
-      setError('Missing code or state in OAuth callback URL.')
+      setError(t('missingCode'))
       return
     }
 
@@ -52,29 +63,55 @@ function AuthCallbackPage() {
       })
       .catch((e: unknown) => {
         const message = e instanceof Error ? e.message : String(e)
-        setError(message || 'Failed to complete GitHub sign-in.')
+        setError(message || t('failedTitle'))
       })
-  }, [navigate, search.code, search.state, search.error, search.error_description])
+  }, [
+    navigate,
+    search.code,
+    search.state,
+    search.error,
+    search.error_description,
+    t,
+  ])
 
   return (
-    <div className="login-shell">
-      <div className="login-card">
+    <div className="flex min-h-svh items-center justify-center bg-gradient-to-br from-primary/10 via-background to-accent/30 p-6">
+      <Card className="w-full max-w-md">
         {error ? (
           <>
-            <h1>Sign-in failed</h1>
-            <div className="notice danger">{error}</div>
-            <p className="muted small">
-              <Link to="/login">Return to the sign-in page</Link> and try again.
-            </p>
+            <CardHeader>
+              <CardTitle>{t('failedTitle')}</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <Alert variant="destructive">
+                <AlertTitle>{t('failedTitle')}</AlertTitle>
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+              <p className="text-sm text-muted-foreground">
+                <Trans
+                  t={t}
+                  i18nKey="failedReturn"
+                  components={{
+                    loginLink: (
+                      <Link
+                        to="/login"
+                        className="font-medium text-primary underline-offset-4 hover:underline"
+                      />
+                    ),
+                  }}
+                />
+              </p>
+            </CardContent>
           </>
         ) : (
-          <>
-            <Loader2 className="spin" size={28} />
-            <h1>Finishing sign-in…</h1>
-            <p className="muted">Exchanging the GitHub code with PocketBase.</p>
-          </>
+          <CardHeader className="items-center text-center">
+            <Loader2 className="mb-2 size-7 animate-spin text-primary" />
+            <CardTitle>{t('finishing')}</CardTitle>
+            <CardDescription>{t('exchanging')}</CardDescription>
+          </CardHeader>
         )}
-      </div>
+      </Card>
     </div>
   )
 }
+

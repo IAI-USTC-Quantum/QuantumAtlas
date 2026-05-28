@@ -1,35 +1,193 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 
-* {
-  box-sizing: border-box;
-}
+@custom-variant dark (&:is(.dark *));
+
+/* ============================================================
+   Design tokens (shadcn/ui v4 + Tailwind v4)
+   - Variables are first declared on :root / .dark
+   - @theme inline maps them into Tailwind's design system
+     so utilities like bg-primary, text-muted-foreground, etc.
+     just work everywhere.
+   ============================================================ */
 
 :root {
-  color: #17201c;
-  background: #f3f5f1;
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  --radius: 0.625rem;
+  --background: oklch(0.985 0.005 145);
+  --foreground: oklch(0.18 0.02 165);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.18 0.02 165);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.18 0.02 165);
+  --primary: oklch(0.51 0.105 165);
+  --primary-foreground: oklch(0.985 0.005 145);
+  --secondary: oklch(0.94 0.012 155);
+  --secondary-foreground: oklch(0.22 0.02 165);
+  --muted: oklch(0.94 0.012 155);
+  --muted-foreground: oklch(0.5 0.02 165);
+  --accent: oklch(0.93 0.025 165);
+  --accent-foreground: oklch(0.22 0.02 165);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.88 0.01 155);
+  --input: oklch(0.92 0.01 155);
+  --ring: oklch(0.51 0.105 165 / 0.5);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --sidebar: oklch(0.18 0.025 165);
+  --sidebar-foreground: oklch(0.94 0.01 155);
+  --sidebar-primary: oklch(0.85 0.12 165);
+  --sidebar-primary-foreground: oklch(0.18 0.025 165);
+  --sidebar-accent: oklch(0.26 0.025 165);
+  --sidebar-accent-foreground: oklch(0.94 0.01 155);
+  --sidebar-border: oklch(0.3 0.02 165);
+  --sidebar-ring: oklch(0.51 0.105 165 / 0.5);
 }
 
-body {
-  margin: 0;
-  min-width: 320px;
-  min-height: 100vh;
+.dark {
+  --background: oklch(0.16 0.015 165);
+  --foreground: oklch(0.96 0.005 145);
+  --card: oklch(0.21 0.018 165);
+  --card-foreground: oklch(0.96 0.005 145);
+  --popover: oklch(0.21 0.018 165);
+  --popover-foreground: oklch(0.96 0.005 145);
+  --primary: oklch(0.78 0.12 165);
+  --primary-foreground: oklch(0.16 0.02 165);
+  --secondary: oklch(0.28 0.02 165);
+  --secondary-foreground: oklch(0.96 0.005 145);
+  --muted: oklch(0.26 0.018 165);
+  --muted-foreground: oklch(0.7 0.018 155);
+  --accent: oklch(0.3 0.03 165);
+  --accent-foreground: oklch(0.96 0.005 145);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 8%);
+  --input: oklch(1 0 0 / 12%);
+  --ring: oklch(0.78 0.12 165 / 0.6);
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+  --sidebar: oklch(0.13 0.015 165);
+  --sidebar-foreground: oklch(0.94 0.01 155);
+  --sidebar-primary: oklch(0.78 0.12 165);
+  --sidebar-primary-foreground: oklch(0.16 0.02 165);
+  --sidebar-accent: oklch(0.22 0.02 165);
+  --sidebar-accent-foreground: oklch(0.94 0.01 155);
+  --sidebar-border: oklch(1 0 0 / 8%);
+  --sidebar-ring: oklch(0.78 0.12 165 / 0.6);
 }
 
-button,
-textarea {
-  font: inherit;
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --font-sans:
+    Inter, "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-ui,
+    -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
 }
 
-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.48;
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    color-scheme: light dark;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: var(--font-sans);
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+  }
+  #root {
+    min-height: 100vh;
+  }
 }
 
-#root {
-  min-height: 100vh;
+/* Markdown content styling — used by wiki page detail. Kept here
+   rather than as Tailwind utilities because it targets raw HTML
+   emitted by `marked` (sanitized via DOMPurify). */
+@layer components {
+  .markdown {
+    @apply text-foreground leading-7;
+  }
+  .markdown h1,
+  .markdown h2,
+  .markdown h3,
+  .markdown h4 {
+    @apply mt-8 mb-3 font-semibold tracking-tight first:mt-0;
+  }
+  .markdown h1 { @apply text-3xl; }
+  .markdown h2 { @apply text-2xl; }
+  .markdown h3 { @apply text-xl; }
+  .markdown h4 { @apply text-lg; }
+  .markdown p,
+  .markdown ul,
+  .markdown ol {
+    @apply my-4;
+  }
+  .markdown ul { @apply list-disc pl-6; }
+  .markdown ol { @apply list-decimal pl-6; }
+  .markdown a {
+    @apply text-primary underline underline-offset-2 hover:no-underline;
+  }
+  .markdown code {
+    @apply rounded bg-muted px-1.5 py-0.5 font-mono text-sm;
+  }
+  .markdown pre {
+    @apply my-4 overflow-x-auto rounded-lg bg-foreground/95 p-4 text-sm text-background;
+  }
+  .markdown pre code {
+    @apply bg-transparent p-0 text-inherit;
+  }
+  .markdown blockquote {
+    @apply my-4 border-l-4 border-border pl-4 text-muted-foreground italic;
+  }
+  .markdown table {
+    @apply my-4 w-full border-collapse text-sm;
+  }
+  .markdown th,
+  .markdown td {
+    @apply border border-border px-3 py-2 text-left;
+  }
+  .markdown th {
+    @apply bg-muted font-semibold;
+  }
 }

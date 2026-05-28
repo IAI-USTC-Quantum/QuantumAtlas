@@ -9,30 +9,27 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as TokenRouteImport } from './routes/token'
-import { Route as PatRouteImport } from './routes/pat'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as LangRouteImport } from './routes/$lang'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as WikiIndexRouteImport } from './routes/wiki.index'
-import { Route as GraphIndexRouteImport } from './routes/graph.index'
-import { Route as WikiSearchRouteImport } from './routes/wiki.search'
+import { Route as LangIndexRouteImport } from './routes/$lang.index'
 import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
-import { Route as WikiPageSplatRouteImport } from './routes/wiki.page.$'
-import { Route as GraphNodeSplatRouteImport } from './routes/graph.node.$'
+import { Route as LangTokenRouteImport } from './routes/$lang.token'
+import { Route as LangPatRouteImport } from './routes/$lang.pat'
+import { Route as LangWikiIndexRouteImport } from './routes/$lang.wiki.index'
+import { Route as LangGraphIndexRouteImport } from './routes/$lang.graph.index'
+import { Route as LangWikiSearchRouteImport } from './routes/$lang.wiki.search'
+import { Route as LangWikiPageSplatRouteImport } from './routes/$lang.wiki.page.$'
+import { Route as LangGraphNodeSplatRouteImport } from './routes/$lang.graph.node.$'
 
-const TokenRoute = TokenRouteImport.update({
-  id: '/token',
-  path: '/token',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const PatRoute = PatRouteImport.update({
-  id: '/pat',
-  path: '/pat',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LangRoute = LangRouteImport.update({
+  id: '/$lang',
+  path: '/$lang',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -40,147 +37,159 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const WikiIndexRoute = WikiIndexRouteImport.update({
-  id: '/wiki/',
-  path: '/wiki/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const GraphIndexRoute = GraphIndexRouteImport.update({
-  id: '/graph/',
-  path: '/graph/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const WikiSearchRoute = WikiSearchRouteImport.update({
-  id: '/wiki/search',
-  path: '/wiki/search',
-  getParentRoute: () => rootRouteImport,
+const LangIndexRoute = LangIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => LangRoute,
 } as any)
 const AuthCallbackRoute = AuthCallbackRouteImport.update({
   id: '/auth/callback',
   path: '/auth/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
-const WikiPageSplatRoute = WikiPageSplatRouteImport.update({
+const LangTokenRoute = LangTokenRouteImport.update({
+  id: '/token',
+  path: '/token',
+  getParentRoute: () => LangRoute,
+} as any)
+const LangPatRoute = LangPatRouteImport.update({
+  id: '/pat',
+  path: '/pat',
+  getParentRoute: () => LangRoute,
+} as any)
+const LangWikiIndexRoute = LangWikiIndexRouteImport.update({
+  id: '/wiki/',
+  path: '/wiki/',
+  getParentRoute: () => LangRoute,
+} as any)
+const LangGraphIndexRoute = LangGraphIndexRouteImport.update({
+  id: '/graph/',
+  path: '/graph/',
+  getParentRoute: () => LangRoute,
+} as any)
+const LangWikiSearchRoute = LangWikiSearchRouteImport.update({
+  id: '/wiki/search',
+  path: '/wiki/search',
+  getParentRoute: () => LangRoute,
+} as any)
+const LangWikiPageSplatRoute = LangWikiPageSplatRouteImport.update({
   id: '/wiki/page/$',
   path: '/wiki/page/$',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => LangRoute,
 } as any)
-const GraphNodeSplatRoute = GraphNodeSplatRouteImport.update({
+const LangGraphNodeSplatRoute = LangGraphNodeSplatRouteImport.update({
   id: '/graph/node/$',
   path: '/graph/node/$',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => LangRoute,
 } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/$lang': typeof LangRouteWithChildren
   '/login': typeof LoginRoute
-  '/pat': typeof PatRoute
-  '/token': typeof TokenRoute
+  '/$lang/pat': typeof LangPatRoute
+  '/$lang/token': typeof LangTokenRoute
   '/auth/callback': typeof AuthCallbackRoute
-  '/wiki/search': typeof WikiSearchRoute
-  '/graph/': typeof GraphIndexRoute
-  '/wiki/': typeof WikiIndexRoute
-  '/graph/node/$': typeof GraphNodeSplatRoute
-  '/wiki/page/$': typeof WikiPageSplatRoute
+  '/$lang/': typeof LangIndexRoute
+  '/$lang/wiki/search': typeof LangWikiSearchRoute
+  '/$lang/graph/': typeof LangGraphIndexRoute
+  '/$lang/wiki/': typeof LangWikiIndexRoute
+  '/$lang/graph/node/$': typeof LangGraphNodeSplatRoute
+  '/$lang/wiki/page/$': typeof LangWikiPageSplatRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
-  '/pat': typeof PatRoute
-  '/token': typeof TokenRoute
+  '/$lang/pat': typeof LangPatRoute
+  '/$lang/token': typeof LangTokenRoute
   '/auth/callback': typeof AuthCallbackRoute
-  '/wiki/search': typeof WikiSearchRoute
-  '/graph': typeof GraphIndexRoute
-  '/wiki': typeof WikiIndexRoute
-  '/graph/node/$': typeof GraphNodeSplatRoute
-  '/wiki/page/$': typeof WikiPageSplatRoute
+  '/$lang': typeof LangIndexRoute
+  '/$lang/wiki/search': typeof LangWikiSearchRoute
+  '/$lang/graph': typeof LangGraphIndexRoute
+  '/$lang/wiki': typeof LangWikiIndexRoute
+  '/$lang/graph/node/$': typeof LangGraphNodeSplatRoute
+  '/$lang/wiki/page/$': typeof LangWikiPageSplatRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/$lang': typeof LangRouteWithChildren
   '/login': typeof LoginRoute
-  '/pat': typeof PatRoute
-  '/token': typeof TokenRoute
+  '/$lang/pat': typeof LangPatRoute
+  '/$lang/token': typeof LangTokenRoute
   '/auth/callback': typeof AuthCallbackRoute
-  '/wiki/search': typeof WikiSearchRoute
-  '/graph/': typeof GraphIndexRoute
-  '/wiki/': typeof WikiIndexRoute
-  '/graph/node/$': typeof GraphNodeSplatRoute
-  '/wiki/page/$': typeof WikiPageSplatRoute
+  '/$lang/': typeof LangIndexRoute
+  '/$lang/wiki/search': typeof LangWikiSearchRoute
+  '/$lang/graph/': typeof LangGraphIndexRoute
+  '/$lang/wiki/': typeof LangWikiIndexRoute
+  '/$lang/graph/node/$': typeof LangGraphNodeSplatRoute
+  '/$lang/wiki/page/$': typeof LangWikiPageSplatRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/$lang'
     | '/login'
-    | '/pat'
-    | '/token'
+    | '/$lang/pat'
+    | '/$lang/token'
     | '/auth/callback'
-    | '/wiki/search'
-    | '/graph/'
-    | '/wiki/'
-    | '/graph/node/$'
-    | '/wiki/page/$'
+    | '/$lang/'
+    | '/$lang/wiki/search'
+    | '/$lang/graph/'
+    | '/$lang/wiki/'
+    | '/$lang/graph/node/$'
+    | '/$lang/wiki/page/$'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/login'
-    | '/pat'
-    | '/token'
+    | '/$lang/pat'
+    | '/$lang/token'
     | '/auth/callback'
-    | '/wiki/search'
-    | '/graph'
-    | '/wiki'
-    | '/graph/node/$'
-    | '/wiki/page/$'
+    | '/$lang'
+    | '/$lang/wiki/search'
+    | '/$lang/graph'
+    | '/$lang/wiki'
+    | '/$lang/graph/node/$'
+    | '/$lang/wiki/page/$'
   id:
     | '__root__'
     | '/'
+    | '/$lang'
     | '/login'
-    | '/pat'
-    | '/token'
+    | '/$lang/pat'
+    | '/$lang/token'
     | '/auth/callback'
-    | '/wiki/search'
-    | '/graph/'
-    | '/wiki/'
-    | '/graph/node/$'
-    | '/wiki/page/$'
+    | '/$lang/'
+    | '/$lang/wiki/search'
+    | '/$lang/graph/'
+    | '/$lang/wiki/'
+    | '/$lang/graph/node/$'
+    | '/$lang/wiki/page/$'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  LangRoute: typeof LangRouteWithChildren
   LoginRoute: typeof LoginRoute
-  PatRoute: typeof PatRoute
-  TokenRoute: typeof TokenRoute
   AuthCallbackRoute: typeof AuthCallbackRoute
-  WikiSearchRoute: typeof WikiSearchRoute
-  GraphIndexRoute: typeof GraphIndexRoute
-  WikiIndexRoute: typeof WikiIndexRoute
-  GraphNodeSplatRoute: typeof GraphNodeSplatRoute
-  WikiPageSplatRoute: typeof WikiPageSplatRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/token': {
-      id: '/token'
-      path: '/token'
-      fullPath: '/token'
-      preLoaderRoute: typeof TokenRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/pat': {
-      id: '/pat'
-      path: '/pat'
-      fullPath: '/pat'
-      preLoaderRoute: typeof PatRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/login': {
       id: '/login'
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/$lang': {
+      id: '/$lang'
+      path: '/$lang'
+      fullPath: '/$lang'
+      preLoaderRoute: typeof LangRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -190,26 +199,12 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/wiki/': {
-      id: '/wiki/'
-      path: '/wiki'
-      fullPath: '/wiki/'
-      preLoaderRoute: typeof WikiIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/graph/': {
-      id: '/graph/'
-      path: '/graph'
-      fullPath: '/graph/'
-      preLoaderRoute: typeof GraphIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/wiki/search': {
-      id: '/wiki/search'
-      path: '/wiki/search'
-      fullPath: '/wiki/search'
-      preLoaderRoute: typeof WikiSearchRouteImport
-      parentRoute: typeof rootRouteImport
+    '/$lang/': {
+      id: '/$lang/'
+      path: '/'
+      fullPath: '/$lang/'
+      preLoaderRoute: typeof LangIndexRouteImport
+      parentRoute: typeof LangRoute
     }
     '/auth/callback': {
       id: '/auth/callback'
@@ -218,34 +213,87 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/wiki/page/$': {
-      id: '/wiki/page/$'
-      path: '/wiki/page/$'
-      fullPath: '/wiki/page/$'
-      preLoaderRoute: typeof WikiPageSplatRouteImport
-      parentRoute: typeof rootRouteImport
+    '/$lang/token': {
+      id: '/$lang/token'
+      path: '/token'
+      fullPath: '/$lang/token'
+      preLoaderRoute: typeof LangTokenRouteImport
+      parentRoute: typeof LangRoute
     }
-    '/graph/node/$': {
-      id: '/graph/node/$'
+    '/$lang/pat': {
+      id: '/$lang/pat'
+      path: '/pat'
+      fullPath: '/$lang/pat'
+      preLoaderRoute: typeof LangPatRouteImport
+      parentRoute: typeof LangRoute
+    }
+    '/$lang/wiki/': {
+      id: '/$lang/wiki/'
+      path: '/wiki'
+      fullPath: '/$lang/wiki/'
+      preLoaderRoute: typeof LangWikiIndexRouteImport
+      parentRoute: typeof LangRoute
+    }
+    '/$lang/graph/': {
+      id: '/$lang/graph/'
+      path: '/graph'
+      fullPath: '/$lang/graph/'
+      preLoaderRoute: typeof LangGraphIndexRouteImport
+      parentRoute: typeof LangRoute
+    }
+    '/$lang/wiki/search': {
+      id: '/$lang/wiki/search'
+      path: '/wiki/search'
+      fullPath: '/$lang/wiki/search'
+      preLoaderRoute: typeof LangWikiSearchRouteImport
+      parentRoute: typeof LangRoute
+    }
+    '/$lang/wiki/page/$': {
+      id: '/$lang/wiki/page/$'
+      path: '/wiki/page/$'
+      fullPath: '/$lang/wiki/page/$'
+      preLoaderRoute: typeof LangWikiPageSplatRouteImport
+      parentRoute: typeof LangRoute
+    }
+    '/$lang/graph/node/$': {
+      id: '/$lang/graph/node/$'
       path: '/graph/node/$'
-      fullPath: '/graph/node/$'
-      preLoaderRoute: typeof GraphNodeSplatRouteImport
-      parentRoute: typeof rootRouteImport
+      fullPath: '/$lang/graph/node/$'
+      preLoaderRoute: typeof LangGraphNodeSplatRouteImport
+      parentRoute: typeof LangRoute
     }
   }
 }
 
+interface LangRouteChildren {
+  LangPatRoute: typeof LangPatRoute
+  LangTokenRoute: typeof LangTokenRoute
+  LangIndexRoute: typeof LangIndexRoute
+  LangWikiSearchRoute: typeof LangWikiSearchRoute
+  LangGraphIndexRoute: typeof LangGraphIndexRoute
+  LangWikiIndexRoute: typeof LangWikiIndexRoute
+  LangGraphNodeSplatRoute: typeof LangGraphNodeSplatRoute
+  LangWikiPageSplatRoute: typeof LangWikiPageSplatRoute
+}
+
+const LangRouteChildren: LangRouteChildren = {
+  LangPatRoute: LangPatRoute,
+  LangTokenRoute: LangTokenRoute,
+  LangIndexRoute: LangIndexRoute,
+  LangWikiSearchRoute: LangWikiSearchRoute,
+  LangGraphIndexRoute: LangGraphIndexRoute,
+  LangWikiIndexRoute: LangWikiIndexRoute,
+  LangGraphNodeSplatRoute: LangGraphNodeSplatRoute,
+  LangWikiPageSplatRoute: LangWikiPageSplatRoute,
+}
+
+const LangRouteWithChildren = LangRoute._addFileChildren(LangRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  LangRoute: LangRouteWithChildren,
   LoginRoute: LoginRoute,
-  PatRoute: PatRoute,
-  TokenRoute: TokenRoute,
   AuthCallbackRoute: AuthCallbackRoute,
-  WikiSearchRoute: WikiSearchRoute,
-  GraphIndexRoute: GraphIndexRoute,
-  WikiIndexRoute: WikiIndexRoute,
-  GraphNodeSplatRoute: GraphNodeSplatRoute,
-  WikiPageSplatRoute: WikiPageSplatRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

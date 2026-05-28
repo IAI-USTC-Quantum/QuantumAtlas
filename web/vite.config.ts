@@ -17,4 +17,17 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
+  server: {
+    // dev-only: vite 5+ rejects non-localhost Host headers by default.
+    // Allow the EasyTier mesh peers and Alibaba's public IP so a reverse
+    // proxy can preview this dev server from outside. Does not affect
+    // `vite build` / `vite preview`.
+    allowedHosts: [
+      '47.102.36.175',
+      '10.144.18.66',
+      '10.144.18.88',
+      'localhost',
+      '127.0.0.1',
+    ],
+  },
 })
