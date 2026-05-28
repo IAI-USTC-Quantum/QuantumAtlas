@@ -40,22 +40,23 @@ jobs:
       - name: Run production smoke against both edges
         env:
           # Default to both edges so the nightly is meaningful out of the
-          # box. If the secret is set it overrides this default — e.g. for
-          # a one-off test against a staging URL.
-          QATLAS_SERVER_TARGETS: ${{ secrets.QATLAS_SERVER_TARGETS || 'https://quantum-atlas.ai,https://47.102.36.175|insecure' }}
-          # Long-lived credential used by test_write_endpoint_accepts_user_token
-          # to verify the auth gate's accept path (handler 400 instead of
-          # guard 401/403). The recommended shape is a Personal Access Token
-          # (qat_*) with the shares:write scope and 365-day expiry — mint
-          # one with:
-          #   ssh 1810 sudo -u quantumatlas \
-          #     /opt/quantum-atlas/qatlas-server pat mint \
-          #     --user <your-github-email> --name nightly-ci \
+          # box. Each target may carry `token-env=NAME` so the test
+          # picks up a per-host PAT — required when the edges run
+          # independent qatlas instances (active-active), since each
+          # has its own users DB and PATs don't cross-validate.
+          QATLAS_SERVER_TARGETS: ${{ secrets.QATLAS_SERVER_TARGETS || 'https://quantum-atlas.ai|token-env=QATLAS_TOKEN_RACKNERD,https://47.102.36.175|insecure|token-env=QATLAS_TOKEN_ALIBABA' }}
+          # Per-edge PATs. Mint each one on its own edge:
+          #   ssh <edge> sudo -u <user> /path/quantumatlas pat mint \
+          #     --user <email> --name nightly-ci \
           #     --scopes shares:write --expires-in-days 365
-          # …or via the SPA at https://quantum-atlas.ai/pat. A PocketBase
-          # session JWT also works but expires in 14 days — not recommended.
-          # If absent, the single token-required test self-skips and the
-          # rest of the smoke still runs.
+          # The active-active topology means RackNerd and Alibaba have
+          # independent SQLite user DBs — a PAT minted on one will get
+          # 401 on the other. Two secrets, one per edge.
+          QATLAS_TOKEN_RACKNERD: ${{ secrets.QATLAS_TOKEN_RACKNERD }}
+          QATLAS_TOKEN_ALIBABA: ${{ secrets.QATLAS_TOKEN_ALIBABA }}
+          # Legacy single-edge fallback (still honoured by
+          # Target.auth_token() when no per-target token resolves).
+          # Set this OR the per-edge tokens above; not both.
           QATLAS_TOKEN: ${{ secrets.QATLAS_CI_TOKEN }}
           # 'legacy' marker covers the old FastAPI-only ingest/* tests that
           # the Go server intentionally does not implement; they must NOT

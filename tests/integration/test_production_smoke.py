@@ -75,20 +75,51 @@ pytestmark = [
 class Target(NamedTuple):
     url: str
     insecure: bool
+    token: str  # per-target bearer; "" means "fall back to QATLAS_TOKEN env"
 
     @property
     def verify(self) -> bool:
         return not self.insecure
 
+    def auth_token(self) -> str:
+        """Effective token for this target.
+
+        Per-target ``token`` (from ``token-env=NAME`` in the
+        QATLAS_SERVER_TARGETS spec) wins. Otherwise fall back to the
+        global ``QATLAS_TOKEN`` env var. Returning "" means "no token
+        available" and the token-required test self-skips.
+        """
+        if self.token:
+            return self.token
+        return os.environ.get("QATLAS_TOKEN", "").strip()
+
 
 def _parse_targets() -> list[Target]:
     """Parse QATLAS_SERVER_TARGETS into a list of Targets.
 
-    Each entry is ``URL`` or ``URL|insecure`` (commas or newlines as
-    separators). The ``|insecure`` suffix disables TLS verification, which
-    is the common case for IP-based vhosts using Caddy's ``tls internal``
-    self-signed certs (e.g. https://47.102.36.175 routed through Alibaba).
-    Legacy fallback: ``QATLAS_SERVER_URL`` + optional ``QATLAS_INSECURE=1``.
+    Each entry is ``URL`` optionally followed by ``|FLAG`` segments,
+    comma- or newline-separated at the top level. Supported flags:
+
+      * ``insecure`` — disables TLS verification, common for
+        IP-based vhosts using Caddy's ``tls internal`` self-signed
+        certs (e.g. https://47.102.36.175 routed through Alibaba).
+      * ``token-env=VAR_NAME`` — pulls the per-target PAT plaintext
+        from the named environment variable. Use this when each
+        edge runs an independent qatlas with its own user DB
+        (active-active topology) so each target needs its own
+        bearer. Falls back to ``QATLAS_TOKEN`` when absent.
+
+    Example::
+
+        QATLAS_SERVER_TARGETS=$'
+            https://quantum-atlas.ai|token-env=QATLAS_TOKEN_RACKNERD
+            https://47.102.36.175|insecure|token-env=QATLAS_TOKEN_ALIBABA
+        '
+        QATLAS_TOKEN_RACKNERD=qat_xxx
+        QATLAS_TOKEN_ALIBABA=qat_yyy
+
+    Legacy fallback: ``QATLAS_SERVER_URL`` + optional
+    ``QATLAS_INSECURE=1``, with token from ``QATLAS_TOKEN``.
     """
     raw = os.environ.get("QATLAS_SERVER_TARGETS", "").strip()
     if raw:
@@ -97,17 +128,33 @@ def _parse_targets() -> list[Target]:
             entry = chunk.strip()
             if not entry:
                 continue
+            insecure = False
+            token = ""
             if "|" in entry:
                 url, *flags = entry.split("|")
-                insecure = any(f.strip().lower() == "insecure" for f in flags)
+                for f in flags:
+                    f = f.strip()
+                    if f.lower() == "insecure":
+                        insecure = True
+                    elif f.startswith("token-env="):
+                        var_name = f[len("token-env="):].strip()
+                        if not var_name:
+                            raise ValueError(
+                                f"token-env= requires a variable name: {entry!r}"
+                            )
+                        token = os.environ.get(var_name, "").strip()
+                        # Empty string is OK — means "var not set, fall
+                        # through to QATLAS_TOKEN at use-time". The
+                        # token-required test still self-skips if both
+                        # are empty.
             else:
-                url, insecure = entry, False
+                url = entry
             url = url.strip().rstrip("/")
             if not url.startswith(("http://", "https://")):
                 raise ValueError(
                     f"QATLAS_SERVER_TARGETS entry missing http(s):// scheme: {url!r}"
                 )
-            targets.append(Target(url, insecure))
+            targets.append(Target(url, insecure, token))
         return targets
 
     legacy_url = os.environ.get("QATLAS_SERVER_URL") or os.environ.get(
@@ -119,13 +166,13 @@ def _parse_targets() -> list[Target]:
             "true",
             "yes",
         }
-        return [Target(legacy_url.rstrip("/"), legacy_insecure)]
+        return [Target(legacy_url.rstrip("/"), legacy_insecure, "")]
 
     return []
 
 
 _TARGETS = _parse_targets()
-_PARAMS = _TARGETS or [Target("", False)]
+_PARAMS = _TARGETS or [Target("", False, "")]
 _IDS = [t.url or "no-target-configured" for t in _PARAMS]
 
 
@@ -259,9 +306,15 @@ def test_write_endpoint_rejects_wrong_bearer(target: Target):
 
 
 def test_write_endpoint_accepts_user_token(target: Target):
-    """If ``QATLAS_TOKEN`` is set, prove the auth gate lets us through
-    (400 from the body parser, not 401 from authGuard, not 403 from
-    scopeGuard). Self-skips without a token.
+    """If a token is available for this target, prove the auth gate
+    lets us through (400 from the body parser, not 401 from authGuard,
+    not 403 from scopeGuard). Self-skips when no token is configured.
+
+    Token resolution (see Target.auth_token):
+      1. ``token-env=NAME`` in QATLAS_SERVER_TARGETS for this target →
+         look up ``$NAME``. Used in active-active topologies where
+         each edge has its own independent qatlas + user DB.
+      2. ``QATLAS_TOKEN`` env var (legacy / single-edge case).
 
     Accepts either a PAT (``qat_...``, recommended for nightly secrets
     because of the 365-day lifetime) or a PocketBase user JWT (anything
@@ -273,9 +326,13 @@ def test_write_endpoint_accepts_user_token(target: Target):
     properly-scoped PAT via https://<host>/pat or on the server box
     with ``qatlas-server pat mint --scopes shares:write``.
     """
-    token = os.environ.get("QATLAS_TOKEN", "").strip()
+    token = target.auth_token()
     if not token:
-        pytest.skip("QATLAS_TOKEN not set; cannot validate accepted path")
+        pytest.skip(
+            f"no token for {target.url} (set QATLAS_TOKEN or "
+            "use token-env=NAME in QATLAS_SERVER_TARGETS); "
+            "cannot validate accepted path"
+        )
 
     response = _post(
         target,
@@ -286,16 +343,23 @@ def test_write_endpoint_accepts_user_token(target: Target):
             "Authorization": f"Bearer {token}",
         },
     )
-    # 401 = the supplied token wasn't accepted (expired? wrong shape?).
-    #       Re-fetch a JWT from /token, or mint a fresh PAT at /pat.
+    # 401 = the supplied token wasn't accepted by THIS target's auth
+    #       store (each edge has its own users DB in active-active —
+    #       did you mix up tokens between RackNerd and Alibaba?).
     # 403 = a PAT was accepted but lacks shares:write scope. Re-mint
     #       the PAT with --scopes shares:write.
     # 400 = passed both authGuard and scopeGuard, reached the handler's
     #       body validator. This is the happy path under test.
+    if response.status_code == 401:
+        pytest.fail(
+            f"Token rejected by {target.url} authGuard (401). Each edge "
+            "has its own user DB in active-active — check the token "
+            f"matches THIS target's user store. Body: {response.text}"
+        )
     if response.status_code == 403:
         pytest.fail(
             "PAT accepted by authGuard but rejected by scopeGuard (403). "
-            "Your QATLAS_TOKEN PAT lacks the 'shares:write' scope. "
+            "Your token PAT lacks the 'shares:write' scope. "
             f"Re-mint with --scopes shares:write. Body: {response.text}"
         )
     assert response.status_code == 400, (
