@@ -95,6 +95,14 @@ func main() {
 		DBConnect: qatlasDBConnect,
 	})
 
+	// Surface main.Version (set via -ldflags "-X main.Version=$VERSION")
+	// to PocketBase's cobra root command so `qatlas-server --version`
+	// prints "qatlas-server version 0.2.4" instead of the default
+	// "qatlas-server version (untracked)". Without this, the version
+	// string we inject is only visible in /api/health's `data.version`
+	// field — operators running `--version` on the CLI see nothing.
+	app.RootCmd.Version = Version
+
 	auth.Register(app, cfg)
 
 	// Mount the `pat` subcommand group. This MUST come before
