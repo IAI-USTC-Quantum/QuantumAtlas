@@ -141,7 +141,7 @@ qatlas wiki sync algo-shor # 单页 sync
 
 或调 API（如果有 endpoint；当前 sync 主要在 CLI）。
 
-后续 Wiki 通过 `POST /api/wiki/sync/pull` 触发 git pull 时，**会顺带 refresh in-memory cache**，但 Neo4j 同步是独立步骤。完整 sync 策略见 [数据流 / Wiki→Neo4j](../concepts/data-flow.md#wiki-neo4j-同步)。
+后续 Wiki 通过 `POST /api/wiki/sync/pull` 触发 git pull 时，**会顺带 refresh in-memory cache**，但 Neo4j 同步是独立步骤。完整 sync 策略见 [数据流 / Wiki→Neo4j](../concepts/data-flow.md#wiki-neo4j)。
 
 ## 备份
 
