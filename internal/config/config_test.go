@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -291,5 +292,110 @@ func TestDefaultXDGSubdir_Unit(t *testing.T) {
 	t.Setenv("HOME", "/home/test")
 	if got := defaultXDGSubdir("pb_data"); got != "/home/test/.local/share/quantum-atlas/pb_data" {
 		t.Errorf("relative XDG should be rejected: got %q", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// S3 / object storage invariant tests (Phase 3).
+//
+// The four QATLAS_S3_* fields must be set as a group: either all four
+// non-empty (S3 backend enabled), or all four empty (local RawDir
+// fallback). A partial config is a boot-time error rather than a silent
+// behaviour change.
+// ---------------------------------------------------------------------------
+
+// clearS3Env unsets every env var that influences S3 wiring so the test
+// sees a clean baseline regardless of the developer's shell.
+func clearS3Env(t *testing.T) {
+	t.Helper()
+	for _, k := range []string{
+		"QATLAS_S3_ENDPOINT",
+		"QATLAS_S3_BUCKET",
+		"QATLAS_S3_ACCESS_KEY_ID",
+		"QATLAS_S3_SECRET_ACCESS_KEY",
+	} {
+		t.Setenv(k, "")
+	}
+}
+
+func TestLoad_S3Disabled_AllFieldsEmpty(t *testing.T) {
+	clearStorageEnv(t)
+	clearS3Env(t)
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.S3Enabled() {
+		t.Errorf("S3Enabled() = true with all env empty; want false")
+	}
+}
+
+func TestLoad_S3Enabled_AllFieldsSet(t *testing.T) {
+	clearStorageEnv(t)
+	clearS3Env(t)
+	t.Setenv("QATLAS_S3_ENDPOINT", "https://raw.example.tld")
+	t.Setenv("QATLAS_S3_BUCKET", "qatlas-raw")
+	t.Setenv("QATLAS_S3_ACCESS_KEY_ID", "AKID")
+	t.Setenv("QATLAS_S3_SECRET_ACCESS_KEY", "SK")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.S3Enabled() {
+		t.Errorf("S3Enabled() = false with all env set; want true")
+	}
+	if cfg.S3Endpoint != "https://raw.example.tld" {
+		t.Errorf("S3Endpoint = %q", cfg.S3Endpoint)
+	}
+	if cfg.S3Bucket != "qatlas-raw" {
+		t.Errorf("S3Bucket = %q", cfg.S3Bucket)
+	}
+	if cfg.S3AccessKeyID != "AKID" {
+		t.Errorf("S3AccessKeyID = %q", cfg.S3AccessKeyID)
+	}
+	if cfg.S3SecretAccessKey != "SK" {
+		t.Errorf("S3SecretAccessKey = %q", cfg.S3SecretAccessKey)
+	}
+}
+
+func TestLoad_S3PartialConfigRejected(t *testing.T) {
+	// Each of these subtests sets a *strict subset* of the four fields;
+	// Load() must refuse to boot. The check is symmetric — neither the
+	// endpoint alone nor the credentials alone constitute a valid state.
+	cases := []struct {
+		name string
+		set  map[string]string
+	}{
+		{"only endpoint", map[string]string{"QATLAS_S3_ENDPOINT": "https://x"}},
+		{"only bucket", map[string]string{"QATLAS_S3_BUCKET": "b"}},
+		{"only access key", map[string]string{"QATLAS_S3_ACCESS_KEY_ID": "a"}},
+		{"only secret", map[string]string{"QATLAS_S3_SECRET_ACCESS_KEY": "s"}},
+		{"endpoint + bucket, no creds", map[string]string{
+			"QATLAS_S3_ENDPOINT": "https://x",
+			"QATLAS_S3_BUCKET":   "b",
+		}},
+		{"creds, no endpoint", map[string]string{
+			"QATLAS_S3_ACCESS_KEY_ID":     "a",
+			"QATLAS_S3_SECRET_ACCESS_KEY": "s",
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			clearStorageEnv(t)
+			clearS3Env(t)
+			for k, v := range c.set {
+				t.Setenv(k, v)
+			}
+			_, err := Load("")
+			if err == nil {
+				t.Fatalf("Load returned nil error; expected partial-config failure")
+			}
+			// Sanity: error message lists at least one missing field name
+			// so an operator can fix it from the log line.
+			if !strings.Contains(err.Error(), "QATLAS_S3_") {
+				t.Errorf("error %q does not mention any QATLAS_S3_* field name", err.Error())
+			}
+		})
 	}
 }

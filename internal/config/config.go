@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -63,6 +64,20 @@ type Config struct {
 
 	// GitHub login whitelist auto-promoted to admin on first OAuth login.
 	AdminGitHubLogins []string
+
+	// Object storage (RustFS / S3-compatible) for the RAW asset bucket.
+	// When S3Endpoint is empty the server falls back to RawDir on the
+	// local filesystem. When set, all four fields must be non-empty —
+	// see invariant check at the end of Load().
+	//
+	// Endpoint must include scheme (https://raw.example.tld) so the
+	// minio-go client can decide TLS vs plaintext deterministically.
+	// We don't use AWS path-style heuristics; for vendor flexibility
+	// the bucket is always supplied as a separate parameter.
+	S3Endpoint        string
+	S3Bucket          string
+	S3AccessKeyID     string
+	S3SecretAccessKey string
 }
 
 // Load resolves the configuration from process environment.
@@ -113,6 +128,10 @@ func Load(dotenvPath string) (*Config, error) {
 		MinerUAPIBaseURL:      firstEnvDefault("https://mineru.net", "MINERU_API_BASE_URL"),
 		GitHubClientID:        firstEnv("GITHUB_CLIENT_ID"),
 		GitHubClientSecret:    firstEnv("GITHUB_CLIENT_SECRET"),
+		S3Endpoint:            firstEnv("QATLAS_S3_ENDPOINT"),
+		S3Bucket:              firstEnv("QATLAS_S3_BUCKET"),
+		S3AccessKeyID:         firstEnv("QATLAS_S3_ACCESS_KEY_ID"),
+		S3SecretAccessKey:     firstEnv("QATLAS_S3_SECRET_ACCESS_KEY"),
 	}
 
 	// HTTP bind: assemble from QATLAS_SERVER_HOST + _PORT if QATLAS_HTTP_ADDR
@@ -143,7 +162,58 @@ func Load(dotenvPath string) (*Config, error) {
 	cfg.DataDir = expandPath(defaultIfEmpty(cfg.DataDir, defaultXDGSubdir("data")), anchor)
 	cfg.PBDataDir = expandPath(defaultIfEmpty(cfg.PBDataDir, defaultXDGSubdir("pb_data")), anchor)
 
+	// S3 invariant: either all four S3 fields are set, or none are.
+	// A half-configured client would silently fall back to the local
+	// RawDir and quietly corrupt the writer/reader symmetry across
+	// restarts; refuse to boot so the operator sees the misconfig
+	// immediately instead of after the next upload.
+	if err := validateS3Config(cfg); err != nil {
+		return nil, err
+	}
+
 	return cfg, nil
+}
+
+// S3Enabled reports whether the object-storage backend is configured.
+// When false, callers should fall back to local-filesystem I/O under
+// cfg.RawDir; when true, all four QATLAS_S3_* fields are guaranteed
+// non-empty by validateS3Config (invoked at end of Load).
+func (c *Config) S3Enabled() bool {
+	return c.S3Endpoint != "" && c.S3Bucket != "" && c.S3AccessKeyID != "" && c.S3SecretAccessKey != ""
+}
+
+// validateS3Config enforces the all-or-nothing rule for the QATLAS_S3_*
+// quartet. We deliberately do not validate URL syntax / bucket naming
+// here — those errors surface clearly at first request through minio-go,
+// and adding our own validator would just be one more thing to keep in
+// sync with the SDK.
+func validateS3Config(cfg *Config) error {
+	fields := map[string]string{
+		"QATLAS_S3_ENDPOINT":          cfg.S3Endpoint,
+		"QATLAS_S3_BUCKET":            cfg.S3Bucket,
+		"QATLAS_S3_ACCESS_KEY_ID":     cfg.S3AccessKeyID,
+		"QATLAS_S3_SECRET_ACCESS_KEY": cfg.S3SecretAccessKey,
+	}
+	var set, unset []string
+	for name, v := range fields {
+		if v == "" {
+			unset = append(unset, name)
+		} else {
+			set = append(set, name)
+		}
+	}
+	if len(set) == 0 || len(unset) == 0 {
+		return nil
+	}
+	// Stable order for the error message so the test is deterministic
+	// and the operator can grep their .env without surprises.
+	sort.Strings(set)
+	sort.Strings(unset)
+	return fmt.Errorf(
+		"object storage half-configured: %v are set but %v are missing — "+
+			"set all four QATLAS_S3_* fields to enable RustFS/S3, or unset all four to use local RawDir",
+		set, unset,
+	)
 }
 
 // firstEnv returns the first non-empty environment variable from the given

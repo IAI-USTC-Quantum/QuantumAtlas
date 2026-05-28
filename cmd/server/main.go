@@ -24,6 +24,7 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/auth"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineruclaim"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/pat"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/routes"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/shares"
@@ -60,18 +61,18 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
-	app := pocketbase.New()
-
-	// Inject --http from env if the operator didn't pass it explicitly.
-	// Matches the FastAPI uvicorn --host/--port behaviour driven by .env.
+	// Inject CLI flags from env BEFORE pocketbase.New() — that
+	// constructor eagerly parses os.Args[1:] to materialise its
+	// persistent flags (--dir, --dev, etc.) and snapshots the values
+	// into the BaseApp. Anything we mutate after construction is
+	// ignored by the app instance even though cobra.Execute() does
+	// see it. Bug repro: setting QATLAS_PB_DATA_DIR and running
+	// `quantumatlas superuser upsert ...` used to silently write to
+	// ./build/pb_data because the injection happened post-New().
 	injectHTTPFlag(cfg)
-
-	// Inject --dir (PocketBase's pb_data root) when the operator didn't
-	// pass it explicitly. Without this, PocketBase falls back to a
-	// "./pb_data" next to the CWD — which for our typical systemd
-	// install is the git checkout, exactly where we don't want SQLite
-	// state to live. cfg.PBDataDir always has a value (XDG default).
 	injectPBDataDirFlag(cfg)
+
+	app := pocketbase.New()
 
 	auth.Register(app, cfg)
 
@@ -85,6 +86,17 @@ func main() {
 	claimStore, err := initClaimStore(cfg)
 	if err != nil {
 		log.Fatalf("init mineru claim store: %v", err)
+	}
+
+	// Wire the raw asset backend. S3Enabled is the documented split
+	// point: when QATLAS_S3_* are all set we route every PDF /
+	// markdown / JSON / image through RustFS (or any S3-compatible
+	// store), otherwise we wrap cfg.RawDir with a LocalStore. The
+	// config layer already validated the all-or-nothing rule, so
+	// neither branch can land in a half-configured state here.
+	rawStore, err := initRawStore(cfg)
+	if err != nil {
+		log.Fatalf("init raw object store: %v", err)
 	}
 
 	// Build the casbin enforcer once at startup. The policy table is
@@ -127,7 +139,7 @@ func main() {
 			}
 		}
 
-		registerRoutes(se, app, cfg, shareStore, claimStore, enforcer)
+		registerRoutes(se, app, cfg, rawStore, shareStore, claimStore, enforcer)
 
 		// Serve the embedded SPA last as the catch-all. apis.Static's
 		// indexFallback=true means any path that doesn't match a real
@@ -157,10 +169,24 @@ func initClaimStore(cfg *config.Config) (*mineruclaim.Store, error) {
 	return mineruclaim.NewStore(filepath.Join(cfg.DataDir, "mineru-claims"))
 }
 
+// initRawStore returns the objstore.Store implementation backing raw
+// paper assets (PDFs, markdown, JSON, images). Selects between
+// LocalStore (cfg.RawDir) and S3Store (QATLAS_S3_*) based on
+// cfg.S3Enabled() — see internal/config/config.go for the
+// invariant that guarantees this can't be half-configured.
+func initRawStore(cfg *config.Config) (objstore.Store, error) {
+	if cfg.S3Enabled() {
+		log.Printf("raw store: S3 backend %s/%s", cfg.S3Endpoint, cfg.S3Bucket)
+		return objstore.NewS3Store(cfg.S3Endpoint, cfg.S3Bucket, cfg.S3AccessKeyID, cfg.S3SecretAccessKey)
+	}
+	log.Printf("raw store: local backend %s", cfg.RawDir)
+	return objstore.NewLocalStore(cfg.RawDir)
+}
+
 // registerRoutes wires the QuantumAtlas /api/* surface. Most endpoints are
 // implemented under internal/routes/ and pulled in by their respective
 // Register* helpers as we migrate each module in subsequent phases.
-func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, shareStore *shares.Store, claimStore *mineruclaim.Store, enforcer *casbin.Enforcer) {
+func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawStore objstore.Store, shareStore *shares.Store, claimStore *mineruclaim.Store, enforcer *casbin.Enforcer) {
 	// /health — uptime probe (Python server compat). PocketBase already
 	// owns /api/health, so we expose this at the root to match the old
 	// FastAPI surface used by smoke tests and Caddy health probes.
@@ -192,10 +218,10 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, share
 	routes.RegisterGraph(se, cfg)
 
 	// Papers (resources, upload, mineru-claim) — see internal/routes/papers.go.
-	routes.RegisterPapers(se, cfg, shareStore, claimStore, enforcer)
+	routes.RegisterPapers(se, cfg, rawStore, shareStore, claimStore, enforcer)
 
 	// Shares CRUD + public /share/{token}* — see internal/routes/shares.go.
-	routes.RegisterShares(se, cfg, shareStore, enforcer)
+	routes.RegisterShares(se, cfg, shareStore, rawStore, enforcer)
 
 	// Personal Access Tokens — see internal/routes/pat.go.
 	// /api/pat is session-token-only (PAT auth refused by sessionGuard);
@@ -223,23 +249,29 @@ func injectHTTPFlag(cfg *config.Config) {
 // that doesn't already carry an explicit --dir. Mirrors the
 // injectHTTPFlag pattern.
 //
-// Why this matters: PocketBase's default for --dir is "./pb_data",
-// resolved against process CWD. For our typical systemd install the
-// CWD is the git checkout, so without an explicit --dir the SQLite
-// database lands inside the source tree. cfg.PBDataDir already has a
+// Why this matters: PocketBase's default for --dir is computed from
+// the binary's own location (executable_dir + "/pb_data"). For our
+// build that's "./build/pb_data", which is exactly the source tree we
+// don't want SQLite state landing in. cfg.PBDataDir always carries a
 // value (XDG default in config.Load), so injecting it makes
 //
 //	quantumatlas serve
 //
 // equivalent to
 //
-//	quantumatlas serve --dir=$HOME/.local/share/quantum-atlas/pb_data
+//	quantumatlas --dir=$HOME/.local/share/quantum-atlas/pb_data serve
 //
 // on a fresh box, while still respecting any operator-supplied --dir.
 //
-// Note: we apply this for every subcommand, not just `serve`. Migrate /
-// superuser / admin commands all need to point at the same pb_data root
-// or they'd silently operate on a freshly-created empty database.
+// Note: --dir is a **global persistent** flag on the cobra root
+// command; cobra refuses to recognise persistent flags placed after a
+// subcommand's positional args. So we insert it right after os.Args[0]
+// (before the subcommand name), NOT append it at the end like
+// injectHTTPFlag does for --http (which is a serve-only local flag).
+//
+// We apply this for every subcommand, not just `serve`. Migrate /
+// superuser / admin commands all need to point at the same pb_data
+// root or they'd silently operate on a freshly-created empty database.
 func injectPBDataDirFlag(cfg *config.Config) {
 	if len(os.Args) < 2 {
 		return
@@ -252,7 +284,13 @@ func injectPBDataDirFlag(cfg *config.Config) {
 			return
 		}
 	}
-	os.Args = append(os.Args, "--dir="+cfg.PBDataDir)
+	// Insert just after os.Args[0] so cobra parses --dir as a root
+	// flag before it dispatches to the subcommand.
+	dirArg := "--dir=" + cfg.PBDataDir
+	newArgs := make([]string, 0, len(os.Args)+1)
+	newArgs = append(newArgs, os.Args[0], dirArg)
+	newArgs = append(newArgs, os.Args[1:]...)
+	os.Args = newArgs
 }
 
 // forceTCP4 returns true when the operator has opted in via
