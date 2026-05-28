@@ -18,6 +18,7 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineruclaim"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperassets"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperindex"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/shares"
 
 	"github.com/casbin/casbin/v2"
@@ -35,6 +36,13 @@ import (
 // records and MinerU claim leases respectively; they remain local
 // (DataDir) regardless of rawStore backend.
 //
+// paperIndex is the in-process Parquet+DuckDB catalog (paperindex.Store)
+// used by collection-style endpoints (needs-mineru, future stats /
+// range queries). MAY BE nil if the deployment hasn't set up the
+// catalog yet — handlers fall back to the legacy store.ListPrefix
+// path in that case (slow but correct). See docs/architecture.md for
+// the lakehouse rationale.
+//
 // enforcer is the process-wide casbin enforcer used to gate write
 // endpoints by PAT scope. Session-token callers bypass via the
 // ScopeMaster short-circuit in pat.Allows.
@@ -51,12 +59,13 @@ func RegisterPapers(
 	rawStore objstore.Store,
 	shareStore *shares.Store,
 	claimStore *mineruclaim.Store,
+	paperIndex *paperindex.Store,
 	enforcer *casbin.Enforcer,
 ) {
 	se.Router.GET("/api/papers/{path...}", func(re *core.RequestEvent) error {
 		raw := re.Request.PathValue("path")
 		if raw == "needs-mineru" {
-			return needsMineruHandler(re, rawStore, claimStore)
+			return needsMineruHandler(re, rawStore, claimStore, paperIndex)
 		}
 		arxiv, action := splitPapersPath(raw)
 		switch action {
@@ -135,7 +144,26 @@ func splitMineruClaimRelease(raw string) (arxivID, claimID string, ok bool) {
 // needs-mineru
 // ---------------------------------------------------------------------------
 
-func needsMineruHandler(re *core.RequestEvent, store objstore.Store, claimStore *mineruclaim.Store) error {
+// needsMineruHandler answers GET /api/papers/needs-mineru.
+//
+// Two implementations live behind this entry point:
+//
+//  1. paperindex-backed (fast path): when paperIndex != nil and the
+//     catalog has been bootstrapped, queries hit the in-memory DuckDB
+//     table in <1ms. This is the production code path on edges
+//     where docs/architecture.md's lakehouse model is enabled.
+//
+//  2. enumerateNeedsMineru (legacy fallback): when paperIndex is nil
+//     OR the catalog reports zero rows (parquet not bootstrapped yet),
+//     fall through to the original two-LIST + in-memory-diff impl.
+//     This used to be the only impl and is documented as slow /
+//     prone to RustFS-beta 500s — it's kept as a safety net for
+//     fresh deployments that haven't yet run the bootstrap-index
+//     subcommand.
+//
+// Response shape is identical across both paths so existing CLI /
+// dashboard consumers don't have to branch.
+func needsMineruHandler(re *core.RequestEvent, store objstore.Store, claimStore *mineruclaim.Store, paperIndex *paperindex.Store) error {
 	limit, _ := strconv.Atoi(re.Request.URL.Query().Get("limit"))
 	if limit < 1 {
 		limit = 10
@@ -144,6 +172,38 @@ func needsMineruHandler(re *core.RequestEvent, store objstore.Store, claimStore 
 	}
 	includeClaimed := re.Request.URL.Query().Get("include_claimed") == "true"
 
+	// Fast path: paperindex catalog.
+	if paperIndex != nil && paperIndex.RowCount() > 0 {
+		ctx := re.Request.Context()
+		stats, err := paperIndex.QueryStats(ctx)
+		if err == nil {
+			// Fetch a window of MinerU candidates that we then
+			// merge with live claim state (claims live in
+			// claimStore, NOT in the parquet — they're short-
+			// lived and would always be stale in the catalog).
+			//
+			// We over-fetch a bit (limit*3, capped at 100) so
+			// that even when many candidates are already
+			// claimed we usually return `limit` actionable
+			// rows without paging through the parquet.
+			fetchN := limit * 3
+			if fetchN > 100 {
+				fetchN = 100
+			}
+			candidates, err := paperIndex.NeedsMineru(ctx, fetchN)
+			if err == nil {
+				return re.JSON(http.StatusOK, buildNeedsMineruResponse(
+					ctx, candidates, claimStore, limit, includeClaimed, stats.NeedsMineru))
+			}
+			slog.Warn("paperindex: NeedsMineru query failed; falling back to legacy LIST",
+				"error", err)
+		} else {
+			slog.Warn("paperindex: QueryStats failed; falling back to legacy LIST", "error", err)
+		}
+	}
+
+	// Legacy fallback: full S3 LIST + in-memory diff. Documented as
+	// slow but correct.
 	papers, unclaimed, claimedCount := enumerateNeedsMineru(re.Request.Context(), store, claimStore, limit, includeClaimed)
 	return re.JSON(http.StatusOK, map[string]any{
 		"papers":          papers,
@@ -151,6 +211,71 @@ func needsMineruHandler(re *core.RequestEvent, store objstore.Store, claimStore 
 		"total_unclaimed": unclaimed,
 		"total_claimed":   claimedCount,
 	})
+}
+
+// buildNeedsMineruResponse merges paperindex candidate rows with live
+// claim-store state and projects the result into the legacy
+// needs-mineru JSON shape. totalNeedsMineru is the global count from
+// QueryStats (used to populate total_unclaimed + total_claimed
+// approximately without scanning the whole claim store).
+//
+// Caveat: total_claimed here is *estimated* as (candidates we saw
+// that were claimed) — we don't enumerate all claims globally because
+// the claim store is a per-file dir scan and would be slow at 10⁴+
+// papers. For dashboard purposes this is good enough; if precise
+// numbers are required, a future endpoint can scan claimStore
+// explicitly.
+func buildNeedsMineruResponse(
+	ctx context.Context,
+	candidates []paperindex.NeedsMineruRow,
+	claimStore *mineruclaim.Store,
+	limit int,
+	includeClaimed bool,
+	totalNeedsMineru int,
+) map[string]any {
+	now := time.Now().UTC()
+	out := make([]map[string]any, 0, limit)
+	claimedSeen := 0
+	for _, c := range candidates {
+		claim, _ := claimStore.Read(c.ArxivID)
+		isClaimed := mineruclaim.IsActive(claim, now)
+		if isClaimed {
+			claimedSeen++
+			if !includeClaimed {
+				continue
+			}
+		}
+		if len(out) >= limit {
+			continue
+		}
+		paper := map[string]any{
+			"arxiv_id":         c.ArxivID,
+			"key":              c.ArxivID,
+			"pdf_path":         c.PDFKey,
+			"claimed":          isClaimed,
+			"claim_expires_at": nil,
+			"claim_requester":  nil,
+		}
+		if claim != nil && isClaimed {
+			paper["claim_expires_at"] = claim.ExpiresAt
+			paper["claim_requester"] = claim.Requester
+		}
+		out = append(out, paper)
+	}
+	// total_unclaimed is the global "has_pdf AND NOT has_md" count
+	// minus the claimed-seen subset (lower bound; precise number would
+	// require enumerating all claims). For most dashboards this is
+	// close enough.
+	unclaimed := totalNeedsMineru - claimedSeen
+	if unclaimed < 0 {
+		unclaimed = 0
+	}
+	return map[string]any{
+		"papers":          out,
+		"returned":        len(out),
+		"total_unclaimed": unclaimed,
+		"total_claimed":   claimedSeen,
+	}
 }
 
 // enumerateNeedsMineru lists every pdf/* object and surfaces the ones

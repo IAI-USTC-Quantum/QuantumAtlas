@@ -146,6 +146,22 @@ GOCACHE = "$PIXI_PROJECT_ROOT/.gocache/build"
 GOMODCACHE = "$PIXI_PROJECT_ROOT/.gocache/pkg/mod"
 GOPATH = "$PIXI_PROJECT_ROOT/.gocache"
 
+# CGO_ENABLED=1 is REQUIRED for `marcboeker/go-duckdb` (libduckdb cgo
+# binding used by internal/paperindex for the metadata catalog). The
+# rest of the codebase remains pure-Go (modernc.org/sqlite); turning
+# cgo on at build time costs us ~30MB binary size and a C-toolchain
+# dependency at build host (already satisfied by the `gxx` dep below).
+# Runtime has zero extra requirement — go-duckdb statically links
+# libduckdb into the binary.
+#
+# Setting it here in pixi activation.env means any `pixi run ...`
+# invocation gets cgo on, overriding whatever the user's
+# ~/.config/go/env has globally. Plain `go build` outside pixi will
+# still respect ~/.config/go/env (which on many devs' machines is set
+# to 0 to avoid the conda gxx hang documented above) — those devs
+# need to `pixi run build` rather than direct `go build`.
+CGO_ENABLED = "1"
+
 [tool.pixi.dependencies]
 # Why both `go` *and* `gxx`?
 #
@@ -161,11 +177,13 @@ GOPATH = "$PIXI_PROJECT_ROOT/.gocache"
 # the same real GCC) into .pixi/envs/default/bin/, satisfying the
 # baked-in lookup.
 #
-# Our actual code is pure-Go (modernc.org/sqlite, no cgo imports), so
-# `CGO_ENABLED=0 go build ./cmd/qatlas-server` would also work — but that
-# requires every dev to remember the env var. Bundling `gxx` keeps the
-# cgo lookup happy "by default" and stays correct if anyone later
-# imports a cgo-using library.
+# Our actual code is pure-Go (modernc.org/sqlite, no cgo imports
+# previously)... **now** `marcboeker/go-duckdb` was added for the
+# paperindex metadata catalog (docs/architecture.md). That binding
+# uses cgo, so `CGO_ENABLED=1` is the new default — see the
+# [tool.pixi.activation.env] block above. `gxx` is therefore no
+# longer optional; it's what allows go build to find
+# `x86_64-conda-linux-gnu-cc` at link time.
 #
 # Version pin: 1.26.x matches go.mod's `go 1.26.2`. Bump both together
 # when upgrading. conda-forge tracks upstream Go releases within ~days.

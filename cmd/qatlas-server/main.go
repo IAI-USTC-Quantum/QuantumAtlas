@@ -29,6 +29,7 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/healthz"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineruclaim"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperindex"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/pat"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/routes"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/shares"
@@ -188,6 +189,15 @@ func main() {
 		log.Fatalf("build PAT scope enforcer: %v", err)
 	}
 
+	// Build the paperindex catalog if S3 backend is configured.
+	// Non-fatal on failure: needsMineruHandler & friends will fall
+	// back to the legacy store.ListPrefix path (slow but correct).
+	// Rationale + design: docs/architecture.md → "论文元数据索引"
+	// section. The actual parquet must be (re)built via the
+	// bootstrap-index subcommand; if it doesn't exist yet, the
+	// Store starts up empty and queries return zero.
+	paperIndex := initPaperIndex(cfg)
+
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
 		// Capture process start time the first time a serve event
 		// fires. /api/health uses this to report uptime_seconds.
@@ -223,7 +233,7 @@ func main() {
 			}
 		}
 
-		registerRoutes(se, app, cfg, rawStore, shareStore, claimStore, enforcer, serverStarted)
+		registerRoutes(se, app, cfg, rawStore, shareStore, claimStore, paperIndex, enforcer, serverStarted)
 
 		// Serve the embedded SPA last as the catch-all. apis.Static's
 		// indexFallback=true means any path that doesn't match a real
@@ -280,10 +290,44 @@ func initRawStore(cfg *config.Config) (objstore.Store, error) {
 	return objstore.NewLocalStore(cfg.RawDir)
 }
 
+// initPaperIndex constructs the in-process paperindex catalog when an
+// S3 backend is configured. Always returns a non-nil Store on success;
+// returns nil silently when S3 isn't enabled (local-only dev setups
+// don't need the catalog — needs-mineru falls back to a trivial
+// LocalStore walk which is fast on a small dev RAW_DIR).
+//
+// Failure to build / load the catalog is non-fatal: we log a warning
+// and return nil so handlers fall back to the legacy slow-but-correct
+// store.ListPrefix path. The most common failure mode is "parquet
+// doesn't exist yet in the bucket" — Store.New handles that as a
+// soft-fail and starts with an empty catalog, so this returns
+// non-nil even then.
+func initPaperIndex(cfg *config.Config) *paperindex.Store {
+	if !cfg.S3Enabled() {
+		log.Printf("paperindex: skipped (S3 backend not enabled — handlers will fall back to LocalStore walks)")
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	store, err := paperindex.New(ctx, paperindex.Config{
+		S3Endpoint:      cfg.S3Endpoint,
+		Bucket:          cfg.S3Bucket,
+		AccessKeyID:     cfg.S3AccessKeyID,
+		SecretAccessKey: cfg.S3SecretAccessKey,
+	})
+	if err != nil {
+		log.Printf("paperindex: init failed (%v); handlers will fall back to legacy LIST-based impl", err)
+		return nil
+	}
+	log.Printf("paperindex: catalog ready (%d rows loaded from s3://%s/%s)",
+		store.RowCount(), cfg.S3Bucket, paperindex.DefaultParquetKey)
+	return store
+}
+
 // registerRoutes wires the QuantumAtlas /api/* surface. Most endpoints are
 // implemented under internal/routes/ and pulled in by their respective
 // Register* helpers as we migrate each module in subsequent phases.
-func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawStore objstore.Store, shareStore *shares.Store, claimStore *mineruclaim.Store, enforcer *casbin.Enforcer, started time.Time) {
+func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawStore objstore.Store, shareStore *shares.Store, claimStore *mineruclaim.Store, paperIndex *paperindex.Store, enforcer *casbin.Enforcer, started time.Time) {
 	probes := healthz.Probes{
 		Cfg:      cfg,
 		RawStore: rawStore,
@@ -360,7 +404,7 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	routes.RegisterGraph(se, cfg)
 
 	// Papers (resources, upload, mineru-claim) — see internal/routes/papers.go.
-	routes.RegisterPapers(se, cfg, rawStore, shareStore, claimStore, enforcer)
+	routes.RegisterPapers(se, cfg, rawStore, shareStore, claimStore, paperIndex, enforcer)
 
 	// Shares CRUD + public /share/{token}* — see internal/routes/shares.go.
 	routes.RegisterShares(se, cfg, shareStore, rawStore, enforcer)
