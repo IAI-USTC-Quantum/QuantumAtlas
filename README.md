@@ -78,7 +78,7 @@ curl -fsSL https://quantum-atlas.ai/install-server.sh | sh -s -- \
 curl -fsSL https://quantum-atlas.ai/install-server.sh | sh -s -- --no-service
 ```
 
-支持 `linux/{amd64,arm64}` + `darwin/{amd64,arm64}` 四个平台。脚本会自动校验 SHA256。
+支持 `linux/{amd64,arm64}` + `darwin/arm64` 三个平台（Intel Mac 用 [`go install`](docs/deployment.md#b-go-install) 路径）。脚本会自动校验 SHA256。
 
 ### 装 client (`qatlas` CLI)
 

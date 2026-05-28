@@ -127,8 +127,13 @@ jobs:
   #    Free runner availability (public repos):
   #      - ubuntu-latest        linux/amd64
   #      - ubuntu-24.04-arm     linux/arm64   (GitHub free tier 2025-01+)
-  #      - macos-13             darwin/amd64  (Intel)
   #      - macos-latest         darwin/arm64  (Apple Silicon)
+  #
+  #    darwin/amd64 (Intel Mac) deliberately NOT shipped: macos-13 (Intel)
+  #    runners on GitHub's free tier sit in queue for 10–40 minutes which
+  #    blocks the whole release. QuantumAtlas's target users are quantum
+  #    researchers running these binaries on cloud VMs / linux servers,
+  #    not Intel Macs. Add it back if there's actual demand.
   # --------------------------------------------------------------------
   binary-build:
     needs: prep
@@ -140,8 +145,6 @@ jobs:
             runner: ubuntu-latest
           - target: linux-arm64
             runner: ubuntu-24.04-arm
-          - target: darwin-amd64
-            runner: macos-13
           - target: darwin-arm64
             runner: macos-latest
     runs-on: ${{ matrix.runner }}

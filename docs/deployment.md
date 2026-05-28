@@ -29,8 +29,8 @@ QuantumAtlas server 是单个 Go 二进制 `qatlas-server`（~35MB，CGO-free，
 
 #### A. 一行 curl 装（**推荐 / 最快**）
 
-CI release pipeline 已经把 4 平台预编译 binary（`linux/amd64`、`linux/arm64`、
-`darwin/amd64`、`darwin/arm64`）发到了 GitHub Release。装脚本服务在
+CI release pipeline 已经把 3 平台预编译 binary（`linux/amd64`、`linux/arm64`、
+`darwin/arm64`）发到了 GitHub Release。装脚本服务在
 `<your-server>/install-server.sh`，会自动选 OS/arch、下载、SHA256 校验：
 
 ```bash
