@@ -27,18 +27,22 @@ checkout 内的 `wiki/` / `raw/` / `data/` / `pb_data/`。这有几个长期
 | `.env` | **保持 `<repo>/.env`** | 12-factor / dotenv 主流做法，未改 |
 
 所有默认都是显式覆盖优先（QATLAS_* > 旧 alias > 内置默认），生产部署
-**不**强制要求重新写 `.env`：什么都不写就走 XDG 默认。`pb_data` 在
-PocketBase 那侧通过 `--dir=` 命令行参数控制；server 启动时
-`cmd/server/main.go::injectPBDataDirFlag` 检查 os.Args，没带就自动
-补 `--dir=$QATLAS_PB_DATA_DIR`。
+**不**强制要求重新写 `.env`：什么都不写就走 XDG 默认。`pb_data` 的位置
+完全由 `QATLAS_PB_DATA_DIR` 控制；server 启动时
+`cmd/server/main.go::injectPBDataDirFlag` 会自动把它注入 PocketBase
+（在 `os.Args` 里补 `--dir=$QATLAS_PB_DATA_DIR`），所以 systemd unit /
+启动脚本里**不需要**也**不应该**再硬写 `--dir=`，整套配置走 `.env`
+统一管。
 
 ## 个人开发机：把仓库内的 wiki/raw/data/pb_data 搬出来
 
-下面假设你的仓库在 `~/TiMidlY-projects/QuantumAtlas/`，旧的状态目录
-都在那里面，目标是把它们挪到 `~/.local/share/quantum-atlas/` 下、
-让 git checkout 重新干净。
+假设你的仓库在 `<APP_HOME>`（举例 `~/QuantumAtlas/`），旧的状态目录都在
+那里面，目标是把它们挪到 `$XDG_DATA_HOME/quantum-atlas/` 下、让 git
+checkout 重新干净。
 
 ```bash
+APP_HOME=~/QuantumAtlas                    # 改成你自己的 checkout 路径
+
 # 0. 停掉本地 server，避免边搬边写
 #    （根据你的运行方式，二选一）
 systemctl --user stop qatlas.service                # systemd user
@@ -48,11 +52,9 @@ pkill -f 'quantumatlas serve' || true                # 手起 binary
 xdg_root="${XDG_DATA_HOME:-$HOME/.local/share}/quantum-atlas"
 mkdir -p "$xdg_root"
 
-cd ~/TiMidlY-projects/QuantumAtlas
+cd "$APP_HOME"
 
-# 2. 搬迁前快照（rsync --link-dest 会做硬链接快照，几乎不耗空间，
-#    但若任一目录在 FUSE / CIFS 上则跨 fs，硬链接会失败 → 退化为
-#    普通 cp。下面的 cp -a 是最安全的兜底）
+# 2. 搬迁前快照（cp -a 是最安全的兜底，跨 fs 也 OK）
 for d in wiki raw data pb_data; do
     [ -d "$d" ] || continue
     cp -a "$d" "$d.bak-$(date +%s)"
@@ -60,10 +62,10 @@ done
 
 # 3. 实际搬迁
 #    - mv 在同一 filesystem 内是原子的
-#    - 跨 filesystem 时退化成 cp + rm，看下面注意事项
+#    - 跨 filesystem 时退化成 cp + rm
 for d in wiki raw data pb_data; do
     [ -d "$d" ] || continue
-    mv "$d" "$xdg_root/${d#}"                       # raw -> $xdg_root/raw 等
+    mv "$d" "$xdg_root/$d"
 done
 
 # 4. wiki 特殊处理：默认指 ../QuantumAtlas-Wiki（兄弟 checkout），
@@ -80,87 +82,43 @@ curl -s http://127.0.0.1:4200/api/stats | jq .      # total_pages 应非 0
 kill %1
 ```
 
-### 跨 filesystem 注意（CIFS / FUSE）
+## 生产迁移：从旧布局切到新代码
 
-如果 `raw/` 是 rclone SMB 挂载（指向团队网盘），`mv raw $xdg_root/raw`
-会变成"复制几十 GB 数据到本地 → 删云端原件"，几乎一定不是你想要的。
-正确做法：**保留挂载点，只在 `.env` 里把 `QATLAS_RAW_DIR` 指过去**：
+无论旧布局是什么样的（in-repo 子目录、共享盘挂载、独立分区都可能），
+新代码的契约就一条：**.env 显式覆盖永远赢默认**。
 
-```bash
-# 不要 mv，改成在 .env 显式覆盖默认：
-echo 'QATLAS_RAW_DIR=/mnt/team/QuantumAtlas/raw' >> .env
-# 或者
-echo 'QATLAS_RAW_DIR=~/TiMidlY-projects/QuantumAtlas/raw' >> .env
-```
+按下面三步切换：
 
-显式覆盖永远赢默认。.env 里有这行，server 就忽略 XDG 默认，直接用挂载点。
+1. **决定每个路径要不要保留**。如果当前生产已经把 `RAW_DIR` /
+   `DATA_DIR` / `PB_DATA_DIR` 钉在某个固定位置（共享盘挂载、独立分区
+   等）且想保留，就在 `.env` 里**显式写出来**——这样未来 `unset`
+   或更新代码默认值都不会让 server 偷偷漂走。如果当前位置就是 XDG
+   默认或愿意接受默认，留空即可。
 
-## 1810 prod 迁移（CIFS 挂载场景）
+2. **删 systemd unit / 启动脚本里的 `--dir=`**。新代码会自动从
+   `.env` 的 `QATLAS_PB_DATA_DIR` 注入；unit 里再硬写 `--dir=` 会绕开
+   .env，让"`.env` 是唯一配置来源"的承诺破功。如果当前路径不在
+   `.env` 里，先 `echo QATLAS_PB_DATA_DIR=... >> .env` 再删 unit 里的
+   `--dir=`，**顺序不能反**——反了那一拍重启会让 pb_data 漂到新位置、
+   登录态/PAT/share 记录"消失"（其实只是不在新库里，老库还在旧位置）。
 
-1810 后端的 `/mnt/team/QuantumAtlas/{raw,data}` 是团队网盘上的 CIFS
-挂载，**不能动 mount 配置**——只能改 server 怎么找它。所以 prod 不
-需要"搬"任何数据，只需要在 `/home/timidly/QuantumAtlas/.env` 里显式
-钉住这两个路径（其实当前就已经这么配，新代码不会改变这个行为，但
-为了防御新人 `unset RAW_DIR` 后 server 默写 XDG 默认丢人，必须在
-`.env` 里钉着）：
+3. **`daemon-reload` + `restart` + 验证**：
 
-```env
-# /home/timidly/QuantumAtlas/.env 必须显式有：
-QATLAS_RAW_DIR=/mnt/team/QuantumAtlas/raw
-QATLAS_DATA_DIR=/mnt/team/QuantumAtlas/data
-```
+   ```bash
+   systemctl --user daemon-reload && systemctl --user restart qatlas.service
+   # 或 system unit：sudo systemctl daemon-reload && sudo systemctl restart qatlas
 
-`pb_data` 之前在 `/home/timidly/QuantumAtlas-go/pb_data/`，跟仓库分开。
-新代码不再要求 systemd unit 显式带 `--dir=`，但如果你想保持现有路径
-（不挪到 XDG 默认），有两种等价做法，**选其中一种**：
+   curl -sf http://127.0.0.1:4200/health
+   journalctl --user -u qatlas -n 50 | grep -E 'loaded \.env|pb_data|listening'
+   # 期望看到：
+   #   loaded .env path=<APP_HOME>/.env
+   #   ... QATLAS_PB_DATA_DIR resolved to <你期望的路径>
+   #   listening on 0.0.0.0:4200
+   ```
 
-A. systemd unit 显式带（不动 .env）：
-```ini
-ExecStart=/home/timidly/.local/bin/quantumatlas serve --http=0.0.0.0:4200 --dir=/home/timidly/QuantumAtlas-go/pb_data
-```
-
-B. `.env` 写 `QATLAS_PB_DATA_DIR`（不动 unit）：
-```env
-QATLAS_PB_DATA_DIR=/home/timidly/QuantumAtlas-go/pb_data
-```
-
-两条等效。**B 更符合 12-factor 配置在 .env 的原则**，迁过去后 unit
-就跟模板版本完全一致，减少特例。
-
-### 1810 一次性迁移步骤（B 路线）
-
-```bash
-# 假设你 ssh 进 1810 之后：
-ssh 1810
-
-# 1. 在 .env 里显式钉住所有不走默认的路径
-cd ~/QuantumAtlas
-grep -q '^QATLAS_RAW_DIR=' .env || \
-    echo 'QATLAS_RAW_DIR=/mnt/team/QuantumAtlas/raw' >> .env
-grep -q '^QATLAS_DATA_DIR=' .env || \
-    echo 'QATLAS_DATA_DIR=/mnt/team/QuantumAtlas/data' >> .env
-grep -q '^QATLAS_PB_DATA_DIR=' .env || \
-    echo 'QATLAS_PB_DATA_DIR=/home/timidly/QuantumAtlas-go/pb_data' >> .env
-
-# 2. 改 systemd user unit，去掉硬写的 --dir=
-nano ~/.config/systemd/user/qatlas.service
-# 把
-#   ExecStart=...quantumatlas serve --http=0.0.0.0:4200 --dir=/home/timidly/QuantumAtlas-go/pb_data
-# 改成
-#   ExecStart=...quantumatlas serve --http=0.0.0.0:4200
-
-# 3. reload & restart
-systemctl --user daemon-reload
-systemctl --user restart qatlas
-
-# 4. 验证
-curl -s http://127.0.0.1:4200/health
-journalctl --user -u qatlas -n 50 | grep -E 'loaded \.env|pb_data|listening'
-# 期望看到：
-#   loaded .env path=/home/timidly/QuantumAtlas/.env
-#   ... QATLAS_PB_DATA_DIR resolved to /home/timidly/QuantumAtlas-go/pb_data
-#   listening on 0.0.0.0:4200
-```
+   浏览器再访问 `https://<HOST>/token` 和 `/pat` 看登录态/PAT 是否
+   保留——如果空了说明 pb_data 路径漂了，回到 step 1 检查 .env 的
+   `QATLAS_PB_DATA_DIR` 是否指向真实有数据的那个目录。
 
 ## 旧用户：保持原有 in-repo 路径（不迁移）
 
