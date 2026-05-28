@@ -56,6 +56,47 @@ Wiki 内部按用途分四类，互相通过 `[[page-id]]` 链接：
 - 从算法定义继续往下走到 Quantum IR、Qiskit/QPanda 代码、验证和资源估计。
 - 通过 Web API、CLI 和分享链接支持远程协作，而不要求所有协作者都能直接登录服务器。
 
+## 安装
+
+QuantumAtlas 分两个交付物：
+
+- **`qatlas-server`**（Go 二进制，单文件 ~30 MB，自带前端 SPA + PocketBase + SQLite）—— 部署服务端用
+- **`qatlas`**（Python CLI，`quantum-atlas` 包）—— 日常用户调用 server API 用
+
+### 装 server (`qatlas-server`)
+
+```bash
+# 一行装：自动检测 OS/arch、下载最新 binary 到 ~/.local/bin、
+# 在 TTY 下问你要不要一并注册成 systemd 服务
+curl -fsSL https://quantum-atlas.ai/install-server.sh | sh
+
+# CI / agent 全自动模式（不问任何问题，装完直接 systemd enable）
+curl -fsSL https://quantum-atlas.ai/install-server.sh | sh -s -- \
+    --yes --service --mode user --dotenv-path ~/QuantumAtlas/.env
+
+# 只装 binary，跳过 service install
+curl -fsSL https://quantum-atlas.ai/install-server.sh | sh -s -- --no-service
+```
+
+支持 `linux/{amd64,arm64}` + `darwin/{amd64,arm64}` 四个平台。脚本会自动校验 SHA256。
+
+### 装 client (`qatlas` CLI)
+
+```bash
+# 推荐：uv 全局工具（隔离环境 + 升级方便）
+uv tool install quantum-atlas
+
+# 或 pipx
+pipx install quantum-atlas
+
+# 或 pip 直接装
+pip install quantum-atlas
+
+qatlas --help
+```
+
+`qatlas` CLI 默认通过 `QATLAS_SERVER_URL` 指向远端 server。配置详见 [.env.example](.env.example)。
+
 ## 快速开始
 
 ### 1. 先跑一个不依赖外部服务的 demo
@@ -97,8 +138,10 @@ cp .env.example .env
 ## 常用命令
 
 ```bash
-# 作为全局工具安装 client（qatlas CLI）
-uv tool install . --editable --force
+# 作为全局工具安装 client（qatlas CLI）— 从 PyPI（推荐）
+uv tool install quantum-atlas
+# 或开发模式装本地 checkout（贡献时用）
+# uv tool install . --editable --force
 qatlas --help
 
 # 论文摄入（服务器侧抓取 + 解析）

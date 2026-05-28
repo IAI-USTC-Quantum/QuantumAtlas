@@ -25,53 +25,79 @@ QuantumAtlas server 是单个 Go 二进制 `qatlas-server`（~35MB，CGO-free，
 
 ### 1. 获取 binary
 
-按门槛从低到高三种方式，任选其一：
+按门槛从低到高四种方式，任选其一：
 
-#### A. `go install`（推荐）
+#### A. 一行 curl 装（**推荐 / 最快**）
 
-目标机器有 Go 1.26+ toolchain 时最省事，从 GitHub 拉源码 + 本地编译 +
+CI release pipeline 已经把 4 平台预编译 binary（`linux/amd64`、`linux/arm64`、
+`darwin/amd64`、`darwin/arm64`）发到了 GitHub Release。装脚本服务在
+`<your-server>/install-server.sh`，会自动选 OS/arch、下载、SHA256 校验：
+
+```bash
+# 默认交互模式：装 binary 后问你要不要一并 systemd install
+curl -fsSL https://quantum-atlas.ai/install-server.sh | sh
+
+# 全自动（CI / agent / 无 TTY）：装 binary + 注册 systemd 一气呵成
+curl -fsSL https://quantum-atlas.ai/install-server.sh | sh -s -- \
+    --yes --service --mode user --dotenv-path ~/QuantumAtlas/.env
+
+# 只装 binary 跳过 service 注册
+curl -fsSL https://quantum-atlas.ai/install-server.sh | sh -s -- --no-service
+
+# 钉 release tag
+curl -fsSL https://quantum-atlas.ai/install-server.sh | sh -s -- --version v0.2.3
+
+# 改安装目录
+curl -fsSL https://quantum-atlas.ai/install-server.sh | sh -s -- --dir /opt/qatlas/bin
+```
+
+支持的环境变量：`QATLAS_INSTALL_DIR`（默认 `~/.local/bin`）、`QATLAS_VERSION`
+（默认 latest）、`QATLAS_REPO`（默认 `IAI-USTC-Quantum/QuantumAtlas`）。
+
+底层就是从 `github.com/IAI-USTC-Quantum/QuantumAtlas/releases/<tag>` 下
+`qatlas-server-<os>-<arch>` 那个 asset，所以**目标机不需要装任何 toolchain**——
+连 Go / npm / pixi 都不要，只要 `curl` 或 `wget` + `install`。也可以走 B/C/D
+本地编译，但只在你想钉未发布 commit、或在隔离环境里复现 build 时才需要。
+
+#### B. `go install`
+
+目标机器有 Go 1.26+ toolchain 时，从 GitHub 拉源码 + 本地编译 +
 落到 `$GOBIN`（默认 `~/go/bin/`）：
 
 ```bash
 go install github.com/IAI-USTC-Quantum/QuantumAtlas/cmd/qatlas-server@latest
-
-# 自动放进 ~/go/bin/qatlas-server
 ~/go/bin/qatlas-server --help
 ```
 
-钉版本：把 `@latest` 换成 `@v0.1.0` / `@<commit-sha>`。Go module
-proxy（`proxy.golang.org`）会自动缓存与做哈希校验，无需信任 GitHub
-单点。
+钉版本：把 `@latest` 换成 `@v0.2.3` / `@<commit-sha>`。Go module
+proxy（`proxy.golang.org`）会自动缓存与做哈希校验。
 
-装完挪到 systemd 引用的路径（如 `~/.local/bin/`）：
+> ⚠️ `go install` **不**会把前端 SPA build 进 binary（`web/embed.go` 需要
+> `web/dist/` 存在），所以这条路装出来的 binary 跑起来 `/{path...}` 会
+> 404。需要 SPA 时用 A 或 C。
+
+装完挪到 systemd 引用的路径：
 
 ```bash
 install -m 0755 ~/go/bin/qatlas-server ~/.local/bin/qatlas-server
 ```
 
-不想给目标机装 Go：跳到 B 或 C。
-
-#### B. 源码 + `pixi run build`
+#### C. 源码 + `pixi run build`
 
 适合贡献者、想钉本地未发布的 commit、或目标机没装 Go 但有 pixi：
 
 ```bash
 git clone https://github.com/IAI-USTC-Quantum/QuantumAtlas.git
 cd QuantumAtlas
-pixi run build                 # 出 build/qatlas-server (CGO-free, static)
+pixi run build                 # 自动跑 npm ci + npm run build + go build
 install -m 0755 build/qatlas-server ~/.local/bin/qatlas-server
 ```
 
-`pixi run build` 内部就是 `go build -o build/qatlas-server
-./cmd/qatlas-server`，pixi 只是顺带把 Go toolchain 锁到 `go 1.26.*`
-（见 `pyproject.toml`），保证不同机器编出的 binary 行为一致。
+#### D. 自带预编译 binary
 
-#### C. 自带预编译 binary
-
-CI 跨架构产物、或在 build host 上编完再丢给目标 host（典型场景：目标
-host 资源紧张，本机交叉编译后传过去）。怎么把 binary 传到目标 host
-本文不规定 —— `scp` / `rsync` / artifact 下载 / `kubectl cp` 都行，按
-你的运维链选。落到目标 host 后同样 `install -m 0755 <src>
+build host 上编完再传给目标 host（典型场景：目标 host 资源紧张，跨网传输
+代替本机交叉编译）。怎么把 binary 传到目标 host 本文不规定——`scp` / `rsync`
+/ artifact 下载 / `kubectl cp` 都行。落到目标 host 后 `install -m 0755 <src>
 ~/.local/bin/qatlas-server` 即可。
 
 ### 2. 目录布局（推荐）

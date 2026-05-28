@@ -26,16 +26,13 @@ permissions:
 
 jobs:
   # --------------------------------------------------------------------
-  # 1. release-build — produce ALL artifacts in one job, upload once.
-  #    Downstream jobs (create-release, pypi-publish) just download.
-  #    Splitting into a build vs publish step matches QuantumAlgorithm
-  #    (qalgo) and avoids rebuilding on every retry of a failed publish.
+  # 1. prep — single ubuntu job that does version + tag validation.
+  #    Cheap (~5 s), single source of truth for the rest of the workflow.
+  #    Splitting it out keeps the matrix jobs from each running their own
+  #    redundant tag-validation step.
   # --------------------------------------------------------------------
-  release-build:
+  prep:
     runs-on: ubuntu-latest
-
-    # Surface version + tag to downstream jobs so we don't re-parse
-    # pyproject.toml three times.
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
@@ -60,8 +57,9 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=$TAG" >> $GITHUB_OUTPUT
 
-      # Tag validation runs in release-build (not create-release) so a
-      # version conflict fails before we waste CPU on Go cross-compile.
+      # Pre-flight check: refuse to re-release the same version against a
+      # different SHA. If the tag already exists at HEAD's SHA, downstream
+      # jobs treat exists=true (Create release tag step gets skipped).
       - name: Validate release tag
         id: tag
         run: |
@@ -80,17 +78,86 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
+  # --------------------------------------------------------------------
+  # 2. python-build — wheel + sdist, single ubuntu job (Python builds
+  #    are platform-agnostic, only one architecture needed).
+  # --------------------------------------------------------------------
+  python-build:
+    runs-on: ubuntu-latest
+    needs: prep
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - name: Build Python distributions
         run: |
           python -m pip install build
           python -m build
 
-      # ------------------------------------------------------------------
-      # Frontend SPA — must build before the Go binary because web/embed.go
-      # uses //go:embed all:dist, which fails the Go build if web/dist/
-      # doesn't exist. The Go binary embeds the built SPA directly so
-      # there's only one artifact to ship to end users.
-      # ------------------------------------------------------------------
+      - name: Upload Python distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-dists-python
+          # *.whl + *.tar.gz only — fed to PyPI via Trusted Publishing.
+          # pypa/gh-action-pypi-publish invokes twine on "<dir>/*", so we
+          # keep this artifact strictly Python files (no Go binary subdir).
+          path: |
+            dist/*.tar.gz
+            dist/*.whl
+          retention-days: 7
+
+  # --------------------------------------------------------------------
+  # 3. binary-build — matrix over (OS, arch). Each runner is native to
+  #    its target so we build with CGO_ENABLED=1 against the runner's
+  #    own libc / libduckdb / sqlite — no cross-toolchain juggling.
+  #
+  #    CGO is required because internal/paperindex imports
+  #    marcboeker/go-duckdb which links against libduckdb. The resulting
+  #    binary is self-contained at runtime (libduckdb is statically
+  #    embedded), but build time needs the target's C toolchain.
+  #
+  #    Free runner availability (public repos):
+  #      - ubuntu-latest        linux/amd64
+  #      - ubuntu-24.04-arm     linux/arm64   (GitHub free tier 2025-01+)
+  #      - macos-13             darwin/amd64  (Intel)
+  #      - macos-latest         darwin/arm64  (Apple Silicon)
+  # --------------------------------------------------------------------
+  binary-build:
+    needs: prep
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-amd64
+            runner: ubuntu-latest
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+          - target: darwin-amd64
+            runner: macos-13
+          - target: darwin-arm64
+            runner: macos-latest
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          fetch-tags: true
+
+      # web/embed.go does //go:embed all:dist, so we need web/dist/ to
+      # exist before the Go compile. The web build is OS-independent, so
+      # any platform's output is equivalent — but it's cheap (~30 s) and
+      # simpler to rebuild per matrix entry than to ferry a prebuilt
+      # bundle across jobs.
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -104,100 +171,41 @@ jobs:
           npm ci
           npm run build
 
-      # ------------------------------------------------------------------
-      # Go server binaries — published to the GitHub Release so end users
-      # can `curl quantum-atlas.ai/install-server.sh | sh` and get the
-      # right artifact for their platform. This is the QuantumAtlas-only
-      # step that qalgo doesn't have (pure-Python project).
-      #
-      # CGO_ENABLED=1 is required since the paperindex package added a
-      # cgo binding to libduckdb (marcboeker/go-duckdb). The resulting
-      # binary is still self-contained at runtime — libduckdb is
-      # statically linked — but cgo cross-compilation needs the target's
-      # C toolchain at build time.
-      #
-      # TODO(paperindex): the ubuntu-latest runner only has the native
-      # x86_64 gcc, so cross-compilation to linux/arm64 + darwin/* will
-      # currently FAIL. Either (a) split this into a matrix-per-runner
-      # job (macos-latest for darwin, separate arm64 runner for linux),
-      # or (b) install cross-toolchains here (zig / clang). For now we
-      # ship linux/amd64 only — both production edges (RackNerd +
-      # Alibaba) are linux/amd64, so this covers prod. Non-prod targets
-      # will be re-enabled in a follow-up.
-      #
-      # pixi pulls the same Go toolchain as go.yml — avoids setup-go
-      # version drift between CI workflows.
-      # ------------------------------------------------------------------
+      # pixi pins the Go toolchain version, matching go.yml. Works on
+      # every matrix runner because conda-forge ships `go` for all four
+      # (linux-64, linux-aarch64, osx-64, osx-arm64).
       - name: Install pixi
         uses: prefix-dev/setup-pixi@v0.8.10
         with:
           pixi-version: v0.68.0
           cache: true
 
-      - name: Cross-compile qatlas-server binaries
+      - name: Build qatlas-server
         env:
           CGO_ENABLED: "1"
         run: |
           set -euo pipefail
           mkdir -p dist/bin
-          LDFLAGS="-s -w -X main.Version=${{ steps.version.outputs.version }}"
+          OUT="dist/bin/qatlas-server-${{ matrix.target }}"
+          pixi run -- go build -trimpath \
+            -ldflags "-s -w -X main.Version=${{ needs.prep.outputs.version }}" \
+            -o "$OUT" ./cmd/qatlas-server
+          file "$OUT" || true   # quick sanity check (linux); macOS skips silently
 
-          build() {
-            local goos="$1"
-            local goarch="$2"
-            local out="dist/bin/qatlas-server-${goos}-${goarch}"
-            echo "==> $out"
-            GOOS="$goos" GOARCH="$goarch" \
-              pixi run -- go build -trimpath -ldflags "$LDFLAGS" \
-              -o "$out" ./cmd/qatlas-server
-          }
-
-          # cgo: only the runner's native target works without extra
-          # cross-toolchain setup. See TODO above.
-          build linux  amd64
-          # build linux  arm64       # disabled: cgo cross-compile
-          # build darwin amd64       # disabled: cgo cross-compile
-          # build darwin arm64       # disabled: cgo cross-compile
-
-      - name: Generate checksums.txt
-        run: |
-          set -euo pipefail
-          cd dist/bin
-          # install-server.sh expects "<sha256>  <asset>" with exactly
-          # the bare asset basename (sha256sum's default when given a
-          # relative path).
-          sha256sum qatlas-server-* > checksums.txt
-          cat checksums.txt
-
-      - name: Upload Python distributions
+      - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: release-dists-python
-          # *.whl + *.tar.gz only — fed to PyPI via Trusted Publishing.
-          # pypa/gh-action-pypi-publish invokes twine on "<dir>/*", so
-          # we keep this artifact strictly Python files to avoid twine
-          # choking on the Go binary subdirectory.
-          path: |
-            dist/*.tar.gz
-            dist/*.whl
-          retention-days: 7
-
-      - name: Upload Go server binaries
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-dists-binaries
-          # Go-only: attached to the GitHub Release alongside wheels,
-          # not uploaded to PyPI.
-          path: dist/bin/
+          name: qatlas-server-${{ matrix.target }}
+          path: dist/bin/qatlas-server-${{ matrix.target }}
           retention-days: 7
 
   # --------------------------------------------------------------------
-  # 2. create-release — git tag + GitHub Release. Owns ALL files we
-  #    publish to the Release page (Python wheels/sdist + Go binaries).
+  # 4. create-release — aggregate all artifacts into one GitHub Release.
+  #    Owns the git tag creation too (when prep said exists=false).
   # --------------------------------------------------------------------
   create-release:
     runs-on: ubuntu-latest
-    needs: release-build
+    needs: [prep, python-build, binary-build]
     permissions:
       contents: write   # needed to push tag + create release
 
@@ -214,15 +222,34 @@ jobs:
           name: release-dists-python
           path: dist/
 
-      - name: Download Go server binaries
+      # Each binary lives in its own per-target artifact. `pattern` +
+      # `merge-multiple: true` glues them back into a single dist/bin/
+      # directory.
+      - name: Download Go binaries
         uses: actions/download-artifact@v4
         with:
-          name: release-dists-binaries
+          pattern: qatlas-server-*
           path: dist/bin/
+          merge-multiple: true
+
+      - name: List downloaded artifacts
+        run: |
+          set -euo pipefail
+          ls -la dist/
+          ls -la dist/bin/
+
+      - name: Generate checksums.txt
+        run: |
+          set -euo pipefail
+          cd dist/bin
+          # install-server.sh expects "<sha256>  <basename>" lines, which
+          # is sha256sum's default when given relative paths.
+          sha256sum qatlas-server-* > checksums.txt
+          cat checksums.txt
 
       - name: Extract latest changelog
         run: |
-          VERSION="${{ needs.release-build.outputs.version }}"
+          VERSION="${{ needs.prep.outputs.version }}"
 
           if [ -f CHANGELOG.md ]; then
             awk -v version="$VERSION" '
@@ -249,20 +276,20 @@ jobs:
           fi
 
       - name: Create release tag
-        if: needs.release-build.outputs.tag_exists == 'false'
+        if: needs.prep.outputs.tag_exists == 'false'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "${{ needs.release-build.outputs.tag }}" \
-                  -m "Release ${{ needs.release-build.outputs.tag }}"
-          git push origin "${{ needs.release-build.outputs.tag }}"
+          git tag -a "${{ needs.prep.outputs.tag }}" \
+                  -m "Release ${{ needs.prep.outputs.tag }}"
+          git push origin "${{ needs.prep.outputs.tag }}"
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ needs.release-build.outputs.tag }}
+          tag_name: ${{ needs.prep.outputs.tag }}
           body_path: /tmp/changelog.txt
           files: |
             dist/*.tar.gz
@@ -274,28 +301,30 @@ jobs:
           generate_release_notes: true
 
   # --------------------------------------------------------------------
-  # 3. pypi-publish — Trusted Publishing via OIDC.
+  # 5. pypi-publish — Trusted Publishing via OIDC.
   #
-  # No API token is stored anywhere; instead the PyPI project must be
-  # configured to trust THIS workflow file from THIS repo using THIS
-  # environment name. Setup is one-time:
+  # No API token stored anywhere; PyPI verifies the GitHub OIDC token
+  # against a per-project Trusted Publisher config that must match:
   #
-  #   1. Create the project on PyPI (one-time, manual).
-  #   2. https://pypi.org/manage/project/quantum-atlas/settings/publishing/
-  #      add a "Trusted Publisher" with:
-  #        owner=IAI-USTC-Quantum repo=QuantumAtlas
-  #        workflow=release.yml environment=pypi
-  #   3. Create a GitHub environment named "pypi" in the repo
-  #      settings (no secrets / protection rules needed for OIDC).
+  #   PyPI project name:    quantum-atlas
+  #   Owner:                IAI-USTC-Quantum
+  #   Repository name:      QuantumAtlas
+  #   Workflow filename:    release.yml
+  #   Environment name:     pypi
   #
-  # Runs in parallel with create-release: both consume the same
-  # release-build artifact, neither depends on the other. PyPI side
-  # uses skip-existing so re-runs of the workflow against an already-
-  # published version are no-ops, not failures.
+  # One-time setup: configure the publisher at
+  #   https://pypi.org/manage/project/quantum-atlas/settings/publishing/
+  # and create a GitHub Environment named `pypi` in repo Settings
+  # (no secrets / approval reviewers needed — the name itself is the
+  # match key for the OIDC token).
+  #
+  # Runs in parallel with create-release: both consume python-build's
+  # artifact and neither depends on the other. `skip-existing: true`
+  # makes re-runs against an already-published version a no-op.
   # --------------------------------------------------------------------
   pypi-publish:
     runs-on: ubuntu-latest
-    needs: release-build
+    needs: [prep, python-build]
     environment:
       name: pypi
       url: https://pypi.org/p/quantum-atlas/
@@ -312,8 +341,7 @@ jobs:
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          # Keep on: re-runs of the workflow against an already-
-          # published version should be silent no-ops.
+          # Silent no-op on re-runs against already-published versions.
           skip-existing: true
           # packages-dir defaults to dist/. We deliberately did NOT
           # download the binaries artifact in this job so the directory
