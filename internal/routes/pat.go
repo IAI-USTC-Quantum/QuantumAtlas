@@ -163,12 +163,14 @@ func patCreateHandler(app core.App) func(re *core.RequestEvent) error {
 
 		plaintext, prefix, hash, err := pat.Generate()
 		if err != nil {
-			return re.JSON(http.StatusInternalServerError, map[string]string{"detail": "generate token: " + err.Error()})
+			slog.Error("pat: token generation failed", "user_id", user.Id, "error", err)
+			return re.JSON(http.StatusInternalServerError, map[string]string{"detail": "internal server error"})
 		}
 
 		collection, err := app.FindCollectionByNameOrId(pat.CollectionName)
 		if err != nil {
-			return re.JSON(http.StatusInternalServerError, map[string]string{"detail": "collection not found: " + err.Error()})
+			slog.Error("pat: collection lookup failed", "collection", pat.CollectionName, "error", err)
+			return re.JSON(http.StatusInternalServerError, map[string]string{"detail": "internal server error"})
 		}
 		rec := core.NewRecord(collection)
 		rec.Set("user", user.Id)
@@ -187,7 +189,8 @@ func patCreateHandler(app core.App) func(re *core.RequestEvent) error {
 		rec.Set("expires_at", expires)
 
 		if err := app.Save(rec); err != nil {
-			return re.JSON(http.StatusInternalServerError, map[string]string{"detail": "save token: " + err.Error()})
+			slog.Error("pat: save record failed", "user_id", user.Id, "error", err)
+			return re.JSON(http.StatusInternalServerError, map[string]string{"detail": "internal server error"})
 		}
 
 		return re.JSON(http.StatusOK, patCreateResponse{
@@ -218,7 +221,8 @@ func patListHandler(app core.App) func(re *core.RequestEvent) error {
 			map[string]any{"user": user.Id},
 		)
 		if err != nil {
-			return re.JSON(http.StatusInternalServerError, map[string]string{"detail": "list tokens: " + err.Error()})
+			slog.Error("pat: list records failed", "user_id", user.Id, "error", err)
+			return re.JSON(http.StatusInternalServerError, map[string]string{"detail": "internal server error"})
 		}
 
 		summaries := make([]patSummary, 0, len(records))
@@ -265,7 +269,8 @@ func patDeleteHandler(app core.App) func(re *core.RequestEvent) error {
 			return re.JSON(http.StatusNotFound, map[string]string{"detail": "token not found"})
 		}
 		if err := app.Delete(rec); err != nil {
-			return re.JSON(http.StatusInternalServerError, map[string]string{"detail": "delete: " + err.Error()})
+			slog.Error("pat: delete record failed", "id", id, "user_id", user.Id, "error", err)
+			return re.JSON(http.StatusInternalServerError, map[string]string{"detail": "internal server error"})
 		}
 		return re.JSON(http.StatusOK, map[string]bool{"ok": true})
 	}

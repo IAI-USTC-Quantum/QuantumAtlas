@@ -108,11 +108,12 @@ func Generate() (plaintext, prefix, hash string, err error) {
 // here always mean "definitely not ours; let the PocketBase JWT path
 // handle it" and never block a legitimate request.
 //
-// The minimum length is TokenPrefix + at least one body character.
-// PocketBase JWTs start with "eyJ" and contain dots, so they always
-// return false here.
+// The minimum length is PrefixDisplayLen because Lookup's prefix-indexed
+// scan needs at least that many chars to be useful (a "qat_x"-shaped
+// bearer is never a real PAT). PocketBase JWTs start with "eyJ" and
+// contain dots, so they always return false here.
 func Looks(token string) bool {
-	if len(token) <= len(TokenPrefix) {
+	if len(token) < PrefixDisplayLen {
 		return false
 	}
 	if !strings.HasPrefix(token, TokenPrefix) {
@@ -125,11 +126,16 @@ func Looks(token string) bool {
 // Used both at Generate time (to persist) and at Lookup time (to scope
 // the bcrypt scan to records that share the same plaintext prefix).
 //
-// Returns the full plaintext if it is shorter than PrefixDisplayLen,
-// which only happens when Looks(plaintext) is already false.
+// Returns "" if the input is shorter than PrefixDisplayLen — never the
+// raw input. This is defense-in-depth: future callers might use this
+// helper for audit logging or telemetry, and silently returning the
+// full plaintext on a runt input would leak the secret into those
+// sinks. Callers MUST treat "" as "no usable prefix, fall through to
+// not-found", which is the natural behaviour for a DB lookup since no
+// stored prefix is ever empty.
 func PrefixOf(plaintext string) string {
 	if len(plaintext) < PrefixDisplayLen {
-		return plaintext
+		return ""
 	}
 	return plaintext[:PrefixDisplayLen]
 }
@@ -179,8 +185,15 @@ func Lookup(app core.App, plaintext string) (*core.Record, *core.Record, error) 
 		// Found it. Check expiry next so an expired-but-correct token
 		// still surfaces the more specific ErrExpired sentinel for
 		// tests / future logging.
+		//
+		// expires_at is REQUIRED at the handler layer (patCreateHandler
+		// rejects zero / negative / >365 days). Treating a zero / past
+		// timestamp as expired here is defense-in-depth: if anything
+		// ever creates a perpetual record by bypassing the handler
+		// (e.g. PocketBase Admin UI direct write, future bulk-import),
+		// it still fails the auth path.
 		expires := rec.GetDateTime("expires_at").Time()
-		if !expires.IsZero() && time.Now().After(expires) {
+		if expires.IsZero() || time.Now().After(expires) {
 			return rec, nil, ErrExpired
 		}
 
@@ -203,39 +216,80 @@ func Lookup(app core.App, plaintext string) (*core.Record, *core.Record, error) 
 // fail the actual request (a write endpoint should accept a valid PAT
 // even if we can't update the audit column for some reason).
 //
-// We use types.NowDateTime() so the value passes the same validation
-// any other DateField write would.
+// Implementation note: we issue a single-column UPDATE rather than
+// calling app.Save(rec). Reasons:
+//
+//   1. app.Save() re-serialises the whole record, bumping the
+//      auto-managed `updated` timestamp and firing OnRecordUpdate*
+//      hooks. Two concurrent requests with the same PAT would race
+//      on those side-effects, jittering `updated` and potentially
+//      double-firing audit hooks.
+//
+//   2. UPDATE last_used_at = ? WHERE id = ? is a single atomic SQL
+//      statement that any number of concurrent calls can collapse
+//      onto without contention beyond the per-row lock SQLite already
+//      manages.
+//
+//   3. Skips the validation cost of Save (which re-runs every field
+//      validator on the record) — meaningful for high-traffic CI PATs
+//      where MarkUsed fires once per authenticated request.
 func MarkUsed(app core.App, rec *core.Record) error {
 	if rec == nil {
 		return errors.New("pat: nil record")
 	}
-	rec.Set("last_used_at", types.NowDateTime())
-	if err := app.Save(rec); err != nil {
-		return fmt.Errorf("pat: save last_used_at: %w", err)
+	_, err := app.DB().
+		NewQuery("UPDATE " + CollectionName + " SET last_used_at = {:t} WHERE id = {:id}").
+		Bind(dbx.Params{
+			"t":  types.NowDateTime(),
+			"id": rec.Id,
+		}).
+		Execute()
+	if err != nil {
+		return fmt.Errorf("pat: update last_used_at: %w", err)
 	}
 	return nil
 }
 
-// randomBase62 returns n cryptographically-random base62 characters.
+// randomBase62 returns n cryptographically-random base62 characters
+// using rejection sampling — bytes ≥ 248 (the largest multiple of 62
+// that fits in a byte) are discarded so every accepted byte maps onto
+// the alphabet with exactly uniform probability. The naive `byte % 62`
+// approach would slightly over-represent the first 8 chars (256 % 62
+// = 8); irrelevant at 143 bits net entropy but trivial to fix, and
+// readers shouldn't have to audit a known-biased PRNG for an
+// auth-critical primitive.
 //
-// We oversample by 2× into a byte buffer and take `byte % 62` to map
-// onto the alphabet. The naive modulo introduces a tiny bias (values
-// 256 mod 62 = 8, so bytes 248..255 are slightly more represented),
-// but at 143 bits of entropy the bias is statistically irrelevant for
-// token uniqueness or guessability. The simpler code is the right call
-// here; if you ever change this for a different cost/uniqueness
-// regime, switch to rejection sampling.
+// Crypto/rand is buffered into 64-byte chunks to amortise syscall
+// cost (rejection sampling otherwise issues one syscall per char on a
+// rejected byte).
 func randomBase62(n int) (string, error) {
 	if n <= 0 {
 		return "", errors.New("pat: randomBase62 length must be > 0")
 	}
-	buf := make([]byte, n*2)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
+	// 256 / 62 = 4 with remainder 8, so 248 is the smallest byte
+	// value we must reject. Accepted bytes map cleanly onto the
+	// 62-character alphabet.
+	const (
+		bucket      = 62 * 4 // = 248
+		chunkBuffer = 64     // tune for amortised syscall cost
+	)
 	out := make([]byte, n)
-	for i := 0; i < n; i++ {
-		out[i] = base62Alphabet[int(buf[i])%len(base62Alphabet)]
+	var buf [chunkBuffer]byte
+	bufPos := chunkBuffer // force initial fill
+	for i := 0; i < n; {
+		if bufPos >= chunkBuffer {
+			if _, err := rand.Read(buf[:]); err != nil {
+				return "", err
+			}
+			bufPos = 0
+		}
+		b := buf[bufPos]
+		bufPos++
+		if b >= bucket {
+			continue
+		}
+		out[i] = base62Alphabet[b%62]
+		i++
 	}
 	return string(out), nil
 }
