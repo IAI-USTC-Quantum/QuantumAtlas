@@ -217,7 +217,7 @@ jobs:
               ;;
           esac
 
-          go build -trimpath -ldflags "$LDFLAGS" -o "$OUT" ./cmd/qatlas-server
+          go build -trimpath -buildvcs=false -ldflags "$LDFLAGS" -o "$OUT" ./cmd/qatlas-server
 
           # Audit: surface what the binary links against.
           file "$OUT" || true

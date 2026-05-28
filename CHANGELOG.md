@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.2.9 (2026-05-29)
+
+### Fix
+
+- **release**: use manylinux_2_28 + static-libstdc++ instead of manylinux2014
+
 ## v0.2.8 (2026-05-29)
 
 ### Feat
