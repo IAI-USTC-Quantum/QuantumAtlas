@@ -190,10 +190,42 @@ jobs:
           set -euo pipefail
           mkdir -p dist/bin
           OUT="dist/bin/qatlas-server-${{ matrix.target }}"
+
+          # On Linux targets we statically link the entire C runtime
+          # (libstdc++, libgcc, libc) so the binary runs on any glibc
+          # 2.17+ system regardless of how old its libstdc++ is.
+          # Without this, the CI runner (ubuntu-latest = GCC 13/14,
+          # CXXABI 1.3.15) produces binaries that demand symbols
+          # missing on older distros — e.g. Alibaba Cloud Linux 3
+          # (RHEL 8 derivative, GCC 10, CXXABI ≤ 1.3.12) fails with
+          # "version `CXXABI_1.3.13' not found".
+          #
+          # Trade-offs of -static:
+          #   - binary stays self-contained, but glibc NSS lookups
+          #     (getpwnam_r / getaddrinfo) emit a build-time warning
+          #     about needing the matching glibc at runtime. In
+          #     practice qatlas-server uses neither (no DNS host
+          #     lookups beyond Go's pure resolver, no /etc/passwd
+          #     queries), and Go's netdns=go fallback handles DNS.
+          #   - size grows ~3 MB (libstdc++.a baked in).
+          #
+          # macOS doesn't have the same problem (Mach-O dynamic
+          # binaries link against /usr/lib/libc++.dylib which is
+          # uniformly available), so we skip -static there.
+          EXT_FLAGS=""
+          case "${{ matrix.target }}" in
+            linux-*) EXT_FLAGS="-linkmode external -extldflags=-static" ;;
+          esac
+
           pixi run -- go build -trimpath \
-            -ldflags "-s -w -X main.Version=${{ needs.prep.outputs.version }}" \
+            -ldflags "-s -w -X main.Version=${{ needs.prep.outputs.version }} $EXT_FLAGS" \
             -o "$OUT" ./cmd/qatlas-server
           file "$OUT" || true   # quick sanity check (linux); macOS skips silently
+          # Surface the dynamic-link audit so future build-log readers
+          # can confirm the linux binaries are truly static.
+          if [ "${{ matrix.target }}" != "darwin-arm64" ]; then
+              ldd "$OUT" 2>&1 | head -5 || true
+          fi
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4

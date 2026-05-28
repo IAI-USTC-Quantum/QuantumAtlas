@@ -262,6 +262,14 @@ func (f ListFilter) matches(p *Page) bool {
 	return true
 }
 
+// IsEmpty reports whether f is the zero filter (every page matches).
+// Used by Cache.Pages as a fast-path to skip per-page matches() when
+// no filtering is requested — callers can then return the underlying
+// slice directly.
+func (f ListFilter) IsEmpty() bool {
+	return f.Type == "" && f.Category == "" && f.Status == "" && len(f.Tags) == 0
+}
+
 // ListPages returns every page under wikiDir matching f, with parse errors
 // counted but not fatal (matches FastAPI's "skip bad pages" behavior).
 func ListPages(wikiDir string, f ListFilter) ([]*Page, int, error) {
