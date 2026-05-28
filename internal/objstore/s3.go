@@ -82,12 +82,33 @@ func validateKey(key string) error {
 // part size. contentType is stored in object metadata and surfaces in
 // Content-Type on subsequent GETs / presigned URLs.
 func (s *S3Store) Put(ctx context.Context, key string, r io.Reader, size int64, contentType string) (int64, error) {
+	return s.PutWithMeta(ctx, key, r, size, contentType, nil)
+}
+
+// PutWithMeta is Put plus user-defined metadata. Each entry becomes an
+// x-amz-meta-<lowercase-k> header. S3 reserves the headers themselves
+// as 2 KiB total per object; the upload-pdf handler uses ~80 bytes
+// (sha256 hex), well clear of the cap.
+//
+// We accept arbitrary keys and trust the caller to keep them
+// lowercase — minio-go does NOT auto-lower for us, and roundtripping
+// CamelCase keys back via Stat returns lowercase, which has burned
+// us once before.
+func (s *S3Store) PutWithMeta(ctx context.Context, key string, r io.Reader, size int64, contentType string, metadata map[string]string) (int64, error) {
 	if err := validateKey(key); err != nil {
 		return 0, err
 	}
 	opts := minio.PutObjectOptions{}
 	if contentType != "" {
 		opts.ContentType = contentType
+	}
+	if len(metadata) > 0 {
+		// minio-go mutates the map; copy so callers can reuse theirs.
+		md := make(map[string]string, len(metadata))
+		for k, v := range metadata {
+			md[k] = v
+		}
+		opts.UserMetadata = md
 	}
 	info, err := s.client.PutObject(ctx, s.bucket, key, r, size, opts)
 	if err != nil {
@@ -124,6 +145,7 @@ func (s *S3Store) Get(ctx context.Context, key string) (io.ReadCloser, ObjectInf
 		Size:        stat.Size,
 		UpdatedAt:   stat.LastModified.UTC(),
 		ContentType: stat.ContentType,
+		Metadata:    copyUserMeta(stat.UserMetadata),
 	}, nil
 }
 
@@ -145,6 +167,7 @@ func (s *S3Store) Stat(ctx context.Context, key string) (ObjectInfo, bool, error
 		Size:        stat.Size,
 		UpdatedAt:   stat.LastModified.UTC(),
 		ContentType: stat.ContentType,
+		Metadata:    copyUserMeta(stat.UserMetadata),
 	}, true, nil
 }
 
@@ -216,6 +239,54 @@ func (s *S3Store) PresignGet(ctx context.Context, key string, ttl time.Duration)
 		return "", false, fmt.Errorf("objstore: presign %s: %w", key, err)
 	}
 	return u.String(), true, nil
+}
+
+// EnsureVersioning makes sure bucket versioning is "Enabled" so a later
+// PutObject-with-same-key keeps the old version reachable via
+// ListObjectVersions / GetObject?versionId=. Called by cmd/server/main.go
+// at boot.
+//
+// Idempotent: if status is already "Enabled" we skip the Set call to
+// avoid noisy "config change" audit events. We **never** transition
+// out of Enabled — even if an operator manually Suspended versioning,
+// qatlas reverts on next restart. This is intentional: losing the
+// ability to recover an over-written PDF is a much bigger correctness
+// hazard than the (small) extra storage cost.
+//
+// Returns the prior status as a string ("" when never set, "Enabled",
+// "Suspended") plus whether we changed it. Errors are descriptive so
+// the caller can decide whether to fail-fast or warn-and-continue
+// (qatlas chooses the latter — the server still works without
+// versioning, the user just loses overwrite-rollback).
+func (s *S3Store) EnsureVersioning(ctx context.Context) (priorStatus string, changed bool, err error) {
+	cfg, err := s.client.GetBucketVersioning(ctx, s.bucket)
+	if err != nil {
+		return "", false, fmt.Errorf("objstore: get bucket versioning %s: %w", s.bucket, err)
+	}
+	if cfg.Status == "Enabled" {
+		return cfg.Status, false, nil
+	}
+	if err := s.client.EnableVersioning(ctx, s.bucket); err != nil {
+		return cfg.Status, false, fmt.Errorf("objstore: enable bucket versioning %s: %w", s.bucket, err)
+	}
+	return cfg.Status, true, nil
+}
+
+// copyUserMeta normalises minio-go's metadata map into the lowercase
+// form Store contract requires, and returns nil for empty input so
+// callers can do plain `if info.Metadata == nil`.
+//
+// Why copy at all: minio-go reuses the map it returned to us across
+// subsequent calls in some code paths; mutating it would race.
+func copyUserMeta(src map[string]string) map[string]string {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(src))
+	for k, v := range src {
+		out[strings.ToLower(k)] = v
+	}
+	return out
 }
 
 // isNoSuchKey checks whether err is the minio-go "object missing"

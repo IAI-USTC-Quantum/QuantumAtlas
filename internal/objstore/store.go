@@ -38,11 +38,20 @@ import (
 // Size may be -1 when the backend can't cheaply report it (e.g. range
 // listings that didn't fetch the full Stat). Callers that need an
 // authoritative size should Stat() the key explicitly.
+//
+// Metadata holds user-defined key/value pairs (S3 x-amz-meta-* headers
+// without the prefix; lower-case keys). It is populated by Stat and
+// Get on backends that support it (S3); LocalStore returns nil because
+// it has no native sidecar metadata store. Callers MUST treat a nil
+// or missing key the same way — "metadata unknown" rather than "known
+// to be empty" — and fall back to the legacy path (e.g. force a re-PUT
+// on upload conflicts).
 type ObjectInfo struct {
 	Key         string
 	Size        int64
 	UpdatedAt   time.Time
 	ContentType string
+	Metadata    map[string]string
 }
 
 // Store abstracts the backing store for raw paper assets. Implementations
@@ -57,6 +66,19 @@ type Store interface {
 	// support it (S3); local backend ignores it (extension wins).
 	// Returns the number of bytes actually written.
 	Put(ctx context.Context, key string, r io.Reader, size int64, contentType string) (int64, error)
+
+	// PutWithMeta is Put plus user-defined metadata. On S3 each map
+	// entry becomes an x-amz-meta-<k> header (S3 lowercases keys on
+	// the wire — pass lowercase to avoid round-trip surprises). On
+	// LocalStore metadata is silently dropped: the dev-only local
+	// fallback has no native sidecar store and surfacing a "metadata
+	// unsupported" error would force every caller to special-case it.
+	// Callers that depend on metadata for correctness (e.g. content
+	// dedup via sha256) must already tolerate missing metadata on
+	// reads — see ObjectInfo.Metadata.
+	//
+	// Behaves identically to Put when metadata is nil or empty.
+	PutWithMeta(ctx context.Context, key string, r io.Reader, size int64, contentType string, metadata map[string]string) (int64, error)
 
 	// Get opens key for reading. The caller MUST close the reader.
 	// Returns ErrNotFound when key does not exist.

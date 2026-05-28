@@ -9,11 +9,19 @@ The ARXIV_ID must include a version suffix (``vN``) so the stored filename
 matches the RAW_DIR layout. Old style (pre-Apr 2007) requires a category
 prefix, e.g. ``quant-ph/9508027v1``. New style is ``YYMM.NNNNNvN`` such as
 ``2501.00010v1``.
+
+The client computes a sha256 of every file before uploading and sends
+``?expected_sha256=<hex>`` (and ``?expected_metadata_sha256`` for the
+metadata JSON sibling) so the server can detect in-transit corruption
+**before** any object-store write. Same hash is what the server stores
+as ``x-amz-meta-sha256`` to make subsequent re-uploads of identical
+content a 200-OK no-op instead of the legacy 409.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import sys
 from pathlib import Path
 from typing import Any
@@ -30,6 +38,24 @@ from atlas.client._common import (
 )
 
 
+_SHA256_CHUNK = 1 << 20  # 1 MiB; balances syscalls vs. memory.
+
+
+def _sha256_hex(path: Path) -> str:
+    """Stream a file through sha256, returning the lowercase hex digest.
+
+    We read in 1 MiB chunks so the 100 MiB PDF cap never balloons RAM.
+    """
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        while True:
+            chunk = fh.read(_SHA256_CHUNK)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def _http_error_exit(response: requests.Response) -> int:
     body = response.text or response.reason or ""
     print(
@@ -44,20 +70,25 @@ def cmd_upload_pdf(args: argparse.Namespace) -> int:
     if not pdf_path.is_file():
         print(f"PDF not found: {pdf_path}", file=sys.stderr)
         return 1
+    pdf_sha = _sha256_hex(pdf_path)
 
     files: dict[str, tuple[str, Any, str]] = {
         "pdf": (pdf_path.name, pdf_path.open("rb"), "application/pdf"),
     }
     metadata_handle = None
+    metadata_sha: str | None = None
     if args.metadata:
         metadata_path = Path(args.metadata).expanduser()
         if not metadata_path.is_file():
             print(f"Metadata JSON not found: {metadata_path}", file=sys.stderr)
             return 1
+        metadata_sha = _sha256_hex(metadata_path)
         metadata_handle = metadata_path.open("rb")
         files["metadata"] = (metadata_path.name, metadata_handle, "application/json")
 
-    params: dict[str, str] = {}
+    params: dict[str, str] = {"expected_sha256": pdf_sha}
+    if metadata_sha is not None:
+        params["expected_metadata_sha256"] = metadata_sha
     if args.overwrite:
         params["overwrite"] = "true"
 
@@ -89,11 +120,12 @@ def cmd_upload_markdown(args: argparse.Namespace) -> int:
     if not md_path.is_file():
         print(f"Markdown not found: {md_path}", file=sys.stderr)
         return 1
+    md_sha = _sha256_hex(md_path)
 
     files = {
         "markdown": (md_path.name, md_path.open("rb"), "text/markdown"),
     }
-    params: dict[str, str] = {}
+    params: dict[str, str] = {"expected_sha256": md_sha}
     if args.overwrite:
         params["overwrite"] = "true"
     if args.source:

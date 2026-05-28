@@ -13,6 +13,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"log/slog"
@@ -20,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/auth"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
@@ -124,6 +126,25 @@ func main() {
 	rawStore, err := initRawStore(cfg)
 	if err != nil {
 		log.Fatalf("init raw object store: %v", err)
+	}
+	// Reconcile bucket versioning so accidental overwrites are
+	// recoverable via S3 ListObjectVersions. Idempotent; non-fatal
+	// when the IAM user lacks s3:Put/GetBucketVersioning (server
+	// still serves, just without rollback safety) — log so ops
+	// notices and grants the perms next deploy.
+	if s3Store, ok := rawStore.(*objstore.S3Store); ok {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		prior, changed, vErr := s3Store.EnsureVersioning(ctx)
+		cancel()
+		switch {
+		case vErr != nil:
+			slog.Warn("bucket versioning: reconcile failed; overwrites will not be recoverable",
+				"bucket", cfg.S3Bucket, "error", vErr)
+		case changed:
+			log.Printf("bucket versioning: enabled (was: %q)", prior)
+		default:
+			log.Printf("bucket versioning: already enabled")
+		}
 	}
 
 	// Build the casbin enforcer once at startup. The policy table is

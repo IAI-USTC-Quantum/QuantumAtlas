@@ -3,13 +3,14 @@ package routes
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
 	"path"
 	"sort"
 	"strconv"
@@ -435,6 +436,8 @@ func uploadPDFHandler(re *core.RequestEvent, cfg *config.Config, store objstore.
 		})
 	}
 	overwrite := re.Request.URL.Query().Get("overwrite") == "true"
+	expectedPdfSha := normaliseSha256Hex(re.Request.URL.Query().Get("expected_sha256"))
+	expectedMetaSha := normaliseSha256Hex(re.Request.URL.Query().Get("expected_metadata_sha256"))
 
 	pdfKey := paperassets.AssetKey("pdf", canonical)
 	jsonKey := paperassets.AssetKey("json", canonical)
@@ -459,15 +462,9 @@ func uploadPDFHandler(re *core.RequestEvent, cfg *config.Config, store objstore.
 		})
 	}
 
-	if !overwrite {
-		if _, exists, _ := store.Stat(ctx, pdfKey); exists {
-			return re.JSON(http.StatusConflict, map[string]string{
-				"detail": fmt.Sprintf("PDF already exists at %s; pass overwrite=true to replace", pdfKey),
-			})
-		}
-	}
-
-	pdfBytes, err := stagedUpload(ctx, pdfPart, store, pdfKey, paperassets.MaxPDFBytes, "pdf", "application/pdf",
+	// Stage PDF (memory + sha256). No store I/O yet, so the entire
+	// upload can be rolled back by simply returning early.
+	pdfBody, pdfSha, err := stageBody(ctx, pdfPart, paperassets.MaxPDFBytes, "pdf",
 		func(b []byte) *uploadError {
 			if len(b) < 5 || string(b[:5]) != "%PDF-" {
 				return &uploadError{Status: http.StatusBadRequest,
@@ -478,19 +475,23 @@ func uploadPDFHandler(re *core.RequestEvent, cfg *config.Config, store objstore.
 	if err != nil {
 		return jsonError(re, err)
 	}
+	if expectedPdfSha != "" && expectedPdfSha != pdfSha {
+		return re.JSON(http.StatusBadRequest, map[string]any{
+			"detail":            "expected_sha256 mismatch — upload may be corrupt in transit",
+			"expected_sha256":   expectedPdfSha,
+			"actual_sha256":     pdfSha,
+		})
+	}
 
-	metaBytes := int64(0)
-	metadataPath := ""
+	// Stage metadata JSON if present, BEFORE any store writes — so a
+	// metadata-side conflict doesn't leave a half-uploaded PDF.
+	var metaBody []byte
+	var metaSha string
+	hasMetadata := false
 	if mdPart, _, err := re.Request.FormFile("metadata"); err == nil && mdPart != nil {
 		defer mdPart.Close()
-		if !overwrite {
-			if _, exists, _ := store.Stat(ctx, jsonKey); exists {
-				return re.JSON(http.StatusConflict, map[string]string{
-					"detail": fmt.Sprintf("metadata already exists at %s; pass overwrite=true to replace", jsonKey),
-				})
-			}
-		}
-		metaBytes, err = stagedUpload(ctx, mdPart, store, jsonKey, paperassets.MaxMetadataBytes, "metadata", "application/json",
+		hasMetadata = true
+		metaBody, metaSha, err = stageBody(ctx, mdPart, paperassets.MaxMetadataBytes, "metadata",
 			func(b []byte) *uploadError {
 				var v any
 				if json.Unmarshal(b, &v) != nil {
@@ -501,39 +502,95 @@ func uploadPDFHandler(re *core.RequestEvent, cfg *config.Config, store objstore.
 		if err != nil {
 			return jsonError(re, err)
 		}
+		if expectedMetaSha != "" && expectedMetaSha != metaSha {
+			return re.JSON(http.StatusBadRequest, map[string]any{
+				"detail":                     "expected_metadata_sha256 mismatch — metadata may be corrupt in transit",
+				"expected_metadata_sha256":   expectedMetaSha,
+				"actual_metadata_sha256":     metaSha,
+			})
+		}
+	}
+
+	// Stat existing for both keys + decide each independently.
+	pdfDecision, err := decideUpload(ctx, store, pdfKey, pdfSha, overwrite, "PDF")
+	if err != nil {
+		return jsonError(re, err)
+	}
+	var metaDecision uploadDecision
+	if hasMetadata {
+		metaDecision, err = decideUpload(ctx, store, jsonKey, metaSha, overwrite, "metadata")
+		if err != nil {
+			return jsonError(re, err)
+		}
+	}
+
+	// All conflict checks passed — now we can write.
+	if !pdfDecision.unchanged {
+		if _, err := store.PutWithMeta(ctx, pdfKey, bytes.NewReader(pdfBody),
+			int64(len(pdfBody)), "application/pdf",
+			map[string]string{"sha256": pdfSha}); err != nil {
+			return re.JSON(http.StatusInternalServerError, map[string]string{"detail": "put pdf: " + err.Error()})
+		}
+	}
+	metadataPath := ""
+	if hasMetadata {
 		metadataPath = jsonKey
+		if !metaDecision.unchanged {
+			if _, err := store.PutWithMeta(ctx, jsonKey, bytes.NewReader(metaBody),
+				int64(len(metaBody)), "application/json",
+				map[string]string{"sha256": metaSha}); err != nil {
+				return re.JSON(http.StatusInternalServerError, map[string]string{"detail": "put metadata: " + err.Error()})
+			}
+		}
 	}
 
 	requester := ""
 	if cfg.UserHeader != "" {
 		requester = re.Request.Header.Get(cfg.UserHeader)
 	}
+	overallUnchanged := pdfDecision.unchanged && (!hasMetadata || metaDecision.unchanged)
 	slog.Info("uploaded pdf",
 		"arxiv_id", canonical,
 		"requester", requester,
-		"pdf_bytes", pdfBytes,
-		"metadata_bytes", metaBytes,
+		"pdf_bytes", len(pdfBody),
+		"pdf_sha256", pdfSha,
+		"pdf_unchanged", pdfDecision.unchanged,
+		"metadata_bytes", len(metaBody),
+		"metadata_sha256", metaSha,
+		"metadata_unchanged", hasMetadata && metaDecision.unchanged,
 		"pdf_key", pdfKey,
 	)
 
 	resp := map[string]any{
-		"arxiv_id":       canonical,
-		"key":            paperassets.StorageKey(canonical),
-		"pdf_path":       pdfKey,
-		"pdf_bytes":      pdfBytes,
-		"metadata_path":  nil,
-		"metadata_bytes": nil,
-		"uploaded_by":    nil,
-		"overwritten":    overwrite,
+		"arxiv_id":         canonical,
+		"key":              paperassets.StorageKey(canonical),
+		"pdf_path":         pdfKey,
+		"pdf_bytes":        int64(len(pdfBody)),
+		"pdf_sha256":       pdfSha,
+		"pdf_unchanged":    pdfDecision.unchanged,
+		"metadata_path":    nil,
+		"metadata_bytes":   nil,
+		"metadata_sha256":  nil,
+		"uploaded_by":      nil,
+		"overwritten":      overwrite,
+		"unchanged":        overallUnchanged,
 	}
 	if metadataPath != "" {
 		resp["metadata_path"] = metadataPath
-		resp["metadata_bytes"] = metaBytes
+		resp["metadata_bytes"] = int64(len(metaBody))
+		resp["metadata_sha256"] = metaSha
+		resp["metadata_unchanged"] = metaDecision.unchanged
 	}
 	if requester != "" {
 		resp["uploaded_by"] = requester
 	}
-	re.Response.WriteHeader(http.StatusCreated)
+	// Status: 200 OK if everything was a no-op (idempotent re-upload
+	// of identical content), 201 Created otherwise.
+	if overallUnchanged {
+		re.Response.WriteHeader(http.StatusOK)
+	} else {
+		re.Response.WriteHeader(http.StatusCreated)
+	}
 	return jsonBody(re, resp)
 }
 
@@ -546,6 +603,7 @@ func uploadMarkdownHandler(re *core.RequestEvent, cfg *config.Config, store objs
 		})
 	}
 	overwrite := re.Request.URL.Query().Get("overwrite") == "true"
+	expectedSha := normaliseSha256Hex(re.Request.URL.Query().Get("expected_sha256"))
 	source := re.Request.URL.Query().Get("source")
 	if len(source) > 64 {
 		source = source[:64]
@@ -556,13 +614,6 @@ func uploadMarkdownHandler(re *core.RequestEvent, cfg *config.Config, store objs
 	}
 
 	mdKey := paperassets.AssetKey("markdown", canonical)
-	if !overwrite {
-		if _, exists, _ := store.Stat(ctx, mdKey); exists {
-			return re.JSON(http.StatusConflict, map[string]string{
-				"detail": fmt.Sprintf("markdown already exists at %s; pass overwrite=true to replace", mdKey),
-			})
-		}
-	}
 
 	mdPart, _, err := re.Request.FormFile("markdown")
 	if err != nil {
@@ -570,7 +621,7 @@ func uploadMarkdownHandler(re *core.RequestEvent, cfg *config.Config, store objs
 	}
 	defer mdPart.Close()
 
-	mdBytes, err := stagedUpload(ctx, mdPart, store, mdKey, paperassets.MaxMarkdownBytes, "markdown", "text/markdown; charset=utf-8",
+	mdBody, mdSha, err := stageBody(ctx, mdPart, paperassets.MaxMarkdownBytes, "markdown",
 		func(b []byte) *uploadError {
 			if !utf8.Valid(b) {
 				return &uploadError{Status: http.StatusBadRequest, Detail: "markdown must be valid utf-8"}
@@ -579,6 +630,26 @@ func uploadMarkdownHandler(re *core.RequestEvent, cfg *config.Config, store objs
 		})
 	if err != nil {
 		return jsonError(re, err)
+	}
+	if expectedSha != "" && expectedSha != mdSha {
+		return re.JSON(http.StatusBadRequest, map[string]any{
+			"detail":            "expected_sha256 mismatch — upload may be corrupt in transit",
+			"expected_sha256":   expectedSha,
+			"actual_sha256":     mdSha,
+		})
+	}
+
+	decision, err := decideUpload(ctx, store, mdKey, mdSha, overwrite, "markdown")
+	if err != nil {
+		return jsonError(re, err)
+	}
+
+	if !decision.unchanged {
+		if _, err := store.PutWithMeta(ctx, mdKey, bytes.NewReader(mdBody),
+			int64(len(mdBody)), "text/markdown; charset=utf-8",
+			map[string]string{"sha256": mdSha}); err != nil {
+			return re.JSON(http.StatusInternalServerError, map[string]string{"detail": "put markdown: " + err.Error()})
+		}
 	}
 
 	requester := ""
@@ -589,7 +660,9 @@ func uploadMarkdownHandler(re *core.RequestEvent, cfg *config.Config, store objs
 		"arxiv_id", canonical,
 		"requester", requester,
 		"source", source,
-		"md_bytes", mdBytes,
+		"md_bytes", len(mdBody),
+		"md_sha256", mdSha,
+		"md_unchanged", decision.unchanged,
 		"md_key", mdKey,
 	)
 
@@ -601,7 +674,9 @@ func uploadMarkdownHandler(re *core.RequestEvent, cfg *config.Config, store objs
 		"arxiv_id":       canonical,
 		"key":            paperassets.StorageKey(canonical),
 		"markdown_path":  mdKey,
-		"markdown_bytes": mdBytes,
+		"markdown_bytes": int64(len(mdBody)),
+		"sha256":         mdSha,
+		"unchanged":      decision.unchanged,
 		"source":         nil,
 		"uploaded_by":    nil,
 		"overwritten":    overwrite,
@@ -612,7 +687,11 @@ func uploadMarkdownHandler(re *core.RequestEvent, cfg *config.Config, store objs
 	if requester != "" {
 		resp["uploaded_by"] = requester
 	}
-	re.Response.WriteHeader(http.StatusCreated)
+	if decision.unchanged {
+		re.Response.WriteHeader(http.StatusOK)
+	} else {
+		re.Response.WriteHeader(http.StatusCreated)
+	}
 	return jsonBody(re, resp)
 }
 
@@ -629,113 +708,143 @@ type uploadError struct {
 
 func (e *uploadError) Error() string { return e.Detail }
 
-// stagedUpload streams src into a local temp file with a hard size cap,
-// runs validate() on the staged bytes, and then uploads from the temp
-// file to dst at dstKey. Returns the byte count actually written.
-//
-// Two passes (disk-stage + upload) buy us:
-//   - synchronous content validation BEFORE anything hits the store
-//     (S3 PutObject is atomic but expensive to roll back; failing in
-//     the disk stage means zero remote state changes);
-//   - exact size known at PutObject time, avoiding minio-go's
-//     multipart upload path for small files.
-//
-// The validate callback receives the entire staged content (bounded by
-// maxBytes) so it can inspect headers, parse JSON, check encoding —
-// whatever the route needs. Returning a non-nil *uploadError aborts the
-// upload and surfaces the status code to the client.
-//
-// For payloads larger than ~10 MiB the all-bytes validate call eats RAM
-// proportional to the upload size; the current callers cap PDF at
-// 100 MiB which is acceptable on RackNerd's 1.4 GiB host. If a future
-// route uploads multi-GiB files, switch to incremental validation.
-func stagedUpload(
-	ctx context.Context,
-	src io.Reader,
-	dst objstore.Store,
-	dstKey string,
-	maxBytes int64,
-	label string,
-	contentType string,
-	validate func([]byte) *uploadError,
-) (int64, error) {
-	stage, err := os.CreateTemp("", "qatlas-upload-*.bin")
-	if err != nil {
-		return 0, err
-	}
-	stagePath := stage.Name()
-	// Ensure cleanup even on early returns.
-	defer func() {
-		_ = stage.Close()
-		_ = os.Remove(stagePath)
-	}()
-
-	written, err := copyWithCap(stage, src, maxBytes, label)
-	if err != nil {
-		return 0, err
-	}
-	if written == 0 {
-		return 0, &uploadError{Status: http.StatusBadRequest, Detail: fmt.Sprintf("%s upload was empty", label)}
-	}
-
-	// Validate. Need to re-read the staged bytes from the start; on
-	// staged size > a few MiB this is a tolerable disk hit. For tiny
-	// metadata uploads (JSON, markdown) it's negligible.
-	if _, err := stage.Seek(0, io.SeekStart); err != nil {
-		return 0, err
-	}
-	body, err := io.ReadAll(stage)
-	if err != nil {
-		return 0, err
-	}
-	if vErr := validate(body); vErr != nil {
-		return 0, vErr
-	}
-
-	// Upload. Rewind and PUT. We pass written (exact size) so the S3
-	// backend can use single-PUT and avoid multipart overhead.
-	if _, err := stage.Seek(0, io.SeekStart); err != nil {
-		return 0, err
-	}
-	// Use bytes.Reader from the already-loaded body to avoid a third
-	// disk read. The body slice is bounded by maxBytes so this stays
-	// within the documented memory envelope.
-	if _, err := dst.Put(ctx, dstKey, bytes.NewReader(body), int64(len(body)), contentType); err != nil {
-		return 0, err
-	}
-	return written, nil
+// uploadDecision is the result of an idempotency check against the
+// store: should the handler skip writing this object?
+type uploadDecision struct {
+	unchanged      bool   // existing object has same sha256 → no-op
+	existingSha256 string // metadata sha256 from existing object; "" when missing or LocalStore
 }
 
-// copyWithCap streams from src to dst, aborting once cap bytes have
-// been read. Returns the byte count actually written.
-func copyWithCap(dst io.Writer, src io.Reader, cap int64, label string) (int64, error) {
-	buf := make([]byte, 1<<20)
-	written := int64(0)
-	for {
-		n, rerr := src.Read(buf)
-		if n > 0 {
-			written += int64(n)
-			if written > cap {
-				return 0, &uploadError{
-					Status: http.StatusRequestEntityTooLarge,
-					Detail: fmt.Sprintf("%s exceeds maximum upload size of %d bytes", label, cap),
-				}
-			}
-			if _, werr := dst.Write(buf[:n]); werr != nil {
-				return 0, werr
-			}
+// decideUpload runs the content-aware idempotency check used by both
+// upload-pdf and upload-markdown:
+//
+//   - object absent → write proceeds (unchanged=false)
+//   - object present + metadata sha256 matches → skip write (unchanged=true)
+//     This catches "same client retried the same upload" — a normal,
+//     benign case that previously returned 409.
+//   - object present + sha256 differs (or metadata missing) + !overwrite
+//     → 409 with both hashes in the response so the caller can decide
+//     whether to overwrite or stop.
+//   - object present + overwrite → write proceeds; under bucket
+//     versioning the prior object becomes a noncurrent version
+//     (recoverable via ListObjectVersions; ops only).
+//
+// When the existing object has no sha256 metadata at all (legacy
+// objects uploaded before this change, or LocalStore which never stores
+// metadata), we treat the content as "unknown" — overwrite must be
+// explicit. We deliberately do NOT fall back to a Get + hash because:
+// it costs a download for every conflict check, and for legacy objects
+// we can't tell whether the bytes really match without it anyway. The
+// safer default is "force the caller to confirm with overwrite=true".
+//
+// label is the human-readable kind ("PDF" / "metadata" / "markdown")
+// used only in the conflict error message.
+func decideUpload(ctx context.Context, store objstore.Store, key, newSha string, overwrite bool, label string) (uploadDecision, error) {
+	info, exists, err := store.Stat(ctx, key)
+	if err != nil {
+		return uploadDecision{}, &uploadError{Status: http.StatusInternalServerError,
+			Detail: fmt.Sprintf("stat %s: %s", key, err.Error())}
+	}
+	if !exists {
+		return uploadDecision{}, nil
+	}
+	existingSha := ""
+	if info.Metadata != nil {
+		existingSha = info.Metadata["sha256"]
+	}
+	if existingSha != "" && existingSha == newSha {
+		return uploadDecision{unchanged: true, existingSha256: existingSha}, nil
+	}
+	if !overwrite {
+		detail := map[string]any{
+			"detail":        fmt.Sprintf("%s already exists at %s with different content; pass overwrite=true to replace (prior version preserved by bucket versioning when enabled)", label, key),
+			"existing_path": key,
+			"new_sha256":    newSha,
 		}
-		if rerr == io.EOF {
-			break
+		if existingSha != "" {
+			detail["existing_sha256"] = existingSha
+		} else {
+			detail["existing_sha256"] = nil
+			detail["note"] = "existing object has no sha256 metadata (legacy upload or LocalStore backend) — content equality cannot be verified without overwrite=true"
 		}
-		if rerr != nil {
-			return 0, rerr
+		return uploadDecision{}, &uploadConflictError{
+			Status: http.StatusConflict,
+			Body:   detail,
 		}
 	}
-	return written, nil
+	return uploadDecision{existingSha256: existingSha}, nil
+}
+
+// uploadConflictError is uploadError's richer cousin — carries a
+// structured JSON body so we can surface both sha256 hashes on a 409.
+type uploadConflictError struct {
+	Status int
+	Body   map[string]any
+}
+
+func (e *uploadConflictError) Error() string {
+	if s, ok := e.Body["detail"].(string); ok {
+		return s
+	}
+	return "upload conflict"
+}
+
+// stageBody reads up to maxBytes from src, validates the bytes, and
+// returns (body, sha256_hex). Computes sha256 inline via io.MultiWriter
+// so we don't re-walk the payload. Empty uploads are rejected.
+//
+// We hold the entire body in memory (bounded by maxBytes). For the
+// current caps (PDF 100 MiB, markdown 25 MiB, metadata 2 MiB) this is
+// safe on every supported deploy; the old stagedUpload code path
+// already eats the same memory (it io.ReadAll'd the staged temp file).
+// If a future route needs multi-GiB files, swap in an io.TeeReader
+// directly into the store PUT, dropping the materialised body.
+func stageBody(ctx context.Context, src io.Reader, maxBytes int64, label string, validate func([]byte) *uploadError) ([]byte, string, error) {
+	// LimitReader to maxBytes+1 so we can distinguish "exactly at cap"
+	// from "over cap".
+	hash := sha256.New()
+	var buf bytes.Buffer
+	n, err := io.Copy(io.MultiWriter(&buf, hash), io.LimitReader(src, maxBytes+1))
+	if err != nil {
+		return nil, "", err
+	}
+	if n > maxBytes {
+		return nil, "", &uploadError{
+			Status: http.StatusRequestEntityTooLarge,
+			Detail: fmt.Sprintf("%s upload exceeds limit of %d bytes", label, maxBytes),
+		}
+	}
+	if n == 0 {
+		return nil, "", &uploadError{Status: http.StatusBadRequest, Detail: fmt.Sprintf("%s upload was empty", label)}
+	}
+	body := buf.Bytes()
+	if vErr := validate(body); vErr != nil {
+		return nil, "", vErr
+	}
+	return body, hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+// normaliseSha256Hex returns the lower-case hex digest when v looks
+// like a 64-char sha256 hex string, else "". Used to scrub the
+// expected_sha256 query param into a comparable form (or drop it).
+func normaliseSha256Hex(v string) string {
+	v = strings.ToLower(strings.TrimSpace(v))
+	if len(v) != 64 {
+		return ""
+	}
+	for _, c := range v {
+		if !(c >= '0' && c <= '9') && !(c >= 'a' && c <= 'f') {
+			return ""
+		}
+	}
+	return v
 }
 
 func jsonError(re *core.RequestEvent, err error) error {
+	var uce *uploadConflictError
+	if errors.As(err, &uce) {
+		return re.JSON(uce.Status, uce.Body)
+	}
 	var ue *uploadError
 	if errors.As(err, &ue) {
 		return re.JSON(ue.Status, map[string]string{"detail": ue.Detail})

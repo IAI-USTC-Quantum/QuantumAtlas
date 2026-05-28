@@ -217,3 +217,109 @@ func TestS3Store_PresignGetWorksAgainstLiveServer(t *testing.T) {
 		t.Errorf("presigned body mismatch")
 	}
 }
+
+// TestS3Store_PutWithMeta_RoundTrip verifies that user metadata set on
+// PutWithMeta surfaces back via Stat / Get with lowercase keys (matches
+// the S3 wire convention; minio-go's UserMetadata roundtrip is the
+// load-bearing assumption behind our content-aware idempotency).
+func TestS3Store_PutWithMeta_RoundTrip(t *testing.T) {
+	s, prefix := newS3(t)
+	ctx := context.Background()
+	key := path.Join(prefix, "meta-target")
+	body := []byte("hello-meta " + time.Now().Format(time.RFC3339Nano))
+
+	// Use a deliberately mixed-case key on the way in to surface any
+	// case-collapsing surprise. Per Store contract callers should
+	// pass lowercase; we test the roundtrip behavior so a future SDK
+	// upgrade can't silently break it.
+	meta := map[string]string{
+		"sha256":         "deadbeef",
+		"original-name":  "Whatever.pdf",
+	}
+	if _, err := s.PutWithMeta(ctx, key, bytes.NewReader(body), int64(len(body)), "application/octet-stream", meta); err != nil {
+		t.Fatalf("PutWithMeta: %v", err)
+	}
+
+	// Stat path.
+	info, exists, err := s.Stat(ctx, key)
+	if err != nil || !exists {
+		t.Fatalf("Stat: err=%v exists=%v", err, exists)
+	}
+	if got := info.Metadata["sha256"]; got != "deadbeef" {
+		t.Errorf("Stat.Metadata[sha256] = %q, want %q", got, "deadbeef")
+	}
+	if got := info.Metadata["original-name"]; got != "Whatever.pdf" {
+		t.Errorf("Stat.Metadata[original-name] = %q, want %q", got, "Whatever.pdf")
+	}
+
+	// Get path.
+	rc, gInfo, err := s.Get(ctx, key)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	defer rc.Close()
+	if got := gInfo.Metadata["sha256"]; got != "deadbeef" {
+		t.Errorf("Get.Metadata[sha256] = %q, want %q", got, "deadbeef")
+	}
+}
+
+// TestS3Store_PutWithMeta_EmptyMetadataMatchesPut verifies that passing
+// nil or empty metadata produces an object indistinguishable from one
+// written via Put — this is the documented Store contract and the
+// papers handler relies on it when calling PutWithMeta with a
+// single-entry map vs Put with no metadata.
+func TestS3Store_PutWithMeta_EmptyMetadataMatchesPut(t *testing.T) {
+	s, prefix := newS3(t)
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name string
+		meta map[string]string
+	}{
+		{"nil-meta", nil},
+		{"empty-meta", map[string]string{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			key := path.Join(prefix, tc.name)
+			if _, err := s.PutWithMeta(ctx, key, bytes.NewReader([]byte("x")), 1, "text/plain", tc.meta); err != nil {
+				t.Fatalf("PutWithMeta: %v", err)
+			}
+			info, exists, err := s.Stat(ctx, key)
+			if err != nil || !exists {
+				t.Fatalf("Stat: err=%v exists=%v", err, exists)
+			}
+			if len(info.Metadata) != 0 {
+				t.Errorf("Metadata = %v, want empty", info.Metadata)
+			}
+		})
+	}
+}
+
+// TestS3Store_EnsureVersioning_Idempotent runs the reconcile pass twice
+// against a live bucket. First call may flip Suspended/empty -> Enabled
+// (changed=true) or be a no-op (changed=false, depends on bucket
+// state). Second call MUST be a no-op. We intentionally do NOT assert
+// the prior status, since the test bucket may be in any state when the
+// CI fires this.
+//
+// Note: requires the test creds to have s3:Get/PutBucketVersioning on
+// the bucket; without those the call errors out and the test fails. We
+// surface that as a real failure rather than skip, because EnsureVersioning
+// is on the qatlas server's startup hot-path — silently passing tests
+// in a misconfigured CI is worse than a loud red mark.
+func TestS3Store_EnsureVersioning_Idempotent(t *testing.T) {
+	s, _ := newS3(t)
+	ctx := context.Background()
+	if _, _, err := s.EnsureVersioning(ctx); err != nil {
+		t.Fatalf("EnsureVersioning first call: %v", err)
+	}
+	prior, changed, err := s.EnsureVersioning(ctx)
+	if err != nil {
+		t.Fatalf("EnsureVersioning second call: %v", err)
+	}
+	if changed {
+		t.Errorf("second call reported changed=true; want false (already Enabled). prior=%q", prior)
+	}
+	if prior != "Enabled" {
+		t.Errorf("second call prior=%q; want %q", prior, "Enabled")
+	}
+}

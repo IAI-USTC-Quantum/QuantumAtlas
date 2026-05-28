@@ -5,7 +5,7 @@
 # 复用场景：
 #   - 首次部署时创建 qatlas-raw / qatlas-server
 #   - 灾难恢复后重建对象存储侧权限
-#   - 之后再开新桶（如 qatlas-snapshots）只需改 BUCKET/USER/POLICY 三个变量
+#   - 之后再开新桶（如 qatlas-snapshots）只需改 BUCKET/IAM_USER/POLICY 三个变量
 #
 # 设计要点：
 #   - 用 MinIO Client (mc) 调 RustFS 的 admin API（RustFS 兼容 MinIO admin）
@@ -23,7 +23,7 @@
 #   export RUSTFS_ROOT_SECRET_KEY=<root_sk>
 #   # 可选覆盖（默认对应当前 QuantumAtlas 部署）：
 #   # export BUCKET=qatlas-raw
-#   # export USER=qatlas-server
+#   # export IAM_USER=qatlas-server          # 注意：用 IAM_USER 而非 USER，避免与 shell 内置 $USER 冲突
 #   # export POLICY=qatlas-raw-rw
 #   bash scripts/rustfs_bootstrap.sh
 #
@@ -42,7 +42,10 @@ set -uo pipefail
 : "${RUSTFS_ROOT_SECRET_KEY:?need RUSTFS_ROOT_SECRET_KEY}"
 
 BUCKET="${BUCKET:-qatlas-raw}"
-USER="${USER:-qatlas-server}"
+# IAM_USER (not USER): bash auto-sets $USER to the login name in every
+# interactive shell, so "${USER:-default}" never falls through to the
+# default. Use IAM_USER to dodge the collision.
+IAM_USER="${IAM_USER:-qatlas-server}"
 POLICY="${POLICY:-qatlas-raw-rw}"
 ALIAS="rustfs_bootstrap_$$"
 
@@ -72,6 +75,25 @@ else
 fi
 
 echo "[3/6] ensure policy: $POLICY (scoped to bucket $BUCKET)"
+# Policy grants the IAM user three things on this bucket only:
+#   1. Object I/O (Get/Put/Delete) — hot path for paper assets.
+#   2. Bucket read (ListBucket/GetBucketLocation) — needed by minio-go
+#      for endpoint probing and prefix listings.
+#   3. Bucket versioning Get/Put — qatlas server self-manages versioning
+#      state on startup (objstore.S3Store.EnsureVersioning) so ops never
+#      needs to run `mc version enable` by hand. We grant both Get and
+#      Put so qatlas can read current state and skip the Put when state
+#      is already correct (avoids noisy RustFS audit "config change"
+#      events every boot).
+#
+# Not granted (deliberately):
+#   - s3:GetLifecycleConfiguration / s3:PutLifecycleConfiguration:
+#     RustFS 1.0.0-beta.5 rejects these action names ("invalid action").
+#     When we add lifecycle policies (e.g. noncurrentversion expiration),
+#     re-test against RustFS first — the action names may stabilise as
+#     RustFS catches up to MinIO spec.
+#   - s3:DeleteBucket / s3:PutBucketPolicy / s3:PutBucketAcl: bucket
+#     destruction and ACL changes are root-only ops, never qatlas's job.
 POLICY_FILE="$WORKDIR/${POLICY}.json"
 cat > "$POLICY_FILE" <<EOF
 {
@@ -90,7 +112,9 @@ cat > "$POLICY_FILE" <<EOF
       "Effect": "Allow",
       "Action": [
         "s3:ListBucket",
-        "s3:GetBucketLocation"
+        "s3:GetBucketLocation",
+        "s3:GetBucketVersioning",
+        "s3:PutBucketVersioning"
       ],
       "Resource": "arn:aws:s3:::${BUCKET}"
     }
@@ -100,24 +124,24 @@ EOF
 "$MC" --quiet admin policy create "$ALIAS" "$POLICY" "$POLICY_FILE" 2>&1 \
   | grep -vE "(already exists|^$)" || true
 
-echo "[4/6] ensure user: $USER"
-if "$MC" --quiet admin user info "$ALIAS" "$USER" >/dev/null 2>&1; then
+echo "[4/6] ensure user: $IAM_USER"
+if "$MC" --quiet admin user info "$ALIAS" "$IAM_USER" >/dev/null 2>&1; then
   echo "      user already exists, skip"
 else
   # 生成一个随机 console 登录密码（不打印；user 永不需要 console 登录）
   TMP_PWD=$(openssl rand -base64 24)
-  "$MC" --quiet admin user add "$ALIAS" "$USER" "$TMP_PWD"
+  "$MC" --quiet admin user add "$ALIAS" "$IAM_USER" "$TMP_PWD"
   unset TMP_PWD
   echo "      user created"
 fi
 
-echo "[5/6] attach policy $POLICY to user $USER"
-"$MC" --quiet admin policy attach "$ALIAS" "$POLICY" --user "$USER" 2>&1 \
+echo "[5/6] attach policy $POLICY to user $IAM_USER"
+"$MC" --quiet admin policy attach "$ALIAS" "$POLICY" --user "$IAM_USER" 2>&1 \
   | grep -vE "(already attached|specified policy.*not attached|^$)" || true
 
-echo "[6/6] create new service account (access key pair) for $USER"
+echo "[6/6] create new service account (access key pair) for $IAM_USER"
 echo "---"
-"$MC" admin user svcacct add "$ALIAS" "$USER"
+"$MC" admin user svcacct add "$ALIAS" "$IAM_USER"
 echo "---"
 echo
 echo "DONE. Copy the Access Key + Secret Key above into server .env:"
@@ -127,4 +151,5 @@ echo "  QATLAS_S3_ACCESS_KEY_ID=<Access Key from above>"
 echo "  QATLAS_S3_SECRET_ACCESS_KEY=<Secret Key from above>"
 echo
 echo "To list all keys for this user later:"
-echo "  mc admin accesskey ls <alias> --user $USER"
+echo "  mc admin accesskey ls <alias> --user $IAM_USER"
+

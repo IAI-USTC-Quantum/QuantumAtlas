@@ -39,7 +39,7 @@ QuantumAtlas 处理论文图谱的本质问题是：
 ## 三个稳定标识符把它们串起来
 
 ```
-sha256(content)        ──>  对象存储寻址 (raw/<sha[:2]>/<sha>.pdf)
+sha256(content)        ──>  对象存储寻址 (raw/<sha[:2]>/<sha>.pdf)   ← ⚠️ 设想未实现
 paper_id (DOI / arXiv) ──>  Metadata DB 主键 + Neo4j 节点 ID
 raw_url                ──>  Metadata DB 的 papers 表字段，
                             指向 raw.quantum-atlas.ai 上的 immutable PDF
@@ -51,6 +51,15 @@ content-addressed 命名（按内容 sha256 分桶）的好处：
 - ETag = sha256，对账简单。
 - 永远 immutable，下游 cache 可永久缓存。
 - 备份只需 rsync 一个目录树，不用导出数据库。
+
+> ⚠️ **2026-05-28 现状**：实际生产 object key schema 是 `<kind>/<arxiv-prefix>/<arxiv_id>v<n>.<ext>`（由 `internal/paperassets.AssetKey` 构造，**arxiv-id 寻址，不是 sha256 寻址**）。原因：跨 arxiv_id 重复内容场景极罕见（要不同 paper 内容字节级相同），不值得为它引入分离的 alias DB 做 `arxiv_id → sha256` 反查双重 lookup。
+>
+> 目前用的是更轻量的折中：
+> - **arxiv-id 寻址**保留（路径直接，无 alias 表）；
+> - **sha256 存在 object metadata** (`x-amz-meta-sha256`) 做**content-aware idempotency**——同 arxiv_id 重传相同字节 → server 短路 200，**不重写 S3**；不同字节 → 409 with both hashes；`--overwrite` 才覆盖（旧版本由 bucket versioning 保留）。
+> - **client 上传时 `?expected_sha256=`** 做 in-transit 损坏防护（PyPI/Docker 同款）。
+>
+> 全部细节见 `.github/copilot-instructions.md` "## 写口语义（papers upload）" 节。如未来跨 arxiv 重复率被发现高（罕见，预期 < 1%），再切到真正 content-addressed 存储 + alias DB；目前不值得。
 
 ## 拓扑
 
@@ -607,7 +616,7 @@ Neo4j 数据本身落 apt 默认路径 `/var/lib/neo4j/data/`（graph-host WSL2 
 | 阶段 | 触发条件 | 工作内容 |
 |---|---|---|
 | **P0** | — | RAW_DIR 本地、`internal/neo4j/client.go` 客户端代码 ready（driver v6.1.0、`/api/graph/{stats,query,schema}` 三端点 wire）、**Neo4j server 未部署** |
-| **P1**（部署起步，**已完成**） | 决定上 Neo4j | graph-host WSL2 **apt 装** `neo4j` 5.26 LTS（systemd 服务，**不是 docker**）、`/etc/neo4j/neo4j.conf` 改 `server.bolt.listen_address=0.0.0.0:7687` + `server.jvm.additional=-Djava.net.preferIPv4Stack=true`（#14154 fix）、Windows host 加 `<graph-host>:7687 → 127.0.0.1:7687` portproxy（写到 registry persistent）、server 节点填 `.env` `NEO4J_*`、`/api/graph/stats` 返回真 0 ✅；RustFS 已部署在 NAS Docker（bucket `qatlas-raw`、user `qatlas-server`、policy `qatlas-raw-rw` 见 `scripts/rustfs_bootstrap.sh`）、**Go server 已接 minio-go**（`internal/objstore.{LocalStore,S3Store}`，`QATLAS_S3_*` 四字段 all-or-nothing 切换，详见 `.env.example`） |
+| **P1**（部署起步，**已完成 + sha256 dedup / versioning extension**） | 决定上 Neo4j | graph-host WSL2 **apt 装** `neo4j` 5.26 LTS（systemd 服务，**不是 docker**）、`/etc/neo4j/neo4j.conf` 改 `server.bolt.listen_address=0.0.0.0:7687` + `server.jvm.additional=-Djava.net.preferIPv4Stack=true`（#14154 fix）、Windows host 加 `<graph-host>:7687 → 127.0.0.1:7687` portproxy（写到 registry persistent）、server 节点填 `.env` `NEO4J_*`、`/api/graph/stats` 返回真 0 ✅；RustFS 已部署在 NAS Docker（bucket `qatlas-raw`、user `qatlas-server`、policy `qatlas-raw-rw` 见 `scripts/rustfs_bootstrap.sh`）、**Go server 已接 minio-go**（`internal/objstore.{LocalStore,S3Store}`，`QATLAS_S3_*` 四字段 all-or-nothing 切换，详见 `.env.example`）、生产 RackNerd 已切到 S3（endpoint mesh `http://10.144.18.10:9000`）；**2026-05-28 加上 content-aware idempotency**（upload sha256 入 `x-amz-meta-sha256` metadata，重传同字节短路 200/unchanged，不同字节 409 带两个 hash；详见 copilot-instructions.md "写口语义"段）+ **bucket versioning qatlas-managed**（`S3Store.EnsureVersioning` 启动自动开启 + policy 加 `s3:Put/GetBucketVersioning`）+ **client `?expected_sha256=` in-transit guard** |
 | **P2** | 有 paper 进来要测引用图 | 实现 extract worker（MinerU 调用 + refs_raw 落库）+ resolve worker（CrossRef/OpenAlex 匹配），先**不写 Neo4j**，refs 仅入 ref_edges 表 |
 | **P3** | ref_edges 表积累几万行 | 实现 graph loader worker + `qatlas graph rebuild` CLI；写第一批 `:CITES` 边到 Neo4j |
 | **P4** | 节点数破百万 | 切换冷启动路径到 offline import（`neo4j-admin database import full`）；写部署 cron 备份；接 GDS 算法跑 PageRank/Louvain 写回 metadata |

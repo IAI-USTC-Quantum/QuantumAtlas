@@ -5,9 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -64,7 +67,26 @@ func (s *LocalStore) resolve(key string) (string, error) {
 // Put writes r to BaseDir/key via a `.part` sidecar + atomic rename.
 // _contentType is ignored — the local fs has no first-class content
 // type, callers downstream rely on the extension instead.
-func (s *LocalStore) Put(_ context.Context, key string, r io.Reader, _ int64, _ string) (int64, error) {
+func (s *LocalStore) Put(ctx context.Context, key string, r io.Reader, size int64, contentType string) (int64, error) {
+	return s.PutWithMeta(ctx, key, r, size, contentType, nil)
+}
+
+// PutWithMeta delegates to Put and silently discards metadata. The
+// local backend has no native sidecar metadata store (xattr is Linux-
+// only and breaks on macOS/Windows without setup); writing a parallel
+// `.meta.json` would invite races and bloat the dev workflow. Callers
+// that need metadata for correctness (e.g. sha256 dedup) MUST tolerate
+// nil ObjectInfo.Metadata on reads.
+//
+// We log once-per-process via sync.Once below so devs notice when
+// they're running in a degraded mode, without spamming.
+func (s *LocalStore) PutWithMeta(_ context.Context, key string, r io.Reader, _ int64, _ string, metadata map[string]string) (int64, error) {
+	if len(metadata) > 0 {
+		localMetadataDropOnce.Do(func() {
+			slog.Warn("LocalStore drops user metadata; dedup features that rely on it are disabled. Switch to S3Store for full functionality.",
+				"first_dropped_keys", maps.Keys(metadata))
+		})
+	}
 	dest, err := s.resolve(key)
 	if err != nil {
 		return 0, err
@@ -94,6 +116,12 @@ func (s *LocalStore) Put(_ context.Context, key string, r io.Reader, _ int64, _ 
 	}
 	return written, nil
 }
+
+// localMetadataDropOnce gates the one-time warn when PutWithMeta is
+// called with non-empty metadata on a LocalStore. We do this here
+// (file-scope) rather than inside the struct so multiple LocalStore
+// instances in tests don't spam the log.
+var localMetadataDropOnce sync.Once
 
 // Get opens BaseDir/key for reading. Returns ErrNotFound if absent.
 func (s *LocalStore) Get(_ context.Context, key string) (io.ReadCloser, ObjectInfo, error) {
