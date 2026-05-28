@@ -116,66 +116,41 @@ jobs:
 
   # --------------------------------------------------------------------
   # 3. binary-build — matrix over (OS, arch). Each runner is native to
-  #    its target so we build with CGO_ENABLED=1 against the runner's
+  #    its target so we build with CGO_ENABLED=1 against that target's
   #    own libc / libduckdb / sqlite — no cross-toolchain juggling.
   #
-  #    CGO is required because internal/paperindex imports
-  #    marcboeker/go-duckdb which links against libduckdb. The resulting
-  #    binary is self-contained at runtime (libduckdb is statically
-  #    embedded), but build time needs the target's C toolchain.
+  #    Linux targets run INSIDE a manylinux_2_28 container (AlmaLinux 8
+  #    / glibc 2.28 / gcc-toolset-12) via the job-level `container:`
+  #    key, so every step (checkout, node, go build) executes inside it.
+  #
+  #    Why manylinux_2_28?
+  #      - bare ubuntu-latest (24.04) links against CXXABI_1.3.13+ →
+  #        fails on Alibaba Cloud Linux 3 (CXXABI ≤ 1.3.12).
+  #      - full `-extldflags=-static` removes the CXXABI dep but
+  #        SIGSEGVs at runtime: DuckDB `INSTALL httpfs` calls dlopen(),
+  #        broken in a fully-static binary (glibc ld machinery absent).
+  #      - manylinux_2_28 + `-static-libstdc++ -static-libgcc` gives
+  #        the best of both worlds: libstdc++/libgcc are baked into the
+  #        binary (zero CXXABI runtime dep), libc stays dynamic (dlopen
+  #        works), and glibc ≥ 2.28 is satisfied by every current
+  #        deploy target (RackNerd Ubuntu 24.04, Alibaba Cloud Linux 3).
+  #
+  #    Why _2_28, not the older manylinux2014 (CentOS 7 / glibc 2.17)?
+  #    GitHub Actions runs every step's JavaScript action (checkout,
+  #    setup-node, setup-go …) via `docker exec <container> node20`.
+  #    Node 20 requires glibc ≥ 2.28; CentOS 7 only has 2.17 → crash.
+  #    manylinux_2_28 (glibc 2.28) is the minimum that satisfies Node.
+  #
+  #    darwin-arm64 stays on macos-latest (no container). macOS binaries
+  #    link /usr/lib/libc++.dylib, uniformly available.
   #
   #    Free runner availability (public repos):
-  #      - ubuntu-latest        linux/amd64
-  #      - ubuntu-24.04-arm     linux/arm64   (GitHub free tier 2025-01+)
-  #      - macos-latest         darwin/arm64  (Apple Silicon)
+  #      - ubuntu-latest        linux/amd64 → manylinux_2_28_x86_64
+  #      - ubuntu-24.04-arm     linux/arm64 → manylinux_2_28_aarch64
+  #      - macos-latest         darwin/arm64 (Apple Silicon, native)
   #
-  #    darwin/amd64 (Intel Mac) deliberately NOT shipped: macos-13 (Intel)
-  #    runners on GitHub's free tier sit in queue for 10–40 minutes which
-  #    blocks the whole release. QuantumAtlas's target users are quantum
-  #    researchers running these binaries on cloud VMs / linux servers,
-  #    not Intel Macs. Add it back if there's actual demand.
-  # --------------------------------------------------------------------
-  # --------------------------------------------------------------------
-  # 3. binary-build — matrix over (OS, arch). Each runner is native to
-  #    its target so we build with CGO_ENABLED=1 against that runner's
-  #    own libc / libduckdb / sqlite — no cross-toolchain juggling.
-  #
-  #    Linux targets run INSIDE a manylinux2014 container (CentOS 7 /
-  #    glibc 2.17 / GCC 10) instead of on the bare ubuntu-* host. That
-  #    container is the Python wheel ecosystem's "build once, run on
-  #    every modern Linux" baseline: binaries linked against glibc 2.17
-  #    and libstdc++ CXXABI 1.3.18 work on every Linux from RHEL 7 +
-  #    Ubuntu 18.04 onwards because glibc / libstdc++ are forward-
-  #    compatible (a binary linked against an old symbol set runs on
-  #    newer libcs that include those symbols, never the other way).
-  #
-  #    Why we need this:
-  #      - bare ubuntu-latest (Ubuntu 24.04) → binaries demand
-  #        CXXABI_1.3.13/1.3.15 etc. → fail to load on Alibaba Cloud
-  #        Linux 3 (RHEL 8 derivative, CXXABI ≤ 1.3.12).
-  #      - `-extldflags=-static` "fixes" the ABI issue but breaks
-  #        DuckDB's runtime `INSTALL httpfs` because dlopen() against
-  #        a fully-static binary SIGSEGVs (glibc dynamic-linker
-  #        machinery isn't linked in).
-  #      - manylinux2014 base gives us a binary that's dynamic-linked
-  #        but only against very old glibc/libstdc++ symbols, so it
-  #        runs everywhere AND dlopen works. This is the
-  #        wheel/PyPA-standard answer to "cgo binary, every Linux".
-  #
-  #    darwin-arm64 stays on macos-latest (no container, no special
-  #    handling). macOS binaries link /usr/lib/libc++.dylib which is
-  #    uniformly available on every macOS version.
-  #
-  #    Free runner availability (public repos):
-  #      - ubuntu-latest        linux/amd64 → wrapped in manylinux2014_x86_64
-  #      - ubuntu-24.04-arm     linux/arm64 → wrapped in manylinux2014_aarch64
-  #      - macos-latest         darwin/arm64 (Apple Silicon, no container)
-  #
-  #    darwin/amd64 (Intel Mac) deliberately NOT shipped: macos-13 (Intel)
-  #    runners on GitHub's free tier sit in queue for 10–40 minutes which
-  #    blocks the whole release. QuantumAtlas's target users are quantum
-  #    researchers running these binaries on cloud VMs / linux servers,
-  #    not Intel Macs. Add it back if there's actual demand.
+  #    darwin/amd64 deliberately NOT shipped: macos-13 runners sit in
+  #    queue 10–40 min on the free tier.
   # --------------------------------------------------------------------
   binary-build:
     needs: prep
@@ -185,18 +160,14 @@ jobs:
         include:
           - target: linux-amd64
             runner: ubuntu-latest
-            container: quay.io/pypa/manylinux2014_x86_64
+            container: quay.io/pypa/manylinux_2_28_x86_64
           - target: linux-arm64
             runner: ubuntu-24.04-arm
-            container: quay.io/pypa/manylinux2014_aarch64
+            container: quay.io/pypa/manylinux_2_28_aarch64
           - target: darwin-arm64
             runner: macos-latest
             container: ""
     runs-on: ${{ matrix.runner }}
-    # Container is empty string for darwin (runs on bare runner). The
-    # GitHub Actions runner supports empty-string container as "no
-    # container", same as omitting the field — keeps the matrix entries
-    # uniform.
     container: ${{ matrix.container }}
 
     steps:
@@ -206,16 +177,9 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      # web/embed.go does //go:embed all:dist, so we need web/dist/ to
-      # exist before the Go compile. The web build is OS-independent, so
-      # any platform's output is equivalent — but it's cheap (~30 s) and
-      # simpler to rebuild per matrix entry than to ferry a prebuilt
-      # bundle across jobs.
-      #
-      # In manylinux2014, actions/setup-node@v4 needs Node 20+ which is
-      # not packaged for CentOS 7 by default — the action downloads its
-      # own static Node binary, which works fine on glibc 2.17. The
-      # node binary itself is dynamic but uses very old symbols.
+      # web/embed.go does //go:embed all:dist — need web/dist/ before
+      # the Go compile. Cheap (~30 s), simpler to rebuild per matrix
+      # entry than to ferry a prebuilt bundle across jobs.
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -229,15 +193,10 @@ jobs:
           npm ci
           npm run build
 
-      # pixi pins the Go toolchain version, matching go.yml. Works on
-      # every matrix runner because conda-forge ships `go` for all four
-      # platforms (linux-64, linux-aarch64, osx-arm64) AND conda-forge's
-      # glibc baseline is `cos7` (glibc 2.17), matching manylinux2014.
-      - name: Install pixi
-        uses: prefix-dev/setup-pixi@v0.8.10
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
-          pixi-version: v0.68.0
-          cache: true
+          go-version-file: go.mod
 
       - name: Build qatlas-server
         env:
@@ -247,23 +206,26 @@ jobs:
           mkdir -p dist/bin
           OUT="dist/bin/qatlas-server-${{ matrix.target }}"
 
-          # Dynamic link. The manylinux2014 base image gives us a
-          # binary that links against old glibc/libstdc++ symbols, so
-          # every modern Linux can run it (forward compatibility). NO
-          # -extldflags=-static — that breaks DuckDB's dlopen() call in
-          # `INSTALL httpfs` at runtime with SIGSEGV.
-          pixi run -- go build -trimpath \
-            -ldflags "-s -w -X main.Version=${{ needs.prep.outputs.version }}" \
-            -o "$OUT" ./cmd/qatlas-server
+          LDFLAGS="-s -w -X main.Version=${{ needs.prep.outputs.version }}"
+          case "${{ matrix.target }}" in
+            linux-*)
+              # Static-link libstdc++ and libgcc so the binary has zero
+              # CXXABI runtime dependency. libc stays dynamic (glibc
+              # ≥ 2.28 floor from manylinux_2_28) so dlopen() — needed
+              # by DuckDB's `INSTALL httpfs` — keeps working.
+              LDFLAGS="$LDFLAGS -extldflags '-static-libstdc++ -static-libgcc'"
+              ;;
+          esac
 
-          # Surface what the binary links against for build-log audit.
+          go build -trimpath -ldflags "$LDFLAGS" -o "$OUT" ./cmd/qatlas-server
+
+          # Audit: surface what the binary links against.
           file "$OUT" || true
           case "${{ matrix.target }}" in
             linux-*)
               ldd "$OUT" 2>&1 | head -10 || true
-              # Show what GLIBC/CXXABI symbols we actually demand —
-              # the highest version in this output is the runtime
-              # floor for any host that can install us.
+              # With -static-libstdc++, CXXABI entries should be absent
+              # (all resolved statically). Only GLIBC entries remain.
               objdump -T "$OUT" 2>/dev/null | grep -oE 'GLIBC_[0-9]+\.[0-9]+(\.[0-9]+)?' | sort -V -u | tail -5 || true
               objdump -T "$OUT" 2>/dev/null | grep -oE 'CXXABI_[0-9]+\.[0-9]+(\.[0-9]+)?' | sort -V -u | tail -5 || true
               ;;
