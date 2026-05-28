@@ -320,7 +320,6 @@ QuantumAtlas/
 ├── raw/                   本地开发默认论文资产目录
 ├── data/                  本地运行时状态
 ├── docs/                  补充文档
-├── docker-compose.yml     Neo4j 开发环境
 └── pyproject.toml         项目配置
 ```
 

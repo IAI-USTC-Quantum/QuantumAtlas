@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# rustfs_bootstrap.sh - 在 RustFS 上幂等创建 bucket + IAM user + 限定 policy，
+# 并打印新生成的 access_key/secret_key 供写入 server .env。
+#
+# 复用场景：
+#   - 首次部署时创建 qatlas-raw / qatlas-server
+#   - 灾难恢复后重建对象存储侧权限
+#   - 之后再开新桶（如 qatlas-snapshots）只需改 BUCKET/USER/POLICY 三个变量
+#
+# 设计要点：
+#   - 用 MinIO Client (mc) 调 RustFS 的 admin API（RustFS 兼容 MinIO admin）
+#   - root 凭据走 env vars MC_HOST_<alias>，**永不落盘**，脚本退出时连同 mc binary 一起销毁
+#   - 所有步骤幂等：bucket 存在则跳过；user/policy 存在则只确保 attach 关系
+#   - 生成的 service account 凭据通过 stdout 单次返回；脚本不写入任何文件
+#
+# 不做的事：
+#   - 不自动写 .env（避免 secret 落盘到错位置；调用方按自己 deploy 流程粘贴）
+#   - 不删除已有 access key（rotate 是显式操作，见末尾备注）
+#
+# 用法：
+#   export RUSTFS_ENDPOINT=https://raw.quantum-atlas.ai
+#   export RUSTFS_ROOT_ACCESS_KEY=<root_ak>
+#   export RUSTFS_ROOT_SECRET_KEY=<root_sk>
+#   # 可选覆盖（默认对应当前 QuantumAtlas 部署）：
+#   # export BUCKET=qatlas-raw
+#   # export USER=qatlas-server
+#   # export POLICY=qatlas-raw-rw
+#   bash scripts/rustfs_bootstrap.sh
+#
+# 输出（最后几行）：
+#   Access Key: <新生成>
+#   Secret Key: <新生成>
+#
+# rotate 用法（建一对新 key，旧的另起命令删）：
+#   bash scripts/rustfs_bootstrap.sh   # 只会新增 svcacct，不动旧 key
+#   ./mc admin user svcacct rm <alias> <old_access_key>   # 手动删旧
+
+set -uo pipefail
+
+: "${RUSTFS_ENDPOINT:?need RUSTFS_ENDPOINT (e.g. https://raw.quantum-atlas.ai)}"
+: "${RUSTFS_ROOT_ACCESS_KEY:?need RUSTFS_ROOT_ACCESS_KEY}"
+: "${RUSTFS_ROOT_SECRET_KEY:?need RUSTFS_ROOT_SECRET_KEY}"
+
+BUCKET="${BUCKET:-qatlas-raw}"
+USER="${USER:-qatlas-server}"
+POLICY="${POLICY:-qatlas-raw-rw}"
+ALIAS="rustfs_bootstrap_$$"
+
+WORKDIR=$(mktemp -d)
+trap 'rm -rf "$WORKDIR"; unset "MC_HOST_${ALIAS}"' EXIT
+
+echo "[1/6] downloading mc to $WORKDIR ..."
+curl -sSL -o "$WORKDIR/mc" https://dl.min.io/client/mc/release/linux-amd64/mc
+chmod +x "$WORKDIR/mc"
+MC="$WORKDIR/mc"
+
+# 用 env var 传 alias 凭据，避免写 ~/.mc/config.json
+export MC_HOST_${ALIAS}="${RUSTFS_ENDPOINT/https:\/\//https://${RUSTFS_ROOT_ACCESS_KEY}:${RUSTFS_ROOT_SECRET_KEY}@}"
+
+# sanity check
+"$MC" --quiet alias list "$ALIAS" >/dev/null 2>&1 || {
+  echo "ERROR: mc alias setup failed; check RUSTFS_ENDPOINT / credentials" >&2
+  exit 1
+}
+
+echo "[2/6] ensure bucket: $BUCKET"
+if "$MC" --quiet ls "$ALIAS/$BUCKET" >/dev/null 2>&1; then
+  echo "      bucket already exists, skip"
+else
+  "$MC" --quiet mb "$ALIAS/$BUCKET"
+  echo "      bucket created"
+fi
+
+echo "[3/6] ensure policy: $POLICY (scoped to bucket $BUCKET)"
+POLICY_FILE="$WORKDIR/${POLICY}.json"
+cat > "$POLICY_FILE" <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": "arn:aws:s3:::${BUCKET}/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket",
+        "s3:GetBucketLocation"
+      ],
+      "Resource": "arn:aws:s3:::${BUCKET}"
+    }
+  ]
+}
+EOF
+"$MC" --quiet admin policy create "$ALIAS" "$POLICY" "$POLICY_FILE" 2>&1 \
+  | grep -vE "(already exists|^$)" || true
+
+echo "[4/6] ensure user: $USER"
+if "$MC" --quiet admin user info "$ALIAS" "$USER" >/dev/null 2>&1; then
+  echo "      user already exists, skip"
+else
+  # 生成一个随机 console 登录密码（不打印；user 永不需要 console 登录）
+  TMP_PWD=$(openssl rand -base64 24)
+  "$MC" --quiet admin user add "$ALIAS" "$USER" "$TMP_PWD"
+  unset TMP_PWD
+  echo "      user created"
+fi
+
+echo "[5/6] attach policy $POLICY to user $USER"
+"$MC" --quiet admin policy attach "$ALIAS" "$POLICY" --user "$USER" 2>&1 \
+  | grep -vE "(already attached|specified policy.*not attached|^$)" || true
+
+echo "[6/6] create new service account (access key pair) for $USER"
+echo "---"
+"$MC" admin user svcacct add "$ALIAS" "$USER"
+echo "---"
+echo
+echo "DONE. Copy the Access Key + Secret Key above into server .env:"
+echo "  QATLAS_S3_ENDPOINT=${RUSTFS_ENDPOINT}"
+echo "  QATLAS_S3_BUCKET=${BUCKET}"
+echo "  QATLAS_S3_ACCESS_KEY_ID=<Access Key from above>"
+echo "  QATLAS_S3_SECRET_ACCESS_KEY=<Secret Key from above>"
+echo
+echo "To list all keys for this user later:"
+echo "  mc admin accesskey ls <alias> --user $USER"

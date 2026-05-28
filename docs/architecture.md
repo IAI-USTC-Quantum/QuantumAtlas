@@ -146,3 +146,9 @@ FHS / 12-factor 的常规约定。
 - QuantumAtlas 不绑定特定反向代理、SSO 或存储产品。
 - `RAW_DIR`、`WIKI_DIR`、`DATA_DIR`、`PB_DATA_DIR` 是显式边界，而不是隐含在仓库结构里的假设。
 - 应用代码版本和 Wiki 内容版本可以分离演进。
+
+## 延伸阅读
+
+- [storage-design.md](storage-design.md) — 当 RAW 资产体量上 TB / 引入对象存储（RustFS @ `raw.quantum-atlas.ai`）/ 用 Neo4j 装 paper 引用图时，三层（raw / metadata / graph）怎么分工、怎么对账、怎么重建。
+- [migration-storage-layout.md](migration-storage-layout.md) — 把 wiki / raw / data / pb_data 从仓库内搬到 XDG / 挂载点的实操步骤。
+- [graph-visualization-research.md](graph-visualization-research.md) — 前端图谱库选型调研（Cytoscape.js / Sigma.js / ...）。

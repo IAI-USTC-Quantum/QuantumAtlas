@@ -72,8 +72,9 @@ uv run --script examples/demo_pipeline.py --algorithm qft --backend qiskit --sav
 
 ```bash
 uv sync --extra dev
-docker compose up -d
 cp .env.example .env
+# 编辑 .env，填上 NEO4J_URI / NEO4J_USERNAME / NEO4J_PASSWORD 指向
+# 你自己准备的 Neo4j 实例（团队共享 / 自起 / 托管均可）
 uv run --script scripts/init_primitives.py
 uv run -m atlas.server
 ```
@@ -82,7 +83,6 @@ uv run -m atlas.server
 
 - 首页：`http://localhost:4200`
 - API 文档：`http://localhost:4200/api/docs`
-- Neo4j：`http://localhost:7474`
 
 生产部署、systemd 安装、反向代理和鉴权边界请看 [docs/deployment.md](docs/deployment.md)。
 
@@ -147,7 +147,6 @@ QuantumAtlas/
 ├── scripts/               初始化与维护脚本
 ├── tests/                 测试套件
 ├── docs/                  补充文档
-├── docker-compose.yml     Neo4j 开发环境
 └── pyproject.toml         项目配置
 ```
 

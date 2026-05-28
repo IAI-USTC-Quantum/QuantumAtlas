@@ -39,10 +39,9 @@ PocketBase 那侧通过 `--dir=` 命令行参数控制；server 启动时
 让 git checkout 重新干净。
 
 ```bash
-# 0. 停掉本地 server / docker，避免边搬边写
-#    （根据你的运行方式，三选一）
+# 0. 停掉本地 server，避免边搬边写
+#    （根据你的运行方式，二选一）
 systemctl --user stop qatlas.service                # systemd user
-docker compose down                                  # docker
 pkill -f 'quantumatlas serve' || true                # 手起 binary
 
 # 1. 准备 XDG 目标目录
