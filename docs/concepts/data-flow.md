@@ -104,7 +104,7 @@ flowchart TB
 
 Wiki 是**独立的 Git 仓库**（[QuantumAtlas-Wiki](https://github.com/IAI-USTC-Quantum/QuantumAtlas-Wiki)），任何人 clone / commit / PR 都可以。Server 端的 wiki checkout **只接受 fast-forward pull**（`POST /api/wiki/sync/pull`），无需 SSH 上服务器。
 
-## Wiki → Neo4j 同步 { #wiki-graph #wiki-neo4j }
+## Wiki → Neo4j 同步 { #wiki-neo4j }
 
 只有 **Entities** 和 **Sources** 类型的页面会同步到 Neo4j：
 

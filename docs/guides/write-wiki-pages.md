@@ -255,4 +255,4 @@ qatlas wiki sync algo-shor   # 单页 sync
 
 - 看完整 schema：[Wiki schema 参考](../reference/wiki-schema.md)
 - 修 lint 错误：[Lint 与校验](lint-wiki.md)
-- 想知道 Wiki 怎么变成图谱：[数据流](../concepts/data-flow.md#wiki-graph)
+- 想知道 Wiki 怎么变成图谱：[数据流](../concepts/data-flow.md#wiki-neo4j)
