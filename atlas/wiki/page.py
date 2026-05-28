@@ -74,6 +74,23 @@ class WikiFrontmatter(BaseModel):
     neo4j_id: Optional[str] = Field(
         None, description="Corresponding Neo4j node ID"
     )
+    # DOI enrichment (see atlas/parser/doi/). Bare DOI string only — no
+    # `https://doi.org/` prefix — so templates and Neo4j can rewrite it
+    # consistently. `doi_source` records which resolver assigned the DOI;
+    # `unresolved` means we tried and got nothing (so `qatlas wiki enrich-doi`
+    # knows it's worth retrying when a new resolver lands).
+    doi: Optional[str] = Field(
+        None, description="DOI of the formally published version (no scheme/host prefix)"
+    )
+    doi_source: Optional[
+        Literal["arxiv", "crossref", "openalex", "semantic-scholar", "manual", "unresolved"]
+    ] = Field(None, description="Provenance of the DOI value")
+    doi_confidence: Optional[Literal["high", "medium", "low"]] = Field(
+        None, description="Confidence of the DOI match"
+    )
+    doi_resolved_at: Optional[datetime] = Field(
+        None, description="When DOI resolution was last attempted"
+    )
 
     def to_yaml_dict(self) -> Dict[str, Any]:
         """Convert to dictionary suitable for YAML serialization."""
@@ -85,6 +102,14 @@ class WikiFrontmatter(BaseModel):
             data["updated_at"] = data["updated_at"].strftime("%Y-%m-%d")
         elif data.get("updated_at") is None:
             del data["updated_at"]
+        if isinstance(data.get("doi_resolved_at"), datetime):
+            data["doi_resolved_at"] = data["doi_resolved_at"].strftime("%Y-%m-%d")
+        elif data.get("doi_resolved_at") is None:
+            del data["doi_resolved_at"]
+        # Drop DOI fields when fully unset so untouched pages don't gain noise.
+        for key in ("doi", "doi_source", "doi_confidence"):
+            if data.get(key) is None:
+                data.pop(key, None)
         return data
 
 
@@ -183,6 +208,16 @@ class WikiPage(BaseModel):
             except ValueError:
                 fm_data["updated_at"] = datetime.fromisoformat(
                     fm_data["updated_at"]
+                )
+
+        if isinstance(fm_data.get("doi_resolved_at"), str):
+            try:
+                fm_data["doi_resolved_at"] = datetime.strptime(
+                    fm_data["doi_resolved_at"], "%Y-%m-%d"
+                )
+            except ValueError:
+                fm_data["doi_resolved_at"] = datetime.fromisoformat(
+                    fm_data["doi_resolved_at"]
                 )
 
         frontmatter = WikiFrontmatter(**fm_data)
