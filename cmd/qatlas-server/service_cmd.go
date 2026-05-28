@@ -229,11 +229,21 @@ func resolveMode(opts *serviceInstallOpts, tty bool) error {
 
 // resolveDotenvPath fills opts.DotenvPath: explicit flag > $QATLAS_DOTENV >
 // auto-detect, then validates the path exists and is a regular file.
+//
+// Whenever the path isn't from --dotenv-path (i.e. operator didn't type it
+// in this command line), we print an announcement to stdout so the chosen
+// path is visible in deploy logs without scrolling to the rendered-unit
+// preview. Three sources, three announcement styles:
+//   - --dotenv-path: silent (operator just typed it, no surprise)
+//   - $QATLAS_DOTENV: stdout note (env var might come from .bashrc / parent
+//     shell / systemd unit operator didn't write themselves)
+//   - autodetect: TTY prompts [Y/n]; non-TTY prints to stdout
 func resolveDotenvPath(opts *serviceInstallOpts, tty bool) error {
 	if opts.DotenvPath != "" {
 		return validateDotenvPath(opts.DotenvPath)
 	}
 	if env := strings.TrimSpace(os.Getenv("QATLAS_DOTENV")); env != "" {
+		fmt.Printf("Using .env from $QATLAS_DOTENV: %s\n", env)
 		opts.DotenvPath = env
 		return validateDotenvPath(env)
 	}
@@ -249,13 +259,19 @@ func resolveDotenvPath(opts *serviceInstallOpts, tty bool) error {
 		return fmt.Errorf("could not auto-detect .env file (tried: %s); pass --dotenv-path", strings.Join(candidates, ", "))
 	}
 	if tty {
-		ok, err := promptYesNo(fmt.Sprintf("Use .env at %s?", found), true)
+		ok, err := promptYesNo(fmt.Sprintf("Use auto-detected .env at %s?", found), true)
 		if err != nil {
 			return err
 		}
 		if !ok {
 			return errors.New("aborted; pass --dotenv-path explicitly")
 		}
+	} else {
+		// Non-TTY (CI / --force / sudo bash script) — can't prompt, but
+		// must not stay silent: deploy logs need to show which .env was
+		// picked, in case autodetect found the wrong one and the operator
+		// only notices when the service fails to start.
+		fmt.Printf("Auto-detected .env: %s (override with --dotenv-path)\n", found)
 	}
 	opts.DotenvPath = found
 	return nil
