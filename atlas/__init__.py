@@ -25,7 +25,7 @@ def _resolve_version() -> str:
         return _version_from_pyproject()
     except (FileNotFoundError, KeyError, OSError):
         try:
-            return version("quantumatlas")
+            return version("quantum-atlas")
         except PackageNotFoundError:
             return "0+unknown"
 

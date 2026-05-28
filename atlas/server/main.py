@@ -23,14 +23,10 @@ async def lifespan(app: FastAPI):
 
     from atlas.server.config import get_project_root
     from atlas.server.tasks import IngestStore, ShareStore
-    from atlas.runtime_metadata import validate_release_tag, write_code_version_manifests
 
     root = get_project_root()
     data_root = config.get_data_root()
     raw_root = config.get_raw_root()
-    if config.require_release_tag:
-        validate_release_tag(root)
-    write_code_version_manifests(root, [raw_root, data_root])
     app.state.share_store = ShareStore(data_root / "shares")
     app.state.ingest_store = IngestStore(data_root / "ingests")
 

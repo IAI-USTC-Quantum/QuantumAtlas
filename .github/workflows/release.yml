@@ -1,5 +1,14 @@
 name: Tag and publish release
 
+# Why this trigger surface:
+#   - workflow_dispatch    — manual re-run from the Actions tab.
+#   - push paths           — local `cz bump` lands pyproject.toml +
+#                            CHANGELOG.md changes on main; this kicks off
+#                            tag creation + multi-target publishing.
+# We intentionally do NOT use `on: push: tags`. The tag is created BY
+# this workflow (so the release == "everything bumped to vX.Y.Z lands on
+# main" rather than "someone manually tagged"). Matches qalgo's spirit
+# but driven by version-file changes instead of pre-tagging.
 on:
   workflow_dispatch:
   push:
@@ -9,12 +18,28 @@ on:
       - pyproject.toml
       - CHANGELOG.md
 
+# Top-level permissions are read-only; each job opts in to what it needs.
+# Trusted Publishing in pypi-publish requires id-token: write at the JOB
+# level (not workflow level), so we keep the workflow default minimal.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
+  # --------------------------------------------------------------------
+  # 1. release-build — produce ALL artifacts in one job, upload once.
+  #    Downstream jobs (create-release, pypi-publish) just download.
+  #    Splitting into a build vs publish step matches QuantumAlgorithm
+  #    (qalgo) and avoids rebuilding on every retry of a failed publish.
+  # --------------------------------------------------------------------
+  release-build:
     runs-on: ubuntu-latest
+
+    # Surface version + tag to downstream jobs so we don't re-parse
+    # pyproject.toml three times.
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      tag_exists: ${{ steps.tag.outputs.exists }}
 
     steps:
       - uses: actions/checkout@v4
@@ -35,6 +60,8 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=$TAG" >> $GITHUB_OUTPUT
 
+      # Tag validation runs in release-build (not create-release) so a
+      # version conflict fails before we waste CPU on Go cross-compile.
       - name: Validate release tag
         id: tag
         run: |
@@ -53,14 +80,116 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Build release distributions
+      - name: Build Python distributions
         run: |
           python -m pip install build
           python -m build
 
+      # ------------------------------------------------------------------
+      # Go server binaries — published to the GitHub Release so end users
+      # can `curl quantum-atlas.ai/install-server.sh | sh` and get the
+      # right artifact for their platform. This is the QuantumAtlas-only
+      # step that qalgo doesn't have (pure-Python project).
+      #
+      # CGO_ENABLED=0 keeps binaries fully static + portable
+      # (modernc.org/sqlite is pure Go, see AGENTS.md).
+      #
+      # pixi pulls the same Go toolchain as go.yml — avoids setup-go
+      # version drift between CI workflows.
+      # ------------------------------------------------------------------
+      - name: Install pixi
+        uses: prefix-dev/setup-pixi@v0.8.10
+        with:
+          pixi-version: v0.68.0
+          cache: true
+
+      - name: Cross-compile qatlas-server binaries
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          mkdir -p dist/bin
+          LDFLAGS="-s -w -X main.Version=${{ steps.version.outputs.version }}"
+
+          build() {
+            local goos="$1"
+            local goarch="$2"
+            local out="dist/bin/qatlas-server-${goos}-${goarch}"
+            echo "==> $out"
+            GOOS="$goos" GOARCH="$goarch" \
+              pixi run -- go build -trimpath -ldflags "$LDFLAGS" \
+              -o "$out" ./cmd/qatlas-server
+          }
+
+          build linux  amd64
+          build linux  arm64
+          build darwin amd64
+          build darwin arm64
+
+      - name: Generate checksums.txt
+        run: |
+          set -euo pipefail
+          cd dist/bin
+          # install-server.sh expects "<sha256>  <asset>" with exactly
+          # the bare asset basename (sha256sum's default when given a
+          # relative path).
+          sha256sum qatlas-server-* > checksums.txt
+          cat checksums.txt
+
+      - name: Upload Python distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-dists-python
+          # *.whl + *.tar.gz only — fed to PyPI via Trusted Publishing.
+          # pypa/gh-action-pypi-publish invokes twine on "<dir>/*", so
+          # we keep this artifact strictly Python files to avoid twine
+          # choking on the Go binary subdirectory.
+          path: |
+            dist/*.tar.gz
+            dist/*.whl
+          retention-days: 7
+
+      - name: Upload Go server binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-dists-binaries
+          # Go-only: attached to the GitHub Release alongside wheels,
+          # not uploaded to PyPI.
+          path: dist/bin/
+          retention-days: 7
+
+  # --------------------------------------------------------------------
+  # 2. create-release — git tag + GitHub Release. Owns ALL files we
+  #    publish to the Release page (Python wheels/sdist + Go binaries).
+  # --------------------------------------------------------------------
+  create-release:
+    runs-on: ubuntu-latest
+    needs: release-build
+    permissions:
+      contents: write   # needed to push tag + create release
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Download Python distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: release-dists-python
+          path: dist/
+
+      - name: Download Go server binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: release-dists-binaries
+          path: dist/bin/
+
       - name: Extract latest changelog
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
+          VERSION="${{ needs.release-build.outputs.version }}"
 
           if [ -f CHANGELOG.md ]; then
             awk -v version="$VERSION" '
@@ -87,23 +216,72 @@ jobs:
           fi
 
       - name: Create release tag
-        if: steps.tag.outputs.exists == 'false'
+        if: needs.release-build.outputs.tag_exists == 'false'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.tag }}"
-          git push origin "${{ steps.version.outputs.tag }}"
+          git tag -a "${{ needs.release-build.outputs.tag }}" \
+                  -m "Release ${{ needs.release-build.outputs.tag }}"
+          git push origin "${{ needs.release-build.outputs.tag }}"
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ steps.version.outputs.tag }}
+          tag_name: ${{ needs.release-build.outputs.tag }}
           body_path: /tmp/changelog.txt
           files: |
             dist/*.tar.gz
             dist/*.whl
+            dist/bin/qatlas-server-*
+            dist/bin/checksums.txt
           draft: false
           prerelease: false
           generate_release_notes: true
+
+  # --------------------------------------------------------------------
+  # 3. pypi-publish — Trusted Publishing via OIDC.
+  #
+  # No API token is stored anywhere; instead the PyPI project must be
+  # configured to trust THIS workflow file from THIS repo using THIS
+  # environment name. Setup is one-time:
+  #
+  #   1. Create the project on PyPI (one-time, manual).
+  #   2. https://pypi.org/manage/project/quantum-atlas/settings/publishing/
+  #      add a "Trusted Publisher" with:
+  #        owner=IAI-USTC-Quantum repo=QuantumAtlas
+  #        workflow=release.yml environment=pypi
+  #   3. Create a GitHub environment named "pypi" in the repo
+  #      settings (no secrets / protection rules needed for OIDC).
+  #
+  # Runs in parallel with create-release: both consume the same
+  # release-build artifact, neither depends on the other. PyPI side
+  # uses skip-existing so re-runs of the workflow against an already-
+  # published version are no-ops, not failures.
+  # --------------------------------------------------------------------
+  pypi-publish:
+    runs-on: ubuntu-latest
+    needs: release-build
+    environment:
+      name: pypi
+      url: https://pypi.org/p/quantum-atlas/
+    permissions:
+      id-token: write   # required for OIDC trusted publishing
+
+    steps:
+      - name: Download Python distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: release-dists-python
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Keep on: re-runs of the workflow against an already-
+          # published version should be silent no-ops.
+          skip-existing: true
+          # packages-dir defaults to dist/. We deliberately did NOT
+          # download the binaries artifact in this job so the directory
+          # contains only *.whl + *.tar.gz, matching what twine wants.

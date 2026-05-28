@@ -17,7 +17,6 @@ ENV_KEYS = [
     "QATLAS_SHARE_ACCESS_TOKEN",
     "QATLAS_DEFAULT_SHARE_EXPIRES_IN",
     "QATLAS_USER_HEADER",
-    "QATLAS_REQUIRE_RELEASE_TAG",
     # Legacy bare aliases
     "SERVER_HOST",
     "SERVER_PORT",
@@ -33,8 +32,6 @@ ENV_KEYS = [
     "PUBLIC_SHARE_TOKEN",
     "DEFAULT_SHARE_EXPIRES_IN",
     "USER_HEADER",
-    "QUANTUMATLAS_REQUIRE_RELEASE_TAG",
-    "REQUIRE_RELEASE_TAG",
     "MINERU_API_TOKEN",
     "MINERU_API_BASE_URL",
     "MINERU_MODEL_VERSION",
@@ -77,7 +74,6 @@ def test_server_config_reads_all_supported_env_vars_from_dotenv(tmp_path, monkey
                 "SHARE_ACCESS_TOKEN=share-secret",
                 "DEFAULT_SHARE_EXPIRES_IN=3600",
                 "USER_HEADER=X-From-Dotenv",
-                "QUANTUMATLAS_REQUIRE_RELEASE_TAG=true",
                 "MINERU_API_TOKEN=mineru-token",
                 "MINERU_API_BASE_URL=https://mineru.example",
                 "MINERU_MODEL_VERSION=vlm",
@@ -109,7 +105,6 @@ def test_server_config_reads_all_supported_env_vars_from_dotenv(tmp_path, monkey
     assert config.share_access_token == "share-secret"
     assert config.default_share_expires_in == 3600
     assert config.user_header == "X-From-Dotenv"
-    assert config.require_release_tag is True
     assert config.mineru_api_token == "mineru-token"
     assert config.mineru_api_base_url == "https://mineru.example"
     assert config.mineru_model_version == "vlm"
@@ -204,8 +199,7 @@ def test_server_config_boolean_env_parsing(tmp_path, monkeypatch, env_value, exp
     _reset_env(monkeypatch)
     _write_env(
         tmp_path,
-        f"SERVER_DEBUG={env_value}\nMINERU_IS_OCR={env_value}\n"
-        f"QUANTUMATLAS_REQUIRE_RELEASE_TAG={env_value}\n",
+        f"SERVER_DEBUG={env_value}\nMINERU_IS_OCR={env_value}\n",
     )
     monkeypatch.setattr("atlas.server.config.get_project_root", lambda: tmp_path)
 
@@ -213,7 +207,6 @@ def test_server_config_boolean_env_parsing(tmp_path, monkeypatch, env_value, exp
 
     assert config.debug is expected
     assert config.mineru_is_ocr is expected
-    assert config.require_release_tag is expected
 
 
 def test_server_config_get_raw_root_resolves_relative_to_project_root(tmp_path, monkeypatch):

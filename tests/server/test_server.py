@@ -225,8 +225,6 @@ class TestAPIRoutes:
         assert data["version"] == __version__
         assert set(data) == {"mode", "version", "code", "wiki", "assets", "audit"}
         assert data["code"]["tag"] == f"v{__version__}"
-        assert data["code"]["require_release_tag"] is False
-        assert set(data["code"]["git"]) >= {"enabled"}
         assert set(data["wiki"]) == {"exists", "external", "git"}
         assert "enabled" in data["wiki"]["git"]
         assert data["assets"] == {
@@ -300,30 +298,6 @@ class TestAPIRoutes:
                 "Implementation": 0,
             },
         }
-
-    def test_server_startup_writes_code_version_manifests(self, tmp_path):
-        """Test raw and data stores include the serving code version."""
-        from atlas import __version__
-        from atlas.runtime_metadata import MANIFEST_FILENAME
-        from atlas.server.config import ServerConfig
-        from atlas.server.main import create_app
-
-        config = ServerConfig(
-            wiki_dir=str(tmp_path / "wiki"),
-            raw_dir=str(tmp_path / "raw"),
-            data_dir=str(tmp_path / "data"),
-        )
-
-        with TestClient(create_app(config)):
-            pass
-
-        for root_name in ["raw", "data"]:
-            manifest = tmp_path / root_name / MANIFEST_FILENAME
-            payload = json.loads(manifest.read_text(encoding="utf-8"))
-            assert payload["project"] == "quantumatlas"
-            assert payload["version"] == __version__
-            assert payload["tag"] == f"v{__version__}"
-            assert payload["schema_version"] == 1
 
     def test_wiki_sync_status_is_safe_summary(self, tmp_path):
         """Test wiki sync status reports Git state without exposing paths."""

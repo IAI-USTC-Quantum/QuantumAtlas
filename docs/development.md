@@ -407,14 +407,6 @@ gh workflow run "Nightly production smoke" --repo IAI-USTC-Quantum/QuantumAtlas
 uv run --with commitizen cz bump --dry-run
 ```
 
-如果生产环境要求代码版本必须对齐 release tag，可以设置：
-
-```env
-QATLAS_REQUIRE_RELEASE_TAG=true
-```
-
-> alias: `QUANTUMATLAS_REQUIRE_RELEASE_TAG` / `REQUIRE_RELEASE_TAG` 仍生效。
-
 ## 协作时的注意点
 
 - Wiki 内容和应用代码可以分开演进，不必同频发版。

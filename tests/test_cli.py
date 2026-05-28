@@ -36,27 +36,30 @@ def test_commitizen_uses_pyproject_version_and_v_tags():
     }
 
 
-def test_release_workflows_use_protected_two_step_flow():
-    """Release bot opens a bump PR; main creates the tag/release after merge."""
-    bump_workflow = Path(".github/workflows/bump-version-pr.yml").read_text(encoding="utf-8")
+def test_release_workflow_publishes_python_and_go_artifacts():
+    """release.yml builds wheels + Go binaries, tags on main, publishes to GitHub + PyPI."""
     release_workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
 
-    assert "Open version bump PR" in bump_workflow
-    assert "peter-evans/create-pull-request@v6" in bump_workflow
-    assert "cz bump" in bump_workflow
-    assert "git tag -d" in bump_workflow
-    assert "add-paths:" in bump_workflow
-    assert "pyproject.toml" in bump_workflow
-    assert "CHANGELOG.md" in bump_workflow
-
+    # Tag + GitHub release creation
     assert "Tag and publish release" in release_workflow
-    assert "branches:" in release_workflow
     assert "- main" in release_workflow
     assert "Create release tag" in release_workflow
     assert "softprops/action-gh-release@v2" in release_workflow
-    assert "tag_name: ${{ steps.version.outputs.tag }}" in release_workflow
-    assert "pypi-publish:" not in release_workflow
-    assert "gh-action-pypi-publish" not in release_workflow
+
+    # 3-job split mirroring TMYTiMidlY/QuantumAlgorithm
+    assert "release-build:" in release_workflow
+    assert "create-release:" in release_workflow
+    assert "pypi-publish:" in release_workflow
+
+    # Go binaries are cross-compiled for both OSes and arches
+    assert "qatlas-server-${goos}-${goarch}" in release_workflow
+    assert "build linux  amd64" in release_workflow
+    assert "build darwin arm64" in release_workflow
+
+    # PyPI uses Trusted Publishing (no token, OIDC via environment + id-token)
+    assert "pypa/gh-action-pypi-publish@release/v1" in release_workflow
+    assert "id-token: write" in release_workflow
+    assert "name: pypi" in release_workflow
 
 
 def test_top_level_help(capsys):

@@ -16,7 +16,6 @@ CONFIG_ENV_KEYS = [
     "QATLAS_SHARE_ACCESS_TOKEN",
     "QATLAS_DEFAULT_SHARE_EXPIRES_IN",
     "QATLAS_USER_HEADER",
-    "QATLAS_REQUIRE_RELEASE_TAG",
     # Legacy bare aliases (kept active for back-compat)
     "SERVER_HOST",
     "SERVER_PORT",
@@ -29,8 +28,6 @@ CONFIG_ENV_KEYS = [
     "PUBLIC_SHARE_TOKEN",
     "DEFAULT_SHARE_EXPIRES_IN",
     "USER_HEADER",
-    "QUANTUMATLAS_REQUIRE_RELEASE_TAG",
-    "REQUIRE_RELEASE_TAG",
     # Third-party vendor names (no prefix by design)
     "NEO4J_URI",
     "NEO4J_USER",

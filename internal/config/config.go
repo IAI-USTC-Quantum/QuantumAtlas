@@ -51,9 +51,6 @@ type Config struct {
 	// Audit header injected by the upstream reverse proxy.
 	UserHeader string
 
-	// Release-tag enforcement (production guard).
-	RequireReleaseTag bool
-
 	// MinerU PDF parser (third-party SDK; not QATLAS_*).
 	MinerUAPIToken   string
 	MinerUAPIBaseURL string
@@ -143,7 +140,6 @@ func Load(dotenvPath string) (*Config, error) {
 		ShareAccessToken:      firstEnv("QATLAS_SHARE_ACCESS_TOKEN", "SHARE_ACCESS_TOKEN"),
 		DefaultShareExpiresIn: firstEnvInt("QATLAS_DEFAULT_SHARE_EXPIRES_IN", "DEFAULT_SHARE_EXPIRES_IN"),
 		UserHeader:            firstEnv("QATLAS_USER_HEADER", "USER_HEADER"),
-		RequireReleaseTag:     firstEnvBool("QATLAS_REQUIRE_RELEASE_TAG", "QUANTUMATLAS_REQUIRE_RELEASE_TAG"),
 		MinerUAPIToken:        firstEnv("MINERU_API_TOKEN"),
 		MinerUAPIBaseURL:      firstEnvDefault("https://mineru.net", "MINERU_API_BASE_URL"),
 		GitHubClientID:        firstEnv("GITHUB_CLIENT_ID"),
@@ -268,18 +264,6 @@ func firstEnvInt(names ...string) int {
 		return 0
 	}
 	return v
-}
-
-// firstEnvBool parses the first non-empty env value as a bool. Accepts the
-// usual truthy strings ("1", "true", "yes", "on") case-insensitively.
-func firstEnvBool(names ...string) bool {
-	raw := strings.ToLower(firstEnv(names...))
-	switch raw {
-	case "1", "true", "yes", "on", "y", "t":
-		return true
-	default:
-		return false
-	}
 }
 
 // expandPath resolves ~ and converts relative paths to absolute.

@@ -106,14 +106,6 @@ class ServerConfig(BaseSettings):
         None,
         validation_alias=AliasChoices("QATLAS_USER_HEADER", "USER_HEADER"),
     )
-    require_release_tag: bool = Field(
-        False,
-        validation_alias=AliasChoices(
-            "QATLAS_REQUIRE_RELEASE_TAG",
-            "QUANTUMATLAS_REQUIRE_RELEASE_TAG",
-            "REQUIRE_RELEASE_TAG",
-        ),
-    )
     # PocketBase (IdP / PAT management)
     pocketbase_url: str = Field(
         "http://127.0.0.1:8090",
@@ -157,7 +149,6 @@ class ServerConfig(BaseSettings):
         "mineru_is_ocr",
         "mineru_enable_formula",
         "mineru_enable_table",
-        "require_release_tag",
         mode="before",
     )
     @classmethod

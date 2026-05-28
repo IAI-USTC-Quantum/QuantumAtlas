@@ -30,7 +30,6 @@ from atlas.paper_assets import (
 )
 from atlas.parser.arxiv_fetcher import ArxivFetcher
 from atlas.parser.mineru_client import MinerUClient
-from atlas.runtime_metadata import code_git_info
 from atlas.server.config import ServerConfig, get_project_root
 from atlas.server.routers.shares import build_external_share_url, build_share_url, create_share_record
 from atlas.server.tasks import IngestStore, IngestTask, ShareStore, StepStatus
@@ -347,8 +346,6 @@ def server_info(request: Request):
         "version": request.app.version,
         "code": {
             "tag": f"v{request.app.version}",
-            "require_release_tag": config.require_release_tag,
-            "git": code_git_info(get_project_root()),
         },
         "wiki": {
             "exists": sync_status["wiki"]["exists"],
