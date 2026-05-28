@@ -4,7 +4,6 @@ import {
   BookOpen,
   Home,
   Key,
-  KeyRound,
   Network,
   Search,
   Sparkles,
@@ -15,7 +14,7 @@ import { useLang } from '@/hooks/use-lang'
 import { cn } from '@/lib/utils'
 
 type NavLink = {
-  to: '/$lang' | '/$lang/wiki' | '/$lang/wiki/search' | '/$lang/graph' | '/$lang/token' | '/$lang/pat'
+  to: '/$lang' | '/$lang/wiki' | '/$lang/wiki/search' | '/$lang/graph' | '/$lang/pat'
   labelKey: string
   icon: LucideIcon
   /**
@@ -31,7 +30,6 @@ const links: NavLink[] = [
   { to: '/$lang/wiki', labelKey: 'nav.wiki', icon: BookOpen, matchPrefix: '/wiki' },
   { to: '/$lang/wiki/search', labelKey: 'nav.search', icon: Search },
   { to: '/$lang/graph', labelKey: 'nav.graph', icon: Network, matchPrefix: '/graph' },
-  { to: '/$lang/token', labelKey: 'nav.token', icon: KeyRound },
   { to: '/$lang/pat', labelKey: 'nav.pat', icon: Key },
 ]
 

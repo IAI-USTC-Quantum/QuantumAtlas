@@ -15,7 +15,6 @@
       "wiki": "Wiki",
       "search": "Search",
       "graph": "Graph",
-      "token": "Token",
       "pat": "PATs"
     },
     "status": {
@@ -42,7 +41,6 @@
       "docsLink": "API docs",
       "userMenu": {
         "openLabel": "User menu",
-        "tokenLink": "View token",
         "patLink": "Manage PATs",
         "signOut": "Sign out"
       }
@@ -102,33 +100,7 @@
     "nodeDetailCopy": "Graph node detail pages now live in the web shell. Add a dedicated JSON endpoint when richer node payloads are needed."
   },
   "token": {
-    "eyebrow": "PocketBase-authenticated access",
-    "title": "QuantumAtlas Token",
-    "subtitle": "Copy your current PocketBase-issued bearer token for API calls from trusted terminals.",
-    "patHint": "Tired of rotating this every 14 days? Mint a long-lived <patLink>Personal Access Token</patLink> instead — it works in the same Authorization: Bearer header.",
-    "fields": {
-      "scope": "Scope",
-      "scopeValue": "QuantumAtlas API",
-      "identity": "Identity",
-      "source": "Source",
-      "sourceValue": "PocketBase auth session"
-    },
-    "panelEyebrow": "Access token",
-    "ready": "Ready for CLI use",
-    "needSignIn": "Sign in required",
-    "tokenLabel": "Token value",
-    "actions": {
-      "copyToken": "Copy token",
-      "copyCurl": "Copy curl",
-      "copyCliEnv": "Copy CLI env"
-    },
-    "warning": "Treat this value like a password. PocketBase issues it on GitHub OAuth login and rotates it when you sign in again.",
-    "copied": "{{label}} copied",
-    "copyLabels": {
-      "token": "Token",
-      "command": "Command",
-      "cliEnv": "CLI env"
-    }
+    "_removed": "Session-token page was removed; the PAT page covers all CLI bearer-token use cases."
   },
   "pat": {
     "eyebrow": "Authentication",

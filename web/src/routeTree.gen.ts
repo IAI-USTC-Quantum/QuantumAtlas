@@ -14,7 +14,6 @@ import { Route as LangRouteImport } from './routes/$lang'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as LangIndexRouteImport } from './routes/$lang.index'
 import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
-import { Route as LangTokenRouteImport } from './routes/$lang.token'
 import { Route as LangPatRouteImport } from './routes/$lang.pat'
 import { Route as LangWikiIndexRouteImport } from './routes/$lang.wiki.index'
 import { Route as LangGraphIndexRouteImport } from './routes/$lang.graph.index'
@@ -46,11 +45,6 @@ const AuthCallbackRoute = AuthCallbackRouteImport.update({
   id: '/auth/callback',
   path: '/auth/callback',
   getParentRoute: () => rootRouteImport,
-} as any)
-const LangTokenRoute = LangTokenRouteImport.update({
-  id: '/token',
-  path: '/token',
-  getParentRoute: () => LangRoute,
 } as any)
 const LangPatRoute = LangPatRouteImport.update({
   id: '/pat',
@@ -88,7 +82,6 @@ export interface FileRoutesByFullPath {
   '/$lang': typeof LangRouteWithChildren
   '/login': typeof LoginRoute
   '/$lang/pat': typeof LangPatRoute
-  '/$lang/token': typeof LangTokenRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/$lang/': typeof LangIndexRoute
   '/$lang/wiki/search': typeof LangWikiSearchRoute
@@ -101,7 +94,6 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/$lang/pat': typeof LangPatRoute
-  '/$lang/token': typeof LangTokenRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/$lang': typeof LangIndexRoute
   '/$lang/wiki/search': typeof LangWikiSearchRoute
@@ -116,7 +108,6 @@ export interface FileRoutesById {
   '/$lang': typeof LangRouteWithChildren
   '/login': typeof LoginRoute
   '/$lang/pat': typeof LangPatRoute
-  '/$lang/token': typeof LangTokenRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/$lang/': typeof LangIndexRoute
   '/$lang/wiki/search': typeof LangWikiSearchRoute
@@ -132,7 +123,6 @@ export interface FileRouteTypes {
     | '/$lang'
     | '/login'
     | '/$lang/pat'
-    | '/$lang/token'
     | '/auth/callback'
     | '/$lang/'
     | '/$lang/wiki/search'
@@ -145,7 +135,6 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/$lang/pat'
-    | '/$lang/token'
     | '/auth/callback'
     | '/$lang'
     | '/$lang/wiki/search'
@@ -159,7 +148,6 @@ export interface FileRouteTypes {
     | '/$lang'
     | '/login'
     | '/$lang/pat'
-    | '/$lang/token'
     | '/auth/callback'
     | '/$lang/'
     | '/$lang/wiki/search'
@@ -213,13 +201,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/$lang/token': {
-      id: '/$lang/token'
-      path: '/token'
-      fullPath: '/$lang/token'
-      preLoaderRoute: typeof LangTokenRouteImport
-      parentRoute: typeof LangRoute
-    }
     '/$lang/pat': {
       id: '/$lang/pat'
       path: '/pat'
@@ -267,7 +248,6 @@ declare module '@tanstack/react-router' {
 
 interface LangRouteChildren {
   LangPatRoute: typeof LangPatRoute
-  LangTokenRoute: typeof LangTokenRoute
   LangIndexRoute: typeof LangIndexRoute
   LangWikiSearchRoute: typeof LangWikiSearchRoute
   LangGraphIndexRoute: typeof LangGraphIndexRoute
@@ -278,7 +258,6 @@ interface LangRouteChildren {
 
 const LangRouteChildren: LangRouteChildren = {
   LangPatRoute: LangPatRoute,
-  LangTokenRoute: LangTokenRoute,
   LangIndexRoute: LangIndexRoute,
   LangWikiSearchRoute: LangWikiSearchRoute,
   LangGraphIndexRoute: LangGraphIndexRoute,

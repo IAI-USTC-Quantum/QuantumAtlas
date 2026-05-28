@@ -78,11 +78,46 @@ unprefixed.
 | `/{lang}/wiki/page/<id>` (id may contain `/`) | `routes/$lang.wiki.page.$.tsx` |
 | `/{lang}/graph` | `routes/$lang.graph.index.tsx` |
 | `/{lang}/graph/node/<type>/<id>` | `routes/$lang.graph.node.$.tsx` |
-| `/{lang}/token` | `routes/$lang.token.tsx` |
 | `/{lang}/pat` | `routes/$lang.pat.tsx` |
 
 These all serve the same SPA shell mounted by the Go server's
 `apis.Static` handler.
+
+## Dev workflow
+
+`npm run dev` only serves the SPA bundle. There is no built-in API
+backend, so `fetch('/api/...')` would fall back to `index.html` and the
+SPA would crash with `Unexpected token '<', "<!doctype "... is not
+valid JSON`. To work on the UI you have two options:
+
+1. **Run a local qatlas-server** alongside vite (recommended when you
+   are also changing Go handlers). Build and run:
+   ```bash
+   pixi run -- go run ./cmd/qatlas-server serve --http=127.0.0.1:4200
+   ```
+2. **Reverse-proxy to a remote qatlas-server** (recommended when you
+   only touch frontend and want real data). Any deployment you can
+   reach over HTTP(S) works — production, staging, a self-hosted dev
+   instance, etc.
+
+Either way, point vite at it:
+
+```bash
+cp web/.env.development.example web/.env.development.local
+# edit web/.env.development.local — at minimum set VITE_DEV_API_TARGET
+```
+
+Available knobs (see `web/.env.development.example` for the
+authoritative descriptions):
+
+| Variable | What it does |
+|---|---|
+| `VITE_DEV_API_TARGET` | URL vite reverse-proxies `/api`, `/_`, `/share` to. **Required** for any UI that hits the server. Self-signed certs are accepted. |
+| `VITE_DEV_FAKE_AUTH` | When `1`, the SPA's PocketBase login gate returns a stub authed state so you go straight into protected views without OAuth. Read endpoints work through the proxy; write endpoints still 401. Stripped from production builds via `import.meta.env.DEV` dead-code elimination. |
+| `VITE_DEV_ALLOWED_HOSTS` | Comma-separated extra `Host` headers vite accepts. Needed when a reverse proxy fronts the dev server on a non-loopback hostname/IP — vite 5+ rejects unknown Hosts by default. |
+
+WebSocket / HMR is automatic — vite's own ws endpoints are not under
+`/api`, so they bypass the proxy.
 
 ## Internationalisation
 

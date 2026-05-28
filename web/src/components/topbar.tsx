@@ -4,7 +4,6 @@ import { useTranslation } from 'react-i18next'
 import {
   ExternalLink,
   Key,
-  KeyRound,
   LogOut,
   Menu,
   Search,
@@ -129,12 +128,6 @@ export function Topbar() {
               </span>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem asChild>
-              <Link to="/$lang/token" params={{ lang }}>
-                <KeyRound className="size-4" />
-                {t('topbar.userMenu.tokenLink')}
-              </Link>
-            </DropdownMenuItem>
             <DropdownMenuItem asChild>
               <Link to="/$lang/pat" params={{ lang }}>
                 <Key className="size-4" />

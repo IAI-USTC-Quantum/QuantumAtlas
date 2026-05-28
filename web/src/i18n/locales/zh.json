@@ -15,7 +15,6 @@
       "wiki": "百科",
       "search": "搜索",
       "graph": "图谱",
-      "token": "Token",
       "pat": "访问令牌"
     },
     "status": {
@@ -42,7 +41,6 @@
       "docsLink": "API 文档",
       "userMenu": {
         "openLabel": "用户菜单",
-        "tokenLink": "查看 Token",
         "patLink": "管理 PAT",
         "signOut": "退出登录"
       }
@@ -102,33 +100,7 @@
     "nodeDetailCopy": "图谱节点详情页现已迁移到 Web Shell。若需要更丰富的节点数据，请新增专门的 JSON 接口。"
   },
   "token": {
-    "eyebrow": "PocketBase 认证访问",
-    "title": "QuantumAtlas Token",
-    "subtitle": "复制由 PocketBase 颁发的当前 bearer token，用于受信终端的 API 调用。",
-    "patHint": "厌倦了每 14 天轮换？去 <patLink>创建 PAT</patLink>，长效且同样使用 Authorization: Bearer 头部。",
-    "fields": {
-      "scope": "作用域",
-      "scopeValue": "QuantumAtlas API",
-      "identity": "身份",
-      "source": "来源",
-      "sourceValue": "PocketBase 认证会话"
-    },
-    "panelEyebrow": "访问令牌",
-    "ready": "可用于 CLI",
-    "needSignIn": "需要登录",
-    "tokenLabel": "Token 值",
-    "actions": {
-      "copyToken": "复制 Token",
-      "copyCurl": "复制 curl",
-      "copyCliEnv": "复制 CLI 环境变量"
-    },
-    "warning": "请像对待密码一样保管。PocketBase 在每次 GitHub OAuth 登录时颁发并轮换。",
-    "copied": "{{label}}已复制",
-    "copyLabels": {
-      "token": "Token",
-      "command": "命令",
-      "cliEnv": "CLI 环境变量"
-    }
+    "_removed": "session token 页面已移除；PAT 页面覆盖所有 CLI bearer token 场景。"
   },
   "pat": {
     "eyebrow": "认证",
