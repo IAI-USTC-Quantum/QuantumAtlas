@@ -2,10 +2,11 @@
 
 > 把量子算法论文从“PDF 和笔记”推进到“可查询的知识、可浏览的 Wiki、可同步的图谱，以及可生成的实现代码”。
 
+[![Go 1.23+](https://img.shields.io/badge/go-1.23+-00ADD8?style=flat&logo=go&logoColor=white)](https://go.dev/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
+[![PocketBase v0.38](https://img.shields.io/badge/PocketBase-v0.38-B8DBE4?style=flat&logo=pocketbase&logoColor=black)](https://pocketbase.io/)
 [![Neo4j](https://img.shields.io/badge/Neo4j-5.15+-008CC1?style=flat&logo=neo4j&logoColor=white)](https://neo4j.com/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 
 QuantumAtlas 是一个面向量子算法研究的分层知识库和实现工作台。它把论文摄入、Wiki 沉淀、图数据库同步，以及电路设计、代码生成、验证、资源估计串成一条可持续迭代的链路。
 
@@ -71,25 +72,32 @@ uv run --script examples/demo_pipeline.py --algorithm qft --backend qiskit --sav
 ### 2. 本地启动 Web 服务
 
 ```bash
-uv sync --extra dev
+# 一次性同步 Python + npm 依赖 + 前端 build + Go build
+pixi run build
+
 cp .env.example .env
 # 编辑 .env，填上 NEO4J_URI / NEO4J_USERNAME / NEO4J_PASSWORD 指向
-# 你自己准备的 Neo4j 实例（团队共享 / 自起 / 托管均可）
-uv run --script scripts/init_primitives.py
-uv run -m atlas.server
+# 你自己准备的 Neo4j 实例（团队共享 / 自起 / 托管均可）。
+# 如需 GitHub OAuth 登录，再填 GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET。
+./build/quantumatlas serve --http=0.0.0.0:4200
 ```
 
 默认入口：
 
-- 首页：`http://localhost:4200`
-- API 文档：`http://localhost:4200/api/docs`
+- 首页 / SPA：`http://localhost:4200`
+- PocketBase admin UI：`http://localhost:4200/_/`
+- 个人 token / PAT 页：`http://localhost:4200/token`、`/pat`
 
 生产部署、systemd 安装、反向代理和鉴权边界请看 [docs/deployment.md](docs/deployment.md)。
+
+> `atlas/server/` 下还保留着旧的 FastAPI 入口（`uv run -m atlas.server`），
+> 已不是生产路径，仅作为本地兼容性测试用，命令见
+> [docs/python-legacy.md](docs/python-legacy.md)。
 
 ## 常用命令
 
 ```bash
-# 作为全局工具安装
+# 作为全局工具安装 client（qatlas CLI）
 uv tool install . --editable --force
 qatlas --help
 
@@ -110,7 +118,8 @@ qatlas validator circuit_ir.json --compare-with qft
 qatlas estimator circuit_ir.json --format markdown
 ```
 
-如果不做全局安装，也可以继续使用 `uv run -m atlas.parser`、`uv run -m atlas.wiki`、`uv run -m atlas.server` 这些模块入口。
+如果不做全局安装，也可以继续使用 `uv run -m atlas.parser`、`uv run -m atlas.wiki`、
+`uv run -m atlas.cli` 这些模块入口。
 
 ## 协作模型
 
@@ -165,7 +174,9 @@ QuantumAtlas/
 
 ## TODO
 
-- Agent 应用方向：Caddy 负责 OAuth、cookie 和 bearer token 鉴权；QuantumAtlas 后端只提供 API、share 链接和构建产物托管；所有页面设计集中在 `web/` 的 Vite + React 工作台。
+- Agent 应用方向：用户 / 鉴权由 Go server 内嵌 PocketBase 直接处理（GitHub OAuth + PAT），
+  CLI 与 SPA 都通过 `Authorization: Bearer <token>` 调写口；QuantumAtlas 后端集中提供
+  API、share 链接和构建产物托管；所有页面设计集中在 `web/` 的 Vite + React 工作台。
 
 ## 贡献
 
@@ -179,7 +190,7 @@ QuantumAtlas/
 
 ## 致谢
 
-QuantumAtlas 最初的三层知识库设计受到 [Karpathy's LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) 启发，并基于 Neo4j、FastAPI、Pydantic、Qiskit 等开源生态继续演化。
+QuantumAtlas 最初的三层知识库设计受到 [Karpathy's LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) 启发，并基于 Go、PocketBase、Neo4j、Pydantic、Qiskit 等开源生态继续演化。
 
 ## 许可证
 
