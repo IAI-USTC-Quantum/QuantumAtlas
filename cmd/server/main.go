@@ -76,6 +76,33 @@ func main() {
 
 	auth.Register(app, cfg)
 
+	// Mount the `pat` subcommand group. This MUST come before
+	// app.Start() — cobra binds commands by reference at parse time,
+	// and any additions after the root walks os.Args are ignored.
+	app.RootCmd.AddCommand(NewPATCommand(app))
+
+	// Install our default PAT-surface rate-limit rules. Done at
+	// OnBootstrap (after PocketBase has loaded settings from the DB)
+	// rather than synchronously here, because Settings() is empty
+	// until bootstrap fires.
+	app.OnBootstrap().BindFunc(func(e *core.BootstrapEvent) error {
+		if err := e.Next(); err != nil {
+			return err
+		}
+		changed, err := pat.EnsureDefaults(app)
+		if err != nil {
+			// Non-fatal: starting the server without rate limits is
+			// still better than refusing to start at all. Log loudly
+			// so the operator notices.
+			slog.Warn("pat: failed to install default rate limits", "error", err)
+			return nil
+		}
+		if changed {
+			slog.Info("pat: installed default rate-limit rules", "rules", len(pat.DefaultRateLimitRules))
+		}
+		return nil
+	})
+
 	// Initialize on-disk JSON stores up-front so route handlers can
 	// share single instances. Both stores no-op when their dirs already
 	// exist, so this is safe to call on every boot.
