@@ -20,7 +20,7 @@ dependencies = [
     "uvicorn>=0.30.0,<0.31",
     "jinja2>=3.1.0,<4",
     "python-multipart>=0.0.9,<0.1",
-    "neo4j>=5.15.0,<6",
+    "neo4j>=5.15.0,<7",
     "pymupdf>=1.23.0,<2",
     "requests>=2.31.0,<3",
     "pydantic>=2.5.0,<3",
@@ -119,7 +119,7 @@ ignore_missing_imports = true
 # Pixi project (manages the Go toolchain alongside Python)
 # ============================================================================
 # Why pixi at all? The Go binary needs to be cross-built locally before
-# scp'ing to the 1810 server. Pixi pins go's version + brings along the
+# deploying to the server host. Pixi pins go's version + brings along the
 # matching cc shim so `go vet ./...` doesn't try (and fail) to call a
 # missing system gcc. Without this, agents would have to remember to
 # `go env -w CGO_ENABLED=0` on every fresh dev machine.
