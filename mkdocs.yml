@@ -67,8 +67,9 @@ theme:
     repo: fontawesome/brands/github
     edit: material/pencil
     view: material/eye
-  favicon: assets/favicon.svg
-  logo: assets/logo.svg
+    # 用 Material 内置 atom 图标作为站点 logo（不需要外部 svg 文件，
+    # 顺便契合 "Quantum" 主题）。favicon 走 mkdocs-material 默认（绿色 m）。
+    logo: material/atom
 
 extra:
   social:

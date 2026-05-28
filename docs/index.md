@@ -1,9 +1,3 @@
----
-hide:
-  - navigation
-  - toc
----
-
 # QuantumAtlas
 
 <div class="hero-tagline" markdown>
