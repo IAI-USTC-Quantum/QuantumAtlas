@@ -75,23 +75,28 @@ else
 fi
 
 echo "[3/6] ensure policy: $POLICY (scoped to bucket $BUCKET)"
-# Policy grants the IAM user three things on this bucket only:
+# Policy grants the IAM user four things on this bucket only:
 #   1. Object I/O (Get/Put/Delete) — hot path for paper assets.
-#   2. Bucket read (ListBucket/GetBucketLocation) — needed by minio-go
-#      for endpoint probing and prefix listings.
-#   3. Bucket versioning Get/Put — qatlas server self-manages versioning
-#      state on startup (objstore.S3Store.EnsureVersioning) so ops never
-#      needs to run `mc version enable` by hand. We grant both Get and
-#      Put so qatlas can read current state and skip the Put when state
-#      is already correct (avoids noisy RustFS audit "config change"
-#      events every boot).
+#   2. Versioned object I/O (GetObjectVersion / DeleteObjectVersion):
+#      separate AWS perms from #1. Stat/Get on the current version
+#      works under s3:GetObject, but reading a specific version-id
+#      (?versionId=) needs s3:GetObjectVersion. Same split for delete.
+#      `quantumatlas storage prune` calls DeleteObject with a version-id
+#      to drop noncurrent versions, so this perm is required.
+#   3. Bucket read (ListBucket/ListBucketVersions/GetBucketLocation):
+#      ListBucketVersions backs `storage prune`'s enumeration call.
+#   4. Bucket versioning Get/Put — qatlas self-manages versioning at
+#      boot via objstore.S3Store.EnsureVersioning, so ops never need
+#      to run `mc version enable`. We grant Get + Put so qatlas can
+#      read state and skip the Put when already correct (avoids
+#      noisy audit-log "config change" events on every boot).
 #
 # Not granted (deliberately):
 #   - s3:GetLifecycleConfiguration / s3:PutLifecycleConfiguration:
 #     RustFS 1.0.0-beta.5 rejects these action names ("invalid action").
-#     When we add lifecycle policies (e.g. noncurrentversion expiration),
-#     re-test against RustFS first — the action names may stabilise as
-#     RustFS catches up to MinIO spec.
+#     We don't currently use lifecycle anyway — noncurrent versions are
+#     retained forever (Synology-Snapshot model), cleanup is via
+#     `quantumatlas storage prune` not automatic expiration.
 #   - s3:DeleteBucket / s3:PutBucketPolicy / s3:PutBucketAcl: bucket
 #     destruction and ACL changes are root-only ops, never qatlas's job.
 POLICY_FILE="$WORKDIR/${POLICY}.json"
@@ -104,7 +109,9 @@ cat > "$POLICY_FILE" <<EOF
       "Action": [
         "s3:GetObject",
         "s3:PutObject",
-        "s3:DeleteObject"
+        "s3:DeleteObject",
+        "s3:GetObjectVersion",
+        "s3:DeleteObjectVersion"
       ],
       "Resource": "arn:aws:s3:::${BUCKET}/*"
     },
@@ -112,6 +119,7 @@ cat > "$POLICY_FILE" <<EOF
       "Effect": "Allow",
       "Action": [
         "s3:ListBucket",
+        "s3:ListBucketVersions",
         "s3:GetBucketLocation",
         "s3:GetBucketVersioning",
         "s3:PutBucketVersioning"

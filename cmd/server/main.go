@@ -83,6 +83,11 @@ func main() {
 	// and any additions after the root walks os.Args are ignored.
 	app.RootCmd.AddCommand(NewPATCommand(app))
 
+	// Mount the `storage` subcommand group (object-store maintenance:
+	// `storage prune` enumerates and deletes noncurrent S3 versions).
+	// Same registration timing constraint as pat above.
+	app.RootCmd.AddCommand(NewStorageCommand())
+
 	// Install our default PAT-surface rate-limit rules. Done at
 	// OnBootstrap (after PocketBase has loaded settings from the DB)
 	// rather than synchronously here, because Settings() is empty

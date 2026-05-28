@@ -272,6 +272,79 @@ func (s *S3Store) EnsureVersioning(ctx context.Context) (priorStatus string, cha
 	return cfg.Status, true, nil
 }
 
+// ObjectVersion is one entry in a versioned ListObjects result —
+// includes everything the prune command needs to decide whether to
+// delete. We don't put this in store.go's ObjectInfo because version
+// concepts only make sense on S3; LocalStore has no version notion.
+type ObjectVersion struct {
+	Key            string
+	VersionID      string
+	IsLatest       bool   // true for the current version; false for noncurrent
+	IsDeleteMarker bool   // soft-deleted entry (versioning artefact); usually want to prune too
+	Size           int64
+	LastModified   time.Time
+}
+
+// ListAllVersions enumerates every version (current + noncurrent +
+// delete markers) under prefix. Pass "" prefix to walk the whole
+// bucket. Returns objects in S3 list order — *not* sorted by date,
+// so callers that want "most recent first per key" must sort.
+//
+// We pull the full result into memory rather than expose a channel
+// because the prune command needs to group by key (decide "keep N
+// per key" semantics) which requires the whole list anyway. For
+// buckets with hundreds of millions of objects this would need
+// pagination + streaming aggregation; current bucket sizes (< 1M
+// objects) make it a non-issue.
+func (s *S3Store) ListAllVersions(ctx context.Context, prefix string) ([]ObjectVersion, error) {
+	if prefix != "" {
+		if strings.HasPrefix(prefix, "/") || strings.Contains(prefix, "..") || strings.Contains(prefix, "\\") {
+			return nil, fmt.Errorf("objstore: invalid prefix %q", prefix)
+		}
+	}
+	opts := minio.ListObjectsOptions{
+		Prefix:       prefix,
+		Recursive:    true,
+		WithVersions: true,
+	}
+	var out []ObjectVersion
+	for obj := range s.client.ListObjects(ctx, s.bucket, opts) {
+		if obj.Err != nil {
+			return nil, fmt.Errorf("objstore: list versions %s: %w", prefix, obj.Err)
+		}
+		out = append(out, ObjectVersion{
+			Key:            obj.Key,
+			VersionID:      obj.VersionID,
+			IsLatest:       obj.IsLatest,
+			IsDeleteMarker: obj.IsDeleteMarker,
+			Size:           obj.Size,
+			LastModified:   obj.LastModified.UTC(),
+		})
+	}
+	return out, nil
+}
+
+// DeleteVersion removes one specific version of an object. Idempotent
+// at the S3 level — deleting an already-gone version returns success.
+// versionID MUST be non-empty; passing "" would delete the current
+// version (or add a delete marker on a versioned bucket), which is
+// almost never what `storage prune` wants. We guard against that
+// to make accidental "prune everything" impossible.
+func (s *S3Store) DeleteVersion(ctx context.Context, key, versionID string) error {
+	if err := validateKey(key); err != nil {
+		return err
+	}
+	if versionID == "" {
+		return fmt.Errorf("objstore: DeleteVersion requires non-empty versionID; use Delete for current-version removal")
+	}
+	if err := s.client.RemoveObject(ctx, s.bucket, key, minio.RemoveObjectOptions{
+		VersionID: versionID,
+	}); err != nil {
+		return fmt.Errorf("objstore: delete version %s@%s: %w", key, versionID, err)
+	}
+	return nil
+}
+
 // copyUserMeta normalises minio-go's metadata map into the lowercase
 // form Store contract requires, and returns nil for empty input so
 // callers can do plain `if info.Metadata == nil`.
