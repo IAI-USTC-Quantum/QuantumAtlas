@@ -70,8 +70,6 @@
     "ctaWiki": "浏览百科",
     "ctaGraph": "探索图谱",
     "quickActions": "快捷操作",
-    "ingestPlaceholder": "arxiv-id",
-    "ingestSubmit": "导入",
     "searchKnowledge": "搜索知识库",
     "runLint": "运行 Lint 检查",
     "recentPages": "近期页面"

@@ -1,16 +1,8 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
-import {
-  Activity,
-  BookOpen,
-  FileText,
-  RefreshCw,
-  Search,
-  ShieldCheck,
-} from 'lucide-react'
+import { Activity, BookOpen, FileText, Search, ShieldCheck } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { MetricGrid } from '@/components/metric-grid'
 import { PageListItem } from '@/components/page-list-item'
 import { Panel } from '@/components/panel'
@@ -67,30 +59,6 @@ function HomePage() {
       <div className="grid gap-4 lg:grid-cols-2">
         <Panel title={t('quickActions')} icon={Activity}>
           <div className="space-y-3">
-            <form
-              className="flex items-center gap-2"
-              onSubmit={async (event) => {
-                event.preventDefault()
-                const form = new FormData(event.currentTarget)
-                const arxivId = String(form.get('arxiv_id') ?? '').trim()
-                if (!arxivId) return
-                await fetch('/api/ingest/paper', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ arxiv_id: arxivId }),
-                })
-                navigate({ to: '/$lang/wiki', params: { lang } })
-              }}
-            >
-              <Input
-                name="arxiv_id"
-                placeholder={t('ingestPlaceholder')}
-                className="flex-1"
-              />
-              <Button type="submit" variant="secondary">
-                <RefreshCw className="size-4" /> {t('ingestSubmit')}
-              </Button>
-            </form>
             <Button
               variant="outline"
               className="w-full justify-start"

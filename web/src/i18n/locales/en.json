@@ -70,8 +70,6 @@
     "ctaWiki": "Browse wiki",
     "ctaGraph": "Explore graph",
     "quickActions": "Quick actions",
-    "ingestPlaceholder": "arxiv-id",
-    "ingestSubmit": "Ingest",
     "searchKnowledge": "Search knowledge",
     "runLint": "Run lint check",
     "recentPages": "Recent pages"

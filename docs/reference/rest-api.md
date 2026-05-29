@@ -42,19 +42,10 @@ QuantumAtlas server 的所有 HTTP endpoint。auth 模型详见 [概念/鉴权](
 |---|---|---|---|
 | `POST` | `/api/wiki/sync/pull` | `wiki:write` | 触发服务端 Wiki git fast-forward pull（`git fetch --prune` + `git pull --ff-only`），随后同步刷新内存缓存 |
 
-### Ingest（尚未在 Go server 实现）
-
-!!! warning "未移植"
-    旧 FastAPI server 有一套异步 ingest task 队列（`POST /api/ingest/paper` 等），
-    用 arxiv_id 在线触发"下载 → 转换 → 抽概念 → 写图"。迁移到 Go server 时**未移植**——
-    当前内容追加走离线多 subagent 流水线（见 [生成 wiki 内容](../guides/generate-wiki-content.md)）。
-    下表端点**当前不存在**（请求会 404），保留仅作历史参考：
-
-| Method | Path | 状态 |
-|---|---|---|
-| `POST` | `/api/ingest/paper` | ❌ 未实现 |
-| `GET` | `/api/ingest/{task_id}` | ❌ 未实现 |
-| `POST` | `/api/ingest/{task_id}/continue` | ❌ 未实现 |
+!!! note "内容追加不走 server"
+    QuantumAtlas **没有**在线 ingest 端点。Wiki 内容追加走离线多 subagent 流水线
+    （读 paper → 总结 concept → 去重合并 → commit 到 wiki repo），server 只读地
+    serve 生成好的词条。详见 [生成 wiki 内容](../guides/generate-wiki-content.md)。
 
 ### Shares
 
