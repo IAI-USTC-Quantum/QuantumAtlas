@@ -33,7 +33,7 @@ QuantumAtlas wiki 以 **concept 词条**为核心单位（见
 - **输入**：已处理的 source markdown（`$WIKI_DIR/sources/papers/paper-arxiv-*.md`，
   优先选非 `pdf-only` 的，正文有 Excerpt）。paper 子集从 quantum algorithm zoo 对应的
   source 里挑。
-- **每个 subagent** 拿 [`concept_prompt.md`](../../scripts/wiki_pipeline/concept_prompt.md)
+- **每个 subagent** 拿 `scripts/wiki_pipeline/concept_prompt.md`
   填好占位符后的 prompt，独立产出**一个** `concepts/concept-<slug>.md`。
 - **硬约束**：一个 subagent 只产一个概念；概念粒度；交叉链接优先复用已有 id；
   公式用 KaTeX；`status: draft`；只写 `concepts/` 不碰别的词条。
@@ -52,8 +52,8 @@ uv run --no-project scripts/wiki_pipeline/merge_concepts.py --json > /tmp/candid
 
 ### 阶段 3 — 合并裁决（`merge_prompt.md`）
 
-按合并原则对每个候选对裁决（见
-[`merge_prompt.md`](../../scripts/wiki_pipeline/merge_prompt.md)）：
+按合并原则对每个候选对裁决（见仓库
+`scripts/wiki_pipeline/merge_prompt.md`）：
 
 - **相似/同一概念**（variational ≈ parameterized quantum circuit）→ **合并**：保留一个 id，
   整合两边正文，把指向被合并 id 的 `[[...]]` 改指保留 id。

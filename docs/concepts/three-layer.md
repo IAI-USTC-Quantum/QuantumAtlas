@@ -56,7 +56,7 @@ QuantumAtlas-Wiki/
 ---
 id: prim-qft
 title: Quantum Fourier Transform
-type: entity
+type: concept
 category: primitive
 tags: [transformation, fourier, fundamental]
 status: published
@@ -65,6 +65,13 @@ related: [paper-arxiv-9508027]
 ```
 
 页面之间通过 `[[page-id]]` 互相引用。内置 linter 会检查 frontmatter、断链、孤立页面和部分知识冲突。
+
+!!! note "统一 concept 模型（2026-05）"
+    页面类型已统一为 **`concept`**——wiki 以「concept 词条」为唯一可浏览单位（Wikipedia
+    风格），子类靠 `category` 区分。`entities/` / `comparisons/` 目录与 `type: entity` /
+    `comparison` 为历史组织方式，Go 侧仍可解析以兼容未迁移数据，但统计与 UI 一律按 concept
+    处理。`source`（论文）只作为词条「参考文献」里的引用，不作为可浏览条目。详见
+    [wiki-schema.md](../reference/wiki-schema.md) 的「统一 concept 模型」段。
 
 ## Primitive 的三层表示
 

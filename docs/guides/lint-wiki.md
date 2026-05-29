@@ -20,13 +20,13 @@ qatlas wiki lint --fix
 | 代码 | 严重度 | 检查 | 怎么修 |
 |---|---|---|---|
 | **W001** | ERROR | 必填 frontmatter 字段缺失 | 加 `id` / `title` / `type` |
-| **W002** | ERROR | frontmatter 字段值非法 | 例如 `type` 必须是 `concept/entity/source/comparison`；`status` 必须是 `draft/review/published` |
+| **W002** | ERROR | frontmatter 字段值非法 | `type` 必须是 `concept/entity/source/comparison`（**新页面统一用 `concept`**，entity/comparison 为 legacy 兼容值）；`status` 必须是 `draft/review/published` |
 | **W003** | INFO | 孤儿页面（无任何入链）| 找一个相关页面加 `[[page-id]]`；或确认它确实独立 |
 | **W004** | WARNING | 断链：`[[xxx]]` 指向不存在的页面 | 改 id 或建对应页面 |
 | **W005** | INFO | 概念引用没有对应 Concept 页面 | 考虑加 Concept 页面解释 |
 | **W006** | ERROR | 页面 ID 重复 | 改其中一个 id（必须全 repo 唯一）|
 | **W007** | INFO | 页面 30 天没更新 | 复审或更新 `updated_at` |
-| **W008** | WARNING | Entity 页面没有 tags | 加 `tags: [...]` 用于过滤 / 图谱属性 |
+| **W008** | WARNING | 词条页面没有 tags | 加 `tags: [...]` 用于过滤 / 图谱属性 |
 
 ## 典型修复模式
 
@@ -36,8 +36,8 @@ qatlas wiki lint --fix
     -id: prim_foo
     +id: prim-foo
     -title:
-    +title: "Foo's Primitive"
-     type: entity
+    +title: "Foo's Concept"
+     type: concept
     +category: primitive
     ```
 
@@ -49,7 +49,7 @@ qatlas wiki lint --fix
     `[[prim-qft]]` 指向不存在的页面：
 
     1. 是不是手抖？`qatlas wiki search "qft"` 找正确 id
-    2. 是不是页面没建？`qatlas wiki create prim-qft --title "Quantum Fourier Transform" --type entity --category primitive`
+    2. 是不是页面没建？`qatlas wiki create prim-qft --title "Quantum Fourier Transform" --type concept --category primitive`
 
 === "W006 重复 id"
 
@@ -69,13 +69,13 @@ qatlas wiki lint --fix
     grep -r 'prim-foo' wiki/   # 看还有没有别处引用旧 id
     ```
 
-=== "W008 Entity 没 tags"
+=== "W008 词条没 tags"
 
     ```diff
      ---
      id: prim-grover
      title: Grover's Search
-     type: entity
+     type: concept
      category: primitive
     +tags: [search, oracle, amplification]
     ```
