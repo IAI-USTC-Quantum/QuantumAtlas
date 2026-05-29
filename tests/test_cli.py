@@ -83,18 +83,17 @@ def test_top_level_help(capsys):
     result = cli.main(["--help"])
 
     captured = capsys.readouterr()
-    client_section, local_section = captured.out.split("  Local workspace/server commands:")
+    client_section, local_section = captured.out.split("  Local workspace commands:")
     assert result == 0
     assert "QuantumAtlas command line" in captured.out
     assert "Client/operator commands" in captured.out
-    assert "Local workspace/server commands" in captured.out
+    assert "Local workspace commands" in captured.out
     assert "ingest" in client_section
     assert "codegen" in client_section
     assert "parser" not in client_section
     assert "wiki" not in client_section
     assert "parser" in local_section
     assert "wiki" in local_section
-    assert "service" in captured.out
 
 
 def test_readme_documents_uv_tool_install():
@@ -195,7 +194,7 @@ def test_ingest_client_defaults_to_public_base_url(tmp_path, monkeypatch):
     )
     monkeypatch.delenv("QATLAS_SKIP_DOTENV", raising=False)
     monkeypatch.delenv("QUANTUMATLAS_SKIP_DOTENV", raising=False)
-    monkeypatch.setattr("qatlas.server.config.get_project_root", lambda: tmp_path)
+    monkeypatch.setattr("qatlas.config.get_project_root", lambda: tmp_path)
 
     assert client_cli._default_base_url() == "https://atlas.example"
 

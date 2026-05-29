@@ -45,8 +45,6 @@ COMMANDS: Mapping[str, Command] = {
     "validator": Command("qatlas.validator.__main__", "Validate quantum circuits"),
     "estimator": Command("qatlas.estimator.__main__", "Estimate circuit resources"),
     "extractor": Command("qatlas.extractor.__main__", "Extract algorithms with an LLM"),
-    "server": Command("qatlas.server.__main__", "Run the FastAPI web server", False),
-    "service": Command("qatlas.server.service", "Install or stage the systemd service", False),
 }
 
 ALIASES: Mapping[str, str] = {
@@ -79,7 +77,7 @@ Commands:"""
             continue
         print(f"    {name:<10} {command.summary}")
 
-    print("\n  Local workspace/server commands:")
+    print("\n  Local workspace commands:")
     for name, command in COMMANDS.items():
         if command.client_friendly:
             continue
@@ -99,7 +97,6 @@ Examples:
   qatlas designer <kg_algorithm_id> -o circuit_ir.json
   qatlas codegen circuit_ir.json --backend qiskit -o output.py
   qatlas validator circuit_ir.json --compare-with qft
-  qatlas server
 
 Use "qatlas <command> --help" for command-specific options."""
     )

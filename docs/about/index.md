@@ -24,8 +24,7 @@ QuantumAtlas/
 │   ├── codegen/           IR → Qiskit / QPanda
 │   ├── validator/         电路等价 / 仿真验证
 │   ├── estimator/         资源估计
-│   ├── parser/            arXiv fetch + MinerU / PyMuPDF 解析
-│   └── server/            旧 FastAPI（legacy）
+│   └── parser/            arXiv fetch + MinerU / PyMuPDF 解析
 ├── cmd/qatlas-server/     Go server 入口（main + 各 cobra 子命令）
 ├── internal/              Go server 内部包（路由 / auth / 存储 / config 等）
 ├── web/                   React SPA 前端（Vite + TanStack Router）
@@ -62,12 +61,6 @@ QuantumAtlas/
     ---
 
     灵感、生态依赖、维护者名单。
-
--   :material-history:{ .lg .middle } **[Python legacy server](python-legacy.md)**
-
-    ---
-
-    旧 FastAPI server——已不是生产路径，但仍可作本地兼容测试。
 
 -   :material-chart-tree:{ .lg .middle } **[图谱可视化调研](graph-visualization-research.md)**
 

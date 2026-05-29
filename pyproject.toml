@@ -16,10 +16,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Physics",
 ]
 dependencies = [
-    "fastapi>=0.115.0,<0.116",
-    "uvicorn>=0.30.0,<0.31",
     "jinja2>=3.1.0,<4",
-    "python-multipart>=0.0.9,<0.1",
     "neo4j>=5.15.0,<7",
     "pymupdf>=1.23.0,<2",
     "requests>=2.31.0,<3",
@@ -70,7 +67,6 @@ markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "network: tests that require outbound network access (e.g. arXiv API)",
     "e2e: end-to-end tests that load the repository .env and exercise real external services",
-    "legacy: targets only the legacy FastAPI server (qatlas/server/), not the current Go server (cmd/qatlas-server). Excluded by default.",
 ]
 
 [tool.black]
@@ -200,7 +196,7 @@ gxx = "*"
 [tool.pixi.tasks]
 build = "go build -o build/qatlas-server ./cmd/qatlas-server"
 test-go = "go test ./internal/... ./cmd/..."
-test-py = "uv run pytest -m 'not e2e and not legacy and not network'"
+test-py = "uv run pytest -m 'not e2e and not network'"
 # `go vet ./internal/... ./cmd/...` is intentionally scoped to *our*
 # packages, not the conventional `./...`. Reasoning:
 #

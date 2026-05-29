@@ -454,14 +454,6 @@ server 透明处理。
 边缘 Caddy 多加一个站点把 `raw.your-domain.tld` 反代到 RustFS `:9000`
 即可，模板见 storage-design 文档对应章节。
 
-## 旧版 Python 部署
-
-旧的 `atlas/server/` FastAPI server（`uv run -m atlas.server`、
-`uv run -m atlas.server.service install`、外置 caddy-security 鉴权链等）
-已不是生产路径，独立收录在 [docs/python-legacy.md](../about/python-legacy.md)，
-仅供 client 兼容性测试或排查历史 issue 时参考。新部署一律走上面的 Go
-server 路径。
-
 ## 推荐的单机生产目录
 
 代码 + 配置在 git checkout，stateful 状态走 XDG_DATA_HOME（用户级）或

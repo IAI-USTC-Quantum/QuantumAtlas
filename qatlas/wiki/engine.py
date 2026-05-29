@@ -112,7 +112,7 @@ class WikiEngine:
             # Look for atlas module to find project root
             current = Path(__file__).resolve()
             for parent in current.parents:
-                if (parent / "atlas").is_dir():
+                if (parent / "qatlas").is_dir():
                     project_root = str(parent)
                     break
             if project_root is None:

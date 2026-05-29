@@ -10,7 +10,7 @@ from typing import Any
 
 import requests
 
-from qatlas.server.config import ServerConfig
+from qatlas.config import ServerConfig
 
 
 def default_base_url() -> str:

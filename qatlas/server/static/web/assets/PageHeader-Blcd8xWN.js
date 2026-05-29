@@ -1,1 +1,0 @@
-import{j as e}from"./index-C85i9If6.js";function c({eyebrow:r,title:s,copy:a}){return e.jsxs("header",{className:"page-header",children:[e.jsx("p",{className:"eyebrow",children:r}),e.jsx("h1",{children:s}),e.jsx("p",{children:a})]})}export{c as P};

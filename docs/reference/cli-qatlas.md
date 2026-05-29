@@ -220,8 +220,6 @@ LLM 辅助从 paper markdown 抽取算法描述。需要 `OPENAI_API_KEY` / `ANT
 | 命令 | 说明 |
 |---|---|
 | `qatlas parser` (alias `parse`) | 旧 monolith parser CLI；新代码用 `qatlas ingest` |
-| `qatlas server` | 启动旧 FastAPI server（**已不是生产路径**，详见 [Python legacy server](../about/python-legacy.md)）|
-| `qatlas service` | 旧 systemd install helper（**已不是生产路径**；新代码用 `qatlas-server service install`）|
 
 ## 别名
 

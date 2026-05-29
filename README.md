@@ -140,10 +140,6 @@ cp .env.example .env
 
 生产部署、systemd 安装、反向代理和鉴权边界请看 [docs/deployment.md](docs/deployment.md)。
 
-> `atlas/server/` 下还保留着旧的 FastAPI 入口（`uv run -m atlas.server`），
-> 已不是生产路径，仅作为本地兼容性测试用，命令见
-> [docs/python-legacy.md](docs/python-legacy.md)。
-
 ## 常用命令
 
 ```bash

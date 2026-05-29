@@ -104,7 +104,7 @@ def main():
         try:
             from qatlas.wiki.engine import WikiEngine
 
-            from qatlas.server.config import ServerConfig
+            from qatlas.config import ServerConfig
 
             config = ServerConfig.from_env()
             engine = WikiEngine(

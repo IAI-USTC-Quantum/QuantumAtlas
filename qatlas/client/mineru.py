@@ -43,7 +43,7 @@ from qatlas.client._common import (
     run_with_request_errors,
 )
 from qatlas.parser.mineru_client import MinerUClient
-from qatlas.server.config import ServerConfig
+from qatlas.config import ServerConfig
 
 
 def _print_err(msg: str) -> None:

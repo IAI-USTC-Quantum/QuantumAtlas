@@ -1,7 +1,10 @@
 """
-Server Configuration
+QuantumAtlas Configuration
 
-Defines configuration for the FastAPI web server.
+Environment-driven settings shared by the ``qatlas`` client CLI and the
+local workspace tooling. The HTTP service itself is the Go ``qatlas-server``
+binary; this module only resolves how the Python side reaches it and where
+local assets live.
 """
 
 import os
@@ -13,10 +16,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 def get_project_root() -> Path:
-    """Resolve repository root (directory containing the atlas package)."""
+    """Resolve repository root (directory containing the qatlas package)."""
     current = Path(__file__).resolve()
     for parent in current.parents:
-        if (parent / "atlas").is_dir():
+        if (parent / "qatlas").is_dir():
             return parent
     return Path.cwd()
 

@@ -5,5 +5,4 @@ nav:
   - 致谢: credits.md
   - 外部数据源: external-data-sources.md
   - 历史:
-    - Python legacy server: python-legacy.md
     - 图谱可视化调研: graph-visualization-research.md
