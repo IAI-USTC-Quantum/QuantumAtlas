@@ -79,6 +79,13 @@ jobs:
       - name: pixi run vet
         run: pixi run vet
 
+      # Regenerate the OpenAPI spec from the swaggo annotations and fail if
+      # the committed internal/apidocs/ drifts. Generation is deterministic
+      # (verified locally), so any diff means someone edited annotations
+      # without rerunning `pixi run swagger`.
+      - name: pixi run swagger-check
+        run: pixi run swagger-check
+
       - name: pixi run test-go
         run: pixi run test-go
 

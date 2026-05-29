@@ -214,3 +214,13 @@ test-py = "uv run pytest -m 'not e2e and not network'"
 # CI (when we add it) can afford `./...` with actions/cache; daily
 # local dev cannot.
 vet = "go vet ./internal/... ./cmd/..."
+# Regenerate the OpenAPI spec from the swaggo annotations in
+# internal/routes/openapi.go (+ general info in cmd/qatlas-server/main.go).
+# Output lands in internal/apidocs/, which is blank-imported by main.go and
+# served at /swagger. swag is pinned via the `tool` directive in go.mod, so
+# `go tool swag` always matches the committed CLI version.
+swagger = "go tool swag init -g main.go -d ./cmd/qatlas-server,./internal/routes -o internal/apidocs --parseInternal --parseDepth 1"
+# CI drift-guard: regenerate the spec and fail if the committed files differ
+# from what the annotations produce. Keeps internal/apidocs/ in sync without
+# trusting humans to rerun `pixi run swagger`.
+swagger-check = "go tool swag init -g main.go -d ./cmd/qatlas-server,./internal/routes -o internal/apidocs --parseInternal --parseDepth 1 && git diff --exit-code -- internal/apidocs"

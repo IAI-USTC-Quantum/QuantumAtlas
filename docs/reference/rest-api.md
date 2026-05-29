@@ -2,6 +2,39 @@
 
 QuantumAtlas server 的所有 HTTP endpoint。auth 模型详见 [概念/鉴权](../concepts/auth-model.md)。
 
+## 交互式 API 文档（Swagger UI）
+
+server 内嵌了一份由 [swaggo](https://github.com/swaggo/swag) 从代码注解自动生成的
+OpenAPI spec，挂在 **`/swagger`**（如 <https://quantum-atlas.ai/swagger/>），可在浏览器里
+直接浏览/点测每个 endpoint：
+
+- `GET /swagger/index.html` — Swagger UI 页面（公开，无需 auth）。
+- `GET /swagger/doc.json` — 原始 OpenAPI 2.0 JSON，可喂给 Postman / openapi-generator 等。
+
+写口在 UI 里点 **Authorize** 填 `Bearer <PAT 或 session token>` 即可带鉴权调用。
+
+### spec 怎么来的（维护者须知）
+
+PocketBase 的路由是匿名闭包，没有可挂 doc 注释的具名 handler，所以注解集中写在
+[`internal/routes/openapi.go`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/internal/routes/openapi.go)
+的一组 no-op stub 函数上（每个 endpoint 一个），general info 写在
+`cmd/qatlas-server/main.go` 的 `func main()` 之上。生成产物落在
+`internal/apidocs/`（被 `main.go` blank-import，编译进二进制）。
+
+改完注解后重新生成：
+
+```bash
+pixi run swagger        # = go tool swag init -g main.go -d ./cmd/qatlas-server,./internal/routes -o internal/apidocs ...
+```
+
+swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成是确定性的。CI
+（`.github/workflows/go.yml`）跑 `pixi run swagger-check`——重新生成后 `git diff --exit-code`，
+注解改了但忘 `pixi run swagger` 会直接红，保证 `internal/apidocs/` 不漂移。
+
+> ⚠️ 注解里的 path / 参数 / 响应是**手写声明**，不是从真实闭包反射出来的——swaggo 在任何
+> 非 net/http-mux 风格路由上都这样。它和真实行为的一致性靠 code review + 这份手维护的
+> Markdown 表交叉验证，不是自动保证。
+
 ## 公开端点（不需要 Authorization 头）
 
 | Method | Path | 用途 |
@@ -9,6 +42,8 @@ QuantumAtlas server 的所有 HTTP endpoint。auth 模型详见 [概念/鉴权](
 | `GET` | `/api/health` | 健康检查 + 依赖探活 |
 | `GET` | `/api/server/info` | 版本 / 引擎信息 |
 | `GET` | `/install-server.sh` | qatlas-server 安装脚本 |
+| `GET` | `/swagger/index.html` | 交互式 API 文档（Swagger UI）|
+| `GET` | `/swagger/doc.json` | OpenAPI 2.0 JSON spec |
 | `GET` | `/api/wiki/sync/status` | Wiki git 状态 |
 | `GET` | `/api/pages` | 列 Wiki 页面（支持 `?page_type=&status=&tags=`）。**默认排除 `type==source`**（Wikipedia 风格只展示 concept 词条）；显式传 `?page_type=source` 才返回 source |
 | `GET` | `/api/pages/{page_id}` | 取单页（frontmatter + content）|

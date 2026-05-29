@@ -37,11 +37,14 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/wiki"
 	qweb "github.com/IAI-USTC-Quantum/QuantumAtlas/web"
 
+	_ "github.com/IAI-USTC-Quantum/QuantumAtlas/internal/apidocs"
+
 	"github.com/casbin/casbin/v2"
 	"github.com/joho/godotenv"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
+	httpSwagger "github.com/swaggo/http-swagger/v2"
 )
 
 // installServerScript is the shell installer served at
@@ -66,6 +69,26 @@ var installServerScript string
 // fallback so the failure mode is visible at a glance.
 var Version = "dev"
 
+// @title          QuantumAtlas API
+// @version        1.0
+// @description    Go + PocketBase backend for QuantumAtlas. Read endpoints
+// @description    (wiki/pages/stats/search/graph metadata/health) are public
+// @description    because the wiki is an open repo; write endpoints require a
+// @description    bearer token (PAT or PocketBase session) plus the matching
+// @description    scope. See the auth model docs for the scope vocabulary.
+//
+// @contact.name   QuantumAtlas
+// @contact.url    https://quantum-atlas.ai
+//
+// @BasePath       /
+//
+// @securityDefinitions.apikey BearerAuth
+// @in                         header
+// @name                       Authorization
+// @description                "Bearer <token>" — token is either a PAT
+// @description                (prefix qat_, created at /pat) or a PocketBase
+// @description                session token (copied from /token). Session
+// @description                tokens implicitly hold every scope.
 func main() {
 	// Load .env BEFORE config.Load so any vars it sets win over
 	// preset systemd environment (godotenv.Load skips existing keys,
@@ -430,6 +453,17 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 		re.Response.Header().Set("Cache-Control", "public, max-age=300")
 		_, err := re.Response.Write([]byte(installServerScript))
 		return err
+	})
+
+	// /swagger/* — interactive OpenAPI (Swagger UI) for the /api surface.
+	// The spec is generated from handler annotations by swaggo/swag into
+	// internal/apidocs (blank-imported above to register it), and served
+	// here via http-swagger. Public on purpose: it's API documentation,
+	// not a write surface. doc.json is the raw OpenAPI 2.0 document.
+	swaggerHandler := httpSwagger.Handler(httpSwagger.URL("/swagger/doc.json"))
+	se.Router.GET("/swagger/{path...}", func(re *core.RequestEvent) error {
+		swaggerHandler(re.Response, re.Request)
+		return nil
 	})
 
 	// /api/server/info — minimal placeholder until internal/routes/info.go

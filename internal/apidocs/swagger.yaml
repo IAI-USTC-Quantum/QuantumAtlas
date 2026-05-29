@@ -1,0 +1,845 @@
+basePath: /
+definitions:
+  routes.patCreateRequest:
+    properties:
+      description:
+        type: string
+      expires_in_days:
+        description: 'REQUIRED: 1..MaxPATExpiryDays'
+        type: integer
+      name:
+        type: string
+      scopes:
+        description: 'REQUIRED: may be empty for "no permissions"'
+        items:
+          type: string
+        type: array
+    type: object
+  routes.patCreateResponse:
+    properties:
+      created:
+        type: string
+      description:
+        type: string
+      expires_at:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      plaintext:
+        type: string
+      prefix:
+        type: string
+      scopes:
+        items:
+          type: string
+        type: array
+    type: object
+  routes.patSummary:
+    properties:
+      created:
+        type: string
+      description:
+        type: string
+      expires_at:
+        type: string
+      id:
+        type: string
+      last_used_at:
+        type: string
+      name:
+        type: string
+      prefix:
+        type: string
+      scopes:
+        items:
+          type: string
+        type: array
+    type: object
+info:
+  contact:
+    name: QuantumAtlas
+    url: https://quantum-atlas.ai
+  description: |-
+    Go + PocketBase backend for QuantumAtlas. Read endpoints
+    (wiki/pages/stats/search/graph metadata/health) are public
+    because the wiki is an open repo; write endpoints require a
+    bearer token (PAT or PocketBase session) plus the matching
+    scope. See the auth model docs for the scope vocabulary.
+  title: QuantumAtlas API
+  version: "1.0"
+paths:
+  /api/_rustfs/event:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Internal webhook for RustFS PUT/DELETE bucket notifications;
+        authenticated by the QATLAS_RUSTFS_EVENT_TOKEN bearer.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: RustFS event webhook
+      tags:
+      - Internal
+  /api/graph/query:
+    post:
+      consumes:
+      - application/json
+      description: Executes caller-supplied read-only Cypher. graph:read scope.
+      parameters:
+      - description: '{query: string, limit: int}'
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Graph query
+      tags:
+      - Graph
+  /api/graph/schema:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Graph schema
+      tags:
+      - Graph
+  /api/graph/stats:
+    get:
+      description: |-
+        Returns 200 with {"error":...} when Neo4j is unreachable
+        (the UI renders a friendly banner rather than a crash page).
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Graph statistics
+      tags:
+      - Graph
+  /api/health:
+    get:
+      description: |-
+        Liveness plus parallel dependency probes (rawstore, neo4j,
+        wiki). HTTP status is always 200; read data.status for the
+        real verdict ("healthy" | "degraded").
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Health check
+      tags:
+      - System
+  /api/lint:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Lint wiki
+      tags:
+      - Wiki
+  /api/pages:
+    get:
+      description: |-
+        Lists wiki entries. Source pages (processed papers) are
+        treated as citations and excluded unless page_type=source.
+      parameters:
+      - description: filter by type (concept|entity|comparison|source)
+        in: query
+        name: page_type
+        type: string
+      - description: filter by status
+        in: query
+        name: status
+        type: string
+      - description: comma-separated tag filter
+        in: query
+        name: tags
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: List wiki pages
+      tags:
+      - Wiki
+  /api/pages/{page_id}:
+    get:
+      parameters:
+      - description: page id
+        in: path
+        name: page_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get wiki page
+      tags:
+      - Wiki
+  /api/papers/{arxiv_id}/markdown:
+    get:
+      parameters:
+      - description: arXiv identifier
+        in: path
+        name: arxiv_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Paper markdown
+      tags:
+      - Papers
+  /api/papers/{arxiv_id}/markdown/status:
+    get:
+      parameters:
+      - description: arXiv identifier
+        in: path
+        name: arxiv_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Paper markdown status
+      tags:
+      - Papers
+  /api/papers/{arxiv_id}/mineru-claim:
+    post:
+      parameters:
+      - description: arXiv identifier
+        in: path
+        name: arxiv_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Claim MinerU processing
+      tags:
+      - Papers
+  /api/papers/{arxiv_id}/mineru-claim/{claim_id}:
+    delete:
+      parameters:
+      - description: arXiv identifier
+        in: path
+        name: arxiv_id
+        required: true
+        type: string
+      - description: claim id
+        in: path
+        name: claim_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Release MinerU claim
+      tags:
+      - Papers
+  /api/papers/{arxiv_id}/resources:
+    get:
+      parameters:
+      - description: arXiv identifier
+        in: path
+        name: arxiv_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Paper resources
+      tags:
+      - Papers
+  /api/papers/{arxiv_id}/upload-markdown:
+    post:
+      consumes:
+      - multipart/form-data
+      parameters:
+      - description: arXiv identifier
+        in: path
+        name: arxiv_id
+        required: true
+        type: string
+      - description: overwrite on content conflict
+        in: query
+        name: overwrite
+        type: boolean
+      - description: client-computed markdown sha256
+        in: query
+        name: expected_sha256
+        type: string
+      - description: markdown file
+        in: formData
+        name: markdown
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Upload paper markdown
+      tags:
+      - Papers
+  /api/papers/{arxiv_id}/upload-pdf:
+    post:
+      consumes:
+      - multipart/form-data
+      description: |-
+        Content-addressed upload with sha256 idempotency. 200 when
+        bytes are unchanged, 201 when written, 409 on a content
+        conflict without overwrite=true.
+      parameters:
+      - description: arXiv identifier
+        in: path
+        name: arxiv_id
+        required: true
+        type: string
+      - description: overwrite on content conflict
+        in: query
+        name: overwrite
+        type: boolean
+      - description: client-computed PDF sha256 (in-transit guard)
+        in: query
+        name: expected_sha256
+        type: string
+      - description: client-computed metadata sha256
+        in: query
+        name: expected_metadata_sha256
+        type: string
+      - description: PDF file
+        in: formData
+        name: pdf
+        required: true
+        type: file
+      - description: metadata JSON
+        in: formData
+        name: metadata
+        type: file
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: unchanged
+          schema:
+            additionalProperties: true
+            type: object
+        "201":
+          description: created
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Upload paper PDF
+      tags:
+      - Papers
+  /api/papers/needs-mineru:
+    get:
+      parameters:
+      - description: max results
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Papers needing MinerU
+      tags:
+      - Papers
+  /api/papers/stats:
+    get:
+      description: |-
+        Counts of PDFs, markdown, JSON and mineru-pending papers from
+        the S3 paper index. Returns {available:false} when no S3
+        backend is configured.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Paper statistics
+      tags:
+      - Papers
+  /api/pat:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/routes.patSummary'
+            type: array
+      security:
+      - BearerAuth: []
+      summary: List PATs
+      tags:
+      - PAT
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Mints a personal access token. Plaintext is returned exactly
+        once. Requires a PocketBase session token (PAT auth is
+        refused here, to stop a leaked PAT from self-replicating).
+      parameters:
+      - description: token spec
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/routes.patCreateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/routes.patCreateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create PAT
+      tags:
+      - PAT
+  /api/pat/{id}:
+    delete:
+      parameters:
+      - description: PAT record id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: boolean
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete PAT
+      tags:
+      - PAT
+  /api/pat/scopes:
+    get:
+      description: |-
+        Lists the available scopes and their descriptions so clients
+        can render the create form without hardcoding the vocabulary.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: PAT scopes
+      tags:
+      - PAT
+  /api/search:
+    get:
+      parameters:
+      - description: query string
+        in: query
+        name: q
+        required: true
+        type: string
+      - description: max results (default 10)
+        in: query
+        name: limit
+        type: integer
+      - description: include source pages (default false)
+        in: query
+        name: include_sources
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Search wiki
+      tags:
+      - Wiki
+  /api/server/info:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Server info
+      tags:
+      - System
+  /api/shares/:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List shares
+      tags:
+      - Shares
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: '{paths: []string, label: string, expires_in: int}'
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create share
+      tags:
+      - Shares
+  /api/shares/{token}:
+    delete:
+      parameters:
+      - description: share token
+        in: path
+        name: token
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: boolean
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete share
+      tags:
+      - Shares
+  /api/stats:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Wiki statistics
+      tags:
+      - Wiki
+  /api/wiki/sync/pull:
+    post:
+      description: |-
+        Runs `git fetch --prune` + `git pull --ff-only` on the server
+        wiki checkout, then refreshes the in-memory cache. Mutates
+        server state, so it requires the wiki:write scope.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: non-fast-forward / wiki dir missing
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Wiki sync pull
+      tags:
+      - Wiki
+  /api/wiki/sync/status:
+    get:
+      description: |-
+        Branch/commit/ahead/behind of the server's wiki checkout.
+        Public: the wiki is an open repo, this reveals nothing
+        sensitive.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Wiki sync status
+      tags:
+      - Wiki
+  /install-server.sh:
+    get:
+      description: |-
+        Returns a POSIX sh script (text/x-shellscript) that downloads
+        and verifies the latest qatlas-server release binary.
+      produces:
+      - text/plain
+      responses:
+        "200":
+          description: shell script
+          schema:
+            type: string
+      summary: Installer script
+      tags:
+      - System
+  /share/{token}:
+    get:
+      description: |-
+        Public download surface. /share/{token} shows the index;
+        /share/{token}/{path} serves (or 307-redirects to a presigned
+        URL for) the asset. No auth — the token IS the credential.
+      parameters:
+      - description: share token
+        in: path
+        name: token
+        required: true
+        type: string
+      responses:
+        "200":
+          description: asset bytes or index html
+          schema:
+            type: string
+        "307":
+          description: redirect to presigned URL
+          schema:
+            type: string
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "410":
+          description: expired
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Public share access
+      tags:
+      - Shares
+securityDefinitions:
+  BearerAuth:
+    description: |-
+      "Bearer <token>" — token is either a PAT
+      (prefix qat_, created at /pat) or a PocketBase
+      session token (copied from /token). Session
+      tokens implicitly hold every scope.
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"
