@@ -112,6 +112,21 @@ plugins:
             show_source: true
             show_signature_annotations: true
             separate_signature: true
+  # Render the swaggo-generated OpenAPI spec as an embedded Swagger UI on
+  # docs/reference/api-explorer.md. The spec is copied into the docs tree by
+  # hooks/openapi_spec.py at build time (single source: internal/apidocs).
+  # Bundles its own JS/CSS (no CDN) and syncs with Material's dark mode.
+  # supportedSubmitMethods=[] disables "Try it out": the RTD-hosted docs are a
+  # different origin than the API, so live calls belong on the binary's own
+  # /swagger (same-origin, correct host). Here it's pure browsable reference.
+  - swagger-ui-tag:
+      docExpansion: none
+      syntaxHighlightTheme: monokai
+      supportedSubmitMethods: []
+
+# MkDocs build hooks (resolved relative to this config file).
+hooks:
+  - hooks/openapi_spec.py
 
 # requirements.txt 是给 RTD 装依赖用的，不应该被当作文档资源复制到 site/
 exclude_docs: |

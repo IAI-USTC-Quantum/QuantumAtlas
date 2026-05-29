@@ -269,3 +269,6 @@ go.work.sum
 # dist/) inadvertently catch SPA source under web/src/lib/. Restore it.
 !web/src/lib/
 !web/src/lib/**
+
+# mkdocs build-time copy of internal/apidocs/swagger.json (see hooks/openapi_spec.py)
+docs/reference/openapi.json

@@ -5,6 +5,7 @@ nav:
     - qatlas-server (服务端): cli-qatlas-server.md
   - API:
     - REST API 总览: rest-api.md
+    - API Explorer: api-explorer.md
     - Upload API 详解: upload-api.md
   - 配置:
     - 环境变量: env-vars.md
