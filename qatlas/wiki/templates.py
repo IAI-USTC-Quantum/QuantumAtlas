@@ -5,12 +5,37 @@ Provides template functions for creating different types of wiki pages.
 Each template generates a WikiPage with appropriate frontmatter and content structure.
 """
 
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from qatlas.paper_assets import wiki_source_page_id
 
 from .page import ExternalLink, WikiPage, WikiFrontmatter
+
+
+@dataclass
+class DOIInfo:
+    """Carrier for resolved DOI metadata passed into page templates.
+
+    Mirrors the four `doi*` frontmatter fields. `source="unresolved"` means
+    we tried and didn't find anything — that's important for `qatlas wiki
+    enrich-doi` to know which pages are worth revisiting when a new
+    resolver lands. Use `unresolved()` for that case.
+    """
+
+    doi: Optional[str] = None
+    source: Optional[str] = None
+    confidence: Optional[str] = None
+    resolved_at: Optional[datetime] = None
+
+    @classmethod
+    def unresolved(cls) -> "DOIInfo":
+        return cls(doi=None, source="unresolved", confidence=None, resolved_at=datetime.now())
+
+    @classmethod
+    def from_arxiv_self(cls, doi: str) -> "DOIInfo":
+        return cls(doi=doi, source="arxiv", confidence="high", resolved_at=datetime.now())
 
 
 class PageTemplate:
@@ -271,7 +296,7 @@ class PageTemplate:
         abstract: str,
         algorithms: Optional[List[str]] = None,
         published: Optional[str] = None,
-        doi: Optional[str] = None,
+        doi: Optional[str | DOIInfo] = None,
         categories: Optional[List[str]] = None,
     ) -> WikiPage:
         """
@@ -284,7 +309,13 @@ class PageTemplate:
             abstract: Paper abstract
             algorithms: Algorithm page IDs introduced by this paper
             published: Publication date string
-            doi: DOI if available
+            doi: DOI for the formally-published version. Either a bare DOI
+                string (treated as ``source=arxiv, confidence=high`` for
+                back-compat with callers that don't know about resolution
+                provenance) or a ``DOIInfo`` carrying source/confidence.
+                Pass ``DOIInfo.unresolved()`` to record an explicit
+                "tried, found nothing" so ``qatlas wiki enrich-doi`` can
+                retry later.
             categories: arXiv categories
 
         Returns:
@@ -292,6 +323,14 @@ class PageTemplate:
         """
         algorithms = algorithms or []
         categories = categories or []
+
+        if isinstance(doi, DOIInfo):
+            doi_info = doi
+        elif doi:
+            doi_info = DOIInfo.from_arxiv_self(doi)
+        else:
+            doi_info = DOIInfo()  # all None; renders / saves as no DOI
+
         external_links = [
             ExternalLink(
                 label="arXiv abstract",
@@ -305,11 +344,11 @@ class PageTemplate:
             ),
         ]
 
-        if doi:
+        if doi_info.doi:
             external_links.append(
                 ExternalLink(
                     label="DOI landing page",
-                    url=f"https://doi.org/{doi}",
+                    url=f"https://doi.org/{doi_info.doi}",
                     kind="paper",
                 )
             )
@@ -322,8 +361,8 @@ class PageTemplate:
 
         if published:
             content += f"- **Published**: {published}\n"
-        if doi:
-            content += f"- **DOI**: [{doi}](https://doi.org/{doi})\n"
+        if doi_info.doi:
+            content += f"- **DOI**: [{doi_info.doi}](https://doi.org/{doi_info.doi})\n"
         if categories:
             content += f"- **Categories**: {', '.join(categories)}\n"
 
@@ -363,6 +402,10 @@ class PageTemplate:
                 related=algorithms,
                 external_links=external_links,
                 status="draft",
+                doi=doi_info.doi,
+                doi_source=doi_info.source,
+                doi_confidence=doi_info.confidence,
+                doi_resolved_at=doi_info.resolved_at,
             ),
             content=content,
         )

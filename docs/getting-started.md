@@ -183,8 +183,8 @@
     # Python 测试
     uv run pytest
 
-    # Go 测试
-    CGO_ENABLED=0 go test ./...
+    # Go 测试（必须通过 pixi 跑：cgo + 工具链都在 pixi env 里）
+    pixi run test-go
 
     # 前端 build + type check
     cd web && npm run build

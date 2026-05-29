@@ -20,8 +20,11 @@ Usage:
 """
 
 import argparse
+import json
 import sys
-from typing import List, Optional
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 from qatlas.wiki.engine import WikiEngine
 
@@ -240,6 +243,188 @@ def cmd_create(args):
     print(f"Created page: {path}")
 
 
+def _extract_arxiv_id_from_page(page: Any) -> Optional[str]:
+    """Recover the canonical arXiv ID from a paper page's external_links.
+
+    Round-tripping via ``frontmatter.id`` is lossy for old-scheme IDs
+    (``wiki_source_page_id("quant-ph/0201024")`` does ``/ → -``), so we
+    parse the abstract URL instead which preserves the full canonical
+    form. Returns None if no arxiv.org link is present.
+    """
+    for link in getattr(page.frontmatter, "external_links", []) or []:
+        url = getattr(link, "url", "") or ""
+        marker = "arxiv.org/abs/"
+        idx = url.find(marker)
+        if idx == -1:
+            continue
+        tail = url[idx + len(marker):]
+        # Strip version suffix and any trailing path/query.
+        for sep in ("?", "#", "/"):
+            i = tail.find(sep)
+            if i != -1:
+                tail = tail[:i]
+        # arxiv versions: 1234.5678v3 → 1234.5678 (resolver doesn't need version)
+        if "v" in tail:
+            base, _, ver = tail.rpartition("v")
+            if ver.isdigit():
+                tail = base
+        return tail.strip() or None
+    return None
+
+
+def _load_arxiv_authors_year(engine: WikiEngine, arxiv_id: str) -> Tuple[List[str], Optional[int]]:
+    """Pull authors + year from the cached arXiv API JSON sidecar.
+
+    Used by ``cmd_enrich_doi`` so the chain resolver can run author
+    cross-check (otherwise Crossref / OpenAlex would only have the title
+    to match on, and we'd downgrade everything to ``confidence=medium``).
+
+    Returns ``([], None)`` when the sidecar is missing or malformed —
+    the caller still runs the chain, it just gets weaker confidence on
+    the matches.
+    """
+    try:
+        path = engine.get_paper_asset_path("json", arxiv_id)
+    except Exception:
+        return [], None
+    if not path or not Path(path).exists():
+        return [], None
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return [], None
+    raw_authors = data.get("authors") or []
+    authors: List[str] = []
+    for a in raw_authors:
+        if isinstance(a, str):
+            if a.strip():
+                authors.append(a.strip())
+        elif isinstance(a, dict):
+            name = a.get("name") or a.get("display_name") or a.get("full_name") or ""
+            if name and isinstance(name, str):
+                authors.append(name.strip())
+    year: Optional[int] = None
+    for key in ("published", "created", "date"):
+        raw = data.get(key)
+        if isinstance(raw, str) and len(raw) >= 4 and raw[:4].isdigit():
+            year = int(raw[:4])
+            break
+    if year is None and isinstance(data.get("year"), int):
+        year = data["year"]
+    return authors, year
+
+
+def cmd_enrich_doi(args):
+    """Look up DOIs for arXiv paper pages that are missing them.
+
+    Iterates ``type=source, category=paper`` pages, runs the configured
+    resolver chain, and writes the result back via
+    ``WikiFrontmatter.doi*`` fields. Pages whose ``doi`` is already set
+    are skipped unless ``--force`` is given. Pages whose
+    ``doi_source == "unresolved"`` are retried (that marker exists
+    precisely so we know which pages to revisit when new resolvers
+    appear).
+    """
+    from atlas.parser.doi import (
+        ArxivSelfReportedResolver,
+        ChainResolver,
+        CrossrefResolver,
+        DOIResolver,
+        OpenAlexResolver,
+        PaperContext,
+    )
+
+    engine = WikiEngine()
+
+    sources = [s.strip() for s in (args.source or "arxiv,crossref,openalex").split(",") if s.strip()]
+    builders = {
+        "arxiv": lambda: ArxivSelfReportedResolver(
+            json_path_getter=lambda aid: engine.get_paper_asset_path("json", aid)
+        ),
+        "crossref": lambda: CrossrefResolver(mailto=args.mailto),
+        "openalex": lambda: OpenAlexResolver(mailto=args.mailto),
+    }
+    resolvers: List[DOIResolver] = []
+    for s in sources:
+        if s not in builders:
+            print(f"warning: unknown resolver '{s}', skipping", file=sys.stderr)
+            continue
+        resolvers.append(builders[s]())
+    if not resolvers:
+        print("error: no usable resolvers configured", file=sys.stderr)
+        sys.exit(1)
+    chain = ChainResolver(resolvers)
+
+    if args.paper:
+        page = engine.get_page(args.paper)
+        if page is None:
+            print(f"error: page not found: {args.paper}", file=sys.stderr)
+            sys.exit(1)
+        candidates = [page]
+    else:
+        candidates = [
+            p for p in engine.list_pages()
+            if p.frontmatter.type == "source" and p.frontmatter.category == "paper"
+        ]
+
+    processed = 0
+    resolved = 0
+    unresolved = 0
+    skipped = 0
+    limit = args.limit if args.limit and args.limit > 0 else None
+
+    for page in candidates:
+        if limit is not None and processed >= limit:
+            break
+        fm = page.frontmatter
+        if fm.doi and not args.force:
+            skipped += 1
+            continue
+
+        arxiv_id = _extract_arxiv_id_from_page(page)
+        if not arxiv_id:
+            print(f"skip {fm.id}: no arXiv link", file=sys.stderr)
+            skipped += 1
+            continue
+
+        authors, year = _load_arxiv_authors_year(engine, arxiv_id)
+        ctx = PaperContext(
+            arxiv_id=arxiv_id,
+            title=fm.title,
+            authors=authors,
+            year=year,
+        )
+
+        processed += 1
+        match = chain.resolve(ctx)
+        now = datetime.now()
+        if match is None:
+            unresolved += 1
+            print(f"unresolved {fm.id} ({arxiv_id})")
+            if not args.dry_run:
+                fm.doi = None
+                fm.doi_source = "unresolved"
+                fm.doi_confidence = None
+                fm.doi_resolved_at = now
+                engine.save_page(page)
+            continue
+
+        resolved += 1
+        print(f"  match {fm.id} ({arxiv_id}): {match.doi}  [{match.source}/{match.confidence}]")
+        if not args.dry_run:
+            fm.doi = match.doi
+            fm.doi_source = match.source
+            fm.doi_confidence = match.confidence
+            fm.doi_resolved_at = now
+            engine.save_page(page)
+
+    summary = (
+        f"processed={processed} resolved={resolved} unresolved={unresolved} skipped={skipped}"
+        + (" (dry-run, nothing written)" if args.dry_run else "")
+    )
+    print(summary)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="QuantumAtlas Wiki Browser",
@@ -320,6 +505,43 @@ Examples:
     create_parser.add_argument("--file", "-f", help="Read content from file")
     create_parser.add_argument("--subdir", help="Target subdirectory")
     create_parser.set_defaults(func=cmd_create)
+
+    # enrich-doi command
+    enrich_parser = subparsers.add_parser(
+        "enrich-doi",
+        help="Resolve missing DOIs for arXiv paper pages",
+        description=(
+            "Run the DOI resolver chain (arxiv-self → Crossref → OpenAlex by default) "
+            "against paper pages whose `doi` frontmatter is unset, and persist matches "
+            "back to the page. Pages already carrying a DOI are skipped unless --force."
+        ),
+    )
+    enrich_parser.add_argument(
+        "--source",
+        default="arxiv,crossref,openalex",
+        help="Comma-separated resolver order (default: arxiv,crossref,openalex)",
+    )
+    enrich_parser.add_argument(
+        "--paper",
+        help="Restrict to a single paper page ID (e.g. paper-arxiv-1234.5678)",
+    )
+    enrich_parser.add_argument(
+        "--force", action="store_true",
+        help="Re-resolve pages that already have a DOI",
+    )
+    enrich_parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Print matches without writing back to disk",
+    )
+    enrich_parser.add_argument(
+        "--limit", type=int, default=0,
+        help="Stop after processing N pages (0 = no limit)",
+    )
+    enrich_parser.add_argument(
+        "--mailto", default=None,
+        help="Contact email for Crossref/OpenAlex polite pool (recommended)",
+    )
+    enrich_parser.set_defaults(func=cmd_enrich_doi)
 
     args = parser.parse_args()
 

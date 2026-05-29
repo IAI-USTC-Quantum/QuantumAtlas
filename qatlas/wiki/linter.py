@@ -85,6 +85,7 @@ class WikiLinter:
         "W006": ("ERROR", "Duplicate page ID"),
         "W007": ("INFO", "Outdated page: not updated in 30 days"),
         "W008": ("WARNING", "Entity page has no tags"),
+        "W009": ("INFO", "Paper page missing DOI"),
     }
 
     def __init__(self, wiki_engine):
@@ -143,6 +144,9 @@ class WikiLinter:
 
             # Check for outdated
             self._check_outdated(page)
+
+            # Check for missing DOI on paper pages
+            self._check_paper_doi(page)
 
         # Check for orphan pages
         for page in pages:
@@ -306,6 +310,33 @@ class WikiLinter:
                 filepath=str(filepath) if filepath else None,
             ))
 
+    def _check_paper_doi(self, page: Any) -> None:
+        """W009: source paper pages should carry a resolved DOI.
+
+        Fires only on ``type=source, category=paper`` pages whose ``doi``
+        is empty. ``doi_source == "unresolved"`` silences the check —
+        that's the explicit "tried, found nothing" marker emitted by the
+        DOI resolver chain (see ``atlas/parser/doi/``), so the page is
+        already known to the enrichment workflow and doesn't need a
+        repeated nag every lint pass.
+        """
+        fm = page.frontmatter
+        if fm.type != "source" or fm.category != "paper":
+            return
+        if fm.doi:
+            return
+        if fm.doi_source == "unresolved":
+            return
+        filepath = self.engine._find_page_file(fm.id)
+        self.issues.append(LintIssue(
+            page_id=fm.id,
+            severity=LintSeverity.INFO,
+            code="W009",
+            message="Paper page missing DOI",
+            suggestion="Run `qatlas wiki enrich-doi` to look up the formally-published DOI",
+            filepath=str(filepath) if filepath else None,
+        ))
+
     def _extract_all_links(self, pages: List[Any]) -> Set[str]:
         """Extract all link targets from all pages."""
         all_links: Set[str] = set()
@@ -364,6 +395,7 @@ class WikiLinter:
         self._check_frontmatter(page, str(filepath) if filepath else None)
         self._check_tags(page)
         self._check_outdated(page)
+        self._check_paper_doi(page)
 
         # Check links
         all_pages = self.engine.list_pages()

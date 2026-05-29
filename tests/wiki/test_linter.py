@@ -195,6 +195,64 @@ class TestWikiLinter:
         assert "fixed" in result
         assert isinstance(result["fixed"], list)
 
+    def test_check_paper_missing_doi(self, temp_wiki):
+        """W009 fires on source paper pages without a DOI."""
+        page = WikiPage(
+            frontmatter=WikiFrontmatter(
+                id="paper-arxiv-1234.5678",
+                title="A Paper",
+                type="source",
+                category="paper",
+                status="published",
+            ),
+            content="Paper body.",
+        )
+        temp_wiki.save_page(page)
+
+        result = temp_wiki.lint()
+        codes = [i["code"] for i in result["issues"] if i["page_id"] == "paper-arxiv-1234.5678"]
+        assert "W009" in codes
+
+    def test_check_paper_unresolved_doi_silent(self, temp_wiki):
+        """W009 stays quiet when doi_source=='unresolved' marks 'tried, nothing'."""
+        page = WikiPage(
+            frontmatter=WikiFrontmatter(
+                id="paper-arxiv-2222.0001",
+                title="Already Tried",
+                type="source",
+                category="paper",
+                status="published",
+                doi_source="unresolved",
+            ),
+            content="Body.",
+        )
+        temp_wiki.save_page(page)
+
+        result = temp_wiki.lint()
+        codes = [i["code"] for i in result["issues"] if i["page_id"] == "paper-arxiv-2222.0001"]
+        assert "W009" not in codes
+
+    def test_check_paper_with_doi_no_warning(self, temp_wiki):
+        """W009 does not fire on paper pages that already carry a DOI."""
+        page = WikiPage(
+            frontmatter=WikiFrontmatter(
+                id="paper-arxiv-3333.0001",
+                title="Has DOI",
+                type="source",
+                category="paper",
+                status="published",
+                doi="10.1103/PhysRevLett.103.150502",
+                doi_source="crossref",
+                doi_confidence="high",
+            ),
+            content="Body.",
+        )
+        temp_wiki.save_page(page)
+
+        result = temp_wiki.lint()
+        codes = [i["code"] for i in result["issues"] if i["page_id"] == "paper-arxiv-3333.0001"]
+        assert "W009" not in codes
+
 
 class TestLintIssue:
     """Tests for LintIssue dataclass."""

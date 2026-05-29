@@ -63,6 +63,63 @@ class TestWikiFrontmatter:
             )
             assert fm.status == valid_status
 
+    def test_frontmatter_doi_fields_roundtrip(self):
+        """All four DOI fields serialize with the canonical bare DOI + date."""
+        fm = WikiFrontmatter(
+            id="paper-arxiv-1234.5678",
+            title="DOI Paper",
+            type="source",
+            category="paper",
+            doi="10.1103/PhysRevLett.103.150502",
+            doi_source="crossref",
+            doi_confidence="high",
+            doi_resolved_at=datetime(2026, 5, 28),
+        )
+
+        yaml_dict = fm.to_yaml_dict()
+
+        assert yaml_dict["doi"] == "10.1103/PhysRevLett.103.150502"
+        assert yaml_dict["doi_source"] == "crossref"
+        assert yaml_dict["doi_confidence"] == "high"
+        assert yaml_dict["doi_resolved_at"] == "2026-05-28"
+
+    def test_frontmatter_doi_unset_fields_dropped(self):
+        """to_yaml_dict drops every doi* key when fully unset (no YAML noise)."""
+        fm = WikiFrontmatter(
+            id="plain-paper",
+            title="Plain Paper",
+            type="source",
+            category="paper",
+        )
+
+        yaml_dict = fm.to_yaml_dict()
+
+        for key in ("doi", "doi_source", "doi_confidence", "doi_resolved_at"):
+            assert key not in yaml_dict, f"unset {key} leaked into yaml dict"
+
+    def test_frontmatter_doi_unresolved_marker_kept(self):
+        """doi_source='unresolved' must persist even when doi is None.
+
+        This is how `qatlas wiki enrich-doi` tells "never tried" from
+        "tried, no hit". Dropping the marker would silently re-fire
+        W009 + waste API quota on repeat lookups.
+        """
+        fm = WikiFrontmatter(
+            id="tried-paper",
+            title="Tried Paper",
+            type="source",
+            category="paper",
+            doi_source="unresolved",
+            doi_resolved_at=datetime(2026, 5, 28),
+        )
+
+        yaml_dict = fm.to_yaml_dict()
+
+        assert yaml_dict.get("doi_source") == "unresolved"
+        assert yaml_dict.get("doi_resolved_at") == "2026-05-28"
+        assert "doi" not in yaml_dict
+        assert "doi_confidence" not in yaml_dict
+
 
 class TestWikiPage:
     """Tests for WikiPage model."""
@@ -194,3 +251,28 @@ This is the content.
         page.update_timestamp()
 
         assert page.frontmatter.updated_at is not None
+
+    def test_roundtrip_with_doi_fields(self):
+        """End-to-end markdown round-trip preserves all four DOI fields."""
+        original = WikiPage(
+            frontmatter=WikiFrontmatter(
+                id="paper-arxiv-1234.5678",
+                title="DOI Round-trip",
+                type="source",
+                category="paper",
+                doi="10.1103/PhysRevLett.103.150502",
+                doi_source="openalex",
+                doi_confidence="medium",
+                doi_resolved_at=datetime(2026, 5, 28),
+            ),
+            content="Body.",
+        )
+
+        markdown = original.to_markdown()
+        parsed = WikiPage.from_markdown(markdown)
+
+        assert parsed.frontmatter.doi == "10.1103/PhysRevLett.103.150502"
+        assert parsed.frontmatter.doi_source == "openalex"
+        assert parsed.frontmatter.doi_confidence == "medium"
+        assert parsed.frontmatter.doi_resolved_at is not None
+        assert parsed.frontmatter.doi_resolved_at.strftime("%Y-%m-%d") == "2026-05-28"

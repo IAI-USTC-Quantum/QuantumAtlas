@@ -70,17 +70,17 @@ feat(api)!: rename /api/papers/upload to /api/papers/upload-pdf
 BREAKING CHANGE: clients before 0.2.0 must update to use the new path.
 ```
 
-### Commitizen
+### Commitizen 与发版
 
 ```bash
 # 用 commitizen 交互式建 commit（不写错格式）
 uv run cz commit
 
-# Bump version + 更新 CHANGELOG.md + 打 tag
+# Bump version + 更新 CHANGELOG.md + 打 tag（推荐 4 步法见下）
 uv run cz bump
 ```
 
-`cz bump` 跑完会：
+`cz bump` 默认行为：
 
 1. 算下个版本号（按 commit type；feat 是 minor，fix 是 patch，feat! 是 major）
 2. 改 `pyproject.toml` 的 `version`
@@ -88,7 +88,60 @@ uv run cz bump
 4. `git commit + git tag`
 5. **不会自动 push**——你 review 完 `git push --follow-tags`
 
-push 上去后 [`release.yml`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.github/workflows/release.yml) 自动 build + 发 PyPI + 发 GitHub Release。
+**release.yml 只在 `git push origin v<X.Y.Z>`（push tag）时触发**，所以不 push tag 就不会发版。push tag 后 [`release.yml`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.github/workflows/release.yml) 自动 build wheel/sdist + 4 个平台 Go binary + 发 PyPI + 发 GitHub Release。
+
+!!! tip "推荐 4 步法（防 cz bump 把工作区脏文件卷进 bump commit）"
+
+    多 agent / 多 PR 同时进行时，`cz bump` 默认会 `git add -A` 把工作区所有改动塞进 bump commit，污染 git blame + tag 范围。隔离工作区改动：
+
+    ```bash
+    # 0. 隔离 WIP（防 cz bump 卷进无关改动）
+    git stash push --include-untracked -m "pre-bump WIP"
+
+    # 1. cz bump --files-only → 只改 pyproject + CHANGELOG，不 commit、不 tag
+    uv run cz bump --files-only --yes
+    #    ↑↑↑ 看 cz 输出！它会说 "bumped to 0.X.Y"——这个版本号是接下来 tag 要用的。
+    #    cz 按你的 commit 算 PATCH/MINOR/MAJOR，不一定是你预期的那个。
+
+    # 2. 显式 add 三个文件（不要 git add -A）
+    git add pyproject.toml CHANGELOG.md uv.lock
+
+    # 3. commit + tag（VERSION 从 pyproject 读，防 typo）
+    VERSION="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')"
+    git commit -m "bump: version <旧> → ${VERSION}"
+    git tag "v${VERSION}"
+
+    # 4. push main + push tag（push tag 才触发 release.yml）
+    git push origin main
+    git push origin "v${VERSION}"
+
+    # 5. 恢复 WIP
+    git stash pop
+    ```
+
+    bump commit 已经卷进无关文件、tag 没 push 出去时还能补救：
+
+    ```bash
+    git reset --soft HEAD~1   # 撤销 commit 但保留改动
+    git tag -d v<n>           # 删本地 tag
+    git reset HEAD            # unstage
+    # 然后按 4 步法重做
+    ```
+
+    tag 已经 push 出去再撤销很麻烦（需要 `git push origin :refs/tags/v<n>` 删远端 tag + force-push 修正后的 main），能避免就避免。
+
+!!! tip "bump 前必须本地跑 CI mirror（防 push 后 CI 红）"
+
+    CI 有三个独立 workflow（`go.yml` / `pytest.yml` / `release.yml`）平行跑。**release.yml 不跑 vet/pytest**，所以不本地跑 vet 直接 push → release artifact 发了但 go.yml 红着，得 push fix commit 才能消红。bump 前先：
+
+    ```bash
+    pixi run vet \
+      && pixi run test-go \
+      && pixi run build \
+      && uv run pytest -m "not network and not e2e"
+    ```
+
+    全绿再 bump。
 
 ---
 
@@ -113,8 +166,9 @@ uv sync
 # Python 测试
 uv run pytest
 
-# Go 测试（必须 CGO_ENABLED=0，详见 [Go 工具链]）
-CGO_ENABLED=0 go test ./...
+# Go 测试（必须通过 pixi 跑，自带 cgo + 工具链）
+pixi run test-go
+# 或：pixi run -- go test ./internal/... ./cmd/...
 
 # 前端 build + type check
 cd web && npm run build
@@ -123,14 +177,17 @@ cd web && npm run build
 qatlas wiki lint
 ```
 
-!!! warning "Go 必须 CGO_ENABLED=0"
-    PocketBase 选用纯 Go 的 SQLite (`modernc.org/sqlite`) 是为了避免 cgo。pixi go env 默认 `CC=x86_64-conda-linux-gnu-cc` 但 conda gcc 不在 PATH，会让 `go vet ./...` 卡死。**永久 fix**：
+!!! warning "Go 必须 CGO_ENABLED=1（2026-05 起）"
+    自 paperindex 包引入 `marcboeker/go-duckdb` 后，**整个 qatlas-server build 强制需要 cgo**（libduckdb 是 C++ 库）。`pixi run build/test-go/vet` 已经在 `[tool.pixi.activation.env]` 里 export `CGO_ENABLED=1`，直接用 pixi 就行。
+
+    如果你想脱离 pixi 直接 `go build`，先确保用户级 env 不强制关 cgo：
 
     ```bash
-    go env -w CGO_ENABLED=0
+    go env -u CGO_ENABLED   # 清掉 ~/.config/go/env 里 CGO_ENABLED=0（如果之前设过）
+    # 或直接 go env -w CGO_ENABLED=1
     ```
 
-    写到 `~/.config/go/env`，再也不挂。
+    Conda gcc (`gxx` 包) 在 `pixi shell` 里在 PATH，但脱离 pixi 时不在，需要系统装 `gcc` 才能跑 cgo build。
 
 ### 仓库结构
 

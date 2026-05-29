@@ -24,7 +24,7 @@ from qatlas.paper_assets import (
 )
 
 from .page import WikiFrontmatter, WikiPage
-from .templates import PageTemplate
+from .templates import DOIInfo, PageTemplate
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +37,21 @@ def _wiki_algorithm_id(value: str) -> str:
 def _wiki_primitive_id(value: str) -> str:
     slug = value.replace("primitive_", "").replace("_", "-").lower()
     return slug if slug.startswith("prim-") else f"prim-{slug}"
+
+
+def _doi_info_from_metadata(metadata: Dict[str, Any]) -> DOIInfo:
+    """Translate raw arXiv metadata into a DOIInfo carrier.
+
+    arXiv self-reported DOIs come from the paper's own claim in the
+    abstract page; we trust it as `confidence=high, source=arxiv`. When
+    arXiv has no DOI on file we still emit a marker (``unresolved``) so
+    ``qatlas wiki enrich-doi`` can tell pages that need re-checking from
+    pages that were never wired up.
+    """
+    doi = metadata.get("doi")
+    if doi:
+        return DOIInfo.from_arxiv_self(str(doi).strip())
+    return DOIInfo.unresolved()
 
 
 class WikiIngester:
@@ -276,7 +291,7 @@ class WikiIngester:
                 abstract=metadata.get("abstract", ""),
                 algorithms=algorithms,
                 published=metadata.get("published"),
-                doi=metadata.get("doi"),
+                doi=_doi_info_from_metadata(metadata),
                 categories=metadata.get("categories"),
             )
             paper_page.frontmatter.status = "published"
@@ -376,7 +391,7 @@ class WikiIngester:
                 authors=metadata.get("authors", []),
                 abstract=metadata.get("abstract", ""),
                 published=metadata.get("published"),
-                doi=metadata.get("doi"),
+                doi=_doi_info_from_metadata(metadata),
                 categories=metadata.get("categories"),
             )
             paper_page.frontmatter.status = "published"
