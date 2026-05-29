@@ -325,7 +325,7 @@ def cmd_enrich_doi(args):
     precisely so we know which pages to revisit when new resolvers
     appear).
     """
-    from atlas.parser.doi import (
+    from qatlas.parser.doi import (
         ArxivSelfReportedResolver,
         ChainResolver,
         CrossrefResolver,
