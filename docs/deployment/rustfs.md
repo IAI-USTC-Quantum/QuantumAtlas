@@ -7,9 +7,9 @@
 >
 > Application-level upload semantics (sha256 dedup, 409 conflict
 > behaviour, `?expected_sha256=` guard) live in
-> [upload-api.md](upload-api.md). Wider storage architecture (why
+> [upload-api.md](../reference/upload-api.md). Wider storage architecture (why
 > we have separate Raw / Metadata / Graph layers) lives in
-> [storage-design.md](storage-design.md).
+> [storage-design.md](../concepts/storage-architecture.md).
 
 ## Backend selection
 
@@ -48,6 +48,50 @@ all-or-nothing rule is enforced by
 | `QATLAS_S3_BUCKET`               | `qatlas-raw`                         | Must exist; bootstrap script creates it idempotently.                                 |
 | `QATLAS_S3_ACCESS_KEY_ID`        | `CNEDAZ2HQDU9TX8A2BUO`               | Service-account key (`qatlas-server` IAM user). Never use root keys here.             |
 | `QATLAS_S3_SECRET_ACCESS_KEY`    | `…`                                  | Secret printed once by bootstrap; copy directly into `.env` (mode 600).               |
+| `QATLAS_S3_PUBLIC_ENDPOINT` (可选) | `https://raw.quantum-atlas.ai`      | 公网入口，给 client presigned URL 用；留空 = 单 endpoint 模式（仅适合 dev）|
+
+### Dual-endpoint mode { #dual-endpoint }
+
+生产部署里 server↔RustFS 走**mesh / 内网**（省一跳反代 + TLS 终结），但发给 client 的 share URL 必须**公网可达**。两者用同一份 endpoint 显然不行——所以 qatlas server 支持 dual-endpoint：
+
+| 用途 | 走哪个 endpoint |
+|---|---|
+| server 内部 Put/Get/Stat/List | `QATLAS_S3_ENDPOINT`（internal） |
+| 给 client presign URL（share / 直接下载）| `QATLAS_S3_PUBLIC_ENDPOINT`（public） |
+
+启用方法：在 `.env` 同时设两个：
+
+```bash
+QATLAS_S3_ENDPOINT=http://10.144.18.10:9000           # mesh 内网
+QATLAS_S3_PUBLIC_ENDPOINT=https://raw.quantum-atlas.ai # 公网（独立子域）
+```
+
+**公网入口必须反代到内网 RustFS 端口，且 `preserve Host header`**——SigV4 把 Host 算进 canonical request，反代改 Host 会让 RustFS 报 `SignatureDoesNotMatch`。最小 Caddy 模板：
+
+```caddy
+raw.quantum-atlas.ai {
+    reverse_proxy 10.144.18.10:9000 {
+        header_up Host {host}
+    }
+}
+```
+
+详见 [反向代理](reverse-proxy.md)。
+
+启动 log 区分两种模式：
+
+```
+raw store: S3 backend http://10.144.18.10:9000/qatlas-raw (presign via https://raw.quantum-atlas.ai)
+```
+
+少了 `(presign via ...)` 那段就是单 endpoint 模式。
+
+每台边缘各自配自己的 public endpoint，**不共享**：
+
+- RackNerd: `https://raw.quantum-atlas.ai`（LE 真证书）
+- 阿里云: `https://47.102.36.175:9000`（`tls internal` 自签，client 必须 `-k`）
+
+详见 [多边缘部署](../concepts/multi-edge.md)。
 
 ## IAM policy: `qatlas-raw-rw`
 
@@ -127,11 +171,11 @@ listings manageable.
 | `markdown` | `markdown/<prefix>/<id>v<n>.md`       | `text/markdown; charset=utf-8`       |
 
 User metadata always includes `x-amz-meta-sha256` (lowercase) with
-the hex digest of the bytes — see [upload-api.md](upload-api.md).
+the hex digest of the bytes — see [upload-api.md](../reference/upload-api.md).
 This is the field `qatlas-server storage prune` and the upload handler
 both rely on for idempotency / dedup.
 
-## Versioning: qatlas self-manages
+## Versioning: qatlas self-manages { #versioning }
 
 `internal/objstore/s3.go::EnsureVersioning` is called once at server
 boot, right after `initRawStore`. Pattern:
@@ -187,7 +231,7 @@ When (if ever) the bucket grows past a few hundred GB of noncurrent
 versions, revisit. RustFS may by then support the standard
 `s3:*LifecycleConfiguration` actions and we can add a rule.
 
-## `qatlas-server storage prune`
+## `qatlas-server storage prune` { #prune }
 
 The on-server CLI for manual cleanup. Lives in
 `cmd/qatlas-server/storage_cmd.go`; runs against whatever the server's
@@ -275,7 +319,7 @@ pdf/2511/2511.88888v1.pdf @69537cbf-2035-4aa2-8ec3-4fc8dca357a6 DELETED
 deleted: 2, failed: 0, freed: 0.18 MiB
 ```
 
-## Bootstrap (initial RustFS setup)
+## Bootstrap (initial RustFS setup) { #bootstrap }
 
 `scripts/rustfs_bootstrap.sh` is idempotent and creates everything
 the server expects: bucket `qatlas-raw`, IAM user `qatlas-server`,
@@ -375,9 +419,9 @@ still recoverable until `storage prune` decides otherwise).
 
 ## Related docs
 
-- [upload-api.md](upload-api.md) — request/response shape, sha256
+- [upload-api.md](../reference/upload-api.md) — request/response shape, sha256
   semantics, in-transit guard from the client's perspective.
-- [storage-design.md](storage-design.md) — wider architecture (why
+- [storage-design.md](../concepts/storage-architecture.md) — wider architecture (why
   Raw / Metadata / Graph are separate layers).
-- [deployment.md](deployment.md) — systemd unit, .env layout,
+- [deployment.md](operations.md) — systemd unit, .env layout,
   RackNerd / Alibaba edge topology.

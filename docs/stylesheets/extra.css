@@ -1,0 +1,55 @@
+/* Material 主题轻度定制 */
+
+/* 首页 hero tagline */
+.hero-tagline {
+  font-size: 1.15rem;
+  line-height: 1.5;
+  margin-block: 1em 1.5em;
+  padding: 1em 1.25em;
+  border-left: 4px solid var(--md-primary-fg-color);
+  background: var(--md-default-bg-color--lighter, rgba(0, 0, 0, 0.025));
+  border-radius: 4px;
+}
+
+/* Grid cards 微调 — 图标用主色 */
+.md-typeset .grid.cards > :is(ul, ol) > li > hr,
+.md-typeset .grid > .card > hr {
+  margin-block: 0.8em;
+}
+
+/* mermaid 图居中 + 限宽 */
+.md-typeset .mermaid {
+  text-align: center;
+}
+.md-typeset .mermaid > svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* 表格列宽友好 — 头部不换行 */
+.md-typeset table:not([class]) th {
+  white-space: nowrap;
+}
+
+/* code block 行高 + 字号 */
+.md-typeset pre > code {
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+/* status pill（用 attr_list 时）*/
+.md-typeset .status-new {
+  display: inline-block;
+  padding: 0 0.4em;
+  margin-left: 0.4em;
+  background: var(--md-accent-fg-color);
+  color: var(--md-accent-bg-color);
+  border-radius: 999px;
+  font-size: 0.7em;
+}
+
+/* 减少 admonition 上下间距过宽 */
+.md-typeset .admonition,
+.md-typeset details {
+  margin-block: 0.8em;
+}

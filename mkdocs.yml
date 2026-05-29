@@ -1,4 +1,4 @@
-site_name: QuantumAtlas Documentation
+site_name: QuantumAtlas
 site_description: 把量子算法论文从「PDF 和笔记」推进到「可查询的知识、可浏览的 Wiki、可同步的图谱，以及可生成的实现代码」
 site_author: IAI-USTC-Quantum
 site_url: https://quantum-atlas.readthedocs.io/
@@ -7,17 +7,45 @@ repo_name: IAI-USTC-Quantum/QuantumAtlas
 repo_url: https://github.com/IAI-USTC-Quantum/QuantumAtlas
 edit_uri: edit/main/docs/
 
+copyright: Copyright &copy; 2024–2026 IAI-USTC-Quantum &middot; MIT License
+
 theme:
   name: material
   language: zh
   features:
-    - navigation.indexes
+    # 顶栏 tabs + 左侧 sections + index pages，构成三段式导航
+    - navigation.tabs
+    - navigation.tabs.sticky
     - navigation.sections
+    - navigation.indexes
     - navigation.top
+    - navigation.footer
+    - navigation.tracking
+    # 站内瞬时切页（SPA-like）+ 顶部进度条
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.instant.prefetch
+    # TOC 行为
     - toc.follow
+    # 搜索增强
+    - search.suggest
+    - search.highlight
+    - search.share
+    # 代码块体验
     - content.code.copy
+    - content.code.annotate
+    - content.code.select
+    # 内容功能
+    - content.tabs.link
+    - content.tooltips
     - content.action.edit
+    - content.action.view
+    - announce.dismiss
   palette:
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/brightness-auto
+        name: 跟随系统
     - media: "(prefers-color-scheme: light)"
       scheme: default
       primary: indigo
@@ -32,30 +60,112 @@ theme:
       toggle:
         icon: material/weather-sunny
         name: 切换到浅色模式
+  font:
+    text: Inter
+    code: JetBrains Mono
+  icon:
+    repo: fontawesome/brands/github
+    edit: material/pencil
+    view: material/eye
+    # 用 Material 内置 atom 图标作为站点 logo（不需要外部 svg 文件，
+    # 顺便契合 "Quantum" 主题）。favicon 走 mkdocs-material 默认（绿色 m）。
+    logo: material/atom
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/IAI-USTC-Quantum/QuantumAtlas
+      name: GitHub repository
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/quantum-atlas/
+      name: quantum-atlas on PyPI
+  status:
+    new: 最近新增
+    deprecated: 已废弃
+  generator: false
 
 plugins:
-  - search
+  - search:
+      lang:
+        - zh
+        - en
+      separator: '[\s\u200b\-_,:!=\[\]()"`/]+|\.(?!\d)|&[lg]t;'
   - awesome-pages
+  - glightbox:
+      touchNavigation: true
+      loop: false
+      effect: zoom
+      slide_effect: slide
+      width: 100%
+      auto_caption: false
+  - git-revision-date-localized:
+      type: timeago
+      timezone: Asia/Shanghai
+      locale: zh
+      enable_creation_date: true
+      fallback_to_build_date: true
   - mkdocstrings:
       handlers:
         python:
           paths: [atlas]
+          options:
+            show_source: true
+            show_signature_annotations: true
+            separate_signature: true
 
 # requirements.txt 是给 RTD 装依赖用的，不应该被当作文档资源复制到 site/
 exclude_docs: |
   requirements.txt
+  snippets/
 
 markdown_extensions:
+  # 基础
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - meta
+  - tables
   - toc:
       permalink: true
-  - attr_list
-  - admonition
-  - tables
+      permalink_title: 锚点链接
+      toc_depth: 4
+  # pymdownx 全家桶
+  - pymdownx.betterem
+  - pymdownx.caret
+  - pymdownx.critic
   - pymdownx.details
-  - pymdownx.superfences
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - pymdownx.highlight:
       anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
   - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.snippets:
+      base_path:
+        - docs/snippets
+      check_paths: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
+  - pymdownx.tasklist:
+      custom_checkbox: true
+      clickable_checkbox: false
+  - pymdownx.tilde
   - pymdownx.arithmatex:
       generic: true
 
@@ -64,6 +174,13 @@ extra_javascript:
   - javascripts/katex.js
   - https://unpkg.com/katex@0/dist/katex.min.js
   - https://unpkg.com/katex@0/dist/contrib/auto-render.min.js
+  # mermaid 图（pymdownx.superfences 的 custom_fence 渲染到这个 script）
+  - javascripts/mermaid.js
 
 extra_css:
   - https://unpkg.com/katex@0/dist/katex.min.css
+  - stylesheets/extra.css
+
+watch:
+  - docs/snippets
+  - atlas

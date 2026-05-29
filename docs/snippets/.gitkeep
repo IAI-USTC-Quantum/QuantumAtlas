@@ -1,0 +1,4 @@
+# Placeholder so docs/snippets/ is tracked by git. The directory hosts
+# reusable fragments for the pymdownx.snippets extension; currently empty,
+# but mkdocs.yml's `watch:` and `pymdownx.snippets::base_path` both
+# reference it, so it must exist at build time.

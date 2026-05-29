@@ -427,7 +427,7 @@ Go server 通过 `internal/objstore` 抽象层接 minio-go SDK，**填齐
 
 物理部署、bucket / IAM user / policy 的创建、rotate 流程，以及配套的
 幂等 bootstrap 脚本 [`scripts/rustfs_bootstrap.sh`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/scripts/rustfs_bootstrap.sh)
-统一收录在 [`storage-design.md` 的 RustFS 部署后置一节](storage-design.md#rustfs-bucket-user-policy)。
+统一收录在 [`storage-design.md` 的 RustFS 部署后置一节](../concepts/storage-architecture.md#rustfs-bucket-user-policy)。
 
 简言之：
 
@@ -458,7 +458,7 @@ server 透明处理。
 
 旧的 `atlas/server/` FastAPI server（`uv run -m atlas.server`、
 `uv run -m atlas.server.service install`、外置 caddy-security 鉴权链等）
-已不是生产路径，独立收录在 [docs/python-legacy.md](python-legacy.md)，
+已不是生产路径，独立收录在 [docs/python-legacy.md](../about/python-legacy.md)，
 仅供 client 兼容性测试或排查历史 issue 时参考。新部署一律走上面的 Go
 server 路径。
 
