@@ -27,6 +27,7 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/auth"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/healthz"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineru"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineruclaim"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperindex"
@@ -219,6 +220,16 @@ func main() {
 	// Store starts up empty and queries return zero.
 	paperIndex := initPaperIndex(cfg, rawStore)
 
+	// Build the server-side MinerU converter. Always constructed; it only
+	// actually converts when MINERU_API_TOKEN is set (Converter.Enabled).
+	// Powers the silent conversion behind GET /api/papers/{id}/markdown.
+	mineruConverter := mineru.NewConverter(cfg, rawStore, shareStore)
+	if mineruConverter.Enabled() {
+		log.Printf("mineru: server-side silent conversion enabled (base=%s)", cfg.MinerUAPIBaseURL)
+	} else {
+		log.Printf("mineru: server-side conversion disabled (MINERU_API_TOKEN unset); markdown served from cache only")
+	}
+
 	// Build the wiki in-memory cache. Walks cfg.WikiDir once at
 	// startup so the first /api/pages request hits warm data; a
 	// background ticker re-walks every 60s when `git rev-parse HEAD`
@@ -269,7 +280,7 @@ func main() {
 			}
 		}
 
-		registerRoutes(se, app, cfg, rawStore, shareStore, claimStore, paperIndex, wikiCache, enforcer, serverStarted)
+		registerRoutes(se, app, cfg, rawStore, shareStore, claimStore, paperIndex, mineruConverter, wikiCache, enforcer, serverStarted)
 
 		// Serve the embedded SPA last as the catch-all. apis.Static's
 		// indexFallback=true means any path that doesn't match a real
@@ -365,7 +376,7 @@ func initPaperIndex(cfg *config.Config, rawStore objstore.Store) *paperindex.Sto
 // registerRoutes wires the QuantumAtlas /api/* surface. Most endpoints are
 // implemented under internal/routes/ and pulled in by their respective
 // Register* helpers as we migrate each module in subsequent phases.
-func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawStore objstore.Store, shareStore *shares.Store, claimStore *mineruclaim.Store, paperIndex *paperindex.Store, wikiCache *wiki.Cache, enforcer *casbin.Enforcer, started time.Time) {
+func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawStore objstore.Store, shareStore *shares.Store, claimStore *mineruclaim.Store, paperIndex *paperindex.Store, mineruConverter *mineru.Converter, wikiCache *wiki.Cache, enforcer *casbin.Enforcer, started time.Time) {
 	probes := healthz.Probes{
 		Cfg:      cfg,
 		RawStore: rawStore,
@@ -442,7 +453,7 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	routes.RegisterGraph(se, cfg)
 
 	// Papers (resources, upload, mineru-claim) — see internal/routes/papers.go.
-	routes.RegisterPapers(se, cfg, rawStore, shareStore, claimStore, paperIndex, enforcer)
+	routes.RegisterPapers(se, cfg, rawStore, shareStore, claimStore, paperIndex, mineruConverter, enforcer)
 
 	// Shares CRUD + public /share/{token}* — see internal/routes/shares.go.
 	routes.RegisterShares(se, cfg, shareStore, rawStore, enforcer)

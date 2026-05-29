@@ -34,6 +34,10 @@ COMMANDS: Mapping[str, Command] = {
         "qatlas.client.mineru",
         "Run MinerU locally with your own token and push the result to the server",
     ),
+    "markdown": Command(
+        "qatlas.client.markdown",
+        "Fetch a paper's Markdown (triggers + waits for server-side MinerU conversion)",
+    ),
     "auth": Command(
         "qatlas.client.auth",
         "Manage saved PATs / session tokens per host (login, status, token, logout)",
@@ -94,6 +98,7 @@ Examples:
   qatlas upload pdf quant-ph/9508027v1 --pdf paper.pdf --metadata meta.json
   qatlas upload markdown 2501.00010v1 --markdown paper.md --source mineru
   qatlas mineru quant-ph/9508027v1 --push-pdf
+  qatlas markdown 2501.00010v1 -o paper.md
   qatlas designer <kg_algorithm_id> -o circuit_ir.json
   qatlas codegen circuit_ir.json --backend qiskit -o output.py
   qatlas validator circuit_ir.json --compare-with qft

@@ -52,8 +52,26 @@ type Config struct {
 	UserHeader string
 
 	// MinerU PDF parser (third-party SDK; not QATLAS_*).
+	//
+	// MinerUAPIToken doubles as the credential for *server-side* silent
+	// markdown conversion (GET /api/papers/{id}/markdown). When it is
+	// empty that endpoint reports 503 "conversion not configured" and the
+	// server only serves already-cached markdown. The same token is also
+	// read by the client-side `qatlas mineru` command — the two flows are
+	// independent (server quota vs contributor quota) and may use
+	// different .env files.
 	MinerUAPIToken   string
 	MinerUAPIBaseURL string
+
+	// MinerU extraction knobs (server-side silent conversion). Defaults
+	// mirror the Python ServerConfig so a single .env drives both.
+	MinerUModelVersion  string
+	MinerULanguage      string
+	MinerUIsOCR         bool
+	MinerUEnableFormula bool
+	MinerUEnableTable   bool
+	MinerUPollInterval  float64 // seconds between MinerU task polls
+	MinerUTimeout       int     // seconds before a conversion is abandoned
 
 	// GitHub OAuth (for PocketBase auth_collection_oauth2 settings).
 	GitHubClientID     string
@@ -157,6 +175,13 @@ func Load(dotenvPath string) (*Config, error) {
 		UserHeader:            firstEnv("QATLAS_USER_HEADER", "USER_HEADER"),
 		MinerUAPIToken:        firstEnv("MINERU_API_TOKEN"),
 		MinerUAPIBaseURL:      firstEnvDefault("https://mineru.net", "MINERU_API_BASE_URL"),
+		MinerUModelVersion:    firstEnvDefault("vlm", "MINERU_MODEL_VERSION"),
+		MinerULanguage:        firstEnvDefault("ch", "MINERU_LANGUAGE"),
+		MinerUIsOCR:           firstEnvBool(false, "MINERU_IS_OCR"),
+		MinerUEnableFormula:   firstEnvBool(true, "MINERU_ENABLE_FORMULA"),
+		MinerUEnableTable:     firstEnvBool(true, "MINERU_ENABLE_TABLE"),
+		MinerUPollInterval:    firstEnvFloat(3.0, "MINERU_POLL_INTERVAL"),
+		MinerUTimeout:         firstEnvIntDefault(1800, "MINERU_TIMEOUT"),
 		GitHubClientID:        firstEnv("GITHUB_CLIENT_ID"),
 		GitHubClientSecret:    firstEnv("GITHUB_CLIENT_SECRET"),
 		S3Endpoint:            firstEnv("QATLAS_S3_ENDPOINT"),
@@ -213,6 +238,13 @@ func Load(dotenvPath string) (*Config, error) {
 // non-empty by validateS3Config (invoked at end of Load).
 func (c *Config) S3Enabled() bool {
 	return c.S3Endpoint != "" && c.S3Bucket != "" && c.S3AccessKeyID != "" && c.S3SecretAccessKey != ""
+}
+
+// MinerUEnabled reports whether server-side silent markdown conversion is
+// configured. When false, GET /api/papers/{id}/markdown only serves
+// already-cached markdown and returns 503 on a miss.
+func (c *Config) MinerUEnabled() bool {
+	return c.MinerUAPIToken != ""
 }
 
 // validateS3Config enforces the all-or-nothing rule for the QATLAS_S3_*
@@ -280,6 +312,48 @@ func firstEnvInt(names ...string) int {
 		return 0
 	}
 	return v
+}
+
+// firstEnvIntDefault is firstEnvInt with a fallback when unset / unparseable.
+func firstEnvIntDefault(def int, names ...string) int {
+	raw := firstEnv(names...)
+	if raw == "" {
+		return def
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return def
+	}
+	return v
+}
+
+// firstEnvFloat parses the first non-empty env value as a float64, falling
+// back to def when unset or unparseable.
+func firstEnvFloat(def float64, names ...string) float64 {
+	raw := firstEnv(names...)
+	if raw == "" {
+		return def
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return def
+	}
+	return v
+}
+
+// firstEnvBool parses the first non-empty env value as a boolean. Accepts
+// the pydantic-ish truthy/falsy set (1/0, true/false, yes/no, on/off,
+// case-insensitive). Falls back to def when unset or unrecognised.
+func firstEnvBool(def bool, names ...string) bool {
+	raw := strings.ToLower(firstEnv(names...))
+	switch raw {
+	case "1", "true", "yes", "on", "y", "t":
+		return true
+	case "0", "false", "no", "off", "n", "f":
+		return false
+	default:
+		return def
+	}
 }
 
 // expandPath resolves ~ and converts relative paths to absolute.

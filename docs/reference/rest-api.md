@@ -22,6 +22,8 @@ QuantumAtlas server 的所有 HTTP endpoint。auth 模型详见 [概念/鉴权](
 | `GET` | `/api/pat/scopes` | 列 PAT scope 词表 |
 | `GET` | `/api/papers/needs-mineru?limit=&include_claimed=` | 列等待 MinerU 解析的论文 |
 | `GET` | `/api/papers/{arxiv_id}/resources` | 列单篇论文已有的资产 |
+| `GET` | `/api/papers/{arxiv_id}/markdown` | 取论文 markdown；无缓存时由 server 用自身 MinerU token 静默后台转换（轮询）|
+| `GET` | `/api/papers/{arxiv_id}/markdown/status` | 查询 markdown 转换 job 状态（无副作用，恒 200）|
 | `GET` | `/share/{token}` | share token 入口 |
 | `GET` | `/share/{token}/{path...}` | share token 下载 |
 | `GET` | `/_/` ... | PocketBase admin UI |
@@ -121,6 +123,34 @@ QuantumAtlas server 的所有 HTTP endpoint。auth 模型详见 [概念/鉴权](
     - `409 Conflict` — sha256 不同且没 `overwrite`，body 含 `existing_sha256` + `new_sha256`
     - `400 Bad Request` — sha256 mismatch / 损坏的 multipart / PDF header 不对等
 - 并发安全（S3 conditional PUT `If-None-Match`），多 client 同字节并发只产生 1 个 201 + 其余 200
+
+### `GET /api/papers/{arxiv_id}/markdown`
+
+开放读，无需 auth。语义：**有缓存直接给，无缓存 server 用自身 `MINERU_API_TOKEN` 静默后台转换**，client / 网页轮询直到拿到 markdown。与 `qatlas mineru`（贡献者用自己 key 主动 claim→转→上传）并行存在、互不冲突。
+
+- 状态码：
+    - `200 OK` — `Content-Type: text/markdown; charset=utf-8`，body 即缓存的 markdown
+    - `202 Accepted` — 后台转换进行中，body `{arxiv_id, status:"processing", state, started_at, status_url, detail}`；同时带响应头 `Operation-Location: /api/papers/{id}/markdown/status`（job 状态资源，Azure/Google AIP 风格）和 `Retry-After: 5`（建议的最小轮询间隔，client 在其上叠加带 jitter 的指数退避）。client 应轮询 `status_url` 而非反复打本端点
+    - `404 Not Found` — `{status:"no_pdf"}`，库里没有该论文的 PDF（先 upload-pdf 才能转）
+    - `502 Bad Gateway` — `{status:"failed", error}`，MinerU 转换失败（带冷却，过冷却期后再次请求会重试）
+    - `503 Service Unavailable` — `{status:"unavailable"}`，server 未配置 MinerU token
+    - `400 Bad Request` — arxiv_id 非法
+- 转换产出的 markdown + images 会写入对象存储（images 经现有 resources / share 系列暴露）
+- in-process 按 canonical arxiv_id 去重，并发请求同一论文只起一个转换 job
+- **本端点 GET 带副作用**（miss 时会触发转换）；只想观测状态、不想触发转换时改用 `/markdown/status`
+- client 用法见 [`qatlas markdown`](cli-qatlas.md)
+
+### `GET /api/papers/{arxiv_id}/markdown/status`
+
+开放读，无需 auth。**无副作用的 job 状态资源**：永不触发转换、永不要求 PDF，只汇报当前状态。因此**恒返回 `200 OK`**，转换结果在 body 的 `status` 字段（GET 状态资源本身成功 = 200；这与 content 端点失败时响亮的 502 是有意的分工）。
+
+- body `status` ∈：
+    - `done` — markdown 已就绪，`markdown_url` 指向 content 端点（命中缓存即此态，覆盖进程重启后 job map 空但 md 已存在的情况）
+    - `processing` — job 排队 / 运行中，附带响应头 `Retry-After: 5`；body 含 `state`、`started_at`
+    - `failed` — 上次转换失败，`error` + `finished_at` 给出原因；下次请求 content 端点会重试
+    - `not_started` — 尚未发起转换（GET content 端点以触发）
+    - `unavailable` — server 未配置 MinerU token
+- `400 Bad Request` — arxiv_id 非法（唯一的非 200）
 
 ### `POST /api/wiki/sync/pull`
 

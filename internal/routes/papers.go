@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"path"
@@ -15,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineru"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineruclaim"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperassets"
@@ -60,12 +62,22 @@ func RegisterPapers(
 	shareStore *shares.Store,
 	claimStore *mineruclaim.Store,
 	paperIndex *paperindex.Store,
+	converter *mineru.Converter,
 	enforcer *casbin.Enforcer,
 ) {
 	se.Router.GET("/api/papers/{path...}", func(re *core.RequestEvent) error {
 		raw := re.Request.PathValue("path")
 		if raw == "needs-mineru" {
 			return needsMineruHandler(re, rawStore, claimStore, paperIndex)
+		}
+		// Two-segment action "<arxiv>/markdown/status" is the side-effect-free
+		// operation resource; check it before the single-segment dispatch
+		// (otherwise splitPapersPath would peel "status" off as the action).
+		if statusArxiv, ok := splitMarkdownStatus(raw); ok {
+			if statusArxiv == "" {
+				return re.JSON(http.StatusBadRequest, map[string]string{"detail": "missing arxiv_id"})
+			}
+			return markdownStatusHandler(re, rawStore, converter, statusArxiv)
 		}
 		arxiv, action := splitPapersPath(raw)
 		switch action {
@@ -74,6 +86,11 @@ func RegisterPapers(
 				return re.JSON(http.StatusBadRequest, map[string]string{"detail": "missing arxiv_id"})
 			}
 			return paperResourcesHandler(re, cfg, rawStore, shareStore, arxiv)
+		case "markdown":
+			if arxiv == "" {
+				return re.JSON(http.StatusBadRequest, map[string]string{"detail": "missing arxiv_id"})
+			}
+			return markdownHandler(re, rawStore, converter, arxiv)
 		}
 		return re.JSON(http.StatusNotFound, map[string]string{
 			"detail": fmt.Sprintf("no GET handler for /api/papers/%s", raw),
@@ -138,6 +155,18 @@ func splitMineruClaimRelease(raw string) (arxivID, claimID string, ok bool) {
 	claimID = parts[len(parts)-1]
 	arxivID = strings.Join(parts[:len(parts)-2], "/")
 	return arxivID, claimID, true
+}
+
+// splitMarkdownStatus parses "<arxiv_id>/markdown/status" and returns the
+// arxiv_id + ok. arxiv_id may contain slashes (old-style ids), so we anchor
+// on the trailing two fixed segments.
+func splitMarkdownStatus(raw string) (arxivID string, ok bool) {
+	raw = strings.Trim(raw, "/")
+	parts := strings.Split(raw, "/")
+	if len(parts) < 3 || parts[len(parts)-1] != "status" || parts[len(parts)-2] != "markdown" {
+		return "", false
+	}
+	return strings.Join(parts[:len(parts)-2], "/"), true
 }
 
 // ---------------------------------------------------------------------------
@@ -425,6 +454,258 @@ func paperResourcesHandler(re *core.RequestEvent, cfg *config.Config, store objs
 		},
 		"images": imageAssets,
 	})
+}
+
+// ---------------------------------------------------------------------------
+// Markdown (silent server-side conversion) handler
+// ---------------------------------------------------------------------------
+
+// markdownHandler answers GET /api/papers/{arxiv_id}/markdown.
+//
+// Silent server-side conversion semantics (the "have → give, none → wait"
+// contract): the client asks for a paper's markdown and either gets it
+// immediately from cache, or the server transparently kicks off a MinerU
+// conversion (using its own MINERU_API_TOKEN) and tells the client to come
+// back. The work runs in the background so this request never blocks for
+// the minutes MinerU can take.
+//
+//   - cached markdown present → 200 text/markdown with the content.
+//   - absent + conversion enabled → start a background job, return 202
+//     with `Operation-Location` pointing at the status resource and a
+//     `Retry-After` hint; clients poll the status resource until done.
+//   - absent + conversion disabled (no token) → 503 (cache-only mode).
+//   - no PDF to convert from → 404.
+//   - a recent conversion failed → 502 with the error (auto-retried after
+//     a cooldown on a later request).
+//
+// This is an open read endpoint (no authGuard): browsing users and the
+// SPA hit it directly. The conversion it may trigger spends the server's
+// MinerU quota, but it's gated on the PDF already existing in the store
+// and deduped per paper, so it can't be used to convert arbitrary URLs or
+// double-spend on the same paper.
+//
+// The GET-with-side-effect (it may start a job) is a deliberate tradeoff
+// for the "just give me the markdown" UX: callers that only want to
+// observe state without triggering work use the side-effect-free
+// GET /api/papers/{arxiv_id}/markdown/status resource instead.
+func markdownHandler(re *core.RequestEvent, store objstore.Store, converter *mineru.Converter, arxivID string) error {
+	ctx := re.Request.Context()
+	canonical, ok := paperassets.ValidateUploadID(arxivID)
+	if !ok {
+		return re.JSON(http.StatusBadRequest, map[string]string{
+			"detail": fmt.Sprintf("invalid arxiv_id: %q (version suffix vN required)", arxivID),
+		})
+	}
+
+	// Cache hit: stream the stored markdown verbatim.
+	if mdKey := resolveMarkdownKey(ctx, store, canonical); mdKey != "" {
+		return streamMarkdown(re, store, mdKey)
+	}
+
+	if converter == nil || !converter.Enabled() {
+		return re.JSON(http.StatusServiceUnavailable, map[string]any{
+			"arxiv_id": canonical,
+			"status":   "unavailable",
+			"detail":   "server-side MinerU conversion is not configured (MINERU_API_TOKEN unset); markdown is only served from cache",
+		})
+	}
+
+	// Need a PDF to convert from.
+	if err := requirePDF(ctx, store, canonical); err != nil {
+		return re.JSON(http.StatusNotFound, map[string]any{
+			"arxiv_id": canonical,
+			"status":   "no_pdf",
+			"detail":   err.Error(),
+		})
+	}
+
+	job := converter.Ensure(canonical)
+
+	// The job may have finished between our cache check and Ensure;
+	// re-resolve so we don't make the client poll once more for nothing.
+	if job.State == mineru.StateDone {
+		if mdKey := resolveMarkdownKey(ctx, store, canonical); mdKey != "" {
+			return streamMarkdown(re, store, mdKey)
+		}
+	}
+	if job.State == mineru.StateFailed {
+		return re.JSON(http.StatusBadGateway, map[string]any{
+			"arxiv_id": canonical,
+			"status":   "failed",
+			"error":    job.Err,
+			"detail":   "MinerU conversion failed; it will be retried on a later request",
+		})
+	}
+
+	return markdownProcessing(re, canonical, job)
+}
+
+// markdownRetryAfterSeconds is the baseline Retry-After hint sent on a 202
+// (and on a "processing" status response). The client treats it as a lower
+// bound and layers its own capped exponential backoff + jitter on top, so
+// this only needs to be a sane floor — small enough that a quick conversion
+// is picked up promptly, large enough not to hammer the API.
+const markdownRetryAfterSeconds = 5
+
+// markdownContentPath / markdownStatusPath build the relative URLs the
+// client resolves against its own base URL. arxiv_id is already validated
+// (no control chars / spaces) so it's safe to embed unescaped, consistent
+// with the other /api/papers/* handlers.
+func markdownContentPath(canonical string) string {
+	return "/api/papers/" + canonical + "/markdown"
+}
+
+func markdownStatusPath(canonical string) string {
+	return "/api/papers/" + canonical + "/markdown/status"
+}
+
+// markdownProcessing writes the 202 Accepted response for an in-flight
+// conversion, including the Operation-Location + Retry-After headers.
+func markdownProcessing(re *core.RequestEvent, canonical string, job *mineru.Job) error {
+	re.Response.Header().Set("Operation-Location", markdownStatusPath(canonical))
+	re.Response.Header().Set("Retry-After", strconv.Itoa(markdownRetryAfterSeconds))
+	return re.JSON(http.StatusAccepted, map[string]any{
+		"arxiv_id":   canonical,
+		"status":     "processing",
+		"state":      job.State,
+		"started_at": job.StartedAt.UTC().Format(time.RFC3339),
+		"status_url": markdownStatusPath(canonical),
+		"detail":     "markdown is being generated by MinerU; poll the status_url (or Operation-Location header) until status==done, then GET the markdown endpoint",
+	})
+}
+
+// markdownStatusHandler answers GET /api/papers/{arxiv_id}/markdown/status.
+//
+// This is the side-effect-free operation resource (Azure/Google AIP style):
+// it never starts a conversion and never requires a PDF — it only reports
+// the current state. It therefore *always* returns HTTP 200; the outcome is
+// carried in the body's "status" field:
+//
+//   - done         → markdown is cached; "markdown_url" points at it.
+//   - processing   → a conversion is queued/running (+ Retry-After header).
+//   - failed       → the last conversion attempt failed ("error" set).
+//   - not_started  → no conversion has been requested yet (GET the markdown
+//     endpoint to start one).
+//   - unavailable  → server-side conversion isn't configured (no token).
+//
+// 200-wrapping a "failed" state is intentional: the GET on the operation
+// resource itself succeeded, so the HTTP status reflects the query, not the
+// operation outcome (which lives in the body). The markdown content
+// endpoint keeps the louder 502 for "I asked for markdown and couldn't get
+// it".
+func markdownStatusHandler(re *core.RequestEvent, store objstore.Store, converter *mineru.Converter, arxivID string) error {
+	ctx := re.Request.Context()
+	canonical, ok := paperassets.ValidateUploadID(arxivID)
+	if !ok {
+		return re.JSON(http.StatusBadRequest, map[string]string{
+			"detail": fmt.Sprintf("invalid arxiv_id: %q (version suffix vN required)", arxivID),
+		})
+	}
+
+	// Cache hit wins regardless of in-process job state (covers the case
+	// where markdown was produced in a previous process / by a contributor
+	// and our job map is empty after a restart).
+	if mdKey := resolveMarkdownKey(ctx, store, canonical); mdKey != "" {
+		return re.JSON(http.StatusOK, map[string]any{
+			"arxiv_id":     canonical,
+			"status":       "done",
+			"markdown_url": markdownContentPath(canonical),
+		})
+	}
+
+	if converter != nil {
+		if job := converter.Lookup(canonical); job != nil {
+			switch job.State {
+			case mineru.StateDone:
+				// Job says done but cache missed above — unusual, but
+				// report done + point at the content endpoint anyway.
+				return re.JSON(http.StatusOK, map[string]any{
+					"arxiv_id":     canonical,
+					"status":       "done",
+					"markdown_url": markdownContentPath(canonical),
+					"finished_at":  job.FinishedAt.UTC().Format(time.RFC3339),
+					"image_count":  job.ImageCount,
+				})
+			case mineru.StateFailed:
+				return re.JSON(http.StatusOK, map[string]any{
+					"arxiv_id":    canonical,
+					"status":      "failed",
+					"error":       job.Err,
+					"finished_at": job.FinishedAt.UTC().Format(time.RFC3339),
+					"detail":      "MinerU conversion failed; it will be retried on a later request to the markdown endpoint",
+				})
+			default: // queued / running
+				re.Response.Header().Set("Retry-After", strconv.Itoa(markdownRetryAfterSeconds))
+				return re.JSON(http.StatusOK, map[string]any{
+					"arxiv_id":   canonical,
+					"status":     "processing",
+					"state":      job.State,
+					"started_at": job.StartedAt.UTC().Format(time.RFC3339),
+				})
+			}
+		}
+	}
+
+	if converter == nil || !converter.Enabled() {
+		return re.JSON(http.StatusOK, map[string]any{
+			"arxiv_id": canonical,
+			"status":   "unavailable",
+			"detail":   "server-side MinerU conversion is not configured (MINERU_API_TOKEN unset); markdown is only served from cache",
+		})
+	}
+
+	return re.JSON(http.StatusOK, map[string]any{
+		"arxiv_id": canonical,
+		"status":   "not_started",
+		"detail":   "no conversion has been requested; GET /api/papers/{arxiv_id}/markdown to start one",
+	})
+}
+
+// resolveMarkdownKey returns the object key of the paper's cached markdown,
+// or "" when none exists. It tries the canonical key first (cheap Stat)
+// then falls back to the candidate-stem resolver.
+func resolveMarkdownKey(ctx context.Context, store objstore.Store, canonical string) string {
+	mdKey := paperassets.AssetKey("markdown", canonical)
+	if _, exists, err := store.Stat(ctx, mdKey); err == nil && exists {
+		return mdKey
+	}
+	if resolved := paperassets.ResolveAssetsViaStore(ctx, store, canonical); resolved.MarkdownPath != "" {
+		return resolved.MarkdownPath
+	}
+	return ""
+}
+
+// requirePDF returns nil when a PDF for canonical is present in the store,
+// else a descriptive error.
+func requirePDF(ctx context.Context, store objstore.Store, canonical string) error {
+	pdfKey := paperassets.AssetKey("pdf", canonical)
+	if _, exists, err := store.Stat(ctx, pdfKey); err == nil && exists {
+		return nil
+	}
+	if resolved := paperassets.ResolveAssetsViaStore(ctx, store, canonical); resolved.PDFPath != "" {
+		return nil
+	}
+	return fmt.Errorf("no PDF in raw storage for %s; upload it first via /api/papers/{arxiv_id}/upload-pdf", canonical)
+}
+
+// streamMarkdown copies the stored markdown object to the response with the
+// correct content type.
+func streamMarkdown(re *core.RequestEvent, store objstore.Store, mdKey string) error {
+	rc, info, err := store.Get(re.Request.Context(), mdKey)
+	if err != nil {
+		if objstore.IsNotFound(err) {
+			return re.JSON(http.StatusNotFound, map[string]string{"detail": "markdown not found"})
+		}
+		return re.JSON(http.StatusInternalServerError, map[string]string{"detail": "read markdown: " + err.Error()})
+	}
+	defer rc.Close()
+	re.Response.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	if info.Size > 0 {
+		re.Response.Header().Set("Content-Length", strconv.FormatInt(info.Size, 10))
+	}
+	re.Response.WriteHeader(http.StatusOK)
+	_, err = io.Copy(re.Response, rc)
+	return err
 }
 
 // ---------------------------------------------------------------------------

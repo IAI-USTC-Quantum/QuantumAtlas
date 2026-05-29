@@ -1,13 +1,27 @@
 # 用 MinerU 解析 PDF
 
-`qatlas mineru` 用**你自己的 `MINERU_API_TOKEN`** 在本地跑 [MinerU](https://mineru.net) 解析 server 上已有的 PDF，然后把 Markdown 推回。
+`qatlas mineru` 用**你自己的 `MINERU_API_TOKEN`** 在本地跑 [MinerU](https://mineru.net) 解析 server 上已有的 PDF，然后把 Markdown 推回。这是**贡献者主动用自己配额贡献解析能力**的方式。
 
-为什么不在 server 端解析？两个原因：
+另有一条 **server 端静默转换**路径并存（见下）：拿 Markdown 时如果没缓存，server 会用**自己的** token 在后台静默转换，调用方轮询直到 ready。两条路互不冲突——前者是"我出配额帮库攒资产"，后者是"我只想读，库帮我转"。
 
-1. **配额属于触发者**——一个共享 server 配置 token 容易被滥用
-2. **server 不挂在 MinerU 上**——一个慢解析不能拖死 server
+## server 端静默转换（`qatlas markdown` / `GET /api/papers/{id}/markdown`）
 
-## 前置条件
+```bash
+qatlas markdown 2501.00010v1          # 有缓存直接给；无缓存 server 静默转，client 轮询
+qatlas markdown 2501.00010v1 -o out.md
+```
+
+- 用 server `.env` 的 `MINERU_API_TOKEN`，**调用方无需自己的 token / `papers:write` scope**（开放读）
+- 无缓存 → server 后台起转换 + 立即回 `202`，client 轮询直到 `200`
+- 产出的 markdown + images 落对象存储，下次直接命中缓存
+- 适合"只想读 markdown"的用户；要主动用自己配额贡献则用下面的 `qatlas mineru`
+
+为什么还保留 `qatlas mineru` 这条贡献者路径？
+
+1. **配额归属**——贡献者用自己的 token 跑，不吃 server 共享配额
+2. **批量贡献**——队列模式可一次攒很多篇，主动暖缓存
+
+## 前置条件（`qatlas mineru`）
 
 ```bash
 # 1. PAT 带 papers:write

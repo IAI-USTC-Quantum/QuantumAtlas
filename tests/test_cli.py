@@ -287,3 +287,189 @@ def test_ingest_client_refuses_silent_parser_default(monkeypatch, capsys):
     captured_output = capsys.readouterr()
     assert "--parser" in captured_output.err
 
+
+# ---------------------------------------------------------------------------
+# qatlas markdown (server-side silent MinerU conversion, client side)
+# ---------------------------------------------------------------------------
+
+from qatlas.client import markdown as markdown_cli  # noqa: E402
+
+
+def test_markdown_command_registered_and_client_friendly(capsys):
+    assert "markdown" in cli.COMMANDS
+    assert cli.COMMANDS["markdown"].client_friendly is True
+    result = cli.main(["--help"])
+    captured = capsys.readouterr()
+    client_section, _ = captured.out.split("  Local workspace commands:")
+    assert result == 0
+    assert "markdown" in client_section
+
+
+class _FakeResp:
+    def __init__(self, status_code, *, text="", payload=None, headers=None):
+        self.status_code = status_code
+        self.text = text
+        self.reason = ""
+        self._payload = payload
+        self.headers = headers or {}
+
+    def json(self):
+        if self._payload is None:
+            raise ValueError("no json")
+        return self._payload
+
+
+def test_markdown_cache_hit_prints_to_stdout(monkeypatch, capsys):
+    def fake_get(url, headers, timeout, verify):
+        assert url == "https://server/api/papers/2501.00010v1/markdown"
+        return _FakeResp(200, text="# Hello\n")
+
+    monkeypatch.setattr(markdown_cli.requests, "get", fake_get)
+    result = markdown_cli.main(["2501.00010v1", "--base-url", "https://server"])
+    out = capsys.readouterr().out
+    assert result == 0
+    assert out == "# Hello\n"
+
+
+def test_markdown_polls_status_resource_until_ready(monkeypatch, capsys):
+    """First GET on the content endpoint returns 202 + Operation-Location;
+    the client then polls the *status* resource until it reports done, and
+    finally fetches the content once more."""
+    state = {"triggered": False, "status_polls": 0, "urls": []}
+
+    def fake_get(url, headers, timeout, verify):
+        state["urls"].append(url)
+        if url.endswith("/markdown/status"):
+            state["status_polls"] += 1
+            if state["status_polls"] < 2:
+                return _FakeResp(
+                    200,
+                    payload={"status": "processing", "state": "running"},
+                    headers={"Retry-After": "5"},
+                )
+            return _FakeResp(
+                200,
+                payload={
+                    "status": "done",
+                    "markdown_url": "/api/papers/2501.00010v1/markdown",
+                },
+            )
+        # content endpoint
+        if not state["triggered"]:
+            state["triggered"] = True
+            return _FakeResp(
+                202,
+                payload={"status": "processing", "state": "running"},
+                headers={
+                    "Operation-Location": "/api/papers/2501.00010v1/markdown/status",
+                    "Retry-After": "5",
+                },
+            )
+        return _FakeResp(200, text="# Done\n")
+
+    monkeypatch.setattr(markdown_cli.requests, "get", fake_get)
+    monkeypatch.setattr(markdown_cli.time, "sleep", lambda _s: None)
+
+    result = markdown_cli.main(
+        ["2501.00010v1", "--base-url", "https://server", "--poll-interval", "0"]
+    )
+    out = capsys.readouterr().out
+    assert result == 0
+    assert out == "# Done\n"
+    # Polled the status resource (not the content endpoint) while waiting.
+    assert state["status_polls"] == 2
+    assert "https://server/api/papers/2501.00010v1/markdown/status" in state["urls"]
+
+
+def test_markdown_respects_retry_after_as_floor(monkeypatch):
+    """The server's Retry-After hint floors the client's poll sleep."""
+    resp = _FakeResp(202, headers={"Retry-After": "9"})
+    assert markdown_cli._parse_retry_after(resp) == 9.0
+    # base/cap small, but Retry-After (9s) raises the floor before jitter;
+    # jitter is +-20%, so the result is at least 9 * 0.8.
+    monkeypatch.setattr(markdown_cli.random, "random", lambda: 0.0)  # max negative jitter
+    sleep = markdown_cli._next_sleep(0, base=0.0, cap=1.0, retry_after=9.0)
+    assert sleep >= 9.0 * (1 - markdown_cli._JITTER_FRACTION) - 1e-9
+
+
+def test_markdown_status_url_prefers_operation_location(monkeypatch):
+    resp = _FakeResp(
+        202, headers={"Operation-Location": "/api/papers/2501.00010v1/markdown/status"}
+    )
+    url = markdown_cli._resolve_status_url("https://server", "2501.00010v1", resp)
+    assert url == "https://server/api/papers/2501.00010v1/markdown/status"
+    # Absolute Operation-Location is honoured as-is.
+    resp_abs = _FakeResp(202, headers={"Operation-Location": "https://edge/x/status"})
+    assert (
+        markdown_cli._resolve_status_url("https://server", "2501.00010v1", resp_abs)
+        == "https://edge/x/status"
+    )
+    # No header → conventional path.
+    resp_none = _FakeResp(202)
+    assert (
+        markdown_cli._resolve_status_url("https://server", "2501.00010v1", resp_none)
+        == "https://server/api/papers/2501.00010v1/markdown/status"
+    )
+
+
+def test_markdown_no_wait_returns_tempfail(monkeypatch, capsys):
+    def fake_get(url, headers, timeout, verify):
+        return _FakeResp(
+            202,
+            payload={"status": "processing", "state": "queued"},
+            headers={"Operation-Location": "/api/papers/2501.00010v1/markdown/status"},
+        )
+
+    monkeypatch.setattr(markdown_cli.requests, "get", fake_get)
+    result = markdown_cli.main(
+        ["2501.00010v1", "--base-url", "https://server", "--no-wait"]
+    )
+    err = capsys.readouterr().err
+    assert result == markdown_cli.EXIT_PENDING
+    assert "still converting" in err
+
+
+def test_markdown_failed_conversion_at_content_reports_error(monkeypatch, capsys):
+    def fake_get(url, headers, timeout, verify):
+        return _FakeResp(502, payload={"status": "failed", "error": "boom"})
+
+    monkeypatch.setattr(markdown_cli.requests, "get", fake_get)
+    result = markdown_cli.main(["2501.00010v1", "--base-url", "https://server"])
+    err = capsys.readouterr().err
+    assert result == markdown_cli.EXIT_FAILED
+    assert "boom" in err
+
+
+def test_markdown_failed_during_polling_reports_error(monkeypatch, capsys):
+    """202 to start, then the status resource reports failed."""
+    state = {"triggered": False}
+
+    def fake_get(url, headers, timeout, verify):
+        if url.endswith("/markdown/status"):
+            return _FakeResp(200, payload={"status": "failed", "error": "mineru exploded"})
+        state["triggered"] = True
+        return _FakeResp(
+            202,
+            payload={"status": "processing"},
+            headers={"Operation-Location": "/api/papers/2501.00010v1/markdown/status"},
+        )
+
+    monkeypatch.setattr(markdown_cli.requests, "get", fake_get)
+    monkeypatch.setattr(markdown_cli.time, "sleep", lambda _s: None)
+    result = markdown_cli.main(["2501.00010v1", "--base-url", "https://server"])
+    err = capsys.readouterr().err
+    assert result == markdown_cli.EXIT_FAILED
+    assert "mineru exploded" in err
+
+
+def test_markdown_writes_to_output_file(monkeypatch, tmp_path, capsys):
+    def fake_get(url, headers, timeout, verify):
+        return _FakeResp(200, text="# File\n")
+
+    monkeypatch.setattr(markdown_cli.requests, "get", fake_get)
+    out_file = tmp_path / "paper.md"
+    result = markdown_cli.main(
+        ["2501.00010v1", "--base-url", "https://server", "-o", str(out_file)]
+    )
+    assert result == 0
+    assert out_file.read_text(encoding="utf-8") == "# File\n"
