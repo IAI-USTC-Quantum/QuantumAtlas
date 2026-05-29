@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.5.0 (2026-05-29)
+
+### Feat
+
+- **graph**: gate /api/graph/* with authGuard + graph:read scope
+- **wiki**: Wikipedia-style refactor — concept-only model, source hiding, paper stats, math + wikilinks
+- **mineru**: server-side silent markdown conversion with async status resource
+- **parser**: restore DOI resolver package and wire into wiki enrich-doi
+
+### Fix
+
+- **wiki**: gate POST /api/wiki/sync/pull behind wiki:write scope
+- **ci**: switch release.yml trigger from path-push to tag-push (qalgo style)
+
+### Refactor
+
+- **web**: remove dead in-page ingest button
+- **qatlas**: remove client-side Neo4j coupling
+
 ## v0.4.0 (2026-05-29)
 
 ### Feat
