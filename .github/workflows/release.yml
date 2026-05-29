@@ -1,22 +1,27 @@
 name: Tag and publish release
 
-# Why this trigger surface:
+# Trigger surface — qalgo style:
 #   - workflow_dispatch    — manual re-run from the Actions tab.
-#   - push paths           — local `cz bump` lands pyproject.toml +
-#                            CHANGELOG.md changes on main; this kicks off
-#                            tag creation + multi-target publishing.
-# We intentionally do NOT use `on: push: tags`. The tag is created BY
-# this workflow (so the release == "everything bumped to vX.Y.Z lands on
-# main" rather than "someone manually tagged"). Matches qalgo's spirit
-# but driven by version-file changes instead of pre-tagging.
+#   - push tags v*.*.*    — user creates a tag locally with `cz bump
+#                           && git push origin v<X.Y.Z>` (or any tag of
+#                           the right shape) and that's the ONLY thing
+#                           that fires a release.
+#
+# We previously triggered on pyproject.toml / CHANGELOG.md path-pushes
+# and let this workflow create the tag itself. That trigger surface
+# fired on ANY unrelated commit that happened to touch those files
+# (e.g. a refactor that drops a dependency from pyproject) — and when
+# the version string wasn't bumped, the "validate-tag" step would red
+# the run with a confusing "tag exists at different SHA" error. The
+# qalgo pattern (only push:tags triggers) makes the operator the
+# explicit "I want a release" actor: no tag push → no workflow run →
+# no spurious red CI badge. See .github/copilot-instructions.md
+# "Release / publish 流水" + "🛑 cz bump 上线前置 checklist" sections.
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
-    paths:
-      - pyproject.toml
-      - CHANGELOG.md
+    tags:
+      - 'v*.*.*'
 
 # Top-level permissions are read-only; each job opts in to what it needs.
 # Trusted Publishing in pypi-publish requires id-token: write at the JOB
@@ -26,22 +31,23 @@ permissions:
 
 jobs:
   # --------------------------------------------------------------------
-  # 1. prep — single ubuntu job that does version + tag validation.
-  #    Cheap (~5 s), single source of truth for the rest of the workflow.
-  #    Splitting it out keeps the matrix jobs from each running their own
-  #    redundant tag-validation step.
+  # 1. prep — single ubuntu job: parse version from the just-pushed tag,
+  #    sanity-check it matches pyproject.toml, and emit it as an output
+  #    other jobs depend on.
   # --------------------------------------------------------------------
   prep:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
-      tag_exists: ${{ steps.tag.outputs.exists }}
 
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          # The push:tags trigger sets github.ref to refs/tags/v<X.Y.Z>;
+          # checkout the tag (not main) so we build the exact code the
+          # tag points at, not whatever moved on main since.
+          ref: ${{ github.ref }}
           fetch-depth: 0
           fetch-tags: true
 
@@ -49,34 +55,28 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Get release version
+      - name: Resolve and validate release version
         id: version
         run: |
-          VERSION="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
-          TAG="v${VERSION}"
+          set -euo pipefail
+          # Tag was pushed by the operator — github.ref_name is e.g. "v0.4.0".
+          TAG="${GITHUB_REF_NAME}"
+          # Strip the leading 'v' for the bare version string used in
+          # filenames / Python wheel metadata.
+          VERSION="${TAG#v}"
+
+          # Cross-check: pyproject.toml's version must match the tag.
+          # cz bump always keeps them in lock-step; if they're out of
+          # sync the operator forgot a step (cz bump but didn't push
+          # the right tag, or pushed a hand-typed tag that doesn't
+          # match the committed version).
+          PYPROJECT_VERSION="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          if [ "$VERSION" != "$PYPROJECT_VERSION" ]; then
+            echo "tag $TAG (version=$VERSION) does not match pyproject.toml version $PYPROJECT_VERSION" >&2
+            exit 1
+          fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=$TAG" >> $GITHUB_OUTPUT
-
-      # Pre-flight check: refuse to re-release the same version against a
-      # different SHA. If the tag already exists at HEAD's SHA, downstream
-      # jobs treat exists=true (Create release tag step gets skipped).
-      - name: Validate release tag
-        id: tag
-        run: |
-          set -euo pipefail
-          TAG="${{ steps.version.outputs.tag }}"
-          HEAD_SHA="$(git rev-parse HEAD)"
-
-          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
-            TAG_SHA="$(git rev-list -n 1 "$TAG")"
-            if [ "$TAG_SHA" != "$HEAD_SHA" ]; then
-              echo "$TAG already exists at $TAG_SHA, but main is at $HEAD_SHA" >&2
-              exit 1
-            fi
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
 
   # --------------------------------------------------------------------
   # 2. python-build — wheel + sdist, single ubuntu job (Python builds
@@ -89,7 +89,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.ref }}
           fetch-depth: 0
           fetch-tags: true
 
@@ -173,7 +173,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.ref }}
           fetch-depth: 0
           fetch-tags: true
 
@@ -251,7 +251,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.ref }}
           fetch-depth: 0
           fetch-tags: true
 
@@ -313,15 +313,6 @@ jobs:
           if [ ! -s /tmp/changelog.txt ]; then
             echo "Version $VERSION" > /tmp/changelog.txt
           fi
-
-      - name: Create release tag
-        if: needs.prep.outputs.tag_exists == 'false'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "${{ needs.prep.outputs.tag }}" \
-                  -m "Release ${{ needs.prep.outputs.tag }}"
-          git push origin "${{ needs.prep.outputs.tag }}"
 
       - name: Create Release
         uses: softprops/action-gh-release@v2

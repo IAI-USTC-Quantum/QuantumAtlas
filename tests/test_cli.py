@@ -37,13 +37,16 @@ def test_commitizen_uses_pyproject_version_and_v_tags():
 
 
 def test_release_workflow_publishes_python_and_go_artifacts():
-    """release.yml builds wheels + Go binaries, tags on main, publishes to GitHub + PyPI."""
+    """release.yml builds wheels + Go binaries, triggers on tag push, publishes to GitHub + PyPI."""
     release_workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
 
-    # Tag + GitHub release creation
+    # Trigger surface (qalgo-style: user pushes a v*.*.* tag → workflow
+    # fires). We deliberately do NOT trigger on branch pushes anymore —
+    # that surface fired spurious red badges every time an unrelated
+    # commit touched pyproject.toml without bumping the version. See the
+    # block comment at the top of release.yml for the full story.
     assert "Tag and publish release" in release_workflow
-    assert "- main" in release_workflow
-    assert "Create release tag" in release_workflow
+    assert "'v*.*.*'" in release_workflow
     assert "softprops/action-gh-release@v2" in release_workflow
 
     # 5-job DAG (renamed from earlier 3-job split: prep+python+binary
