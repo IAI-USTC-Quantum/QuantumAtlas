@@ -342,16 +342,17 @@ func fetchArxivMetadata(ctx context.Context, store objstore.Store, key string) (
 		return paperindex.JSONMetadata{}, false
 	}
 	var parsed struct {
-		Title      string   `json:"title"`
-		Abstract   string   `json:"abstract"`
-		Authors    string   `json:"authors"`
-		Categories string   `json:"categories"`
-		Submitter  string   `json:"submitter"`
-		UpdateDate string   `json:"update_date"`
+		Title      string `json:"title"`
+		Abstract   string `json:"abstract"`
+		Authors    string `json:"authors"`
+		Categories string `json:"categories"`
+		Submitter  string `json:"submitter"`
+		UpdateDate string `json:"update_date"`
 		// authors_parsed is [[lastName, firstName, suffix], ...]; we
 		// don't need it when `authors` (the joined string) is already
 		// present in the same record, which the PoC scrape confirmed.
-		_ []any `json:"authors_parsed"`
+		// json.Unmarshal silently ignores unknown fields by default,
+		// so listing this here as a documenting comment is enough.
 	}
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		return paperindex.JSONMetadata{}, false
