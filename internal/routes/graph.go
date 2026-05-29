@@ -10,6 +10,7 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/neo4j"
 
+	"github.com/casbin/casbin/v2"
 	"github.com/pocketbase/pocketbase/core"
 )
 
@@ -20,8 +21,34 @@ import (
 // but the existing UI relies on this loose contract to render a friendly
 // "Neo4j not configured" banner instead of a generic crash page. We
 // preserve that behavior here.
-func RegisterGraph(se *core.ServeEvent, cfg *config.Config) {
-	se.Router.GET("/api/graph/stats", func(re *core.RequestEvent) error {
+//
+// Auth: unlike the wiki read endpoints (which stay public because the
+// wiki is a public git repo), all three graph endpoints are gated by
+// authGuard + scopeGuard("graph", "read"). Two reasons the graph is
+// treated as more sensitive than the wiki:
+//
+//  1. Consistency. Every other non-public-repo surface goes through the
+//     same authGuard/scopeGuard pair; the graph had been the lone
+//     unauthenticated exception. Closing it removes a "why is this one
+//     different?" footgun.
+//
+//  2. /api/graph/query executes caller-supplied Cypher. It is read-only
+//     (ExecuteRead refuses writes at the driver level) but otherwise
+//     unconstrained: there is no query-cost ceiling, so a pathological
+//     query (e.g. an unbounded cartesian product) can pin Neo4j. We
+//     deliberately do NOT add a cost limiter — once a caller is past
+//     authGuard they are a trusted insider (a signed-in user or a PAT
+//     holder who explicitly opted into graph:read), and the same person
+//     could run the same query straight against Bolt. The accepted risk
+//     and its rationale are documented in docs/concepts/auth-model.md
+//     and docs/deployment/neo4j.md so operators know the only mitigation
+//     is revoking the offending credential.
+//
+// Browser users are unaffected: session tokens carry the implicit
+// ScopeMaster and short-circuit the scope check. PAT callers must mint a
+// token with graph:read.
+func RegisterGraph(se *core.ServeEvent, cfg *config.Config, enforcer *casbin.Enforcer) {
+	se.Router.GET("/api/graph/stats", scopeGuard(enforcer, "graph", "read", func(re *core.RequestEvent) error {
 		ctx, cancel := context.WithTimeout(re.Request.Context(), 10*time.Second)
 		defer cancel()
 
@@ -56,9 +83,9 @@ func RegisterGraph(se *core.ServeEvent, cfg *config.Config) {
 			"labels":        labels,
 			"label_counts":  labelCounts,
 		})
-	})
+	}))
 
-	se.Router.POST("/api/graph/query", func(re *core.RequestEvent) error {
+	se.Router.POST("/api/graph/query", scopeGuard(enforcer, "graph", "read", func(re *core.RequestEvent) error {
 		ctx, cancel := context.WithTimeout(re.Request.Context(), 30*time.Second)
 		defer cancel()
 
@@ -97,9 +124,9 @@ func RegisterGraph(se *core.ServeEvent, cfg *config.Config) {
 			"query":   body.Query,
 			"records": records,
 		})
-	})
+	}))
 
-	se.Router.GET("/api/graph/schema", func(re *core.RequestEvent) error {
+	se.Router.GET("/api/graph/schema", scopeGuard(enforcer, "graph", "read", func(re *core.RequestEvent) error {
 		ctx, cancel := context.WithTimeout(re.Request.Context(), 10*time.Second)
 		defer cancel()
 
@@ -120,5 +147,5 @@ func RegisterGraph(se *core.ServeEvent, cfg *config.Config) {
 			"labels":             labels,
 			"relationship_types": relTypes,
 		})
-	})
+	}))
 }

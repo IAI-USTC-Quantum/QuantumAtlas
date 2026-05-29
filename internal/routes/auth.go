@@ -24,10 +24,12 @@
 // caller goes through the same auth surface and ends up with a per-
 // user record on re.Auth.
 //
-// Read endpoints (wiki, pages, stats, search, graph, /api/server/info,
-// /api/oauth2-redirect, /share/{token}, /api/health) stay open without
-// auth. The wiki repo is public so no sensitive data leaks; only
-// write-side abuse of the public surface needs blocking.
+// Read endpoints that stay open without auth (wiki, pages, stats,
+// search, /api/server/info, /api/oauth2-redirect, /share/{token},
+// /api/health) do so because the wiki repo is public so no sensitive
+// data leaks. The graph endpoints are the exception: they require
+// authGuard + scopeGuard("graph", "read") — see internal/routes/graph.go
+// for why the graph is treated as more sensitive than the wiki.
 //
 // Two further wrappers layer on top of authGuard:
 //

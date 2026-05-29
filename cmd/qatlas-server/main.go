@@ -449,8 +449,10 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// Wiki / pages / stats / search / lint — see internal/routes/wiki.go.
 	routes.RegisterWiki(se, cfg, wikiCache)
 
-	// Graph (Neo4j) — see internal/routes/graph.go.
-	routes.RegisterGraph(se, cfg)
+	// Graph (Neo4j) — see internal/routes/graph.go. Gated by
+	// authGuard + scopeGuard("graph", "read") so it matches the rest
+	// of the non-public-repo surface; sessions bypass via ScopeMaster.
+	routes.RegisterGraph(se, cfg, enforcer)
 
 	// Papers (resources, upload, mineru-claim) — see internal/routes/papers.go.
 	routes.RegisterPapers(se, cfg, rawStore, shareStore, claimStore, paperIndex, mineruConverter, enforcer)

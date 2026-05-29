@@ -191,6 +191,22 @@ curl -X POST https://<server>/api/graph/query \
 - 磁盘：少于 100 MB
 - Bolt connection pool：默认 100，QuantumAtlas 没有持续高并发图查询，不需要调
 
+## 安全：`/api/graph/query` 的 Cypher 无代价上限（已接受的风险）
+
+`/api/graph/*` 全部要 `authGuard + graph:read`（详见 [鉴权模型](../concepts/auth-model.md)），
+不再对匿名开放。但 `/api/graph/query` 接收调用方提供的 Cypher，**只做只读约束
+（`ExecuteRead`），不设查询代价上限**。一条病态查询（如无界笛卡尔积、深层变长路径）
+能吃满 Neo4j CPU / 内存。
+
+**这是明确的设计取舍，不是待修复项**：过了 `graph:read` 鉴权即「自己人」（登录用户
+或显式勾了 `graph:read` 的 PAT 持有者），同一个人本就能直连 Bolt 跑同样的查询，应用层
+加限制器只增复杂度、挡不住真想跑重查询的人。运维侧的缓解手段：
+
+- **撤销凭据**：删掉出问题的 PAT（`DELETE /api/pat/{id}`）或登出对应用户，这是唯一的应用层止血。
+- **Neo4j 侧兜底**（可选，不在 qatlas 配置范围）：`/etc/neo4j/neo4j.conf` 可设
+  `db.transaction.timeout`（事务超时）、`dbms.memory.transaction.total.max`（单事务内存上限）
+  给 JVM 自身加护栏。这属于 Neo4j 运维而非 qatlas 应用层。
+
 ## 完全不要图谱也行
 
 设 `NEO4J_URI=` 留空 / 不写。结果：

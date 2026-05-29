@@ -28,6 +28,9 @@ func TestNewEnforcer(t *testing.T) {
 		{ScopeSharesWrite, "shares", "read", true}, // write implies read
 		{ScopeSharesWrite, "shares", "write", true},
 		{ScopeSharesWrite, "papers", "write", false},
+		{ScopeGraphRead, "graph", "read", true},
+		{ScopeGraphRead, "papers", "write", false},
+		{ScopePapersWrite, "graph", "read", false},
 		{"bogus", "papers", "write", false},
 	}
 	for _, tc := range cases {
@@ -71,6 +74,10 @@ func TestAllows(t *testing.T) {
 		// Multiple scopes are OR-ed together.
 		{"multi-scope covers union", []string{ScopePapersWrite, ScopeSharesRead}, "shares", "read", true},
 		{"multi-scope still denies uncovered", []string{ScopePapersWrite, ScopeSharesRead}, "shares", "write", false},
+
+		// Graph read is its own resource — not implied by any other scope.
+		{"graph:read covers graph/read", []string{ScopeGraphRead}, "graph", "read", true},
+		{"papers:write does not cover graph", []string{ScopePapersWrite}, "graph", "read", false},
 
 		// Master wildcard short-circuit (session-token path).
 		{"master covers anything", []string{ScopeMaster}, "papers", "write", true},

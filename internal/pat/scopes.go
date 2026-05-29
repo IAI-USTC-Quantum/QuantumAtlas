@@ -44,6 +44,7 @@ const (
 	ScopePapersWrite = "papers:write" // upload-pdf / upload-markdown / mineru-claim CRUD
 	ScopeSharesRead  = "shares:read"  // GET /api/shares/
 	ScopeSharesWrite = "shares:write" // POST/DELETE /api/shares/  (implies shares:read)
+	ScopeGraphRead   = "graph:read"   // GET /api/graph/{stats,schema} + POST /api/graph/query
 
 	// ScopeMaster is the wildcard internal-only scope assigned to
 	// PocketBase session tokens (browser users). Never accepted as
@@ -60,11 +61,12 @@ var ScopeDescription = map[string]string{
 	ScopePapersWrite: "Upload paper PDFs / Markdown and run MinerU jobs",
 	ScopeSharesRead:  "List share tokens you created",
 	ScopeSharesWrite: "Create and revoke share tokens (includes read)",
+	ScopeGraphRead:   "Read the knowledge graph (stats, schema, read-only Cypher)",
 }
 
 // AllScopes is the canonical vocabulary surfaced to clients. Keep it
 // in the order you want users to see in the SPA (most common first).
-var AllScopes = []string{ScopePapersWrite, ScopeSharesRead, ScopeSharesWrite}
+var AllScopes = []string{ScopePapersWrite, ScopeSharesRead, ScopeSharesWrite, ScopeGraphRead}
 
 // casbinModel is the in-memory casbin model. Each scope acts as its
 // own subject — the matcher just checks (scope, obj, act) equality
@@ -93,6 +95,7 @@ var scopePolicies = [][3]string{
 	{ScopeSharesRead, "shares", "read"},
 	{ScopeSharesWrite, "shares", "read"}, // write implies read
 	{ScopeSharesWrite, "shares", "write"},
+	{ScopeGraphRead, "graph", "read"},
 }
 
 // NewEnforcer constructs a fresh in-memory casbin enforcer pre-loaded
