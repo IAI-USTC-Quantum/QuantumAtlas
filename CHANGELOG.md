@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.3.0 (2026-05-29)
+
+### Feat
+
+- **paperindex**: Phase 2 — Upsert + CAS flush + RustFS event webhook
+
+### Fix
+
+- **docs**: unify wiki sync section to single #wiki-neo4j anchor
+- **docs**: swap anchor order so wiki-neo4j wins
+- **docs**: correct wiki-neo4j anchor in neo4j.md
+- **docs**: restore landing-page nav + use built-in atom logo
+- **docs**: add .gitkeep so docs/snippets/ exists on RTD checkout
+- **rtd**: pin Python to 3.12
+
 ## v0.2.9 (2026-05-29)
 
 ### Fix
