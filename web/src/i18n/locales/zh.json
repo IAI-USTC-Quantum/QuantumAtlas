@@ -47,9 +47,12 @@
     },
     "metrics": {
       "totalPages": "页面总数",
+      "entries": "词条",
       "primitives": "原语",
       "algorithms": "算法",
       "published": "已发布",
+      "downloadedPapers": "已下载论文",
+      "convertedMd": "已转换 Markdown",
       "nodes": "节点数",
       "relationships": "关系数",
       "labels": "标签数"

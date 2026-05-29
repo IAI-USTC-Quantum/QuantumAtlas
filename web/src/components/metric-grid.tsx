@@ -3,15 +3,17 @@ import {
   Boxes,
   CircleDot,
   Database,
+  FileDown,
   FileText,
   GitBranch,
   Layers3,
+  ScrollText,
   type LucideIcon,
 } from 'lucide-react'
 
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
-import { statValue, type Stats } from '@/lib/api'
+import { statValue, type PaperStats, type Stats } from '@/lib/api'
 
 export type Metric = {
   key: string
@@ -37,6 +39,10 @@ export function MetricGrid(
         loading: boolean
       }
     | {
+        paperStats: PaperStats | null | undefined
+        loading: boolean
+      }
+    | {
         nodes: number
         relationships: number
         labels: number
@@ -51,16 +57,10 @@ export function MetricGrid(
   } else if ('stats' in props) {
     items = [
       {
-        key: 'total_pages',
-        label: t('metrics.totalPages'),
-        value: props.stats?.total_pages ?? 0,
+        key: 'entries',
+        label: t('metrics.entries'),
+        value: props.stats?.entries ?? props.stats?.total_pages ?? 0,
         icon: FileText,
-      },
-      {
-        key: 'primitives',
-        label: t('metrics.primitives'),
-        value: statValue(props.stats, 'by_category', 'primitive'),
-        icon: Boxes,
       },
       {
         key: 'algorithms',
@@ -69,10 +69,31 @@ export function MetricGrid(
         icon: GitBranch,
       },
       {
+        key: 'primitives',
+        label: t('metrics.primitives'),
+        value: statValue(props.stats, 'by_category', 'primitive'),
+        icon: Boxes,
+      },
+      {
         key: 'published',
         label: t('metrics.published'),
         value: statValue(props.stats, 'by_status', 'published'),
         icon: CircleDot,
+      },
+    ]
+  } else if ('paperStats' in props) {
+    items = [
+      {
+        key: 'downloaded_papers',
+        label: t('metrics.downloadedPapers'),
+        value: props.paperStats?.has_pdf ?? 0,
+        icon: FileDown,
+      },
+      {
+        key: 'converted_md',
+        label: t('metrics.convertedMd'),
+        value: props.paperStats?.has_md ?? 0,
+        icon: ScrollText,
       },
     ]
   } else {

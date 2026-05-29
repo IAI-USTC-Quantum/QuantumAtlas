@@ -13,6 +13,21 @@
 
 核心原则：**分类和关联是两回事**。Wiki 回答“这是什么”，Graph 回答“它和什么有关”。
 
+## 统一 concept 模型（2026-05 迁移）
+
+> **破坏性变更**：原先的 `entity` / `comparison` 页面类型已合并进 **`concept`**。
+> 现在 wiki 以「concept 词条」为唯一可浏览单位（Wikipedia 风格），子类靠 `category`
+> 区分（`algorithm` / `primitive` / `technique` / `problem` / `framework` / `comparison` / …）。
+> `source`（论文）仍存在，但**不作为可浏览条目**——它只在词条的「参考文献」里被
+> `[[paper-arxiv-*]]` 引用，列表/搜索 API 默认排除（`/api/pages`、`/api/search`），
+> 详情仍可经引用点入。Graph 入口暂时在前端隐藏（路由与 `/api/graph/*` 保留）。
+>
+> 迁移脚本：`scripts/wiki_pipeline/`（内容生成）与 `scripts/migrate_wiki_types.py`
+> （type 改写）。下面各模板里的 `type: entity` / `type: comparison` 为**历史记录**，
+> 新页面一律 `type: concept` + 合适的 `category`；旧 type 常量在 Go 侧仍可解析以兼容
+> 未迁移数据，但统计与 UI 统一按 concept 处理。批量追加内容见
+> [generate-wiki-content.md](../guides/generate-wiki-content.md)。
+
 ## Wiki 页面类型
 
 ### Concepts (`wiki/concepts/`)

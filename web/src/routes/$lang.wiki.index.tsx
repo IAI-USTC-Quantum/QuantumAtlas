@@ -9,7 +9,7 @@ import { PageHeader } from '@/components/page-header'
 import { Panel } from '@/components/panel'
 import { StatusBlock } from '@/components/status-block'
 import type { PageSummary } from '@/lib/api'
-import { usePages, useStats } from '@/lib/queries'
+import { usePages, usePaperStats, useStats } from '@/lib/queries'
 import { titleCase } from '@/lib/utils'
 
 export const Route = createFileRoute('/$lang/wiki/')({
@@ -19,14 +19,19 @@ export const Route = createFileRoute('/$lang/wiki/')({
 function WikiPage() {
   const { t } = useTranslation('wiki')
   const stats = useStats()
+  const paperStats = usePaperStats()
   const pages = usePages()
+  // Wikipedia-style: every page is a concept (词条). Group by category
+  // (algorithm / primitive / zoo-section / comparison / …) so the browse
+  // surfaces meaningful sections instead of one flat list. Sources are
+  // already excluded server-side.
   const grouped = useMemo(() => {
     const map = new Map<string, PageSummary[]>()
     for (const page of pages.data?.pages ?? []) {
-      const key = page.type || 'page'
+      const key = page.category || 'other'
       map.set(key, [...(map.get(key) ?? []), page])
     }
-    return [...map.entries()]
+    return [...map.entries()].sort((a, b) => b[1].length - a[1].length)
   }, [pages.data])
 
   return (
@@ -37,16 +42,22 @@ function WikiPage() {
         copy={t('subtitle')}
       />
       <MetricGrid stats={stats.data} loading={stats.isLoading} />
+      {paperStats.data?.available && (
+        <MetricGrid
+          paperStats={paperStats.data}
+          loading={paperStats.isLoading}
+        />
+      )}
       <StatusBlock
         loading={pages.isLoading}
         error={pages.error?.message ?? ''}
         empty={!grouped.length}
       >
         <div className="space-y-4">
-          {grouped.map(([type, items]) => (
+          {grouped.map(([category, items]) => (
             <Panel
-              key={type}
-              title={`${titleCase(type)}s`}
+              key={category}
+              title={titleCase(category)}
               icon={Layers3}
               suffix={`${items.length}`}
             >

@@ -34,7 +34,13 @@
 
     ---
 
-    Concepts / Entities / Sources / Comparisons 四类页面的模板与最小可行示例。
+    统一 concept 模型下的页面模板与最小可行示例（concept + category，source 仅作引用）。
+
+-   :material-robot:{ .lg .middle } **[生成 Wiki 内容](generate-wiki-content.md)**
+
+    ---
+
+    多 subagent 读 paper → 提炼 concept → 去重合并的可复用流水线（prompt + `merge_concepts.py`）。
 
 -   :material-shield-check:{ .lg .middle } **[Lint 与 校验](lint-wiki.md)**
 

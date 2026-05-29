@@ -19,6 +19,14 @@ qatlas wiki list
 
 按用途分四类，互相通过 `[[page-id]]` 链接：
 
+!!! note "2026-05 统一 concept 模型"
+    Wiki 现以 **concept 词条**为唯一可浏览单位（Wikipedia 风格）：原 `entity` / `comparison`
+    页面的 `type` 已统一改写为 `type: concept`，子类靠 `category` 区分
+    （`algorithm` / `primitive` / `technique` / `comparison` / …）。`source`（论文）**不再作为
+    可浏览条目**，只在词条「参考文献」里被 `[[paper-arxiv-*]]` 引用（列表 / 搜索 API 默认排除）。
+    下表的 `type` 列为历史语义；**新页面一律 `type: concept` + 合适的 `category`**，目录沿用下表。
+    批量追加内容见 [生成 wiki 内容](generate-wiki-content.md)。
+
 | 类型 | 目录 | 文件名前缀 | 回答什么问题 | 同步到 Neo4j？|
 |---|---|---|---|---|
 | **Concept** | `wiki/concepts/` | `concept-*` | "这是什么概念" | ❌ |

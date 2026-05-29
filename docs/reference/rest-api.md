@@ -11,14 +11,12 @@ QuantumAtlas server 的所有 HTTP endpoint。auth 模型详见 [概念/鉴权](
 | `GET` | `/install-server.sh` | qatlas-server 安装脚本 |
 | `GET` | `/api/wiki/sync/status` | Wiki git 状态 |
 | `POST` | `/api/wiki/sync/pull` | 触发 Wiki git fast-forward pull |
-| `GET` | `/api/pages` | 列 Wiki 页面（支持 `?page_type=&status=&tags=`）|
+| `GET` | `/api/pages` | 列 Wiki 页面（支持 `?page_type=&status=&tags=`）。**默认排除 `type==source`**（Wikipedia 风格只展示 concept 词条）；显式传 `?page_type=source` 才返回 source |
 | `GET` | `/api/pages/{page_id}` | 取单页（frontmatter + content）|
-| `GET` | `/api/stats` | Wiki 统计 |
-| `GET` | `/api/search?q=&limit=` | 全文搜索 |
+| `GET` | `/api/stats` | Wiki 统计（含 `entries`=词条数、`sources`=源文献数、`by_category`、`by_status`）|
+| `GET` | `/api/search?q=&limit=` | 全文搜索。**默认排除 source**；显式传 `?include_sources=true` 才纳入 |
+| `GET` | `/api/papers/stats` | 论文资产统计（`available`、`total`、`has_pdf`=已下载、`has_md`=已转换 markdown、`has_json`、`needs_mineru`、`total_images`、`loaded_at`）；paperindex 不可用时返回 `{available:false}` |
 | `GET` | `/api/lint` | Wiki lint 报告（**当前是占位**，返回空 issues）|
-| `GET` | `/api/graph/stats` | Neo4j 节点 / 关系计数 |
-| `GET` | `/api/graph/schema` | Neo4j label / relationship type 清单 |
-| `POST` | `/api/graph/query` | 执行 Cypher（**只读**，server 端跑 `ExecuteRead`）|
 | `GET` | `/api/pat/scopes` | 列 PAT scope 词表 |
 | `GET` | `/api/papers/needs-mineru?limit=&include_claimed=` | 列等待 MinerU 解析的论文 |
 | `GET` | `/api/papers/{arxiv_id}/resources` | 列单篇论文已有的资产 |
@@ -54,6 +52,16 @@ QuantumAtlas server 的所有 HTTP endpoint。auth 模型详见 [概念/鉴权](
 | `POST` | `/api/shares/` | `shares:write` | 创建 share token |
 | `GET` | `/api/shares/` | `shares:read` | 列 share |
 | `DELETE` | `/api/shares/{token}` | `shares:write` | 撤销 |
+
+### Graph（Neo4j）
+
+| Method | Path | 鉴权 | 用途 |
+|---|---|---|---|
+| `GET` | `/api/graph/stats` | `graph:read` | Neo4j 节点 / 关系计数 |
+| `GET` | `/api/graph/schema` | `graph:read` | Neo4j label / relationship type 清单 |
+| `POST` | `/api/graph/query` | `graph:read` | 执行 Cypher（**只读**，server 端跑 `ExecuteRead`）|
+
+> Graph 端点过去是公开读口，现已收敛到 `authGuard + graph:read`，与其余非公开仓库表面一致。session token（浏览器登录）自带 `*` 自动放行；PAT 调用方需勾选 `graph:read`。
 
 ### PAT 管理（**只接受 session token**，PAT auth 被拒）
 
@@ -177,10 +185,11 @@ curl -X POST https://<server>/api/wiki/sync/pull
 
 ### `POST /api/graph/query`
 
-只读 Cypher 执行：
+只读 Cypher 执行。**需鉴权 + `graph:read` scope**（session token 自动放行）。
 
 ```bash
 curl -X POST https://<server>/api/graph/query \
+  -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
     "query": "MATCH (a:Algorithm)-[:USES]->(p:Primitive {id: \"prim-qft\"}) RETURN a.id",
@@ -201,6 +210,9 @@ curl -X POST https://<server>/api/graph/query \
 ```
 
 **Neo4j 故障时返回 200 + `{"error": "..."}`**——这是有意的，让 SPA 渲染"Neo4j 不可用"banner 而不是错误页。
+
+!!! warning "已接受的风险：Cypher 无代价上限"
+    `query` 是只读的（驱动层 `ExecuteRead` 拒绝写），但**没有查询代价上限**——理论上一条病态查询（如无界笛卡尔积）能拖垮 Neo4j。**这是有意不加限制的取舍**：过了 `graph:read` 鉴权的调用方即「自己人」（登录用户或显式勾了 `graph:read` 的 PAT 持有者），同一个人本就能直连 Bolt 跑同样的查询，加应用层限制器只是徒增复杂度而挡不住真正想跑重查询的人。唯一缓解手段是**撤销出问题的凭据**（删 PAT / 登出用户）。详见 [鉴权模型](../concepts/auth-model.md) 与 [Neo4j 部署](../deployment/neo4j.md)。
 
 ### `POST /api/shares/`
 

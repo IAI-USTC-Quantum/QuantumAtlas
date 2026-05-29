@@ -70,6 +70,9 @@ func RegisterPapers(
 		if raw == "needs-mineru" {
 			return needsMineruHandler(re, rawStore, claimStore, paperIndex)
 		}
+		if raw == "stats" {
+			return paperStatsHandler(re, paperIndex)
+		}
 		// Two-segment action "<arxiv>/markdown/status" is the side-effect-free
 		// operation resource; check it before the single-segment dispatch
 		// (otherwise splitPapersPath would peel "status" off as the action).
@@ -167,6 +170,43 @@ func splitMarkdownStatus(raw string) (arxivID string, ok bool) {
 		return "", false
 	}
 	return strings.Join(parts[:len(parts)-2], "/"), true
+}
+
+// ---------------------------------------------------------------------------
+// stats
+// ---------------------------------------------------------------------------
+
+// paperStatsHandler answers GET /api/papers/stats — a read-open endpoint
+// exposing the paperindex aggregate counters so the SPA can show
+// "downloaded papers" (has_pdf) and "converted markdown" (has_md) tiles
+// on the home/wiki pages.
+//
+// When paperIndex is nil (deployment hasn't configured the Parquet+DuckDB
+// catalog, e.g. local dev with no S3) we degrade to {available:false}
+// rather than 500 — the frontend simply hides the tiles.
+func paperStatsHandler(re *core.RequestEvent, paperIndex *paperindex.Store) error {
+	if paperIndex == nil {
+		return re.JSON(http.StatusOK, map[string]any{"available": false})
+	}
+	ctx := re.Request.Context()
+	stats, err := paperIndex.QueryStats(ctx)
+	if err != nil {
+		slog.Warn("paperindex: QueryStats failed for /api/papers/stats", "error", err)
+		return re.JSON(http.StatusOK, map[string]any{"available": false})
+	}
+	out := map[string]any{
+		"available":    true,
+		"total":        stats.Total,
+		"has_pdf":      stats.HasPDF,
+		"has_md":       stats.HasMD,
+		"has_json":     stats.HasJSON,
+		"needs_mineru": stats.NeedsMineru,
+		"total_images": stats.TotalImages,
+	}
+	if !stats.LoadedAt.IsZero() {
+		out["loaded_at"] = stats.LoadedAt.UTC().Format(time.RFC3339)
+	}
+	return re.JSON(http.StatusOK, out)
 }
 
 // ---------------------------------------------------------------------------

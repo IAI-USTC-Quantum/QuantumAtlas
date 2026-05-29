@@ -4,6 +4,7 @@ import {
   type GraphStats,
   type PageDetail,
   type PageListPayload,
+  type PaperStats,
   type SearchPayload,
   type Stats,
 } from './api'
@@ -12,6 +13,13 @@ export function useStats() {
   return useQuery({
     queryKey: ['stats'],
     queryFn: () => getJson<Stats>('/api/stats'),
+  })
+}
+
+export function usePaperStats() {
+  return useQuery({
+    queryKey: ['paper-stats'],
+    queryFn: () => getJson<PaperStats>('/api/papers/stats'),
   })
 }
 

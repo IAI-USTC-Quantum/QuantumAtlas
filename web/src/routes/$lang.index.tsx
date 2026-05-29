@@ -4,7 +4,6 @@ import {
   Activity,
   BookOpen,
   FileText,
-  Network,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -17,7 +16,7 @@ import { PageListItem } from '@/components/page-list-item'
 import { Panel } from '@/components/panel'
 import { StatusBlock } from '@/components/status-block'
 import { useLang } from '@/hooks/use-lang'
-import { usePages, useStats } from '@/lib/queries'
+import { usePages, usePaperStats, useStats } from '@/lib/queries'
 
 export const Route = createFileRoute('/$lang/')({
   component: HomePage,
@@ -28,6 +27,7 @@ function HomePage() {
   const lang = useLang()
   const navigate = useNavigate()
   const stats = useStats()
+  const paperStats = usePaperStats()
   const pages = usePages()
   const recent = (pages.data?.pages ?? []).slice(0, 5)
 
@@ -52,17 +52,17 @@ function HomePage() {
             >
               <BookOpen className="size-4" /> {t('ctaWiki')}
             </Button>
-            <Button
-              variant="secondary"
-              onClick={() => navigate({ to: '/$lang/graph', params: { lang } })}
-            >
-              <Network className="size-4" /> {t('ctaGraph')}
-            </Button>
           </div>
         </div>
       </div>
 
       <MetricGrid stats={stats.data} loading={stats.isLoading} />
+      {paperStats.data?.available && (
+        <MetricGrid
+          paperStats={paperStats.data}
+          loading={paperStats.isLoading}
+        />
+      )}
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Panel title={t('quickActions')} icon={Activity}>

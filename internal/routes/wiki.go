@@ -88,8 +88,15 @@ func RegisterWiki(se *core.ServeEvent, cfg *config.Config, cache *wiki.Cache) {
 			}
 		}
 		pages := cache.Pages(filter)
+		// Wikipedia-style browse: source pages (processed papers) are
+		// citations, not browsable entries. Exclude them from the default
+		// listing unless the caller explicitly asked for page_type=source.
+		hideSources := filter.Type == ""
 		summaries := make([]map[string]any, 0, len(pages))
 		for _, p := range pages {
+			if hideSources && p.Frontmatter.Type == wiki.TypeSource {
+				continue
+			}
 			summaries = append(summaries, map[string]any{
 				"id":       p.Frontmatter.ID,
 				"title":    p.Frontmatter.Title,
@@ -142,6 +149,8 @@ func RegisterWiki(se *core.ServeEvent, cfg *config.Config, cache *wiki.Cache) {
 		if !status["wiki"].(map[string]any)["exists"].(bool) {
 			return re.JSON(http.StatusOK, map[string]any{
 				"total_pages":     0,
+				"entries":         0,
+				"sources":         0,
 				"by_type":         map[string]int{},
 				"by_status":       map[string]int{},
 				"by_category":     map[string]int{},
@@ -150,7 +159,24 @@ func RegisterWiki(se *core.ServeEvent, cfg *config.Config, cache *wiki.Cache) {
 			})
 		}
 		stats := cache.Stats()
-		return re.JSON(http.StatusOK, &stats)
+		// "entries" = browsable wiki entries = everything except source
+		// pages (processed papers, which are citations not entries).
+		// total_pages keeps its original all-inclusive meaning for any
+		// existing consumer; the SPA reads "entries" for its tile.
+		entries := stats.TotalPages - stats.ByType[wiki.TypeSource]
+		if entries < 0 {
+			entries = 0
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"total_pages":     stats.TotalPages,
+			"entries":         entries,
+			"sources":         stats.ByType[wiki.TypeSource],
+			"by_type":         stats.ByType,
+			"by_status":       stats.ByStatus,
+			"by_category":     stats.ByCategory,
+			"synced_to_neo4j": stats.SyncedToNeo4j,
+			"needs_sync":      stats.NeedsSync,
+		})
 	})
 
 	se.Router.GET("/api/search", func(re *core.RequestEvent) error {
@@ -170,9 +196,31 @@ func RegisterWiki(se *core.ServeEvent, cfg *config.Config, cache *wiki.Cache) {
 				"results": []any{},
 			})
 		}
-		results := cache.Search(q, limit)
+		// Source pages are citations, not browsable entries — keep them
+		// out of search results unless explicitly requested. Over-fetch
+		// then filter so the post-filter result count still approaches
+		// the requested limit.
+		includeSources := re.Request.URL.Query().Get("include_sources") == "true"
+		fetch := limit
+		if !includeSources {
+			fetch = limit * 3
+		}
+		results := cache.Search(q, fetch)
 		if results == nil {
 			results = []wiki.SearchResult{}
+		}
+		if !includeSources {
+			filtered := results[:0]
+			for _, r := range results {
+				if r.Type == wiki.TypeSource {
+					continue
+				}
+				filtered = append(filtered, r)
+			}
+			results = filtered
+			if len(results) > limit {
+				results = results[:limit]
+			}
 		}
 		return re.JSON(http.StatusOK, map[string]any{
 			"query":   q,

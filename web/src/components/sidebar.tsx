@@ -4,7 +4,6 @@ import {
   BookOpen,
   Home,
   Key,
-  Network,
   Search,
   Sparkles,
   type LucideIcon,
@@ -25,11 +24,12 @@ type NavLink = {
   matchPrefix?: string
 }
 
+// Graph is intentionally omitted from nav until it's ready; the route file
+// and /api/graph backend are kept so it can be re-enabled later.
 const links: NavLink[] = [
   { to: '/$lang', labelKey: 'nav.home', icon: Home },
   { to: '/$lang/wiki', labelKey: 'nav.wiki', icon: BookOpen, matchPrefix: '/wiki' },
   { to: '/$lang/wiki/search', labelKey: 'nav.search', icon: Search },
-  { to: '/$lang/graph', labelKey: 'nav.graph', icon: Network, matchPrefix: '/graph' },
   { to: '/$lang/pat', labelKey: 'nav.pat', icon: Key },
 ]
 
