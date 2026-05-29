@@ -301,13 +301,14 @@ git push origin add-grover
 # 在 GitHub 发 PR
 ```
 
-合并到 main 后，触发 server 端 fast-forward pull：
+合并到 main 后，触发 server 端 fast-forward pull（需 `wiki:write` scope 的 PAT 或 session token）：
 
 ```bash
-curl -X POST https://quantum-atlas.ai/api/wiki/sync/pull
+curl -X POST https://quantum-atlas.ai/api/wiki/sync/pull \
+    -H "Authorization: Bearer $QATLAS_TOKEN"
 ```
 
-无需 auth——fast-forward only 没法搞破坏。
+即使是 fast-forward only，它仍会在服务端跑 git + 重建缓存，因此和其它写口一样需要鉴权，防匿名滥用。
 
 ---
 

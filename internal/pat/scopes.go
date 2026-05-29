@@ -45,6 +45,7 @@ const (
 	ScopeSharesRead  = "shares:read"  // GET /api/shares/
 	ScopeSharesWrite = "shares:write" // POST/DELETE /api/shares/  (implies shares:read)
 	ScopeGraphRead   = "graph:read"   // GET /api/graph/{stats,schema} + POST /api/graph/query
+	ScopeWikiWrite   = "wiki:write"   // POST /api/wiki/sync/pull (server-side git fast-forward)
 
 	// ScopeMaster is the wildcard internal-only scope assigned to
 	// PocketBase session tokens (browser users). Never accepted as
@@ -62,11 +63,12 @@ var ScopeDescription = map[string]string{
 	ScopeSharesRead:  "List share tokens you created",
 	ScopeSharesWrite: "Create and revoke share tokens (includes read)",
 	ScopeGraphRead:   "Read the knowledge graph (stats, schema, read-only Cypher)",
+	ScopeWikiWrite:   "Trigger server-side wiki git sync (fast-forward pull)",
 }
 
 // AllScopes is the canonical vocabulary surfaced to clients. Keep it
 // in the order you want users to see in the SPA (most common first).
-var AllScopes = []string{ScopePapersWrite, ScopeSharesRead, ScopeSharesWrite, ScopeGraphRead}
+var AllScopes = []string{ScopePapersWrite, ScopeSharesRead, ScopeSharesWrite, ScopeGraphRead, ScopeWikiWrite}
 
 // casbinModel is the in-memory casbin model. Each scope acts as its
 // own subject — the matcher just checks (scope, obj, act) equality
@@ -96,6 +98,7 @@ var scopePolicies = [][3]string{
 	{ScopeSharesWrite, "shares", "read"}, // write implies read
 	{ScopeSharesWrite, "shares", "write"},
 	{ScopeGraphRead, "graph", "read"},
+	{ScopeWikiWrite, "wiki", "write"},
 }
 
 // NewEnforcer constructs a fresh in-memory casbin enforcer pre-loaded

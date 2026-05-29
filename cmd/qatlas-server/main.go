@@ -447,7 +447,7 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// directly; CLI users pull their bearer from the /token page.)
 
 	// Wiki / pages / stats / search / lint — see internal/routes/wiki.go.
-	routes.RegisterWiki(se, cfg, wikiCache)
+	routes.RegisterWiki(se, cfg, wikiCache, enforcer)
 
 	// Graph (Neo4j) — see internal/routes/graph.go. Gated by
 	// authGuard + scopeGuard("graph", "read") so it matches the rest

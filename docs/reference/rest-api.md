@@ -10,7 +10,6 @@ QuantumAtlas server 的所有 HTTP endpoint。auth 模型详见 [概念/鉴权](
 | `GET` | `/api/server/info` | 版本 / 引擎信息 |
 | `GET` | `/install-server.sh` | qatlas-server 安装脚本 |
 | `GET` | `/api/wiki/sync/status` | Wiki git 状态 |
-| `POST` | `/api/wiki/sync/pull` | 触发 Wiki git fast-forward pull |
 | `GET` | `/api/pages` | 列 Wiki 页面（支持 `?page_type=&status=&tags=`）。**默认排除 `type==source`**（Wikipedia 风格只展示 concept 词条）；显式传 `?page_type=source` 才返回 source |
 | `GET` | `/api/pages/{page_id}` | 取单页（frontmatter + content）|
 | `GET` | `/api/stats` | Wiki 统计（含 `entries`=词条数、`sources`=源文献数、`by_category`、`by_status`）|
@@ -37,13 +36,25 @@ QuantumAtlas server 的所有 HTTP endpoint。auth 模型详见 [概念/鉴权](
 | `POST` | `/api/papers/{arxiv_id}/mineru-claim` | `papers:write` | 申请 MinerU 处理 claim |
 | `DELETE` | `/api/papers/{arxiv_id}/mineru-claim/{claim_id}` | `papers:write` | 释放 claim |
 
-### Ingest
+### Wiki
 
 | Method | Path | 鉴权 | 用途 |
 |---|---|---|---|
-| `POST` | `/api/ingest/paper` | `papers:write` | 提交 server-side ingest task |
-| `GET` | `/api/ingest/{task_id}` | `papers:write` | 查 task 状态 |
-| `POST` | `/api/ingest/{task_id}/continue` | `papers:write` | 续跑已有 task |
+| `POST` | `/api/wiki/sync/pull` | `wiki:write` | 触发服务端 Wiki git fast-forward pull（`git fetch --prune` + `git pull --ff-only`），随后同步刷新内存缓存 |
+
+### Ingest（尚未在 Go server 实现）
+
+!!! warning "未移植"
+    旧 FastAPI server 有一套异步 ingest task 队列（`POST /api/ingest/paper` 等），
+    用 arxiv_id 在线触发"下载 → 转换 → 抽概念 → 写图"。迁移到 Go server 时**未移植**——
+    当前内容追加走离线多 subagent 流水线（见 [生成 wiki 内容](../guides/generate-wiki-content.md)）。
+    下表端点**当前不存在**（请求会 404），保留仅作历史参考：
+
+| Method | Path | 状态 |
+|---|---|---|
+| `POST` | `/api/ingest/paper` | ❌ 未实现 |
+| `GET` | `/api/ingest/{task_id}` | ❌ 未实现 |
+| `POST` | `/api/ingest/{task_id}/continue` | ❌ 未实现 |
 
 ### Shares
 
@@ -162,10 +173,11 @@ QuantumAtlas server 的所有 HTTP endpoint。auth 模型详见 [概念/鉴权](
 
 ### `POST /api/wiki/sync/pull`
 
-无 auth，因为 fast-forward only，最多让 Wiki 跟上 GitHub main：
+**需鉴权 + `wiki:write` scope**（session token 自动放行）。即使是 fast-forward only，它仍会在服务端跑 git 子进程并重建内存缓存，因此和其它写口一样门禁，避免被匿名滥用：
 
 ```bash
-curl -X POST https://<server>/api/wiki/sync/pull
+curl -X POST https://<server>/api/wiki/sync/pull \
+    -H "Authorization: Bearer $QATLAS_TOKEN"
 ```
 
 响应：

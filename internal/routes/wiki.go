@@ -16,6 +16,7 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/wiki"
 
+	"github.com/casbin/casbin/v2"
 	"github.com/pocketbase/pocketbase/core"
 )
 
@@ -27,12 +28,18 @@ import (
 // paths go through the cache; only /api/wiki/sync/pull writes (then
 // refreshes the cache synchronously so callers see fresh data on the
 // next request).
-func RegisterWiki(se *core.ServeEvent, cfg *config.Config, cache *wiki.Cache) {
+//
+// /api/wiki/sync/status is an open read endpoint (the wiki is a public
+// repo — branch/commit/ahead/behind reveal nothing sensitive), but
+// /api/wiki/sync/pull mutates server state (runs git + rebuilds the
+// cache), so it is gated behind scopeGuard("wiki", "write") just like
+// the other write endpoints.
+func RegisterWiki(se *core.ServeEvent, cfg *config.Config, cache *wiki.Cache, enforcer *casbin.Enforcer) {
 	se.Router.GET("/api/wiki/sync/status", func(re *core.RequestEvent) error {
 		return re.JSON(http.StatusOK, wikiSyncStatus(cfg))
 	})
 
-	se.Router.POST("/api/wiki/sync/pull", func(re *core.RequestEvent) error {
+	se.Router.POST("/api/wiki/sync/pull", scopeGuard(enforcer, "wiki", "write", func(re *core.RequestEvent) error {
 		dir, status := resolveWikiDir(cfg)
 		if !status["wiki"].(map[string]any)["exists"].(bool) {
 			return re.JSON(http.StatusConflict, map[string]string{"detail": "wiki directory does not exist"})
@@ -64,7 +71,7 @@ func RegisterWiki(se *core.ServeEvent, cfg *config.Config, cache *wiki.Cache) {
 			out[k] = v
 		}
 		return re.JSON(http.StatusOK, out)
-	})
+	}))
 
 	se.Router.GET("/api/pages", func(re *core.RequestEvent) error {
 		_, status := resolveWikiDir(cfg)

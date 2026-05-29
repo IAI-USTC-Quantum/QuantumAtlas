@@ -79,6 +79,10 @@ func TestAllows(t *testing.T) {
 		{"graph:read covers graph/read", []string{ScopeGraphRead}, "graph", "read", true},
 		{"papers:write does not cover graph", []string{ScopePapersWrite}, "graph", "read", false},
 
+		// Wiki write is its own resource — gates POST /api/wiki/sync/pull.
+		{"wiki:write covers wiki/write", []string{ScopeWikiWrite}, "wiki", "write", true},
+		{"papers:write does not cover wiki", []string{ScopePapersWrite}, "wiki", "write", false},
+
 		// Master wildcard short-circuit (session-token path).
 		{"master covers anything", []string{ScopeMaster}, "papers", "write", true},
 		{"master covers anything 2", []string{ScopeMaster}, "shares", "write", true},
