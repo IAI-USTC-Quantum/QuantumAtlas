@@ -57,8 +57,13 @@ var installServerScript string
 //
 //	go build -ldflags "-X main.Version=$(cat pyproject.toml ...)"
 //
-// Defaults to "0.2.2-go" so the binary always reports something useful.
-var Version = "0.2.2-go"
+// Defaults to "dev" as a sentinel — if `qatlas-server --version` or
+// /api/health reports "dev" in production, the binary was built without
+// the release pipeline's -ldflags injection (most likely a manual
+// `go build` instead of a GitHub Actions artifact). A real version
+// string like "0.2.9" should be unambiguously distinguishable from the
+// fallback so the failure mode is visible at a glance.
+var Version = "dev"
 
 func main() {
 	// Load .env BEFORE config.Load so any vars it sets win over
