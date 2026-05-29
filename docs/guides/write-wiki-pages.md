@@ -243,13 +243,9 @@ curl -X POST https://<server>/api/wiki/sync/pull
 
 ## 推回 Neo4j
 
-`POST /api/wiki/sync/pull` 完成后，server 会自动重建 Neo4j 图。手工触发：
-
-```bash
-# Python CLI 路径（开发期）
-qatlas wiki sync             # 全部 sync
-qatlas wiki sync algo-shor   # 单页 sync
-```
+知识图谱的同步是**服务端职责**。`POST /api/wiki/sync/pull` 触发 server 端
+git fast-forward 拉取 Wiki 并刷新缓存；图谱的派生由 Go ``qatlas-server`` 基于
+canonical Wiki 重建。Python 客户端不再直连 Neo4j，也没有客户端 sync 命令。
 
 ## 下一步
 

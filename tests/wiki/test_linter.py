@@ -19,7 +19,6 @@ class TestWikiLinter:
         engine = WikiEngine(
             wiki_dir=str(tmp_path / "wiki"),
             raw_dir=str(tmp_path / "raw"),
-            enable_neo4j_sync=False,
             project_root=str(tmp_path),
         )
         return engine

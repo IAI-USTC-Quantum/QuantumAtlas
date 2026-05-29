@@ -7,9 +7,6 @@ Main class for extracting algorithm information from papers using LLM.
 import os
 from typing import Any, Dict, List, Optional
 
-from qatlas.knowledge import Neo4jClient
-from qatlas.knowledge.models import Algorithm
-
 from .algorithm_ir import AlgorithmIR
 from .llm_interface import LLMInterface, TokenUsage, create_llm
 
@@ -17,19 +14,21 @@ from .llm_interface import LLMInterface, TokenUsage, create_llm
 class AlgorithmExtractor:
     """
     Extracts algorithm information from papers and manages the extraction pipeline.
-    
+
     This class orchestrates the extraction process from paper text to
-    Algorithm IR, and optionally saves results to the knowledge graph.
-    
+    Algorithm IR. Persisting results to the knowledge graph is a server-side
+    concern (the Go ``qatlas-server`` owns the Neo4j connection); the client
+    produces an :class:`AlgorithmIR` and exports it (e.g. to YAML).
+
     Usage:
         llm = create_llm("openai")
         extractor = AlgorithmExtractor(llm)
-        
+
         # Extract from paper text
         algorithm_ir = extractor.extract_from_paper("arxiv:9508027", paper_text)
-        
-        # Save to knowledge graph
-        extractor.save_to_knowledge_graph(neo4j_client, algorithm_ir)
+
+        # Export the structured result
+        extractor.export_to_yaml(algorithm_ir, "algorithm.yaml")
     """
     
     def __init__(self, llm: LLMInterface):
@@ -108,62 +107,7 @@ class AlgorithmExtractor:
         })
         
         return algorithm_ir
-    
-    def save_to_knowledge_graph(
-        self,
-        client: Neo4jClient,
-        algorithm_ir: AlgorithmIR
-    ) -> Dict[str, Any]:
-        """
-        Save extracted algorithm to Neo4j knowledge graph.
 
-        Args:
-            client: Neo4j client instance
-            algorithm_ir: Algorithm IR to save
-
-        Returns:
-            Dict with algorithm_id, paper_id, primitives_linked
-
-        Raises:
-            ValueError: If client is not connected
-        """
-        if not client.is_connected():
-            raise ValueError("Neo4j client is not connected")
-
-        print(f"Saving algorithm {algorithm_ir.id} to knowledge graph...")
-
-        # Create Algorithm node
-        algorithm = Algorithm(
-            id=algorithm_ir.id,
-            name=algorithm_ir.name,
-            description=algorithm_ir.description,
-            problem_type=algorithm_ir.problem_type,
-            complexity=algorithm_ir.complexity.to_dict(),
-            primitives_used=algorithm_ir.primitives,
-            paper_id=f"paper_{algorithm_ir.arxiv_id}" if algorithm_ir.arxiv_id else None,
-            year=algorithm_ir.year,
-        )
-
-        client.create_algorithm(algorithm)
-
-        paper_id = None
-        # Link to paper if exists
-        if algorithm_ir.arxiv_id:
-            paper_id = f"paper_{algorithm_ir.arxiv_id}"
-            try:
-                client.link_paper_to_algorithm(paper_id, algorithm_ir.id)
-                print(f"  Linked to paper {paper_id}")
-            except Exception as e:
-                print(f"  Warning: Could not link to paper: {e}")
-
-        print(f"  Saved with {len(algorithm_ir.primitives)} primitives")
-
-        return {
-            "algorithm_id": algorithm_ir.id,
-            "paper_id": paper_id,
-            "primitives_linked": algorithm_ir.primitives,
-        }
-    
     def get_extraction_stats(self) -> Dict[str, Any]:
         """Get statistics about extractions performed."""
         total_usage = self.llm.get_total_usage()

@@ -4,9 +4,9 @@ Algorithm Extractor CLI
 Command-line interface for extracting algorithms from arXiv papers.
 
 Usage:
-    python -m atlas.extractor <arxiv_id> --llm-provider openai
-    python -m atlas.extractor <arxiv_id> --llm-provider anthropic --dry-run
-    python -m atlas.extractor <arxiv_id> --output algorithm.yaml
+    python -m qatlas.extractor <arxiv_id> --llm-provider openai
+    python -m qatlas.extractor <arxiv_id> --llm-provider anthropic --dry-run
+    python -m qatlas.extractor <arxiv_id> --output algorithm.yaml
 """
 
 import os
@@ -20,7 +20,6 @@ import click
 from .llm_interface import create_llm, LLMInterface
 from .algorithm_ir import AlgorithmIR
 from .extractor import AlgorithmExtractor
-from ..knowledge.neo4j_client import Neo4jClient
 
 
 # Configure logging
@@ -50,37 +49,13 @@ def setup_logging(verbose: bool = False):
 @click.option(
     "--dry-run",
     is_flag=True,
-    help="Extract but don't save to knowledge graph"
+    help="Extract only; do not write the YAML output"
 )
 @click.option(
     "--output",
     "-o",
     type=click.Path(),
     help="Save extracted algorithm to YAML file"
-)
-@click.option(
-    "--save-to-kg",
-    is_flag=True,
-    default=False,
-    help="Save extracted algorithm to Neo4j knowledge graph"
-)
-@click.option(
-    "--neo4j-uri",
-    default=None,
-    envvar="NEO4J_URI",
-    help="Neo4j URI (default: bolt://localhost:7687)"
-)
-@click.option(
-    "--neo4j-user",
-    default=None,
-    envvar="NEO4J_USER",
-    help="Neo4j username (default: neo4j)"
-)
-@click.option(
-    "--neo4j-password",
-    default=None,
-    envvar="NEO4J_PASSWORD",
-    help="Neo4j password"
 )
 @click.option(
     "--verbose",
@@ -99,10 +74,6 @@ def main(
     model: Optional[str],
     dry_run: bool,
     output: Optional[str],
-    save_to_kg: bool,
-    neo4j_uri: Optional[str],
-    neo4j_user: Optional[str],
-    neo4j_password: Optional[str],
     verbose: bool,
     papers_dir: str,
 ):
@@ -114,23 +85,19 @@ def main(
     Examples:
         \b
         # Extract using OpenAI (default)
-        python -m atlas.extractor 9508027
+        python -m qatlas.extractor 9508027
         
         \b
         # Extract using Claude
-        python -m atlas.extractor 9508027 --llm-provider anthropic
+        python -m qatlas.extractor 9508027 --llm-provider anthropic
         
         \b
-        # Dry run - extract but don't save
-        python -m atlas.extractor 9508027 --dry-run
+        # Dry run - extract but don't write output
+        python -m qatlas.extractor 9508027 --dry-run
         
         \b
         # Save to YAML file
-        python -m atlas.extractor 9508027 --output algorithm.yaml
-        
-        \b
-        # Save to knowledge graph
-        python -m atlas.extractor 9508027 --save-to-kg
+        python -m qatlas.extractor 9508027 --output algorithm.yaml
     """
     setup_logging(verbose)
     logger = logging.getLogger(__name__)
@@ -226,31 +193,6 @@ def main(
         except Exception as e:
             click.echo(f"Error saving to YAML: {e}", err=True)
     
-    # Step 7: Save to knowledge graph if requested
-    if save_to_kg and not dry_run:
-        click.echo("\n🗄️  Saving to knowledge graph...")
-        try:
-            neo4j = Neo4jClient(
-                uri=neo4j_uri,
-                username=neo4j_user,
-                password=neo4j_password,
-            )
-            neo4j.connect()
-            
-            results = extractor.save_to_knowledge_graph(neo4j, algorithm_ir)
-            
-            click.echo(f"✓ Created Algorithm node: {results['algorithm_id']}")
-            if results['paper_id']:
-                click.echo(f"✓ Created Paper node: {results['paper_id']}")
-            if results['primitives_linked']:
-                click.echo(f"✓ Linked primitives: {', '.join(results['primitives_linked'])}")
-            
-            neo4j.close()
-        except Exception as e:
-            click.echo(f"Error saving to knowledge graph: {e}", err=True)
-            if verbose:
-                logger.exception("Knowledge graph save failed")
-    
     # Show token usage
     total_usage = extractor.get_total_token_usage()
     click.echo(f"\n📊 Token Usage:")
@@ -267,75 +209,6 @@ def cli():
     pass
 
 
-@cli.command()
-@click.argument("yaml_file", type=click.Path(exists=True))
-@click.option(
-    "--neo4j-uri",
-    default=None,
-    envvar="NEO4J_URI",
-    help="Neo4j URI"
-)
-@click.option(
-    "--neo4j-user",
-    default=None,
-    envvar="NEO4J_USER",
-    help="Neo4j username"
-)
-@click.option(
-    "--neo4j-password",
-    default=None,
-    envvar="NEO4J_PASSWORD",
-    help="Neo4j password"
-)
-@click.option("--verbose", "-v", is_flag=True)
-def import_yaml(
-    yaml_file: str,
-    neo4j_uri: Optional[str],
-    neo4j_user: Optional[str],
-    neo4j_password: Optional[str],
-    verbose: bool,
-):
-    """
-    Import an algorithm from YAML file to knowledge graph.
-    
-    YAML_FILE: Path to the YAML file containing algorithm IR
-    """
-    setup_logging(verbose)
-    
-    click.echo(f"📖 Loading algorithm from {yaml_file}...")
-    try:
-        algorithm_ir = AlgorithmIR.from_yaml(filepath=yaml_file)
-        click.echo(f"✓ Loaded: {algorithm_ir.name}")
-    except Exception as e:
-        click.echo(f"Error loading YAML: {e}", err=True)
-        sys.exit(1)
-    
-    click.echo("🗄️  Saving to knowledge graph...")
-    try:
-        neo4j = Neo4jClient(
-            uri=neo4j_uri,
-            username=neo4j_user,
-            password=neo4j_password,
-        )
-        neo4j.connect()
-        
-        # Create a dummy extractor to use save method
-        llm = create_llm("openai")  # Won't be used
-        extractor = AlgorithmExtractor(llm)
-        
-        results = extractor.save_to_knowledge_graph(neo4j, algorithm_ir)
-        
-        click.echo(f"✓ Created Algorithm node: {results['algorithm_id']}")
-        if results['paper_id']:
-            click.echo(f"✓ Created Paper node: {results['paper_id']}")
-        
-        neo4j.close()
-        click.echo("\n✅ Import complete!")
-    except Exception as e:
-        click.echo(f"Error: {e}", err=True)
-        sys.exit(1)
-
-
 # Add main command to cli group
 cli.add_command(main, name="extract")
 
@@ -343,7 +216,7 @@ cli.add_command(main, name="extract")
 if __name__ == "__main__":
     # When run directly, use the main command
     # When imported, use the cli group
-    if len(sys.argv) > 1 and sys.argv[1] in ["extract", "import-yaml"]:
+    if len(sys.argv) > 1 and sys.argv[1] == "extract":
         cli()
     else:
         main()

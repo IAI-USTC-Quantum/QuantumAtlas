@@ -21,9 +21,9 @@ def create_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python -m atlas.designer algorithm_id
-  python -m atlas.designer my_algorithm --optimization-level O2 --output circuit.json
-  python -m atlas.designer shor_factoring --param n=4 --visualize
+  python -m qatlas.designer algorithm_id
+  python -m qatlas.designer my_algorithm --optimization-level O2 --output circuit.json
+  python -m qatlas.designer shor_factoring --param n=4 --visualize
         """
     )
     
@@ -68,32 +68,9 @@ Examples:
     )
     
     parser.add_argument(
-        "--neo4j-uri",
-        default="bolt://localhost:7687",
-        help="Neo4j Bolt URI"
-    )
-    
-    parser.add_argument(
-        "--neo4j-user",
-        default="neo4j",
-        help="Neo4j username"
-    )
-    
-    parser.add_argument(
-        "--neo4j-password",
-        help="Neo4j password (or set NEO4J_PASSWORD env var)"
-    )
-    
-    parser.add_argument(
         "--list-primitives",
         action="store_true",
         help="List available primitives and exit"
-    )
-    
-    parser.add_argument(
-        "--save-to-kg",
-        action="store_true",
-        help="Save designed circuit to knowledge graph"
     )
     
     return parser
@@ -183,18 +160,9 @@ def main():
     # Parse parameters
     params = parse_params(args.param)
     
-    # Get Neo4j password from env if not provided
-    neo4j_password = args.neo4j_password
-    if not neo4j_password:
-        import os
-        neo4j_password = os.getenv("NEO4J_PASSWORD")
-    
     # Initialize designer
     try:
         designer = CircuitDesigner(
-            neo4j_uri=args.neo4j_uri,
-            neo4j_user=args.neo4j_user,
-            neo4j_password=neo4j_password,
             default_optimization_level=opt_level
         )
     except Exception as e:
@@ -271,18 +239,6 @@ def main():
             print(f"Qiskit code exported to: {args.export_qiskit}")
         except Exception as e:
             print(f"Error exporting Qiskit code: {e}", file=sys.stderr)
-            return 1
-    
-    # Save to knowledge graph
-    if args.save_to_kg:
-        try:
-            success = designer.save_circuit_to_kg(quantum_ir)
-            if success:
-                print("Circuit saved to knowledge graph")
-            else:
-                print("Failed to save circuit to knowledge graph", file=sys.stderr)
-        except Exception as e:
-            print(f"Error saving to knowledge graph: {e}", file=sys.stderr)
             return 1
     
     return 0

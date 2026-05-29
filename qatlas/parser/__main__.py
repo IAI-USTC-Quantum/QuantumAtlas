@@ -2,9 +2,9 @@
 Paper Parser CLI
 
 Usage:
-    python -m atlas.parser <arxiv_id>
-    python -m atlas.parser 9508027
-    python -m atlas.parser arXiv:9508027
+    python -m qatlas.parser <arxiv_id>
+    python -m qatlas.parser 9508027
+    python -m qatlas.parser arXiv:9508027
 
 Options:
     --output-dir, -o    Output directory for downloaded files
@@ -64,19 +64,6 @@ def main():
         help="Ingest paper into wiki (recommended new path)"
     )
 
-    parser.add_argument(
-        "--wiki-only",
-        action="store_true",
-        help="Ingest to wiki only, skip Neo4j sync"
-    )
-
-    # Legacy path: Direct Neo4j import
-    parser.add_argument(
-        "--import-to-neo4j",
-        action="store_true",
-        help="Import parsed paper to Neo4j knowledge graph (legacy path)"
-    )
-
     # LLM extraction options
     parser.add_argument(
         "--extract",
@@ -97,7 +84,7 @@ def main():
     print(f"=" * 50)
 
     # ========== New Path: Wiki Integration ==========
-    if args.wiki or args.wiki_only:
+    if args.wiki:
         print(f"\n📚 Wiki Ingestion Mode")
         print(f"=" * 50)
 
@@ -110,7 +97,6 @@ def main():
             engine = WikiEngine(
                 wiki_dir=config.wiki_dir,
                 raw_dir=config.raw_dir,
-                enable_neo4j_sync=not args.wiki_only,
             )
 
             result = engine.ingest_paper(
@@ -119,7 +105,6 @@ def main():
                 parse=True,
                 extract=args.extract,
                 create_wiki=True,
-                sync_neo4j=not args.wiki_only,
                 llm_provider=args.llm_provider,
             )
 
@@ -150,7 +135,7 @@ def main():
         print(f"\n✨ Done!")
         return
 
-    # ========== Legacy Path: Direct Neo4j Import ==========
+    # ========== Standalone Parse Path (no wiki) ==========
     # Step 1: Fetch from arXiv
     print(f"\n📥 Fetching paper: {args.arxiv_id}")
 
@@ -193,37 +178,6 @@ def main():
             if args.save_json:
                 json_path = pdf_parser.save_json(paper, f"{output_base}.json")
                 print(f"✅ JSON saved to: {json_path}")
-
-            # Step 3: Import to Neo4j (legacy)
-            if args.import_to_neo4j:
-                print(f"\n🔄 Importing to Neo4j (legacy path)...")
-
-                try:
-                    from qatlas.knowledge.neo4j_client import Neo4jClient
-                    from qatlas.knowledge.models import Paper
-
-                    client = Neo4jClient()
-                    client.connect()
-
-                    # Create Paper node
-                    paper_node = Paper(
-                        id=f"paper_{metadata['arxiv_id']}",
-                        title=metadata['title'],
-                        arxiv_id=metadata['arxiv_id'],
-                        authors=metadata['authors'],
-                        year=metadata.get('published', '')[:4] if metadata.get('published') else None,
-                        abstract=metadata['abstract'],
-                        pdf_url=str(pdf_path.absolute()),
-                    )
-
-                    client.create_paper(paper_node)
-                    print(f"✅ Paper imported to Neo4j with ID: {paper_node.id}")
-
-                    client.close()
-
-                except Exception as e:
-                    print(f"⚠️ Error importing to Neo4j: {e}")
-                    print("   Make sure Neo4j is running (docker-compose up -d)")
         except Exception as e:
             print(f"❌ Error parsing PDF: {e}")
             import traceback

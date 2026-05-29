@@ -101,7 +101,6 @@ class WikiIngester:
         parse: bool = True,
         extract: bool = True,
         create_wiki: bool = True,
-        sync_neo4j: bool = True,
         llm_provider: str = "openai",
     ) -> Dict[str, Any]:
         """
@@ -113,7 +112,6 @@ class WikiIngester:
             parse: Whether to parse PDF to markdown
             extract: Whether to extract algorithm info via LLM
             create_wiki: Whether to create wiki pages
-            sync_neo4j: Whether to sync to Neo4j
             llm_provider: LLM provider for extraction ("openai" or "anthropic")
 
         Returns:
@@ -163,12 +161,6 @@ class WikiIngester:
                 wiki_pages = self._create_wiki_pages(arxiv_id, result)
                 result["wiki_pages"] = [p.frontmatter.id for p in wiki_pages]
                 result["steps"]["wiki"] = {"pages_created": len(wiki_pages)}
-
-            # Step 5: Sync to Neo4j
-            if sync_neo4j and self.engine.neo4j_sync:
-                logger.info(f"Syncing to Neo4j for {arxiv_id}...")
-                sync_result = self.engine.sync_to_neo4j()
-                result["steps"]["sync"] = sync_result
 
             # Update index and log
             self.engine.update_index()

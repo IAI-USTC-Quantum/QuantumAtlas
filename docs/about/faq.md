@@ -116,7 +116,7 @@
     不会自动更新。
 
     - 触发 `POST /api/wiki/sync/pull` → server 端 git fast-forward → in-memory cache 刷新
-    - 但 Neo4j sync 是**独立步骤**——`qatlas wiki sync` CLI 跑一次
+    - Neo4j 图谱的派生是**服务端职责**，由 Go `qatlas-server` 基于 canonical Wiki 重建；Python 客户端不直连 Neo4j
 
     或者你把 sync 加进 GitHub Action：每次 Wiki repo PR 合并触发 server 端 sync。
 

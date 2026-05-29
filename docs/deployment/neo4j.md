@@ -131,17 +131,11 @@ curl http://127.0.0.1:4200/api/graph/stats | jq
 
 ## 初次 sync Wiki 到 Neo4j
 
-Server 启动时**不会**自动 sync。要让 Wiki 的内容进 Neo4j：
+Server 启动时**不会**自动 sync。Wiki → Neo4j 的派生是**服务端职责**：Go
+``qatlas-server`` 持有 Neo4j 连接，基于 canonical Wiki（source of truth）重建图谱。
+Python 客户端不再直连 Neo4j，也没有客户端 sync 命令。
 
-```bash
-# Python CLI 路径（开发期）
-qatlas wiki sync           # 全部 sync
-qatlas wiki sync algo-shor # 单页 sync
-```
-
-或调 API（如果有 endpoint；当前 sync 主要在 CLI）。
-
-后续 Wiki 通过 `POST /api/wiki/sync/pull` 触发 git pull 时，**会顺带 refresh in-memory cache**，但 Neo4j 同步是独立步骤。完整 sync 策略见 [数据流 / Wiki→Neo4j](../concepts/data-flow.md#wiki-neo4j)。
+后续 Wiki 通过 `POST /api/wiki/sync/pull` 触发 git pull 时，**会顺带 refresh in-memory cache**。完整 sync 策略见 [数据流 / Wiki→Neo4j](../concepts/data-flow.md#wiki-neo4j)。
 
 ## 备份
 

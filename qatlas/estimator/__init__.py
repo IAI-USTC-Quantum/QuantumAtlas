@@ -25,8 +25,8 @@
     print(f"Depth: {stats.depth}, Gates: {stats.total_gates}")
     
 CLI 使用：
-    python -m atlas.estimator <circuit_file>
-    python -m atlas.estimator --demo
+    python -m qatlas.estimator <circuit_file>
+    python -m qatlas.estimator --demo
 """
 
 from .resource_analyzer import ResourceAnalyzer, ResourceStats

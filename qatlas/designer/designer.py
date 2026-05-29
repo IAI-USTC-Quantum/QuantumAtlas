@@ -16,19 +16,27 @@ from .quantum_ir import QuantumIR
 from .optimizer import CircuitOptimizer, OptimizationLevel
 from .parameter_mapper import ParameterMapper
 
-# Knowledge graph imports (optional)
+# Knowledge-graph data models (optional). The graph itself is server-side:
+# the Go qatlas-server owns the Neo4j connection and exposes reads over
+# /api/graph/*. The Python client does not connect to Neo4j directly.
 try:
-    from ..knowledge.neo4j_client import Neo4jClient
     from ..knowledge.models import Algorithm, Implementation
-    HAS_NEO4J = True
+    HAS_KG_MODELS = True
 except ImportError:
-    HAS_NEO4J = False
+    HAS_KG_MODELS = False
 
 try:
     from ..extractor.algorithm_ir import AlgorithmIR
     HAS_ALGORITHM_IR = True
 except ImportError:
     HAS_ALGORITHM_IR = False
+
+
+_KG_SERVER_ONLY = (
+    "Knowledge-graph access is server-side only. The Go qatlas-server owns the "
+    "Neo4j connection and exposes reads over /api/graph/*; client-side graph "
+    "read/write is not implemented."
+)
 
 
 class CircuitDesigner:
@@ -45,17 +53,10 @@ class CircuitDesigner:
     Usage:
         designer = CircuitDesigner()
         quantum_ir = designer.design_circuit(algorithm_ir)
-        
-        # With Neo4j integration
-        designer = CircuitDesigner(neo4j_uri="bolt://localhost:7687")
-        quantum_ir = designer.design_circuit_from_kg("algorithm_id")
     """
     
     def __init__(
         self,
-        neo4j_uri: Optional[str] = None,
-        neo4j_user: Optional[str] = None,
-        neo4j_password: Optional[str] = None,
         primitives_dir: Optional[str] = None,
         default_optimization_level: int = OptimizationLevel.O1
     ):
@@ -63,9 +64,6 @@ class CircuitDesigner:
         Initialize circuit designer.
         
         Args:
-            neo4j_uri: Neo4j Bolt URI (optional)
-            neo4j_user: Neo4j username (optional)
-            neo4j_password: Neo4j password (optional)
             primitives_dir: Directory with primitive definitions
             default_optimization_level: Default optimization level
         """
@@ -76,30 +74,6 @@ class CircuitDesigner:
         self.parameter_mapper = ParameterMapper()
         
         self.default_optimization_level = default_optimization_level
-        
-        # Neo4j client (lazy initialization)
-        self._neo4j_client: Optional[Any] = None
-        self._neo4j_config = {
-            "uri": neo4j_uri,
-            "user": neo4j_user,
-            "password": neo4j_password,
-        }
-    
-    @property
-    def neo4j_client(self) -> Optional[Any]:
-        """Get or create Neo4j client."""
-        if self._neo4j_client is None and HAS_NEO4J:
-            if self._neo4j_config.get("password"):
-                try:
-                    self._neo4j_client = Neo4jClient(
-                        uri=self._neo4j_config.get("uri"),
-                        username=self._neo4j_config.get("user"),
-                        password=self._neo4j_config.get("password"),
-                    )
-                    self._neo4j_client.connect()
-                except Exception as e:
-                    print(f"Warning: Failed to connect to Neo4j: {e}")
-        return self._neo4j_client
     
     def design_circuit(
         self,
@@ -196,43 +170,11 @@ class CircuitDesigner:
         parameter_overrides: Optional[Dict[str, Any]] = None
     ) -> QuantumIR:
         """
-        Design a circuit from knowledge graph algorithm definition.
+        Design a circuit from a knowledge graph algorithm definition.
         
-        Args:
-            algorithm_id: Algorithm ID in knowledge graph
-            optimization_level: Optimization level
-            parameter_overrides: Override parameter values
-            
-        Returns:
-            QuantumIR with the designed circuit
+        Placeholder: graph access is server-side only (see /api/graph/*).
         """
-        if not HAS_NEO4J or self.neo4j_client is None:
-            raise RuntimeError("Neo4j not available. Provide connection parameters.")
-        
-        # Fetch algorithm from Neo4j
-        algorithm = self.neo4j_client.get_algorithm(algorithm_id)
-        if algorithm is None:
-            raise ValueError(f"Algorithm not found in knowledge graph: {algorithm_id}")
-        
-        # Get associated primitives
-        primitives = self.neo4j_client.get_algorithm_primitives(algorithm_id)
-        primitive_ids = [p.id for p in primitives]
-        
-        # Convert to AlgorithmIR-like dict
-        algo_dict = {
-            "id": algorithm_id,
-            "name": getattr(algorithm, 'name', algorithm_id),
-            "primitives": primitive_ids,
-            "input_params": getattr(algorithm, 'input_params', []),
-        }
-        
-        # Design circuit
-        return self.design_circuit(
-            algo_dict,
-            optimization_level=optimization_level,
-            parameter_overrides=parameter_overrides,
-            circuit_name=f"circuit_{algorithm_id}"
-        )
+        raise NotImplementedError(_KG_SERVER_ONLY)
 
     def design_from_wiki(
         self,
@@ -334,53 +276,9 @@ class CircuitDesigner:
         """
         Save a designed circuit to the knowledge graph.
         
-        Creates an Implementation node linked to the Algorithm.
-        
-        Args:
-            quantum_ir: QuantumIR to save
-            implementation_name: Name for the implementation
-            implementation_id: ID for the implementation
-            
-        Returns:
-            True if successful
+        Placeholder: graph writes are server-side only.
         """
-        if not HAS_NEO4J or self.neo4j_client is None:
-            raise RuntimeError("Neo4j not available. Provide connection parameters.")
-        
-        # Generate implementation ID if not provided
-        if implementation_id is None:
-            import uuid
-            implementation_id = f"impl_{quantum_ir.algorithm_id}_{uuid.uuid4().hex[:8]}"
-        
-        if implementation_name is None:
-            implementation_name = f"Generated Circuit for {quantum_ir.algorithm_id}"
-        
-        # Create implementation data
-        impl_data = {
-            "id": implementation_id,
-            "name": implementation_name,
-            "algorithm_id": quantum_ir.algorithm_id,
-            "circuit_json": quantum_ir.to_json(),
-            "gate_count": quantum_ir.gate_count,
-            "depth": quantum_ir.depth,
-            "num_qubits": quantum_ir.num_qubits,
-            "optimization_level": quantum_ir.optimization_level,
-            "created_at": quantum_ir.created_at,
-        }
-        
-        try:
-            # Create implementation node
-            impl = Implementation(**impl_data)
-            self.neo4j_client.create_implementation(impl)
-            
-            # Create relationship to primitives used
-            metadata = quantum_ir.metadata
-            primitives_used = metadata.get("primitives_used", [])
-            
-            return True
-        except Exception as e:
-            print(f"Error saving circuit to knowledge graph: {e}")
-            return False
+        raise NotImplementedError(_KG_SERVER_ONLY)
     
     def save_design_config(
         self,
@@ -450,24 +348,11 @@ class CircuitDesigner:
     
     def get_algorithm_circuit_from_kg(self, algorithm_id: str) -> Optional[QuantumIR]:
         """
-        Retrieve a previously designed circuit from knowledge graph.
+        Retrieve a previously designed circuit from the knowledge graph.
         
-        Args:
-            algorithm_id: Algorithm ID
-            
-        Returns:
-            QuantumIR if found, None otherwise
+        Placeholder: graph reads are server-side only (see /api/graph/*).
         """
-        if not HAS_NEO4J or self.neo4j_client is None:
-            return None
-        
-        try:
-            # Query for implementations of this algorithm
-            # This is a simplified version - full implementation would
-            # query the graph for the latest/best implementation
-            return None
-        except Exception:
-            return None
+        return None
     
     def link_circuit_to_algorithm(
         self,
@@ -475,21 +360,8 @@ class CircuitDesigner:
         algorithm_id: str
     ) -> bool:
         """
-        Create CIRCUIT_FOR relationship in knowledge graph.
+        Create a CIRCUIT_FOR relationship in the knowledge graph.
         
-        Args:
-            circuit_id: Circuit/Implementation ID
-            algorithm_id: Algorithm ID
-            
-        Returns:
-            True if successful
+        Placeholder: graph writes are server-side only.
         """
-        if not HAS_NEO4J or self.neo4j_client is None:
-            return False
-        
-        try:
-            # This would create a relationship in Neo4j
-            # For now, this is a placeholder for the full implementation
-            return True
-        except Exception:
-            return False
+        return False

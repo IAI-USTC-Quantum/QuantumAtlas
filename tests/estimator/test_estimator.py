@@ -5,7 +5,6 @@ Tests for estimator.py (main ResourceEstimator class)
 import json
 import pytest
 from pathlib import Path
-from unittest.mock import Mock, MagicMock, patch
 
 from qatlas.designer.quantum_circuit import QuantumCircuit
 from qatlas.estimator.estimator import ResourceEstimator
@@ -184,94 +183,6 @@ class TestResourceEstimator:
             report,
             "/nonexistent/path/report",
             format="markdown",
-        )
-        
-        assert success is False
-    
-    def test_save_to_knowledge_graph_with_mock(self, estimator, bell_circuit):
-        """Test saving to knowledge graph with mock client."""
-        report = estimator.estimate(bell_circuit, algorithm_name="Bell State")
-        
-        # Create mock Neo4j client
-        mock_client = Mock()
-        mock_session = Mock()
-        mock_result = Mock()
-        mock_result.single.return_value = {"a": {"id": "test"}}
-        
-        mock_client.session.return_value.__enter__ = Mock(return_value=mock_session)
-        mock_client.session.return_value.__exit__ = Mock(return_value=False)
-        mock_session.run.return_value = mock_result
-        
-        success = estimator.save_to_knowledge_graph(
-            algorithm_id="test_algorithm",
-            report=report,
-            neo4j_client=mock_client,
-        )
-        
-        assert success is True
-        mock_session.run.assert_called_once()
-        
-        # Check the query was called - first positional arg is the query string
-        call_args = mock_session.run.call_args
-        assert "MATCH (a:Algorithm {id: $algorithm_id})" in call_args[0][0]
-    
-    def test_save_to_knowledge_graph_no_client(self, estimator, bell_circuit):
-        """Test saving without Neo4j client available - skip if client exists."""
-        # This test verifies that the function handles missing Neo4j gracefully
-        # In practice, if Neo4j is not installed, the import will fail
-        # and the function will return False
-        
-        # Test with a mock client that simulates a failed import scenario
-        report = estimator.estimate(bell_circuit, algorithm_name="Bell State")
-        
-        # Create a mock that raises ImportError on use
-        class MockClientWithImportError:
-            def session(self):
-                raise ImportError("No module named 'neo4j'")
-        
-        success = estimator.save_to_knowledge_graph(
-            algorithm_id="test_algorithm",
-            report=report,
-            neo4j_client=MockClientWithImportError(),
-        )
-        
-        # Should handle the exception and return False
-        assert success is False
-    
-    def test_save_to_knowledge_graph_algorithm_not_found(self, estimator, bell_circuit):
-        """Test saving when algorithm not found in graph."""
-        report = estimator.estimate(bell_circuit, algorithm_name="Bell State")
-        
-        # Create mock Neo4j client that returns None (algorithm not found)
-        mock_client = Mock()
-        mock_session = Mock()
-        mock_result = Mock()
-        mock_result.single.return_value = None
-        
-        mock_client.session.return_value.__enter__ = Mock(return_value=mock_session)
-        mock_client.session.return_value.__exit__ = Mock(return_value=False)
-        mock_session.run.return_value = mock_result
-        
-        success = estimator.save_to_knowledge_graph(
-            algorithm_id="nonexistent",
-            report=report,
-            neo4j_client=mock_client,
-        )
-        
-        assert success is False
-    
-    def test_save_to_knowledge_graph_exception(self, estimator, bell_circuit):
-        """Test saving when exception occurs."""
-        report = estimator.estimate(bell_circuit, algorithm_name="Bell State")
-        
-        # Create mock Neo4j client that raises exception
-        mock_client = Mock()
-        mock_client.session.side_effect = Exception("Connection error")
-        
-        success = estimator.save_to_knowledge_graph(
-            algorithm_id="test_algorithm",
-            report=report,
-            neo4j_client=mock_client,
         )
         
         assert success is False

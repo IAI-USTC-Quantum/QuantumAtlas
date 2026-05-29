@@ -4,12 +4,12 @@ Resource Estimator CLI
 Command-line interface for quantum circuit resource estimation.
 
 Usage:
-    python -m atlas.estimator <circuit_file> [options]
+    python -m qatlas.estimator <circuit_file> [options]
     
 Examples:
-    python -m atlas.estimator circuit.json
-    python -m atlas.estimator circuit.json --format markdown --output report
-    python -m atlas.estimator circuit.json --hardware-params '{"gate_time": 50}'
+    python -m qatlas.estimator circuit.json
+    python -m qatlas.estimator circuit.json --format markdown --output report
+    python -m qatlas.estimator circuit.json --hardware-params '{"gate_time": 50}'
 """
 
 import argparse
@@ -153,12 +153,6 @@ Examples:
     )
     
     parser.add_argument(
-        "--save-to-kg",
-        metavar="ALGORITHM_ID",
-        help="Save results to knowledge graph with the given algorithm ID",
-    )
-    
-    parser.add_argument(
         "--quiet",
         "-q",
         action="store_true",
@@ -213,22 +207,6 @@ Examples:
                 print(json.dumps(report["json_report"], indent=2, default=str))
             else:
                 print(report["markdown_report"])
-        
-        # Save to knowledge graph if requested
-        if args.save_to_kg:
-            if not args.quiet:
-                print(f"\nSaving to knowledge graph (algorithm_id: {args.save_to_kg})...")
-            
-            success = estimator.save_to_knowledge_graph(
-                algorithm_id=args.save_to_kg,
-                report=report,
-            )
-            
-            if not success:
-                print("Warning: Failed to save to knowledge graph", file=sys.stderr)
-                sys.exit(1)
-            elif not args.quiet:
-                print("Successfully saved to knowledge graph")
         
         # Print summary
         if not args.quiet and not args.output:

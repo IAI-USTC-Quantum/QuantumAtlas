@@ -61,11 +61,6 @@ class ServerConfig(BaseSettings):
         validation_alias=AliasChoices("QATLAS_SERVER_DEBUG", "SERVER_DEBUG"),
     )
 
-    # Neo4j settings (use vendor-standard names; no QATLAS_ prefix)
-    neo4j_uri: str = Field("bolt://localhost:7687", validation_alias="NEO4J_URI")
-    neo4j_user: str = Field("neo4j", validation_alias="NEO4J_USER")
-    neo4j_password: str = Field("", validation_alias="NEO4J_PASSWORD")
-
     # Wiki / raw / data dirs
     wiki_dir: str = Field(
         "wiki",
@@ -177,14 +172,6 @@ class ServerConfig(BaseSettings):
         """Load configuration from environment variables."""
         env_file = None if _skip_dotenv() else get_project_root() / ".env"
         return cls(_env_file=env_file)
-
-    def get_neo4j_config(self) -> dict:
-        """Get Neo4j connection configuration."""
-        return {
-            "uri": self.neo4j_uri,
-            "user": self.neo4j_user,
-            "password": self.neo4j_password,
-        }
 
     def get_raw_root(self) -> Path:
         """Resolve RAW_DIR."""

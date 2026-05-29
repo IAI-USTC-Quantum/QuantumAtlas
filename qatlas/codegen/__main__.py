@@ -4,8 +4,8 @@ Code Generator CLI
 Command-line interface for the code generator module.
 
 Usage:
-    python -m atlas.codegen <quantum_ir_file>
-    python -m atlas.codegen <quantum_ir_file> --backend qpanda --output output.py
+    python -m qatlas.codegen <quantum_ir_file>
+    python -m qatlas.codegen <quantum_ir_file> --backend qpanda --output output.py
 """
 
 import argparse
@@ -26,16 +26,16 @@ def create_parser() -> argparse.ArgumentParser:
         epilog="""
 Examples:
     # Generate Qiskit code (default)
-    python -m atlas.codegen circuit.json
+    python -m qatlas.codegen circuit.json
     
     # Generate QPanda code
-    python -m atlas.codegen circuit.json --backend qpanda
+    python -m qatlas.codegen circuit.json --backend qpanda
     
     # Save to specific file
-    python -m atlas.codegen circuit.json --output my_circuit.py
+    python -m qatlas.codegen circuit.json --output my_circuit.py
     
     # Skip code formatting
-    python -m atlas.codegen circuit.json --no-format
+    python -m qatlas.codegen circuit.json --no-format
         """,
     )
     

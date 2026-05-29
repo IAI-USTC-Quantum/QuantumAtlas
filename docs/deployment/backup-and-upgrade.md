@@ -113,7 +113,7 @@ sudo neo4j-admin database dump neo4j --to-path=/var/backups/neo4j-$(date +%F).du
 sudo systemctl start neo4j
 ```
 
-**优先级最低**——挂了直接 `qatlas wiki sync` 从 Wiki 重建即可，不依赖快照恢复。
+**优先级最低**——挂了从 canonical Wiki 由服务端重建即可，不依赖快照恢复。
 
 ## Wiki repo 备份
 

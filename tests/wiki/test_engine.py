@@ -23,7 +23,6 @@ class TestWikiEngine:
         engine = WikiEngine(
             wiki_dir=str(wiki_dir),
             raw_dir=str(raw_dir),
-            enable_neo4j_sync=False,
             project_root=str(tmp_path),
         )
         return engine
@@ -40,7 +39,6 @@ class TestWikiEngine:
         engine = WikiEngine(
             wiki_dir=str(tmp_path / "wiki"),
             raw_dir=str(tmp_path / "raw"),
-            enable_neo4j_sync=False,
             project_root=str(tmp_path),
             ensure_directories=False,
             wiki_content_writable=False,
@@ -55,7 +53,6 @@ class TestWikiEngine:
         engine = WikiEngine(
             wiki_dir=str(tmp_path / "wiki"),
             raw_dir=str(tmp_path / "raw"),
-            enable_neo4j_sync=False,
             project_root=str(tmp_path),
             ensure_directories=False,
             wiki_content_writable=False,
@@ -267,7 +264,6 @@ class TestWikiEngineQueries:
         engine = WikiEngine(
             wiki_dir=str(tmp_path / "wiki"),
             raw_dir=str(tmp_path / "raw"),
-            enable_neo4j_sync=False,
             project_root=str(tmp_path),
         )
 
@@ -334,7 +330,6 @@ class TestWikiIngester:
         return WikiEngine(
             wiki_dir=str(tmp_path / "wiki"),
             raw_dir=str(tmp_path / "raw"),
-            enable_neo4j_sync=False,
             project_root=str(tmp_path),
         )
 

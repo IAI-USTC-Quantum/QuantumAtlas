@@ -4,9 +4,9 @@ Validator CLI 模块
 命令行接口，用于验证量子电路文件
 
 Usage:
-    python -m atlas.validator <circuit_file> --reference <ref_file>
-    python -m atlas.validator <circuit_file> --test-suite <test_suite.yaml>
-    python -m atlas.validator <circuit_file> --reference <ref_file> --output report.txt
+    python -m qatlas.validator <circuit_file> --reference <ref_file>
+    python -m qatlas.validator <circuit_file> --test-suite <test_suite.yaml>
+    python -m qatlas.validator <circuit_file> --reference <ref_file> --output report.txt
 """
 
 import argparse
@@ -102,20 +102,20 @@ def create_argument_parser() -> argparse.ArgumentParser:
         epilog="""
 Examples:
   # Basic equivalence check
-  python -m atlas.validator circuit.json --reference ref_circuit.json
+  python -m qatlas.validator circuit.json --reference ref_circuit.json
   
   # Run test suite
-  python -m atlas.validator circuit.json --test-suite tests.yaml
+  python -m qatlas.validator circuit.json --test-suite tests.yaml
   
   # Full validation with report
-  python -m atlas.validator circuit.json \\
+  python -m qatlas.validator circuit.json \\
       --reference ref_circuit.json \\
       --test-suite tests.yaml \\
       --output report.txt \\
       --format text
   
   # Compare with built-in reference
-  python -m atlas.validator bell_circuit.json --compare-with bell_state
+  python -m qatlas.validator bell_circuit.json --compare-with bell_state
         """
     )
     

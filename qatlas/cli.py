@@ -2,7 +2,7 @@
 
 This module backs the ``qatlas`` console script declared in
 ``pyproject.toml``.  It intentionally delegates to the existing module CLIs so
-their behavior stays identical to ``python -m atlas.<module>``.
+their behavior stays identical to ``python -m qatlas.<module>``.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ COMMANDS: Mapping[str, Command] = {
         "Manage saved PATs / session tokens per host (login, status, token, logout)",
     ),
     "parser": Command("qatlas.parser.__main__", "Fetch and parse arXiv papers", False),
-    "wiki": Command("qatlas.wiki.__main__", "Browse, lint, and sync wiki pages", False),
+    "wiki": Command("qatlas.wiki.__main__", "Browse, lint, and search wiki pages", False),
     "designer": Command("qatlas.designer.__main__", "Design circuits from algorithms"),
     "codegen": Command("qatlas.codegen.__main__", "Generate backend code from Quantum IR"),
     "validator": Command("qatlas.validator.__main__", "Validate quantum circuits"),

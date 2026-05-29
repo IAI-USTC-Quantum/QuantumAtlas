@@ -9,16 +9,14 @@ Commands:
     search      Search wiki pages
     links       Show page links
     lint        Run lint checks
-    sync        Sync to Neo4j
     stats       Show wiki statistics
 
 Usage:
-    python -m atlas.wiki list --type concept
-    python -m atlas.wiki show prim-qft
-    python -m atlas.wiki search "quantum fourier"
-    python -m atlas.wiki links prim-qft --backlinks
-    python -m atlas.wiki lint --fix
-    python -m atlas.wiki sync
+    python -m qatlas.wiki list --type concept
+    python -m qatlas.wiki show prim-qft
+    python -m qatlas.wiki search "quantum fourier"
+    python -m qatlas.wiki links prim-qft --backlinks
+    python -m qatlas.wiki lint --fix
 """
 
 import argparse
@@ -149,28 +147,6 @@ def cmd_lint(args):
         sys.exit(1)
 
 
-def cmd_sync(args):
-    """Sync to Neo4j."""
-    engine = WikiEngine(enable_neo4j_sync=True)
-
-    print(f"\nSyncing wiki to Neo4j...")
-
-    if args.page_id:
-        result = engine.sync_to_neo4j(args.page_id)
-        print(f"  Page: {result.get('page_id')}")
-        print(f"  Success: {result.get('success')}")
-        if result.get('error'):
-            print(f"  Error: {result['error']}")
-        if result.get('neo4j_id'):
-            print(f"  Neo4j ID: {result['neo4j_id']}")
-    else:
-        result = engine.sync_to_neo4j()
-        print(f"  Total: {result.get('total', 0)}")
-        print(f"  Synced: {result.get('synced', 0)}")
-        print(f"  Failed: {result.get('failed', 0)}")
-        print(f"  Skipped: {result.get('skipped', 0)}")
-
-
 def cmd_stats(args):
     """Show wiki statistics."""
     engine = WikiEngine()
@@ -212,7 +188,6 @@ def cmd_ingest(args):
         fetch=not args.no_fetch,
         parse=not args.no_parse,
         extract=not args.no_extract,
-        sync_neo4j=not args.wiki_only,
     )
 
     print(f"\nStatus: {result['status']}")
@@ -272,19 +247,16 @@ def main():
         epilog="""
 Examples:
   List all concepts:
-    python -m atlas.wiki list --type concept
+    python -m qatlas.wiki list --type concept
 
   Show a page:
-    python -m atlas.wiki show prim-qft
+    python -m qatlas.wiki show prim-qft
 
   Search:
-    python -m atlas.wiki search "quantum fourier"
+    python -m qatlas.wiki search "quantum fourier"
 
   Check wiki health:
-    python -m atlas.wiki lint -v
-
-  Sync to Neo4j:
-    python -m atlas.wiki sync
+    python -m qatlas.wiki lint -v
         """,
     )
 
@@ -322,11 +294,6 @@ Examples:
     lint_parser.add_argument("--verbose", "-v", action="store_true", help="Show details")
     lint_parser.set_defaults(func=cmd_lint)
 
-    # sync command
-    sync_parser = subparsers.add_parser("sync", help="Sync to Neo4j")
-    sync_parser.add_argument("page_id", nargs="?", help="Page ID (all if not specified)")
-    sync_parser.set_defaults(func=cmd_sync)
-
     # stats command
     stats_parser = subparsers.add_parser("stats", help="Show wiki statistics")
     stats_parser.set_defaults(func=cmd_stats)
@@ -337,7 +304,6 @@ Examples:
     ingest_parser.add_argument("--no-fetch", action="store_true", help="Skip fetching")
     ingest_parser.add_argument("--no-parse", action="store_true", help="Skip parsing")
     ingest_parser.add_argument("--no-extract", action="store_true", help="Skip LLM extraction")
-    ingest_parser.add_argument("--wiki-only", action="store_true", help="Skip Neo4j sync")
     ingest_parser.set_defaults(func=cmd_ingest)
 
     # create command

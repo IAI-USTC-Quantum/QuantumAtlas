@@ -164,9 +164,8 @@ qatlas wiki <list|show|search|links|lint|sync|stats|ingest|create> [options...]
 | `search <query>` | `--limit 10` | 全文搜索 |
 | `links <page_id>` | `--backlinks` | 列出/反列页面间链接 |
 | `lint` | `--fix --verbose` | 运行所有 W001–W008 检查 |
-| `sync [page_id]` | — | 同步到 Neo4j（缺省全 sync）|
 | `stats` | — | 仓库统计：页面数 / 按类型 / 按 status |
-| `ingest <arxiv_id>` | `--no-fetch --no-parse --no-extract --wiki-only` | 旧 monolith pipeline（开发期，新代码用 `qatlas ingest`）|
+| `ingest <arxiv_id>` | `--no-fetch --no-parse --no-extract` | 旧 monolith pipeline（开发期，新代码用 `qatlas ingest`）|
 | `create <id>` | `--title T --type entity --category primitive --tags a,b --status draft --content ... --file ... --subdir ...` | 生成页面模板文件 |
 
 详细：[写 Wiki 页面](../guides/write-wiki-pages.md) / [Lint](../guides/lint-wiki.md) / [Schema](wiki-schema.md)。

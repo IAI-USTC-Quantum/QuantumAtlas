@@ -27,7 +27,7 @@ TERMINAL_STATUSES = {"succeeded", "failed", "partial", "cancelled"}
 
 def _default_base_url() -> str:
     """Resolve default server base URL; kept as a module-local wrapper so tests
-    can monkey-patch ``atlas.client.__main__._default_base_url``."""
+    can monkey-patch ``qatlas.client.__main__._default_base_url``."""
     return default_base_url()
 
 

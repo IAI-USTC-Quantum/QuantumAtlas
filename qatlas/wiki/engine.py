@@ -91,7 +91,6 @@ class WikiEngine:
         self,
         wiki_dir: Optional[str] = None,
         raw_dir: Optional[str] = None,
-        enable_neo4j_sync: bool = True,
         project_root: Optional[str] = None,
         ensure_directories: bool = True,
         wiki_content_writable: bool = True,
@@ -102,7 +101,6 @@ class WikiEngine:
         Args:
             wiki_dir: Path to wiki directory (default: ./wiki)
             raw_dir: Path to canonical raw asset directory (default: ./raw)
-            enable_neo4j_sync: Whether to enable Neo4j synchronization
             project_root: Project root directory (auto-detected if None)
             ensure_directories: Whether to create wiki/raw directory skeletons
             wiki_content_writable: Whether this engine may modify Wiki content files
@@ -142,8 +140,6 @@ class WikiEngine:
         self._ingester = None
         self._querier = None
         self._linter = None
-        self._neo4j_sync = None
-        self._enable_neo4j_sync = enable_neo4j_sync
 
         logger.debug(
             f"WikiEngine initialized: wiki_dir={self.wiki_dir}, "
@@ -396,18 +392,6 @@ class WikiEngine:
             self._linter = WikiLinter(self)
         return self._linter
 
-    @property
-    def neo4j_sync(self):
-        """Lazy initialization of Neo4j sync."""
-        if self._neo4j_sync is None and self._enable_neo4j_sync:
-            try:
-                from .sync.neo4j_sync import Neo4jWikiSync
-                self._neo4j_sync = Neo4jWikiSync()
-            except ImportError:
-                logger.warning("Neo4j sync disabled: neo4j driver not available")
-                self._neo4j_sync = None
-        return self._neo4j_sync
-
     def ingest_paper(self, arxiv_id: str, **kwargs) -> Dict[str, Any]:
         """
         Ingest a paper into the wiki.
@@ -464,32 +448,6 @@ class WikiEngine:
             Dict with lint results and issues
         """
         return self.linter.run(fix=fix)
-
-    def sync_to_neo4j(self, page_id: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Sync wiki pages to Neo4j.
-
-        Args:
-            page_id: Specific page to sync (all pages if None)
-
-        Returns:
-            Sync results
-        """
-        if not self._enable_neo4j_sync or self.neo4j_sync is None:
-            return {
-                "success": False,
-                "error": "Neo4j sync not enabled or unavailable",
-            }
-
-        if page_id:
-            page = self.get_page(page_id)
-            if page is None:
-                return {"success": False, "error": f"Page not found: {page_id}"}
-            return self.neo4j_sync.sync_page(page)
-
-        # Sync all pages
-        pages = self.list_pages(status="published")
-        return self.neo4j_sync.sync_all(pages)
 
     # === Utility Methods ===
 
