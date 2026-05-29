@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"path"
 	"strings"
 	"time"
 
@@ -232,7 +231,7 @@ func applyRustFSEvent(
 		return nil
 	}
 
-	kind, arxivID, yymm, ok := parseAssetKey(ev.Key)
+	kind, arxivID, yymm, ok := paperindex.ParseAssetKey(ev.Key)
 	if !ok {
 		// Unknown key shape (e.g. user uploaded something to a
 		// non-standard prefix). Log once at debug level via the
@@ -248,17 +247,17 @@ func applyRustFSEvent(
 	}
 
 	switch kind {
-	case "pdf":
+	case paperindex.KindPDF:
 		if removed {
 			return paperIndex.RemoveAsset(ctx, arxivID, "pdf")
 		}
 		return paperIndex.UpsertPDFAsset(ctx, arxivID, yymm, ev.Size, ev.EventTime, ev.ETag)
-	case "markdown":
+	case paperindex.KindMarkdown:
 		if removed {
 			return paperIndex.RemoveAsset(ctx, arxivID, "md")
 		}
 		return paperIndex.UpsertMDAsset(ctx, arxivID, yymm, ev.Size, ev.EventTime, ev.ETag)
-	case "json":
+	case paperindex.KindJSON:
 		if removed {
 			return paperIndex.RemoveAsset(ctx, arxivID, "json")
 		}
@@ -266,13 +265,13 @@ func applyRustFSEvent(
 		// json from the bucket and parse its title/abstract/etc.
 		// On fetch failure (transient S3 hiccup), fall back to the
 		// no-metadata upsert so at least has_json + sizes get set.
-		md, mdOK := fetchArxivMetadata(ctx, rawStore, ev.Key)
+		md, mdOK := paperindex.FetchArxivMetadata(ctx, rawStore, ev.Key)
 		if mdOK {
 			return paperIndex.UpsertJSONMetadata(ctx, arxivID, yymm,
 				ev.Size, ev.EventTime, ev.ETag, md)
 		}
 		return paperIndex.UpsertJSONAsset(ctx, arxivID, yymm, ev.Size, ev.EventTime, ev.ETag)
-	case "images":
+	case paperindex.KindImages:
 		delta := 1
 		if removed {
 			delta = -1
@@ -280,97 +279,6 @@ func applyRustFSEvent(
 		return paperIndex.AdjustImageCount(ctx, arxivID, yymm, delta)
 	}
 	return nil
-}
-
-// parseAssetKey decodes a bucket object key into the (kind, arxivID,
-// yymm) triple expected by paperindex Upsert methods. Returns ok=false
-// for any key shape we don't recognise (the catch-all so noise like
-// index/* or operator-uploaded files at the bucket root doesn't enter
-// the catalog).
-//
-// Recognised shapes (matching internal/paperassets.AssetKey):
-//
-//	pdf/<yymm>/<id>.pdf                         → kind=pdf
-//	markdown/<yymm>/<id>.md                     → kind=markdown
-//	json/<yymm>/<id>.json                       → kind=json
-//	images/<yymm>/<id>/<anything>               → kind=images
-func parseAssetKey(key string) (kind, arxivID, yymm string, ok bool) {
-	parts := strings.Split(key, "/")
-	if len(parts) < 3 {
-		return "", "", "", false
-	}
-	switch parts[0] {
-	case "pdf", "markdown", "json":
-		if len(parts) != 3 {
-			return "", "", "", false
-		}
-		yymm = parts[1]
-		base := parts[2]
-		stem := strings.TrimSuffix(base, path.Ext(base))
-		if stem == "" {
-			return "", "", "", false
-		}
-		return parts[0], stem, yymm, true
-	case "images":
-		// images/<yymm>/<arxiv_id>/<file>
-		if len(parts) < 4 {
-			return "", "", "", false
-		}
-		return "images", parts[2], parts[1], true
-	}
-	return "", "", "", false
-}
-
-// fetchArxivMetadata downloads json/<…>.json from the bucket and
-// extracts title/abstract/etc. Returns ok=false on any failure — the
-// caller falls back to the metadata-less UpsertJSONAsset path.
-//
-// The schema here mirrors what was observed in the production bucket
-// (see PoC peek_json.py): top-level fields title / abstract / authors
-// / authors_parsed / categories / submitter / update_date / etc.
-// Missing fields produce empty strings / zero-times, which the
-// paperindex Upsert path COALESCEs against existing values rather
-// than clobbering them.
-func fetchArxivMetadata(ctx context.Context, store objstore.Store, key string) (paperindex.JSONMetadata, bool) {
-	rc, _, err := store.Get(ctx, key)
-	if err != nil {
-		return paperindex.JSONMetadata{}, false
-	}
-	defer rc.Close()
-	body, err := io.ReadAll(io.LimitReader(rc, 2<<20)) // arxiv metadata jsons are <50KB; 2 MiB is paranoid
-	if err != nil {
-		return paperindex.JSONMetadata{}, false
-	}
-	var parsed struct {
-		Title      string `json:"title"`
-		Abstract   string `json:"abstract"`
-		Authors    string `json:"authors"`
-		Categories string `json:"categories"`
-		Submitter  string `json:"submitter"`
-		UpdateDate string `json:"update_date"`
-		// authors_parsed is [[lastName, firstName, suffix], ...]; we
-		// don't need it when `authors` (the joined string) is already
-		// present in the same record, which the PoC scrape confirmed.
-		// json.Unmarshal silently ignores unknown fields by default,
-		// so listing this here as a documenting comment is enough.
-	}
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return paperindex.JSONMetadata{}, false
-	}
-	md := paperindex.JSONMetadata{
-		Title:      strings.TrimSpace(parsed.Title),
-		Abstract:   strings.TrimSpace(parsed.Abstract),
-		Authors:    strings.TrimSpace(parsed.Authors),
-		Categories: strings.TrimSpace(parsed.Categories),
-		Submitter:  strings.TrimSpace(parsed.Submitter),
-	}
-	if parsed.UpdateDate != "" {
-		// arxiv update_date is "YYYY-MM-DD".
-		if t, err := time.Parse("2006-01-02", parsed.UpdateDate); err == nil {
-			md.UpdateDate = t
-		}
-	}
-	return md, true
 }
 
 // trimForLog truncates a byte slice for log inclusion, replacing

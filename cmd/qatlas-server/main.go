@@ -127,6 +127,13 @@ func main() {
 	// constraint as pat / storage above.
 	app.RootCmd.AddCommand(NewServiceCommand())
 
+	// Mount the `bootstrap-index` subcommand (one-shot full-bucket
+	// scan that rebuilds index/papers.parquet, including arxiv
+	// metadata enrichment from json files). Same timing constraint
+	// as pat / storage / service above. Operator-driven; see
+	// bootstrap_index_cmd.go for the "stop service first" caveat.
+	app.RootCmd.AddCommand(NewBootstrapIndexCommand())
+
 	// Install our default PAT-surface rate-limit rules. Done at
 	// OnBootstrap (after PocketBase has loaded settings from the DB)
 	// rather than synchronously here, because Settings() is empty

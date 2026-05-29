@@ -222,11 +222,17 @@ func New(ctx context.Context, cfg Config) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("paperindex: open duckdb: %w", err)
 	}
-	// Single-connection pool: keeps the in-memory table coherent
-	// across goroutines (duckdb writes serialise per-connection).
-	// Reads stay fast because DuckDB parallelises within a query.
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
+	// Bumped from 1 → 8 (2026-05-29) for concurrent reads. DuckDB
+	// uses MVCC + per-DB locking internally, so multiple connections
+	// against the same in-memory database serialise writes but
+	// parallelise reads. With 1 conn, dashboard pages with multiple
+	// concurrent /api/papers/... queries would queue serially even
+	// though each was sub-30ms; with 8 we serve typical small-team
+	// concurrent traffic without queuing. Writes (Upsert path) still
+	// serialise at the DuckDB level — pool size is a read-parallelism
+	// tunable, not a write one.
+	db.SetMaxOpenConns(8)
+	db.SetMaxIdleConns(2)
 
 	s := &Store{
 		db:      db,
