@@ -21,3 +21,6 @@
     详见 [REST API 总览 › 交互式 API 文档](rest-api.md#api-swagger-ui)。
 
 <swagger-ui src="openapi.json"/>
+
+<!-- RTD auto-build connectivity probe: 2026-05-29 -->
+
