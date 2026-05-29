@@ -22,5 +22,3 @@
 
 <swagger-ui src="openapi.json"/>
 
-<!-- RTD auto-build connectivity probe: 2026-05-29 -->
-
