@@ -10,8 +10,8 @@
 import pytest
 import numpy as np
 
-from atlas.designer.quantum_circuit import QuantumCircuit
-from atlas.validator.reference_comparison import (
+from qatlas.designer.quantum_circuit import QuantumCircuit
+from qatlas.validator.reference_comparison import (
     ReferenceComparator, ReferenceComparisonResult,
     ComparisonStatus, MetricComparison
 )

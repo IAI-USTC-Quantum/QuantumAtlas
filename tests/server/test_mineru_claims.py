@@ -11,8 +11,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from atlas.server.config import ServerConfig
-from atlas.server.main import create_app
+from qatlas.server.config import ServerConfig
+from qatlas.server.main import create_app
 
 PDF_HEADER = b"%PDF-1.4\n%test\n%%EOF\n"
 

@@ -11,7 +11,7 @@ import argparse
 
 import pytest
 
-from atlas.client import _common
+from qatlas.client import _common
 
 
 @pytest.fixture(autouse=True)
@@ -75,7 +75,7 @@ def test_resolve_token_store_fallback(monkeypatch, tmp_path):
     # Seed the store using auth.py's own writer so we exercise the
     # same path qatlas auth login uses (host normalisation, file
     # layout, etc.).
-    from atlas.client import auth
+    from qatlas.client import auth
 
     store = auth._load_store()
     store.setdefault("hosts", {})["quantum-atlas.ai"] = {
@@ -96,7 +96,7 @@ def test_resolve_token_env_beats_store(monkeypatch, tmp_path):
     monkeypatch.setenv("QATLAS_TOKEN", "env-wins")
     monkeypatch.setenv("QATLAS_SERVER_URL", "https://quantum-atlas.ai")
 
-    from atlas.client import auth
+    from qatlas.client import auth
 
     store = auth._load_store()
     store.setdefault("hosts", {})["quantum-atlas.ai"] = {

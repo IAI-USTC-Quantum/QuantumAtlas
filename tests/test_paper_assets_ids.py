@@ -1,6 +1,6 @@
 import pytest
 
-from atlas.paper_assets import safe_paper_key, wiki_source_page_id
+from qatlas.paper_assets import safe_paper_key, wiki_source_page_id
 
 
 @pytest.mark.parametrize(

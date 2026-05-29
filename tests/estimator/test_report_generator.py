@@ -4,9 +4,9 @@ Tests for report_generator.py
 
 import json
 import pytest
-from atlas.designer.quantum_circuit import QuantumCircuit
-from atlas.estimator.resource_analyzer import ResourceAnalyzer
-from atlas.estimator.report_generator import ReportGenerator, OptimizationSuggestion
+from qatlas.designer.quantum_circuit import QuantumCircuit
+from qatlas.estimator.resource_analyzer import ResourceAnalyzer
+from qatlas.estimator.report_generator import ReportGenerator, OptimizationSuggestion
 
 
 class TestReportGenerator:

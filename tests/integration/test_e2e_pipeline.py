@@ -9,12 +9,12 @@ import pytest
 from pathlib import Path
 from typing import Dict, Any
 
-from atlas.designer.quantum_circuit import QuantumCircuit
-from atlas.designer.quantum_ir import QuantumIR
-from atlas.designer.designer import CircuitDesigner
-from atlas.codegen.generator import CodeGenerator
-from atlas.validator.validator import Validator
-from atlas.estimator.estimator import ResourceEstimator
+from qatlas.designer.quantum_circuit import QuantumCircuit
+from qatlas.designer.quantum_ir import QuantumIR
+from qatlas.designer.designer import CircuitDesigner
+from qatlas.codegen.generator import CodeGenerator
+from qatlas.validator.validator import Validator
+from qatlas.estimator.estimator import ResourceEstimator
 
 
 # === Test Data: Predefined Algorithm IRs ===

@@ -13,11 +13,11 @@ import json
 import tempfile
 import os
 
-from atlas.designer.quantum_circuit import QuantumCircuit
-from atlas.designer.quantum_ir import QuantumIR
-from atlas.validator.__main__ import load_circuit
-from atlas.validator.validator import Validator, ValidationReport
-from atlas.validator.test_framework import TestCase, TestSuite
+from qatlas.designer.quantum_circuit import QuantumCircuit
+from qatlas.designer.quantum_ir import QuantumIR
+from qatlas.validator.__main__ import load_circuit
+from qatlas.validator.validator import Validator, ValidationReport
+from qatlas.validator.test_framework import TestCase, TestSuite
 
 
 class TestValidatorInitialization:
@@ -417,7 +417,7 @@ class TestValidationReport:
     
     def test_report_with_results(self):
         """测试带结果的报告"""
-        from atlas.validator.equivalence_checker import EquivalenceResult
+        from qatlas.validator.equivalence_checker import EquivalenceResult
         
         report = ValidationReport(circuit_name="Test")
         report.equivalence_result = EquivalenceResult(is_equivalent=True)

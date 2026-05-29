@@ -1,7 +1,7 @@
 """Tests for AlgorithmIR schema."""
 
 import pytest
-from atlas.extractor.algorithm_ir import AlgorithmIR, Complexity
+from qatlas.extractor.algorithm_ir import AlgorithmIR, Complexity
 
 
 class TestComplexity:

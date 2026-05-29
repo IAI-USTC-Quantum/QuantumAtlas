@@ -6,7 +6,7 @@ import pytest
 from datetime import datetime
 from pathlib import Path
 
-from atlas.wiki.page import WikiPage, WikiFrontmatter
+from qatlas.wiki.page import WikiPage, WikiFrontmatter
 
 
 class TestWikiFrontmatter:

@@ -3,8 +3,8 @@ Tests for resource_analyzer.py
 """
 
 import pytest
-from atlas.designer.quantum_circuit import QuantumCircuit
-from atlas.estimator.resource_analyzer import ResourceAnalyzer, ResourceStats
+from qatlas.designer.quantum_circuit import QuantumCircuit
+from qatlas.estimator.resource_analyzer import ResourceAnalyzer, ResourceStats
 
 
 class TestResourceAnalyzer:

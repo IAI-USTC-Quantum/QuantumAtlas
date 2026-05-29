@@ -5,9 +5,9 @@ Tests for WikiLinter.
 import pytest
 from pathlib import Path
 
-from atlas.wiki.engine import WikiEngine
-from atlas.wiki.page import WikiPage, WikiFrontmatter
-from atlas.wiki.linter import LintSeverity, LintIssue
+from qatlas.wiki.engine import WikiEngine
+from qatlas.wiki.page import WikiPage, WikiFrontmatter
+from qatlas.wiki.linter import LintSeverity, LintIssue
 
 
 class TestWikiLinter:

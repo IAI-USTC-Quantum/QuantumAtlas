@@ -33,8 +33,8 @@ def mock_wiki_engine():
 @pytest.fixture
 def client(tmp_path):
     """Create test client (runs ASGI lifespan so stores are initialized)."""
-    from atlas.server.config import ServerConfig
-    from atlas.server.main import create_app
+    from qatlas.server.config import ServerConfig
+    from qatlas.server.main import create_app
 
     config = ServerConfig(
         wiki_dir=str(tmp_path / "wiki"),
@@ -184,10 +184,10 @@ class TestAPIRoutes:
 
     def test_configured_wiki_engine_blocks_server_content_mutations(self, tmp_path):
         """Server code gets an engine that cannot create or edit Wiki content."""
-        from atlas.server.config import ServerConfig
-        from atlas.server.routers.api import _configured_wiki_engine
-        from atlas.wiki.engine import WikiWriteDisabledError
-        from atlas.wiki.page import WikiFrontmatter, WikiPage
+        from qatlas.server.config import ServerConfig
+        from qatlas.server.routers.api import _configured_wiki_engine
+        from qatlas.wiki.engine import WikiWriteDisabledError
+        from qatlas.wiki.page import WikiFrontmatter, WikiPage
 
         config = ServerConfig(
             wiki_dir=str(tmp_path / "wiki"),
@@ -220,7 +220,7 @@ class TestAPIRoutes:
         data = response.json()
 
         assert data["mode"] == "server"
-        from atlas import __version__
+        from qatlas import __version__
 
         assert data["version"] == __version__
         assert set(data) == {"mode", "version", "code", "wiki", "assets", "audit"}
@@ -283,7 +283,7 @@ class TestAPIRoutes:
             def close(self):
                 pass
 
-        monkeypatch.setattr("atlas.knowledge.neo4j_client.Neo4jClient", FakeNeo4jClient)
+        monkeypatch.setattr("qatlas.knowledge.neo4j_client.Neo4jClient", FakeNeo4jClient)
 
         response = client.get("/api/graph/stats")
         assert response.status_code == 200
@@ -301,8 +301,8 @@ class TestAPIRoutes:
 
     def test_wiki_sync_status_is_safe_summary(self, tmp_path):
         """Test wiki sync status reports Git state without exposing paths."""
-        from atlas.server.config import ServerConfig
-        from atlas.server.main import create_app
+        from qatlas.server.config import ServerConfig
+        from qatlas.server.main import create_app
 
         wiki_dir = tmp_path / "wiki"
         wiki_dir.mkdir()
@@ -330,8 +330,8 @@ class TestAPIRoutes:
 
     def test_wiki_sync_status_warns_on_non_main_branch(self, tmp_path):
         """Test wiki sync status warns when the server checkout is not main/master."""
-        from atlas.server.config import ServerConfig
-        from atlas.server.main import create_app
+        from qatlas.server.config import ServerConfig
+        from qatlas.server.main import create_app
 
         wiki_dir = tmp_path / "wiki"
         wiki_dir.mkdir()
@@ -361,8 +361,8 @@ class TestAPIRoutes:
 
     def test_wiki_sync_pull_rejects_dirty_worktree(self, tmp_path):
         """Test wiki sync pull refuses local changes."""
-        from atlas.server.config import ServerConfig
-        from atlas.server.main import create_app
+        from qatlas.server.config import ServerConfig
+        from qatlas.server.main import create_app
 
         wiki_dir = tmp_path / "wiki"
         wiki_dir.mkdir()
@@ -385,8 +385,8 @@ class TestAPIRoutes:
 
     def test_wiki_sync_pull_fast_forwards(self, tmp_path):
         """Test wiki sync pull fetches and fast-forwards the configured Wiki repo."""
-        from atlas.server.config import ServerConfig
-        from atlas.server.main import create_app
+        from qatlas.server.config import ServerConfig
+        from qatlas.server.main import create_app
 
         remote = tmp_path / "remote.git"
         seed = tmp_path / "seed"

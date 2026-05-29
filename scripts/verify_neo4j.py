@@ -12,7 +12,7 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from atlas.knowledge import Neo4jClient
+from qatlas.knowledge import Neo4jClient
 
 
 def main():

@@ -7,14 +7,14 @@ from pathlib import Path
 
 import pytest
 
-from atlas import __version__, cli
-from atlas.client import __main__ as client_cli
+from qatlas import __version__, cli
+from qatlas.client import __main__ as client_cli
 
 
 def test_pyproject_console_script_points_to_top_level_cli():
     pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
 
-    assert pyproject["project"]["scripts"]["qatlas"] == "atlas.cli:main"
+    assert pyproject["project"]["scripts"]["qatlas"] == "qatlas.cli:main"
 
 
 def test_runtime_version_matches_project_metadata():
@@ -135,7 +135,7 @@ def test_dispatches_to_existing_module_cli(monkeypatch):
     assert result == 0
     assert calls == [
         (
-            "atlas.codegen.__main__",
+            "qatlas.codegen.__main__",
             "__main__",
             ["qatlas codegen", "circuit.json", "--backend", "qiskit"],
         )
@@ -156,7 +156,7 @@ def test_dispatches_ingest_to_http_client(monkeypatch):
     assert result == 0
     assert calls == [
         (
-            "atlas.client.__main__",
+            "qatlas.client.__main__",
             "__main__",
             ["qatlas ingest", "quant-ph/9508027", "--no-poll"],
         )
@@ -175,7 +175,7 @@ def test_dispatch_normalizes_aliases(monkeypatch):
 
     assert result == 0
     assert calls == [
-        ("atlas.codegen.__main__", ["qatlas codegen", "circuit.json"])
+        ("qatlas.codegen.__main__", ["qatlas codegen", "circuit.json"])
     ]
 
 
@@ -195,7 +195,7 @@ def test_ingest_client_defaults_to_public_base_url(tmp_path, monkeypatch):
     )
     monkeypatch.delenv("QATLAS_SKIP_DOTENV", raising=False)
     monkeypatch.delenv("QUANTUMATLAS_SKIP_DOTENV", raising=False)
-    monkeypatch.setattr("atlas.server.config.get_project_root", lambda: tmp_path)
+    monkeypatch.setattr("qatlas.server.config.get_project_root", lambda: tmp_path)
 
     assert client_cli._default_base_url() == "https://atlas.example"
 

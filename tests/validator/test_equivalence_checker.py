@@ -11,8 +11,8 @@
 import pytest
 import numpy as np
 
-from atlas.designer.quantum_circuit import QuantumCircuit
-from atlas.validator.equivalence_checker import EquivalenceChecker, EquivalenceResult
+from qatlas.designer.quantum_circuit import QuantumCircuit
+from qatlas.validator.equivalence_checker import EquivalenceChecker, EquivalenceResult
 
 
 class TestEquivalenceCheckerBasics:

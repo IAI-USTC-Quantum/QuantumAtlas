@@ -1,7 +1,7 @@
 """Tests for knowledge graph models."""
 
 import pytest
-from atlas.knowledge.models import Primitive, Algorithm, Paper, Implementation
+from qatlas.knowledge.models import Primitive, Algorithm, Paper, Implementation
 
 
 class TestPrimitive:

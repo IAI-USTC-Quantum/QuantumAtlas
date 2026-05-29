@@ -170,8 +170,8 @@ qatlas validator circuit_ir.json --compare-with qft
 qatlas estimator circuit_ir.json --format markdown
 ```
 
-如果不做全局安装，也可以继续使用 `uv run -m atlas.parser`、`uv run -m atlas.wiki`、
-`uv run -m atlas.cli` 这些模块入口。
+如果不做全局安装，也可以继续使用 `uv run -m qatlas.parser`、`uv run -m qatlas.wiki`、
+`uv run -m qatlas.cli` 这些模块入口。
 
 ## 协作模型
 

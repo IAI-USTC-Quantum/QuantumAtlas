@@ -2,8 +2,8 @@
 
 import ast
 import pytest
-from atlas.codegen.qpanda_generator import QPandaCodeGenerator
-from atlas.designer.quantum_circuit import QuantumCircuit
+from qatlas.codegen.qpanda_generator import QPandaCodeGenerator
+from qatlas.designer.quantum_circuit import QuantumCircuit
 
 
 class TestQPandaCodeGenerator:
@@ -136,7 +136,7 @@ class TestQPandaCodeGenerator:
         """Test handling of unsupported gates."""
         circuit = QuantumCircuit(num_qubits=1)
         # Add a custom/unsupported gate directly
-        from atlas.designer.quantum_circuit import Gate
+        from qatlas.designer.quantum_circuit import Gate
         circuit.add_gate(Gate("CUSTOM_GATE", [0]))
         
         code = generator.generate(circuit, algorithm_id="unsupported")

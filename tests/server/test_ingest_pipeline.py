@@ -20,10 +20,10 @@ from __future__ import annotations
 import requests
 from fastapi.testclient import TestClient
 
-from atlas.server.config import ServerConfig
-from atlas.server.main import create_app
-from atlas.server.routers import api as api_module
-from atlas.server.routers.api import (
+from qatlas.server.config import ServerConfig
+from qatlas.server.main import create_app
+from qatlas.server.routers import api as api_module
+from qatlas.server.routers.api import (
     STAGE_ORDER,
     _friendly_fetch_error,
     _friendly_parse_error,
@@ -31,7 +31,7 @@ from atlas.server.routers.api import (
     _remaining_stage_flags,
     _stage_done_for_continue,
 )
-from atlas.server.tasks import IngestTask, StepStatus
+from qatlas.server.tasks import IngestTask, StepStatus
 
 
 # === Pure helper tests ============================================

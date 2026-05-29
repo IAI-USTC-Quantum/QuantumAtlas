@@ -11,8 +11,8 @@
 import pytest
 import numpy as np
 
-from atlas.designer.quantum_circuit import QuantumCircuit
-from atlas.validator.test_framework import (
+from qatlas.designer.quantum_circuit import QuantumCircuit
+from qatlas.validator.test_framework import (
     TestCase, TestSuite, TestExecutor, TestSuiteResult,
     TestStatus, TestResult
 )

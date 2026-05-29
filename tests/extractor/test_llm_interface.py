@@ -14,7 +14,7 @@ from typing import Generator
 
 import pytest
 
-from atlas.extractor.llm_interface import (
+from qatlas.extractor.llm_interface import (
     TokenUsage,
     RetryConfig,
     ExtractionResult,
@@ -164,7 +164,7 @@ class TestOpenAIProvider:
     
     def test_init_with_api_key_parameter(self):
         """Test initialization with API key parameter."""
-        with patch("atlas.extractor.llm_interface.OpenAI") as mock_openai:
+        with patch("qatlas.extractor.llm_interface.OpenAI") as mock_openai:
             provider = OpenAIProvider(api_key="test-key", model="gpt-4")
             
             assert provider.provider == LLMProvider.OPENAI
@@ -175,7 +175,7 @@ class TestOpenAIProvider:
     def test_init_with_env_var(self):
         """Test initialization with environment variable."""
         with patch.dict(os.environ, {"OPENAI_API_KEY": "env-key"}):
-            with patch("atlas.extractor.llm_interface.OpenAI"):
+            with patch("qatlas.extractor.llm_interface.OpenAI"):
                 provider = OpenAIProvider()
                 
                 assert provider.api_key == "env-key"
@@ -188,7 +188,7 @@ class TestOpenAIProvider:
     
     def test_total_token_usage_tracking(self):
         """Test that token usage is tracked across calls."""
-        with patch("atlas.extractor.llm_interface.OpenAI"):
+        with patch("qatlas.extractor.llm_interface.OpenAI"):
             provider = OpenAIProvider(api_key="test-key")
             
             # Simulate adding token usage
@@ -202,7 +202,7 @@ class TestOpenAIProvider:
     
     def test_truncate_text(self):
         """Test text truncation."""
-        with patch("atlas.extractor.llm_interface.OpenAI"):
+        with patch("qatlas.extractor.llm_interface.OpenAI"):
             provider = OpenAIProvider(api_key="test-key")
             
             short_text = "Short text"
@@ -219,7 +219,7 @@ class TestClaudeProvider:
     
     def test_init_with_api_key_parameter(self):
         """Test initialization with API key parameter."""
-        with patch("atlas.extractor.llm_interface.anthropic.Anthropic") as mock_anthropic:
+        with patch("qatlas.extractor.llm_interface.anthropic.Anthropic") as mock_anthropic:
             provider = ClaudeProvider(api_key="test-key", model="claude-3-opus")
             
             assert provider.provider == LLMProvider.ANTHROPIC
@@ -230,7 +230,7 @@ class TestClaudeProvider:
     def test_init_with_env_var(self):
         """Test initialization with environment variable."""
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "env-key"}):
-            with patch("atlas.extractor.llm_interface.anthropic.Anthropic"):
+            with patch("qatlas.extractor.llm_interface.anthropic.Anthropic"):
                 provider = ClaudeProvider()
                 
                 assert provider.api_key == "env-key"
@@ -247,19 +247,19 @@ class TestCreateLLM:
     
     def test_create_openai_provider(self):
         """Test creating OpenAI provider."""
-        with patch("atlas.extractor.llm_interface.OpenAI"):
+        with patch("qatlas.extractor.llm_interface.OpenAI"):
             provider = create_llm("openai", api_key="test-key")
             assert isinstance(provider, OpenAIProvider)
     
     def test_create_anthropic_provider(self):
         """Test creating Anthropic provider."""
-        with patch("atlas.extractor.llm_interface.anthropic.Anthropic"):
+        with patch("qatlas.extractor.llm_interface.anthropic.Anthropic"):
             provider = create_llm("anthropic", api_key="test-key")
             assert isinstance(provider, ClaudeProvider)
     
     def test_create_claude_provider(self):
         """Test creating Claude provider (alias for anthropic)."""
-        with patch("atlas.extractor.llm_interface.anthropic.Anthropic"):
+        with patch("qatlas.extractor.llm_interface.anthropic.Anthropic"):
             provider = create_llm("claude", api_key="test-key")
             assert isinstance(provider, ClaudeProvider)
     

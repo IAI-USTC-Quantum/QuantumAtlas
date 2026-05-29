@@ -8,8 +8,8 @@ from unittest.mock import patch
 
 import pytest
 
-from atlas.designer.quantum_ir import QuantumIR
-from atlas.designer.quantum_circuit import QuantumCircuit
+from qatlas.designer.quantum_ir import QuantumIR
+from qatlas.designer.quantum_circuit import QuantumCircuit
 
 
 class TestCLI:
@@ -17,12 +17,12 @@ class TestCLI:
     
     def test_cli_import(self):
         """Test that CLI module can be imported."""
-        from atlas.codegen import __main__ as cli_module
+        from qatlas.codegen import __main__ as cli_module
         assert cli_module is not None
     
     def test_cli_help(self):
         """Test CLI help output."""
-        from atlas.codegen.__main__ import main
+        from qatlas.codegen.__main__ import main
         
         with pytest.raises(SystemExit) as exc_info:
             main(['--help'])
@@ -31,7 +31,7 @@ class TestCLI:
     
     def test_cli_no_args_shows_error(self):
         """Test CLI with no arguments shows error."""
-        from atlas.codegen.__main__ import main
+        from qatlas.codegen.__main__ import main
         
         with pytest.raises(SystemExit) as exc_info:
             main([])
@@ -39,21 +39,21 @@ class TestCLI:
     
     def test_cli_nonexistent_file(self):
         """Test CLI with non-existent file."""
-        from atlas.codegen.__main__ import main
+        from qatlas.codegen.__main__ import main
         
         result = main(['/nonexistent/file.json'])
         assert result == 1
     
     def test_cli_invalid_directory(self):
         """Test CLI with directory instead of file."""
-        from atlas.codegen.__main__ import main
+        from qatlas.codegen.__main__ import main
         
         result = main(['/tmp'])
         assert result == 1
     
     def test_cli_invalid_json(self, tmp_path):
         """Test CLI with invalid JSON file."""
-        from atlas.codegen.__main__ import main
+        from qatlas.codegen.__main__ import main
         
         ir_file = tmp_path / "invalid.json"
         ir_file.write_text("not valid json")
@@ -63,7 +63,7 @@ class TestCLI:
     
     def test_cli_qpanda_backend(self, tmp_path):
         """Test CLI with QPanda backend."""
-        from atlas.codegen.__main__ import main
+        from qatlas.codegen.__main__ import main
         
         # Create a valid IR file
         circuit = QuantumCircuit(2)
@@ -94,7 +94,7 @@ class TestCLI:
     
     def test_cli_qiskit_backend(self, tmp_path):
         """Test CLI with Qiskit backend."""
-        from atlas.codegen.__main__ import main
+        from qatlas.codegen.__main__ import main
         
         # Create a valid IR file
         circuit = QuantumCircuit(2)
@@ -125,7 +125,7 @@ class TestCLI:
     
     def test_cli_no_format(self, tmp_path):
         """Test CLI with --no-format flag."""
-        from atlas.codegen.__main__ import main
+        from qatlas.codegen.__main__ import main
         
         circuit = QuantumCircuit(1)
         circuit.h(0)
@@ -153,7 +153,7 @@ class TestCLI:
     
     def test_cli_description(self, tmp_path):
         """Test CLI with description."""
-        from atlas.codegen.__main__ import main
+        from qatlas.codegen.__main__ import main
         
         circuit = QuantumCircuit(2)
         circuit.h(0)
@@ -185,7 +185,7 @@ class TestCLI:
     
     def test_cli_stdout_output(self, tmp_path, capsys):
         """Test CLI output to stdout."""
-        from atlas.codegen.__main__ import main
+        from qatlas.codegen.__main__ import main
         
         circuit = QuantumCircuit(1)
         circuit.h(0)
@@ -210,7 +210,7 @@ class TestCLI:
     
     def test_cli_creates_directories(self, tmp_path):
         """Test CLI creates output directories if needed."""
-        from atlas.codegen.__main__ import main
+        from qatlas.codegen.__main__ import main
         
         circuit = QuantumCircuit(1)
         circuit.h(0)
@@ -238,7 +238,7 @@ class TestCLI:
     
     def test_cli_line_length(self, tmp_path):
         """Test CLI with custom line length."""
-        from atlas.codegen.__main__ import main
+        from qatlas.codegen.__main__ import main
         
         circuit = QuantumCircuit(1)
         circuit.h(0)
@@ -270,14 +270,14 @@ class TestCLIArgumentParser:
     
     def test_parser_creation(self):
         """Test that argument parser is created correctly."""
-        from atlas.codegen.__main__ import create_parser
+        from qatlas.codegen.__main__ import create_parser
         
         parser = create_parser()
         assert parser is not None
     
     def test_backend_choices(self):
         """Test that backend choices are validated."""
-        from atlas.codegen.__main__ import create_parser
+        from qatlas.codegen.__main__ import create_parser
         
         parser = create_parser()
         
@@ -290,7 +290,7 @@ class TestCLIArgumentParser:
     
     def test_default_backend(self):
         """Test default backend is qiskit."""
-        from atlas.codegen.__main__ import create_parser
+        from qatlas.codegen.__main__ import create_parser
         
         parser = create_parser()
         args = parser.parse_args(['file.json'])
@@ -299,7 +299,7 @@ class TestCLIArgumentParser:
     
     def test_default_line_length(self):
         """Test default line length."""
-        from atlas.codegen.__main__ import create_parser
+        from qatlas.codegen.__main__ import create_parser
         
         parser = create_parser()
         args = parser.parse_args(['file.json'])
@@ -312,7 +312,7 @@ class TestCLIMainFunction:
     
     def test_main_with_valid_args(self, tmp_path):
         """Test main function with valid arguments."""
-        from atlas.codegen.__main__ import main
+        from qatlas.codegen.__main__ import main
         
         circuit = QuantumCircuit(2)
         circuit.h(0)

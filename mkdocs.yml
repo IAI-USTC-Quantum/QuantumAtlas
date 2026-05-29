@@ -107,7 +107,7 @@ plugins:
   - mkdocstrings:
       handlers:
         python:
-          paths: [atlas]
+          paths: [qatlas]
           options:
             show_source: true
             show_signature_annotations: true
@@ -183,4 +183,4 @@ extra_css:
 
 watch:
   - docs/snippets
-  - atlas
+  - qatlas

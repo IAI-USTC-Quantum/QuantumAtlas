@@ -1,7 +1,7 @@
 """Tests for QuantumCircuit data model."""
 
 import pytest
-from atlas.designer.quantum_circuit import QuantumCircuit, Gate
+from qatlas.designer.quantum_circuit import QuantumCircuit, Gate
 
 
 class TestQuantumCircuit:

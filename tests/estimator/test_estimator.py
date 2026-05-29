@@ -7,10 +7,10 @@ import pytest
 from pathlib import Path
 from unittest.mock import Mock, MagicMock, patch
 
-from atlas.designer.quantum_circuit import QuantumCircuit
-from atlas.estimator.estimator import ResourceEstimator
-from atlas.estimator.resource_analyzer import ResourceAnalyzer, ResourceStats
-from atlas.estimator.report_generator import ReportGenerator
+from qatlas.designer.quantum_circuit import QuantumCircuit
+from qatlas.estimator.estimator import ResourceEstimator
+from qatlas.estimator.resource_analyzer import ResourceAnalyzer, ResourceStats
+from qatlas.estimator.report_generator import ReportGenerator
 
 
 class TestResourceEstimator:

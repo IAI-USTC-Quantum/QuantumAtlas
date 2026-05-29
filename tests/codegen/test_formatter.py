@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from atlas.codegen.formatter import CodeFormatter, format_code, validate_code_syntax
+from qatlas.codegen.formatter import CodeFormatter, format_code, validate_code_syntax
 
 
 class TestCodeFormatter:

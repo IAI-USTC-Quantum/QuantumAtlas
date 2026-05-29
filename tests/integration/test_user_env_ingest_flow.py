@@ -19,8 +19,8 @@ import pytest
 import requests
 import uvicorn
 
-from atlas.server.config import ServerConfig, get_project_root
-from atlas.server.main import create_app
+from qatlas.server.config import ServerConfig, get_project_root
+from qatlas.server.main import create_app
 
 pytestmark = [
     pytest.mark.e2e,

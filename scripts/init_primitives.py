@@ -13,7 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import yaml
-from atlas.knowledge import Neo4jClient, Primitive
+from qatlas.knowledge import Neo4jClient, Primitive
 
 
 def load_primitive_from_yaml(yaml_path: Path) -> Primitive:
@@ -52,7 +52,7 @@ def main():
         return 1
     
     # Load primitives from YAML files
-    primitives_dir = Path(__file__).parent.parent / "atlas" / "knowledge_graph" / "primitives"
+    primitives_dir = Path(__file__).parent.parent / "qatlas" / "knowledge_graph" / "primitives"
     yaml_files = list(primitives_dir.glob("*.yaml"))
     
     print(f"\n📁 Found {len(yaml_files)} primitive definitions")

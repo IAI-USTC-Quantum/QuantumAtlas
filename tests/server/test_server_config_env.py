@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from atlas.server.config import ServerConfig
+from qatlas.server.config import ServerConfig
 
 ENV_KEYS = [
     # New QATLAS_* names
@@ -87,7 +87,7 @@ def test_server_config_reads_all_supported_env_vars_from_dotenv(tmp_path, monkey
         )
         + "\n",
     )
-    monkeypatch.setattr("atlas.server.config.get_project_root", lambda: tmp_path)
+    monkeypatch.setattr("qatlas.server.config.get_project_root", lambda: tmp_path)
 
     config = ServerConfig.from_env()
 
@@ -129,7 +129,7 @@ def test_server_config_prefers_process_env_over_dotenv(tmp_path, monkeypatch):
         )
         + "\n",
     )
-    monkeypatch.setattr("atlas.server.config.get_project_root", lambda: tmp_path)
+    monkeypatch.setattr("qatlas.server.config.get_project_root", lambda: tmp_path)
     monkeypatch.setenv("SERVER_PORT", "9100")
     monkeypatch.setenv("RAW_DIR", "/from-env")
     monkeypatch.setenv("USER_HEADER", "X-From-Env")
@@ -154,7 +154,7 @@ def test_server_config_strips_quoted_dotenv_values(tmp_path, monkeypatch):
         )
         + "\n",
     )
-    monkeypatch.setattr("atlas.server.config.get_project_root", lambda: tmp_path)
+    monkeypatch.setattr("qatlas.server.config.get_project_root", lambda: tmp_path)
 
     config = ServerConfig.from_env()
 
@@ -176,7 +176,7 @@ def test_server_config_uses_standard_dotenv_syntax(tmp_path, monkeypatch):
         )
         + "\n",
     )
-    monkeypatch.setattr("atlas.server.config.get_project_root", lambda: tmp_path)
+    monkeypatch.setattr("qatlas.server.config.get_project_root", lambda: tmp_path)
 
     config = ServerConfig.from_env()
 
@@ -201,7 +201,7 @@ def test_server_config_boolean_env_parsing(tmp_path, monkeypatch, env_value, exp
         tmp_path,
         f"SERVER_DEBUG={env_value}\nMINERU_IS_OCR={env_value}\n",
     )
-    monkeypatch.setattr("atlas.server.config.get_project_root", lambda: tmp_path)
+    monkeypatch.setattr("qatlas.server.config.get_project_root", lambda: tmp_path)
 
     config = ServerConfig.from_env()
 
@@ -212,7 +212,7 @@ def test_server_config_boolean_env_parsing(tmp_path, monkeypatch, env_value, exp
 def test_server_config_get_raw_root_resolves_relative_to_project_root(tmp_path, monkeypatch):
     _reset_env(monkeypatch)
     _write_env(tmp_path, "RAW_DIR=shared/raw\n")
-    monkeypatch.setattr("atlas.server.config.get_project_root", lambda: tmp_path)
+    monkeypatch.setattr("qatlas.server.config.get_project_root", lambda: tmp_path)
 
     config = ServerConfig.from_env()
 

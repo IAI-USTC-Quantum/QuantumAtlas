@@ -4,7 +4,7 @@ import re
 
 import pytest
 import requests
-from atlas.parser.arxiv_fetcher import ArxivFetcher
+from qatlas.parser.arxiv_fetcher import ArxivFetcher
 
 
 class TestArxivFetcher:

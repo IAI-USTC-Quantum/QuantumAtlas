@@ -29,7 +29,7 @@ import stat
 import pytest
 import yaml
 
-from atlas.client import auth
+from qatlas.client import auth
 
 
 @pytest.fixture(autouse=True)
@@ -205,9 +205,9 @@ def test_login_via_token_flag_persists_and_status_lists(tmp_path, capsys):
 
 def test_login_via_with_token_stdin(monkeypatch, capsys):
     monkeypatch.setattr("sys.stdin", io.StringIO("qat_FromStdin12345\n"))
-    rc = auth.main(["login", "-H", "atlas.example", "--with-token"])
+    rc = auth.main(["login", "-H", "qatlas.example", "--with-token"])
     assert rc == 0
-    assert auth.get_stored_token("atlas.example") == "qat_FromStdin12345"
+    assert auth.get_stored_token("qatlas.example") == "qat_FromStdin12345"
 
 
 def test_login_warns_on_non_pat_token(capsys):
@@ -238,16 +238,16 @@ def test_login_no_host_no_env_no_arg_is_error(monkeypatch):
 
 def test_logout_is_idempotent(capsys):
     # Logging out a never-logged-in host succeeds with rc=0.
-    rc = auth.main(["logout", "-H", "atlas.example"])
+    rc = auth.main(["logout", "-H", "qatlas.example"])
     assert rc == 0
     assert "No credentials stored" in capsys.readouterr().err
 
     # Login then logout actually removes the entry.
-    auth.main(["login", "-H", "atlas.example", "--token", "qat_xyz"])
-    assert auth.get_stored_token("atlas.example") == "qat_xyz"
-    rc = auth.main(["logout", "-H", "atlas.example"])
+    auth.main(["login", "-H", "qatlas.example", "--token", "qat_xyz"])
+    assert auth.get_stored_token("qatlas.example") == "qat_xyz"
+    rc = auth.main(["logout", "-H", "qatlas.example"])
     assert rc == 0
-    assert auth.get_stored_token("atlas.example") == ""
+    assert auth.get_stored_token("qatlas.example") == ""
 
 
 def test_status_empty_returns_nonzero(capsys):
@@ -258,9 +258,9 @@ def test_status_empty_returns_nonzero(capsys):
 
 
 def test_token_subcommand_prints_plaintext(capsys):
-    auth.main(["login", "-H", "atlas.example", "--token", "qat_pipeMe"])
+    auth.main(["login", "-H", "qatlas.example", "--token", "qat_pipeMe"])
     capsys.readouterr()  # drop login chatter
-    rc = auth.main(["token", "-H", "atlas.example"])
+    rc = auth.main(["token", "-H", "qatlas.example"])
     assert rc == 0
     out = capsys.readouterr().out
     # Token is on stdout, exactly one line, no extra adornment — this

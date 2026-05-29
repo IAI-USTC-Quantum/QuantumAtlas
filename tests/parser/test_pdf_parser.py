@@ -2,7 +2,7 @@
 
 import pytest
 from pathlib import Path
-from atlas.parser.pdf_parser import PDFParser, ParsedPaper
+from qatlas.parser.pdf_parser import PDFParser, ParsedPaper
 
 
 class TestPDFParser:

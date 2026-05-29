@@ -3,7 +3,7 @@
 import os
 import tempfile
 import pytest
-from atlas.codegen.template_engine import TemplateEngine
+from qatlas.codegen.template_engine import TemplateEngine
 
 
 class TestTemplateEngine:
@@ -12,7 +12,7 @@ class TestTemplateEngine:
     def test_init_without_jinja2(self, monkeypatch):
         """Test initialization when Jinja2 is not available."""
         # Mock Jinja2 as unavailable
-        monkeypatch.setattr("atlas.codegen.template_engine.JINJA2_AVAILABLE", False)
+        monkeypatch.setattr("qatlas.codegen.template_engine.JINJA2_AVAILABLE", False)
         
         with pytest.raises(ImportError, match="Jinja2 is required"):
             TemplateEngine()
@@ -140,7 +140,7 @@ class TestGetDefaultEngine:
     
     def test_default_engine_creation(self):
         """Test creating default engine with templates directory."""
-        from atlas.codegen.template_engine import get_default_engine
+        from qatlas.codegen.template_engine import get_default_engine
         
         engine = get_default_engine()
         assert isinstance(engine, TemplateEngine)

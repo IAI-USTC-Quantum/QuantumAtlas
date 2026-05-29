@@ -7,8 +7,8 @@ import pytest
 import tempfile
 from pathlib import Path
 
-from atlas.wiki.engine import WikiEngine, WikiWriteDisabledError
-from atlas.wiki.page import WikiPage, WikiFrontmatter
+from qatlas.wiki.engine import WikiEngine, WikiWriteDisabledError
+from qatlas.wiki.page import WikiPage, WikiFrontmatter
 
 
 class TestWikiEngine:

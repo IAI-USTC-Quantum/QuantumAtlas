@@ -7,8 +7,8 @@ import pytest
 import requests
 import uvicorn
 
-from atlas.server.config import ServerConfig
-from atlas.server.main import create_app
+from qatlas.server.config import ServerConfig
+from qatlas.server.main import create_app
 
 
 # Legacy Python-only ingest pipeline: only valid against atlas.server, not

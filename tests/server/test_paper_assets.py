@@ -3,9 +3,9 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from atlas.paper_assets import paper_asset_path, resolve_paper_assets, safe_paper_key
-from atlas.server.config import ServerConfig
-from atlas.server.main import create_app
+from qatlas.paper_assets import paper_asset_path, resolve_paper_assets, safe_paper_key
+from qatlas.server.config import ServerConfig
+from qatlas.server.main import create_app
 
 
 def _write(path: Path, data: str | bytes) -> None:
@@ -187,9 +187,9 @@ def test_server_config_reads_raw_dir_from_dotenv(tmp_path, monkeypatch):
     monkeypatch.delenv('QUANTUMATLAS_SKIP_DOTENV', raising=False)
     monkeypatch.delenv('RAW_DIR', raising=False)
     monkeypatch.delenv('QATLAS_RAW_DIR', raising=False)
-    monkeypatch.setattr('atlas.server.config.get_project_root', lambda: tmp_path)
+    monkeypatch.setattr('qatlas.server.config.get_project_root', lambda: tmp_path)
 
-    from atlas.server.config import ServerConfig
+    from qatlas.server.config import ServerConfig
 
     config = ServerConfig.from_env()
     assert config.raw_dir == '/tmp/quantum-atlas-raw'
@@ -203,9 +203,9 @@ def test_server_config_defaults_user_header_to_none(tmp_path, monkeypatch):
     monkeypatch.delenv('QUANTUMATLAS_SKIP_DOTENV', raising=False)
     monkeypatch.delenv('USER_HEADER', raising=False)
     monkeypatch.delenv('QATLAS_USER_HEADER', raising=False)
-    monkeypatch.setattr('atlas.server.config.get_project_root', lambda: tmp_path)
+    monkeypatch.setattr('qatlas.server.config.get_project_root', lambda: tmp_path)
 
-    from atlas.server.config import ServerConfig
+    from qatlas.server.config import ServerConfig
 
     config = ServerConfig.from_env()
     assert config.user_header is None

@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
-from atlas.server.config import ServerConfig
-from atlas.server.main import create_app
+from qatlas.server.config import ServerConfig
+from qatlas.server.main import create_app
 
 
 def test_ingest_queue_records_requester_header_without_wiki_log(tmp_path, monkeypatch):
@@ -11,7 +11,7 @@ def test_ingest_queue_records_requester_header_without_wiki_log(tmp_path, monkey
         data_dir=str(tmp_path / "data"),
         user_header="X-Token-User-Name",
     )
-    monkeypatch.setattr("atlas.server.routers.api.execute_ingest", lambda *args, **kwargs: None)
+    monkeypatch.setattr("qatlas.server.routers.api.execute_ingest", lambda *args, **kwargs: None)
 
     app = create_app(config)
 
@@ -37,7 +37,7 @@ def test_ingest_queue_records_anonymous_without_wiki_log(tmp_path, monkeypatch):
         raw_dir=str(tmp_path / "raw"),
         data_dir=str(tmp_path / "data"),
     )
-    monkeypatch.setattr("atlas.server.routers.api.execute_ingest", lambda *args, **kwargs: None)
+    monkeypatch.setattr("qatlas.server.routers.api.execute_ingest", lambda *args, **kwargs: None)
 
     app = create_app(config)
 

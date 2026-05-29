@@ -42,14 +42,14 @@ dev = [
 ]
 
 [project.scripts]
-qatlas = "atlas.cli:main"
+qatlas = "qatlas.cli:main"
 
 [build-system]
 requires = ["hatchling>=1.24"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["atlas"]
+packages = ["qatlas"]
 
 [tool.commitizen]
 name = "cz_conventional_commits"
@@ -70,7 +70,7 @@ markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "network: tests that require outbound network access (e.g. arXiv API)",
     "e2e: end-to-end tests that load the repository .env and exercise real external services",
-    "legacy: targets only the legacy FastAPI server (atlas/server/), not the current Go server (cmd/qatlas-server). Excluded by default.",
+    "legacy: targets only the legacy FastAPI server (qatlas/server/), not the current Go server (cmd/qatlas-server). Excluded by default.",
 ]
 
 [tool.black]

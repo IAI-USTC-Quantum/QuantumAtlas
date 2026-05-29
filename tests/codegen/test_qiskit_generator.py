@@ -2,8 +2,8 @@
 
 import ast
 import pytest
-from atlas.codegen.qiskit_generator import QiskitCodeGenerator
-from atlas.designer.quantum_circuit import QuantumCircuit
+from qatlas.codegen.qiskit_generator import QiskitCodeGenerator
+from qatlas.designer.quantum_circuit import QuantumCircuit
 
 
 class TestQiskitCodeGenerator:
@@ -150,7 +150,7 @@ class TestQiskitCodeGenerator:
         """Test handling of unsupported gates."""
         circuit = QuantumCircuit(num_qubits=1)
         # Add a custom/unsupported gate directly
-        from atlas.designer.quantum_circuit import Gate
+        from qatlas.designer.quantum_circuit import Gate
         circuit.add_gate(Gate("CUSTOM_GATE", [0]))
         
         code = generator.generate(circuit, algorithm_id="unsupported")

@@ -2,8 +2,8 @@
 
 import pytest
 import math
-from atlas.designer.quantum_circuit import QuantumCircuit
-from atlas.designer.optimizer import CircuitOptimizer, OptimizationLevel
+from qatlas.designer.quantum_circuit import QuantumCircuit
+from qatlas.designer.optimizer import CircuitOptimizer, OptimizationLevel
 
 
 class TestCircuitOptimizer:

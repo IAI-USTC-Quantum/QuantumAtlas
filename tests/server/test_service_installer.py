@@ -1,4 +1,4 @@
-from atlas.server.service import (
+from qatlas.server.service import (
     ServiceSpec,
     _resolve_enable_now,
     detect_runner,
@@ -40,7 +40,7 @@ def test_cli_stages_system_service_with_uvicorn_uv_runner(tmp_path):
     assert f'WorkingDirectory={tmp_path}' in unit
     assert f'EnvironmentFile=-{tmp_path / ".env"}' in unit
     assert (
-        "ExecStart=/usr/bin/uv run uvicorn atlas.server.main:app --host 0.0.0.0 --port 9000"
+        "ExecStart=/usr/bin/uv run uvicorn qatlas.server.main:app --host 0.0.0.0 --port 9000"
         in unit
     )
     assert "WantedBy=multi-user.target" in unit
@@ -58,7 +58,7 @@ def test_render_service_unit_uses_concrete_default_bind_args(tmp_path):
     assert "${SERVER_HOST}" not in unit
     assert "${SERVER_PORT}" not in unit
     assert (
-        "ExecStart=/usr/bin/uv run uvicorn atlas.server.main:app "
+        "ExecStart=/usr/bin/uv run uvicorn qatlas.server.main:app "
         "--host 127.0.0.1 --port 4200"
     ) in unit
 
@@ -101,7 +101,7 @@ def test_detect_runner_falls_back_to_local_venv_python_when_uv_is_missing(tmp_pa
     python_path = tmp_path / ".venv" / "bin" / "python"
     python_path.parent.mkdir(parents=True)
     python_path.write_text("#!/bin/sh\n", encoding="utf-8")
-    monkeypatch.setattr("atlas.server.service.shutil.which", lambda name: None)
+    monkeypatch.setattr("qatlas.server.service.shutil.which", lambda name: None)
 
     runner, uv_path, detected_python = detect_runner(tmp_path)
 

@@ -33,7 +33,7 @@ def find_project_root() -> Path:
     """Find the project root directory."""
     current = Path(__file__).resolve()
     for parent in current.parents:
-        if (parent / "atlas").is_dir() and (parent / "pyproject.toml").exists():
+        if (parent / "qatlas").is_dir() and (parent / "pyproject.toml").exists():
             return parent
     return Path.cwd()
 
@@ -52,10 +52,10 @@ def migrate_primitives(
     Returns:
         Migration statistics
     """
-    from atlas.designer.primitive_loader import PrimitiveLoader, PrimitiveDefinition
-    from atlas.wiki.templates import PageTemplate
+    from qatlas.designer.primitive_loader import PrimitiveLoader, PrimitiveDefinition
+    from qatlas.wiki.templates import PageTemplate
 
-    primitives_dir = project_root / "atlas" / "knowledge_graph" / "primitives"
+    primitives_dir = project_root / "qatlas" / "knowledge_graph" / "primitives"
     wiki_primitives_dir = project_root / "wiki" / "entities" / "primitives"
 
     if not primitives_dir.exists():
@@ -171,7 +171,7 @@ def migrate_papers(
         logger.info("No existing papers directory to migrate")
         return stats
 
-    from atlas.paper_assets import safe_paper_key, wiki_source_page_id
+    from qatlas.paper_assets import safe_paper_key, wiki_source_page_id
 
     # Create target directories
     for subdir in ["pdf", "markdown", "json"]:
@@ -216,7 +216,7 @@ def migrate_papers(
             with open(js) as f:
                 metadata = json.load(f)
 
-            from atlas.wiki.templates import PageTemplate
+            from qatlas.wiki.templates import PageTemplate
 
             page = PageTemplate.source_paper(
                 arxiv_id=arxiv_id,

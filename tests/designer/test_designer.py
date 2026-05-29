@@ -5,10 +5,10 @@ import tempfile
 import os
 from pathlib import Path
 
-from atlas.designer.designer import CircuitDesigner
-from atlas.designer.quantum_ir import QuantumIR
-from atlas.designer.quantum_circuit import QuantumCircuit
-from atlas.designer.optimizer import OptimizationLevel
+from qatlas.designer.designer import CircuitDesigner
+from qatlas.designer.quantum_ir import QuantumIR
+from qatlas.designer.quantum_circuit import QuantumCircuit
+from qatlas.designer.optimizer import OptimizationLevel
 
 
 class TestCircuitDesigner:
@@ -170,7 +170,7 @@ class TestCircuitDesigner:
 
         # Ensure circuit has at least 2 qubits for CNOT
         if quantum_ir.circuit.num_qubits < 2:
-            from atlas.designer.quantum_circuit import QuantumCircuit
+            from qatlas.designer.quantum_circuit import QuantumCircuit
             new_circuit = QuantumCircuit(num_qubits=2, name=quantum_ir.circuit.name)
             new_circuit.gates = quantum_ir.circuit.gates
             quantum_ir.circuit = new_circuit

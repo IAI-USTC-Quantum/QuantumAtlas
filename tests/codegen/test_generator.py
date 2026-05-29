@@ -7,9 +7,9 @@ import tempfile
 import pytest
 from pathlib import Path
 
-from atlas.codegen.generator import CodeGenerator, generate_qpanda_code, generate_qiskit_code
-from atlas.designer.quantum_ir import QuantumIR
-from atlas.designer.quantum_circuit import QuantumCircuit
+from qatlas.codegen.generator import CodeGenerator, generate_qpanda_code, generate_qiskit_code
+from qatlas.designer.quantum_ir import QuantumIR
+from qatlas.designer.quantum_circuit import QuantumCircuit
 
 
 class TestCodeGenerator:

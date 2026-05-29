@@ -1,8 +1,8 @@
 """Tests for primitive composer."""
 
 import pytest
-from atlas.designer.primitive_loader import PrimitiveLoader, PrimitiveDefinition
-from atlas.designer.primitive_composer import PrimitiveComposer, CompositionResult
+from qatlas.designer.primitive_loader import PrimitiveLoader, PrimitiveDefinition
+from qatlas.designer.primitive_composer import PrimitiveComposer, CompositionResult
 
 
 class TestPrimitiveLoader:
@@ -168,7 +168,7 @@ class TestCompositionResult:
 
     def test_successful_result(self):
         """Test successful composition result."""
-        from atlas.designer.quantum_circuit import QuantumCircuit
+        from qatlas.designer.quantum_circuit import QuantumCircuit
 
         circuit = QuantumCircuit(num_qubits=2)
         result = CompositionResult(

@@ -28,11 +28,11 @@ from typing import Dict, Any, List, Optional
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from atlas.designer.quantum_circuit import QuantumCircuit
-from atlas.designer.quantum_ir import QuantumIR
-from atlas.codegen.generator import CodeGenerator
-from atlas.validator.validator import Validator
-from atlas.estimator.estimator import ResourceEstimator
+from qatlas.designer.quantum_circuit import QuantumCircuit
+from qatlas.designer.quantum_ir import QuantumIR
+from qatlas.codegen.generator import CodeGenerator
+from qatlas.validator.validator import Validator
+from qatlas.estimator.estimator import ResourceEstimator
 
 
 # === Predefined Algorithm Definitions ===
