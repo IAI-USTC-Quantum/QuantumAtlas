@@ -66,13 +66,6 @@ type Converter struct {
 	shareStore *shares.Store
 	client     *Client
 
-	// pdfFetchStore, when non-nil, is a dedicated single-bucket store used
-	// ONLY to presign the PDF URL handed to MinerU. It is bound to a
-	// MinerU-reachable public endpoint (cfg.MinerUFetchEndpoint) for edges
-	// whose own public endpoint isn't MinerU-fetchable. Keys passed to it
-	// are PDF-bucket-relative (the leading "pdf/" router prefix stripped).
-	pdfFetchStore objstore.Store
-
 	mu   sync.Mutex
 	jobs map[string]*Job
 }
@@ -88,15 +81,6 @@ func NewConverter(cfg *config.Config, store objstore.Store, shareStore *shares.S
 		client:     NewClient(cfg.MinerUAPIToken, cfg.MinerUAPIBaseURL, nil),
 		jobs:       map[string]*Job{},
 	}
-}
-
-// SetPDFFetchStore installs a dedicated store used only to presign the PDF
-// URL handed to MinerU, overriding the regular store's public endpoint.
-// Pass a single-bucket store bound to the PDF bucket on a MinerU-reachable
-// endpoint (see config.MinerUFetchEndpoint). nil (the default) means presign
-// via the regular store's public endpoint.
-func (c *Converter) SetPDFFetchStore(s objstore.Store) {
-	c.pdfFetchStore = s
 }
 
 // Enabled reports whether server-side conversion is configured.
@@ -304,12 +288,13 @@ func (c *Converter) resolvePDFKey(ctx context.Context, canonical string) (string
 // buildPDFURL returns the URL MinerU will fetch the PDF from. Preference
 // order:
 //
-//  1. A presigned direct link to the PDF object served by RustFS via the
-//     public S3 endpoint — real private bytes, no arxiv redirect. This is
-//     the intended production path: MinerU pulls the actual stored PDF.
-//     When cfg.MinerUFetchEndpoint is set (pdfFetchStore != nil) the link
-//     is signed against that MinerU-reachable endpoint; otherwise it is
-//     signed via the regular store's public endpoint.
+//  1. A presigned direct link to the PDF object served by RustFS via THIS
+//     edge's public S3 endpoint — real private bytes, no arxiv redirect.
+//     This is the intended production path: MinerU pulls the actual stored
+//     PDF from the same public endpoint clients use for share downloads
+//     (RackNerd: https://raw.<domain>; Alibaba: http://<ip>:9000, plain
+//     HTTP because its self-signed TLS isn't MinerU-trusted). Each edge is
+//     self-contained — no cross-edge dependency, no extra env var.
 //  2. A share-token URL — fallback only when presign is unsupported (the
 //     local dev backend, which can't presign). Preserves the dev workflow.
 //
@@ -320,21 +305,8 @@ func (c *Converter) resolvePDFKey(ctx context.Context, canonical string) (string
 func (c *Converter) buildPDFURL(ctx context.Context, canonical, pdfKey string) (string, error) {
 	ttl := time.Duration(c.cfg.MinerUTimeout)*time.Second + 10*time.Minute
 
-	// Dedicated MinerU-fetch endpoint (e.g. Alibaba pointing at the
-	// LE-fronted raw.<domain>). Keys here are PDF-bucket-relative.
-	if c.pdfFetchStore != nil {
-		key := strings.TrimPrefix(pdfKey, "pdf/")
-		url, ok, err := c.pdfFetchStore.PresignGet(ctx, key, ttl)
-		if err != nil {
-			return "", fmt.Errorf("presign pdf via mineru-fetch endpoint: %w", err)
-		}
-		if ok && url != "" {
-			return url, nil
-		}
-	}
-
-	// Regular store presign (per-edge public endpoint). The Router strips
-	// the leading "pdf/" prefix to the PDF bucket.
+	// Presign the PDF object via this edge's public endpoint. The Router
+	// strips the leading "pdf/" prefix to the PDF bucket.
 	url, ok, err := c.store.PresignGet(ctx, pdfKey, ttl)
 	if err != nil {
 		return "", fmt.Errorf("presign pdf: %w", err)

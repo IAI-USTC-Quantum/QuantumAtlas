@@ -258,20 +258,6 @@ func main() {
 	mineruConverter := mineru.NewConverter(cfg, rawStore, shareStore)
 	if mineruConverter.Enabled() {
 		log.Printf("mineru: server-side silent conversion enabled (base=%s)", cfg.MinerUAPIBaseURL)
-		// When a dedicated MinerU-fetch endpoint is configured (e.g. an
-		// edge whose own public endpoint isn't MinerU-trusted), presign
-		// the PDF download URL against it instead of the regular store.
-		if cfg.S3Enabled() && cfg.MinerUFetchEndpoint != "" {
-			fetchStore, err := objstore.NewS3Store(
-				cfg.MinerUFetchEndpoint, cfg.S3BucketPDF,
-				cfg.S3AccessKeyID, cfg.S3SecretAccessKey,
-			)
-			if err != nil {
-				log.Fatalf("init mineru-fetch presign store: %v", err)
-			}
-			mineruConverter.SetPDFFetchStore(fetchStore)
-			log.Printf("mineru: PDF presign via fetch endpoint %s/%s", cfg.MinerUFetchEndpoint, cfg.S3BucketPDF)
-		}
 	} else {
 		log.Printf("mineru: server-side conversion disabled (MINERU_API_TOKEN unset); markdown served from cache only")
 	}
