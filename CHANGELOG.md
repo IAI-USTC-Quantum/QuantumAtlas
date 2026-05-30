@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.7.0 (2026-05-30)
+
+### BREAKING CHANGE
+
+- QATLAS_S3_BUCKET replaced by QATLAS_S3_BUCKET_{PDF,MD,
+IMAGES}; /api/_rustfs/event webhook and QATLAS_RUSTFS_EVENT_TOKEN
+removed; paper catalog now requires Neo4j (NEO4J_URI).
+
+### Feat
+
+- move paper catalog to Neo4j, split object storage into 3 buckets
+
 ## v0.6.0 (2026-05-30)
 
 ### Feat
