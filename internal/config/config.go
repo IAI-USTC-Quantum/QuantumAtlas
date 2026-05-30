@@ -63,6 +63,24 @@ type Config struct {
 	MinerUAPIToken   string
 	MinerUAPIBaseURL string
 
+	// MinerUFetchEndpoint (optional, QATLAS_MINERU_FETCH_ENDPOINT) is the
+	// public S3 endpoint used to presign the PDF direct-download URL handed
+	// to MinerU for server-side conversion. MinerU fetches this URL itself,
+	// so it must be reachable AND TLS-trusted by MinerU's crawler.
+	//
+	// Leave empty on edges whose own S3PublicEndpoint is already
+	// MinerU-reachable (e.g. RackNerd's LE-fronted raw.quantum-atlas.ai):
+	// the converter then presigns via the regular store. Set it on edges
+	// whose public endpoint isn't MinerU-fetchable — e.g. Alibaba's
+	// self-signed https://<ip>:9000, which MinerU rejects ("failed to read
+	// file") — pointing it at a MinerU-trusted endpoint such as
+	// https://raw.quantum-atlas.ai. Both edges share one svcacct, so a
+	// raw.quantum-atlas.ai presign is valid no matter which edge signs it.
+	//
+	// Must include scheme. Has no effect when MinerU conversion is disabled
+	// or when running on the local (non-S3) backend.
+	MinerUFetchEndpoint string
+
 	// MinerU extraction knobs (server-side silent conversion). Defaults
 	// mirror the Python ServerConfig so a single .env drives both.
 	MinerUModelVersion  string
@@ -175,6 +193,7 @@ func Load(dotenvPath string) (*Config, error) {
 		UserHeader:            firstEnv("QATLAS_USER_HEADER", "USER_HEADER"),
 		MinerUAPIToken:        firstEnv("MINERU_API_TOKEN"),
 		MinerUAPIBaseURL:      firstEnvDefault("https://mineru.net", "MINERU_API_BASE_URL"),
+		MinerUFetchEndpoint:   firstEnv("QATLAS_MINERU_FETCH_ENDPOINT"),
 		MinerUModelVersion:    firstEnvDefault("vlm", "MINERU_MODEL_VERSION"),
 		MinerULanguage:        firstEnvDefault("ch", "MINERU_LANGUAGE"),
 		MinerUIsOCR:           firstEnvBool(false, "MINERU_IS_OCR"),

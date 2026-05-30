@@ -66,6 +66,13 @@ type Converter struct {
 	shareStore *shares.Store
 	client     *Client
 
+	// pdfFetchStore, when non-nil, is a dedicated single-bucket store used
+	// ONLY to presign the PDF URL handed to MinerU. It is bound to a
+	// MinerU-reachable public endpoint (cfg.MinerUFetchEndpoint) for edges
+	// whose own public endpoint isn't MinerU-fetchable. Keys passed to it
+	// are PDF-bucket-relative (the leading "pdf/" router prefix stripped).
+	pdfFetchStore objstore.Store
+
 	mu   sync.Mutex
 	jobs map[string]*Job
 }
@@ -81,6 +88,15 @@ func NewConverter(cfg *config.Config, store objstore.Store, shareStore *shares.S
 		client:     NewClient(cfg.MinerUAPIToken, cfg.MinerUAPIBaseURL, nil),
 		jobs:       map[string]*Job{},
 	}
+}
+
+// SetPDFFetchStore installs a dedicated store used only to presign the PDF
+// URL handed to MinerU, overriding the regular store's public endpoint.
+// Pass a single-bucket store bound to the PDF bucket on a MinerU-reachable
+// endpoint (see config.MinerUFetchEndpoint). nil (the default) means presign
+// via the regular store's public endpoint.
+func (c *Converter) SetPDFFetchStore(s objstore.Store) {
+	c.pdfFetchStore = s
 }
 
 // Enabled reports whether server-side conversion is configured.
@@ -173,8 +189,9 @@ func (c *Converter) convert(ctx context.Context, canonical string) (mdKey string
 		return "", 0, err
 	}
 
-	// 2. Build the public PDF URL MinerU will fetch.
-	pdfURL, err := c.buildPDFURL(canonical, pdfKey)
+	// 2. Build the direct PDF URL MinerU will fetch (private presigned
+	// link to the real bytes; no arxiv redirect).
+	pdfURL, err := c.buildPDFURL(ctx, canonical, pdfKey)
 	if err != nil {
 		return "", 0, err
 	}
@@ -284,10 +301,56 @@ func (c *Converter) resolvePDFKey(ctx context.Context, canonical string) (string
 	return "", &Error{Msg: "no PDF in raw storage; upload it first via /api/papers/{arxiv_id}/upload-pdf"}
 }
 
-// buildPDFURL mints the public share URL for the PDF, mirroring the
-// mineru-claim handler: prefer a static QATLAS_SHARE_ACCESS_TOKEN, else
-// create a per-asset share record.
-func (c *Converter) buildPDFURL(canonical, pdfKey string) (string, error) {
+// buildPDFURL returns the URL MinerU will fetch the PDF from. Preference
+// order:
+//
+//  1. A presigned direct link to the PDF object served by RustFS via the
+//     public S3 endpoint — real private bytes, no arxiv redirect. This is
+//     the intended production path: MinerU pulls the actual stored PDF.
+//     When cfg.MinerUFetchEndpoint is set (pdfFetchStore != nil) the link
+//     is signed against that MinerU-reachable endpoint; otherwise it is
+//     signed via the regular store's public endpoint.
+//  2. A share-token URL — fallback only when presign is unsupported (the
+//     local dev backend, which can't presign). Preserves the dev workflow.
+//
+// The presigned link is private: it is handed to MinerU's crawler (or an
+// internal team member) and must not be redistributed publicly. The TTL is
+// the conversion budget plus a margin so a slow MinerU pull doesn't expire
+// the URL mid-fetch.
+func (c *Converter) buildPDFURL(ctx context.Context, canonical, pdfKey string) (string, error) {
+	ttl := time.Duration(c.cfg.MinerUTimeout)*time.Second + 10*time.Minute
+
+	// Dedicated MinerU-fetch endpoint (e.g. Alibaba pointing at the
+	// LE-fronted raw.<domain>). Keys here are PDF-bucket-relative.
+	if c.pdfFetchStore != nil {
+		key := strings.TrimPrefix(pdfKey, "pdf/")
+		url, ok, err := c.pdfFetchStore.PresignGet(ctx, key, ttl)
+		if err != nil {
+			return "", fmt.Errorf("presign pdf via mineru-fetch endpoint: %w", err)
+		}
+		if ok && url != "" {
+			return url, nil
+		}
+	}
+
+	// Regular store presign (per-edge public endpoint). The Router strips
+	// the leading "pdf/" prefix to the PDF bucket.
+	url, ok, err := c.store.PresignGet(ctx, pdfKey, ttl)
+	if err != nil {
+		return "", fmt.Errorf("presign pdf: %w", err)
+	}
+	if ok && url != "" {
+		return url, nil
+	}
+
+	// Fallback for backends without presign support (local dev).
+	return c.buildShareURL(canonical, pdfKey)
+}
+
+// buildShareURL mints a share-token URL for the PDF (dev fallback only;
+// see buildPDFURL). Prefers a static QATLAS_SHARE_ACCESS_TOKEN, else
+// creates a per-asset share record.
+func (c *Converter) buildShareURL(canonical, pdfKey string) (string, error) {
 	relSharePath := paperassets.ShareRelPathForKey(pdfKey)
 	shareToken := c.cfg.ShareAccessToken
 	shareBaseURL := ""

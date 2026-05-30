@@ -15,7 +15,6 @@ import (
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
-	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/papers"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/shares"
 
 	"github.com/casbin/casbin/v2"
@@ -222,11 +221,19 @@ func publicShareFile(re *core.RequestEvent, cfg *config.Config, store *shares.St
 // object doesn't exist and the caller should fall back to directory
 // listing.
 //
+// All asset kinds — PDF, markdown, images — serve their real stored bytes.
+// Share links are PRIVATE: they are minted for MinerU's crawler and for
+// internal team sharing, never as a public redistribution surface (the
+// short presign TTL and per-token share lifetime bound exposure). The
+// "jump to the canonical arxiv.org page" affordance is a frontend/client
+// concern (the paper API exposes the arxiv URL as data) — the server does
+// NOT rewrite share/raw paths into arxiv redirects.
+//
 // Dispatch order:
 //  1. Stat — confirm the object exists. Presign is happy to sign URLs
 //     for absent keys (S3 only validates on GET) so a pre-flight Stat
 //     prevents 404-via-redirect surprises.
-//  2. PresignGet — when the backend supports it (S3), 302 to a direct
+//  2. PresignGet — when the backend supports it (S3), 307 to a direct
 //     presigned URL. No bytes flow through us, saves WAN egress.
 //  3. Get — stream the body. Used by LocalStore and as a fallback
 //     for any S3 PresignGet failure.
@@ -235,17 +242,6 @@ func serveSharedKey(re *core.RequestEvent, store objstore.Store, rel string) boo
 	key, err := shares.ResolveKey(rel)
 	if err != nil {
 		return false
-	}
-	// Compliance (§1): we never serve the publisher PDF bytes. Any
-	// request that resolves to a pdf/ object is a 307 to the canonical
-	// arxiv.org URL — our stored PDFs are internal processing material
-	// (MinerU / embeddings / citation extraction), not a redistribution
-	// surface. Markdown / images (our own derived artifacts) still serve
-	// normally below.
-	if strings.HasPrefix(key, "pdf/") || strings.EqualFold(path.Ext(key), ".pdf") {
-		stem := strings.TrimSuffix(path.Base(key), path.Ext(key))
-		http.Redirect(re.Response, re.Request, papers.ArxivAbsURL(stem), http.StatusTemporaryRedirect)
-		return true
 	}
 	info, exists, statErr := store.Stat(ctx, key)
 	if statErr != nil || !exists {

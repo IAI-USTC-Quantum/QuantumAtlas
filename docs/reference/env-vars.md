@@ -142,6 +142,7 @@ OAuth callback URL 必须填成 `https://<your-server>/api/oauth2-redirect`。
 | `MINERU_ENABLE_TABLE` | `true` | 表格识别 |
 | `MINERU_POLL_INTERVAL` | `3` | 轮询间隔（秒）|
 | `MINERU_TIMEOUT` | `1800` | 单篇总超时（秒，30 分钟）|
+| `QATLAS_MINERU_FETCH_ENDPOINT` | —（空=用 `QATLAS_S3_PUBLIC_ENDPOINT`）| 给 MinerU 拉取 PDF 用的 presign 公网 endpoint（含 scheme）。server 端静默转换时 MinerU **主动拉取** presigned PDF 直链；该直链必须被 MinerU 爬虫**可达且 TLS 受信**。RackNerd 自身公网入口（LE 证书 `https://raw.quantum-atlas.ai`）已受信 → 留空即可。Alibaba 自身公网入口是自签 `https://<ip>:9000`（MinerU 实测拒绝，报 `failed to read file`）→ 设为 MinerU 受信的 endpoint（如 `https://raw.quantum-atlas.ai`）。两 edge 共享同一 svcacct，任一 edge 签 raw.quantum-atlas.ai 直链 MinerU 都能拉。仅 server 端、S3 后端、MinerU 启用时有效。|
 
 ### LLM
 

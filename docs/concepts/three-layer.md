@@ -109,6 +109,17 @@ QuantumAtlas 对外分享原始资源时统一走 `/api/shares` 和 `/share/{tok
 - 公开访问的是 share token，而不是用户身份。
 - share 只负责"哪些资源可访问"，不负责"谁是调用者"。
 
+### Share 链私密性 + PDF 字节直服务（v0.7.3+）
+
+`/share/{token}/{path...}` 对**所有资源类型（PDF / Markdown / 图片）一律服务真实存储字节**——S3 后端 307 到短寿命 presigned 直链，本地后端流式回传。**没有** "PDF 请求自动 307 到 arxiv.org" 这种服务端重写（v0.7.3 移除；之前的 `serveSharedKey` 对 `pdf/` key 做 arxiv 重定向是错误设计）。
+
+约束与语义：
+
+- **Share 链是私密凭据，不是公开再分发面**。它只为两类消费方铸造：(a) MinerU 爬虫拉取 PDF 做服务端静默转换；(b) 团队内部分享。**不得对外公开传播**。暴露面由 presign TTL（5 分钟）+ share token 自身寿命双重收口。
+- **"跳转到 arxiv 官方页"是纯前端/client 行为**，不是服务端重定向。论文 API 把 canonical arxiv URL（`papers.ArxivAbsURL`）作为**数据字段**返回，前端在论文详情页渲染成可点击的"去 arxiv"链接。服务端从不把 raw / share 路径改写成 arxiv 跳转。
+- **服务端 MinerU 转换拉取 PDF 走 presigned 直链**（`internal/mineru/converter.go::buildPDFURL`），不走"上传到 MinerU"路径（主动拉取比上传快）。直链由公网 S3 endpoint 签发；当某 edge 自身公网入口不被 MinerU 信任（如 Alibaba 自签 `https://<ip>:9000`，实测 MinerU 报 `failed to read file`），用 `QATLAS_MINERU_FETCH_ENDPOINT` 指向 MinerU 可信的 endpoint（如 LE 证书的 `https://raw.quantum-atlas.ai`）；两 edge 共享同一 svcacct，任一 edge 签的 raw.quantum-atlas.ai 直链 MinerU 都能拉。
+
+
 ## 论文元数据索引 (`paperindex` — Parquet + DuckDB Lakehouse 模式)
 
 > 这是 QuantumAtlas 区别于"原始 S3 cache"的一层。理解了它就理解了为什么不需要额外开一个 PostgreSQL / MySQL。
