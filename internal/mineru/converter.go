@@ -202,12 +202,11 @@ func (c *Converter) convert(ctx context.Context, canonical string) (mdKey string
 		return "", 0, fmt.Errorf("fetch result: %w", err)
 	}
 
-	// 5. Upload markdown + images.
-	mdKey = paperassets.AssetKey("markdown", canonical)
-	if err := c.putBytes(ctx, mdKey, result.Markdown, "text/markdown; charset=utf-8"); err != nil {
-		return "", 0, fmt.Errorf("upload markdown: %w", err)
-	}
-
+	// 5. Upload images first, then markdown last. Markdown is the
+	// completion marker callers poll on (and the page that links to the
+	// images), so writing every image before it guarantees that once the
+	// markdown object exists, all of its referenced images are already
+	// stored — no broken-link / racing-reader window.
 	imagesBase := paperassets.AssetKey("images", canonical)
 	for rel, data := range result.Images {
 		// rel is e.g. "images/abc.jpg"; strip the leading "images/" so we
@@ -225,6 +224,11 @@ func (c *Converter) convert(ctx context.Context, canonical string) (mdKey string
 			return "", 0, fmt.Errorf("upload image %s: %w", name, err)
 		}
 		imgCount++
+	}
+
+	mdKey = paperassets.AssetKey("markdown", canonical)
+	if err := c.putBytes(ctx, mdKey, result.Markdown, "text/markdown; charset=utf-8"); err != nil {
+		return "", 0, fmt.Errorf("upload markdown: %w", err)
 	}
 	return mdKey, imgCount, nil
 }
