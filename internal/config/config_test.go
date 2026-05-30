@@ -311,6 +311,10 @@ func clearS3Env(t *testing.T) {
 	for _, k := range []string{
 		"QATLAS_S3_ENDPOINT",
 		"QATLAS_S3_BUCKET",
+		"QATLAS_S3_BUCKET_PDF",
+		"QATLAS_S3_BUCKET_MD",
+		"QATLAS_S3_BUCKET_IMAGES",
+		"QATLAS_S3_BUCKET_OPENALEX_SNAPSHOT",
 		"QATLAS_S3_ACCESS_KEY_ID",
 		"QATLAS_S3_SECRET_ACCESS_KEY",
 	} {
@@ -334,7 +338,9 @@ func TestLoad_S3Enabled_AllFieldsSet(t *testing.T) {
 	clearStorageEnv(t)
 	clearS3Env(t)
 	t.Setenv("QATLAS_S3_ENDPOINT", "https://raw.example.tld")
-	t.Setenv("QATLAS_S3_BUCKET", "qatlas-raw")
+	t.Setenv("QATLAS_S3_BUCKET_PDF", "qatlas-pdf")
+	t.Setenv("QATLAS_S3_BUCKET_MD", "qatlas-md")
+	t.Setenv("QATLAS_S3_BUCKET_IMAGES", "qatlas-images")
 	t.Setenv("QATLAS_S3_ACCESS_KEY_ID", "AKID")
 	t.Setenv("QATLAS_S3_SECRET_ACCESS_KEY", "SK")
 
@@ -348,8 +354,14 @@ func TestLoad_S3Enabled_AllFieldsSet(t *testing.T) {
 	if cfg.S3Endpoint != "https://raw.example.tld" {
 		t.Errorf("S3Endpoint = %q", cfg.S3Endpoint)
 	}
-	if cfg.S3Bucket != "qatlas-raw" {
-		t.Errorf("S3Bucket = %q", cfg.S3Bucket)
+	if cfg.S3BucketPDF != "qatlas-pdf" {
+		t.Errorf("S3BucketPDF = %q", cfg.S3BucketPDF)
+	}
+	if cfg.S3BucketMD != "qatlas-md" {
+		t.Errorf("S3BucketMD = %q", cfg.S3BucketMD)
+	}
+	if cfg.S3BucketImages != "qatlas-images" {
+		t.Errorf("S3BucketImages = %q", cfg.S3BucketImages)
 	}
 	if cfg.S3AccessKeyID != "AKID" {
 		t.Errorf("S3AccessKeyID = %q", cfg.S3AccessKeyID)
@@ -359,21 +371,46 @@ func TestLoad_S3Enabled_AllFieldsSet(t *testing.T) {
 	}
 }
 
+// TestLoad_S3LegacyBucketRejected verifies the v0.6.0 single-bucket var
+// is a hard boot error in v0.7.0 (a stale .env would otherwise silently
+// mis-route every object into one bucket).
+func TestLoad_S3LegacyBucketRejected(t *testing.T) {
+	clearStorageEnv(t)
+	clearS3Env(t)
+	t.Setenv("QATLAS_S3_BUCKET", "qatlas-raw")
+	_, err := Load("")
+	if err == nil {
+		t.Fatalf("Load returned nil; expected legacy QATLAS_S3_BUCKET rejection")
+	}
+	if !strings.Contains(err.Error(), "QATLAS_S3_BUCKET") {
+		t.Errorf("error %q does not mention QATLAS_S3_BUCKET", err.Error())
+	}
+}
+
 func TestLoad_S3PartialConfigRejected(t *testing.T) {
-	// Each of these subtests sets a *strict subset* of the four fields;
-	// Load() must refuse to boot. The check is symmetric — neither the
-	// endpoint alone nor the credentials alone constitute a valid state.
+	// Each of these subtests sets a *strict subset* of the required
+	// fields; Load() must refuse to boot. The check is symmetric — no
+	// single field (endpoint / a bucket / a credential) alone is valid.
 	cases := []struct {
 		name string
 		set  map[string]string
 	}{
 		{"only endpoint", map[string]string{"QATLAS_S3_ENDPOINT": "https://x"}},
-		{"only bucket", map[string]string{"QATLAS_S3_BUCKET": "b"}},
+		{"only pdf bucket", map[string]string{"QATLAS_S3_BUCKET_PDF": "b"}},
 		{"only access key", map[string]string{"QATLAS_S3_ACCESS_KEY_ID": "a"}},
 		{"only secret", map[string]string{"QATLAS_S3_SECRET_ACCESS_KEY": "s"}},
-		{"endpoint + bucket, no creds", map[string]string{
-			"QATLAS_S3_ENDPOINT": "https://x",
-			"QATLAS_S3_BUCKET":   "b",
+		{"endpoint + buckets, no creds", map[string]string{
+			"QATLAS_S3_ENDPOINT":      "https://x",
+			"QATLAS_S3_BUCKET_PDF":    "p",
+			"QATLAS_S3_BUCKET_MD":     "m",
+			"QATLAS_S3_BUCKET_IMAGES": "i",
+		}},
+		{"two of three buckets", map[string]string{
+			"QATLAS_S3_ENDPOINT":          "https://x",
+			"QATLAS_S3_BUCKET_PDF":        "p",
+			"QATLAS_S3_BUCKET_MD":         "m",
+			"QATLAS_S3_ACCESS_KEY_ID":     "a",
+			"QATLAS_S3_SECRET_ACCESS_KEY": "s",
 		}},
 		{"creds, no endpoint", map[string]string{
 			"QATLAS_S3_ACCESS_KEY_ID":     "a",

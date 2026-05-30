@@ -18,6 +18,7 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperassets"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/papers"
 	"github.com/pocketbase/pocketbase/core"
 )
 
@@ -50,6 +51,7 @@ func TestUploadPDFHandler_ConcurrentDifferentBytes(t *testing.T) {
 		t.Fatalf("NewLocalStore: %v", err)
 	}
 	cfg := &config.Config{}
+	catalog := papers.NewStore(nil)
 
 	var (
 		wg          sync.WaitGroup
@@ -83,7 +85,7 @@ func TestUploadPDFHandler_ConcurrentDifferentBytes(t *testing.T) {
 			re.Request = req
 			re.Response = rec
 
-			if err := uploadPDFHandler(re, cfg, store, arxivID); err != nil {
+			if err := uploadPDFHandler(re, cfg, store, catalog, arxivID); err != nil {
 				t.Errorf("worker %d: uploadPDFHandler returned err: %v", i, err)
 			}
 
@@ -170,6 +172,7 @@ func TestUploadPDFHandler_ConcurrentIdenticalBytes(t *testing.T) {
 		t.Fatalf("NewLocalStore: %v", err)
 	}
 	cfg := &config.Config{}
+	catalog := papers.NewStore(nil)
 
 	var (
 		wg          sync.WaitGroup
@@ -193,7 +196,7 @@ func TestUploadPDFHandler_ConcurrentIdenticalBytes(t *testing.T) {
 			re.Request = req
 			re.Response = rec
 
-			if err := uploadPDFHandler(re, cfg, store, arxivID); err != nil {
+			if err := uploadPDFHandler(re, cfg, store, catalog, arxivID); err != nil {
 				t.Errorf("worker %d: uploadPDFHandler returned err: %v", i, err)
 			}
 

@@ -98,19 +98,24 @@ OAuth callback URL 必须填成 `https://<your-server>/api/oauth2-redirect`。
 
 未配 → graph endpoint 返回 `{"error":"..."}` 200，`/api/health` 报 `neo4j: not_configured`，**不下拉聚合等级**。
 
-## Server: S3 / RustFS（四字段 all-or-nothing）
+## Server: S3 / RustFS（连接字段 + 三桶 all-or-nothing）
 
-四个字段**必须同时填或同时不填**——半填启动直接报错：
+连接字段（endpoint + 双 key）**加上三个 asset bucket 必须同时填或同时不填**——半填启动直接报错。v0.7.0 起对象存储按 asset kind 拆成三个独立 bucket（`objstore.Router` 路由），旧的单桶 `QATLAS_S3_BUCKET` 已**废弃**（残留会让 server fail-loud 提示迁移）。
 
 | 变量 | 必填 | 含义 |
 |---|---|---|
 | `QATLAS_S3_ENDPOINT` | ✅ | server↔RustFS 流量走的 endpoint，必含 scheme (`http://10.144.18.10:9000`)|
-| `QATLAS_S3_BUCKET` | ✅ | bucket 名 |
+| `QATLAS_S3_BUCKET_PDF` | ✅ | PDF 桶（如 `qatlas-pdf`），object key = `<yymm>/<arxiv_id>.pdf` |
+| `QATLAS_S3_BUCKET_MD` | ✅ | MinerU markdown 桶（如 `qatlas-md`）|
+| `QATLAS_S3_BUCKET_IMAGES` | ✅ | 抽出图片桶（如 `qatlas-images`）|
 | `QATLAS_S3_ACCESS_KEY_ID` | ✅ | svcacct access key（**不要用 root key**）|
 | `QATLAS_S3_SECRET_ACCESS_KEY` | ✅ | svcacct secret |
 | `QATLAS_S3_PUBLIC_ENDPOINT` | ❌（强烈建议）| client 端 presign URL 用的公网 host；留空 = 用 internal endpoint 签 |
+| `QATLAS_S3_BUCKET_OPENALEX_SNAPSHOT` | ❌ | OpenAlex snapshot 桶；仅 `openalex bootstrap` 用，不参与三桶 all-or-nothing |
 
-启动 log 出 `raw store: S3 backend ...` 一行确认启用；dual endpoint 模式额外有 `(presign via ...)`。
+启动 log 出三行 `raw store: S3 backend .../<bucket>` 各一桶确认启用；dual endpoint 模式额外有 `(presign via ...)`。`/api/health` 的 `rawstore` check 报 `backend: s3-router` + `buckets: [...]`。
+
+> 注意：v0.7.0 删除了 RustFS notification webhook（`/api/_rustfs/event` + `QATLAS_RUSTFS_EVENT_TOKEN`）。应用对 bucket 独占写，catalog 由上传写路径直接同步进 Neo4j，无需外部事件回灌。
 
 详见 [RustFS 部署](../deployment/rustfs.md)。
 

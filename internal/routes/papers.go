@@ -17,10 +17,9 @@ import (
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineru"
-	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineruclaim"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperassets"
-	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperindex"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/papers"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/shares"
 
 	"github.com/casbin/casbin/v2"
@@ -34,16 +33,15 @@ import (
 // image touched by these handlers flows through this interface — never
 // directly via os.*, so the same routes work against either backend.
 //
-// shareStore + claimStore are the on-disk JSON stores for share token
-// records and MinerU claim leases respectively; they remain local
-// (DataDir) regardless of rawStore backend.
+// shareStore is the share-token record store (Neo4j-backed in
+// production, local-file fallback in dev) used to mint asset share URLs.
 //
-// paperIndex is the in-process Parquet+DuckDB catalog (paperindex.Store)
-// used by collection-style endpoints (needs-mineru, future stats /
-// range queries). MAY BE nil if the deployment hasn't set up the
-// catalog yet — handlers fall back to the legacy store.ListPrefix
-// path in that case (slow but correct). See docs/architecture.md for
-// the lakehouse rationale.
+// catalog is the Neo4j-backed papers catalog (papers.Store) that owns
+// all collection-style metadata: aggregate stats, the needs-mineru
+// queue, MinerU claim leases, and upload write-through. It degrades
+// gracefully (ErrCatalogUnavailable) when Neo4j is unreachable — read
+// endpoints report {available:false}; uploads still write the object
+// and defer the catalog sync (X-Catalog-Sync: deferred).
 //
 // enforcer is the process-wide casbin enforcer used to gate write
 // endpoints by PAT scope. Session-token callers bypass via the
@@ -60,18 +58,17 @@ func RegisterPapers(
 	cfg *config.Config,
 	rawStore objstore.Store,
 	shareStore *shares.Store,
-	claimStore *mineruclaim.Store,
-	paperIndex *paperindex.Store,
+	catalog *papers.Store,
 	converter *mineru.Converter,
 	enforcer *casbin.Enforcer,
 ) {
 	se.Router.GET("/api/papers/{path...}", func(re *core.RequestEvent) error {
 		raw := re.Request.PathValue("path")
 		if raw == "needs-mineru" {
-			return needsMineruHandler(re, rawStore, claimStore, paperIndex)
+			return needsMineruHandler(re, catalog)
 		}
 		if raw == "stats" {
-			return paperStatsHandler(re, paperIndex)
+			return paperStatsHandler(re, catalog)
 		}
 		// Two-segment action "<arxiv>/markdown/status" is the side-effect-free
 		// operation resource; check it before the single-segment dispatch
@@ -105,15 +102,15 @@ func RegisterPapers(
 		arxiv, action := splitPapersPath(raw)
 		switch action {
 		case "upload-pdf":
-			return uploadPDFHandler(re, cfg, rawStore, arxiv)
+			return uploadPDFHandler(re, cfg, rawStore, catalog, arxiv)
 		case "upload-markdown":
-			return uploadMarkdownHandler(re, cfg, rawStore, claimStore, arxiv)
+			return uploadMarkdownHandler(re, cfg, rawStore, catalog, arxiv)
 		case "mineru-claim":
 			ttl, _ := strconv.Atoi(re.Request.URL.Query().Get("ttl_seconds"))
 			if ttl <= 0 {
-				ttl = mineruclaim.DefaultTTLSeconds
+				ttl = papers.DefaultTTLSeconds
 			}
-			return mineruClaimHandler(re, cfg, rawStore, shareStore, claimStore, arxiv, ttl)
+			return mineruClaimHandler(re, cfg, rawStore, catalog, arxiv, ttl)
 		}
 		return re.JSON(http.StatusNotFound, map[string]string{
 			"detail": fmt.Sprintf("no POST handler for /api/papers/%s", raw),
@@ -128,7 +125,7 @@ func RegisterPapers(
 				"detail": fmt.Sprintf("no DELETE handler for /api/papers/%s", raw),
 			})
 		}
-		return mineruClaimReleaseHandler(re, claimStore, arxiv, claimID)
+		return mineruClaimReleaseHandler(re, catalog, arxiv, claimID)
 	}))
 }
 
@@ -177,21 +174,20 @@ func splitMarkdownStatus(raw string) (arxivID string, ok bool) {
 // ---------------------------------------------------------------------------
 
 // paperStatsHandler answers GET /api/papers/stats — a read-open endpoint
-// exposing the paperindex aggregate counters so the SPA can show
+// exposing the catalog aggregate counters so the SPA can show
 // "downloaded papers" (has_pdf) and "converted markdown" (has_md) tiles
 // on the home/wiki pages.
 //
-// When paperIndex is nil (deployment hasn't configured the Parquet+DuckDB
-// catalog, e.g. local dev with no S3) we degrade to {available:false}
-// rather than 500 — the frontend simply hides the tiles.
-func paperStatsHandler(re *core.RequestEvent, paperIndex *paperindex.Store) error {
-	if paperIndex == nil {
-		return re.JSON(http.StatusOK, map[string]any{"available": false})
-	}
+// When the catalog is unreachable (Neo4j down, or NEO4J_URI unset in
+// local dev) we degrade to {available:false} rather than 500 — the
+// frontend simply hides the tiles.
+func paperStatsHandler(re *core.RequestEvent, catalog *papers.Store) error {
 	ctx := re.Request.Context()
-	stats, err := paperIndex.QueryStats(ctx)
+	stats, err := catalog.QueryStats(ctx)
 	if err != nil {
-		slog.Warn("paperindex: QueryStats failed for /api/papers/stats", "error", err)
+		if !errors.Is(err, papers.ErrCatalogUnavailable) {
+			slog.Warn("papers: QueryStats failed for /api/papers/stats", "error", err)
+		}
 		return re.JSON(http.StatusOK, map[string]any{"available": false})
 	}
 	out := map[string]any{
@@ -215,209 +211,44 @@ func paperStatsHandler(re *core.RequestEvent, paperIndex *paperindex.Store) erro
 
 // needsMineruHandler answers GET /api/papers/needs-mineru.
 //
-// Two implementations live behind this entry point:
-//
-//  1. paperindex-backed (fast path): when paperIndex != nil and the
-//     catalog has been bootstrapped, queries hit the in-memory DuckDB
-//     table in <1ms. This is the production code path on edges
-//     where docs/architecture.md's lakehouse model is enabled.
-//
-//  2. enumerateNeedsMineru (legacy fallback): when paperIndex is nil
-//     OR the catalog reports zero rows (parquet not bootstrapped yet),
-//     fall through to the original two-LIST + in-memory-diff impl.
-//     This used to be the only impl and is documented as slow /
-//     prone to RustFS-beta 500s — it's kept as a safety net for
-//     fresh deployments that haven't yet run the bootstrap-index
-//     subcommand.
-//
-// Response shape is identical across both paths so existing CLI /
-// dashboard consumers don't have to branch.
-func needsMineruHandler(re *core.RequestEvent, store objstore.Store, claimStore *mineruclaim.Store, paperIndex *paperindex.Store) error {
+// The catalog query already filters out papers with an active claim
+// (claims are inlined on the :PaperWork node), so the response is the
+// list of papers with a PDF, no markdown, and no live lease — ready to
+// be claimed and converted. When the catalog is unreachable we return
+// an empty list with available:false rather than 500.
+func needsMineruHandler(re *core.RequestEvent, catalog *papers.Store) error {
 	limit, _ := strconv.Atoi(re.Request.URL.Query().Get("limit"))
 	if limit < 1 {
 		limit = 10
 	} else if limit > 100 {
 		limit = 100
 	}
-	includeClaimed := re.Request.URL.Query().Get("include_claimed") == "true"
-
-	// Fast path: paperindex catalog.
-	if paperIndex != nil && paperIndex.RowCount() > 0 {
-		ctx := re.Request.Context()
-		stats, err := paperIndex.QueryStats(ctx)
-		if err == nil {
-			// Fetch a window of MinerU candidates that we then
-			// merge with live claim state (claims live in
-			// claimStore, NOT in the parquet — they're short-
-			// lived and would always be stale in the catalog).
-			//
-			// We over-fetch a bit (limit*3, capped at 100) so
-			// that even when many candidates are already
-			// claimed we usually return `limit` actionable
-			// rows without paging through the parquet.
-			fetchN := limit * 3
-			if fetchN > 100 {
-				fetchN = 100
-			}
-			candidates, err := paperIndex.NeedsMineru(ctx, fetchN)
-			if err == nil {
-				return re.JSON(http.StatusOK, buildNeedsMineruResponse(
-					ctx, candidates, claimStore, limit, includeClaimed, stats.NeedsMineru))
-			}
-			slog.Warn("paperindex: NeedsMineru query failed; falling back to legacy LIST",
-				"error", err)
-		} else {
-			slog.Warn("paperindex: QueryStats failed; falling back to legacy LIST", "error", err)
+	ctx := re.Request.Context()
+	rows, err := catalog.NeedsMineru(ctx, limit)
+	if err != nil {
+		if errors.Is(err, papers.ErrCatalogUnavailable) {
+			return re.JSON(http.StatusOK, map[string]any{
+				"papers": []any{}, "returned": 0, "available": false,
+			})
 		}
+		return re.JSON(http.StatusInternalServerError, map[string]string{"detail": err.Error()})
 	}
-
-	// Legacy fallback: full S3 LIST + in-memory diff. Documented as
-	// slow but correct.
-	papers, unclaimed, claimedCount := enumerateNeedsMineru(re.Request.Context(), store, claimStore, limit, includeClaimed)
+	out := make([]map[string]any, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, map[string]any{
+			"arxiv_id":         r.ArxivID,
+			"key":              r.ArxivID,
+			"pdf_path":         r.PDFKey,
+			"claimed":          false,
+			"claim_expires_at": nil,
+			"claim_requester":  nil,
+		})
+	}
 	return re.JSON(http.StatusOK, map[string]any{
-		"papers":          papers,
-		"returned":        len(papers),
-		"total_unclaimed": unclaimed,
-		"total_claimed":   claimedCount,
+		"papers":    out,
+		"returned":  len(out),
+		"available": true,
 	})
-}
-
-// buildNeedsMineruResponse merges paperindex candidate rows with live
-// claim-store state and projects the result into the legacy
-// needs-mineru JSON shape. totalNeedsMineru is the global count from
-// QueryStats (used to populate total_unclaimed + total_claimed
-// approximately without scanning the whole claim store).
-//
-// Caveat: total_claimed here is *estimated* as (candidates we saw
-// that were claimed) — we don't enumerate all claims globally because
-// the claim store is a per-file dir scan and would be slow at 10⁴+
-// papers. For dashboard purposes this is good enough; if precise
-// numbers are required, a future endpoint can scan claimStore
-// explicitly.
-func buildNeedsMineruResponse(
-	ctx context.Context,
-	candidates []paperindex.NeedsMineruRow,
-	claimStore *mineruclaim.Store,
-	limit int,
-	includeClaimed bool,
-	totalNeedsMineru int,
-) map[string]any {
-	now := time.Now().UTC()
-	out := make([]map[string]any, 0, limit)
-	claimedSeen := 0
-	for _, c := range candidates {
-		claim, _ := claimStore.Read(c.ArxivID)
-		isClaimed := mineruclaim.IsActive(claim, now)
-		if isClaimed {
-			claimedSeen++
-			if !includeClaimed {
-				continue
-			}
-		}
-		if len(out) >= limit {
-			continue
-		}
-		paper := map[string]any{
-			"arxiv_id":         c.ArxivID,
-			"key":              c.ArxivID,
-			"pdf_path":         c.PDFKey,
-			"claimed":          isClaimed,
-			"claim_expires_at": nil,
-			"claim_requester":  nil,
-		}
-		if claim != nil && isClaimed {
-			paper["claim_expires_at"] = claim.ExpiresAt
-			paper["claim_requester"] = claim.Requester
-		}
-		out = append(out, paper)
-	}
-	// total_unclaimed is the global "has_pdf AND NOT has_md" count
-	// minus the claimed-seen subset (lower bound; precise number would
-	// require enumerating all claims). For most dashboards this is
-	// close enough.
-	unclaimed := totalNeedsMineru - claimedSeen
-	if unclaimed < 0 {
-		unclaimed = 0
-	}
-	return map[string]any{
-		"papers":          out,
-		"returned":        len(out),
-		"total_unclaimed": unclaimed,
-		"total_claimed":   claimedSeen,
-	}
-}
-
-// enumerateNeedsMineru lists every pdf/* object and surfaces the ones
-// that don't have a sibling markdown/*. Bounded by limit (returned set)
-// but always tallies the full totals for the dashboard counter.
-//
-// One ListPrefix call per kind (pdf, markdown). Bounded set of basenames
-// is held in memory — fine for the ~10⁴-10⁵ paper count we expect on
-// any one bucket.
-func enumerateNeedsMineru(ctx context.Context, store objstore.Store, claimStore *mineruclaim.Store, limit int, includeClaimed bool) ([]map[string]any, int, int) {
-	pdfs, err := store.ListPrefix(ctx, "pdf/", 0)
-	if err != nil || len(pdfs) == 0 {
-		return nil, 0, 0
-	}
-	// Set of stems that already have markdown — drives the "needs work" filter.
-	mdObjs, _ := store.ListPrefix(ctx, "markdown/", 0)
-	mdStems := map[string]struct{}{}
-	for _, o := range mdObjs {
-		base := path.Base(o.Key)
-		mdStems[strings.TrimSuffix(base, path.Ext(base))] = struct{}{}
-	}
-
-	// Stable iteration order so dashboards aren't randomized between
-	// calls (S3 list order is unspecified across S3-compatible vendors).
-	sort.Slice(pdfs, func(i, j int) bool { return pdfs[i].Key < pdfs[j].Key })
-
-	now := time.Now().UTC()
-	var papers []map[string]any
-	totalUnclaimed := 0
-	totalClaimed := 0
-	seen := map[string]struct{}{}
-
-	for _, pdf := range pdfs {
-		base := path.Base(pdf.Key)
-		key := strings.TrimSuffix(base, path.Ext(base))
-		if _, dup := seen[key]; dup {
-			continue
-		}
-		seen[key] = struct{}{}
-		if _, hasMD := mdStems[key]; hasMD {
-			continue
-		}
-
-		canonical := key
-		claim, _ := claimStore.Read(canonical)
-		claimed := mineruclaim.IsActive(claim, now)
-		if claimed {
-			totalClaimed++
-		} else {
-			totalUnclaimed++
-		}
-		if claimed && !includeClaimed {
-			continue
-		}
-		if len(papers) >= limit {
-			continue
-		}
-
-		paper := map[string]any{
-			"arxiv_id":         canonical,
-			"key":              key,
-			"pdf_path":         pdf.Key,
-			"claimed":          claimed,
-			"claim_expires_at": nil,
-			"claim_requester":  nil,
-		}
-		if claim != nil && claimed {
-			paper["claim_expires_at"] = claim.ExpiresAt
-			paper["claim_requester"] = claim.Requester
-		}
-		papers = append(papers, paper)
-	}
-	return papers, totalUnclaimed, totalClaimed
 }
 
 // ---------------------------------------------------------------------------
@@ -752,7 +583,7 @@ func streamMarkdown(re *core.RequestEvent, store objstore.Store, mdKey string) e
 // MinerU claim handlers
 // ---------------------------------------------------------------------------
 
-func mineruClaimHandler(re *core.RequestEvent, cfg *config.Config, store objstore.Store, shareStore *shares.Store, claimStore *mineruclaim.Store, arxivID string, ttl int) error {
+func mineruClaimHandler(re *core.RequestEvent, cfg *config.Config, store objstore.Store, catalog *papers.Store, arxivID string, ttl int) error {
 	ctx := re.Request.Context()
 	canonical, ok := paperassets.ValidateUploadID(arxivID)
 	if !ok {
@@ -761,68 +592,34 @@ func mineruClaimHandler(re *core.RequestEvent, cfg *config.Config, store objstor
 		})
 	}
 
-	// PDF must already be present — refuse to claim a paper we can't serve.
-	pdfKey := paperassets.AssetKey("pdf", canonical)
-	_, exists, err := store.Stat(ctx, pdfKey)
-	if err != nil {
-		return re.JSON(http.StatusInternalServerError, map[string]string{"detail": "stat pdf: " + err.Error()})
-	}
-	if !exists {
-		resolved := paperassets.ResolveAssetsViaStore(ctx, store, canonical)
-		if resolved.PDFPath == "" {
-			return re.JSON(http.StatusNotFound, map[string]string{
-				"detail": fmt.Sprintf("no PDF in raw storage for %s; upload it first via /api/papers/{arxiv_id}/upload-pdf", canonical),
-			})
-		}
-		pdfKey = resolved.PDFPath
-	}
-
-	// No work if markdown already exists (both exact + resolved variants).
-	mdKey := paperassets.AssetKey("markdown", canonical)
-	if _, mdExists, _ := store.Stat(ctx, mdKey); mdExists {
-		return re.JSON(http.StatusConflict, map[string]string{
-			"detail": fmt.Sprintf("markdown already exists for %s; nothing to do", canonical),
-		})
-	}
-	if resolved := paperassets.ResolveAssetsViaStore(ctx, store, canonical); resolved.MarkdownPath != "" {
-		return re.JSON(http.StatusConflict, map[string]string{
-			"detail": fmt.Sprintf("markdown already exists for %s; nothing to do", canonical),
-		})
-	}
-
-	// Build the PDF share URL the claimant will hand to MinerU.
-	relSharePath := paperassets.ShareRelPathForKey(pdfKey)
-	shareToken := cfg.ShareAccessToken
-	shareBaseURL := ""
-	if shareToken != "" {
-		shareBaseURL = cfg.PublicBaseURL
-	} else {
-		rec, err := shares.CreateRecord(shareStore, cfg, shares.CreateOptions{
-			Paths: []string{relSharePath},
-			Label: "mineru pdf: " + canonical,
-		}, store)
-		if err != nil {
-			return re.JSON(http.StatusInternalServerError, map[string]string{
-				"detail": "failed to build share URL for PDF: " + err.Error(),
-			})
-		}
-		shareToken = rec.Token
-	}
-	shareURL := shares.BuildURL(shareToken, relSharePath, shareBaseURL)
-
 	requester := ""
 	if cfg.UserHeader != "" {
 		requester = re.Request.Header.Get(cfg.UserHeader)
 	}
 
-	claim, err := claimStore.Create(mineruclaim.CreateOptions{
+	// The lease is granted atomically by the catalog (single MERGE/SET
+	// that only matches when the paper has a PDF, lacks markdown, and has
+	// no live claim). The PDF URL handed to MinerU is the public arxiv
+	// abstract URL — compliance-safe and avoids minting a share token per
+	// claim.
+	claim, err := catalog.Claim(ctx, papers.CreateOptions{
 		ArxivID:    canonical,
 		Requester:  requester,
 		TTLSeconds: ttl,
-		PDFURL:     shareURL,
+		PDFURL:     papers.ArxivAbsURL(canonical),
 	})
 	if err != nil {
-		var dupErr *mineruclaim.ErrAlreadyClaimed
+		switch {
+		case errors.Is(err, papers.ErrCatalogUnavailable):
+			return re.JSON(http.StatusServiceUnavailable, map[string]string{
+				"detail": "catalog unavailable (Neo4j unreachable); retry shortly",
+			})
+		case errors.Is(err, papers.ErrNotClaimable):
+			return re.JSON(http.StatusNotFound, map[string]string{
+				"detail": fmt.Sprintf("%s cannot be claimed: no PDF in catalog, or markdown already exists. Upload the PDF first via /api/papers/{arxiv_id}/upload-pdf", canonical),
+			})
+		}
+		var dupErr *papers.ErrAlreadyClaimed
 		if errors.As(err, &dupErr) {
 			return re.JSON(http.StatusConflict, map[string]any{
 				"detail": map[string]any{
@@ -845,18 +642,23 @@ func mineruClaimHandler(re *core.RequestEvent, cfg *config.Config, store objstor
 	return re.JSON(http.StatusCreated, claim)
 }
 
-func mineruClaimReleaseHandler(re *core.RequestEvent, claimStore *mineruclaim.Store, arxivID, claimID string) error {
+func mineruClaimReleaseHandler(re *core.RequestEvent, catalog *papers.Store, arxivID, claimID string) error {
 	canonical, ok := paperassets.ValidateUploadID(arxivID)
 	if !ok {
 		return re.JSON(http.StatusBadRequest, map[string]string{
 			"detail": fmt.Sprintf("invalid arxiv_id for claim release: %q", arxivID),
 		})
 	}
-	_, err := claimStore.ReleaseWithID(canonical, claimID)
+	_, err := catalog.ReleaseClaim(re.Request.Context(), canonical, claimID)
 	if err != nil {
-		if errors.Is(err, mineruclaim.ErrIDMismatch) {
+		if errors.Is(err, papers.ErrIDMismatch) {
 			return re.JSON(http.StatusConflict, map[string]string{
 				"detail": "claim_id does not match the active claim",
+			})
+		}
+		if errors.Is(err, papers.ErrCatalogUnavailable) {
+			return re.JSON(http.StatusServiceUnavailable, map[string]string{
+				"detail": "catalog unavailable (Neo4j unreachable); retry shortly",
 			})
 		}
 		return re.JSON(http.StatusInternalServerError, map[string]string{"detail": err.Error()})
@@ -869,7 +671,7 @@ func mineruClaimReleaseHandler(re *core.RequestEvent, claimStore *mineruclaim.St
 // Upload handlers
 // ---------------------------------------------------------------------------
 
-func uploadPDFHandler(re *core.RequestEvent, cfg *config.Config, store objstore.Store, arxivID string) error {
+func uploadPDFHandler(re *core.RequestEvent, cfg *config.Config, store objstore.Store, catalog *papers.Store, arxivID string) error {
 	ctx := re.Request.Context()
 	canonical, ok := paperassets.ValidateUploadID(arxivID)
 	if !ok {
@@ -879,12 +681,10 @@ func uploadPDFHandler(re *core.RequestEvent, cfg *config.Config, store objstore.
 	}
 	overwrite := re.Request.URL.Query().Get("overwrite") == "true"
 	expectedPdfSha := normaliseSha256Hex(re.Request.URL.Query().Get("expected_sha256"))
-	expectedMetaSha := normaliseSha256Hex(re.Request.URL.Query().Get("expected_metadata_sha256"))
 
 	pdfKey := paperassets.AssetKey("pdf", canonical)
-	jsonKey := paperassets.AssetKey("json", canonical)
 
-	if err := re.Request.ParseMultipartForm(int64(paperassets.MaxPDFBytes) + int64(paperassets.MaxMetadataBytes) + 1<<20); err != nil {
+	if err := re.Request.ParseMultipartForm(int64(paperassets.MaxPDFBytes) + 1<<20); err != nil {
 		return re.JSON(http.StatusBadRequest, map[string]string{"detail": "parse multipart: " + err.Error()})
 	}
 
@@ -932,108 +732,55 @@ func uploadPDFHandler(re *core.RequestEvent, cfg *config.Config, store objstore.
 		})
 	}
 
-	// Stage metadata JSON if present, BEFORE any store writes — so a
-	// metadata-side validation failure doesn't even attempt a PDF PUT.
-	// Metadata is small (cap 2 MiB) and json.Unmarshal needs the full
-	// body, so we keep this one in memory.
-	var metaStaged stagedBody
-	var metaSha string
-	hasMetadata := false
-	if mdPart, _, err := re.Request.FormFile("metadata"); err == nil && mdPart != nil {
-		defer mdPart.Close()
-		hasMetadata = true
-		var mvErr *uploadError
-		metaStaged, mvErr = stageInMemory(ctx, mdPart, paperassets.MaxMetadataBytes, "metadata",
-			func(b []byte) *uploadError {
-				var v any
-				if json.Unmarshal(b, &v) != nil {
-					return &uploadError{Status: http.StatusBadRequest, Detail: "metadata must be valid utf-8 JSON"}
-				}
-				return nil
-			})
-		if mvErr != nil {
-			return re.JSON(mvErr.Status, map[string]string{"detail": mvErr.Detail})
-		}
-		defer metaStaged.Close()
-		metaSha = metaStaged.Sha256()
-		if expectedMetaSha != "" && expectedMetaSha != metaSha {
-			return re.JSON(http.StatusBadRequest, map[string]any{
-				"detail":                   "expected_metadata_sha256 mismatch — metadata may be corrupt in transit",
-				"expected_metadata_sha256": expectedMetaSha,
-				"actual_metadata_sha256":   metaSha,
-			})
-		}
-	}
-
-	// Each part runs the conditional-write flow independently. We do
-	// the PDF first so a metadata-side conflict can still leave the
-	// PDF in place (the prior contract — "metadata conflict shouldn't
-	// leave PDF written" — is intentionally relaxed; under conditional
-	// writes each key's content is idempotent + race-safe on its own,
-	// and a client that gets a metadata 409 can retry idempotently
-	// because the PDF write was content-addressed via sha256 metadata).
+	// v0.7.0: the json/metadata sidecar bucket was cut — paper metadata
+	// now lives in the Neo4j catalog (sourced from OpenAlex), so we no
+	// longer accept or write a "metadata" multipart part. Any such part
+	// in the request is ignored.
 	pdfOutcome, err := uploadOne(ctx, store, pdfKey, pdfStaged, "application/pdf", overwrite, "PDF")
 	if err != nil {
 		return re.JSON(http.StatusInternalServerError, map[string]string{"detail": err.Error()})
 	}
-	var metaOutcome uploadOutcome
-	if hasMetadata {
-		metaOutcome, err = uploadOne(ctx, store, jsonKey, metaStaged, "application/json", overwrite, "metadata")
-		if err != nil {
-			return re.JSON(http.StatusInternalServerError, map[string]string{"detail": err.Error()})
-		}
-	}
 
-	// If either part conflicted, surface a 409 with both per-part
-	// hashes so the client knows exactly which part(s) need attention.
-	if pdfOutcome.kind == outcomeConflict || (hasMetadata && metaOutcome.kind == outcomeConflict) {
+	if pdfOutcome.kind == outcomeConflict {
 		body := map[string]any{
-			"detail":     "upload conflict; pass overwrite=true to replace (prior version preserved by bucket versioning when enabled)",
-			"new_sha256": pdfSha,
+			"detail":        "upload conflict; pass overwrite=true to replace (prior version preserved by bucket versioning when enabled)",
+			"new_sha256":    pdfSha,
+			"existing_path": pdfKey,
 		}
-		if pdfOutcome.kind == outcomeConflict {
-			body["pdf_conflict"] = true
-			body["pdf_existing_sha256"] = pdfOutcome.existingShaJSON()
-			body["existing_path"] = pdfKey
-		}
-		if hasMetadata && metaOutcome.kind == outcomeConflict {
-			body["metadata_conflict"] = true
-			body["metadata_existing_sha256"] = metaOutcome.existingShaJSON()
-			body["metadata_new_sha256"] = metaSha
-			body["metadata_path"] = jsonKey
-		}
-		// Note when either side lacked sha256 metadata so the operator
-		// knows it's a legacy / LocalStore object, not a hash mismatch.
-		if (pdfOutcome.kind == outcomeConflict && pdfOutcome.existingSha == "") ||
-			(hasMetadata && metaOutcome.kind == outcomeConflict && metaOutcome.existingSha == "") {
-			body["note"] = "at least one existing object has no sha256 metadata (legacy upload or LocalStore backend) — content equality cannot be verified without overwrite=true"
+		body["existing_sha256"] = pdfOutcome.existingShaJSON()
+		if pdfOutcome.existingSha == "" {
+			body["note"] = "existing object has no sha256 metadata (legacy upload or LocalStore backend) — content equality cannot be verified without overwrite=true"
 		}
 		return re.JSON(http.StatusConflict, body)
-	}
-
-	metadataPath := ""
-	if hasMetadata {
-		metadataPath = jsonKey
 	}
 
 	requester := ""
 	if cfg.UserHeader != "" {
 		requester = re.Request.Header.Get(cfg.UserHeader)
 	}
-	var metaSize int64
-	if hasMetadata {
-		metaSize = metaStaged.Size()
+	overallUnchanged := pdfOutcome.kind == outcomeUnchanged
+
+	// Catalog write-through: flip has_pdf=true on the :PaperWork node
+	// (creating a minimal arxiv-fallback node if the paper predates the
+	// OpenAlex bootstrap). When Neo4j is down we still return success —
+	// the object is durably written; `papers sync` reconciles later.
+	catalogDeferred := false
+	if err := catalog.UpsertPDF(ctx, canonical, pdfSha, pdfSize, pdfOutcome.existingSha); err != nil {
+		if errors.Is(err, papers.ErrCatalogUnavailable) {
+			catalogDeferred = true
+		} else {
+			slog.Warn("papers: UpsertPDF write-through failed", "arxiv_id", canonical, "error", err)
+			catalogDeferred = true
+		}
 	}
-	overallUnchanged := pdfOutcome.kind == outcomeUnchanged && (!hasMetadata || metaOutcome.kind == outcomeUnchanged)
+
 	slog.Info("uploaded pdf",
 		"arxiv_id", canonical,
 		"requester", requester,
 		"pdf_bytes", pdfSize,
 		"pdf_sha256", pdfSha,
 		"pdf_unchanged", pdfOutcome.kind == outcomeUnchanged,
-		"metadata_bytes", metaSize,
-		"metadata_sha256", metaSha,
-		"metadata_unchanged", hasMetadata && metaOutcome.kind == outcomeUnchanged,
+		"catalog_deferred", catalogDeferred,
 		"pdf_key", pdfKey,
 	)
 
@@ -1051,14 +798,11 @@ func uploadPDFHandler(re *core.RequestEvent, cfg *config.Config, store objstore.
 		"overwritten":     overwrite,
 		"unchanged":       overallUnchanged,
 	}
-	if metadataPath != "" {
-		resp["metadata_path"] = metadataPath
-		resp["metadata_bytes"] = metaSize
-		resp["metadata_sha256"] = metaSha
-		resp["metadata_unchanged"] = metaOutcome.kind == outcomeUnchanged
-	}
 	if requester != "" {
 		resp["uploaded_by"] = requester
+	}
+	if catalogDeferred {
+		re.Response.Header().Set("X-Catalog-Sync", "deferred")
 	}
 	// Status: 200 OK if everything was a no-op (idempotent re-upload
 	// of identical content), 201 Created otherwise.
@@ -1070,7 +814,7 @@ func uploadPDFHandler(re *core.RequestEvent, cfg *config.Config, store objstore.
 	return jsonBody(re, resp)
 }
 
-func uploadMarkdownHandler(re *core.RequestEvent, cfg *config.Config, store objstore.Store, claimStore *mineruclaim.Store, arxivID string) error {
+func uploadMarkdownHandler(re *core.RequestEvent, cfg *config.Config, store objstore.Store, catalog *papers.Store, arxivID string) error {
 	ctx := re.Request.Context()
 	canonical, ok := paperassets.ValidateUploadID(arxivID)
 	if !ok {
@@ -1151,8 +895,14 @@ func uploadMarkdownHandler(re *core.RequestEvent, cfg *config.Config, store objs
 		"md_key", mdKey,
 	)
 
-	if err := claimStore.Release(canonical); err != nil {
-		slog.Warn("failed to release mineru claim", "arxiv_id", canonical, "error", err)
+	// Catalog write-through: flip has_md=true and clear any active claim
+	// (markdown done ⇒ lease no longer needed). Deferred when Neo4j down.
+	catalogDeferred := false
+	if err := catalog.UpsertMD(ctx, canonical, mdSha, mdSize, outcome.existingSha); err != nil {
+		if !errors.Is(err, papers.ErrCatalogUnavailable) {
+			slog.Warn("papers: UpsertMD write-through failed", "arxiv_id", canonical, "error", err)
+		}
+		catalogDeferred = true
 	}
 
 	resp := map[string]any{
@@ -1171,6 +921,9 @@ func uploadMarkdownHandler(re *core.RequestEvent, cfg *config.Config, store objs
 	}
 	if requester != "" {
 		resp["uploaded_by"] = requester
+	}
+	if catalogDeferred {
+		re.Response.Header().Set("X-Catalog-Sync", "deferred")
 	}
 	if outcome.kind == outcomeUnchanged {
 		re.Response.WriteHeader(http.StatusOK)
@@ -1226,20 +979,20 @@ const (
 //   - Without overwrite:
 //     1. Try `Put + If-None-Match: "*"`. On success, return Written.
 //     2. On 412 PreconditionFailed: Stat the existing object, compare
-//        sha256 metadata. Match → Unchanged (idempotent re-upload).
-//        Mismatch (or missing) → Conflict.
+//     sha256 metadata. Match → Unchanged (idempotent re-upload).
+//     Mismatch (or missing) → Conflict.
 //     3. On the rare "412 then key disappears" race, retry the
-//        create-only Put once; if even that 412s, return Conflict.
+//     create-only Put once; if even that 412s, return Conflict.
 //
 //   - With overwrite:
 //     1. Stat first. If sha256 matches, return Unchanged (zero writes —
-//        same content-aware idempotency the old code had, preserved).
+//     same content-aware idempotency the old code had, preserved).
 //     2. Otherwise, unconditional Put. We deliberately do NOT use
-//        If-Match here: paper assets are mostly single-writer per
-//        arxiv_id, and the CAS-retry-loop adds complexity without much
-//        benefit when the operator already opted in to "replace". The
-//        S3 backend's bucket versioning preserves the prior version so
-//        the loser of a true concurrent overwrite stays recoverable.
+//     If-Match here: paper assets are mostly single-writer per
+//     arxiv_id, and the CAS-retry-loop adds complexity without much
+//     benefit when the operator already opted in to "replace". The
+//     S3 backend's bucket versioning preserves the prior version so
+//     the loser of a true concurrent overwrite stays recoverable.
 //
 //   - LocalStore fallback: LocalStore implements If-None-Match="*" via
 //     atomic os.Link (so create-only really is race-safe even on local

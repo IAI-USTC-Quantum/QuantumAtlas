@@ -70,32 +70,6 @@ info:
   title: QuantumAtlas API
   version: "1.0"
 paths:
-  /api/_rustfs/event:
-    post:
-      consumes:
-      - application/json
-      description: |-
-        Internal webhook for RustFS PUT/DELETE bucket notifications;
-        authenticated by the QATLAS_RUSTFS_EVENT_TOKEN bearer.
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-        "401":
-          description: Unauthorized
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      security:
-      - BearerAuth: []
-      summary: RustFS event webhook
-      tags:
-      - Internal
   /api/graph/query:
     post:
       consumes:

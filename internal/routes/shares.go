@@ -15,6 +15,7 @@ import (
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/papers"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/shares"
 
 	"github.com/casbin/casbin/v2"
@@ -234,6 +235,17 @@ func serveSharedKey(re *core.RequestEvent, store objstore.Store, rel string) boo
 	key, err := shares.ResolveKey(rel)
 	if err != nil {
 		return false
+	}
+	// Compliance (§1): we never serve the publisher PDF bytes. Any
+	// request that resolves to a pdf/ object is a 307 to the canonical
+	// arxiv.org URL — our stored PDFs are internal processing material
+	// (MinerU / embeddings / citation extraction), not a redistribution
+	// surface. Markdown / images (our own derived artifacts) still serve
+	// normally below.
+	if strings.HasPrefix(key, "pdf/") || strings.EqualFold(path.Ext(key), ".pdf") {
+		stem := strings.TrimSuffix(path.Base(key), path.Ext(key))
+		http.Redirect(re.Response, re.Request, papers.ArxivAbsURL(stem), http.StatusTemporaryRedirect)
+		return true
 	}
 	info, exists, statErr := store.Stat(ctx, key)
 	if statErr != nil || !exists {

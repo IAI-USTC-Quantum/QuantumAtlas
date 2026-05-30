@@ -36,6 +36,7 @@ package healthz
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -57,9 +58,10 @@ type Check struct {
 	// Optional per-check fields. Different checks fill different
 	// subsets — we keep them on one struct so the JSON layout stays
 	// uniform and the SPA doesn't need a discriminated union.
-	Backend    string `json:"backend,omitempty"`     // raw store: "s3" | "local"
+	Backend    string `json:"backend,omitempty"`     // raw store: "s3" | "s3-router" | "local"
 	Endpoint   string `json:"endpoint,omitempty"`    // s3 endpoint URL
 	Bucket     string `json:"bucket,omitempty"`      // s3 bucket name
+	Buckets    []string `json:"buckets,omitempty"`   // s3-router: probed bucket names
 	URI        string `json:"uri,omitempty"`         // neo4j bolt URI
 	Database   string `json:"database,omitempty"`    // neo4j database
 	Dir        string `json:"dir,omitempty"`         // wiki working tree path
@@ -221,6 +223,12 @@ func probeRawStore(ctx context.Context, store objstore.Store) Check {
 
 	s3, ok := store.(*objstore.S3Store)
 	if !ok {
+		// Multi-bucket Router (v0.7.0 default for S3 deployments):
+		// probe each distinct S3 backend, aggregate to the worst
+		// status so a single broken bucket surfaces as degraded.
+		if r, isRouter := store.(*objstore.Router); isRouter {
+			return probeRouter(ctx, r)
+		}
 		// LocalStore (filesystem-backed). The process owns the
 		// directory, so a probe would be testing our own filesystem
 		// — if that's broken the server isn't actually serving.
@@ -251,6 +259,41 @@ func probeRawStore(ctx context.Context, store objstore.Store) Check {
 		c.Error = "bucket does not exist"
 	default:
 		c.Status = "ok"
+	}
+	return c
+}
+
+// probeRouter HEAD-checks every distinct S3 bucket behind a multi-bucket
+// Router. Any bucket failing (connectivity or missing) downgrades the
+// aggregate to "error"; latency is the max over probed backends.
+func probeRouter(ctx context.Context, r *objstore.Router) Check {
+	backends := r.S3Backends()
+	c := Check{Backend: "s3-router"}
+	if len(backends) == 0 {
+		return Check{Status: "ok", Backend: "local"}
+	}
+	c.Endpoint = backends[0].EndpointURL()
+	c.Status = "ok"
+	for _, s3 := range backends {
+		c.Buckets = append(c.Buckets, s3.Bucket())
+		pctx, cancel := context.WithTimeout(ctx, probeTimeout)
+		start := time.Now()
+		exists, err := s3.Ping(pctx)
+		cancel()
+		if ms := time.Since(start).Milliseconds(); ms > c.LatencyMS {
+			c.LatencyMS = ms
+		}
+		switch {
+		case err != nil:
+			c.Status = "error"
+			c.Error = fmt.Sprintf("bucket %s: %v", s3.Bucket(), err)
+		case !exists:
+			c.Status = "error"
+			c.Error = fmt.Sprintf("bucket %s does not exist", s3.Bucket())
+		}
+		if c.Status == "error" {
+			break
+		}
 	}
 	return c
 }

@@ -28,9 +28,9 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/healthz"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineru"
-	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineruclaim"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/neo4j"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
-	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperindex"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/papers"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/pat"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/routes"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/shares"
@@ -151,12 +151,16 @@ func main() {
 	// constraint as pat / storage above.
 	app.RootCmd.AddCommand(NewServiceCommand())
 
-	// Mount the `bootstrap-index` subcommand (one-shot full-bucket
-	// scan that rebuilds index/papers.parquet, including arxiv
-	// metadata enrichment from json files). Same timing constraint
-	// as pat / storage / service above. Operator-driven; see
-	// bootstrap_index_cmd.go for the "stop service first" caveat.
-	app.RootCmd.AddCommand(NewBootstrapIndexCommand())
+	// Mount the `papers` subcommand group (catalog maintenance:
+	// `papers sync` reconciles Neo4j has_pdf/has_md/image_count from the
+	// object-store buckets — periodic drift repair + disaster rebuild).
+	// Same registration timing constraint as pat / storage above.
+	app.RootCmd.AddCommand(NewPapersCommand())
+
+	// Mount the `openalex` subcommand group (bootstrap / sync the
+	// OpenAlex works snapshot into the :PaperWork layer). Execution is
+	// operator-driven and decoupled from server boot — see handoff.md.
+	app.RootCmd.AddCommand(NewOpenAlexCommand())
 
 	// Install our default PAT-surface rate-limit rules. Done at
 	// OnBootstrap (after PocketBase has loaded settings from the DB)
@@ -183,47 +187,48 @@ func main() {
 		return nil
 	})
 
-	// Initialize on-disk JSON stores up-front so route handlers can
-	// share single instances. Both stores no-op when their dirs already
-	// exist, so this is safe to call on every boot.
-	shareStore, err := initShareStore(cfg)
+	// Initialize the share-token store. When Neo4j is configured the
+	// records live in the catalog (:PaperShareToken nodes); otherwise
+	// they fall back to {DATA_DIR}/shares JSON files. Construction is
+	// no-op-safe on every boot.
+	nc := initNeo4jClient(cfg)
+	shareStore, err := initShareStore(cfg, nc)
 	if err != nil {
 		log.Fatalf("init share store: %v", err)
 	}
-	claimStore, err := initClaimStore(cfg)
-	if err != nil {
-		log.Fatalf("init mineru claim store: %v", err)
+
+	// Build the Neo4j-backed papers catalog (stats / needs-mineru /
+	// claims / upload write-through). nc may be nil/unconnected — the
+	// catalog degrades gracefully (ErrCatalogUnavailable) in that case.
+	catalog := papers.NewStore(nc)
+	if catalog.Configured() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := catalog.EnsureSchema(ctx); err != nil {
+			slog.Warn("papers: EnsureSchema failed (will retry next boot)", "error", err)
+		} else {
+			log.Printf("papers: catalog schema ensured")
+		}
+		cancel()
+	} else {
+		log.Printf("papers: catalog disabled (NEO4J_URI unset); /api/papers stats+queue report available:false")
 	}
 
 	// Wire the raw asset backend. S3Enabled is the documented split
 	// point: when QATLAS_S3_* are all set we route every PDF /
-	// markdown / JSON / image through RustFS (or any S3-compatible
-	// store), otherwise we wrap cfg.RawDir with a LocalStore. The
-	// config layer already validated the all-or-nothing rule, so
-	// neither branch can land in a half-configured state here.
+	// markdown / image through three RustFS buckets (qatlas-pdf /
+	// qatlas-md / qatlas-images) behind an objstore.Router, otherwise
+	// we wrap cfg.RawDir with a single LocalStore (keys keep their
+	// <kind>/ prefix in one dir). The config layer already validated
+	// the all-or-nothing rule, so neither branch can land half-
+	// configured here.
 	rawStore, err := initRawStore(cfg)
 	if err != nil {
 		log.Fatalf("init raw object store: %v", err)
 	}
-	// Reconcile bucket versioning so accidental overwrites are
-	// recoverable via S3 ListObjectVersions. Idempotent; non-fatal
-	// when the IAM user lacks s3:Put/GetBucketVersioning (server
-	// still serves, just without rollback safety) — log so ops
-	// notices and grants the perms next deploy.
-	if s3Store, ok := rawStore.(*objstore.S3Store); ok {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		prior, changed, vErr := s3Store.EnsureVersioning(ctx)
-		cancel()
-		switch {
-		case vErr != nil:
-			slog.Warn("bucket versioning: reconcile failed; overwrites will not be recoverable",
-				"bucket", cfg.S3Bucket, "error", vErr)
-		case changed:
-			log.Printf("bucket versioning: enabled (was: %q)", prior)
-		default:
-			log.Printf("bucket versioning: already enabled")
-		}
-	}
+	// Reconcile bucket versioning on each per-kind S3 bucket so
+	// accidental overwrites are recoverable via ListObjectVersions.
+	// Idempotent; non-fatal when the IAM user lacks the perm.
+	ensureBucketVersioning(rawStore)
 
 	// Build the casbin enforcer once at startup. The policy table is
 	// static (defined in internal/pat/scopes.go), so a single shared
@@ -234,14 +239,17 @@ func main() {
 		log.Fatalf("build PAT scope enforcer: %v", err)
 	}
 
-	// Build the paperindex catalog if S3 backend is configured.
-	// Non-fatal on failure: needsMineruHandler & friends will fall
-	// back to the legacy store.ListPrefix path (slow but correct).
-	// Rationale + design: docs/architecture.md → "论文元数据索引"
-	// section. The actual parquet must be (re)built via the
-	// bootstrap-index subcommand; if it doesn't exist yet, the
-	// Store starts up empty and queries return zero.
-	paperIndex := initPaperIndex(cfg, rawStore)
+	// Background janitor: sweep expired MinerU claims + share tokens
+	// every JanitorInterval. Idempotent and safe to run on both edges.
+	// Stops when the app terminates.
+	janitorCtx, janitorCancel := context.WithCancel(context.Background())
+	if catalog.Configured() {
+		go catalog.RunJanitor(janitorCtx, shareStore)
+	}
+	app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
+		janitorCancel()
+		return e.Next()
+	})
 
 	// Build the server-side MinerU converter. Always constructed; it only
 	// actually converts when MINERU_API_TOKEN is set (Converter.Enabled).
@@ -303,7 +311,7 @@ func main() {
 			}
 		}
 
-		registerRoutes(se, app, cfg, rawStore, shareStore, claimStore, paperIndex, mineruConverter, wikiCache, enforcer, serverStarted)
+		registerRoutes(se, app, cfg, rawStore, shareStore, catalog, mineruConverter, wikiCache, enforcer, serverStarted)
 
 		// Serve the embedded SPA last as the catch-all. apis.Static's
 		// indexFallback=true means any path that doesn't match a real
@@ -319,87 +327,122 @@ func main() {
 	}
 }
 
-// initShareStore returns a ready-to-use ShareStore rooted at
-// {DATA_DIR}/shares. cfg.DataDir always carries a value (XDG default
-// applied in config.Load), so this no longer needs a "DATA_DIR unset"
-// fallback like it did before storage paths got proper defaults.
-func initShareStore(cfg *config.Config) (*shares.Store, error) {
-	return shares.NewStore(filepath.Join(cfg.DataDir, "shares"))
-}
-
-// initClaimStore returns a ready-to-use mineru claim store rooted at
-// {DATA_DIR}/mineru-claims.
-func initClaimStore(cfg *config.Config) (*mineruclaim.Store, error) {
-	return mineruclaim.NewStore(filepath.Join(cfg.DataDir, "mineru-claims"))
-}
-
-// initRawStore returns the objstore.Store implementation backing raw
-// paper assets (PDFs, markdown, JSON, images). Selects between
-// LocalStore (cfg.RawDir) and S3Store (QATLAS_S3_*) based on
-// cfg.S3Enabled() — see internal/config/config.go for the
-// invariant that guarantees this can't be half-configured.
-//
-// When cfg.S3PublicEndpoint is set and distinct from cfg.S3Endpoint we
-// use NewS3StoreDual so presigned URLs handed to end-user clients
-// point at the public endpoint (server↔RustFS still goes through the
-// internal endpoint). Empty / equal collapses to single-endpoint mode.
-func initRawStore(cfg *config.Config) (objstore.Store, error) {
-	if cfg.S3Enabled() {
-		if cfg.S3PublicEndpoint != "" && cfg.S3PublicEndpoint != cfg.S3Endpoint {
-			log.Printf("raw store: S3 backend %s/%s (presign via %s)",
-				cfg.S3Endpoint, cfg.S3Bucket, cfg.S3PublicEndpoint)
-		} else {
-			log.Printf("raw store: S3 backend %s/%s", cfg.S3Endpoint, cfg.S3Bucket)
-		}
-		return objstore.NewS3StoreDual(
-			cfg.S3Endpoint, cfg.S3PublicEndpoint,
-			cfg.S3Bucket, cfg.S3AccessKeyID, cfg.S3SecretAccessKey,
-		)
-	}
-	log.Printf("raw store: local backend %s", cfg.RawDir)
-	return objstore.NewLocalStore(cfg.RawDir)
-}
-
-// initPaperIndex constructs the in-process paperindex catalog when an
-// S3 backend is configured. Always returns a non-nil Store on success;
-// returns nil silently when S3 isn't enabled (local-only dev setups
-// don't need the catalog — needs-mineru falls back to a trivial
-// LocalStore walk which is fast on a small dev RAW_DIR).
-//
-// Takes the already-constructed objstore.Store so paperindex shares
-// the exact same bucket/credentials/dual-endpoint configuration as the
-// /api/papers handlers — single source of truth for "how do we talk to
-// RustFS".
-//
-// Failure to build / load the catalog is non-fatal: we log a warning
-// and return nil so handlers fall back to the legacy slow-but-correct
-// store.ListPrefix path. The most common failure mode is "parquet
-// doesn't exist yet in the bucket" — Store.New handles that as a
-// soft-fail and starts with an empty catalog, so this returns
-// non-nil even then.
-func initPaperIndex(cfg *config.Config, rawStore objstore.Store) *paperindex.Store {
-	if !cfg.S3Enabled() {
-		log.Printf("paperindex: skipped (S3 backend not enabled — handlers will fall back to LocalStore walks)")
-		return nil
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	store, err := paperindex.New(ctx, paperindex.Config{
-		Store: rawStore,
-	})
+// initNeo4jClient builds the long-lived Neo4j client shared by the
+// papers catalog and the share-token store. It attempts an initial
+// Connect (best-effort, short timeout) so the first request after boot
+// doesn't pay the dial latency, but a down/unconfigured Neo4j is
+// non-fatal: NewClient returns ErrNotConfigured when NEO4J_URI is
+// empty, in which case we return nil and every catalog op degrades to
+// "unavailable". A configured-but-unreachable Neo4j returns a client
+// that lazily reconnects (backoff-gated) on later requests.
+func initNeo4jClient(cfg *config.Config) *neo4j.Client {
+	nc, err := neo4j.NewClient(cfg.Neo4jURI, cfg.Neo4jUser, cfg.Neo4jPassword, cfg.Neo4jDatabase)
 	if err != nil {
-		log.Printf("paperindex: init failed (%v); handlers will fall back to legacy LIST-based impl", err)
+		log.Printf("neo4j: not configured (%v); papers catalog + share tokens use file fallback", err)
 		return nil
 	}
-	log.Printf("paperindex: catalog ready (%d rows loaded from s3://%s/%s)",
-		store.RowCount(), cfg.S3Bucket, paperindex.DefaultParquetKey)
-	return store
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if cErr := nc.Connect(ctx); cErr != nil {
+		slog.Warn("neo4j: initial connect failed; will retry lazily", "uri", cfg.Neo4jURI, "error", cErr)
+	} else {
+		log.Printf("neo4j: connected (%s)", cfg.Neo4jURI)
+	}
+	return nc
+}
+
+// initShareStore returns a ready-to-use ShareStore. When a connected
+// Neo4j client is available the records live in the catalog as
+// :PaperShareToken nodes; otherwise they fall back to {DATA_DIR}/shares
+// JSON files. The on-disk path is always constructed so a later Neo4j
+// outage can still degrade to file storage.
+func initShareStore(cfg *config.Config, nc *neo4j.Client) (*shares.Store, error) {
+	return shares.NewNeo4jStore(filepath.Join(cfg.DataDir, "shares"), nc)
+}
+
+// initRawStore returns the objstore.Store backing raw paper assets.
+// Selects between a single LocalStore (cfg.RawDir) and the v0.7.0
+// three-bucket S3 split (qatlas-pdf / qatlas-md / qatlas-images behind
+// an objstore.Router) based on cfg.S3Enabled().
+//
+// In S3 mode each kind gets its own NewS3StoreDual so presigned URLs
+// point at cfg.S3PublicEndpoint while server↔RustFS traffic stays on
+// the internal endpoint. The Router keys objects as "<kind>/<shard>/…"
+// for the rest of the codebase and transparently strips the "<kind>/"
+// prefix per bucket. The "json" kind is intentionally absent — v0.7.0
+// drops paper metadata JSON — so it routes to nil (writes error, reads
+// 404), which the upload handlers already treat as "no metadata".
+//
+// In local mode a single LocalStore keeps the "<kind>/" prefix as a
+// subdirectory, preserving the dev-friendly single-RAW_DIR layout.
+func initRawStore(cfg *config.Config) (objstore.Store, error) {
+	if !cfg.S3Enabled() {
+		log.Printf("raw store: local backend %s", cfg.RawDir)
+		return objstore.NewLocalStore(cfg.RawDir)
+	}
+	dual := cfg.S3PublicEndpoint != "" && cfg.S3PublicEndpoint != cfg.S3Endpoint
+	kinds := []struct {
+		kind   string
+		bucket string
+	}{
+		{"pdf", cfg.S3BucketPDF},
+		{"markdown", cfg.S3BucketMD},
+		{"images", cfg.S3BucketImages},
+	}
+	backends := make(map[string]objstore.Store, len(kinds))
+	for _, k := range kinds {
+		st, err := objstore.NewS3StoreDual(
+			cfg.S3Endpoint, cfg.S3PublicEndpoint,
+			k.bucket, cfg.S3AccessKeyID, cfg.S3SecretAccessKey,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("init S3 bucket %q: %w", k.bucket, err)
+		}
+		backends[k.kind] = st
+		if dual {
+			log.Printf("raw store: S3 backend %s/%s (presign via %s)", cfg.S3Endpoint, k.bucket, cfg.S3PublicEndpoint)
+		} else {
+			log.Printf("raw store: S3 backend %s/%s", cfg.S3Endpoint, k.bucket)
+		}
+	}
+	return objstore.NewRouter(backends), nil
+}
+
+// ensureBucketVersioning reconciles bucket versioning on every S3
+// backend behind rawStore so accidental overwrites are recoverable via
+// ListObjectVersions. Handles both a bare *objstore.S3Store (local-dev
+// edge case) and the production *objstore.Router (3 per-kind buckets).
+// Idempotent + non-fatal: a missing s3:Put/GetBucketVersioning perm
+// logs a warning and the server still serves (just without rollback
+// safety).
+func ensureBucketVersioning(rawStore objstore.Store) {
+	var stores []*objstore.S3Store
+	switch v := rawStore.(type) {
+	case *objstore.S3Store:
+		stores = append(stores, v)
+	case *objstore.Router:
+		stores = append(stores, v.S3Backends()...)
+	}
+	for _, s3Store := range stores {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		prior, changed, vErr := s3Store.EnsureVersioning(ctx)
+		cancel()
+		switch {
+		case vErr != nil:
+			slog.Warn("bucket versioning: reconcile failed; overwrites will not be recoverable",
+				"bucket", s3Store.Bucket(), "error", vErr)
+		case changed:
+			log.Printf("bucket versioning: enabled (was: %q) on %s", prior, s3Store.Bucket())
+		default:
+			log.Printf("bucket versioning: already enabled on %s", s3Store.Bucket())
+		}
+	}
 }
 
 // registerRoutes wires the QuantumAtlas /api/* surface. Most endpoints are
 // implemented under internal/routes/ and pulled in by their respective
 // Register* helpers as we migrate each module in subsequent phases.
-func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawStore objstore.Store, shareStore *shares.Store, claimStore *mineruclaim.Store, paperIndex *paperindex.Store, mineruConverter *mineru.Converter, wikiCache *wiki.Cache, enforcer *casbin.Enforcer, started time.Time) {
+func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawStore objstore.Store, shareStore *shares.Store, catalog *papers.Store, mineruConverter *mineru.Converter, wikiCache *wiki.Cache, enforcer *casbin.Enforcer, started time.Time) {
 	probes := healthz.Probes{
 		Cfg:      cfg,
 		RawStore: rawStore,
@@ -489,7 +532,7 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	routes.RegisterGraph(se, cfg, enforcer)
 
 	// Papers (resources, upload, mineru-claim) — see internal/routes/papers.go.
-	routes.RegisterPapers(se, cfg, rawStore, shareStore, claimStore, paperIndex, mineruConverter, enforcer)
+	routes.RegisterPapers(se, cfg, rawStore, shareStore, catalog, mineruConverter, enforcer)
 
 	// Shares CRUD + public /share/{token}* — see internal/routes/shares.go.
 	routes.RegisterShares(se, cfg, shareStore, rawStore, enforcer)
@@ -498,11 +541,6 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// /api/pat is session-token-only (PAT auth refused by sessionGuard);
 	// no enforcer needed because there's no scope-gated endpoint here.
 	routes.RegisterPAT(se, app)
-
-	// RustFS bucket-notification webhook — see internal/routes/rustfs_event.go.
-	// No-op when cfg.RustFSEventToken is empty or paperIndex is nil
-	// (fail-closed against unauthenticated / un-applicable events).
-	routes.RegisterRustFSEvent(se, cfg, rawStore, paperIndex)
 }
 
 // injectHTTPFlag mutates os.Args to add --http=<addr> when the user invokes

@@ -17,6 +17,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/neo4j"
 )
 
 // Record is the persisted share-link record. Field tags use the
@@ -31,13 +33,19 @@ type Record struct {
 	Label     string   `json:"label,omitempty"`
 }
 
-// Store is a thin {base_dir}/{token}.json key-value store with atomic
-// writes (tmp + rename). Concurrent access is safe via an in-process
-// mutex; we don't try to coordinate across processes because the Python
-// server is being decommissioned and won't run alongside the Go one.
+// Store persists share records either on disk ({base_dir}/{token}.json,
+// atomic tmp+rename) or, when a Neo4j client is supplied, as
+// :PaperShareToken nodes so both active-active edges see the same
+// tokens. The on-disk format stays byte-compatible with the legacy
+// Python server. In-process access is mutex-guarded.
 type Store struct {
 	BaseDir string
 	mu      sync.Mutex
+
+	// neo, when non-nil and connected, is used instead of the on-disk
+	// backend. Share records become :PaperShareToken nodes keyed by
+	// token, with the paths[] array preserved verbatim.
+	neo *neo4j.Client
 }
 
 // NewStore initializes the on-disk directory and returns a store handle.
@@ -48,13 +56,35 @@ func NewStore(baseDir string) (*Store, error) {
 	return &Store{BaseDir: baseDir}, nil
 }
 
+// NewNeo4jStore returns a share store backed by Neo4j :PaperShareToken
+// nodes. baseDir is still required as a fallback target when the Neo4j
+// client is unreachable at a given call (so local dev and disaster
+// degradation keep working).
+func NewNeo4jStore(baseDir string, nc *neo4j.Client) (*Store, error) {
+	s, err := NewStore(baseDir)
+	if err != nil {
+		return nil, err
+	}
+	s.neo = nc
+	return s, nil
+}
+
+// useNeo reports whether the Neo4j backend is configured and currently
+// connected. When false, all operations fall back to the on-disk store.
+func (s *Store) useNeo() bool {
+	return s.neo != nil && s.neo.Connected()
+}
+
 // path is the file path for a token.
 func (s *Store) path(token string) string {
 	return filepath.Join(s.BaseDir, token+".json")
 }
 
-// Save atomically persists rec to disk.
+// Save atomically persists rec (Neo4j node or on-disk JSON file).
 func (s *Store) Save(rec *Record) error {
+	if s.useNeo() {
+		return s.neoSave(rec)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -72,6 +102,9 @@ func (s *Store) Get(token string) (*Record, error) {
 	if token == "" {
 		return nil, nil
 	}
+	if s.useNeo() {
+		return s.neoGet(token)
+	}
 	data, err := os.ReadFile(s.path(token))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -88,6 +121,9 @@ func (s *Store) Get(token string) (*Record, error) {
 
 // Delete removes a token. Returns (false, nil) when nothing to delete.
 func (s *Store) Delete(token string) (bool, error) {
+	if s.useNeo() {
+		return s.neoDelete(token)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -104,6 +140,9 @@ func (s *Store) Delete(token string) (bool, error) {
 // ListAll returns every record in the store, sorted by created_at DESC.
 // Corrupt files are skipped silently (matches Python warn-and-continue).
 func (s *Store) ListAll() ([]*Record, error) {
+	if s.useNeo() {
+		return s.neoListAll()
+	}
 	entries, err := os.ReadDir(s.BaseDir)
 	if err != nil {
 		return nil, err

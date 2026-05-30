@@ -98,6 +98,7 @@ to prune when assets live as plain files.`,
 
 // pruneFlags carries the parsed CLI flags for `storage prune`.
 type pruneFlags struct {
+	kind       string // which per-kind bucket (pdf/md/images); v0.7.0 split
 	prefix     string
 	olderThan  string // raw flag value; parsed into duration
 	keepLast   int
@@ -138,6 +139,7 @@ Examples:
 			return runStoragePrune(cmd.OutOrStdout(), cmd.ErrOrStderr(), f)
 		},
 	}
+	cmd.Flags().StringVar(&f.kind, "kind", "pdf", "which per-kind bucket to prune: pdf | md | images (v0.7.0 split qatlas-raw into three)")
 	cmd.Flags().StringVar(&f.prefix, "prefix", "", "limit to keys under this prefix (default: whole bucket)")
 	cmd.Flags().StringVar(&f.olderThan, "older-than", "", "only delete noncurrent versions older than this duration (e.g. 24h, 30d, 1y); empty = no age cap")
 	cmd.Flags().IntVar(&f.keepLast, "keep-last", 0, "per object key, keep the N most-recent noncurrent versions; 0 = no per-key cap")
@@ -157,7 +159,11 @@ func runStoragePrune(stdout, stderr io.Writer, f pruneFlags) error {
 		return errors.New("storage prune requires the S3 backend (QATLAS_S3_* env all set); LocalStore has no version concept")
 	}
 
-	store, err := objstore.NewS3Store(cfg.S3Endpoint, cfg.S3Bucket, cfg.S3AccessKeyID, cfg.S3SecretAccessKey)
+	bucket, err := bucketForKind(cfg, f.kind)
+	if err != nil {
+		return err
+	}
+	store, err := objstore.NewS3Store(cfg.S3Endpoint, bucket, cfg.S3AccessKeyID, cfg.S3SecretAccessKey)
 	if err != nil {
 		return fmt.Errorf("connect s3: %w", err)
 	}
@@ -179,7 +185,7 @@ func runStoragePrune(stdout, stderr io.Writer, f pruneFlags) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	fmt.Fprintf(stderr, "Bucket    : %s/%s\n", cfg.S3Endpoint, cfg.S3Bucket)
+	fmt.Fprintf(stderr, "Bucket    : %s/%s (kind=%s)\n", cfg.S3Endpoint, bucket, f.kind)
 	fmt.Fprintf(stderr, "Prefix    : %q\n", f.prefix)
 	if ageCap > 0 {
 		fmt.Fprintf(stderr, "Older than: %s (versions modified before %s)\n", ageCap, time.Now().Add(-ageCap).Format(time.RFC3339))
@@ -359,6 +365,23 @@ func modeLabel(f pruneFlags) string {
 		return "APPLY (--yes set, deletions will execute)"
 	}
 	return "dry-run (pass --yes to apply)"
+}
+
+// bucketForKind maps a --kind value to the configured per-kind bucket.
+// v0.7.0 split the single qatlas-raw bucket into qatlas-pdf /
+// qatlas-md / qatlas-images, so prune (which talks to one bucket at a
+// time) needs to know which one.
+func bucketForKind(cfg *config.Config, kind string) (string, error) {
+	switch kind {
+	case "pdf":
+		return cfg.S3BucketPDF, nil
+	case "md", "markdown":
+		return cfg.S3BucketMD, nil
+	case "images", "img":
+		return cfg.S3BucketImages, nil
+	default:
+		return "", fmt.Errorf("--kind %q invalid (want pdf | md | images)", kind)
+	}
 }
 
 // silenceUnused keeps `os` imported when build tags strip the apply

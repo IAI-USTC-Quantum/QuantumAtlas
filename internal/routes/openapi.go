@@ -401,19 +401,3 @@ func docDeletePAT() {}
 // @Success     200 {object} map[string]interface{}
 // @Router      /api/pat/scopes [get]
 func docPATScopes() {}
-
-// --- Internal ----------------------------------------------------------------
-
-// rustfsEvent ingests RustFS bucket-notification webhooks.
-//
-// @Summary     RustFS event webhook
-// @Description Internal webhook for RustFS PUT/DELETE bucket notifications;
-// @Description authenticated by the QATLAS_RUSTFS_EVENT_TOKEN bearer.
-// @Tags        Internal
-// @Accept      json
-// @Produce     json
-// @Security    BearerAuth
-// @Success     200 {object} map[string]interface{}
-// @Failure     401 {object} map[string]string
-// @Router      /api/_rustfs/event [post]
-func docRustfsEvent() {}

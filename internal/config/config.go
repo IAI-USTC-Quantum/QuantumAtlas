@@ -108,26 +108,26 @@ type Config struct {
 	// internal endpoint — handy for single-network dev setups but
 	// useless for any deployment where clients can't reach the
 	// internal host.
-	S3Endpoint        string
-	S3PublicEndpoint  string
-	S3Bucket          string
+	S3Endpoint       string
+	S3PublicEndpoint string
+
+	// Per-kind buckets (v0.7.0). The single qatlas-raw bucket was split
+	// into three so each asset kind has its own lifecycle / quota /
+	// access policy. S3BucketOpenAlex is reserved for the OpenAlex
+	// snapshot ingest (档 B) and is optional — the server runs without
+	// it; only `openalex` subcommands need it.
+	//
+	// All three of PDF/MD/Images are required together when S3 is
+	// enabled (validateS3Config). The legacy single QATLAS_S3_BUCKET is
+	// REMOVED in v0.7.0 — Load fails fast if it's still set so a stale
+	// .env can't silently mis-route every object into one bucket.
+	S3BucketPDF      string
+	S3BucketMD       string
+	S3BucketImages   string
+	S3BucketOpenAlex string
+
 	S3AccessKeyID     string
 	S3SecretAccessKey string
-
-	// Shared secret used to authenticate RustFS bucket-notification
-	// webhook calls into POST /api/_rustfs/event. RustFS adds it to
-	// every push as `Authorization: Bearer <token>` (per its
-	// notify_webhook target config); qatlas rejects requests whose
-	// header doesn't match this value with 401.
-	//
-	// Set the SAME value here AND in the RustFS container's
-	// RUSTFS_NOTIFY_WEBHOOK_AUTH_TOKEN_QATLAS env var. Generated
-	// once with `openssl rand -hex 32`.
-	//
-	// When empty, the /api/_rustfs/event handler refuses to mount —
-	// failing closed rather than accepting unauthenticated upserts
-	// into the paperindex catalog.
-	RustFSEventToken string
 }
 
 // Load resolves the configuration from process environment.
@@ -186,10 +186,12 @@ func Load(dotenvPath string) (*Config, error) {
 		GitHubClientSecret:    firstEnv("GITHUB_CLIENT_SECRET"),
 		S3Endpoint:            firstEnv("QATLAS_S3_ENDPOINT"),
 		S3PublicEndpoint:      firstEnv("QATLAS_S3_PUBLIC_ENDPOINT"),
-		S3Bucket:              firstEnv("QATLAS_S3_BUCKET"),
+		S3BucketPDF:           firstEnv("QATLAS_S3_BUCKET_PDF"),
+		S3BucketMD:            firstEnv("QATLAS_S3_BUCKET_MD"),
+		S3BucketImages:        firstEnv("QATLAS_S3_BUCKET_IMAGES"),
+		S3BucketOpenAlex:      firstEnv("QATLAS_S3_BUCKET_OPENALEX_SNAPSHOT"),
 		S3AccessKeyID:         firstEnv("QATLAS_S3_ACCESS_KEY_ID"),
 		S3SecretAccessKey:     firstEnv("QATLAS_S3_SECRET_ACCESS_KEY"),
-		RustFSEventToken:      firstEnv("QATLAS_RUSTFS_EVENT_TOKEN"),
 	}
 
 	// HTTP bind: assemble from QATLAS_SERVER_HOST + _PORT if QATLAS_HTTP_ADDR
@@ -234,10 +236,11 @@ func Load(dotenvPath string) (*Config, error) {
 
 // S3Enabled reports whether the object-storage backend is configured.
 // When false, callers should fall back to local-filesystem I/O under
-// cfg.RawDir; when true, all four QATLAS_S3_* fields are guaranteed
-// non-empty by validateS3Config (invoked at end of Load).
+// cfg.RawDir; when true, all S3 connection fields plus the three
+// per-kind buckets are guaranteed non-empty by validateS3Config.
 func (c *Config) S3Enabled() bool {
-	return c.S3Endpoint != "" && c.S3Bucket != "" && c.S3AccessKeyID != "" && c.S3SecretAccessKey != ""
+	return c.S3Endpoint != "" && c.S3BucketPDF != "" && c.S3BucketMD != "" &&
+		c.S3BucketImages != "" && c.S3AccessKeyID != "" && c.S3SecretAccessKey != ""
 }
 
 // MinerUEnabled reports whether server-side silent markdown conversion is
@@ -247,15 +250,24 @@ func (c *Config) MinerUEnabled() bool {
 	return c.MinerUAPIToken != ""
 }
 
-// validateS3Config enforces the all-or-nothing rule for the QATLAS_S3_*
-// quartet. We deliberately do not validate URL syntax / bucket naming
-// here — those errors surface clearly at first request through minio-go,
-// and adding our own validator would just be one more thing to keep in
-// sync with the SDK.
+// validateS3Config enforces the all-or-nothing rule for the S3 connection
+// quartet plus the three per-kind buckets, and fails fast when the
+// removed single-bucket var QATLAS_S3_BUCKET is still set (a stale .env
+// would otherwise silently mis-route every object into one bucket).
 func validateS3Config(cfg *Config) error {
+	// Hard fail: the v0.6.0 single-bucket var is gone. Catch it before
+	// the all-or-nothing check so the operator gets a precise message.
+	if v := strings.TrimSpace(os.Getenv("QATLAS_S3_BUCKET")); v != "" {
+		return fmt.Errorf(
+			"QATLAS_S3_BUCKET is no longer supported in v0.7.0 — the single " +
+				"qatlas-raw bucket was split into per-kind buckets; set " +
+				"QATLAS_S3_BUCKET_PDF / _MD / _IMAGES instead and remove QATLAS_S3_BUCKET")
+	}
 	fields := map[string]string{
 		"QATLAS_S3_ENDPOINT":          cfg.S3Endpoint,
-		"QATLAS_S3_BUCKET":            cfg.S3Bucket,
+		"QATLAS_S3_BUCKET_PDF":        cfg.S3BucketPDF,
+		"QATLAS_S3_BUCKET_MD":         cfg.S3BucketMD,
+		"QATLAS_S3_BUCKET_IMAGES":     cfg.S3BucketImages,
 		"QATLAS_S3_ACCESS_KEY_ID":     cfg.S3AccessKeyID,
 		"QATLAS_S3_SECRET_ACCESS_KEY": cfg.S3SecretAccessKey,
 	}
@@ -276,7 +288,8 @@ func validateS3Config(cfg *Config) error {
 	sort.Strings(unset)
 	return fmt.Errorf(
 		"object storage half-configured: %v are set but %v are missing — "+
-			"set all four QATLAS_S3_* fields to enable RustFS/S3, or unset all four to use local RawDir",
+			"set all S3 connection fields + the three QATLAS_S3_BUCKET_{PDF,MD,IMAGES} "+
+			"to enable RustFS/S3, or unset all to use local RawDir",
 		set, unset,
 	)
 }
