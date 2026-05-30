@@ -86,7 +86,15 @@ func (s *Store) Claim(ctx context.Context, opts CreateOptions) (*Claim, error) {
 	rows, err := s.nc.ExecuteWrite(ctx, `
 		MATCH (p:PaperWork {arxiv_id: $arxiv_id})
 		WHERE p.has_pdf = true AND coalesce(p.has_md, false) <> true
-		  AND (p.claim_expires_at IS NULL OR p.claim_expires_at < datetime())
+		// Force a write-lock on p before evaluating the claim predicate.
+		// Without this, two concurrent claim txns both read the pre-write
+		// snapshot (no active claim), both pass the guard, and both SET ->
+		// lost update / double-win. The unconditional SET serializes them;
+		// the loser re-reads the committed lease below and matches 0 rows.
+		// _claim_lock is transient lease bookkeeping (not in source).
+		SET p._claim_lock = coalesce(p._claim_lock, 0) + 1
+		WITH p
+		WHERE (p.claim_expires_at IS NULL OR p.claim_expires_at < datetime())
 		SET p.claimed_by_login = $login,
 		    p.claim_expires_at  = datetime() + duration({seconds: $ttl}),
 		    p.claim_id          = $claim_id

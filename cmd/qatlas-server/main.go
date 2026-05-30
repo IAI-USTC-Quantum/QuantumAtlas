@@ -202,13 +202,14 @@ func main() {
 	// catalog degrades gracefully (ErrCatalogUnavailable) in that case.
 	catalog := papers.NewStore(nc)
 	if catalog.Configured() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		if err := catalog.EnsureSchema(ctx); err != nil {
-			slog.Warn("papers: EnsureSchema failed (will retry next boot)", "error", err)
-		} else {
-			log.Printf("papers: catalog schema ensured")
-		}
-		cancel()
+		// Schema bootstrap runs in the background: it is ~16 sequential DDL
+		// round-trips to the (cross-mesh, ~700ms-latency) Neo4j, which can
+		// exceed any startup-blocking budget and would otherwise delay
+		// /api/health. All statements are idempotent (IF NOT EXISTS), so we
+		// retry with a generous per-attempt timeout until every constraint +
+		// index exists. Missing schema degrades correctness (uniqueness) +
+		// performance, so we keep retrying rather than wait for the next boot.
+		go ensureCatalogSchema(catalog)
 	} else {
 		log.Printf("papers: catalog disabled (NEO4J_URI unset); /api/papers stats+queue report available:false")
 	}
@@ -335,6 +336,34 @@ func main() {
 // empty, in which case we return nil and every catalog op degrades to
 // "unavailable". A configured-but-unreachable Neo4j returns a client
 // that lazily reconnects (backoff-gated) on later requests.
+// ensureCatalogSchema applies the Neo4j constraints + indexes in the
+// background, retrying until success. EnsureSchema is ~16 sequential DDL
+// round-trips; over a cross-mesh link (~700ms/round-trip) the full pass
+// can exceed 10s, so a single short startup-blocking attempt would
+// silently leave the tail of the schema (e.g. the PaperShareToken
+// uniqueness constraint) uncreated. Each attempt gets a generous timeout
+// and statements are idempotent, so retries converge cheaply.
+func ensureCatalogSchema(catalog *papers.Store) {
+	const (
+		attemptTimeout = 90 * time.Second
+		retryDelay     = 30 * time.Second
+		maxAttempts    = 10
+	)
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), attemptTimeout)
+		err := catalog.EnsureSchema(ctx)
+		cancel()
+		if err == nil {
+			log.Printf("papers: catalog schema ensured")
+			return
+		}
+		slog.Warn("papers: EnsureSchema attempt failed; retrying",
+			"attempt", attempt, "max", maxAttempts, "error", err)
+		time.Sleep(retryDelay)
+	}
+	slog.Error("papers: EnsureSchema gave up after retries (will retry next boot)")
+}
+
 func initNeo4jClient(cfg *config.Config) *neo4j.Client {
 	nc, err := neo4j.NewClient(cfg.Neo4jURI, cfg.Neo4jUser, cfg.Neo4jPassword, cfg.Neo4jDatabase)
 	if err != nil {
