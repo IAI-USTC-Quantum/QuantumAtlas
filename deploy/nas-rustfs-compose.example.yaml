@@ -1,0 +1,67 @@
+# NAS RustFS + Fluent Bit notify relay — docker compose 模板
+#
+# 实测验证版（RustFS 1.0.0-beta.5 + Fluent Bit 3.2.10）。
+#
+# 两个必守的配置点（实测踩出来的）：
+#   1. QUEUE_DIR 必须指向容器内可写路径（/data/.notify-events）。
+#      默认 /opt/rustfs/events 不可写 → target 创建失败。
+#   2. mc event add 的 ARN 必须小写（env 后缀被小写化成 account_id）。
+#      大写 ARN 静默丢弃所有事件。
+#
+# 占位符：
+#   <RUSTFS_ROOT_ACCESS_KEY> / <RUSTFS_ROOT_SECRET_KEY> — RustFS root identity
+#   <SINK_ACCESS_KEY> / <SINK_SECRET_KEY> — rustfs_notify_bootstrap.sh 输出的 sink svcacct
+#
+# 桶绑定（一次性，bootstrap 脚本做）：
+#   bash scripts/rustfs_notify_bootstrap.sh
+#   （绑 5 个资产桶到小写 ARN arn:rustfs:sqs::qatlas:webhook）
+
+services:
+  fluent-bit:
+    image: docker.1panel.live/fluent/fluent-bit:3.2.10
+    container_name: rustfs-notify-relay
+    restart: unless-stopped
+    environment:
+      AWS_ACCESS_KEY_ID: "<SINK_ACCESS_KEY>"
+      AWS_SECRET_ACCESS_KEY: "<SINK_SECRET_KEY>"
+    command:
+      - -i
+      - http
+      - -o
+      - stdout
+      - -m
+      - "*"
+      - -o
+      - s3
+      - -m
+      - "*"
+      - -p
+      - endpoint=http://rustfs:9000
+      - -p
+      - bucket=qatlas-s3-events
+      - -p
+      - use_put_object=On
+      - -p
+      - "s3_key_format=/%Y/%m/%d/%H-%M-%S-$UUID.json"
+
+  rustfs:
+    image: docker.1panel.live/rustfs/rustfs:latest
+    container_name: rustfs
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      RUSTFS_ACCESS_KEY: "<RUSTFS_ROOT_ACCESS_KEY>"
+      RUSTFS_SECRET_KEY: "<RUSTFS_ROOT_SECRET_KEY>"
+      RUSTFS_OBS_LOG_STDOUT_ENABLED: "true"
+      RUSTFS_NOTIFY_ENABLE: "true"
+      RUSTFS_NOTIFY_WEBHOOK_ENABLE_QATLAS: "on"
+      RUSTFS_NOTIFY_WEBHOOK_ENDPOINT_QATLAS: "http://fluent-bit:9880/"
+      RUSTFS_NOTIFY_WEBHOOK_QUEUE_DIR_QATLAS: "/data/.notify-events"
+      RUSTFS_NOTIFY_WEBHOOK_QUEUE_LIMIT_QATLAS: "100000"
+    volumes:
+      - rustfs_data:/data
+
+volumes:
+  rustfs_data:
