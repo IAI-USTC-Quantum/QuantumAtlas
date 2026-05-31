@@ -43,9 +43,10 @@ import (
 // endpoints report {available:false}; uploads still write the object
 // and defer the catalog sync (X-Catalog-Sync: deferred).
 //
-// enforcer is the process-wide casbin enforcer used to gate write
-// endpoints by PAT scope. Session-token callers bypass via the
-// ScopeMaster short-circuit in pat.Allows.
+// enforcer is the process-wide casbin enforcer used to gate endpoints by
+// PAT scope: GET (asset download) requires papers:read, POST/DELETE
+// require papers:write (which implies papers:read). Session-token
+// callers bypass via the ScopeMaster short-circuit in pat.Allows.
 //
 // Routing: we install three catch-all routes (GET / POST / DELETE) and
 // dispatch on the trailing path segment(s) inside the handler. This is
@@ -62,7 +63,7 @@ func RegisterPapers(
 	converter *mineru.Converter,
 	enforcer *casbin.Enforcer,
 ) {
-	se.Router.GET("/api/papers/{path...}", func(re *core.RequestEvent) error {
+	se.Router.GET("/api/papers/{path...}", scopeGuard(enforcer, "papers", "read", func(re *core.RequestEvent) error {
 		raw := re.Request.PathValue("path")
 		if raw == "needs-mineru" {
 			return needsMineruHandler(re, catalog)
@@ -95,7 +96,7 @@ func RegisterPapers(
 		return re.JSON(http.StatusNotFound, map[string]string{
 			"detail": fmt.Sprintf("no GET handler for /api/papers/%s", raw),
 		})
-	})
+	}))
 
 	se.Router.POST("/api/papers/{path...}", scopeGuard(enforcer, "papers", "write", func(re *core.RequestEvent) error {
 		raw := re.Request.PathValue("path")
@@ -349,11 +350,13 @@ func paperResourcesHandler(re *core.RequestEvent, cfg *config.Config, store objs
 //   - a recent conversion failed → 502 with the error (auto-retried after
 //     a cooldown on a later request).
 //
-// This is an open read endpoint (no authGuard): browsing users and the
-// SPA hit it directly. The conversion it may trigger spends the server's
-// MinerU quota, but it's gated on the PDF already existing in the store
-// and deduped per paper, so it can't be used to convert arbitrary URLs or
-// double-spend on the same paper.
+// This handler sits behind scopeGuard("papers", "read") via the GET
+// /api/papers/{path...} catch-all: browsing users (session token) and
+// PAT holders with papers:read reach it; anonymous callers get 401. The
+// conversion it may trigger spends the server's MinerU quota, but it's
+// gated on the PDF already existing in the store and deduped per paper,
+// so it can't be used to convert arbitrary URLs or double-spend on the
+// same paper.
 //
 // The GET-with-side-effect (it may start a job) is a deliberate tradeoff
 // for the "just give me the markdown" UX: callers that only want to

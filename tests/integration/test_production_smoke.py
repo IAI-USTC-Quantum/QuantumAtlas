@@ -28,10 +28,14 @@ still run.
 
 What this exercises against each target:
 
-  * GET /health and GET /api/server/info — alive checks (must report the
-    Go engine and not the legacy Python server).
-  * Public read endpoints — /api/stats, /api/pages, /api/search,
-    /api/lint, /api/graph/stats — must respond 200 without auth.
+  * GET /api/health and GET /api/server/info — alive checks (must report
+    the Go engine and not the legacy Python server). These two stay
+    public on purpose (liveness + version, no corpus data).
+  * Auth-gated read endpoints — /api/stats, /api/pages, /api/search,
+    /api/lint, /api/wiki/sync/status, /api/graph/stats, /api/graph/schema,
+    /api/papers/stats — must return 401 without auth (the knowledge base
+    is not anonymously browsable; reads need wiki:read / graph:read /
+    papers:read, or a session token).
   * Static SPA — GET / returns HTML that points at /assets/*.js (not the
     old /static/web/... path that broke after the vite.config.ts fix).
   * authGuard enforcement on write endpoints — POST /api/shares/ must
@@ -208,14 +212,23 @@ def _post(target: Target, path: str, **kw) -> requests.Response:
 
 
 def test_health_endpoint(target: Target):
-    response = _get(target, "/health")
+    # Liveness moved off the old root /health (now eaten by the SPA
+    # catch-all) onto PocketBase's /api/health, which we override with a
+    # dependency-aware probe. The response is a PocketBase-envelope
+    # superset (see healthz.PBResult): SDK-compatible top-level
+    # {code, message} with our detail nested under `data`.
+    response = _get(target, "/api/health")
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body.get("status") == "healthy", body
-    # Version string includes the '-go' suffix for the Go binary; if a
-    # legacy Python server ever resurfaces under this URL we want to
-    # notice immediately.
-    assert str(body.get("version", "")).endswith("-go"), body
+    assert body.get("code") == 200, body
+    data = body.get("data", {})
+    assert data.get("status") == "healthy", data
+    assert data.get("version"), data
+    # Dependency probes (rawstore / neo4j / wiki) must be reported. The
+    # "is this still the Go engine and not a resurrected Python server?"
+    # invariant lives in test_server_info_reports_go_engine — the version
+    # string no longer carries a '-go' suffix.
+    assert "checks" in data, data
 
 
 def test_server_info_reports_go_engine(target: Target):
@@ -238,12 +251,23 @@ def test_server_info_reports_go_engine(target: Target):
         "/api/pages",
         "/api/lint",
         "/api/search?q=quantum",
+        "/api/wiki/sync/status",
         "/api/graph/stats",
+        "/api/graph/schema",
+        "/api/papers/stats",
     ],
 )
-def test_public_read_endpoints_open(target: Target, path: str):
+def test_read_endpoints_require_auth(target: Target, path: str):
+    # The knowledge base is not anonymously readable: every information
+    # endpoint sits behind authGuard + scopeGuard (wiki:read / graph:read
+    # / papers:read). An unauthenticated GET must be rejected at authGuard
+    # with 401 "authentication required" — NOT 200, and NOT 403 (403 would
+    # mean a credential was accepted but lacked the scope, which can't
+    # happen without an Authorization header).
     response = _get(target, path)
-    assert response.status_code == 200, f"{path} -> {response.status_code}: {response.text[:200]}"
+    assert response.status_code == 401, f"{path} -> {response.status_code}: {response.text[:200]}"
+    body = response.json()
+    assert "authentication required" in body.get("detail", "").lower(), body
 
 
 # ---------------------------------------------------------------------------

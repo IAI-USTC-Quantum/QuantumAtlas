@@ -69,6 +69,9 @@ func docInstallServer() {}
 // @Param       status    query string false "filter by status"
 // @Param       tags      query string false "comma-separated tag filter"
 // @Success     200 {object} map[string]interface{}
+// @Security    BearerAuth
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
 // @Router      /api/pages [get]
 func docListPages() {}
 
@@ -80,6 +83,8 @@ func docListPages() {}
 // @Param       page_id path string true "page id"
 // @Success     200 {object} map[string]interface{}
 // @Failure     404 {object} map[string]string
+// @Security    BearerAuth
+// @Failure     401 {object} map[string]string
 // @Router      /api/pages/{page_id} [get]
 func docGetPage() {}
 
@@ -89,6 +94,9 @@ func docGetPage() {}
 // @Tags        Wiki
 // @Produce     json
 // @Success     200 {object} map[string]interface{}
+// @Security    BearerAuth
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
 // @Router      /api/stats [get]
 func docWikiStats() {}
 
@@ -101,6 +109,9 @@ func docWikiStats() {}
 // @Param       limit           query int    false "max results (default 10)"
 // @Param       include_sources query bool   false "include source pages (default false)"
 // @Success     200 {object} map[string]interface{}
+// @Security    BearerAuth
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
 // @Router      /api/search [get]
 func docSearchWiki() {}
 
@@ -110,6 +121,9 @@ func docSearchWiki() {}
 // @Tags        Wiki
 // @Produce     json
 // @Success     200 {object} map[string]interface{}
+// @Security    BearerAuth
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
 // @Router      /api/lint [get]
 func docLint() {}
 
@@ -117,11 +131,14 @@ func docLint() {}
 //
 // @Summary     Wiki sync status
 // @Description Branch/commit/ahead/behind of the server's wiki checkout.
-// @Description Public: the wiki is an open repo, this reveals nothing
-// @Description sensitive.
+// @Description Requires the wiki:read scope (the knowledge base is not
+// @Description anonymously readable).
 // @Tags        Wiki
 // @Produce     json
+// @Security    BearerAuth
 // @Success     200 {object} map[string]interface{}
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
 // @Router      /api/wiki/sync/status [get]
 func docWikiSyncStatus() {}
 
@@ -152,6 +169,9 @@ func docWikiSyncPull() {}
 // @Tags        Papers
 // @Produce     json
 // @Success     200 {object} map[string]interface{}
+// @Security    BearerAuth
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
 // @Router      /api/papers/stats [get]
 func docPaperStats() {}
 
@@ -162,6 +182,9 @@ func docPaperStats() {}
 // @Produce     json
 // @Param       limit query int false "max results"
 // @Success     200 {object} map[string]interface{}
+// @Security    BearerAuth
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
 // @Router      /api/papers/needs-mineru [get]
 func docNeedsMineru() {}
 
@@ -173,6 +196,8 @@ func docNeedsMineru() {}
 // @Param       arxiv_id path string true "arXiv identifier"
 // @Success     200 {object} map[string]interface{}
 // @Failure     404 {object} map[string]string
+// @Security    BearerAuth
+// @Failure     401 {object} map[string]string
 // @Router      /api/papers/{arxiv_id}/resources [get]
 func docPaperResources() {}
 
@@ -184,6 +209,8 @@ func docPaperResources() {}
 // @Param       arxiv_id path string true "arXiv identifier"
 // @Success     200 {object} map[string]interface{}
 // @Failure     404 {object} map[string]string
+// @Security    BearerAuth
+// @Failure     401 {object} map[string]string
 // @Router      /api/papers/{arxiv_id}/markdown [get]
 func docPaperMarkdown() {}
 
@@ -194,6 +221,8 @@ func docPaperMarkdown() {}
 // @Produce     json
 // @Param       arxiv_id path string true "arXiv identifier"
 // @Success     200 {object} map[string]interface{}
+// @Security    BearerAuth
+// @Failure     401 {object} map[string]string
 // @Router      /api/papers/{arxiv_id}/markdown/status [get]
 func docPaperMarkdownStatus() {}
 
@@ -268,10 +297,13 @@ func docMineruClaimRelease() {}
 // @Summary     Graph statistics
 // @Description Returns 200 with {"error":...} when Neo4j is unreachable
 // @Description (the UI renders a friendly banner rather than a crash page).
+// @Description Requires the graph:read scope.
 // @Tags        Graph
 // @Produce     json
 // @Security    BearerAuth
 // @Success     200 {object} map[string]interface{}
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
 // @Router      /api/graph/stats [get]
 func docGraphStats() {}
 
@@ -292,10 +324,13 @@ func docGraphQuery() {}
 // graphSchema returns the Neo4j labels and relationship types.
 //
 // @Summary     Graph schema
+// @Description Requires the graph:read scope.
 // @Tags        Graph
 // @Produce     json
 // @Security    BearerAuth
 // @Success     200 {object} map[string]interface{}
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
 // @Router      /api/graph/schema [get]
 func docGraphSchema() {}
 

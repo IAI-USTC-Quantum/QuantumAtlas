@@ -40,6 +40,8 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
 
 ## 公开端点（不需要 Authorization 头）
 
+> 仅以下"无语料数据"端点保持公开：探活 / 版本 / 安装脚本 / API 文档 / scope 词表 / SPA 外壳，以及"凭据自带授权"的 share 短链。**知识库本身不再匿名可读**——Wiki 页面、搜索、统计、论文资产、图谱等读口都已收敛到 `*:read` scope（见下方鉴权端点）。
+
 | Method | Path | 用途 |
 |---|---|---|
 | `GET` | `/api/health` | 健康检查 + 依赖探活 |
@@ -47,20 +49,10 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
 | `GET` | `/install-server.sh` | qatlas-server 安装脚本 |
 | `GET` | `/swagger/index.html` | 交互式 API 文档（Swagger UI）|
 | `GET` | `/swagger/doc.json` | OpenAPI 2.0 JSON spec |
-| `GET` | `/api/wiki/sync/status` | Wiki git 状态 |
-| `GET` | `/api/pages` | 列 Wiki 页面（支持 `?page_type=&status=&tags=`）。**默认排除 `type==source`**（Wikipedia 风格只展示 concept 词条）；显式传 `?page_type=source` 才返回 source |
-| `GET` | `/api/pages/{page_id}` | 取单页（frontmatter + content）|
-| `GET` | `/api/stats` | Wiki 统计（含 `entries`=词条数、`sources`=源文献数、`by_category`、`by_status`）|
-| `GET` | `/api/search?q=&limit=` | 全文搜索。**默认排除 source**；显式传 `?include_sources=true` 才纳入 |
-| `GET` | `/api/papers/stats` | 论文资产统计（`available`、`total`、`has_pdf`=已下载、`has_md`=已转换 markdown、`has_json`、`needs_mineru`、`total_images`、`loaded_at`）；paperindex 不可用时返回 `{available:false}` |
-| `GET` | `/api/lint` | Wiki lint 报告（**当前是占位**，返回空 issues）|
-| `GET` | `/api/pat/scopes` | 列 PAT scope 词表 |
-| `GET` | `/api/papers/needs-mineru?limit=&include_claimed=` | 列等待 MinerU 解析的论文 |
-| `GET` | `/api/papers/{arxiv_id}/resources` | 列单篇论文已有的资产 |
-| `GET` | `/api/papers/{arxiv_id}/markdown` | 取论文 markdown；无缓存时由 server 用自身 MinerU token 静默后台转换（轮询）|
-| `GET` | `/api/papers/{arxiv_id}/markdown/status` | 查询 markdown 转换 job 状态（无副作用，恒 200）|
-| `GET` | `/share/{token}` | share token 入口 |
+| `GET` | `/api/pat/scopes` | 列 PAT scope 词表（纯常量，无用户数据）|
+| `GET` | `/share/{token}` | share token 入口（token 即凭据）|
 | `GET` | `/share/{token}/{path...}` | share token 下载 |
+| `GET` | `/{path...}` | SPA 前端静态外壳（数据在被门禁的 API 后面）|
 | `GET` | `/_/` ... | PocketBase admin UI |
 
 ## 鉴权端点（需要 PAT 或 session token）
@@ -69,16 +61,31 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
 
 | Method | Path | 鉴权 | 用途 |
 |---|---|---|---|
+| `GET` | `/api/papers/stats` | `papers:read` | 论文资产统计（`available`、`total`、`has_pdf`、`has_md`、`has_json`、`needs_mineru`、`total_images`、`loaded_at`）；paperindex 不可用时返回 `{available:false}` |
+| `GET` | `/api/papers/needs-mineru?limit=&include_claimed=` | `papers:read` | 列等待 MinerU 解析的论文 |
+| `GET` | `/api/papers/{arxiv_id}/resources` | `papers:read` | 列单篇论文已有的资产 |
+| `GET` | `/api/papers/{arxiv_id}/markdown` | `papers:read` | 取论文 markdown；无缓存时由 server 用自身 MinerU token 静默后台转换（轮询）|
+| `GET` | `/api/papers/{arxiv_id}/markdown/status` | `papers:read` | 查询 markdown 转换 job 状态（无副作用，恒 200）|
 | `POST` | `/api/papers/{arxiv_id}/upload-pdf` | `papers:write` | 上传 PDF（+ metadata），见 [Upload API](upload-api.md) |
 | `POST` | `/api/papers/{arxiv_id}/upload-markdown` | `papers:write` | 上传 markdown |
 | `POST` | `/api/papers/{arxiv_id}/mineru-claim` | `papers:write` | 申请 MinerU 处理 claim |
 | `DELETE` | `/api/papers/{arxiv_id}/mineru-claim/{claim_id}` | `papers:write` | 释放 claim |
 
+> `papers:write` 隐式含 `papers:read`。
+
 ### Wiki
 
 | Method | Path | 鉴权 | 用途 |
 |---|---|---|---|
+| `GET` | `/api/pages` | `wiki:read` | 列 Wiki 页面（支持 `?page_type=&status=&tags=`）。**默认排除 `type==source`**（Wikipedia 风格只展示 concept 词条）；显式传 `?page_type=source` 才返回 source |
+| `GET` | `/api/pages/{page_id}` | `wiki:read` | 取单页（frontmatter + content）|
+| `GET` | `/api/stats` | `wiki:read` | Wiki 统计（含 `entries`=词条数、`sources`=源文献数、`by_category`、`by_status`）|
+| `GET` | `/api/search?q=&limit=` | `wiki:read` | 全文搜索。**默认排除 source**；显式传 `?include_sources=true` 才纳入 |
+| `GET` | `/api/lint` | `wiki:read` | Wiki lint 报告（**当前是占位**，返回空 issues）|
+| `GET` | `/api/wiki/sync/status` | `wiki:read` | Wiki git 状态 |
 | `POST` | `/api/wiki/sync/pull` | `wiki:write` | 触发服务端 Wiki git fast-forward pull（`git fetch --prune` + `git pull --ff-only`），随后同步刷新内存缓存 |
+
+> `wiki:write` 隐式含 `wiki:read`。
 
 !!! note "内容追加不走 server"
     QuantumAtlas **没有**在线 ingest 端点。Wiki 内容追加走离线多 subagent 流水线
@@ -101,7 +108,7 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
 | `GET` | `/api/graph/schema` | `graph:read` | Neo4j label / relationship type 清单 |
 | `POST` | `/api/graph/query` | `graph:read` | 执行 Cypher（**只读**，server 端跑 `ExecuteRead`）|
 
-> Graph 端点过去是公开读口，现已收敛到 `authGuard + graph:read`，与其余非公开仓库表面一致。session token（浏览器登录）自带 `*` 自动放行；PAT 调用方需勾选 `graph:read`。
+> 三个 graph 读口都收敛到 `authGuard + graph:read`。session token（浏览器登录）自带 `*` 自动放行；PAT 调用方需勾选 `graph:read`。其中 `/api/graph/query` 风险最高（执行调用方提供的 Cypher、无成本上限）——见下方 query 详述。
 
 ### PAT 管理（**只接受 session token**，PAT auth 被拒）
 

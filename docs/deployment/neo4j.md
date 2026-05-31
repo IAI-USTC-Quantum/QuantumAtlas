@@ -193,10 +193,11 @@ curl -X POST https://<server>/api/graph/query \
 
 ## 安全：`/api/graph/query` 的 Cypher 无代价上限（已接受的风险）
 
-`/api/graph/*` 全部要 `authGuard + graph:read`（详见 [鉴权模型](../concepts/auth-model.md)），
-不再对匿名开放。但 `/api/graph/query` 接收调用方提供的 Cypher，**只做只读约束
-（`ExecuteRead`），不设查询代价上限**。一条病态查询（如无界笛卡尔积、深层变长路径）
-能吃满 Neo4j CPU / 内存。
+`/api/graph/stats`、`/api/graph/schema`、`/api/graph/query` 三个图端点都要
+`authGuard + graph:read`（知识库不再匿名可读，详见
+[鉴权模型](../concepts/auth-model.md)）。其中 `/api/graph/query` 风险最高：它接收
+调用方提供的 Cypher，**只做只读约束（`ExecuteRead`），不设查询代价上限**。一条病态
+查询（如无界笛卡尔积、深层变长路径）能吃满 Neo4j CPU / 内存。
 
 **这是明确的设计取舍，不是待修复项**：过了 `graph:read` 鉴权即「自己人」（登录用户
 或显式勾了 `graph:read` 的 PAT 持有者），同一个人本就能直连 Bolt 跑同样的查询，应用层

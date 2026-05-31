@@ -29,15 +29,17 @@ import (
 // refreshes the cache synchronously so callers see fresh data on the
 // next request).
 //
-// /api/wiki/sync/status is an open read endpoint (the wiki is a public
-// repo — branch/commit/ahead/behind reveal nothing sensitive), but
-// /api/wiki/sync/pull mutates server state (runs git + rebuilds the
-// cache), so it is gated behind scopeGuard("wiki", "write") just like
-// the other write endpoints.
+// All wiki read endpoints (/api/pages*, /api/stats, /api/search,
+// /api/lint, /api/wiki/sync/status) are gated behind
+// scopeGuard("wiki", "read"): the knowledge base is not anonymously
+// browsable — callers need a session token or a PAT carrying wiki:read.
+// /api/wiki/sync/pull additionally mutates server state (runs git +
+// rebuilds the cache), so it requires the stronger wiki:write scope
+// (which implies wiki:read).
 func RegisterWiki(se *core.ServeEvent, cfg *config.Config, cache *wiki.Cache, enforcer *casbin.Enforcer) {
-	se.Router.GET("/api/wiki/sync/status", func(re *core.RequestEvent) error {
+	se.Router.GET("/api/wiki/sync/status", scopeGuard(enforcer, "wiki", "read", func(re *core.RequestEvent) error {
 		return re.JSON(http.StatusOK, wikiSyncStatus(cfg))
-	})
+	}))
 
 	se.Router.POST("/api/wiki/sync/pull", scopeGuard(enforcer, "wiki", "write", func(re *core.RequestEvent) error {
 		dir, status := resolveWikiDir(cfg)
@@ -73,7 +75,7 @@ func RegisterWiki(se *core.ServeEvent, cfg *config.Config, cache *wiki.Cache, en
 		return re.JSON(http.StatusOK, out)
 	}))
 
-	se.Router.GET("/api/pages", func(re *core.RequestEvent) error {
+	se.Router.GET("/api/pages", scopeGuard(enforcer, "wiki", "read", func(re *core.RequestEvent) error {
 		_, status := resolveWikiDir(cfg)
 		if !status["wiki"].(map[string]any)["exists"].(bool) {
 			return re.JSON(http.StatusOK, map[string]any{
@@ -117,9 +119,9 @@ func RegisterWiki(se *core.ServeEvent, cfg *config.Config, cache *wiki.Cache, en
 			"total": len(summaries),
 			"pages": summaries,
 		})
-	})
+	}))
 
-	se.Router.GET("/api/pages/{page_id}", func(re *core.RequestEvent) error {
+	se.Router.GET("/api/pages/{page_id}", scopeGuard(enforcer, "wiki", "read", func(re *core.RequestEvent) error {
 		pageID := re.Request.PathValue("page_id")
 		_, status := resolveWikiDir(cfg)
 		if !status["wiki"].(map[string]any)["exists"].(bool) {
@@ -149,9 +151,9 @@ func RegisterWiki(se *core.ServeEvent, cfg *config.Config, cache *wiki.Cache, en
 			out["updated_at"] = page.Frontmatter.UpdatedAt
 		}
 		return re.JSON(http.StatusOK, out)
-	})
+	}))
 
-	se.Router.GET("/api/stats", func(re *core.RequestEvent) error {
+	se.Router.GET("/api/stats", scopeGuard(enforcer, "wiki", "read", func(re *core.RequestEvent) error {
 		_, status := resolveWikiDir(cfg)
 		if !status["wiki"].(map[string]any)["exists"].(bool) {
 			return re.JSON(http.StatusOK, map[string]any{
@@ -184,9 +186,9 @@ func RegisterWiki(se *core.ServeEvent, cfg *config.Config, cache *wiki.Cache, en
 			"synced_to_neo4j": stats.SyncedToNeo4j,
 			"needs_sync":      stats.NeedsSync,
 		})
-	})
+	}))
 
-	se.Router.GET("/api/search", func(re *core.RequestEvent) error {
+	se.Router.GET("/api/search", scopeGuard(enforcer, "wiki", "read", func(re *core.RequestEvent) error {
 		q := re.Request.URL.Query().Get("q")
 		limitRaw := re.Request.URL.Query().Get("limit")
 		limit := 10
@@ -234,21 +236,21 @@ func RegisterWiki(se *core.ServeEvent, cfg *config.Config, cache *wiki.Cache, en
 			"total":   len(results),
 			"results": results,
 		})
-	})
+	}))
 
 	// /api/lint — placeholder. The full Python lint pass is ~370 LOC
 	// across atlas/wiki/linter.py and isn't on the CLI hot path; we
 	// emit an empty issue list so the frontend renders a "no problems"
 	// pane instead of erroring out. A follow-up commit will port the
 	// real lint rules.
-	se.Router.GET("/api/lint", func(re *core.RequestEvent) error {
+	se.Router.GET("/api/lint", scopeGuard(enforcer, "wiki", "read", func(re *core.RequestEvent) error {
 		return re.JSON(http.StatusOK, map[string]any{
 			"issues":           []any{},
 			"checked_pages":    0,
 			"linter_available": false,
 			"note":             "Go server: lint rules not yet ported. See atlas/wiki/linter.py for the Python implementation.",
 		})
-	})
+	}))
 }
 
 // resolveWikiDir returns the absolute wiki dir path and the same nested

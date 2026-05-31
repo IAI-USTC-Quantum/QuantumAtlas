@@ -22,27 +22,24 @@ import (
 // "Neo4j not configured" banner instead of a generic crash page. We
 // preserve that behavior here.
 //
-// Auth: unlike the wiki read endpoints (which stay public because the
-// wiki is a public git repo), all three graph endpoints are gated by
-// authGuard + scopeGuard("graph", "read"). Two reasons the graph is
-// treated as more sensitive than the wiki:
+// Auth: all three graph endpoints are GATED by authGuard +
+// scopeGuard("graph", "read"). The knowledge graph is not anonymously
+// readable — callers need a session token or a PAT carrying graph:read.
 //
-//  1. Consistency. Every other non-public-repo surface goes through the
-//     same authGuard/scopeGuard pair; the graph had been the lone
-//     unauthenticated exception. Closing it removes a "why is this one
-//     different?" footgun.
-//
-//  2. /api/graph/query executes caller-supplied Cypher. It is read-only
+//   - GET /api/graph/stats and GET /api/graph/schema return fixed-shape
+//     aggregates (node/relationship counts, the label and
+//     relationship-type vocabulary) computed by server-owned Cypher.
+//   - POST /api/graph/query executes caller-supplied Cypher: read-only
 //     (ExecuteRead refuses writes at the driver level) but otherwise
-//     unconstrained: there is no query-cost ceiling, so a pathological
+//     unconstrained. There is no query-cost ceiling, so a pathological
 //     query (e.g. an unbounded cartesian product) can pin Neo4j. We
 //     deliberately do NOT add a cost limiter — once a caller is past
 //     authGuard they are a trusted insider (a signed-in user or a PAT
 //     holder who explicitly opted into graph:read), and the same person
 //     could run the same query straight against Bolt. The accepted risk
-//     and its rationale are documented in docs/concepts/auth-model.md
-//     and docs/deployment/neo4j.md so operators know the only mitigation
-//     is revoking the offending credential.
+//     and its rationale are documented in docs/concepts/auth-model.md and
+//     docs/deployment/neo4j.md so operators know the only mitigation is
+//     revoking the offending credential.
 //
 // Browser users are unaffected: session tokens carry the implicit
 // ScopeMaster and short-circuit the scope check. PAT callers must mint a
