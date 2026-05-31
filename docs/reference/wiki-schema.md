@@ -1,6 +1,6 @@
 # Wiki Conventions
 
-本文档定义 QuantumAtlas Wiki 的页面类型、frontmatter schema、命名规范、工作流以及 lint 规则。Wiki 与图谱、论文资产、应用代码的分层关系参见 [architecture.md](../concepts/three-layer.md)。
+本文档定义 QuantumAtlas Wiki 的页面类型、frontmatter schema、命名规范、工作流以及 lint 规则。Wiki 与图谱、论文资产、应用代码的分层关系参见 [architecture.md](../concepts/architecture.md)。
 
 ## 四层结构回顾
 

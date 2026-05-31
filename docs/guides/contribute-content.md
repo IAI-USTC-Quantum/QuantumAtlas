@@ -5,7 +5,7 @@
 - **Raw 资产贡献**：把论文 PDF、解析 Markdown、元数据落到 `RAW_DIR`。
 - **Wiki 协作**：在独立 Git 仓库里编辑知识页面，按需触发服务器拉取。
 
-如果你想理解项目分层和设计动机，先看 [architecture.md](../concepts/three-layer.md)。如果你只想跑起来一个服务，看 [deployment.md](../deployment/operations.md)。本文档定位是「内容贡献的 how-to」。
+如果你想理解项目分层和设计动机，先看 [architecture.md](../concepts/architecture.md)。如果你只想跑起来一个服务，看 [deployment.md](../deployment/operations.md)。本文档定位是「内容贡献的 how-to」。
 
 ---
 
