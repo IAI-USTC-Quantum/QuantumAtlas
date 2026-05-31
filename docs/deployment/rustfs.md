@@ -417,6 +417,122 @@ The server's next GET for that key serves the restored bytes. No
 restart needed. The over-written v2 becomes noncurrent (but is
 still recoverable until `storage prune` decides otherwise).
 
+## 写入留痕 audit sink (T10) { #写入留痕-audit-sink-t10 }
+
+**问题**：S3 svcacct key 一旦泄露，持有者能绕过 `qatlas-server` API 直连桶
+写/删对象。我们要能在日志里**看到**这种直连，并区分它和正规 server 写，
+且**跨 edge 一致**（两台 edge 共享 RustFS，审计要落在一处）。
+
+**方案**：RustFS 原生 audit（逐请求记 `userAgent` / `remotehost` /
+`req_header`(含 SigV4 `accessKey`) / `api.bucket` / `event` / `request_id`，
+**服务器全局**覆盖所有桶所有身份）→ localhost webhook → **Fluent Bit sidecar**
+→ 批量写进 `qatlas-audit` 桶。sink 刻意选**通用、零后端约定**的日志转发器
+（Fluent Bit，CNCF Graduated 项目）作为 sidecar，**不碰我们的 binary**——dumb
+存储层不该被后端演进中的约定（审计 JSON 解析、桶布局、过滤逻辑）绑死；我们每
+`cz bump` 一次也不该逼 NAS 跟着换 sink 镜像。Go server 唯一参与的是
+`QATLAS_EDGE_NAME` 打的 UA 标（见下，纯辅助标识）。
+
+### 取证判定（主键 = accessKey，不是 UA）
+
+- `accessKey` = root（`TiMidlY`）→ 直接点名误用 root（SigV4 绑定，不可伪造，强信号）。
+- `accessKey` ≠ 任何预期 svcacct（既非 edge 写 key、也非 sink 自己）→ 有人拿别的 key 直连。
+- `remotehost` 非预期网段 → 佐证。
+- **UA 只作辅助提示，绝不作判定主键**——UA 可伪造，靠 UA 判定的话攻击者把 UA
+  伪装成 `qatlas-server/*` 就隐身了。`QATLAS_EDGE_NAME` 打的 UA 标
+  （`qatlas-server/<ver>/<edge>`）只是让正规写在审计流里"一眼可读"，不是安全边界。
+  注意：两台 edge **共享同一把 svcacct key**，光看 `accessKey` 分不出是哪台 edge
+  写的——这正是 UA edge 标唯一的用处（要它生效得在每台 edge `.env` 设 `QATLAS_EDGE_NAME`）。
+
+### 自循环陷阱
+
+sink 把审计写进 `qatlas-audit` 桶，这个 PUT 本身又触发一条 audit → sink 再写 →
+无限循环。**解法：Fluent Bit 用 `grep` filter drop 掉 `api.bucket == qatlas-audit`
+的事件**（纯配置、零代码、最 dumb 的正确过滤）。被 drop 的事件 RustFS 侧已交付
+成功，不影响 durability。
+
+> ⚠️ **sink 仍用独立 svcacct（`qatlas-audit-sink`），不复用 edge 的
+> `QATLAS_S3_ACCESS_KEY_ID`**——理由是**最小权限 + 审计不可变**：sink 只拿
+> `qatlas-audit` 桶的 Get/Put/List，**没有 Delete**（审计落了删不掉），也碰不到
+> 三个资产桶。复用 edge key 既越权、又（若改用 accessKey 过滤断环时）会把正规
+> edge 写一并 drop 掉——审计里恰恰没了你最想记的那些写。
+
+### 供给（用户持 root 跑一次）
+
+```bash
+# RustFS root key 在 NAS compose env 里，agent 不持有。用户跑：
+export RUSTFS_ENDPOINT=http://10.144.18.10:9000
+read -rs RUSTFS_ROOT_ACCESS_KEY; export RUSTFS_ROOT_ACCESS_KEY   # = compose RUSTFS_ACCESS_KEY
+read -rs RUSTFS_ROOT_SECRET_KEY; export RUSTFS_ROOT_SECRET_KEY   # = compose RUSTFS_SECRET_KEY
+bash scripts/rustfs_audit_bootstrap.sh
+```
+
+脚本幂等：建 `qatlas-audit` 桶（无 versioning，审计对象 write-once）+
+`qatlas-audit-rw` policy（Get/Put/ListBucket，**故意不给 Delete** = 审计不可变）+
+`qatlas-audit-sink` user/svcacct + `qatlas-audit-ro` 只读 policy 挂到现有
+`qatlas-server` 父用户（edge svcacct 继承读，给未来 Go 侧对账/扫描预留只读）。
+**只打印 sink 的 access/secret**，root 不落盘——跟 `rustfs_bootstrap.sh` 供给 edge
+svcacct 同款套路（agent 全程只见 scoped key，没见过 root）。
+
+### sink = Fluent Bit sidecar（NAS compose）
+
+sink 的 svcacct key、桶名、过滤规则**全在 NAS 侧 Fluent Bit 配置里**，与
+qatlas-server `.env` 完全解耦。一个 `fluent/fluent-bit:<钉版本>` 容器：HTTP input
+收 webhook、`grep` filter 断自循环、S3 output 批量落 `qatlas-audit`（配置示意，
+字段路径以 RustFS 实际 audit JSON 为准，部署时定稿）：
+
+```ini
+[INPUT]
+    Name     http
+    Listen   0.0.0.0
+    Port     8080
+
+[FILTER]
+    Name     grep
+    Match    *
+    Exclude  $api['bucket'] ^qatlas-audit$     # 断自循环
+
+[OUTPUT]
+    Name             s3
+    Match            *
+    endpoint         http://rustfs:9000        # NAS docker 网内，service 名解析
+    bucket           qatlas-audit
+    region           us-east-1
+    total_file_size  5M
+    upload_timeout   1m
+    s3_key_format    /%Y-%m-%d/$UUID.json
+    store_dir        /var/log/fluent-bit-buffer  # 本地缓冲，S3 挂时不丢
+    # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY = bootstrap 输出的 sink key（compose env）
+```
+
+durability 两层兜底：RustFS audit webhook 自带磁盘队列（sink 挂时缓冲重放），
+Fluent Bit S3 output 自带 filesystem buffer（RustFS 写挂时缓冲）。
+
+### RustFS 侧（NAS compose，纯 env）
+
+audit webhook 纯 env 开，**无需 mc / init 容器**（audit 是服务器全局，不像 notify
+按桶 `mc event add` 订阅）：
+
+```yaml
+RUSTFS_AUDIT_WEBHOOK_ENABLE: "on"
+RUSTFS_AUDIT_WEBHOOK_ENDPOINT: "http://fluent-bit:8080/"   # 指向 Fluent Bit HTTP input
+RUSTFS_AUDIT_WEBHOOK_AUTH_TOKEN: "<webhook 共享密钥>"        # Fluent Bit 侧校验
+RUSTFS_AUDIT_WEBHOOK_QUEUE_DIR: "/data/audit-queue"   # durability：sink 重启窗口缓冲重放
+RUSTFS_AUDIT_WEBHOOK_QUEUE_LIMIT: "10000"             # 上限钉死磁盘
+```
+
+> ⚠️ NAS 是 Synology DSM，compose 编辑 + Fluent Bit sidecar service + 容器 down/up
+> **只能在 DSM GUI 完成**（ssh 用户不在 docker 组、sudo 要交互密码）。agent 写好
+> compose 片段交用户在 DSM 里粘贴 + down/up。
+
+### 对象布局
+
+Fluent Bit S3 output 把多条事件**批量**攒成时间分区的 NDJSON 对象
+（`/%Y-%m-%d/<uuid>.json`，可选 gzip），每次 upload 是一个**全新不可变对象**——
+S3 无 append，但这里根本不需要 append（不是 read-modify-write 同一文件，没有并发
+丢行问题；Fluent Bit 的 disk buffer 负责攒批 + 崩溃重放）。读取：
+`mc cat qatlas-audit/<date>/*.json | jq`。
+
+
 ## Related docs
 
 - [upload-api.md](../reference/upload-api.md) — request/response shape, sha256

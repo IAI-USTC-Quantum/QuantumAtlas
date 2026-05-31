@@ -106,6 +106,19 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
+	// Stamp the S3 client User-Agent (T10): qatlas-server/<version> or
+	// qatlas-server/<version>/<edge> when QATLAS_EDGE_NAME is set. This
+	// makes legitimate server writes visually separable from direct
+	// mc/boto3 bucket access in the RustFS audit trail. Must run before
+	// any S3Store is built (initRawStore fires later at OnServe). UA is
+	// a forgeable hint only — the load-bearing forensic key is the
+	// SigV4 accessKey recorded by the RustFS-side audit trail.
+	uaVersion := Version
+	if cfg.EdgeName != "" {
+		uaVersion = Version + "/" + cfg.EdgeName
+	}
+	objstore.SetClientAppInfo("qatlas-server", uaVersion)
+
 	// Inject CLI flags from env BEFORE pocketbase.New() — that
 	// constructor eagerly parses os.Args[1:] to materialise its
 	// persistent flags (--dir, --dev, etc.) and snapshots the values

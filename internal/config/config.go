@@ -44,9 +44,9 @@ type Config struct {
 	Neo4jDatabase string
 
 	// Share URL signing / public visibility.
-	PublicBaseURL          string
-	ShareAccessToken       string
-	DefaultShareExpiresIn  int // seconds; 0 means no default expiry.
+	PublicBaseURL         string
+	ShareAccessToken      string
+	DefaultShareExpiresIn int // seconds; 0 means no default expiry.
 
 	// Audit header injected by the upstream reverse proxy.
 	UserHeader string
@@ -128,6 +128,24 @@ type Config struct {
 
 	S3AccessKeyID     string
 	S3SecretAccessKey string
+
+	// EdgeName labels which edge this process runs on (e.g. "RackNerd",
+	// "Alibaba"). It is purely cosmetic: it's folded into the S3 client
+	// User-Agent (qatlas-server/<version>/<edge>) so the RustFS audit
+	// trail can tell apart writes coming from different edges at a
+	// glance. Empty → the UA is just qatlas-server/<version>. Never
+	// load-bearing for auth (UA is forgeable; the load-bearing forensic
+	// key is the SigV4 accessKey recorded by the audit trail — T10).
+	//
+	// The audit *sink* itself is NOT part of this binary: a generic,
+	// convention-free log shipper (Fluent Bit) deployed as a sidecar
+	// next to RustFS on the NAS receives the RustFS global audit webhook
+	// and writes one object per event into the qatlas-audit bucket using
+	// its own dedicated svcacct. Keeping the dumb storage layer free of
+	// our evolving backend conventions is the whole point — so none of
+	// the sink's wiring (bucket name, sink keys, listen addr, webhook
+	// token) lives in this config. See docs/deployment/rustfs.md.
+	EdgeName string
 }
 
 // Load resolves the configuration from process environment.
@@ -160,38 +178,39 @@ func Load(dotenvPath string) (*Config, error) {
 	}
 
 	cfg := &Config{
-		HTTPAddr:              firstEnv("QATLAS_HTTP_ADDR"),
-		WikiDir:               firstEnv("QATLAS_WIKI_DIR", "WIKI_DIR"),
-		RawDir:                firstEnv("QATLAS_RAW_DIR", "RAW_DIR"),
-		DataDir:               firstEnv("QATLAS_DATA_DIR", "DATA_DIR"),
-		PBDataDir:             firstEnv("QATLAS_PB_DATA_DIR", "PB_DATA_DIR"),
-		Neo4jURI:              firstEnv("NEO4J_URI"),
-		Neo4jUser:             firstEnv("NEO4J_USERNAME", "NEO4J_USER"),
-		Neo4jPassword:         firstEnv("NEO4J_PASSWORD"),
-		Neo4jDatabase:         firstEnv("NEO4J_DATABASE"),
-		PublicBaseURL:         firstEnv("QATLAS_SERVER_URL", "PUBLIC_BASE_URL"),
-		ShareAccessToken:      firstEnv("QATLAS_SHARE_ACCESS_TOKEN", "SHARE_ACCESS_TOKEN"),
-		DefaultShareExpiresIn: firstEnvInt("QATLAS_DEFAULT_SHARE_EXPIRES_IN", "DEFAULT_SHARE_EXPIRES_IN"),
-		UserHeader:            firstEnv("QATLAS_USER_HEADER", "USER_HEADER"),
-		MinerUAPIToken:        firstEnv("MINERU_API_TOKEN"),
-		MinerUAPIBaseURL:      firstEnvDefault("https://mineru.net", "MINERU_API_BASE_URL"),
-		MinerUModelVersion:    firstEnvDefault("vlm", "MINERU_MODEL_VERSION"),
-		MinerULanguage:        firstEnvDefault("ch", "MINERU_LANGUAGE"),
-		MinerUIsOCR:           firstEnvBool(false, "MINERU_IS_OCR"),
-		MinerUEnableFormula:   firstEnvBool(true, "MINERU_ENABLE_FORMULA"),
-		MinerUEnableTable:     firstEnvBool(true, "MINERU_ENABLE_TABLE"),
-		MinerUPollInterval:    firstEnvFloat(3.0, "MINERU_POLL_INTERVAL"),
-		MinerUTimeout:         firstEnvIntDefault(1800, "MINERU_TIMEOUT"),
-		GitHubClientID:        firstEnv("GITHUB_CLIENT_ID"),
-		GitHubClientSecret:    firstEnv("GITHUB_CLIENT_SECRET"),
-		S3Endpoint:            firstEnv("QATLAS_S3_ENDPOINT"),
-		S3PublicEndpoint:      firstEnv("QATLAS_S3_PUBLIC_ENDPOINT"),
-		S3BucketPDF:           firstEnv("QATLAS_S3_BUCKET_PDF"),
-		S3BucketMD:            firstEnv("QATLAS_S3_BUCKET_MD"),
-		S3BucketImages:        firstEnv("QATLAS_S3_BUCKET_IMAGES"),
-		S3BucketOpenAlex:      firstEnv("QATLAS_S3_BUCKET_OPENALEX_SNAPSHOT"),
-		S3AccessKeyID:         firstEnv("QATLAS_S3_ACCESS_KEY_ID"),
-		S3SecretAccessKey:     firstEnv("QATLAS_S3_SECRET_ACCESS_KEY"),
+		HTTPAddr:                 firstEnv("QATLAS_HTTP_ADDR"),
+		WikiDir:                  firstEnv("QATLAS_WIKI_DIR", "WIKI_DIR"),
+		RawDir:                   firstEnv("QATLAS_RAW_DIR", "RAW_DIR"),
+		DataDir:                  firstEnv("QATLAS_DATA_DIR", "DATA_DIR"),
+		PBDataDir:                firstEnv("QATLAS_PB_DATA_DIR", "PB_DATA_DIR"),
+		Neo4jURI:                 firstEnv("NEO4J_URI"),
+		Neo4jUser:                firstEnv("NEO4J_USERNAME", "NEO4J_USER"),
+		Neo4jPassword:            firstEnv("NEO4J_PASSWORD"),
+		Neo4jDatabase:            firstEnv("NEO4J_DATABASE"),
+		PublicBaseURL:            firstEnv("QATLAS_SERVER_URL", "PUBLIC_BASE_URL"),
+		ShareAccessToken:         firstEnv("QATLAS_SHARE_ACCESS_TOKEN", "SHARE_ACCESS_TOKEN"),
+		DefaultShareExpiresIn:    firstEnvInt("QATLAS_DEFAULT_SHARE_EXPIRES_IN", "DEFAULT_SHARE_EXPIRES_IN"),
+		UserHeader:               firstEnv("QATLAS_USER_HEADER", "USER_HEADER"),
+		MinerUAPIToken:           firstEnv("MINERU_API_TOKEN"),
+		MinerUAPIBaseURL:         firstEnvDefault("https://mineru.net", "MINERU_API_BASE_URL"),
+		MinerUModelVersion:       firstEnvDefault("vlm", "MINERU_MODEL_VERSION"),
+		MinerULanguage:           firstEnvDefault("ch", "MINERU_LANGUAGE"),
+		MinerUIsOCR:              firstEnvBool(false, "MINERU_IS_OCR"),
+		MinerUEnableFormula:      firstEnvBool(true, "MINERU_ENABLE_FORMULA"),
+		MinerUEnableTable:        firstEnvBool(true, "MINERU_ENABLE_TABLE"),
+		MinerUPollInterval:       firstEnvFloat(3.0, "MINERU_POLL_INTERVAL"),
+		MinerUTimeout:            firstEnvIntDefault(1800, "MINERU_TIMEOUT"),
+		GitHubClientID:           firstEnv("GITHUB_CLIENT_ID"),
+		GitHubClientSecret:       firstEnv("GITHUB_CLIENT_SECRET"),
+		S3Endpoint:               firstEnv("QATLAS_S3_ENDPOINT"),
+		S3PublicEndpoint:         firstEnv("QATLAS_S3_PUBLIC_ENDPOINT"),
+		S3BucketPDF:              firstEnv("QATLAS_S3_BUCKET_PDF"),
+		S3BucketMD:               firstEnv("QATLAS_S3_BUCKET_MD"),
+		S3BucketImages:           firstEnv("QATLAS_S3_BUCKET_IMAGES"),
+		S3BucketOpenAlex:         firstEnv("QATLAS_S3_BUCKET_OPENALEX_SNAPSHOT"),
+		S3AccessKeyID:            firstEnv("QATLAS_S3_ACCESS_KEY_ID"),
+		S3SecretAccessKey:        firstEnv("QATLAS_S3_SECRET_ACCESS_KEY"),
+		EdgeName:                 firstEnv("QATLAS_EDGE_NAME"),
 	}
 
 	// HTTP bind: assemble from QATLAS_SERVER_HOST + _PORT if QATLAS_HTTP_ADDR
@@ -432,7 +451,7 @@ func defaultXDGSubdir(name string) string {
 		if home, err := os.UserHomeDir(); err == nil && home != "" {
 			base = filepath.Join(home, ".local", "share")
 		} else {
-			return filepath.Join(".quantum-atlas-"+name) // tiny last-resort
+			return filepath.Join(".quantum-atlas-" + name) // tiny last-resort
 		}
 	}
 	return filepath.Join(base, "quantum-atlas", name)

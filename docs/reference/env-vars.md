@@ -119,6 +119,14 @@ OAuth callback URL 必须填成 `https://<your-server>/api/oauth2-redirect`。
 
 详见 [RustFS 部署](../deployment/rustfs.md)。
 
+## Server: 写入留痕 audit（T10）
+
+| 变量 | 必填 | 默认 | 含义 |
+|---|---|---|---|
+| `QATLAS_EDGE_NAME` | ❌ | — | 这台 edge 的名字（`RackNerd` / `Alibaba`）；折进 S3 client UA `qatlas-server/<ver>/<edge>`，让 audit 流里正规 server 写与直连 mc/boto3 一眼可分。**UA 可伪造，仅辅助标识，绝不用于鉴权** |
+
+这是 qatlas-server 端**唯一**与审计相关的 env。审计 sink 本身**不在我们的 binary / `.env` 里**——由一个通用、零后端约定的日志转发器（Fluent Bit）作为 sidecar 跑在 NAS 上 RustFS 旁边，接 RustFS 全局 audit webhook、写进 `qatlas-audit` 桶。sink 用的 svcacct key、桶名、webhook token 全在 NAS 侧 Fluent Bit / RustFS compose 配置里，与 server 解耦——这样 dumb 存储层不被我们演进中的后端约定绑死。判定主键是 SigV4 `accessKey`（不可伪造）。整套部署见 [RustFS 部署 · 写入留痕](../deployment/rustfs.md#写入留痕-audit-sink-t10)。
+
 ## Server: Share URL
 
 | 变量 | Alias | 默认 | 作用 |

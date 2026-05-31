@@ -13,6 +13,35 @@ import (
 	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
+// appInfoName / appInfoVersion are folded into the minio-go client
+// User-Agent (e.g. "qatlas-server/0.9.0/racknerd minio-go/v7…") so the
+// RustFS audit trail can distinguish legitimate qatlas-server writes
+// from direct-to-bucket access (mc/…, boto3/…). Set once at process
+// start via SetClientAppInfo, before any store is constructed; the
+// values are read by buildMinioClient for every client it builds.
+//
+// UA is a *forgeable* signal — never use it for authz. It only makes the
+// audit stream readable at a glance; the load-bearing forensic key is
+// the SigV4 accessKey recorded by the RustFS-side audit trail (T10).
+var (
+	appInfoName    = "qatlas-server"
+	appInfoVersion = "dev"
+)
+
+// SetClientAppInfo overrides the User-Agent app name/version stamped on
+// every subsequently-built minio-go client. Call it once at startup
+// (before initRawStore) with version+edge so direct-bucket access is
+// visually separable from server writes in the audit log. Empty
+// arguments are ignored (keep the existing default).
+func SetClientAppInfo(name, version string) {
+	if name != "" {
+		appInfoName = name
+	}
+	if version != "" {
+		appInfoVersion = version
+	}
+}
+
 // S3Store implements Store against any S3-compatible backend
 // (Amazon S3, RustFS, MinIO). We use minio-go because:
 //
@@ -124,6 +153,10 @@ func buildMinioClient(endpoint, accessKeyID, secretAccessKey string) (*minio.Cli
 	if err != nil {
 		return nil, fmt.Errorf("objstore: minio.New: %w", err)
 	}
+	// Stamp the app name/version into the request User-Agent so the
+	// RustFS audit trail visibly separates qatlas-server writes from
+	// direct mc/boto3 access. Forgeable — readability only, never authz.
+	client.SetAppInfo(appInfoName, appInfoVersion)
 	return client, nil
 }
 
@@ -429,8 +462,8 @@ func (s *S3Store) EnsureVersioning(ctx context.Context) (priorStatus string, cha
 type ObjectVersion struct {
 	Key            string
 	VersionID      string
-	IsLatest       bool   // true for the current version; false for noncurrent
-	IsDeleteMarker bool   // soft-deleted entry (versioning artefact); usually want to prune too
+	IsLatest       bool // true for the current version; false for noncurrent
+	IsDeleteMarker bool // soft-deleted entry (versioning artefact); usually want to prune too
 	Size           int64
 	LastModified   time.Time
 }
