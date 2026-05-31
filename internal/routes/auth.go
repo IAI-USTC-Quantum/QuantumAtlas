@@ -24,12 +24,16 @@
 // caller goes through the same auth surface and ends up with a per-
 // user record on re.Auth.
 //
-// Read endpoints that stay open without auth (wiki, pages, stats,
-// search, /api/server/info, /api/oauth2-redirect, /share/{token},
-// /api/health) do so because the wiki repo is public so no sensitive
-// data leaks. The graph endpoints are the exception: they require
-// authGuard + scopeGuard("graph", "read") — see internal/routes/graph.go
-// for why the graph is treated as more sensitive than the wiki.
+// Endpoints that stay open without auth: /api/health, /api/server/info,
+// /install-server.sh, /swagger/*, /api/pat/scopes (pure constant — the
+// scope vocabulary), /share/{token} and /share/{token}/{path...} (the
+// token IS the credential), the SPA shell at /{path...} (no data —
+// data lives behind the gated APIs), and the PocketBase OAuth callback
+// (/api/oauth2-redirect). Everything else — including wiki / papers /
+// graph reads — requires authGuard plus the matching scopeGuard
+// (wiki:read / papers:read / graph:read). The knowledge base is not
+// anonymously readable; see docs/concepts/auth-model.md for the full
+// rationale and the per-endpoint table.
 //
 // Two further wrappers layer on top of authGuard:
 //
@@ -38,7 +42,9 @@
 //     to mint more PATs (mirrors GitHub fine-grained PAT design).
 //
 //   - scopeGuard: requires a specific (resource, action) scope. Used
-//     by every write endpoint. Session callers bypass the check.
+//     by every read endpoint (*:read) and every write endpoint
+//     (*:write). Session callers bypass the check via the implicit
+//     ScopeMaster short-circuit in pat.Allows.
 
 package routes
 

@@ -514,7 +514,7 @@ svcacct 同款套路（agent 全程只见 scoped key，没见过 root）。
 ### NAS compose（RustFS notify + Fluent Bit sidecar）
 
 完整 compose 模板见
-[`deploy/nas-rustfs-compose.example.yaml`](../../deploy/nas-rustfs-compose.example.yaml)
+[`deploy/nas-rustfs-compose.example.yaml`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/deploy/nas-rustfs-compose.example.yaml)
 （含占位符 + 配置坑注释）。结构：
 
 - **rustfs**：5 个资产桶的 PUT/DELETE 事件通过 notify webhook 推到 sidecar。
