@@ -243,9 +243,20 @@ QuantumAtlas/
 
 QuantumAtlas 最初的三层知识库设计受到 [Karpathy's LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) 启发，并基于 Go、PocketBase、Neo4j、Pydantic、Qiskit 等开源生态继续演化。
 
+完整开源生态依赖、灵感来源和维护者名单见 [致谢](https://quantum-atlas.tmytimidly.com/about/credits/)。
+
+## 数据来源与归属（Attribution）
+
+QuantumAtlas 的论文 catalog 基于以下开放学术数据源：
+
+- **论文 metadata**（标题 / 作者 / DOI / 引用关系等）来自 [OpenAlex](https://openalex.org/) 与 [Crossref](https://www.crossref.org/)，均为 **[CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/)** 公共领域许可。
+- **论文条目本身**来自 [arXiv](https://arxiv.org/)，按 [arXiv ToU](https://arxiv.org/help/license) 镜像 metadata。**论文 PDF 字节我们不持有也不再分发**——`share/download` 接口 `307 redirect` 到 arxiv 原 URL，用户直接从 arxiv 下载。
+
+完整 license / attribution / 撤稿请求流程见 [License & Attribution](https://quantum-atlas.tmytimidly.com/about/license-and-attribution/)；服务使用条款见 [Terms of Service](https://quantum-atlas.tmytimidly.com/about/terms-of-service/)。
+
 ## 许可证
 
-[MIT License](LICENSE)
+[MIT License](LICENSE)（代码 + 文档 + Wiki 内容均 MIT）
 
 GitHub: https://github.com/IAI-USTC-Quantum/QuantumAtlas
 

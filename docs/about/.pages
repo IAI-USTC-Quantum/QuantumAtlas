@@ -4,5 +4,7 @@ nav:
   - FAQ: faq.md
   - 致谢: credits.md
   - 外部数据源: external-data-sources.md
+  - License & Attribution: license-and-attribution.md
+  - Terms of Service: terms-of-service.md
   - 历史:
     - 图谱可视化调研: graph-visualization-research.md
