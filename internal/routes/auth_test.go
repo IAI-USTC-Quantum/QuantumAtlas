@@ -227,3 +227,58 @@ func TestSystemPAT_UseNilDisables(t *testing.T) {
 		t.Fatal("isAuthorized authenticated even after UseSystemPAT(nil) cleared the matcher")
 	}
 }
+
+// IsCallerAuthenticated covers the side-effect-free probe used by
+// /api/health to decide between sanitised (anon) and detail (auth)
+// payloads. Three cases that matter:
+//
+//   * no bearer + no session  → false
+//   * system PAT bearer match → true (no side effects)
+//   * user-PAT-shaped bearer  → false (we deliberately don't resolve)
+//
+// Each path is one-liner; folding them into a single test keeps the
+// rationale visible alongside the assertions.
+func TestIsCallerAuthenticated(t *testing.T) {
+	t.Run("no creds → false", func(t *testing.T) {
+		if IsCallerAuthenticated(makeRE("")) {
+			t.Fatal("expected false for unauthenticated caller")
+		}
+		if IsCallerAuthenticated(makeRE("Bearer junk")) {
+			t.Fatal("expected false for arbitrary bearer with no matching backend")
+		}
+	})
+
+	t.Run("system PAT match → true", func(t *testing.T) {
+		const secret = "iscaller-auth-test-secret-very-long"
+		t.Setenv("QATLAS_SYSTEM_PAT", secret)
+		t.Setenv("QATLAS_SYSTEM_PAT_SCOPES", "*")
+		s, err := pat.LoadSystemPAT()
+		if err != nil {
+			t.Fatal(err)
+		}
+		UseSystemPAT(s)
+		t.Cleanup(func() { UseSystemPAT(nil) })
+
+		if !IsCallerAuthenticated(makeRE("Bearer " + secret)) {
+			t.Fatal("expected system PAT bearer to authenticate")
+		}
+		if IsCallerAuthenticated(makeRE("Bearer " + secret + "x")) {
+			t.Fatal("modified secret must not match")
+		}
+	})
+
+	t.Run("user-PAT-shaped bearer ignored (no DB hit)", func(t *testing.T) {
+		// IsCallerAuthenticated must NOT try to resolve "qat_..."
+		// against the DB — otherwise /api/health would do a SQLite
+		// lookup on every probe.
+		if IsCallerAuthenticated(makeRE("Bearer qat_anything_shaped_correctly")) {
+			t.Fatal("user PAT path must not be taken by IsCallerAuthenticated")
+		}
+	})
+
+	t.Run("nil request event → false", func(t *testing.T) {
+		if IsCallerAuthenticated(nil) {
+			t.Fatal("nil RE must not authenticate")
+		}
+	})
+}

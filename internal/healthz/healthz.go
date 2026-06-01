@@ -32,6 +32,27 @@
 //                   and the operator hasn't enabled it (e.g. Neo4j
 //                   without NEO4J_URI). Not_configured checks do NOT
 //                   downgrade the aggregate status.
+//
+// # Privacy tiers
+//
+// /api/health is anonymously reachable (liveness probes / uptime
+// monitors must not need a credential). That means the response body
+// is also reachable by anyone who can make an HTTPS request — including
+// attackers fingerprinting the deployment. We split the payload into
+// two tiers:
+//
+//   - Public (anonymous):  status + version + uptime + per-check status.
+//                          Enough for monitors / SDK pb.health.check()
+//                          to tell "alive vs degraded vs down".
+//   - Detail (authenticated): everything above + endpoint URLs, bucket
+//                          names, wiki commit SHA / branch / dirty
+//                          flag, etc. Useful for operators staring at
+//                          a dashboard; absolutely not useful for
+//                          attackers, which is why it gates.
+//
+// Sanitise() drops the detail fields and is what handlers call when
+// the request is unauthenticated. Authenticated callers get the raw
+// Result back.
 package healthz
 
 import (
@@ -104,6 +125,48 @@ type PBResult struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 	Data    Result `json:"data"`
+}
+
+// Sanitise returns a copy of r with every detail field stripped from
+// the per-check payloads, keeping only the status (and the error
+// string when present so degraded probes still surface a one-liner
+// cause). Use this when serving /api/health to an unauthenticated
+// caller — see package doc § "Privacy tiers".
+//
+// What survives at the top level: Status, Version, UptimeSeconds, Time.
+// What survives per check: Status, Error.
+// What gets dropped: LatencyMS, Backend, Endpoint, Bucket(s), URI,
+// Database, Dir, Commit, CommitTime, Branch, Dirty.
+//
+// Concretely, an attacker doing `curl /api/health` sees enough to
+// tell "this thing is alive" but not bucket names, mesh IPs, wiki
+// git layout, or any other deployment-topology fingerprint.
+func (r Result) Sanitise() Result {
+	out := Result{
+		Status:        r.Status,
+		Version:       r.Version,
+		UptimeSeconds: r.UptimeSeconds,
+		Time:          r.Time,
+		Checks:        make(map[string]Check, len(r.Checks)),
+	}
+	for name, c := range r.Checks {
+		out.Checks[name] = Check{
+			Status: c.Status,
+			Error:  c.Error,
+		}
+	}
+	return out
+}
+
+// SanitisePB applies Sanitise to a PBResult's payload. Convenience
+// wrapper so handlers don't have to deconstruct + reconstruct the
+// envelope.
+func (p PBResult) Sanitise() PBResult {
+	return PBResult{
+		Code:    p.Code,
+		Message: p.Message,
+		Data:    p.Data.Sanitise(),
+	}
 }
 
 // Probes bundles the live backends the checker needs. We pass them in

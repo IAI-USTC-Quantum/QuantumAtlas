@@ -566,7 +566,18 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// healthz.RunPB call. The rest fall through via e.Next().
 	se.Router.BindFunc(func(re *core.RequestEvent) error {
 		if re.Request.Method == "GET" && re.Request.URL.Path == "/api/health" {
-			return re.JSON(200, healthz.RunPB(re.Request.Context(), probes))
+			result := healthz.RunPB(re.Request.Context(), probes)
+			// Anonymous callers get a sanitised payload: just
+			// status / version / uptime / per-check status. Strips
+			// bucket names, mesh endpoints, wiki commit info, and
+			// other deployment-topology fingerprints. Authenticated
+			// callers (system PAT or session JWT) see the full
+			// detail useful for dashboards. See healthz package doc
+			// § "Privacy tiers" for the full rationale.
+			if !routes.IsCallerAuthenticated(re) {
+				result = result.Sanitise()
+			}
+			return re.JSON(200, result)
 		}
 		return re.Next()
 	})

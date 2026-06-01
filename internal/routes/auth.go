@@ -244,3 +244,44 @@ func decodeScopes(raw string) []string {
 	}
 	return out
 }
+
+// IsCallerAuthenticated is a side-effect-free authentication probe
+// for handlers that want to vary the response shape based on
+// credentials but don't want to use authGuard (which always 401s on
+// the unauthenticated path) and don't want isAuthorized's side
+// effects (mutating re.Auth / re.Set / fire-and-forget DB writes).
+//
+// Recognises two of the three credential types isAuthorized accepts:
+//
+//   - system PAT: constant-time bearer match. No DB hit. No state
+//     mutated. Returns true on match.
+//   - PocketBase session JWT: same check as isAuthorized — re.Auth
+//     populated by PocketBase's own middleware AND belongs to the
+//     users collection. Returns true if both.
+//
+// User PATs ("qat_...") are NOT recognised here, by design. The only
+// caller is /api/health, which is hit by liveness monitors at high
+// frequency; resolving a user PAT would mean a SQLite lookup +
+// async last_used_at bump on every probe — turning the health route
+// into a side-effecting write path is exactly the wrong shape for
+// a probe endpoint. User PAT holders that want detailed health can
+// either copy a session token from /token or set up a system PAT.
+//
+// Returns true iff one of the recognised credentials checks out,
+// false otherwise. Never returns an error: missing / malformed /
+// expired credentials all collapse to false so callers can use a
+// plain if-statement.
+func IsCallerAuthenticated(re *core.RequestEvent) bool {
+	if re == nil {
+		return false
+	}
+	if token := bearerToken(re); token != "" {
+		if _, ok := systemPAT.Match(token); ok {
+			return true
+		}
+	}
+	if re.Auth == nil || re.Auth.Collection() == nil {
+		return false
+	}
+	return re.Auth.Collection().Name == "users"
+}
