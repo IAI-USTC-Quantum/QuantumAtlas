@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.9.0 (2026-06-01)
+
+### BREAKING CHANGE
+
+- 之前匿名可调的读口（/api/pages、/api/search、
+/api/stats、/api/lint、/api/wiki/sync/status、/api/graph/{stats,
+schema,query}、/api/papers/stats、/api/papers/needs-mineru、
+/api/papers/{id}/{resources,markdown,markdown/status}）现在要 401。
+SPA 需同步更新调用时带 Authorization 头。
+
+### Feat
+
+- **auth**: collapse wiki/papers/graph reads behind PAT scopes
+- **audit**: T10 notify webhook → Fluent Bit → qatlas-s3-events
+- **audit**: T10 RustFS 写入留痕 — UA edge-label + Fluent Bit sink
+
+### Fix
+
+- **cli**: drop hardcoded operation timeouts in long-running commands
+- **review**: mkdocs strict broken links + stale auth.go doc
+
 ## v0.8.1 (2026-05-30)
 
 ### Fix
