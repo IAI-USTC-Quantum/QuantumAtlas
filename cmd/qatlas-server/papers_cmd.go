@@ -106,7 +106,7 @@ func runPapersSync(stdout, stderr io.Writer, f papersSyncFlags) error {
 	if err != nil {
 		return fmt.Errorf("neo4j: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if err := nc.Connect(ctx); err != nil {
 		return fmt.Errorf("connect neo4j: %w", err)

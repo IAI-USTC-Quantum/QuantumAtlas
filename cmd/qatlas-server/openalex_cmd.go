@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"time"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/neo4j"
@@ -108,7 +107,7 @@ func runOpenAlexBootstrap(stdout, stderr io.Writer, f openalexBootstrapFlags) er
 	if err != nil {
 		return fmt.Errorf("neo4j: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Hour)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if err := nc.Connect(ctx); err != nil {
 		return fmt.Errorf("connect neo4j: %w", err)

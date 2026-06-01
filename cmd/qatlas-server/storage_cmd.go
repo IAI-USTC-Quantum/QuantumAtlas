@@ -182,7 +182,7 @@ func runStoragePrune(stdout, stderr io.Writer, f pruneFlags) error {
 		return errors.New("--keep-last must be >= 0")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	fmt.Fprintf(stderr, "Bucket    : %s/%s (kind=%s)\n", cfg.S3Endpoint, bucket, f.kind)
