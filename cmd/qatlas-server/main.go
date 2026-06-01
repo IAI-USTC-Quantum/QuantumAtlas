@@ -90,6 +90,22 @@ var Version = "dev"
 // @description                session token (copied from /token). Session
 // @description                tokens implicitly hold every scope.
 func main() {
+	// Early --version / version short-circuit. Everything below
+	// (loadDotEnv, config.Load, initNeo4jClient, initRawStore, ...)
+	// runs in main() body BEFORE cobra parses os.Args, so a naked
+	// `qatlas-server --version` would otherwise trigger network I/O
+	// (.env load, Neo4j connect attempt, S3 client init) before
+	// printing the version. Detect the version flag at the top so the
+	// command is cheap, side-effect-free, and dependency-free (no .env
+	// required — useful in install-server.sh / CI smoke checks).
+	if len(os.Args) >= 2 {
+		switch os.Args[1] {
+		case "--version", "version":
+			fmt.Printf("qatlas-server version %s\n", Version)
+			return
+		}
+	}
+
 	// Load .env BEFORE config.Load so any vars it sets win over
 	// preset systemd environment (godotenv.Load skips existing keys,
 	// which is correct for the "real env beats file" precedence we want).
