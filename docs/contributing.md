@@ -82,6 +82,7 @@ version_scheme = "pep440"           # PEP 440 版本号格式（支持 0.12.0a1 
 version_provider = "pep621"         # 从 [project] version 字段读写（不是 [tool.poetry]）
 update_changelog_on_bump = true
 major_version_zero = true           # 0.x 期间 feat 也只 bump minor
+annotated_tag = true                # 创建 annotated tag（默认 lightweight，git push --follow-tags 不推 lightweight）
 ```
 
 `version_provider = "pep621"` 这条意思是 cz **读写 `pyproject.toml` 顶层 `[project] version`**——PEP 621 标准位置。`uv` 不参与，因为 `uv.lock` 里的 self-package version 字段在工程上无人依赖（详见下"为什么 uv.lock 不用同步"）。
