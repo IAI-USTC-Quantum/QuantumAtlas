@@ -246,7 +246,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [prep, python-build, binary-build]
     permissions:
-      contents: write   # needed to push tag + create release
+      contents: write       # needed to push tag + create release
+      id-token: write       # OIDC token → Sigstore for SLSA provenance
+      attestations: write   # write to GitHub attestations API
 
     steps:
       - uses: actions/checkout@v4
@@ -277,14 +279,39 @@ jobs:
           ls -la dist/
           ls -la dist/bin/
 
-      - name: Generate checksums.txt
+      - name: Generate SHA256SUMS
         run: |
           set -euo pipefail
-          cd dist/bin
-          # install-server.sh expects "<sha256>  <basename>" lines, which
-          # is sha256sum's default when given relative paths.
-          sha256sum qatlasd-* > checksums.txt
-          cat checksums.txt
+          # One manifest covering EVERY release asset (binaries + wheel +
+          # sdist). Naming follows the hashicorp / k8s / debian convention
+          # (uppercase, no extension), which signals "this is a checksum
+          # manifest" to humans + tools without needing MIME-sniffing.
+          cd dist
+          ( cd bin && sha256sum qatlasd-* ) > SHA256SUMS
+          # Python artifacts (wheel + sdist) live one level up.
+          sha256sum *.whl *.tar.gz >> SHA256SUMS
+          cat SHA256SUMS
+
+      # SLSA build provenance — signed attestation binding each artifact
+      # digest to (this workflow, this commit, this runner, this point in
+      # time). Stored in GitHub's attestations API rather than as a
+      # release asset; users verify with:
+      #
+      #   gh attestation verify ./qatlasd-linux-amd64 \
+      #     --repo IAI-USTC-Quantum/QuantumAtlas
+      #
+      # Powered by Sigstore public-good keyless signing (free for public
+      # repos, zero key management). Run BEFORE the release-create step
+      # so the attestation predates the release notification — anyone
+      # auto-downloading on release-published events sees a verifiable
+      # artifact from the first moment.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/bin/qatlasd-*
 
       - name: Extract latest changelog
         run: |
@@ -325,7 +352,7 @@ jobs:
             dist/*.tar.gz
             dist/*.whl
             dist/bin/qatlasd-*
-            dist/bin/checksums.txt
+            dist/SHA256SUMS
           draft: false
           prerelease: false
           generate_release_notes: true

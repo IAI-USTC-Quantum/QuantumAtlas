@@ -81,6 +81,19 @@ def test_release_workflow_publishes_python_and_go_artifacts():
     assert "id-token: write" in release_workflow
     assert "name: pypi" in release_workflow
 
+    # Single SHA256SUMS manifest covers every release asset (binaries +
+    # wheel + sdist). Naming follows hashicorp / k8s / debian convention.
+    assert "Generate SHA256SUMS" in release_workflow
+    assert "dist/SHA256SUMS" in release_workflow
+
+    # SLSA build provenance via Sigstore public-good keyless signing.
+    # Each release artifact (binary, wheel, sdist) gets an attestation
+    # bound to (workflow, commit, runner, time) — verifiable with
+    # `gh attestation verify <file> --repo IAI-USTC-Quantum/QuantumAtlas`.
+    # The OIDC + attestations permissions live on create-release.
+    assert "actions/attest-build-provenance@v3" in release_workflow
+    assert "attestations: write" in release_workflow
+
 
 def test_top_level_help(capsys):
     result = cli.main(["--help"])
