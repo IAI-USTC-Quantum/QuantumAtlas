@@ -71,7 +71,7 @@ func TestSanitise_StripsDetailFields(t *testing.T) {
 			"bolt://", "neo4j", "/home/timidly/", "QuantumAtlas-Wiki",
 			"38f365b", "2026-05-29", "main", "dirty",
 			"latency_ms", "backend", "endpoint", "uri", "database",
-			"dir", "commit", "commit_time", "branch",
+			"dir", "commit", "commit_time", "branch", "error",
 		}
 		for _, leak := range leakSamples {
 			if contains(s, leak) {
@@ -81,33 +81,62 @@ func TestSanitise_StripsDetailFields(t *testing.T) {
 	}
 }
 
-// TestSanitise_PreservesErrorString proves degraded probes keep
-// their one-line cause in the sanitised payload — a monitor that
-// alerts on "status: error" still gets a usable hint without
-// leaking topology.
-func TestSanitise_PreservesErrorString(t *testing.T) {
+// TestSanitise_DropsErrorString locks down the post-v0.12-audit
+// contract: degraded probes do NOT leak any Error string on the
+// anonymous tier. Raw err.Error() from SDK drivers and our own
+// probeRouter "bucket %s: %v" formatter embed bucket names / mesh
+// IPs / bolt URIs inline, so keeping Error on the public tier was
+// silently defeating the rest of the redaction. The aggregate
+// Status ("degraded") + per-check Status ("error") already give
+// monitors a usable alert signal without needing the underlying
+// topology-tainted cause.
+func TestSanitise_DropsErrorString(t *testing.T) {
 	raw := Result{
 		Status:  "degraded",
 		Version: "0.10.0",
 		Checks: map[string]Check{
 			"neo4j": {
 				Status:    "error",
-				Error:     "connect refused",
-				URI:       "bolt://10.144.18.10:7687", // should NOT survive
-				LatencyMS: 5000,                       // should NOT survive
+				Error:     "Neo4jError: connection refused to bolt://10.144.18.10:7687",
+				URI:       "bolt://10.144.18.10:7687",
+				LatencyMS: 5000,
+			},
+			"rawstore": {
+				Status: "error",
+				Error:  "bucket qatlas-pdf: HEAD failed: NoSuchBucket",
+				Bucket: "qatlas-pdf",
 			},
 		},
 	}
 	clean := raw.Sanitise()
-	c := clean.Checks["neo4j"]
-	if c.Error != "connect refused" {
-		t.Errorf("Error string dropped: got %q", c.Error)
-	}
-	if c.URI != "" {
-		t.Errorf("URI must be stripped, got %q", c.URI)
-	}
-	if c.LatencyMS != 0 {
-		t.Errorf("LatencyMS must be stripped, got %d", c.LatencyMS)
+	for name, c := range clean.Checks {
+		if c.Status != "error" {
+			t.Errorf("check %s: status %q, want error (Status must survive)", name, c.Status)
+		}
+		if c.Error != "" {
+			t.Errorf("check %s: Error %q must be empty on anon tier", name, c.Error)
+		}
+		if c.URI != "" {
+			t.Errorf("check %s: URI must be stripped, got %q", name, c.URI)
+		}
+		if c.Bucket != "" {
+			t.Errorf("check %s: Bucket must be stripped, got %q", name, c.Bucket)
+		}
+		if c.LatencyMS != 0 {
+			t.Errorf("check %s: LatencyMS must be stripped, got %d", name, c.LatencyMS)
+		}
+		// Belt-and-braces: marshal and grep for the leak samples that
+		// the raw Error strings contain. Any of these surfacing = bug.
+		b, err := json.Marshal(c)
+		if err != nil {
+			t.Fatalf("marshal check %s: %v", name, err)
+		}
+		s := string(b)
+		for _, leak := range []string{"10.144.18.10", "qatlas-pdf", "bolt://", "NoSuchBucket", "Neo4jError"} {
+			if contains(s, leak) {
+				t.Errorf("check %s: sanitised JSON %s leaks %q", name, s, leak)
+			}
+		}
 	}
 }
 

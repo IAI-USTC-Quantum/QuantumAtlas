@@ -193,6 +193,12 @@ _HEALTH_DETAIL_FIELDS_FORBIDDEN_ANON = [
     "latency_ms",
     "backend",
     "database",
+    # ``error`` was historically allowed on the anon tier as a "one-line
+    # cause" hint, but raw err.Error() / "bucket %s: %v" strings from
+    # SDK drivers embed mesh IPs / bucket names / bolt URIs inline,
+    # silently defeating the rest of the redaction. Post-v0.12 audit:
+    # Sanitise() drops Error entirely on the anon tier.
+    "error",
 ]
 
 
@@ -210,17 +216,22 @@ def test_health_anonymous_is_sanitised(target: Target):
     body = response.json()
     assert body.get("code") == 200, body
     data = body.get("data", {})
-    assert data.get("status") == "healthy", f"degraded: {data}"
     assert data.get("version"), data
     checks = data.get("checks", {})
-    # Expected per-check shape: just {"status": ...} (and optionally
-    # {"error": ...} when status=error, which we don't expect here).
+    # Expected per-check shape: just {"status": ...}. The leak sweep
+    # runs unconditionally — even on a degraded production server
+    # (status != "ok") Sanitise() must keep redacting detail fields,
+    # so a transient backend outage must not mask a Sanitise bypass.
     for name, c in checks.items():
-        assert c.get("status") == "ok", f"{name} status: {c}"
         for forbidden in _HEALTH_DETAIL_FIELDS_FORBIDDEN_ANON:
             assert forbidden not in c, (
                 f"check {name} leaked {forbidden!r} to anonymous caller: {c}"
             )
+    # Aggregate health is asserted last so the leak invariant is
+    # checked regardless of prod liveness.
+    assert data.get("status") == "healthy", f"degraded: {data}"
+    for name, c in checks.items():
+        assert c.get("status") == "ok", f"{name} status: {c}"
 
 
 def test_health_authenticated_returns_detail(target: Target):

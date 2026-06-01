@@ -128,15 +128,25 @@ type PBResult struct {
 }
 
 // Sanitise returns a copy of r with every detail field stripped from
-// the per-check payloads, keeping only the status (and the error
-// string when present so degraded probes still surface a one-liner
-// cause). Use this when serving /api/health to an unauthenticated
-// caller — see package doc § "Privacy tiers".
+// the per-check payloads, keeping only the status. Use this when
+// serving /api/health to an unauthenticated caller — see package
+// doc § "Privacy tiers".
 //
 // What survives at the top level: Status, Version, UptimeSeconds, Time.
-// What survives per check: Status, Error.
-// What gets dropped: LatencyMS, Backend, Endpoint, Bucket(s), URI,
-// Database, Dir, Commit, CommitTime, Branch, Dirty.
+// What survives per check: Status.
+// What gets dropped: Error, LatencyMS, Backend, Endpoint, Bucket(s),
+// URI, Database, Dir, Commit, CommitTime, Branch, Dirty.
+//
+// Note: Error is dropped on purpose. Raw error strings from SDK
+// drivers (minio-go, neo4j-go-driver) typically embed the endpoint
+// URL / bolt URI / bucket name in their default Error() output, and
+// our own probeRouter formats "bucket %s: %v" with the bucket name
+// inline — leaving Error on the public tier would defeat the whole
+// point of redacting Endpoint/Bucket/URI individually. The top-level
+// aggregate Status ("healthy"|"degraded") + per-check Status
+// ("ok"|"error"|"not_configured") give monitors enough signal to
+// alert on degraded state without needing the underlying cause;
+// operators that need the cause must auth.
 //
 // Concretely, an attacker doing `curl /api/health` sees enough to
 // tell "this thing is alive" but not bucket names, mesh IPs, wiki
@@ -152,7 +162,6 @@ func (r Result) Sanitise() Result {
 	for name, c := range r.Checks {
 		out.Checks[name] = Check{
 			Status: c.Status,
-			Error:  c.Error,
 		}
 	}
 	return out
