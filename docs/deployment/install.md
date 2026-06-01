@@ -26,6 +26,16 @@ QATLAS_VERSION=v0.2.8 QATLAS_INSTALL_DIR=/opt/qatlas/bin \
 
 支持 `linux/{amd64,arm64}` + `darwin/arm64` 三个平台。Intel Mac 故意不发预编 binary（GitHub Actions `macos-13` runner 排队 10–40 分钟），改走 `go install github.com/IAI-USTC-Quantum/QuantumAtlas/cmd/qatlasd@latest` 自编。脚本本身**不做二次哈希校验**——下载完整性靠 HTTPS（curl/wget 校验 GitHub CA 链）保证，从同一个 release 拉 `SHA256SUMS` 来比对是自签名（能改 binary 的攻击者同时改了 manifest）。需要更强保证的场景请走下面 [Release 资产的校验方式](#release-资产的校验方式)。
 
+!!! tip "供应链校验（opt-in）"
+
+    **v0.12.0 起**每个 release artifact 都附 [SLSA Build Provenance](https://slsa.dev/) attestation，由 GitHub OIDC + Sigstore public-good 实例**密钥学签名**。需要时一行命令验出处：
+
+    ```bash
+    gh attestation verify ./qatlasd-linux-amd64 --repo IAI-USTC-Quantum/QuantumAtlas
+    ```
+
+    日常装机不需要做。完整验证流程（含纯 `curl`+`cosign` 离线方案）见下方 [Release 资产的校验方式](#release-资产的校验方式)。
+
 ### 脚本内部行为
 
 1. 检测 OS/arch
