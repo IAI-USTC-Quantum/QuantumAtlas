@@ -6,13 +6,25 @@ name: Nightly production smoke
 # stack). Everything else is covered by Go / pytest unit suites that
 # run on every push.
 #
-#   - https://quantum-atlas.ai            (RackNerd, real LE cert)
-#   - https://47.102.36.175 | insecure    (Alibaba, tls internal self-signed)
+# Targets are NEVER hardcoded in this workflow. The list of edges +
+# their per-target system-PAT env vars lives in the
+# QATLAS_SERVER_TARGETS secret (so flipping an edge, adding a new
+# region, or testing a private staging URL doesn't require touching
+# committed code — and prod URLs / topology don't leak to anyone
+# who can read this YAML).
 #
-# Both targets reverse-proxy to qatlasd on their own host. Failure
-# patterns: qatlasd.service down on an edge, Caddy reload broke the
-# public vhost, or the edge .env lost its QATLAS_SYSTEM_PAT after
-# config rotation (and we forgot to update the matching CI secret).
+# Format: comma- or newline-separated entries, each `URL[|FLAG]*`.
+# Flags: `insecure` (TLS self-signed), `token-env=NAME` (per-target
+# PAT plaintext from the matching env var). See _parse_targets in
+# tests/integration/test_production_smoke.py for the grammar.
+#
+# Example (paste verbatim into the secret value, NOT into this YAML):
+#   https://quantum-atlas.ai|token-env=QATLAS_SYSTEM_PAT_RACKNERD
+#   https://47.102.36.175|insecure|token-env=QATLAS_SYSTEM_PAT_ALIBABA
+#
+# Failure to set the secret = the suite collects 0 tests (the fixture
+# self-skips) and we fail the job below with a clear hint, NOT a
+# silent green that hides the misconfig.
 
 on:
   schedule:
@@ -41,37 +53,36 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev --frozen
 
-      - name: Run production smoke against both edges
+      - name: Validate required secrets
+        # Fail loudly + immediately if the operator forgot to set
+        # the secrets. Without this guard, the test suite would
+        # self-skip every parametrisation and the job would appear
+        # green — exactly the silent-misconfig failure mode the
+        # nightly is supposed to catch.
         env:
-          # Two targets, each carrying its own token-env. The smoke
-          # suite resolves the env var per target so RackNerd's
-          # system PAT can never accidentally be sent to Alibaba
-          # (they are NOT interchangeable — each edge has its own
-          # QATLAS_SYSTEM_PAT in its own .env).
-          QATLAS_SERVER_TARGETS: ${{ secrets.QATLAS_SERVER_TARGETS || 'https://quantum-atlas.ai|token-env=QATLAS_SYSTEM_PAT_RACKNERD,https://47.102.36.175|insecure|token-env=QATLAS_SYSTEM_PAT_ALIBABA' }}
-
-          # System PAT plaintext, one per edge. Setup recipe per edge:
-          #   1. generate: openssl rand -base64 32  (or `python3 -c
-          #      'import secrets; print(secrets.token_urlsafe(32))'`)
-          #   2. on the edge: echo QATLAS_SYSTEM_PAT=<plaintext> >> .env
-          #      sudo systemctl restart qatlasd.service
-          #   3. verify: journalctl -u qatlasd | grep 'system PAT enabled'
-          #   4. store the plaintext as the matching GitHub secret here.
-          #
-          # Default scope is `*` (set via QATLAS_SYSTEM_PAT_SCOPES on
-          # the edge, optional). The smoke suite only needs wiki:read
-          # for /api/stats, but `*` is the easiest setup and the
-          # operator who can read .env is already trusted.
-          #
-          # Rotation: regenerate + edit edge .env + restart qatlasd,
-          # then update the GitHub secret here. The two halves can
-          # be out of sync for a few minutes — the worst case is one
-          # nightly fails with a 401 hint pointing at this comment.
+          QATLAS_SERVER_TARGETS: ${{ secrets.QATLAS_SERVER_TARGETS }}
           QATLAS_SYSTEM_PAT_RACKNERD: ${{ secrets.QATLAS_SYSTEM_PAT_RACKNERD }}
           QATLAS_SYSTEM_PAT_ALIBABA: ${{ secrets.QATLAS_SYSTEM_PAT_ALIBABA }}
+        run: |
+          set -e
+          missing=()
+          [ -n "$QATLAS_SERVER_TARGETS" ]      || missing+=(QATLAS_SERVER_TARGETS)
+          [ -n "$QATLAS_SYSTEM_PAT_RACKNERD" ] || missing+=(QATLAS_SYSTEM_PAT_RACKNERD)
+          [ -n "$QATLAS_SYSTEM_PAT_ALIBABA" ]  || missing+=(QATLAS_SYSTEM_PAT_ALIBABA)
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::missing required nightly secret(s): ${missing[*]}"
+            echo "Set them at https://github.com/${{ github.repository }}/settings/secrets/actions"
+            echo "See .github/workflows/nightly.yml header for the format."
+            exit 1
+          fi
+          echo "all 3 required secrets are set"
 
-          # 'legacy' marker excludes the old FastAPI-only ingest/*
-          # tests that the Go server intentionally does not implement.
+      - name: Run production smoke against both edges
+        env:
+          QATLAS_SERVER_TARGETS: ${{ secrets.QATLAS_SERVER_TARGETS }}
+          QATLAS_SYSTEM_PAT_RACKNERD: ${{ secrets.QATLAS_SYSTEM_PAT_RACKNERD }}
+          QATLAS_SYSTEM_PAT_ALIBABA: ${{ secrets.QATLAS_SYSTEM_PAT_ALIBABA }}
         run: uv run pytest -rs -m "e2e and not legacy"
+
 
 
