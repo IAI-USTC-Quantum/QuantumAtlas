@@ -1,66 +1,59 @@
-"""Production smoke tests for the QuantumAtlas Go server (P12).
+"""Production smoke tests for the QuantumAtlas Go server (qatlasd).
 
-Targets are configured through ``QATLAS_SERVER_TARGETS`` — a comma- or
-newline-separated list of ``URL`` / ``URL|insecure`` entries (see the
-docstring of ``_parse_targets`` for the grammar). Without a configured
-target, every test in this file is skipped.
+Run nightly against the two live edges; deliberately minimal — every
+test here MUST cover something unit tests cannot. Things that the Go
+/ Python unit suites already pin down (handler shape, scopeGuard
+behaviour, decodeScopes fail-closed contracts, PAT lifecycle, etc.)
+do NOT belong in this file.
 
-Typical local invocation::
+# What we test, and why each one is here
 
-    QATLAS_SERVER_TARGETS=$'https://quantum-atlas.ai\\nhttps://47.102.36.175|insecure' \\
-    QATLAS_TOKEN=qat_<your_long_lived_PAT> \\
-        uv run pytest -m e2e tests/integration/test_production_smoke.py
+  * /api/health — anonymous and authenticated tiers. The authenticated
+    detail tier proves Neo4j Bolt + RustFS HEAD-bucket + wiki git
+    HEAD all wire to the *real* deployment AND the system PAT chain
+    (env → pat.LoadSystemPAT → authGuard → handler) is intact end
+    to end; unit tests can only exercise mocks / loopback. The
+    anonymous tier proves the privacy split (Sanitise) is wired
+    correctly on prod — no mesh IPs / bucket names / wiki commit
+    info leaking.
 
-``QATLAS_TOKEN`` accepts either:
+  * /api/server/info — confirms the running binary is the one the
+    last release pushed (version float check); detects "Caddy is
+    serving cached HTML / old binary forgot to restart" silently.
 
-  * a **PAT plaintext** (``qat_*``) — minted at https://<host>/pat or via
-    ``qatlasd pat mint`` on the server box; lives up to 365 days,
-    so it is the recommended shape for unattended callers (CI secrets,
-    cron jobs).
-  * a **PocketBase user JWT** (anything else, typically a long ``eyJ...``
-    string) — copy from the SPA's /token page; lives 14 days by default,
-    so suitable for interactive use only.
+  * One anonymous read endpoint returning 401 — proves prod lockdown
+    is in fact in place (a misconfigured deployment that bypassed
+    authGuard would silently leak the corpus; better to catch that
+    here than in a security audit).
 
-The nightly CI workflow injects both targets plus a PAT-shaped
-``QATLAS_TOKEN`` (no 14-day rotation chore). Without ``QATLAS_TOKEN`` the
-single token-required test self-skips and the unauthenticated checks
-still run.
+  * SPA index — proves the embedded SPA + Caddy reverse-proxy is
+    serving real assets, not a fallback / login page. The asset
+    referenced in the HTML must actually fetch and have a JS
+    content-type. No unit test can verify the full HTTP stack.
 
-What this exercises against each target:
+Specifically NOT tested here (covered by Go / Python unit suites):
+auth scope vocabulary (pat_test.go / scopes_test.go), individual
+read handlers' response shape (papers_stats_test.go / graph.go
+handler tests / wiki cache tests), full PAT lifecycle
+(pat_cmd_test.go), per-endpoint authGuard behaviour (auth_test.go).
+Re-running those against the live edge was duplicative cost.
 
-  * GET /api/health and GET /api/server/info — alive checks (must report
-    the Go engine and not the legacy Python server). These two stay
-    public on purpose (liveness + version, no corpus data).
-  * Auth-gated read endpoints — /api/stats, /api/pages, /api/search,
-    /api/lint, /api/wiki/sync/status, /api/graph/stats, /api/graph/schema,
-    /api/papers/stats — must return 401 without auth (the knowledge base
-    is not anonymously browsable; reads need wiki:read / graph:read /
-    papers:read, or a session token). When a PAT token is configured for
-    a target, the same set of endpoints is re-exercised with the PAT in
-    the Authorization header and must return 200 with the expected JSON
-    keys — proving scopeGuard accepts a properly-scoped PAT and the
-    handler reaches the real data path.
-  * Static SPA — GET / returns HTML that points at /assets/*.js (not the
-    old /static/web/... path that broke after the vite.config.ts fix).
-  * authGuard enforcement on write endpoints — POST /api/shares/ must
-    return 401 with no Authorization, 401 with a wrong bearer, and (only
-    when ``QATLAS_TOKEN`` is supplied with a real PAT or JWT) move on to
-    validate the JSON body (400 "paths required").
+Targets are configured through ``QATLAS_SERVER_TARGETS`` (comma- or
+newline-separated ``URL`` / ``URL|insecure`` entries; see
+``_parse_targets`` for the full grammar). Without it, every test
+self-skips.
 
-The PAT-management contracts (mandatory expiry, scope enforcement,
-sessionGuard-rejects-PAT, full lifecycle) are NOT exercised here — they
-require a session JWT to bootstrap (POST /api/pat is gated by
-sessionGuard, which by design refuses PAT auth so a leaked PAT can't
-self-replicate). Putting a JWT in CI secrets means rotating every 14
-days, which we explicitly reject as a long-running operational chore.
-Those contracts are covered offline by ``internal/routes/pat_test.go``
-(PocketBase test-app harness, runs on every push).
+Per-edge system PAT is read from ``QATLAS_SYSTEM_PAT_<EDGE>`` via the
+``token-env=NAME`` flag on each target spec. Each edge has its own
+``QATLAS_SYSTEM_PAT`` in its .env, so per-edge secrets ARE required
+(they are not interchangeable).
 
-The /api/ingest/* endpoints intentionally do **not** appear here. The Go
-server does not implement that surface (see HANDOFF.md §"Things
-explicitly out of scope"). Tests for the legacy Python-only
-``atlas.server.routers.api`` live in test_live_server_paper_flow.py etc.,
-marked ``legacy`` so they no longer run by default.
+Token gotcha: ``QATLAS_SYSTEM_PAT`` is the server's env var name on the
+edge box (loaded by ``pat.LoadSystemPAT``); the GitHub Actions secret
+mirrors per-edge as ``QATLAS_SYSTEM_PAT_RACKNERD`` /
+``QATLAS_SYSTEM_PAT_ALIBABA``. The test code just receives the resolved
+plaintext via the ``token-env=`` spec — neither end of the wire knows
+about the "system PAT" name; it's just a long-lived bearer.
 """
 
 from __future__ import annotations
@@ -83,51 +76,29 @@ pytestmark = [
 class Target(NamedTuple):
     url: str
     insecure: bool
-    token: str  # per-target bearer; "" means "fall back to QATLAS_TOKEN env"
+    token: str  # per-target bearer ("" → fall back to QATLAS_TOKEN env)
 
     @property
     def verify(self) -> bool:
         return not self.insecure
 
     def auth_token(self) -> str:
-        """Effective token for this target.
-
-        Per-target ``token`` (from ``token-env=NAME`` in the
-        QATLAS_SERVER_TARGETS spec) wins. Otherwise fall back to the
-        global ``QATLAS_TOKEN`` env var. Returning "" means "no token
-        available" and the token-required test self-skips.
-        """
         if self.token:
             return self.token
         return os.environ.get("QATLAS_TOKEN", "").strip()
 
 
 def _parse_targets() -> list[Target]:
-    """Parse QATLAS_SERVER_TARGETS into a list of Targets.
+    """Parse QATLAS_SERVER_TARGETS into Targets.
 
     Each entry is ``URL`` optionally followed by ``|FLAG`` segments,
-    comma- or newline-separated at the top level. Supported flags:
+    comma- or newline-separated at the top level. Flags:
 
-      * ``insecure`` — disables TLS verification, common for
-        IP-based vhosts using Caddy's ``tls internal`` self-signed
-        certs (e.g. https://47.102.36.175 routed through Alibaba).
-      * ``token-env=VAR_NAME`` — pulls the per-target PAT plaintext
-        from the named environment variable. Use this when each
-        edge runs an independent qatlas with its own user DB
-        (active-active topology) so each target needs its own
-        bearer. Falls back to ``QATLAS_TOKEN`` when absent.
+      * ``insecure`` — disable TLS verification (Caddy ``tls internal``).
+      * ``token-env=VAR_NAME`` — pull per-target bearer from ``$VAR_NAME``.
 
-    Example::
-
-        QATLAS_SERVER_TARGETS=$'
-            https://quantum-atlas.ai|token-env=QATLAS_TOKEN_RACKNERD
-            https://47.102.36.175|insecure|token-env=QATLAS_TOKEN_ALIBABA
-        '
-        QATLAS_TOKEN_RACKNERD=qat_xxx
-        QATLAS_TOKEN_ALIBABA=qat_yyy
-
-    Legacy fallback: ``QATLAS_SERVER_URL`` + optional
-    ``QATLAS_INSECURE=1``, with token from ``QATLAS_TOKEN``.
+    Falls back to legacy ``QATLAS_SERVER_URL`` + ``QATLAS_INSECURE``
+    + ``QATLAS_TOKEN`` when ``QATLAS_SERVER_TARGETS`` is unset.
     """
     raw = os.environ.get("QATLAS_SERVER_TARGETS", "").strip()
     if raw:
@@ -151,10 +122,6 @@ def _parse_targets() -> list[Target]:
                                 f"token-env= requires a variable name: {entry!r}"
                             )
                         token = os.environ.get(var_name, "").strip()
-                        # Empty string is OK — means "var not set, fall
-                        # through to QATLAS_TOKEN at use-time". The
-                        # token-required test still self-skips if both
-                        # are empty.
             else:
                 url = entry
             url = url.strip().rstrip("/")
@@ -191,8 +158,6 @@ def target(request) -> Target:
             "no production target configured "
             "(set QATLAS_SERVER_TARGETS or QATLAS_SERVER_URL)"
         )
-    # Hush the TLS warnings emitted once per insecure call so test output
-    # stays readable when the Alibaba edge runs alongside RackNerd.
     if request.param.insecure:
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     return request.param
@@ -204,312 +169,163 @@ def _get(target: Target, path: str, **kw) -> requests.Response:
     return requests.get(f"{target.url}{path}", **kw)
 
 
-def _post(target: Target, path: str, **kw) -> requests.Response:
-    kw.setdefault("timeout", 15)
-    kw.setdefault("verify", target.verify)
-    return requests.post(f"{target.url}{path}", **kw)
-
-
 # ---------------------------------------------------------------------------
-# Liveness
+# 1. Anonymous health — sanitised payload only, no topology leaks
 # ---------------------------------------------------------------------------
 
 
-def test_health_endpoint(target: Target):
-    # Liveness moved off the old root /health (now eaten by the SPA
-    # catch-all) onto PocketBase's /api/health, which we override with a
-    # dependency-aware probe. The response is a PocketBase-envelope
-    # superset (see healthz.PBResult): SDK-compatible top-level
-    # {code, message} with our detail nested under `data`.
+# Detail-tier field names that the sanitised /api/health response must
+# NEVER surface. The healthz package's unit tests pin the same contract
+# for Sanitise() against an in-memory Result; here we re-verify the
+# wiring on the live wire (handler -> Caddy -> client). If a future
+# refactor accidentally serves the unsanitised payload to anonymous
+# callers, this fails.
+_HEALTH_DETAIL_FIELDS_FORBIDDEN_ANON = [
+    "endpoint",
+    "uri",
+    "bucket",
+    "buckets",
+    "dir",
+    "commit",
+    "commit_time",
+    "branch",
+    "dirty",
+    "latency_ms",
+    "backend",
+    "database",
+]
+
+
+def test_health_anonymous_is_sanitised(target: Target):
+    """Anonymous /api/health must report alive + per-check status only.
+
+    Detail fields (mesh IPs, bucket names, wiki commit info) must be
+    stripped — they are deployment fingerprints valuable to an
+    attacker and useless to a liveness probe. The privacy contract
+    is enforced by ``healthz.Result.Sanitise``; this test catches
+    accidental bypass of the wiring in main.go.
+    """
     response = _get(target, "/api/health")
     assert response.status_code == 200, response.text
     body = response.json()
     assert body.get("code") == 200, body
     data = body.get("data", {})
-    assert data.get("status") == "healthy", data
+    assert data.get("status") == "healthy", f"degraded: {data}"
     assert data.get("version"), data
-    # Dependency probes (rawstore / neo4j / wiki) must be reported. The
-    # "is this still the Go engine and not a resurrected Python server?"
-    # invariant lives in test_server_info_reports_go_engine — the version
-    # string no longer carries a '-go' suffix.
-    assert "checks" in data, data
+    checks = data.get("checks", {})
+    # Expected per-check shape: just {"status": ...} (and optionally
+    # {"error": ...} when status=error, which we don't expect here).
+    for name, c in checks.items():
+        assert c.get("status") == "ok", f"{name} status: {c}"
+        for forbidden in _HEALTH_DETAIL_FIELDS_FORBIDDEN_ANON:
+            assert forbidden not in c, (
+                f"check {name} leaked {forbidden!r} to anonymous caller: {c}"
+            )
+
+
+def test_health_authenticated_returns_detail(target: Target):
+    """The same /api/health, called with the system PAT, MUST include
+    detail fields (proving the auth-aware split is wired both ways).
+
+    We don't assert specific values (mesh IP, bucket names) because
+    deployments may change them — we only assert that at least one
+    detail field surfaces, demonstrating Sanitise is NOT being applied
+    to authenticated callers.
+    """
+    token = target.auth_token()
+    if not token:
+        pytest.skip(f"no system PAT configured for {target.url}")
+
+    response = _get(target, "/api/health", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body.get("code") == 200, body
+    data = body.get("data", {})
+    assert data.get("status") == "healthy", f"degraded with detail: {data}"
+
+    # At least one detail field must surface across the checks.
+    checks = data.get("checks", {})
+    detail_present = False
+    for c in checks.values():
+        for f in _HEALTH_DETAIL_FIELDS_FORBIDDEN_ANON:
+            if f in c:
+                detail_present = True
+                break
+        if detail_present:
+            break
+    assert detail_present, (
+        "authenticated health response has no detail fields — either auth probe "
+        f"misfired or Sanitise leaked into the auth path: {checks}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 2. Version freshness — detect "old binary still running"
+# ---------------------------------------------------------------------------
 
 
 def test_server_info_reports_go_engine(target: Target):
+    """``/api/server/info`` confirms (a) we're talking to the Go binary,
+    not a resurrected legacy Python server, and (b) the version field
+    is populated (catches build flags being lost in a botched release).
+    """
     response = _get(target, "/api/server/info")
     assert response.status_code == 200, response.text
     body = response.json()
     assert body.get("engine") == "go+pocketbase", body
     assert body.get("mode") == "server", body
+    assert body.get("version"), body
 
 
 # ---------------------------------------------------------------------------
-# Public read endpoints — no Authorization, must succeed
+# 3. One representative protected endpoint must reject anonymous GETs
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "path",
-    [
-        "/api/stats",
-        "/api/pages",
-        "/api/lint",
-        "/api/search?q=quantum",
-        "/api/wiki/sync/status",
-        "/api/graph/stats",
-        "/api/graph/schema",
-        "/api/papers/stats",
-    ],
-)
-def test_read_endpoints_require_auth(target: Target, path: str):
-    # The knowledge base is not anonymously readable: every information
-    # endpoint sits behind authGuard + scopeGuard (wiki:read / graph:read
-    # / papers:read). An unauthenticated GET must be rejected at authGuard
-    # with 401 "authentication required" — NOT 200, and NOT 403 (403 would
-    # mean a credential was accepted but lacked the scope, which can't
-    # happen without an Authorization header).
-    response = _get(target, path)
-    assert response.status_code == 401, f"{path} -> {response.status_code}: {response.text[:200]}"
+def test_anonymous_read_is_locked_down(target: Target):
+    """One representative protected endpoint must reject anonymous
+    GETs with 401.
+
+    We don't sweep the whole vocabulary (Go unit tests already pin
+    authGuard's behaviour on every endpoint); we just verify that a
+    misconfigured deployment hasn't accidentally turned the corpus
+    public. /api/stats picked as the canary because it touches the
+    wiki cache (the most "leaky-looking" surface if lockdown broke).
+    """
+    response = _get(target, "/api/stats")
+    assert response.status_code == 401, (
+        f"/api/stats anonymously returned {response.status_code} (LEAKED?): {response.text[:200]}"
+    )
     body = response.json()
     assert "authentication required" in body.get("detail", "").lower(), body
 
 
 # ---------------------------------------------------------------------------
-# PAT positive path — same endpoints, this time WITH a properly-scoped
-# PAT, must return 200 + handler payload (proves scopeGuard accepts the
-# PAT and the handler reaches the data layer, not just that 401 fires
-# when there's no token).
+# 4. SPA shell — only real-deployment can verify the embedded SPA +
+#    Caddy reverse-proxy + asset content-type chain
 # ---------------------------------------------------------------------------
 
 
-# (path, required_scope, required_keys_in_response_body).
-#
-# required_keys is a small list of JSON keys that the handler is
-# expected to surface even when the underlying corpus is empty. The
-# point is to confirm we hit the real handler (and not, e.g., a JSON
-# wrapper from Caddy / PocketBase / an error envelope) — NOT to pin
-# the exact dataset, which would make the nightly brittle against
-# routine wiki / paper changes.
-_READ_ENDPOINTS_PAT = [
-    pytest.param("/api/stats", "wiki:read", ["by_category", "by_type", "entries"], id="stats"),
-    pytest.param("/api/pages", "wiki:read", ["pages"], id="pages"),
-    pytest.param("/api/lint", "wiki:read", ["checked_pages", "issues"], id="lint"),
-    pytest.param("/api/search?q=quantum", "wiki:read", ["query", "results"], id="search"),
-    pytest.param("/api/wiki/sync/status", "wiki:read", ["git", "wiki"], id="wiki-sync-status"),
-    pytest.param("/api/graph/stats", "graph:read", ["nodes", "relationships"], id="graph-stats"),
-    # /api/graph/schema returns labels + relationship types; shape varies
-    # by dataset, so only assert "200 + JSON dict/list" (no key probe).
-    pytest.param("/api/graph/schema", "graph:read", [], id="graph-schema"),
-    pytest.param("/api/papers/stats", "papers:read", ["total", "has_pdf", "has_md"], id="papers-stats"),
-]
+def test_spa_renders_and_assets_load(target: Target):
+    """``/`` returns the embedded SPA HTML and the first
+    ``/assets/*.js`` it references actually fetches as JavaScript.
 
-
-@pytest.mark.parametrize("path,required_scope,required_keys", _READ_ENDPOINTS_PAT)
-def test_read_endpoints_accept_pat(
-    target: Target, path: str, required_scope: str, required_keys: list[str]
-):
-    """Same read endpoints, this time with the nightly PAT — must 200.
-
-    Self-skips when no token is configured for this target (so the
-    nightly stays green during the window between adding a new scope
-    to the test set and re-minting / updating the PAT secret).
-
-    Failure modes are diagnosed explicitly:
-      * 401 → the PAT was rejected by THIS edge's authGuard. Common
-        cause: cross-edge token mix-up (active-active topology — each
-        edge has an independent users DB).
-      * 403 → the PAT was accepted but lacks the required scope.
-        Re-mint with `--scopes <csv-including-required_scope>`.
-      * non-200 → handler / dependency problem (Neo4j down, wiki repo
-        missing, etc.). Body is dumped so the operator can triage.
+    Catches two failure modes invisible to unit tests:
+      1. embed.go regression / asset path drift (would serve a fallback
+         page or 404 the asset);
+      2. Caddy / reverse-proxy misconfig stripping the asset prefix
+         (would serve text/html for a .js URL).
     """
-    token = target.auth_token()
-    if not token:
-        pytest.skip(
-            f"no token for {target.url} (set QATLAS_TOKEN or "
-            "use token-env=NAME in QATLAS_SERVER_TARGETS); "
-            f"cannot validate {required_scope} read path"
-        )
-
-    response = _get(
-        target, path, headers={"Authorization": f"Bearer {token}"}
-    )
-
-    if response.status_code == 401:
-        pytest.fail(
-            f"PAT rejected by {target.url} authGuard on {path} (401). "
-            "Each edge has its own user DB in active-active — check the "
-            f"token matches THIS target's user store. Body: {response.text[:300]}"
-        )
-    if response.status_code == 403:
-        pytest.fail(
-            f"PAT accepted by authGuard but rejected by scopeGuard on "
-            f"{path} (403). Token lacks {required_scope!r}. Re-mint "
-            f"with --scopes including {required_scope}. "
-            f"Body: {response.text[:300]}"
-        )
-    assert response.status_code == 200, (
-        f"{path} with PAT -> {response.status_code}: {response.text[:300]}"
-    )
-
-    body = response.json()
-    assert isinstance(body, (dict, list)), f"{path} returned non-JSON-container: {body!r}"
-    if required_keys:
-        assert isinstance(body, dict), (
-            f"{path} expected dict to probe keys {required_keys}, got {type(body).__name__}"
-        )
-        missing = [k for k in required_keys if k not in body]
-        assert not missing, (
-            f"{path} response missing keys {missing} (got keys {list(body)[:20]})"
-        )
-
-
-# ---------------------------------------------------------------------------
-# Static SPA bundle
-# ---------------------------------------------------------------------------
-
-
-def test_spa_index_points_at_root_relative_assets(target: Target):
-    response = _get(target, "/")
-    assert response.status_code == 200, response.text
-    body = response.text
+    index = _get(target, "/")
+    assert index.status_code == 200, index.text
+    body = index.text
     assert "<title>QuantumAtlas</title>" in body
-    # vite.config.ts sets base='/', so asset URLs must NOT be prefixed with
-    # the old caddy-security era '/static/web/'.
     assert 'src="/assets/' in body, body[:400]
-    assert '/static/web/' not in body, body[:400]
+    assert "/static/web/" not in body, body[:400]
 
-
-def test_spa_asset_loads(target: Target):
-    """Pluck the first /assets/*.js hash out of index.html, fetch it, and
-    confirm Caddy / PocketBase actually serve the bundle (not redirect to
-    login)."""
-    index = _get(target, "/").text
-    match = re.search(r'src="(/assets/index-[^"]+\.js)"', index)
+    match = re.search(r'src="(/assets/index-[^"]+\.js)"', body)
     assert match, "could not find /assets/index-*.js in SPA index"
     asset = _get(target, match.group(1))
     assert asset.status_code == 200, asset.text[:200]
     ctype = asset.headers.get("Content-Type", "")
     assert "javascript" in ctype, ctype
-
-
-# ---------------------------------------------------------------------------
-# Auth gate — write endpoints
-# ---------------------------------------------------------------------------
-
-
-def test_write_endpoint_rejects_anonymous(target: Target):
-    response = _post(
-        target,
-        "/api/shares/",
-        json={"paths": ["x"]},
-        headers={"Content-Type": "application/json"},
-    )
-    assert response.status_code == 401, response.text
-    body = response.json()
-    assert "authentication required" in body.get("detail", "").lower(), body
-
-
-def test_write_endpoint_rejects_wrong_bearer(target: Target):
-    response = _post(
-        target,
-        "/api/shares/",
-        json={"paths": ["x"]},
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": "Bearer not-a-real-token-zzz",
-        },
-    )
-    assert response.status_code == 401, response.text
-
-
-def test_write_endpoint_accepts_user_token(target: Target):
-    """If a token is available for this target, prove the auth gate
-    lets us through (400 from the body parser, not 401 from authGuard,
-    not 403 from scopeGuard). Self-skips when no token is configured.
-
-    Token resolution (see Target.auth_token):
-      1. ``token-env=NAME`` in QATLAS_SERVER_TARGETS for this target →
-         look up ``$NAME``. Used in active-active topologies where
-         each edge has its own independent qatlas + user DB.
-      2. ``QATLAS_TOKEN`` env var (legacy / single-edge case).
-
-    Accepts either a PAT (``qat_...``, recommended for nightly secrets
-    because of the 365-day lifetime) or a PocketBase user JWT (anything
-    else, typically rotated every 14 days from the SPA /token page).
-
-    If the token is a PAT, it MUST have been minted with the
-    ``shares:write`` scope — otherwise scopeGuard returns 403 and this
-    test fails with a hint pointing the operator at the fix. Mint a
-    properly-scoped PAT via https://<host>/pat or on the server box
-    with ``qatlasd pat mint --scopes shares:write``.
-    """
-    token = target.auth_token()
-    if not token:
-        pytest.skip(
-            f"no token for {target.url} (set QATLAS_TOKEN or "
-            "use token-env=NAME in QATLAS_SERVER_TARGETS); "
-            "cannot validate accepted path"
-        )
-
-    response = _post(
-        target,
-        "/api/shares/",
-        json={},  # missing paths key triggers the handler's own 400
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {token}",
-        },
-    )
-    # 401 = the supplied token wasn't accepted by THIS target's auth
-    #       store (each edge has its own users DB in active-active —
-    #       did you mix up tokens between RackNerd and Alibaba?).
-    # 403 = a PAT was accepted but lacks shares:write scope. Re-mint
-    #       the PAT with --scopes shares:write.
-    # 400 = passed both authGuard and scopeGuard, reached the handler's
-    #       body validator. This is the happy path under test.
-    if response.status_code == 401:
-        pytest.fail(
-            f"Token rejected by {target.url} authGuard (401). Each edge "
-            "has its own user DB in active-active — check the token "
-            f"matches THIS target's user store. Body: {response.text}"
-        )
-    if response.status_code == 403:
-        pytest.fail(
-            "PAT accepted by authGuard but rejected by scopeGuard (403). "
-            "Your token PAT lacks the 'shares:write' scope. "
-            f"Re-mint with --scopes shares:write. Body: {response.text}"
-        )
-    assert response.status_code == 400, (
-        f"expected 400 (handler validation), got {response.status_code}: {response.text}"
-    )
-    body = response.json()
-    assert body.get("detail") == "paths required", body
-
-
-# ---------------------------------------------------------------------------
-# PAT lifecycle / sessionGuard / scope enforcement / mandatory expiry
-#
-# These contracts USED to live here as live-server scenarios that
-# bootstrapped a temporary PAT via a session JWT, exercised it against
-# the production server, and revoked it. They moved to
-# ``internal/routes/pat_test.go`` (PocketBase test-app harness) for
-# two reasons:
-#
-#   1. The bootstrap step (POST /api/pat) is gated by sessionGuard,
-#      which by design refuses PAT auth (a leaked PAT must not be
-#      able to self-replicate — mirrors GitHub fine-grained PAT).
-#      That makes the e2e tests require a session JWT, which means
-#      rotating the CI secret every 14 days. We explicitly reject
-#      that operational chore.
-#
-#   2. The contracts under test are HTTP-layer business rules
-#      (validation, status codes, error detail shape) — exactly what
-#      PocketBase's tests.NewTestApp() harness was built for. Running
-#      them offline in CI on every push is strictly better than once
-#      a night against a live server.
-#
-# The nightly's PAT-shaped QATLAS_TOKEN secret never expires for 365
-# days, so unattended bootstrap is solved without touching this file.
-# ---------------------------------------------------------------------------
-
