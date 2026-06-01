@@ -42,7 +42,7 @@
 
 ??? question "macOS 能跑 server 吗？"
 
-    可以。binary `darwin-amd64` / `darwin-arm64` 都出。但 launchd 配置不如 systemd 成熟（kardianos/service 库默认配置在 macOS 跑通过没充分测试）。
+    Apple Silicon 可以——release 出 `darwin-arm64` binary。Intel Mac 没出预编 binary（GitHub Actions `macos-13` runner 排队 10–40 分钟），用 `go install github.com/IAI-USTC-Quantum/QuantumAtlas/cmd/qatlasd@latest` 自编。但 launchd 配置不如 systemd 成熟（kardianos/service 库默认配置在 macOS 跑通过没充分测试）。
 
 ??? question "我有 ARM VPS（aarch64），能装吗？"
 

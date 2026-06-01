@@ -88,7 +88,7 @@ uv run cz bump
 4. `git commit + git tag`
 5. **不会自动 push**——你 review 完 `git push --follow-tags`
 
-**release.yml 只在 `git push origin v<X.Y.Z>`（push tag）时触发**，所以不 push tag 就不会发版。push tag 后 [`release.yml`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.github/workflows/release.yml) 自动 build wheel/sdist + 4 个平台 Go binary + 发 PyPI + 发 GitHub Release。
+**release.yml 只在 `git push origin v<X.Y.Z>`（push tag）时触发**，所以不 push tag 就不会发版。push tag 后 [`release.yml`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.github/workflows/release.yml) 自动 build wheel/sdist + 3 个平台 Go binary + 发 PyPI + 发 GitHub Release。
 
 !!! tip "推荐 4 步法（防 cz bump 把工作区脏文件卷进 bump commit）"
 
@@ -321,7 +321,7 @@ curl -X POST https://quantum-atlas.ai/api/wiki/sync/pull \
 3. Review：`git show HEAD` / `git show --stat <tag>`
 4. `git push --follow-tags`
 5. [`release.yml`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.github/workflows/release.yml) 自动：
-    - Cross-compile 4 平台 binary（`linux/{amd64,arm64}` + `darwin/{amd64,arm64}`）
+    - Cross-compile 3 平台 binary（`linux/{amd64,arm64}` + `darwin/arm64`；Intel Mac 故意不发，`macos-13` runner 太慢，详见 `release.yml::binary-build` 注释）
     - 发到 GitHub Release（含 SHA256 checksum）
     - PyPI 发 Python wheel + sdist
 6. 验证：

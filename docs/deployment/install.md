@@ -24,7 +24,7 @@ QATLAS_VERSION=v0.2.8 QATLAS_INSTALL_DIR=/opt/qatlas/bin \
     curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh
 ```
 
-支持 `linux/{amd64,arm64}` + `darwin/{amd64,arm64}` 四个平台。脚本本身**不做二次哈希校验**——下载完整性靠 HTTPS（curl/wget 校验 GitHub CA 链）保证，从同一个 release 拉 `SHA256SUMS` 来比对是自签名（能改 binary 的攻击者同时改了 manifest）。需要更强保证的场景请走下面 [Release 资产的校验方式](#release-资产的校验方式)。
+支持 `linux/{amd64,arm64}` + `darwin/arm64` 三个平台。Intel Mac 故意不发预编 binary（GitHub Actions `macos-13` runner 排队 10–40 分钟），改走 `go install github.com/IAI-USTC-Quantum/QuantumAtlas/cmd/qatlasd@latest` 自编。脚本本身**不做二次哈希校验**——下载完整性靠 HTTPS（curl/wget 校验 GitHub CA 链）保证，从同一个 release 拉 `SHA256SUMS` 来比对是自签名（能改 binary 的攻击者同时改了 manifest）。需要更强保证的场景请走下面 [Release 资产的校验方式](#release-资产的校验方式)。
 
 ### 脚本内部行为
 
@@ -42,7 +42,7 @@ QATLAS_VERSION=v0.2.8 QATLAS_INSTALL_DIR=/opt/qatlas/bin \
 
 #### 1. `SHA256SUMS`（POSIX `sha256sum` 标准格式）
 
-Release 资产里有一个 `SHA256SUMS` 文件，每行 `<sha256>  <basename>`，覆盖**全部** release 产物（4 个 binary + wheel + sdist）。**有意义的用法是跨网络/跨时段比对**——在 GitHub Release 网页上肉眼记下 hash，或在一台机器上拉 manifest、在另一台机器/镜像源拉到 binary 后本地校验：
+Release 资产里有一个 `SHA256SUMS` 文件，每行 `<sha256>  <basename>`，覆盖**全部** release 产物（3 个 binary + wheel + sdist）。**有意义的用法是跨网络/跨时段比对**——在 GitHub Release 网页上肉眼记下 hash，或在一台机器上拉 manifest、在另一台机器/镜像源拉到 binary 后本地校验：
 
 ```bash
 # Linux / WSL
