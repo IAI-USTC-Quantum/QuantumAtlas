@@ -9,7 +9,7 @@
 - **GitHub**：<https://github.com/IAI-USTC-Quantum/QuantumAtlas>
 - **Wiki repo**：<https://github.com/IAI-USTC-Quantum/QuantumAtlas-Wiki>
 - **生产入口**：<https://quantum-atlas.ai>
-- **协议**：[MIT](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/LICENSE)
+- **协议**：[Apache-2.0](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/LICENSE)
 - **维护方**：[IAI-USTC-Quantum](https://github.com/IAI-USTC-Quantum)
 
 ## 仓库概览
@@ -24,7 +24,7 @@ QuantumAtlas/
 │   ├── codegen/           IR → Qiskit / QPanda
 │   ├── validator/         电路等价 / 仿真验证
 │   ├── estimator/         资源估计
-│   └── parser/            arXiv fetch + MinerU / PyMuPDF 解析
+│   └── parser/            arXiv fetch + MinerU 解析
 ├── cmd/qatlasd/     Go server 入口（main + 各 cobra 子命令）
 ├── internal/              Go server 内部包（路由 / auth / 存储 / config 等）
 ├── web/                   React SPA 前端（Vite + TanStack Router）

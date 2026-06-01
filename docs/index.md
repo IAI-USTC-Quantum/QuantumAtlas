@@ -77,7 +77,7 @@ flowchart LR
 
 ## 它能做什么
 
-- **从 arXiv 摄入论文**：自动抓取 PDF + 元数据，可选用 MinerU / PyMuPDF 解析为 Markdown
+- **从 arXiv 摄入论文**：自动抓取 PDF + 元数据，可选用 MinerU 解析为 Markdown
 - **沉淀知识到 Wiki**：可审阅的 Markdown + YAML frontmatter，分 Concepts / Entities / Sources / Comparisons 四类
 - **同步到 Neo4j 图谱**：从 Wiki 派生算法 / 原语 / 论文 / 人物的关系网
 - **从算法走到代码**：Designer → Quantum IR → Qiskit/QPanda → Validator → Estimator
@@ -97,4 +97,4 @@ flowchart LR
 - :material-github: 源码：<https://github.com/IAI-USTC-Quantum/QuantumAtlas>
 - :material-language-python: PyPI：[`quantum-atlas`](https://pypi.org/project/quantum-atlas/)
 - :material-server-network: 生产入口：<https://quantum-atlas.ai>
-- :material-license: 协议：[MIT](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/LICENSE)
+- :material-license: 协议：[Apache-2.0](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/LICENSE)

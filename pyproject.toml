@@ -3,14 +3,14 @@ name = "quantum-atlas"
 version = "0.11.0"
 description = "AI 驱动的量子算法开发辅助系统"
 readme = "README.md"
-license = { text = "MIT" }
+license = { text = "Apache-2.0" }
 requires-python = ">=3.11"
 authors = [{ name = "IAI-USTC-Quantum" }]
 keywords = ["quantum", "algorithm", "llm", "knowledge-graph", "code-generation"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Topic :: Scientific/Engineering :: Physics",

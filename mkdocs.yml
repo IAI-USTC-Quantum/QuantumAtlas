@@ -7,7 +7,7 @@ repo_name: IAI-USTC-Quantum/QuantumAtlas
 repo_url: https://github.com/IAI-USTC-Quantum/QuantumAtlas
 edit_uri: edit/main/docs/
 
-copyright: Copyright &copy; 2024–2026 IAI-USTC-Quantum &middot; MIT License
+copyright: Copyright &copy; 2024–2026 IAI-USTC-Quantum &middot; Apache-2.0 License
 
 theme:
   name: material

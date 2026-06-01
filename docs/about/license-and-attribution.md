@@ -63,7 +63,7 @@ X-Attribution: OpenAlex (CC0), arXiv
 - **Metadata（CC0）**：随便用，**仍请**归属到 OpenAlex（公益项目，归属能帮它们拿持续资助）
 - **PDF**：你拿到的是 arxiv 的 redirect 链接，**license 跟 arxiv 上原文一致**——按原作者声明使用
 - **MinerU markdown**：你登录才能拿；**仅供研究 / 教育用**，**禁止商业再分发**（见 [Terms of Service](terms-of-service.md)）
-- **Wiki 内容**：MIT（与 [QuantumAtlas-Wiki repo](https://github.com/IAI-USTC-Quantum/QuantumAtlas-Wiki) LICENSE 一致），归属到本项目即可
+- **Wiki 内容**：Apache-2.0（与 [QuantumAtlas-Wiki repo](https://github.com/IAI-USTC-Quantum/QuantumAtlas-Wiki) LICENSE 一致），归属到本项目即可
 
 ## 撤稿 / 删除请求
 

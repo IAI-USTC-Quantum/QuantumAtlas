@@ -4,7 +4,7 @@
 
 [![Go 1.23+](https://img.shields.io/badge/go-1.23+-00ADD8?style=flat&logo=go&logoColor=white)](https://go.dev/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![PocketBase v0.38](https://img.shields.io/badge/PocketBase-v0.38-B8DBE4?style=flat&logo=pocketbase&logoColor=black)](https://pocketbase.io/)
 [![Neo4j](https://img.shields.io/badge/Neo4j-5.15+-008CC1?style=flat&logo=neo4j&logoColor=white)](https://neo4j.com/)
 [![Documentation Status](https://app.readthedocs.org/projects/quantum-atlas/badge/?version=latest)](https://quantum-atlas.readthedocs.io/zh-cn/latest/)
@@ -256,7 +256,7 @@ QuantumAtlas 的论文 catalog 基于以下开放学术数据源：
 
 ## 许可证
 
-[MIT License](LICENSE)（代码 + 文档 + Wiki 内容均 MIT）
+[Apache-2.0 License](LICENSE)（代码 + 文档 + Wiki 内容均 Apache-2.0）
 
 GitHub: https://github.com/IAI-USTC-Quantum/QuantumAtlas
 

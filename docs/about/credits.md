@@ -86,9 +86,9 @@ QuantumAtlas 的 Wiki 模板和 schema 受这几篇影响：
 
 ## 许可证
 
-- **代码**：[MIT License](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/LICENSE)
-- **文档**：MIT（同 repo）
-- **Wiki 内容**：[QuantumAtlas-Wiki repo](https://github.com/IAI-USTC-Quantum/QuantumAtlas-Wiki) 自己的 LICENSE（同样 MIT）
+- **代码**：[Apache-2.0 License](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/LICENSE)
+- **文档**：Apache-2.0（同 repo）
+- **Wiki 内容**：[QuantumAtlas-Wiki repo](https://github.com/IAI-USTC-Quantum/QuantumAtlas-Wiki) 自己的 LICENSE（同样 Apache-2.0）
 - **第三方依赖**：各自原 license（看 `go.sum` / `pyproject.toml` / `package.json`）
 
 ---
