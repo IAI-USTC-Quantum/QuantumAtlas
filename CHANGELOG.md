@@ -4,6 +4,32 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.12.0 (2026-06-02)
+
+### BREAKING CHANGE
+
+- the public installer URL has moved from
+`https://quantum-atlas.ai/install-server.sh` to
+`https://quantum-atlas.ai/install-qatlasd.sh`. The old URL now
+404s on every edge running v0.12.0+. Any external bookmarks /
+documentation / chat-history one-liners pointing at the old URL
+will break and must be updated. The release artefact filename
+(`qatlasd-<os>-<arch>`) is unchanged.
+- PyMuPDF is no longer a supported PDF parser backend.
+The `--parser pymupdf` option on `qatlas ingest`, the
+`qatlas parser parse-pdf` subcommand, and the
+`qatlas.parser.pdf_parser` Python module have been removed. Convert
+callers to MinerU (`qatlas mineru <id>` for one-off conversions, or
+`qatlas ingest <id> --parser mineru` from a pipeline).
+
+### Feat
+
+- **parser**: drop pymupdf, MinerU is the sole PDF backend
+
+### Fix
+
+- **ci,nightly**: fail-loud on missing secrets
+
 ## v0.11.0 (2026-06-02)
 
 ### Feat
