@@ -1,7 +1,9 @@
 nav:
   - 概览: index.md
-  - 三层架构: three-layer.md
+  - 三层架构: architecture.md
   - 数据流: data-flow.md
   - 鉴权模型: auth-model.md
   - 存储架构: storage-architecture.md
+  - 桶布局: bucket-layout.md
+  - 桶迁移对账: bucket-migration-reconciliation.md
   - 多边缘部署: multi-edge.md
