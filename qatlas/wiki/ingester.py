@@ -5,7 +5,9 @@ Handles the ingest workflow: raw sources → wiki pages → Neo4j sync.
 
 Ingestion Pipeline:
 1. Fetch: Download paper from arXiv (reuse ArxivFetcher)
-2. Parse: Convert PDF to Markdown (reuse PDFParser)
+2. Parse: Convert PDF to Markdown via MinerU (caller-driven; the
+   ingester's ``_parse_pdf`` hook now raises ``NotImplementedError``
+   on purpose — see `qatlas mineru` for the supported flow)
 3. Extract: Use LLM to extract structured info (reuse AlgorithmExtractor)
 4. Create Wiki Pages: Generate wiki pages from extracted info
 5. Sync: Push to Neo4j (if enabled)
@@ -59,7 +61,10 @@ class WikiIngester:
     Handles ingestion of external sources into the wiki.
 
     The ingester orchestrates the flow from raw sources to wiki pages,
-    reusing existing components (ArxivFetcher, PDFParser, AlgorithmExtractor).
+    reusing existing components (ArxivFetcher, AlgorithmExtractor). PDF
+    → Markdown conversion goes through the `qatlas mineru` CLI; the
+    ingester's `_parse_pdf` hook raises NotImplementedError when called
+    directly so misconfigured pipelines fail loudly.
 
     Usage:
         engine = WikiEngine()

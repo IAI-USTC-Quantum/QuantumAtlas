@@ -49,10 +49,15 @@ import (
 
 // installScript is the POSIX shell installer served at
 // /install-qatlasd.sh. It detects OS/arch, downloads the latest
-// qatlasd release artifact from GitHub, verifies SHA256SUMS,
-// installs to ~/.local/bin, and prints next-step pointers. Kept
-// in a separate file so it can be edited as a real .sh (syntax
-// highlighting + shellcheck) and reviewed standalone.
+// qatlasd release artifact from GitHub over HTTPS, installs to
+// ~/.local/bin, and prints next-step pointers. Kept in a separate
+// file so it can be edited as a real .sh (syntax highlighting +
+// shellcheck) and reviewed standalone.
+//
+// The script does NOT do in-band SHA256SUMS verification — see the
+// script body comment near the install step for the trust-model
+// rationale (HTTPS covers in-transit; SHA256SUMS / SLSA attestation
+// are opt-in stronger checks documented separately).
 //
 //go:embed install-qatlasd.sh
 var installScript string
@@ -541,6 +546,31 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 		Started:  started,
 	}
 
+	// X-Attribution — declare upstream data sources on every /api/*
+	// response. OpenAlex and Crossref both ship under CC0 1.0, which
+	// does NOT require attribution legally, but OurResearch (OpenAlex)
+	// and Crossref are non-profit infrastructure that depend on
+	// visible attribution for grant funding; the broader open-data
+	// community treats this as basic etiquette. arXiv is listed
+	// because every paper entry in the catalog originated there.
+	//
+	// Registered BEFORE the /api/health override below so even the
+	// short-circuited health response carries the header (the health
+	// BindFunc returns without calling e.Next() — if X-Attribution
+	// ran after it, the header would be missing on /api/health).
+	//
+	// Scope is /api/* only: SPA assets, /install-qatlasd.sh, /swagger,
+	// and /share/* either don't surface upstream metadata bytes
+	// (share returns 307 to arxiv.org for PDF) or aren't API
+	// responses in the contract sense. Footer in the SPA chrome
+	// covers the human-readable attribution side.
+	se.Router.BindFunc(func(re *core.RequestEvent) error {
+		if strings.HasPrefix(re.Request.URL.Path, "/api/") {
+			re.Response.Header().Set("X-Attribution", "OpenAlex (CC0), Crossref (CC0), arXiv")
+		}
+		return re.Next()
+	})
+
 	// Override PocketBase's built-in /api/health with our dependency-
 	// aware version. Implementation note:
 	//
@@ -594,7 +624,7 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// up within ~5 min of cutover but we don't hammer the server for
 	// every curl|sh.
 	//
-	// Note: there is NO redirect from the old /install-qatlasd.sh URL
+	// Note: there is NO redirect from the old /install-server.sh URL
 	// (it 404s through the SPA catch-all). The rename in v0.12.0 was
 	// deliberate — keeping a redirect would mean operators discover
 	// the new name only when they happen to bypass the redirect, and

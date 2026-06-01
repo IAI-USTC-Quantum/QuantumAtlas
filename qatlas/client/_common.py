@@ -65,8 +65,8 @@ def resolve_token(args: argparse.Namespace) -> str:
 
     Empty string means the caller will not send an Authorization header; the
     server then either accepts the call (open read endpoints) or rejects with
-    401 (write endpoints gated by authGuard). The user gets a clear error
-    pointing them at /token in the SPA either way.
+    401 (write endpoints gated by authGuard). The 401 response body points
+    the user at the /pat page in the SPA either way.
     """
     explicit = getattr(args, "token", None)
     if explicit:
@@ -120,9 +120,10 @@ def add_common_http_args(parser: argparse.ArgumentParser) -> None:
         default=None,
         help=(
             "Bearer token sent as 'Authorization: Bearer <token>' on every "
-            "request. Defaults to QATLAS_TOKEN env. Get one from "
-            "https://<server>/token after signing in with GitHub, or use the "
-            "interim QATLAS_WRITE_TOKEN shared secret while Step 7 lands."
+            "request. Defaults to QATLAS_TOKEN env. Create one at "
+            "https://<server>/pat after signing in with GitHub (a 'qat_'-"
+            "prefixed PAT with explicit scopes); session tokens copied from "
+            "the SPA also work."
         ),
     )
 
