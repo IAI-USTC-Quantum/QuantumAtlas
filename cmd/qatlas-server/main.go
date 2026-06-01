@@ -191,6 +191,13 @@ func main() {
 	// operator-driven and decoupled from server boot — see handoff.md.
 	app.RootCmd.AddCommand(NewOpenAlexCommand())
 
+	// Mount the `users` subcommand group (`users list` enumerates the
+	// PocketBase users collection — needed before `pat mint --user`
+	// because each edge has an independent user store and there's
+	// otherwise no non-browser way to discover which emails are
+	// registered locally).
+	app.RootCmd.AddCommand(NewUsersCommand(app))
+
 	// Install our default PAT-surface rate-limit rules. Done at
 	// OnBootstrap (after PocketBase has loaded settings from the DB)
 	// rather than synchronously here, because Settings() is empty
