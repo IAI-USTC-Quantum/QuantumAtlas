@@ -35,7 +35,11 @@ What this exercises against each target:
     /api/lint, /api/wiki/sync/status, /api/graph/stats, /api/graph/schema,
     /api/papers/stats — must return 401 without auth (the knowledge base
     is not anonymously browsable; reads need wiki:read / graph:read /
-    papers:read, or a session token).
+    papers:read, or a session token). When a PAT token is configured for
+    a target, the same set of endpoints is re-exercised with the PAT in
+    the Authorization header and must return 200 with the expected JSON
+    keys — proving scopeGuard accepts a properly-scoped PAT and the
+    handler reaches the real data path.
   * Static SPA — GET / returns HTML that points at /assets/*.js (not the
     old /static/web/... path that broke after the vite.config.ts fix).
   * authGuard enforcement on write endpoints — POST /api/shares/ must
@@ -268,6 +272,96 @@ def test_read_endpoints_require_auth(target: Target, path: str):
     assert response.status_code == 401, f"{path} -> {response.status_code}: {response.text[:200]}"
     body = response.json()
     assert "authentication required" in body.get("detail", "").lower(), body
+
+
+# ---------------------------------------------------------------------------
+# PAT positive path — same endpoints, this time WITH a properly-scoped
+# PAT, must return 200 + handler payload (proves scopeGuard accepts the
+# PAT and the handler reaches the data layer, not just that 401 fires
+# when there's no token).
+# ---------------------------------------------------------------------------
+
+
+# (path, required_scope, required_keys_in_response_body).
+#
+# required_keys is a small list of JSON keys that the handler is
+# expected to surface even when the underlying corpus is empty. The
+# point is to confirm we hit the real handler (and not, e.g., a JSON
+# wrapper from Caddy / PocketBase / an error envelope) — NOT to pin
+# the exact dataset, which would make the nightly brittle against
+# routine wiki / paper changes.
+_READ_ENDPOINTS_PAT = [
+    pytest.param("/api/stats", "wiki:read", ["by_category", "by_type", "entries"], id="stats"),
+    pytest.param("/api/pages", "wiki:read", ["pages"], id="pages"),
+    pytest.param("/api/lint", "wiki:read", ["checked_pages", "issues"], id="lint"),
+    pytest.param("/api/search?q=quantum", "wiki:read", ["query", "results"], id="search"),
+    pytest.param("/api/wiki/sync/status", "wiki:read", ["git", "wiki"], id="wiki-sync-status"),
+    pytest.param("/api/graph/stats", "graph:read", ["nodes", "relationships"], id="graph-stats"),
+    # /api/graph/schema returns labels + relationship types; shape varies
+    # by dataset, so only assert "200 + JSON dict/list" (no key probe).
+    pytest.param("/api/graph/schema", "graph:read", [], id="graph-schema"),
+    pytest.param("/api/papers/stats", "papers:read", ["total", "has_pdf", "has_md"], id="papers-stats"),
+]
+
+
+@pytest.mark.parametrize("path,required_scope,required_keys", _READ_ENDPOINTS_PAT)
+def test_read_endpoints_accept_pat(
+    target: Target, path: str, required_scope: str, required_keys: list[str]
+):
+    """Same read endpoints, this time with the nightly PAT — must 200.
+
+    Self-skips when no token is configured for this target (so the
+    nightly stays green during the window between adding a new scope
+    to the test set and re-minting / updating the PAT secret).
+
+    Failure modes are diagnosed explicitly:
+      * 401 → the PAT was rejected by THIS edge's authGuard. Common
+        cause: cross-edge token mix-up (active-active topology — each
+        edge has an independent users DB).
+      * 403 → the PAT was accepted but lacks the required scope.
+        Re-mint with `--scopes <csv-including-required_scope>`.
+      * non-200 → handler / dependency problem (Neo4j down, wiki repo
+        missing, etc.). Body is dumped so the operator can triage.
+    """
+    token = target.auth_token()
+    if not token:
+        pytest.skip(
+            f"no token for {target.url} (set QATLAS_TOKEN or "
+            "use token-env=NAME in QATLAS_SERVER_TARGETS); "
+            f"cannot validate {required_scope} read path"
+        )
+
+    response = _get(
+        target, path, headers={"Authorization": f"Bearer {token}"}
+    )
+
+    if response.status_code == 401:
+        pytest.fail(
+            f"PAT rejected by {target.url} authGuard on {path} (401). "
+            "Each edge has its own user DB in active-active — check the "
+            f"token matches THIS target's user store. Body: {response.text[:300]}"
+        )
+    if response.status_code == 403:
+        pytest.fail(
+            f"PAT accepted by authGuard but rejected by scopeGuard on "
+            f"{path} (403). Token lacks {required_scope!r}. Re-mint "
+            f"with --scopes including {required_scope}. "
+            f"Body: {response.text[:300]}"
+        )
+    assert response.status_code == 200, (
+        f"{path} with PAT -> {response.status_code}: {response.text[:300]}"
+    )
+
+    body = response.json()
+    assert isinstance(body, (dict, list)), f"{path} returned non-JSON-container: {body!r}"
+    if required_keys:
+        assert isinstance(body, dict), (
+            f"{path} expected dict to probe keys {required_keys}, got {type(body).__name__}"
+        )
+        missing = [k for k in required_keys if k not in body]
+        assert not missing, (
+            f"{path} response missing keys {missing} (got keys {list(body)[:20]})"
+        )
 
 
 # ---------------------------------------------------------------------------

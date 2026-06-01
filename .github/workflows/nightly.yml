@@ -48,7 +48,14 @@ jobs:
           # Per-edge PATs. Mint each one on its own edge:
           #   ssh <edge> sudo -u <user> /path/qatlas-server pat mint \
           #     --user <email> --name nightly-ci \
-          #     --scopes shares:write --expires-in-days 365
+          #     --scopes wiki:read,papers:read,graph:read,shares:write \
+          #     --expires-in-days 365
+          # The scope CSV covers everything the smoke suite exercises:
+          # the wiki/papers/graph read tests + the shares:write write
+          # gate test. Drop any scope here and the matching read-positive
+          # parametrisation will fail with a 403 hint pointing back at
+          # this comment.
+          #
           # The active-active topology means RackNerd and Alibaba have
           # independent SQLite user DBs — a PAT minted on one will get
           # 401 on the other. Two secrets, one per edge.
