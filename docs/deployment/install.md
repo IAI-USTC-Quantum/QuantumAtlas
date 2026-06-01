@@ -89,6 +89,24 @@ sudo qatlasd service install \
     --force
 ```
 
+!!! danger "system mode 必须用 `sudo qatlasd ...`，**不能**用 `sudo -u <user> qatlasd ...`"
+
+    System unit 写到 `/etc/systemd/system/`，需要 root 写权限——这意味着
+    `qatlasd service install --mode system` 的进程**必须**以 EUID=0 运行。
+    同时，渲染出的 unit 里的 `User=` 字段、`ReadWritePaths=` 的家目录锚点
+    都由 binary 内部从 `$SUDO_USER` 反推（见 `cmd/qatlasd/service_cmd.go::resolveSystemUser`
+    + `effectiveHomeDir`）。
+
+    | 调用方式 | EUID | `$SUDO_USER` | 结果 |
+    |---|---|---|---|
+    | `sudo qatlasd service install ...` | 0 ✓ | 你的 login user ✓ | **正确**：写得了 unit，`User=<你>` |
+    | `sudo -u alice qatlasd service install ...` | alice 的 uid ❌ | `root`（sudo 调用者） ❌ | 双重错：1）EUID≠0 写不了 `/etc/systemd/system/` 直接 `permission denied`；2）即便能写，`User=root` 进 unit，daemon 用 root 跑 |
+    | `sudo bash script.sh` 里调 `qatlasd service install ...` | 0 ✓ | 你的 login user ✓（外层 `sudo` 设的） | **正确**：跟方式 1 等价；适合写到部署脚本里 |
+
+    自动化脚本里**绝对不要**在 `sudo bash ...` 之内再套 `sudo -u`——
+    那是把"我要换运行身份"和"我要写系统文件"两个目标硬拗到一个命令上，
+    永远是冲突的。
+
 | Flag | 默认 | 含义 |
 |---|---|---|
 | `--mode user\|system` | TTY 询问；非 TTY 必填 | unit 安装位置 |

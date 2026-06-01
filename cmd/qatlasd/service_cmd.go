@@ -83,6 +83,33 @@ then writes the unit and starts the service.
 Non-interactive mode (no TTY, e.g. CI / piped stdin): --mode and --force
 are required, no prompts are issued.
 
+# CRITICAL — sudo invocation pattern (system mode)
+
+System mode writes /etc/systemd/system/<name>.service, which requires
+EUID=0. The rendered unit's User= field and ReadWritePaths= anchor are
+ALSO inferred from $SUDO_USER (see resolveSystemUser / effectiveHomeDir
+above). The only correct shapes are:
+
+  RIGHT: sudo qatlasd service install --mode system ...
+         (EUID=0, SUDO_USER=<you>; unit gets User=<you>)
+
+  RIGHT: sudo bash deploy.sh        # script body runs qatlasd directly
+         (script inherits EUID=0 + SUDO_USER=<you>; unit gets User=<you>)
+
+  WRONG: sudo -u <user> qatlasd service install --mode system ...
+         Two failure modes stacked:
+           1. EUID becomes <user> (not 0), so writing the unit file fails
+              with "open /etc/systemd/system/<name>.service: permission denied".
+           2. Even if step 1 somehow succeeded, SUDO_USER would be "root"
+              (the sudo invoker), so resolveSystemUser() would emit
+              User=root into the unit — the daemon would run as root,
+              not as <user>.
+
+If you need the daemon to run as a user OTHER than the one invoking
+sudo, set the user explicitly in the rendered unit's User= field by
+running sudo from THAT user's shell (login as them, then sudo). The
+"sudo -u" sandwich is never the right answer.
+
 Examples:
   # Interactive — auto-detect everything, prompt at each step
   qatlasd service install
@@ -90,6 +117,10 @@ Examples:
   # CI-style — fully explicit, no prompts
   qatlasd service install --mode user \
       --dotenv-path ~/QuantumAtlas/.env --force
+
+  # CI-style system mode (run as your normal user, sudo to install)
+  sudo qatlasd service install --mode system \
+      --dotenv-path /etc/quantum-atlas/.env --force
 
   # Preview the rendered unit without writing
   qatlasd service install --dry-run --mode system \
