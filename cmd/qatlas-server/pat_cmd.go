@@ -108,7 +108,8 @@ func patMintCommand(app core.App) *cobra.Command {
 			description = strings.TrimSpace(description)
 
 			if userRef == "" {
-				return errors.New("--user is required (email or user record id)")
+				return errors.New("--user is required (email or users record id)\n" +
+					"hint: run `qatlas-server users list` to see who's registered on this edge")
 			}
 			if name == "" {
 				return errors.New("--name is required")
@@ -312,13 +313,13 @@ func lookupUser(app core.App, ref string) (*core.Record, error) {
 	if strings.Contains(ref, "@") {
 		rec, err := app.FindAuthRecordByEmail(auth.UsersCollection, ref)
 		if err != nil {
-			return nil, fmt.Errorf("no users record with email %q", ref)
+			return nil, fmt.Errorf("no users record with email %q (run `qatlas-server users list` to see candidates)", ref)
 		}
 		return rec, nil
 	}
 	rec, err := app.FindRecordById(auth.UsersCollection, ref)
 	if err != nil {
-		return nil, fmt.Errorf("no users record with id %q", ref)
+		return nil, fmt.Errorf("no users record with id %q (run `qatlas-server users list` to see candidates)", ref)
 	}
 	return rec, nil
 }
