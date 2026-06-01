@@ -1,49 +1,71 @@
-# NAS RustFS + Fluent Bit notify relay — docker compose 模板
-#
-# 实测验证版（RustFS 1.0.0-beta.5 + Fluent Bit 3.2.10）。
-#
-# 两个必守的配置点（实测踩出来的）：
-#   1. QUEUE_DIR 必须指向容器内可写路径（/data/.notify-events）。
-#      默认 /opt/rustfs/events 不可写 → target 创建失败。
-#   2. mc event add 的 ARN 必须小写（env 后缀被小写化成 account_id）。
-#      大写 ARN 静默丢弃所有事件。
-#
-# 占位符：
-#   <RUSTFS_ROOT_ACCESS_KEY> / <RUSTFS_ROOT_SECRET_KEY> — RustFS root identity
-#   <SINK_ACCESS_KEY> / <SINK_SECRET_KEY> — rustfs_notify_bootstrap.sh 输出的 sink svcacct
-#
-# 桶绑定（一次性，bootstrap 脚本做）：
-#   bash scripts/rustfs_notify_bootstrap.sh
-#   （绑 5 个资产桶到小写 ARN arn:rustfs:sqs::qatlas:webhook）
+# ────────────────────────────────────────────────────────────────────────────
+# NAS RustFS docker-compose
+# 完整架构 + 运维约定见 QuantumAtlas .github/copilot-instructions.md
+# "RustFS 服务（@ NAS docker）" + "T10" 章节
+# ────────────────────────────────────────────────────────────────────────────
 
 services:
+  # ──────────────────────────────────────────────────────────────────────────
+  # fluent-bit: RustFS 通知事件中继
+  # ──────────────────────────────────────────────────────────────────────────
+  # T10 链路: RustFS notify webhook → fluent-bit:9880 (HTTP input) →
+  #          S3 PutObject → qatlas-s3-events bucket
+  #
+  # 用途: 把 RustFS 的对象事件 (Put/Delete/CompleteMultipartUpload) 持久化
+  # 到 S3 作为 audit log,供 qatlas-server papers sync 兜底对账用。
+  # 流式 NDJSON,按时间 partition (/YYYY/MM/DD/HH-MM-SS-<uuid>.json)
+  # 直接 mc cat qatlas-s3-events/<date>/*.json | jq 可读。
+  #
+  # upload_timeout (fluent-bit S3 output 参数, 默认 10m, 我们设 1m):
+  # fluent-bit 不逐条实时写 S3——它攒批上传。两个条件先到先触发:
+  #   ① total_file_size (默认 100MB) 攒够大小
+  #   ② upload_timeout 攒够时间
+  # 低频写操作下 ① 基本触不到, 所以 ② 决定延迟。1m = 最多 1 分钟落地。
+  # 改更小 (10s) = 更多小对象 PUT; 改更大 (10m 默认) = 省 PUT 但延迟高。
+  # 源码: github.com/fluent/fluent-bit plugins/out_s3/s3.c
+  # 文档: https://docs.fluentbit.io/manual/data-pipeline/outputs/s3.md
+  #
+  # 凭据 (AWS_*): qatlas-s3-events-writer svcacct 的 access key,policy
+  # `qatlas-s3-events-writer` 只授对该单 bucket 的 PutObject。
+  # bootstrap 见 scripts/rustfs_notify_bootstrap.sh。
+  # ⚠️ 改 svcacct 流程: DSM 改 AWS_* env → recreate 这个 service 即可,
+  #    RustFS 侧不需要动 (rustfs 不直连 S3,只推 HTTP 到 fluent-bit)。
+  #
+  # durability: fluent-bit S3 output 自带 buffer (RustFS 挂时缓冲),
+  # RustFS notify 也有自己的 QUEUE_DIR 磁盘队列 (fluent-bit 挂时缓冲),
+  # 两层都不丢事件。
   fluent-bit:
     image: docker.1panel.live/fluent/fluent-bit:3.2.10
     container_name: rustfs-notify-relay
     restart: unless-stopped
     environment:
-      AWS_ACCESS_KEY_ID: "<SINK_ACCESS_KEY>"
-      AWS_SECRET_ACCESS_KEY: "<SINK_SECRET_KEY>"
+      AWS_ACCESS_KEY_ID: "<SINK_ACCESS_KEY>"           # rustfs_notify_bootstrap.sh 输出
+      AWS_SECRET_ACCESS_KEY: "<SINK_SECRET_KEY>"       # 同上
     command:
       - -i
-      - http
-      - -o
-      - stdout
-      - -m
-      - "*"
+      - http              # HTTP input: 监听 :9880, 接收 RustFS POST 的 JSON 事件
       - -o
       - s3
-      - -m
-      - "*"
       - -p
-      - endpoint=http://rustfs:9000
+      - endpoint=http://rustfs:9000   # compose 内网, fluent-bit 通过 service 名访问 RustFS
       - -p
       - bucket=qatlas-s3-events
       - -p
-      - use_put_object=On
+      - use_put_object=On             # 强制单次 PutObject, 不走 multipart (事件批量 <5MB)
       - -p
-      - "s3_key_format=/%Y/%m/%d/%H-%M-%S-$UUID.json"
+      - upload_timeout=1m             # 最多攒 1 分钟就上传一批 (默认 10m 太慢)
+      - -p
+      - "s3_key_format=/%Y/%m/%d/%H-%M-%S-$$UUID.json"
 
+  # ──────────────────────────────────────────────────────────────────────────
+  # rustfs: 对象存储 server (MinIO 替代品,Rust 重写)
+  # ──────────────────────────────────────────────────────────────────────────
+  # 监听:
+  #   :9000 - S3 API,qatlas-server + 客户端 + fluent-bit 都走这
+  #   :9001 - admin console,只局域网/mesh,不对外
+  # storage: rustfs_data 卷 (DSM @docker volumes,EC=1 单盘)
+  # auth: 根 key (RUSTFS_ACCESS_KEY/_SECRET_KEY) 是 god mode,生产应用层
+  #       一律用子用户 svcacct (qatlas-server, qatlas-s3-events-writer, ...)
   rustfs:
     image: docker.1panel.live/rustfs/rustfs:latest
     container_name: rustfs
@@ -54,14 +76,55 @@ services:
     environment:
       RUSTFS_ACCESS_KEY: "<RUSTFS_ROOT_ACCESS_KEY>"
       RUSTFS_SECRET_KEY: "<RUSTFS_ROOT_SECRET_KEY>"
-      RUSTFS_OBS_LOG_STDOUT_ENABLED: "true"
+
+      # ── 事件通知 (T10) ──
+      # webhook target 推到 fluent-bit (上面 service);桶→target 订阅另一层
+      # (mc event add) 由 scripts/rustfs_notify_bootstrap.sh 维护
       RUSTFS_NOTIFY_ENABLE: "true"
       RUSTFS_NOTIFY_WEBHOOK_ENABLE_QATLAS: "on"
       RUSTFS_NOTIFY_WEBHOOK_ENDPOINT_QATLAS: "http://fluent-bit:9880/"
+      # ⚠️ QUEUE_DIR 必须可写,默认 /opt/rustfs/events 容器内不可写 → 用 /data/.notify-events
       RUSTFS_NOTIFY_WEBHOOK_QUEUE_DIR_QATLAS: "/data/.notify-events"
       RUSTFS_NOTIFY_WEBHOOK_QUEUE_LIMIT_QATLAS: "100000"
+
+      # ────────────────────────────────────────────────────────────
+      # 【RUSTFS_DRIVE_TIMEOUT_PROFILE = high_latency】 ★ 关键 ★
+      # ────────────────────────────────────────────────────────────
+      # 内置预设,把所有 drive 层操作 timeout 从默认 5s 一次性放大到 60s:
+      #   LIST_DIR / WALKDIR / WALKDIR_STALL / METADATA / DISK_INFO 全部 5→60。
+      # 适用场景:HDD + 大目录(>10k obj)。我们 25k+ jpg 的 image shard 撞
+      # 默认 5s 必挂,mc 错误显示 "bucket does not exist" 实为客户端误诊断,
+      # 真错是 server 端 walkdir 超时。
+      # 源码见 crates/config/src/constants/drive.rs:90,94
+      # 不想用 profile 可逐 env 单调,如 RUSTFS_DRIVE_WALKDIR_TIMEOUT_SECS=60。
+      RUSTFS_DRIVE_TIMEOUT_PROFILE: "high_latency"
+
+      # ────────────────────────────────────────────────────────────
+      # GetObject 路径 timeout (independent of drive profile)
+      # ────────────────────────────────────────────────────────────
+      # 默认 30s,大对象 + HDD 不够。覆盖每个 GetObject S3 请求硬上限。
+      RUSTFS_OBJECT_GET_TIMEOUT: "120"
+      # 默认 5s,dynamic timeout 下限。治 "Io error: timeout" 小对象 5xx。
+      RUSTFS_OBJECT_MIN_TIMEOUT: "60"
+
+      # ────────────────────────────────────────────────────────────
+      # File logging (crates/obs/src/telemetry/local.rs + Dockerfile:104)
+      # ────────────────────────────────────────────────────────────
+      # 写到 bind mount /logs (./rustfs-logs:/logs),agent 可读
+      RUSTFS_OBS_LOG_DIRECTORY: "/logs"
+      # Dockerfile 强制 LOGGER_LEVEL=warn (代码默认 error,image 比代码默认放宽 1 档)。
+      # 但 "Init file logging at..." 是 info!() — warn filter 掉它,
+      # RollingFileAppender lazy create 不触发,导致 /logs 永远空。
+      # 调成 info → 启动会落 file log + 后续 INFO 事件全可读。
+      RUSTFS_OBS_LOGGER_LEVEL: "info"
+      # rotation 默认就是 hourly,显式写出来易读
+      RUSTFS_OBS_LOG_ROTATION_TIME: "hourly"
+      # 保留 168 个 active hourly log (=7天);老的自动压成 .zst 再留 30 天
+      RUSTFS_OBS_LOG_KEEP_FILES: "168"
+
     volumes:
-      - rustfs_data:/data
+      - rustfs_data:/data       # 对象数据 + .notify-events 队列
+      - ./rustfs-logs:/logs     # bind mount,host 路径 /volume1/docker/rustfs-logs/
 
 volumes:
   rustfs_data:
