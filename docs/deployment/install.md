@@ -38,7 +38,7 @@ QATLAS_VERSION=v0.2.8 QATLAS_INSTALL_DIR=/opt/qatlas/bin \
 
 ### Release 资产的校验方式
 
-每次 release 都通过 [`.github/workflows/release.yml`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.github/workflows/release.yml) 自动生成两类校验产物，全部走业界标准格式，可被通用工具直接消费。两条路径都是**可选**的手动操作，给愿意做额外验证的用户用。
+每次 release 都通过 [`.github/workflows/release.yml`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.github/workflows/release.yml) 自动生成两类校验产物——`SHA256SUMS` 自始即有，**SLSA build provenance attestation 自 v0.12.0 起**（更早 release 仅前者，attestation API 查 v0.11.x 及之前的 binary 会返回空）。全部走业界标准格式，可被通用工具直接消费。两条路径都是**可选**的手动操作，给愿意做额外验证的用户用。
 
 #### 1. `SHA256SUMS`（POSIX `sha256sum` 标准格式）
 
