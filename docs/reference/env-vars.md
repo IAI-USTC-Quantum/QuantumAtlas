@@ -127,6 +127,25 @@ OAuth callback URL 必须填成 `https://<your-server>/api/oauth2-redirect`。
 
 这是 qatlasd 端**唯一**与写入留痕相关的 env。sink 本身**不在我们的 binary / `.env` 里**——由一个通用、零后端约定的日志转发器（Fluent Bit）作为 sidecar 跑在 NAS 上 RustFS 旁边，接 RustFS notify webhook（per-bucket subscribe，5 个资产桶 PUT/DELETE 推到 sink）、写进 `qatlas-s3-events` 桶。sink 用的 svcacct key（`qatlas-s3-events-writer`）、桶名、订阅列表全在 NAS 侧 Fluent Bit / RustFS compose 配置里，与 server 解耦——这样 dumb 存储层不被我们演进中的后端约定绑死。判定主键是 SigV4 `accessKey`（不可伪造）。整套部署见 [RustFS 部署 · 写入留痕](../deployment/rustfs.md#写入留痕-audit-sink-t10)。
 
+## Server: System PAT（运维兜底 bearer）
+
+可选的、与 PocketBase 完全无关的 bearer token，**直接从 env 加载、永不落 pb_data**。给"pb_data 不可用 / 还没人登录 / CI 不想绑具体人"等运维兜底场景。完整设计见 [鉴权模型 § System PAT](../concepts/auth-model.md#system-pat-运维专用-breaking-glass-token)。
+
+| 变量 | 必填 | 默认 | 含义 |
+|---|---|---|---|
+| `QATLAS_SYSTEM_PAT` | ❌ | unset（功能关闭） | 单个全局 bearer 的明文；HTTP 请求带 `Authorization: Bearer <这串>` 即过 authGuard。设了启动 log 会有 `system PAT enabled (length=N scopes=[...])` 一行（**不打明文**）|
+| `QATLAS_SYSTEM_PAT_SCOPES` | ❌ | `*`（master，等价 session）| CSV 限定该 token 能调什么；词表跟 user PAT 一致，额外允许 `*`。少数运维想 least-privilege 时用，例如 `wiki:read,papers:read,graph:read`|
+
+启动时长度 < 16 字符**直接 fatal**——防止有人填了 `secret` / 空格 / 之类 placeholder 上 prod。生成办法：
+
+```bash
+openssl rand -base64 32         # 推荐
+python -c 'import secrets; print(secrets.token_urlsafe(32))'
+uuidgen
+```
+
+前缀格式随意，不强制 `qats_` 之类。能读 .env 的人 = superuser-equivalent，但 .env 早就有 S3 / Neo4j / GitHub 同等敏感的 secret，新增 system PAT 不扩大现有攻击面。
+
 ## Server: Share URL
 
 | 变量 | Alias | 默认 | 作用 |

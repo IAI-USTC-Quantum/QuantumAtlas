@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/pat"
+
 	"github.com/pocketbase/pocketbase/core"
 )
 
@@ -153,4 +155,75 @@ func TestDecodeScopes(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestSystemPAT_IntegrationViaIsAuthorized exercises the system PAT
+// path end-to-end through the same isAuthorized entrypoint that
+// every real handler uses. The pat.Match unit tests in
+// internal/pat/system_pat_test.go already cover the byte compare
+// in isolation; this test covers the WIRING in routes/auth.go:
+// that UseSystemPAT mounts the matcher, that isAuthorized actually
+// consults it before the user-PAT path, and that the request keys
+// (authSourceKey, authScopesKey) end up populated with the right
+// values so sessionGuard / scopeGuard downstream behave correctly.
+func TestSystemPAT_IntegrationViaIsAuthorized(t *testing.T) {
+	// Build a synthetic system PAT in the env, load it, mount it.
+	// t.Setenv + t.Cleanup keep this test fully isolated from any
+	// real QATLAS_SYSTEM_PAT the dev's shell might carry.
+	const plaintext = "system-pat-integration-test-secret"
+	t.Setenv("QATLAS_SYSTEM_PAT", plaintext)
+	t.Setenv("QATLAS_SYSTEM_PAT_SCOPES", "wiki:read,papers:write")
+
+	sysPAT, err := pat.LoadSystemPAT()
+	if err != nil {
+		t.Fatalf("LoadSystemPAT: %v", err)
+	}
+	if sysPAT == nil {
+		t.Fatal("LoadSystemPAT returned nil — env wiring broken")
+	}
+	UseSystemPAT(sysPAT)
+	t.Cleanup(func() { UseSystemPAT(nil) })
+
+	t.Run("matching bearer authenticates as system", func(t *testing.T) {
+		re := makeRE("Bearer " + plaintext)
+		if !isAuthorized(re) {
+			t.Fatal("isAuthorized rejected matching system PAT")
+		}
+		if got, _ := re.Get(authSourceKey).(string); got != authSourceSystemPAT {
+			t.Errorf("authSourceKey = %q, want %q", got, authSourceSystemPAT)
+		}
+		scopes, _ := re.Get(authScopesKey).([]string)
+		if len(scopes) != 2 || scopes[0] != "wiki:read" || scopes[1] != "papers:write" {
+			t.Errorf("authScopesKey = %v, want [wiki:read papers:write]", scopes)
+		}
+		if re.Auth != nil {
+			t.Errorf("re.Auth must stay nil for system PAT (no users row); got %v", re.Auth)
+		}
+	})
+
+	t.Run("wrong bearer falls through (no user PAT, no session → 401)", func(t *testing.T) {
+		re := makeRE("Bearer not-the-system-pat-and-not-qat-prefixed")
+		if isAuthorized(re) {
+			t.Fatal("isAuthorized should not accept a bearer that matches neither system nor user PAT")
+		}
+	})
+}
+
+// UseSystemPAT(nil) MUST disable the feature entirely so tests
+// that don't opt in don't accidentally inherit a previous test's
+// matcher. Pinned because the global-state pattern is fragile.
+func TestSystemPAT_UseNilDisables(t *testing.T) {
+	t.Setenv("QATLAS_SYSTEM_PAT", "would-have-matched-if-not-cleared-xyz")
+	sysPAT, err := pat.LoadSystemPAT()
+	if err != nil {
+		t.Fatal(err)
+	}
+	UseSystemPAT(sysPAT)
+	UseSystemPAT(nil)
+	t.Cleanup(func() { UseSystemPAT(nil) })
+
+	re := makeRE("Bearer would-have-matched-if-not-cleared-xyz")
+	if isAuthorized(re) {
+		t.Fatal("isAuthorized authenticated even after UseSystemPAT(nil) cleared the matcher")
+	}
 }

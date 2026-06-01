@@ -174,12 +174,30 @@ func Allows(enforcer *casbin.Enforcer, held []string, obj, act string) (bool, er
 // is a valid intermediate state; the create handler may refuse it
 // separately if we want to require at least one scope).
 func ValidateScopes(scopes []string) error {
+	return validateScopes(scopes, false)
+}
+
+// ValidateScopesIncludingMaster is the operator-trusted variant of
+// ValidateScopes: it accepts ScopeMaster ("*") as a valid entry, in
+// addition to everything in AllScopes. Used for credentials loaded
+// from the server's own environment (system PAT) — those are not
+// "user input" in the same sense as JSON posted to /api/pat; the
+// operator who set the env var already controls the box and could
+// just write to the DB directly.
+func ValidateScopesIncludingMaster(scopes []string) error {
+	return validateScopes(scopes, true)
+}
+
+func validateScopes(scopes []string, allowMaster bool) error {
 	known := make(map[string]struct{}, len(AllScopes))
 	for _, s := range AllScopes {
 		known[s] = struct{}{}
 	}
 	for _, s := range scopes {
 		if s == ScopeMaster {
+			if allowMaster {
+				continue
+			}
 			return errors.New("pat: wildcard scope is not allowed in user input")
 		}
 		if _, ok := known[s]; !ok {

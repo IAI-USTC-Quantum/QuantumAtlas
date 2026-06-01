@@ -1,10 +1,17 @@
 // Package routes contains the QuantumAtlas HTTP handlers.
 //
 // authGuard returns a wrapper that gates a PocketBase route handler on
-// the caller presenting a valid credential. Two credential types are
+// the caller presenting a valid credential. Three credential types are
 // accepted, in this order:
 //
-//  1. A QuantumAtlas Personal Access Token (PAT) — bearer string
+//  1. A system PAT (optional, env-loaded breaking-glass token) — the
+//     plaintext from QATLAS_SYSTEM_PAT, compared constant-time.
+//     Unbound to any users record (pb_data may be unavailable when
+//     the operator needs this), authenticates as a synthetic system
+//     identity with the scope set from QATLAS_SYSTEM_PAT_SCOPES
+//     (defaults to ScopeMaster). Disabled when the env var is unset.
+//
+//  2. A QuantumAtlas Personal Access Token (PAT) — bearer string
 //     starting with "qat_", looked up via the pat package and the
 //     pat_tokens collection. Long-lived, user-managed via the SPA's
 //     /pat page. The matched users record is mounted on re.Auth so
@@ -12,7 +19,7 @@
 //     in user. The PAT's scope list is stashed in re via Set so the
 //     scopeGuard middleware can enforce fine-grained access.
 //
-//  2. A PocketBase user JWT — short-lived (default 14d), issued by the
+//  3. A PocketBase user JWT — short-lived (default 14d), issued by the
 //     GitHub OAuth flow and surfaced on the SPA's /token page. The
 //     PocketBase middleware that runs upstream of our handlers already
 //     populates re.Auth from this header; we only need to confirm the
@@ -20,9 +27,11 @@
 //     get pat.ScopeMaster — what the user can do in the SPA, the
 //     token they copy from /token can do too.
 //
-// There is no shared-secret fallback by design — every CLI / browser
-// caller goes through the same auth surface and ends up with a per-
-// user record on re.Auth.
+// The system PAT is the only path that authenticates without a users
+// record on re.Auth. sessionGuard (used by /api/pat) rejects it for
+// the same reason it rejects user PATs: a leaked credential must not
+// be able to mint more PAT records. Every other handler ignores
+// re.Auth, so the system PAT works transparently for them.
 //
 // Endpoints that stay open without auth: /api/health, /api/server/info,
 // /install-server.sh, /swagger/*, /api/pat/scopes (pure constant — the
@@ -38,13 +47,14 @@
 // Two further wrappers layer on top of authGuard:
 //
 //   - sessionGuard: like authGuard but rejects PAT-authenticated
-//     callers. Used by /api/pat itself so a leaked PAT can't be used
-//     to mint more PATs (mirrors GitHub fine-grained PAT design).
+//     callers (both user and system PATs). Used by /api/pat itself
+//     so a leaked PAT can't be used to mint more PATs (mirrors
+//     GitHub fine-grained PAT design).
 //
 //   - scopeGuard: requires a specific (resource, action) scope. Used
 //     by every read endpoint (*:read) and every write endpoint
-//     (*:write). Session callers bypass the check via the implicit
-//     ScopeMaster short-circuit in pat.Allows.
+//     (*:write). Session callers and system PATs holding ScopeMaster
+//     bypass the check via the implicit short-circuit in pat.Allows.
 
 package routes
 
@@ -72,9 +82,36 @@ const (
 // callers). Stored as a string in the request event store so callers
 // don't need to know about this type alias.
 const (
-	authSourceSession = "session"
-	authSourcePAT     = "pat"
+	authSourceSession   = "session"
+	authSourcePAT       = "pat"
+	authSourceSystemPAT = "system-pat"
 )
+
+// systemPAT is the optional, env-loaded breaking-glass token. nil
+// means the feature is disabled (the most common case). Set once
+// at server startup via UseSystemPAT and never mutated afterwards.
+//
+// Stored as a package-level singleton (rather than threaded into
+// every handler signature) because:
+//
+//   - It is server-wide state with a single source of truth (one
+//     env var, one in-memory value).
+//   - isAuthorized is the only consumer, and it cannot easily be
+//     parameterised without changing the cobra-mounted middleware
+//     signatures every other route depends on.
+//   - Tests that need a custom system PAT call UseSystemPAT in
+//     their setup and reset it with t.Cleanup; isolation is fine
+//     because each test runs in a single goroutine sequence.
+var systemPAT *pat.SystemPAT
+
+// UseSystemPAT mounts the loaded SystemPAT for authGuard to
+// consult. Call once at server startup, before any request is
+// served. Passing nil disables the feature explicitly (the
+// default zero value also disables it; UseSystemPAT(nil) is for
+// tests that want to clear a previously-set value).
+func UseSystemPAT(s *pat.SystemPAT) {
+	systemPAT = s
+}
 
 // authGuard wraps a handler so it is only invoked for authenticated
 // callers. Returns 401 otherwise. The caller's auth state is
@@ -109,24 +146,45 @@ func sessionGuard(handler func(re *core.RequestEvent) error) func(re *core.Reque
 }
 
 // isAuthorized returns true when the request carries an acceptable
-// credential. It does two things, in order:
+// credential. It checks three paths, in this order:
 //
-//  1. PAT path: if the Authorization header is "Bearer qat_..." we
-//     resolve it against the pat_tokens collection. On success we
-//     mount the linked users record on re.Auth (so downstream
+//  1. System PAT path (optional, env-configured): if a SystemPAT is
+//     mounted via UseSystemPAT and the bearer matches it bit-for-bit
+//     (constant-time), we mark the request as system-sourced and
+//     stash the configured scope list. re.Auth STAYS nil — system
+//     PATs are not tied to any users row; handlers that need a
+//     user record (currently only /api/pat itself) are gated by
+//     sessionGuard which rejects this source.
+//
+//  2. User PAT path: if the Authorization header is "Bearer qat_..."
+//     we resolve it against the pat_tokens collection. On success
+//     we mount the linked users record on re.Auth (so downstream
 //     handlers behave the same as for a JWT-authed request), stash
 //     the granted scope list under authScopesKey, mark the request
 //     as PAT-sourced, and fire-and-forget a last_used_at bump.
 //
-//  2. Fallback: trust whatever PocketBase's own middleware put on
-//     re.Auth — must be a record in the "users" collection. We mark
-//     the request as session-sourced and grant the master scope so
-//     downstream scopeGuard checks are no-ops.
+//  3. Session fallback: trust whatever PocketBase's own middleware
+//     put on re.Auth — must be a record in the "users" collection.
+//     We mark the request as session-sourced and grant the master
+//     scope so downstream scopeGuard checks are no-ops.
 //
 // Admin allowlist gating remains a separate concern handled by a
 // future requireAdmin wrapper.
 func isAuthorized(re *core.RequestEvent) bool {
-	if token := bearerToken(re); pat.Looks(token) {
+	token := bearerToken(re)
+
+	// System PAT: cheap constant-time check; falls through on miss
+	// (or when the feature is disabled / token shape doesn't fit).
+	// Runs first so it works even when pb_data is unavailable
+	// (the breaking-glass case the feature exists for).
+	if scopes, ok := systemPAT.Match(token); ok {
+		re.Auth = nil
+		re.Set(authSourceKey, authSourceSystemPAT)
+		re.Set(authScopesKey, scopes)
+		return true
+	}
+
+	if pat.Looks(token) {
 		patRec, userRec, err := pat.Lookup(re.App, token)
 		if err != nil {
 			return false

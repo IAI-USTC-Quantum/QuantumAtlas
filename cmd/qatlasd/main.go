@@ -164,6 +164,26 @@ func main() {
 
 	auth.Register(app, cfg)
 
+	// Load the optional system PAT (QATLAS_SYSTEM_PAT in the env) and
+	// mount it for authGuard. Loaded once at startup so isAuthorized
+	// can do a constant-time compare without re-reading the env on
+	// every request. Logs:
+	//   - feature on  → "system PAT enabled (length=N scopes=[...])"
+	//   - feature off → "system PAT disabled (QATLAS_SYSTEM_PAT unset)"
+	//   - malformed   → fatal: the operator clearly INTENDED to enable
+	//     it (env is set) and we should not silently fall through.
+	if sysPAT, err := pat.LoadSystemPAT(); err != nil {
+		log.Fatalf("system PAT: %v", err)
+	} else if sysPAT != nil {
+		routes.UseSystemPAT(sysPAT)
+		slog.Info("system PAT enabled",
+			"length", sysPAT.Length(),
+			"scopes", sysPAT.Scopes(),
+		)
+	} else {
+		slog.Info("system PAT disabled (QATLAS_SYSTEM_PAT unset)")
+	}
+
 	// Mount the `pat` subcommand group. This MUST come before
 	// app.Start() — cobra binds commands by reference at parse time,
 	// and any additions after the root walks os.Args are ignored.
