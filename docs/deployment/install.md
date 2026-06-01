@@ -2,7 +2,7 @@
 
 两步：
 
-1. **`install-server.sh`** 下载 binary（不动 systemd）
+1. **`install-qatlasd.sh`** 下载 binary（不动 systemd）
 2. **`qatlasd service install`** 注册成 systemd / launchd / SCM 服务
 
 两步分开是有意的——install 脚本要 POSIX sh 极简，service 注册需要交互 / 多 flag，分开后各自负责自己的事。
@@ -11,31 +11,70 @@
 
 ```bash
 # 装最新 release 到 ~/.local/bin/qatlasd
-curl -fsSL https://quantum-atlas.ai/install-server.sh | sh
+curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh
 
 # 锁定版本
-curl -fsSL https://quantum-atlas.ai/install-server.sh | sh -s -- --version v0.2.8
+curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh -s -- --version v0.2.8
 
 # 装到指定目录
-curl -fsSL https://quantum-atlas.ai/install-server.sh | sh -s -- --dir /opt/qatlas/bin
+curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh -s -- --dir /opt/qatlas/bin
 
 # 环境变量同义
 QATLAS_VERSION=v0.2.8 QATLAS_INSTALL_DIR=/opt/qatlas/bin \
-    curl -fsSL https://quantum-atlas.ai/install-server.sh | sh
+    curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh
 ```
 
-支持 `linux/{amd64,arm64}` + `darwin/{amd64,arm64}` 四个平台。脚本自动 SHA256 校验。
+支持 `linux/{amd64,arm64}` + `darwin/{amd64,arm64}` 四个平台。脚本本身**不做二次哈希校验**——下载完整性靠 HTTPS（curl/wget 校验 GitHub CA 链）保证，从同一个 release 拉 `SHA256SUMS` 来比对是自签名（能改 binary 的攻击者同时改了 manifest）。需要更强保证的场景请走下面 [Release 资产的校验方式](#release-资产的校验方式)。
 
 ### 脚本内部行为
 
 1. 检测 OS/arch
 2. 解析 GitHub Release 的 `latest` redirect 拿 tag（不调 API，避免限流）
-3. 下载 `qatlasd-<os>-<arch>` 到目标目录
-4. 下载 `checksums.txt` 验 SHA256
-5. `chmod +x`
-6. 打印 next-step 提示
+3. HTTPS 下载 `qatlasd-<os>-<arch>` 到目标目录
+4. `chmod +x`
+5. 打印 next-step 提示
 
 **全 POSIX sh**（不依赖 bash），所以 Alpine / BusyBox / macOS sh 都能跑。
+
+### Release 资产的校验方式
+
+每次 release 都通过 [`.github/workflows/release.yml`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.github/workflows/release.yml) 自动生成两类校验产物，全部走业界标准格式，可被通用工具直接消费。两条路径都是**可选**的手动操作，给愿意做额外验证的用户用。
+
+#### 1. `SHA256SUMS`（POSIX `sha256sum` 标准格式）
+
+Release 资产里有一个 `SHA256SUMS` 文件，每行 `<sha256>  <basename>`，覆盖**全部** release 产物（4 个 binary + wheel + sdist）。**有意义的用法是跨网络/跨时段比对**——在 GitHub Release 网页上肉眼记下 hash，或在一台机器上拉 manifest、在另一台机器/镜像源拉到 binary 后本地校验：
+
+```bash
+# Linux / WSL
+sha256sum -c --ignore-missing SHA256SUMS
+
+# macOS / BSD
+shasum -a 256 -c --ignore-missing SHA256SUMS
+```
+
+`--ignore-missing` 让校验只针对当前目录里实际存在的文件，省去预先 grep 出自己关心那一行的麻烦。能挡：跨源传输不一致、镜像投毒、本地落盘损坏。**挡不了**有 release 写权限的攻击者同时改 binary + SHA256SUMS 的"完整链替换"——那种攻击的防线是下面的 attestation。
+
+#### 2. SLSA Build Provenance Attestation（Sigstore Bundle 标准格式）
+
+每个 release artifact 在打包时同步用 [`actions/attest-build-provenance`](https://github.com/actions/attest-build-provenance) 走 GitHub OIDC + Sigstore 公开实例**密钥学签名**，把 `(artifact digest, repo, commit, workflow file, runner, timestamp)` 绑定起来。attestation 落 GitHub 自家的 Attestations API（不是 release 资产），有两种通用工具可验，都不依赖任何专属凭据：
+
+```bash
+# 方式 A: gh CLI（最简单，自动拉 bundle + 验签 + 验 cert identity 一气呵成）
+gh attestation verify ./qatlasd-linux-amd64 --repo IAI-USTC-Quantum/QuantumAtlas
+
+# 方式 B: 纯 curl + cosign（任何机器，零安装 gh CLI，可断网验证）
+ARTIFACT=qatlasd-linux-amd64
+DIGEST=$(sha256sum "$ARTIFACT" | awk '{print $1}')
+curl -fsSL -H "Accept: application/vnd.github+json" \
+  "https://api.github.com/repos/IAI-USTC-Quantum/QuantumAtlas/attestations/sha256:${DIGEST}" \
+  | jq -r '.attestations[0].bundle' > qatlasd.sigstore.json
+cosign verify-blob "$ARTIFACT" \
+  --bundle qatlasd.sigstore.json \
+  --certificate-identity-regexp '^https://github\.com/IAI-USTC-Quantum/QuantumAtlas/\.github/workflows/release\.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+attestation 能挡的额外攻击面：源仓库写权限被劫持后的恶意 release（重新签名需要在 `IAI-USTC-Quantum/QuantumAtlas` 仓库的 release.yml workflow 里跑出 OIDC token，PAT / Personal Token 拿不到）、typosquatting fork 钓鱼（cert identity 直接绑 source repo path）。日常装机不需要这一步——SLSA attestation 是给安全敏感场景（CI/CD pipeline、企业 SRE 审计、需要 SLSA L3 合规凭证的部署）的可选强校验路径。
 
 ### 常见错误
 
@@ -180,7 +219,7 @@ curl http://127.0.0.1:4200/api/health | jq
 
 ```bash
 # 装 v0.2.9
-curl -fsSL https://quantum-atlas.ai/install-server.sh | sh -s -- --version v0.2.9
+curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh -s -- --version v0.2.9
 
 # 让 service 用新 binary
 sudo systemctl restart qatlasd

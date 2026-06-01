@@ -53,7 +53,7 @@ func docServerInfo() {}
 // @Tags        System
 // @Produce     plain
 // @Success     200 {string} string "shell script"
-// @Router      /install-server.sh [get]
+// @Router      /install-qatlasd.sh [get]
 func docInstallServer() {}
 
 // --- Wiki --------------------------------------------------------------------

@@ -18,7 +18,7 @@
 !!! danger "三条铁律"
 
     1. **`Host` header 必须 preserve**——RustFS 用 SigV4 验签把 Host 算进 canonical request，反代改写 Host 会让 `/share/...` presigned URL 返回 `SignatureDoesNotMatch`。
-    2. **`/_/`、`/api/`、`/share/`、`/install-server.sh` 全部转发**——SPA catch-all 在 server 这边处理，不要在反代层面截留。
+    2. **`/_/`、`/api/`、`/share/`、`/install-qatlasd.sh` 全部转发**——SPA catch-all 在 server 这边处理，不要在反代层面截留。
     3. **WebSocket 透传**——PocketBase realtime 用 SSE/WS；Caddy v2 默认透传，nginx 需要显式 `proxy_http_version 1.1` + `Upgrade` 头。
 
 ## Caddy（推荐）

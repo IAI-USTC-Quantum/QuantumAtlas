@@ -71,11 +71,11 @@ QuantumAtlas 分两个交付物：
 ```bash
 # 一行装：自动检测 OS/arch、下载最新 binary 到 ~/.local/bin、
 # SHA256 校验。这步只装 binary 本身。
-curl -fsSL https://quantum-atlas.ai/install-server.sh | sh
+curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh
 
 # 钉版本 / 改安装路径
-curl -fsSL https://quantum-atlas.ai/install-server.sh | sh -s -- --version v0.2.5
-curl -fsSL https://quantum-atlas.ai/install-server.sh | sh -s -- --dir /opt/qatlas/bin
+curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh -s -- --version v0.2.5
+curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh -s -- --dir /opt/qatlas/bin
 ```
 
 支持 `linux/{amd64,arm64}` + `darwin/arm64` 三个平台（Intel Mac 用 [`go install`](docs/deployment.md#b-go-install) 路径）。

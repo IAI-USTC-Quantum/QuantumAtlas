@@ -46,7 +46,7 @@
 
 ??? question "我有 ARM VPS（aarch64），能装吗？"
 
-    可以。release artifact 出 `linux-arm64`，`install-server.sh` 自动检测。
+    可以。release artifact 出 `linux-arm64`，`install-qatlasd.sh` 自动检测。
 
 ??? question "Docker 镜像有吗？"
 

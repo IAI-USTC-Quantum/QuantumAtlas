@@ -39,7 +39,7 @@
 // re.Auth, so the system PAT works transparently for them.
 //
 // Endpoints that stay open without auth: /api/health, /api/server/info,
-// /install-server.sh, /swagger/*, /api/pat/scopes (pure constant — the
+// /install-qatlasd.sh, /swagger/*, /api/pat/scopes (pure constant — the
 // scope vocabulary), /share/{token} and /share/{token}/{path...} (the
 // token IS the credential), the SPA shell at /{path...} (no data —
 // data lives behind the gated APIs), and the PocketBase OAuth callback

@@ -327,7 +327,7 @@ curl -X POST https://quantum-atlas.ai/api/wiki/sync/pull \
 6. 验证：
     ```bash
     pip install --upgrade quantum-atlas
-    curl https://quantum-atlas.ai/install-server.sh | sh -s -- --version vX.Y.Z
+    curl https://quantum-atlas.ai/install-qatlasd.sh | sh -s -- --version vX.Y.Z
     ```
 
 ## 行为准则

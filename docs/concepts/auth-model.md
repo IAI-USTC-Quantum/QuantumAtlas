@@ -75,7 +75,7 @@ flowchart TD
 | Wiki 读 (`/api/pages`、`/api/search`、`/api/stats`、`/api/lint`、`/api/wiki/sync/status`) | `authGuard + wiki:read` |
 | Graph 读 (`/api/graph/stats`、`/api/graph/schema`、`POST /api/graph/query`) | `authGuard + graph:read` |
 | 论文资产下载 (`GET /api/papers/{path...}`) | `authGuard + papers:read` |
-| Health / Meta (`/api/health`、`/api/server/info`、`/api/pat/scopes`、`/install-server.sh`、`/swagger/*`、SPA `/{path...}`) | **公开**（无数据 / bootstrap / 外壳）|
+| Health / Meta (`/api/health`、`/api/server/info`、`/api/pat/scopes`、`/install-qatlasd.sh`、`/swagger/*`、SPA `/{path...}`) | **公开**（无数据 / bootstrap / 外壳）|
 | Share 读 (`/share/{token}/*`) | **公开**（share token 自带授权）|
 | 论文上传 / mineru 相关 | `authGuard + papers:write` |
 | Wiki 同步 (`POST /api/wiki/sync/pull`) | `authGuard + wiki:write` |

@@ -137,7 +137,7 @@ git remote update
 
 ```bash
 # 1. 拉新 binary（覆盖旧的）
-curl -fsSL https://quantum-atlas.ai/install-server.sh | sh -s -- --version v0.2.9
+curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh -s -- --version v0.2.9
 
 # 2. 看升级日志（如果有 breaking change）
 gh release view v0.2.9   # 或在 GitHub 网页看
@@ -170,7 +170,7 @@ journalctl -u qatlasd -n 30 | grep -iE 'migration|error'
 
 ```bash
 # 装回老版本
-curl -fsSL https://quantum-atlas.ai/install-server.sh | sh -s -- --version v0.2.7
+curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh -s -- --version v0.2.7
 
 # 恢复 pb_data（如果 migration 改了 schema）
 sudo systemctl stop qatlasd

@@ -47,15 +47,15 @@ import (
 	httpSwagger "github.com/swaggo/http-swagger/v2"
 )
 
-// installServerScript is the shell installer served at
-// /install-server.sh. It detects OS/arch, downloads the latest
-// qatlasd release artifact from GitHub, installs to
-// ~/.local/bin, and prints next-step pointers. Kept in a separate
-// file so it can be edited as a real .sh (syntax highlighting +
-// shellcheck) and reviewed standalone.
+// installScript is the POSIX shell installer served at
+// /install-qatlasd.sh. It detects OS/arch, downloads the latest
+// qatlasd release artifact from GitHub, verifies SHA256SUMS,
+// installs to ~/.local/bin, and prints next-step pointers. Kept
+// in a separate file so it can be edited as a real .sh (syntax
+// highlighting + shellcheck) and reviewed standalone.
 //
-//go:embed install-server.sh
-var installServerScript string
+//go:embed install-qatlasd.sh
+var installScript string
 
 // Version is overridden at build time via:
 //
@@ -103,7 +103,7 @@ func main() {
 	// (.env load, Neo4j connect attempt, S3 client init) before
 	// printing the version. Detect the version flag at the top so the
 	// command is cheap, side-effect-free, and dependency-free (no .env
-	// required — useful in install-server.sh / CI smoke checks).
+	// required — useful in install-qatlasd.sh / CI smoke checks).
 	if len(os.Args) >= 2 {
 		switch os.Args[1] {
 		case "--version", "version":
@@ -588,15 +588,22 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 		return re.Next()
 	})
 
-	// /install-server.sh — public installer that downloads the latest
-	// qatlasd binary from GitHub releases. Serves the static
-	// script verbatim. Caching: short max-age so a fresh release is
-	// picked up within ~5 min of cutover but we don't hammer the
-	// server for every curl|sh.
-	se.Router.GET("/install-server.sh", func(re *core.RequestEvent) error {
+	// /install-qatlasd.sh — public installer that downloads the latest
+	// qatlasd binary from GitHub releases. Serves the static script
+	// verbatim. Caching: short max-age so a fresh release is picked
+	// up within ~5 min of cutover but we don't hammer the server for
+	// every curl|sh.
+	//
+	// Note: there is NO redirect from the old /install-qatlasd.sh URL
+	// (it 404s through the SPA catch-all). The rename in v0.12.0 was
+	// deliberate — keeping a redirect would mean operators discover
+	// the new name only when they happen to bypass the redirect, and
+	// the only-version-bumped-after-v0.10.0 docs already point at
+	// /install-qatlasd.sh.
+	se.Router.GET("/install-qatlasd.sh", func(re *core.RequestEvent) error {
 		re.Response.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
 		re.Response.Header().Set("Cache-Control", "public, max-age=300")
-		_, err := re.Response.Write([]byte(installServerScript))
+		_, err := re.Response.Write([]byte(installScript))
 		return err
 	})
 

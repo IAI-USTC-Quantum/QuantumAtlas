@@ -46,7 +46,7 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
 |---|---|---|
 | `GET` | `/api/health` | 健康检查 + 依赖探活 |
 | `GET` | `/api/server/info` | 版本 / 引擎信息 |
-| `GET` | `/install-server.sh` | qatlasd 安装脚本 |
+| `GET` | `/install-qatlasd.sh` | qatlasd 安装脚本 |
 | `GET` | `/swagger/index.html` | 交互式 API 文档（Swagger UI）|
 | `GET` | `/swagger/doc.json` | OpenAPI 2.0 JSON spec |
 | `GET` | `/api/pat/scopes` | 列 PAT scope 词表（纯常量，无用户数据）|

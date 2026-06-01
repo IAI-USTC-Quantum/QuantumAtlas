@@ -17,9 +17,9 @@
 # handling, not a sub-shell, so it has none of the curl|sh problems.
 #
 # Usage:
-#   curl -fsSL https://quantum-atlas.ai/install-server.sh | sh
-#   curl -fsSL https://quantum-atlas.ai/install-server.sh | sh -s -- --version v0.2.5
-#   curl -fsSL https://quantum-atlas.ai/install-server.sh | sh -s -- --dir /opt/qatlas/bin
+#   curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh
+#   curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh -s -- --version v0.2.5
+#   curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh -s -- --dir /opt/qatlas/bin
 #
 # Env overrides (equivalent to flags):
 #   QATLAS_INSTALL_DIR   target directory (default: $HOME/.local/bin)
@@ -42,8 +42,8 @@ while [ $# -gt 0 ]; do
 qatlasd installer
 
 Usage:
-  curl -fsSL https://quantum-atlas.ai/install-server.sh | sh
-  curl -fsSL https://quantum-atlas.ai/install-server.sh | sh -s -- [options]
+  curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh
+  curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh -s -- [options]
 
 Options:
   --version <tag>   Install a specific release tag (default: latest)
@@ -164,26 +164,12 @@ TMPBIN="$TMPDIR/$ASSET"
 
 fetch "$URL" "$TMPBIN" || fail "download failed; the release may not include $ASSET"
 
-# Optional checksum verification — only enforced when checksums.txt is
-# published for this release (Go cross-compile job in release.yml writes
-# one). Older Python-only releases skip silently.
-CHECKSUMS_URL="https://github.com/$REPO/releases/download/$TAG/checksums.txt"
-if have sha256sum || have shasum; then
-    if fetch_stdout "$CHECKSUMS_URL" > "$TMPDIR/checksums.txt" 2>/dev/null; then
-        EXPECTED="$(grep " $ASSET\$" "$TMPDIR/checksums.txt" | awk '{print $1}')"
-        if [ -n "$EXPECTED" ]; then
-            if have sha256sum; then
-                ACTUAL="$(sha256sum "$TMPBIN" | awk '{print $1}')"
-            else
-                ACTUAL="$(shasum -a 256 "$TMPBIN" | awk '{print $1}')"
-            fi
-            if [ "$EXPECTED" != "$ACTUAL" ]; then
-                fail "sha256 mismatch! expected=$EXPECTED actual=$ACTUAL"
-            fi
-            info "sha256 verified: ${ACTUAL}"
-        fi
-    fi
-fi
+# Note: download integrity is delegated to HTTPS (curl/wget verify the
+# GitHub CA chain). Downloading SHA256SUMS from the same release would
+# be self-signing — anyone who can swap the binary can swap the
+# manifest. Users who want stronger guarantees can manually run
+# `sha256sum -c SHA256SUMS` from the GitHub release page, or verify
+# the SLSA build provenance attestation; see docs/deployment/install.md.
 
 # --- Install binary --------------------------------------------------------
 mkdir -p "$INSTALL_DIR" || fail "cannot create $INSTALL_DIR"

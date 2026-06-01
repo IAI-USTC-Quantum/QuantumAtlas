@@ -94,9 +94,9 @@
 
     ```bash
     # 自动下载最新 release 到 ~/.local/bin/
-    curl -fsSL https://quantum-atlas.ai/install-server.sh | sh
+    curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh
     # 或锁定版本
-    curl -fsSL https://quantum-atlas.ai/install-server.sh | sh -s -- --version v0.2.8
+    curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh -s -- --version v0.2.8
     ```
 
     **2. 准备 .env：** 参照 [env vars 参考](reference/env-vars.md)，最小配置：

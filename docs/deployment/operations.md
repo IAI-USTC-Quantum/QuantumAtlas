@@ -31,24 +31,24 @@ QuantumAtlas server 是单个 Go 二进制 `qatlasd`（~35MB，CGO-free，
 
 CI release pipeline 已经把 3 平台预编译 binary（`linux/amd64`、`linux/arm64`、
 `darwin/arm64`）发到了 GitHub Release。装脚本服务在
-`<your-server>/install-server.sh`，会自动选 OS/arch、下载、SHA256 校验：
+`<your-server>/install-qatlasd.sh`，会自动选 OS/arch、下载、SHA256 校验：
 
 ```bash
 # 装 binary 到 ~/.local/bin/qatlasd，自动校验 SHA256
-curl -fsSL https://quantum-atlas.ai/install-server.sh | sh
+curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh
 
 # 钉 release tag
-curl -fsSL https://quantum-atlas.ai/install-server.sh | sh -s -- --version v0.2.5
+curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh -s -- --version v0.2.5
 
 # 改安装目录
-curl -fsSL https://quantum-atlas.ai/install-server.sh | sh -s -- --dir /opt/qatlas/bin
+curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh -s -- --dir /opt/qatlas/bin
 ```
 
 支持的环境变量：`QATLAS_INSTALL_DIR`（默认 `~/.local/bin`）、`QATLAS_VERSION`
 （默认 latest）、`QATLAS_REPO`（默认 `IAI-USTC-Quantum/QuantumAtlas`）。
 
 装完 binary 后**手动**注册成 systemd 服务（脚本本身刻意不链式调用 `service
-install`——见下文"为什么 install-server.sh 不自动起服务"）：
+install`——见下文"为什么 install-qatlasd.sh 不自动起服务"）：
 
 ```bash
 qatlasd service install                    # 交互模式，问 mode + .env path
@@ -62,14 +62,14 @@ qatlasd service install \
 连 Go / npm / pixi 都不要，只要 `curl` 或 `wget` + `install`。也可以走 B/C/D
 本地编译，但只在你想钉未发布 commit、或在隔离环境里复现 build 时才需要。
 
-> **为什么 install-server.sh 不自动起服务**：早期版本里 `curl|sh` 会在 binary
+> **为什么 install-qatlasd.sh 不自动起服务**：早期版本里 `curl|sh` 会在 binary
 > 装完后顺手 chain 进 `qatlasd service install`。在 dash（Debian / Ubuntu
 > 的 `/bin/sh`）上这条链不可靠——dash 是流式 parser，会在执行到 `exec </dev/tty`
 > 切换 stdin 之前已经从 pipe 预读了大量未消费字节，切换后这些字节既不能用作
 > 脚本继续解析也不能用作终端输入，要么 hang 要么报 `Syntax error: word
 > unexpected`。bash 因为预读整个脚本不受影响，但我们不能假设目标机有 bash
 > （Alpine / BusyBox / macOS sh 都是 dash 风格的 POSIX shell）。所以拆成两步：
-> install-server.sh **只装 binary**；service install 由 cobra 程序自己稳定处理
+> install-qatlasd.sh **只装 binary**；service install 由 cobra 程序自己稳定处理
 > TTY，没有 shell parser 冲突。
 
 #### B. `go install`
@@ -534,7 +534,7 @@ caddy-security / oauth2-proxy 这类身份代理；反代只承担 SNI 选路 + 
 | 路径 | 鉴权层 | 反代怎么写 |
 |---|---|---|
 | `/api/health` | open | 直接 reverse_proxy；监控可读（返回 `{code, message, data:{status, version, uptime_seconds, checks{rawstore, neo4j, wiki}}}`） |
-| `/install-server.sh` | open | 直接 reverse_proxy；公开的 `curl \| sh` 安装脚本 |
+| `/install-qatlasd.sh` | open | 直接 reverse_proxy；公开的 `curl \| sh` 安装脚本 |
 | `/{path...}`、`/_/`、`/auth-with-oauth2` 等 SPA + PocketBase 内置 | open / 自管 | 直接 reverse_proxy；OAuth 由 server 自己处理 |
 | `/api/wiki/...`、`/api/pages`、`/api/search`、`/api/stats`、`/api/graph/*`、`/api/lint` | open（公开读） | 直接 reverse_proxy |
 | `/api/papers/...`、`/api/shares/...`、`/api/pat/...` | server 内的 `authGuard` / `scopeGuard` / `sessionGuard` | 直接 reverse_proxy；**不要**剥 `Authorization` header（server 要拿来鉴权） |
