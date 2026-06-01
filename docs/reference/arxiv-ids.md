@@ -41,7 +41,7 @@ server 端把 arxiv_id 拆成 prefix + filename：
 | kind | key 模板 | 内容 |
 |---|---|---|
 | `pdf` | `pdf/<prefix>/<id>v<n>.pdf` | 原始 PDF |
-| `md` | `md/<prefix>/<id>v<n>.md` | 解析后的 markdown（MinerU / PyMuPDF）|
+| `md` | `md/<prefix>/<id>v<n>.md` | 解析后的 markdown（MinerU）|
 | `json` | `json/<prefix>/<id>v<n>.json` | arXiv 元数据（题目 / 作者 / abstract 等）|
 | `images/...` | `images/<prefix>/<id>v<n>/...` | MinerU 解析出的图片 |
 

@@ -157,31 +157,17 @@ def main():
     if pdf_path:
         print(f"✅ PDF saved to: {pdf_path}")
 
-    # Step 2: Parse PDF
-    if pdf_path and pdf_path.exists():
-        print(f"\n📄 Parsing PDF...")
-
-        try:
-            from .pdf_parser import PDFParser
-            pdf_parser = PDFParser()
-            paper = pdf_parser.parse(pdf_path, arxiv_metadata=metadata)
-
-            print(f"✅ Parsed {len(paper.sections)} sections")
-
-            # Save outputs
-            output_base = Path(args.output_dir) / metadata['arxiv_id']
-
-            if args.save_markdown:
-                md_path = pdf_parser.save_markdown(paper, f"{output_base}.md")
-                print(f"✅ Markdown saved to: {md_path}")
-
-            if args.save_json:
-                json_path = pdf_parser.save_json(paper, f"{output_base}.json")
-                print(f"✅ JSON saved to: {json_path}")
-        except Exception as e:
-            print(f"❌ Error parsing PDF: {e}")
-            import traceback
-            traceback.print_exc()
+    # Step 2: Parse PDF — only MinerU is supported.
+    # Local PDF parsing inside this CLI has been removed; the recommended
+    # flow is to upload the PDF and let MinerU produce the markdown, or use
+    # `qatlas mineru` for the remote API.
+    if args.save_markdown or args.save_json:
+        print(
+            "\n⚠️  --save-markdown / --save-json are only available via MinerU; "
+            "run `qatlas mineru <arxiv_id>` after this fetch, or use "
+            "`qatlas upload markdown` once you have the parsed file.",
+            file=sys.stderr,
+        )
 
     print(f"\n✨ Done!")
 

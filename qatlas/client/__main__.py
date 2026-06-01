@@ -149,9 +149,13 @@ def _add_poll_args(parser: argparse.ArgumentParser) -> None:
 def _add_stage_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--parser",
-        choices=["pymupdf", "mineru"],
-        required=True,
-        help="Explicitly choose the PDF parser. No silent default — you must opt in.",
+        choices=["mineru"],
+        default="mineru",
+        help=(
+            "PDF parser to use (currently only 'mineru' is supported in the "
+            "open-source build). Kept as an explicit flag so the wire shape "
+            "can grow without breaking callers."
+        ),
     )
     parser.add_argument("--stop-after", choices=["fetch", "parse"])
     parser.add_argument("--stages", help="Comma-separated exact stages to run (fetch,parse)")

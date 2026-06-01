@@ -114,12 +114,11 @@ def main(
     # Import parser modules
     try:
         from ..parser.arxiv_fetcher import ArxivFetcher
-        from ..parser.pdf_parser import PDFParser
     except ImportError as e:
         click.echo(f"Error: Failed to import parser modules: {e}", err=True)
         click.echo("Make sure all dependencies are installed: pip install -e .", err=True)
         sys.exit(1)
-    
+
     # Step 1: Fetch paper from arXiv
     click.echo(f"📥 Fetching paper arXiv:{arxiv_id}...")
     try:
@@ -130,15 +129,26 @@ def main(
     except Exception as e:
         click.echo(f"Error fetching paper: {e}", err=True)
         sys.exit(1)
-    
-    # Step 2: Parse PDF to text
-    click.echo("📄 Parsing PDF...")
+
+    # Step 2: Obtain parsed paper text
+    # Local PDF parsing was removed from the open-source build. The supported
+    # flow is to fetch parsed markdown produced by MinerU; if no markdown is
+    # available, fail loudly so the operator runs `qatlas mineru` first.
+    click.echo("📄 Loading parsed markdown...")
     try:
-        parser = PDFParser()
-        paper_text = parser.parse(str(pdf_path))
-        click.echo(f"✓ Extracted {len(paper_text)} characters")
+        markdown_path = pdf_path.with_suffix(".md")
+        if not markdown_path.exists():
+            click.echo(
+                f"Error: parsed markdown not found at {markdown_path}. "
+                "Run `qatlas mineru <arxiv_id>` to generate it (the open-source "
+                "build no longer ships a local PDF parser).",
+                err=True,
+            )
+            sys.exit(1)
+        paper_text = markdown_path.read_text(encoding="utf-8")
+        click.echo(f"✓ Loaded {len(paper_text)} characters from {markdown_path}")
     except Exception as e:
-        click.echo(f"Error parsing PDF: {e}", err=True)
+        click.echo(f"Error loading markdown: {e}", err=True)
         sys.exit(1)
     
     # Step 3: Initialize LLM

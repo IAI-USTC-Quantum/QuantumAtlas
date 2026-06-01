@@ -33,15 +33,15 @@ qatlas [--version] [--help] <subcommand> [args...]
 让 server 抓 arXiv 论文 + 可选解析。需要 `papers:write` scope。
 
 ```
-qatlas ingest <arxiv_id> --parser pymupdf|mineru [options...]
-qatlas ingest continue <task_id> --parser ... [options...]
+qatlas ingest <arxiv_id> [--parser mineru] [options...]
+qatlas ingest continue <task_id> [options...]
 qatlas ingest status <task_id>
 ```
 
 | Flag | 必填 | 默认 | 含义 |
 |---|---|---|---|
 | `<arxiv_id>` | ✅ | — | arXiv ID（旧式 `quant-ph/9508027` 或新式 `2501.00010`）|
-| `--parser pymupdf\|mineru` | ✅ | — | **必须显式选**——避免不小心吃 MinerU 配额 |
+| `--parser mineru` | ❌ | `mineru` | 显式声明解析器；开源版本只支持 `mineru` 一种 |
 | `--stop-after fetch\|parse` | ❌ | — | 跑到指定阶段就停 |
 | `--stages a,b` | ❌ | — | 逗号分隔的精确阶段列表 |
 | `--force-fetch` | ❌ | false | 已有 PDF 也重抓 |
@@ -90,7 +90,7 @@ qatlas upload markdown <arxiv_id> --markdown <path> [--source <tool>] [--overwri
 |---|---|---|---|
 | `<arxiv_id>` | ✅ | — | 必含版本 |
 | `--markdown <path>` | ✅ | — | 本地 markdown 文件 |
-| `--source <tool>` | ❌ | — | 解析工具名（写入审计：mineru / pymupdf / manual / ...）|
+| `--source <tool>` | ❌ | — | 解析工具名（写入审计：mineru / manual / ...）|
 | `--overwrite` | ❌ | false | 字节不同时允许覆盖 |
 
 调用：`POST /api/papers/{arxiv_id}/upload-markdown`。

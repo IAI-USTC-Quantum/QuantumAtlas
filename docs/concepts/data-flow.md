@@ -39,7 +39,6 @@ flowchart TB
     OTH -->|qatlas upload pdf| META
 
     PDF -->|qatlas ingest --parser mineru<br/>或<br/>qatlas mineru| MD
-    PDF -->|qatlas ingest --parser pymupdf| MD
 
     MD -->|人工 + LLM 整理| SRCPG
     SRCPG -->|人工沉淀概念 / 算法| ENTPG
@@ -71,7 +70,7 @@ flowchart TB
     qatlas ingest quant-ph/9508027 --parser mineru
     ```
 
-    server 调 arXiv API 抓 PDF + metadata，可选立刻调 MinerU/PyMuPDF 解析。**触发方需要 `papers:write` scope**。
+    server 调 arXiv API 抓 PDF + metadata，可选立刻调 MinerU 解析。**触发方需要 `papers:write` scope**。
 
 === "2. 用户直接上传"
 

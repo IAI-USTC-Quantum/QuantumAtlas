@@ -27,7 +27,7 @@ qatlas upload pdf 2501.00010v1 --pdf paper.pdf --metadata meta.json
 qatlas upload markdown 2501.00010v1 --markdown paper.md --source mineru
 ```
 
-`--source` 字段记录是谁解析的（mineru / pymupdf / manual / ...），出现在审计日志。
+`--source` 字段记录是谁解析的（mineru / manual / ...），出现在审计日志。
 
 ## sha256 dedup：上传一次还是上传两次？
 

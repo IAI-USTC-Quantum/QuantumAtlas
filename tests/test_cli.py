@@ -274,7 +274,7 @@ def test_ingest_client_uses_continue_endpoint_with_stages(tmp_path, monkeypatch)
             "continue",
             "task-1",
             "--parser",
-            "pymupdf",
+            "mineru",
             "--stages",
             "parse",
             "--no-poll",
@@ -284,7 +284,7 @@ def test_ingest_client_uses_continue_endpoint_with_stages(tmp_path, monkeypatch)
     assert result == 0
     assert captured["url"] == "http://server/api/ingest/task-1/continue"
     assert captured["json"]["stages"] == ["parse"]
-    assert captured["json"]["parser"] == "pymupdf"
+    assert captured["json"]["parser"] == "mineru"
     # ff-only: client must NOT send reviewed-extraction fields
     assert "algorithm" not in captured["json"]
     assert "create_wiki" not in captured["json"]
@@ -292,13 +292,32 @@ def test_ingest_client_uses_continue_endpoint_with_stages(tmp_path, monkeypatch)
     assert captured["verify"] is True
 
 
-def test_ingest_client_refuses_silent_parser_default(monkeypatch, capsys):
+def test_ingest_client_defaults_parser_to_mineru(monkeypatch):
+    """The `--parser` flag is optional now that 'mineru' is the only choice.
+
+    Open-source builds dropped the local PDF parser, so the client defaults
+    to mineru and still sends an explicit `parser` field on the wire (so the
+    server-side schema and future additional choices stay consistent).
+    """
+    captured = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"task_id": "task-3", "status": "queued"}
+
+    def fake_post(url, json, timeout, verify):
+        captured["json"] = json
+        return FakeResponse()
+
     monkeypatch.setattr(client_cli, "_default_base_url", lambda: "http://server")
-    with pytest.raises(SystemExit) as excinfo:
-        client_cli.main(["quant-ph/9508027", "--no-poll"])
-    assert excinfo.value.code != 0
-    captured_output = capsys.readouterr()
-    assert "--parser" in captured_output.err
+    monkeypatch.setattr(client_cli.requests, "post", fake_post)
+
+    result = client_cli.main(["quant-ph/9508027", "--no-poll"])
+    assert result == 0
+    assert captured["json"]["parser"] == "mineru"
 
 
 # ---------------------------------------------------------------------------

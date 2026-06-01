@@ -77,7 +77,6 @@ class WikiIngester:
 
         # Lazy-loaded components
         self._arxiv_fetcher = None
-        self._pdf_parser = None
         self._extractor = None
 
     @property
@@ -89,15 +88,6 @@ class WikiIngester:
             pdf_dir = self.engine.get_paper_asset_dir("pdf")
             self._arxiv_fetcher = ArxivFetcher(output_dir=str(pdf_dir))
         return self._arxiv_fetcher
-
-    @property
-    def pdf_parser(self):
-        """Lazy initialization of PDFParser."""
-        if self._pdf_parser is None:
-            from qatlas.parser.pdf_parser import PDFParser
-
-            self._pdf_parser = PDFParser()
-        return self._pdf_parser
 
     @property
     def extractor(self):
@@ -113,7 +103,7 @@ class WikiIngester:
         self,
         arxiv_id: str,
         fetch: bool = True,
-        parse: bool = True,
+        parse: bool = False,
         extract: bool = True,
         create_wiki: bool = True,
         llm_provider: str = "openai",
@@ -229,23 +219,17 @@ class WikiIngester:
         metadata: Optional[Dict] = None,
         pdf_path: Optional[Path | str] = None,
     ) -> Path:
-        """Parse PDF to Markdown."""
-        pdf_path = (
-            Path(pdf_path) if pdf_path else self._resolve_asset_path("pdf", arxiv_id, metadata)
+        """Local PDF parsing has been removed from the open-source build.
+
+        The previous implementation used a third-party local PDF library; the
+        only supported path now is to upload an existing markdown (e.g. one
+        produced by ``qatlas mineru``) via ``qatlas upload markdown``.
+        """
+        raise NotImplementedError(
+            "Local PDF parsing has been removed. "
+            "Run `qatlas mineru <arxiv_id>` to obtain markdown, then call "
+            "`qatlas upload markdown <arxiv_id>v<n> --markdown <path>`."
         )
-
-        if not pdf_path.exists():
-            raise FileNotFoundError(f"PDF not found: {pdf_path}")
-
-        markdown_path = self._resolve_asset_path("markdown", arxiv_id, metadata)
-        markdown_path.parent.mkdir(parents=True, exist_ok=True)
-
-        parsed_paper = self.pdf_parser.parse(str(pdf_path), arxiv_metadata=metadata)
-
-        # Save as markdown
-        self.pdf_parser.save_markdown(parsed_paper, str(markdown_path))
-
-        return markdown_path
 
     def _extract_algorithm(self, arxiv_id: str, llm_provider: str = "openai") -> Any:
         """Extract algorithm info using LLM."""

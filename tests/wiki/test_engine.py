@@ -333,64 +333,39 @@ class TestWikiIngester:
             project_root=str(tmp_path),
         )
 
-    def test_parse_pdf_uses_versioned_asset_from_metadata(self, temp_wiki):
+    def test_parse_pdf_now_raises(self, temp_wiki):
+        """Local PDF parsing was removed from the open-source build.
+
+        The previous test stubbed in a ``DummyParser`` via
+        ``temp_wiki.ingester._pdf_parser = DummyParser()``; that hook no
+        longer exists. We now assert ``_parse_pdf`` fails loudly so callers
+        know to route through `qatlas mineru` + `qatlas upload markdown`.
+        """
         requested_id = "quant-ph/9508027"
         resolved_id = "quant-ph/9508027v2"
         pdf_path = temp_wiki.get_paper_asset_path("pdf", resolved_id)
         pdf_path.parent.mkdir(parents=True, exist_ok=True)
         pdf_path.write_bytes(b"%PDF-1.4")
 
-        calls = {}
+        with pytest.raises(NotImplementedError, match="Local PDF parsing"):
+            temp_wiki.ingester._parse_pdf(
+                requested_id,
+                {"arxiv_id": resolved_id, "title": "Shor"},
+            )
 
-        class DummyParser:
-            def parse(self, path, arxiv_metadata=None):
-                calls["parse_path"] = path
-                calls["metadata"] = arxiv_metadata
-                return object()
-
-            def save_markdown(self, parsed_paper, path):
-                calls["markdown_path"] = path
-                Path(path).write_text("# parsed", encoding="utf-8")
-
-        temp_wiki.ingester._pdf_parser = DummyParser()
-
-        markdown_path = temp_wiki.ingester._parse_pdf(
-            requested_id,
-            {"arxiv_id": resolved_id, "title": "Shor"},
-        )
-
-        assert Path(calls["parse_path"]) == pdf_path
-        assert markdown_path == temp_wiki.get_paper_asset_path("markdown", resolved_id)
-        assert Path(calls["markdown_path"]) == markdown_path
-
-    def test_parse_pdf_uses_explicit_fetch_pdf_path(self, temp_wiki):
+    def test_parse_pdf_raises_even_with_explicit_pdf_path(self, temp_wiki):
         requested_id = "quant-ph/9508027"
         resolved_id = "quant-ph/9508027v2"
         pdf_path = temp_wiki.get_paper_asset_path("pdf", requested_id)
         pdf_path.parent.mkdir(parents=True, exist_ok=True)
         pdf_path.write_bytes(b"%PDF-1.4")
 
-        calls = {}
-
-        class DummyParser:
-            def parse(self, path, arxiv_metadata=None):
-                calls["parse_path"] = path
-                return object()
-
-            def save_markdown(self, parsed_paper, path):
-                calls["markdown_path"] = path
-                Path(path).write_text("# parsed", encoding="utf-8")
-
-        temp_wiki.ingester._pdf_parser = DummyParser()
-
-        markdown_path = temp_wiki.ingester._parse_pdf(
-            requested_id,
-            {"arxiv_id": resolved_id, "title": "Shor"},
-            pdf_path=pdf_path,
-        )
-
-        assert Path(calls["parse_path"]) == pdf_path
-        assert markdown_path == temp_wiki.get_paper_asset_path("markdown", resolved_id)
+        with pytest.raises(NotImplementedError):
+            temp_wiki.ingester._parse_pdf(
+                requested_id,
+                {"arxiv_id": resolved_id, "title": "Shor"},
+                pdf_path=pdf_path,
+            )
 
     def test_ingest_from_existing_finds_versioned_assets(self, temp_wiki):
         requested_id = "quant-ph/9508027"
