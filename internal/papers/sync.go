@@ -59,7 +59,10 @@ func (s *Store) SyncFromStore(ctx context.Context, store objstore.Store, opts Sy
 		return rep, fmt.Errorf("papers sync: list markdown: %w", err)
 	}
 	rep.MDObjects = len(mdPaths)
-	imgCounts, imgObjs := listImageCounts(ctx, store)
+	imgCounts, imgObjs, err := listImageCounts(ctx, store)
+	if err != nil {
+		return rep, fmt.Errorf("papers sync: list images: %w", err)
+	}
 	rep.ImageObjects = imgObjs
 
 	if opts.DryRun {
@@ -108,10 +111,19 @@ func listKindPaths(ctx context.Context, store objstore.Store, kind string) (map[
 }
 
 // listImageCounts returns stem→count of image objects under images/.
-func listImageCounts(ctx context.Context, store objstore.Store) (map[string]int, int) {
+// Returns (counts, total, err). A non-nil err means the listing was
+// incomplete (S3 paginate failed, ctx canceled, etc.) — callers MUST
+// propagate it instead of silently treating an empty result as "zero
+// images". Earlier version swallowed the error and reported 0, which
+// in production made `papers sync` claim success while leaving every
+// :PaperWork.image_count unchanged at 0/null even when qatlas-images
+// had thousands of objects (bug surfaced 2026-06-01 during T3 reconcile
+// — sync reported 0 images while the bucket actually held 34 prefixes
+// of mirrored arxiv assets).
+func listImageCounts(ctx context.Context, store objstore.Store) (map[string]int, int, error) {
 	infos, err := store.ListPrefix(ctx, "images/", 0)
 	if err != nil {
-		return map[string]int{}, 0
+		return nil, 0, err
 	}
 	counts := map[string]int{}
 	total := 0
@@ -124,7 +136,7 @@ func listImageCounts(ctx context.Context, store objstore.Store) (map[string]int,
 		counts[parts[2]]++
 		total++
 	}
-	return counts, total
+	return counts, total, nil
 }
 
 // stemFromKey extracts the arxiv stem from a "<kind>/<yymm>/<stem>.<ext>"
