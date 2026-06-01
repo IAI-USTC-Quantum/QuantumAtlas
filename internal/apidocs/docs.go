@@ -1461,7 +1461,7 @@ const docTemplate = `{
     },
     "securityDefinitions": {
         "BearerAuth": {
-            "description": "\"Bearer \u003ctoken\u003e\" — token is either a PAT\n(prefix qat_, created at /pat) or a PocketBase\nsession token (copied from /token). Session\ntokens implicitly hold every scope.",
+            "description": "\"Bearer \u003ctoken\u003e\" — two credential shapes\naccepted: a Personal Access Token\n(` + "`" + `Authorization: Bearer qat_...` + "`" + `, minted at\n` + "`" + `/pat` + "`" + ` after GitHub OAuth login), or the\nenv-loaded system PAT (set\n` + "`" + `QATLAS_SYSTEM_PAT` + "`" + ` on the server, send the\nplaintext as ` + "`" + `Authorization: Bearer \u003cvalue\u003e` + "`" + `).\nBrowser callers are authenticated through\npb.authStore (no copy step) — only non-browser\ncallers need an explicit bearer.",
             "type": "apiKey",
             "name": "Authorization",
             "in": "header"

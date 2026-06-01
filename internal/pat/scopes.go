@@ -4,9 +4,10 @@
 // kind, not the legacy "classic" ones): a PAT carries an explicit
 // allow-list of scopes; an empty list means "this token can call
 // nothing"; there is no implicit master-grant. Sessions tokens (the
-// PocketBase user JWT issued by browser OAuth) keep their full
-// permissions and bypass scope checks entirely — what the user can do
-// in the SPA, the token they copy from /token can do too.
+// PocketBase user JWT issued by browser OAuth and held by the SPA
+// in pb.authStore) keep their full permissions and bypass scope
+// checks entirely — what the user can do in the SPA, anything
+// authenticated as that session can do too.
 //
 // Why bring in casbin instead of `slices.Contains`? Two reasons:
 //

@@ -516,8 +516,9 @@ caddy-security / oauth2-proxy 这类身份代理；反代只承担 SNI 选路 + 
 终结 + 反向转发到后端。鉴权完全在 server 内部：
 
 - 浏览器：访问 `/auth-with-oauth2`（PocketBase 内置）走 GitHub OAuth，
-  登录后从 `/token` 页面拷 14d 寿命的 session token，或者在 `/pat` 页
-  创建 fine-grained PAT（前缀 `qat_`，过期可选）。
+  登录后 `pb.authStore` 自动持有 14d 寿命的 session token（不暴露 UI
+  入口让你 copy 它），或者在 `/pat` 页创建 fine-grained PAT（前缀
+  `qat_`，过期可选）给非浏览器调用用。
 - CLI / 自动化：`Authorization: Bearer <token>`，server 端 `authGuard`
   根据前缀分发——`qat_*` 走 `internal/pat` 包做 prefix lookup + bcrypt
   校验并查 scope；其余走 PocketBase session token 验证。

@@ -85,10 +85,16 @@ var Version = "dev"
 // @securityDefinitions.apikey BearerAuth
 // @in                         header
 // @name                       Authorization
-// @description                "Bearer <token>" — token is either a PAT
-// @description                (prefix qat_, created at /pat) or a PocketBase
-// @description                session token (copied from /token). Session
-// @description                tokens implicitly hold every scope.
+// @description                "Bearer <token>" — two credential shapes
+// @description                accepted: a Personal Access Token
+// @description                (`Authorization: Bearer qat_...`, minted at
+// @description                `/pat` after GitHub OAuth login), or the
+// @description                env-loaded system PAT (set
+// @description                `QATLAS_SYSTEM_PAT` on the server, send the
+// @description                plaintext as `Authorization: Bearer <value>`).
+// @description                Browser callers are authenticated through
+// @description                pb.authStore (no copy step) — only non-browser
+// @description                callers need an explicit bearer.
 func main() {
 	// Early --version / version short-circuit. Everything below
 	// (loadDotEnv, config.Load, initNeo4jClient, initRawStore, ...)
@@ -617,7 +623,8 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 
 	// (P12 removed: /api/session/token. It was a caddy-security-era stub
 	// that returned an empty string. The SPA now reads pb.authStore.token
-	// directly; CLI users pull their bearer from the /token page.)
+	// directly; non-browser callers mint a PAT at /pat or use the
+	// QATLAS_SYSTEM_PAT env on the server.)
 
 	// Wiki / pages / stats / search / lint — see internal/routes/wiki.go.
 	routes.RegisterWiki(se, cfg, wikiCache, enforcer)

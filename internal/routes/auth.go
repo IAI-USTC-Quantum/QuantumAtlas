@@ -19,13 +19,18 @@
 //     in user. The PAT's scope list is stashed in re via Set so the
 //     scopeGuard middleware can enforce fine-grained access.
 //
-//  3. A PocketBase user JWT — short-lived (default 14d), issued by the
-//     GitHub OAuth flow and surfaced on the SPA's /token page. The
-//     PocketBase middleware that runs upstream of our handlers already
-//     populates re.Auth from this header; we only need to confirm the
-//     record belongs to the "users" collection. Sessions implicitly
-//     get pat.ScopeMaster — what the user can do in the SPA, the
-//     token they copy from /token can do too.
+//  3. A PocketBase user JWT — the short-lived session token PocketBase
+//     mints during the GitHub OAuth flow. The SPA holds it in
+//     pb.authStore (browser localStorage) and the PocketBase middleware
+//     that runs upstream of our handlers populates re.Auth from the
+//     bearer; we only need to confirm the record belongs to the
+//     "users" collection. Sessions implicitly get pat.ScopeMaster.
+//
+//     We do NOT expose a UI affordance to copy this token (there is
+//     no /token page) — for non-browser callers, mint a PAT at /pat
+//     (long-lived, scoped, revocable) or use the system PAT for
+//     server-side ops scripts. A user JWT in a CI secret would force
+//     a rotation every 14 days, which we explicitly reject.
 //
 // The system PAT is the only path that authenticates without a users
 // record on re.Auth. sessionGuard (used by /api/pat) rejects it for
@@ -122,7 +127,7 @@ func authGuard(handler func(re *core.RequestEvent) error) func(re *core.RequestE
 	return func(re *core.RequestEvent) error {
 		if !isAuthorized(re) {
 			return re.JSON(http.StatusUnauthorized, map[string]string{
-				"detail": "authentication required (sign in at /login, then send 'Authorization: Bearer <token>' from /token, or mint a long-lived PAT at /pat)",
+				"detail": "authentication required (sign in at /login then mint a PAT at /pat, or set QATLAS_SYSTEM_PAT on the server for ops scripts)",
 			})
 		}
 		return handler(re)
@@ -138,7 +143,7 @@ func sessionGuard(handler func(re *core.RequestEvent) error) func(re *core.Reque
 	return authGuard(func(re *core.RequestEvent) error {
 		if source, _ := re.Get(authSourceKey).(string); source != authSourceSession {
 			return re.JSON(http.StatusForbidden, map[string]string{
-				"detail": "this endpoint requires a browser session token (PAT auth is not accepted for PAT management — sign in at /login and use the token from /token)",
+				"detail": "this endpoint requires a browser session token (PAT auth is not accepted for PAT management — open the SPA and sign in at /login)",
 			})
 		}
 		return handler(re)
@@ -265,7 +270,8 @@ func decodeScopes(raw string) []string {
 // async last_used_at bump on every probe — turning the health route
 // into a side-effecting write path is exactly the wrong shape for
 // a probe endpoint. User PAT holders that want detailed health can
-// either copy a session token from /token or set up a system PAT.
+// either browse the SPA (the in-browser pb.authStore session is
+// recognised here) or use the system PAT for ops scripts.
 //
 // Returns true iff one of the recognised credentials checks out,
 // false otherwise. Never returns an error: missing / malformed /

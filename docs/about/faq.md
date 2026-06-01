@@ -103,7 +103,7 @@
 
 ??? question "我有 PAT 但调 `/api/pat` 仍 403？"
 
-    设计如此。PAT **不能**操作 `/api/pat`（防止 leaked PAT 自我复制）。用 session token（浏览器登录后 `/token` 拷）。
+    设计如此。PAT **不能**操作 `/api/pat`（防止 leaked PAT 自我复制）。用 session token 调（浏览器登录后 SPA 内部已自动持有；如需用 SDK / CLI 调用 `/api/pat`，请在浏览器 SPA 内操作）。
 
 ??? question "PAT 在 RackNerd 上建的，在阿里云用不了？"
 
@@ -155,13 +155,13 @@
 
 ## 协议 / 法律
 
-??? question "MIT 协议允许我把 QuantumAtlas 嵌进我的商业产品吗？"
+??? question "Apache-2.0 协议允许我把 QuantumAtlas 嵌进我的商业产品吗？"
 
-    可以。MIT 是最宽松的开源协议之一。需要保留 LICENSE 文件即可。
+    可以。Apache-2.0 是工业界最主流的 permissive 开源协议之一（Kubernetes、Docker、Terraform、Prometheus 等都用它）。需要保留 LICENSE / NOTICE 文件并显著标注改动，且额外获得 contributor 的专利使用权。详见 [LICENSE](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/LICENSE) 全文。
 
 ??? question "Wiki 内容（论文摘要）的版权？"
 
-    我们的 Wiki repo MIT；但论文本身是各家出版社 / arXiv 的版权（一般是 arXiv non-exclusive license）。Wiki paper 页面**应该是用自己的话总结 + 引用关键数据**，而不是 verbatim copy abstract。
+    我们的 Wiki repo Apache-2.0；但论文本身是各家出版社 / arXiv 的版权（一般是 arXiv non-exclusive license）。Wiki paper 页面**应该是用自己的话总结 + 引用关键数据**，而不是 verbatim copy abstract。
 
 ??? question "上传的 PDF 谁的版权？"
 

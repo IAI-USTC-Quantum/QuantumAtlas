@@ -2,11 +2,13 @@
 // long-lived bearer tokens that any signed-in user can mint for use in
 // CLI / CI / scripted callers.
 //
-// The PocketBase user JWT issued by GitHub OAuth login (the one the SPA
-// pastes onto its /token page) defaults to a 14-day lifetime. That is
-// fine for the browser but painful for nightly jobs and GH Actions
-// secrets. PATs solve that by giving each user an authentik-style "User
-// Settings → Tokens" UX:
+// The PocketBase user JWT issued by GitHub OAuth login is held by the
+// SPA in `pb.authStore` (browser localStorage) and never surfaced as
+// copyable text — the deliberate choice is "session token stays in
+// the browser, anything else uses a PAT". Session JWTs also default
+// to a 14-day lifetime, fine for the browser but painful for nightly
+// jobs and GH Actions secrets. PATs solve that by giving each user
+// an authentik-style "User Settings → Tokens" UX:
 //
 //   - Browser visits /pat, hits "New token", fills in name / optional
 //     expiry, the server hands back a one-time plaintext (prefixed with

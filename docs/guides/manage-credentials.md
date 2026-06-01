@@ -186,7 +186,7 @@ CI 这边更新 GitHub secret 后下次 workflow 跑就用新的。
     PAT 创建时没勾 `papers:write`。要么 revoke + 重建带 scope 的，要么用 session token。
 
 !!! failure "403 this endpoint requires a browser session token"
-    你在用 PAT 调 `/api/pat` —— **这条不通**。必须用 session：登录后从 `/token` 拷 JWT 用。
+    你在用 PAT 调 `/api/pat` —— **这条不通**。`/api/pat` 只接受 session token（浏览器登录后 `pb.authStore` 自动持有），有意为之防止 leaked PAT 自我复制。需要管理 PAT 请在浏览器 SPA 内打开 `/pat` 页操作。
 
 !!! failure "401 在 RackNerd 用阿里云的 PAT"
     PocketBase 各边缘独立，PAT 不跨节点。看 [多边缘部署](../concepts/multi-edge.md)。

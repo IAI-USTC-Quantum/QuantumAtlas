@@ -66,7 +66,7 @@ sequenceDiagram
     QA-->>U: 302 → SPA + cookie session
 ```
 
-首次登录会**自动创建 users 记录**。之后从 `/token` 页面可以拷 14d session JWT 给 CLI / curl 用。
+首次登录会**自动创建 users 记录**。之后浏览器 SPA 内自动持有 session（`pb.authStore`，无需手动 copy）；非浏览器调用请在 `/pat` 页面创建 PAT 后使用。
 
 ## Admin 提权（计划中）
 

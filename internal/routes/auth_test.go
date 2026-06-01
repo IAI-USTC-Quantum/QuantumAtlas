@@ -61,8 +61,8 @@ func TestAuthGuard_RejectAndPass(t *testing.T) {
 	if !strings.Contains(body, "authentication required") {
 		t.Errorf("expected error body to mention authentication, got %q", body)
 	}
-	if !strings.Contains(body, "/login") || !strings.Contains(body, "/token") {
-		t.Errorf("expected error body to point caller at /login and /token, got %q", body)
+	if !strings.Contains(body, "/login") || !strings.Contains(body, "/pat") {
+		t.Errorf("expected error body to point caller at /login and /pat, got %q", body)
 	}
 
 	// The accept-path needs a real PocketBase auth record on re.Auth,

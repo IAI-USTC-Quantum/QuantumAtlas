@@ -965,10 +965,16 @@ paths:
 securityDefinitions:
   BearerAuth:
     description: |-
-      "Bearer <token>" — token is either a PAT
-      (prefix qat_, created at /pat) or a PocketBase
-      session token (copied from /token). Session
-      tokens implicitly hold every scope.
+      "Bearer <token>" — two credential shapes
+      accepted: a Personal Access Token
+      (`Authorization: Bearer qat_...`, minted at
+      `/pat` after GitHub OAuth login), or the
+      env-loaded system PAT (set
+      `QATLAS_SYSTEM_PAT` on the server, send the
+      plaintext as `Authorization: Bearer <value>`).
+      Browser callers are authenticated through
+      pb.authStore (no copy step) — only non-browser
+      callers need an explicit bearer.
     in: header
     name: Authorization
     type: apiKey

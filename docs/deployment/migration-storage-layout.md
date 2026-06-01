@@ -116,8 +116,8 @@ kill %1
    #   listening on 0.0.0.0:4200
    ```
 
-   浏览器再访问 `https://<HOST>/token` 和 `/pat` 看登录态/PAT 是否
-   保留——如果空了说明 pb_data 路径漂了，回到 step 1 检查 .env 的
+   浏览器再访问 `https://<HOST>/pat` 看是否还能列出之前的 PAT 列表
+   ——空了说明 pb_data 路径漂了，回到 step 1 检查 .env 的
    `QATLAS_PB_DATA_DIR` 是否指向真实有数据的那个目录。
 
 ## 旧用户：保持原有 in-repo 路径（不迁移）

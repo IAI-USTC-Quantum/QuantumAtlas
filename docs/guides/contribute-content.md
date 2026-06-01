@@ -56,11 +56,11 @@ MINERU_API_TOKEN=mn_xxxxx
 最轻量。贡献者只需要给一个 arXiv ID，服务端负责抓 PDF 并解析（fetch + parse）。**服务端严格 ff-only，不会自动跑 LLM 抽取，也不会写 wiki 或 Neo4j**——抽取/wiki 这两步走人工 PR 流程。
 
 ```bash
-qatlas ingest quant-ph/9508027 --parser pymupdf
-qatlas ingest 2501.00010 --parser mineru   # 用服务器 .env 里的 MINERU_API_TOKEN
+qatlas ingest quant-ph/9508027              # 默认走 MinerU 解析
+qatlas ingest 2501.00010 --parser mineru   # 显式声明也可以，等同上一行
 ```
 
-`--parser` 是**强制选项**——服务端和 CLI 都不会默认走 pymupdf，必须显式选择。
+`--parser` 是**可选**——开源版本目前只支持 `mineru` 这一个 parser，省略则按默认走。
 `qatlas ingest` 会同步走 fetch + parse 流水线并轮询任务状态。完整选项：
 
 ```bash
@@ -71,7 +71,7 @@ qatlas ingest --help
 
 | 选项 | 行为 |
 |---|---|
-| `--parser pymupdf` / `--parser mineru` | **必选**——明确选择解析器；`mineru` 需要服务端配置 `MINERU_API_TOKEN`。服务端和 CLI 都不再有静默默认值 |
+| `--parser mineru` | 可省略；保留为显式 flag 是为了将来 wire 协议扩展（万一以后又加了新 parser，签名不动）。`mineru` 需要服务端配置 `MINERU_API_TOKEN` |
 | `--stop-after fetch` / `--stop-after parse` | 在指定阶段后停止（`parse` 是末尾阶段，等价于跑完） |
 | `--stages a,b` | 只跑明确列出的阶段（`fetch` / `parse`），跳过的阶段如果有本地资产会被复用 |
 | `--force-fetch` / `--force-parse` | 即使本地已有 PDF/Markdown 也强制重做 |
@@ -123,7 +123,7 @@ qatlas upload markdown 2501.00010v1 --markdown out.md --source mineru
 
 - markdown 必须是 UTF-8。
 - 单文件上限 25 MiB。
-- `source` 是可选审计标签（如 `mineru`、`pymupdf`、`hand-edited`），不影响存储位置。
+- `source` 是可选审计标签（如 `mineru`、`hand-edited`），不影响存储位置。
 
 ### Path C：本地跑 MinerU 后把解析结果推回云端
 
@@ -169,12 +169,13 @@ qatlas mineru 2501.00010v1 --no-push
 
 服务器使用 PocketBase 内嵌的 GitHub OAuth 流程做浏览器登录，并通过 `authGuard`（`internal/routes/auth.go`）门禁写操作。读口（wiki / pages / stats / search / graph / lint / share）保持公开（因为 wiki 仓库本身就是公开的）。
 
-`authGuard` 接受 **两种**凭据，按到达顺序检查：
+`authGuard` 接受**三种**凭据，按到达顺序检查：
 
-1. **Personal Access Token (PAT)** —— bearer 以 `qat_` 开头，从 SPA `/pat` 页面创建，明文一次性显示。**强制设置过期时间**（7 / 30 / 60 / 90 / 365 天，最长 1 年）。**每条 PAT 携带显式 scope 列表**，默认空集 = 什么写口都调不了，必须勾选具体 scope 才能用。撤销 = 同页 Revoke。**CI、nightly、长跑脚本推荐用这条路径。**
-2. **PocketBase 用户 session token** —— OAuth 登录后从 `/token` 页面复制，默认 14 天有效，到期再回页面拷一次。**隐式拥有全部权限**（"在浏览器里能干啥，从 /token 拷的就能干啥"），跳过 scope 检查。适合人手浏览器调用。
+1. **System PAT**（环境变量加载） —— server 启动时从 `QATLAS_SYSTEM_PAT` env 读取；命中常时比较直接通过 authGuard。永不过期、跟 PocketBase 完全解耦、pb_data 挂了还能用——专供 CI / cron / 灾难恢复等 ops 路径。详见 [auth-model.md § System PAT](../concepts/auth-model.md#system-pat-运维专用-breaking-glass-token)。
+2. **Personal Access Token (PAT)** —— bearer 以 `qat_` 开头，从 SPA `/pat` 页面创建，明文一次性显示。**强制设置过期时间**（7 / 30 / 60 / 90 / 365 天，最长 1 年）。**每条 PAT 携带显式 scope 列表**，默认空集 = 什么写口都调不了，必须勾选具体 scope 才能用。撤销 = 同页 Revoke。**人工脚本 / 想钉到具体身份的 ingest 工具推荐这条。**
+3. **PocketBase 用户 session token** —— OAuth 登录后浏览器自动持有（`pb.authStore`），SPA 内所有调用自动带在 `Authorization` 头里。**没有 UI 入口去手动 copy**——只在浏览器里用得了。隐式拥有全部权限，跳过 scope 检查。
 
-任何写口都同时接受这两种形式；CLI / curl 在 `Authorization: Bearer <...>` 里塞哪种都行。
+任何写口都同时接受这三种形式；非浏览器调用在 `Authorization: Bearer <...>` 里塞 PAT 或 system PAT 都行。
 
 ### Scope 词表
 
@@ -222,12 +223,11 @@ sudo -u qatlasd /opt/quantum-atlas/qatlasd pat mint \
 
 **PAT 不能用来管理 PAT**：`/api/pat` HTTP 端点用 `sessionGuard` 而非 `authGuard`——只接受浏览器 session token，PAT auth 一律 403。这跟 GitHub fine-grained PAT 一致：一条 PAT 即便泄露也不能 mint 出更多 PAT，限制爆炸半径。服务端 CLI 之所以可以"绕过"，是因为执行者已经是 shell 权限持有者，跟 HTTP 远端调用是两套信任模型。
 
-### 获取 (2) session token
+### 获取 (2) Session token
 
-1. 浏览器打开 `https://<server>/`，被引导到 `/login`；
-2. 点 "Continue with GitHub"，授权后回到 SPA；
-3. 进 `/token` 页面，复制 `Authorization: Bearer ...` 或 `export QATLAS_TOKEN=...`；
-4. PocketBase 默认 token 有 14 天有效期，到期再回 `/token` 重新拷。
+浏览器登录 GitHub OAuth 后，session 自动存在 `pb.authStore`（前端的 localStorage 里），SPA 调用 `/api/*` 时自动附 `Authorization: Bearer <session>`，14 天到期会自动续期，**无需手动复制 / 粘贴**。
+
+**没有 `/token` 这种 UI 页面让你 copy session token**——如果你想脱离浏览器调用（CLI / curl / CI），请用上面的 PAT（人工身份）或 System PAT（运维身份）。这是有意设计的限制：session token 短期、自动续期、绑浏览器；要给"长跑 / 自动化"用就该走专门的长寿命凭据。
 
 涉及到的服务端配置：
 
@@ -267,11 +267,6 @@ curl -X POST -H "Authorization: Bearer $QATLAS_TOKEN" \
   -F pdf=@paper.pdf -F metadata=@meta.json \
   "https://quantum-atlas.ai/api/papers/quant-ph/9508027v1/upload-pdf?overwrite=true"
 ```
-
-Web UI 的 Token 页面（`https://<server>/token`，登录后访问）提供:
-- "Copy token"：纯 token 字符串；
-- "Copy curl"：完整 curl 命令；
-- "Copy CLI env"：`export QATLAS_SERVER_URL=... && export QATLAS_TOKEN=...` 一对环境变量，粘到 shell 直接配好 CLI。
 
 具体反代配置（Caddy 现在已经是纯 reverse_proxy）见 [deployment.md](../deployment/operations.md)。
 
