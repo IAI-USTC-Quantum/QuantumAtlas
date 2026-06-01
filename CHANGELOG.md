@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.10.0 (2026-06-02)
+
+### BREAKING CHANGE
+
+- the published Go binary is now named `qatlasd`. Both
+its filename and the systemd / launchd / SCM service unit it installs
+change. Edges running an old installation MUST migrate explicitly —
+neither install-server.sh nor the binary's `service install` will
+remove the old artefacts.
+
+### Feat
+
+- **auth**: env-loaded system PAT for ops paths without a user
+- rename server binary qatlas-server → qatlasd
+- **pat**: point user-lookup errors at 'users list'
+- **cli**: add 'users list' for non-browser user discovery
+
 ## v0.9.2 (2026-06-01)
 
 ### Fix
