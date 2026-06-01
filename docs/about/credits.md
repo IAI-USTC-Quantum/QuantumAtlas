@@ -10,6 +10,27 @@ QuantumAtlas 最初的**三层知识库设计**受 [Karpathy's LLM Wiki](https:/
 - 显式 scope opt-in
 - "PAT 不能管理 PAT" 设计
 
+## 上游数据源（学术 metadata）
+
+QuantumAtlas 的论文 catalog / 引用图 / DOI 解析依赖以下开放学术数据源——
+license 与归属义务详见 [License & Attribution](license-and-attribution.md)。
+
+- [**OpenAlex**](https://openalex.org/)（OurResearch 非营利）— 论文 metadata
+  主源，含反向引用 `cited_by` 列表 / topics / 机构 ROR / 摘要倒排索引；license
+  [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/)。我们镜像
+  bulk dump 到 `qatlas-openalex` 桶做离线 join + 增量同步。
+- [**Crossref**](https://www.crossref.org/) — DOI 注册中心，metadata 自 2017
+  起 [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/)。负责正向
+  reference 列表（含 unstructured 引文文本，比 OpenAlex 更全）。
+- [**arXiv**](https://arxiv.org/) — preprint 源头。我们通过 OAI-PMH 镜像 metadata
+  ([arXiv ToU](https://arxiv.org/help/license))；**PDF 字节不镜像、不再分发**，
+  share 接口 `307` 跳 arxiv 原 URL。
+
+OpenAlex / Crossref 是 CC0 ⇒ 无强制归属，但作为非营利基础设施仍需要可见归属帮它
+们持续争取资助。本项目除本节外，在 SPA 全局页脚、`/api/*` 响应 `X-Attribution`
+header、以及 [README.md](https://github.com/IAI-USTC-Quantum/QuantumAtlas#数据来源与归属attribution)
+均显式声明。
+
 ## 关键依赖（开源生态）
 
 ### Server

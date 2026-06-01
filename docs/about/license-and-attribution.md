@@ -48,10 +48,11 @@ Metadata from OpenAlex (https://openalex.org), released under CC0.
 Article source and full text: arXiv (https://arxiv.org).
 ```
 
-**API 响应 header**（计划中）：
+**API 响应 header**（在所有 `/api/*` 路径上自动注入，由
+`cmd/qatlasd/main.go` 的 router-level middleware 实现）：
 
 ```
-X-Attribution: OpenAlex (CC0), arXiv
+X-Attribution: OpenAlex (CC0), Crossref (CC0), arXiv
 ```
 
 **README + 项目文档**（本节及 [致谢](credits.md)）显示完整 attribution 链。

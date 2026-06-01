@@ -45,6 +45,14 @@
         "signOut": "Sign out"
       }
     },
+    "footer": {
+      "dataSources": "Paper metadata from <oa>OpenAlex</oa> (CC0) and <cr>Crossref</cr> (CC0); source entries from <ax>arXiv</ax>.",
+      "links": {
+        "license": "License & attribution",
+        "tos": "Terms of service",
+        "source": "Source code"
+      }
+    },
     "metrics": {
       "totalPages": "Total pages",
       "entries": "Entries",

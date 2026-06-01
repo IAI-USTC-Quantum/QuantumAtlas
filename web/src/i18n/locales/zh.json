@@ -45,6 +45,14 @@
         "signOut": "退出登录"
       }
     },
+    "footer": {
+      "dataSources": "论文 metadata 由 <oa>OpenAlex</oa>（CC0）与 <cr>Crossref</cr>（CC0）提供；论文条目来自 <ax>arXiv</ax>。",
+      "links": {
+        "license": "许可与归属",
+        "tos": "服务条款",
+        "source": "源代码"
+      }
+    },
     "metrics": {
       "totalPages": "页面总数",
       "entries": "词条",

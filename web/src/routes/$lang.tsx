@@ -3,6 +3,7 @@ import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { isLang } from '@/i18n'
+import { Footer } from '@/components/footer'
 import { Sidebar } from '@/components/sidebar'
 import { Topbar } from '@/components/topbar'
 
@@ -46,6 +47,7 @@ function LangLayout() {
             <Outlet />
           </div>
         </main>
+        <Footer />
       </div>
     </div>
   )
