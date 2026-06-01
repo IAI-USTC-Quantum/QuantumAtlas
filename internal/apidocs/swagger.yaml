@@ -915,7 +915,7 @@ paths:
     get:
       description: |-
         Returns a POSIX sh script (text/x-shellscript) that downloads
-        and verifies the latest qatlasd release binary.
+        the latest qatlasd release binary.
       produces:
       - text/plain
       responses:

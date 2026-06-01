@@ -45,16 +45,16 @@ func docHealthCheck() {}
 // @Router      /api/server/info [get]
 func docServerInfo() {}
 
-// installServer serves the POSIX-sh installer for the qatlasd binary.
+// docInstallScript serves the POSIX-sh installer for the qatlasd binary.
 //
 // @Summary     Installer script
 // @Description Returns a POSIX sh script (text/x-shellscript) that downloads
-// @Description and verifies the latest qatlasd release binary.
+// @Description the latest qatlasd release binary.
 // @Tags        System
 // @Produce     plain
 // @Success     200 {string} string "shell script"
 // @Router      /install-qatlasd.sh [get]
-func docInstallServer() {}
+func docInstallScript() {}
 
 // --- Wiki --------------------------------------------------------------------
 
