@@ -14,7 +14,7 @@ Typical local invocation::
 ``QATLAS_TOKEN`` accepts either:
 
   * a **PAT plaintext** (``qat_*``) — minted at https://<host>/pat or via
-    ``qatlas-server pat mint`` on the server box; lives up to 365 days,
+    ``qatlasd pat mint`` on the server box; lives up to 365 days,
     so it is the recommended shape for unattended callers (CI secrets,
     cron jobs).
   * a **PocketBase user JWT** (anything else, typically a long ``eyJ...``
@@ -442,7 +442,7 @@ def test_write_endpoint_accepts_user_token(target: Target):
     ``shares:write`` scope — otherwise scopeGuard returns 403 and this
     test fails with a hint pointing the operator at the fix. Mint a
     properly-scoped PAT via https://<host>/pat or on the server box
-    with ``qatlas-server pat mint --scopes shares:write``.
+    with ``qatlasd pat mint --scopes shares:write``.
     """
     token = target.auth_token()
     if not token:

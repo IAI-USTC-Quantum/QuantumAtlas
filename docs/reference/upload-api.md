@@ -7,7 +7,7 @@
 > in-transit guard.
 >
 > Storage / ops perspective (RustFS env vars, IAM policy, bucket
-> versioning lifecycle, `qatlas-server storage prune` operator guide)
+> versioning lifecycle, `qatlasd storage prune` operator guide)
 > lives in [storage-rustfs.md](../deployment/rustfs.md).
 
 ## Endpoints
@@ -71,7 +71,7 @@ do based on what already exists at the target key:
 | Nothing                                             | (any)           | Write new object, attach `sha256` user metadata                                                                                                 | 201  |
 | Same bytes (existing `x-amz-meta-sha256` matches)   | (any)           | **Skip the PutObject entirely**; return `unchanged: true`                                                                                       | 200  |
 | Different bytes                                     | no `--overwrite`| Reject with both hashes in the body so the caller can decide                                                                                    | 409  |
-| Different bytes                                     | `--overwrite`   | Overwrite. Prior version becomes noncurrent (recoverable via `mc cp --version-id …` or `qatlas-server storage prune --keep-last N` policy)       | 201  |
+| Different bytes                                     | `--overwrite`   | Overwrite. Prior version becomes noncurrent (recoverable via `mc cp --version-id …` or `qatlasd storage prune --keep-last N` policy)       | 201  |
 | Object exists but has NO sha256 metadata (legacy)   | no `--overwrite`| Treat as "unknown content" → 409. We can't verify equality without downloading and re-hashing, so we require explicit confirm.                  | 409  |
 
 Why bother with sha256 when RustFS already has versioning? See the
@@ -254,7 +254,7 @@ mc cp --version-id <vid> \
     qatlas/qatlas-raw/pdf/2501/2501.00010v1.pdf
 ```
 
-Or alter retention policy with `qatlas-server storage prune
+Or alter retention policy with `qatlasd storage prune
 --keep-last N` so the prior version is preserved long-term.
 
 ## Why bother — RustFS already has versioning, right?

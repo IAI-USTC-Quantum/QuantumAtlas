@@ -16,12 +16,12 @@ import (
 
 // defaultServiceName is the systemd unit / launchd plist / SCM service
 // name installed by `service install` when --name isn't passed.
-const defaultServiceName = "qatlas-server"
+const defaultServiceName = "qatlasd"
 
 // noopProgram satisfies service.Interface. The library requires this
 // interface to construct service.Service even for install/uninstall calls
 // that never invoke Run(). The actual daemon process is the existing
-// `qatlas-server serve` subcommand (PocketBase's HTTP server), not anything
+// `qatlasd serve` subcommand (PocketBase's HTTP server), not anything
 // the library spawns — so Start/Stop here are no-ops.
 type noopProgram struct{}
 
@@ -44,12 +44,12 @@ type serviceInstallOpts struct {
 func NewServiceCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "service",
-		Short: "Manage qatlas-server as a managed system service (systemd / launchd / SCM)",
-		Long: `Manage qatlas-server as a managed system service.
+		Short: "Manage qatlasd as a managed system service (systemd / launchd / SCM)",
+		Long: `Manage qatlasd as a managed system service.
 
 Wraps github.com/kardianos/service to install a sandboxed systemd unit
 (or launchd plist / Windows SCM entry on other platforms). After install,
-service management goes through either this command (qatlas-server service
+service management goes through either this command (qatlasd service
 start/stop/status) or natively via systemctl — they are equivalent because
 the library is just a thin systemctl wrapper that exits after Install().
 
@@ -73,8 +73,8 @@ func newServiceInstallCommand() *cobra.Command {
 	opts := serviceInstallOpts{}
 	cmd := &cobra.Command{
 		Use:   "install",
-		Short: "Install qatlas-server as a managed service",
-		Long: `Install qatlas-server as a managed service.
+		Short: "Install qatlasd as a managed service",
+		Long: `Install qatlasd as a managed service.
 
 Interactive mode (default, TTY): prompts for mode (user/system), confirms
 the auto-detected .env path, renders the unit content for [Y/n] review,
@@ -85,14 +85,14 @@ are required, no prompts are issued.
 
 Examples:
   # Interactive — auto-detect everything, prompt at each step
-  qatlas-server service install
+  qatlasd service install
 
   # CI-style — fully explicit, no prompts
-  qatlas-server service install --mode user \
+  qatlasd service install --mode user \
       --dotenv-path ~/QuantumAtlas/.env --force
 
   # Preview the rendered unit without writing
-  qatlas-server service install --dry-run --mode system \
+  qatlasd service install --dry-run --mode system \
       --dotenv-path /etc/quantum-atlas/.env`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runServiceInstall(opts)
@@ -189,7 +189,7 @@ func runServiceInstall(opts serviceInstallOpts) error {
 		fmt.Fprintf(os.Stderr, "warning: install succeeded but start failed: %v\n", err)
 		return nil
 	}
-	fmt.Printf("Started service %s. Manage via `qatlas-server service status` or `systemctl%s status %s`.\n",
+	fmt.Printf("Started service %s. Manage via `qatlasd service status` or `systemctl%s status %s`.\n",
 		opts.Name, userFlagFor(opts.Mode), opts.Name)
 	return nil
 }
@@ -303,7 +303,7 @@ func validateDotenvPath(path string) error {
 // actually run as, NOT the home of the current process. The distinction
 // matters under sudo: sudo resets $HOME to /root by default (see sudoers(5)
 // `env_reset`), so a plain os.UserHomeDir() during
-// `sudo qatlas-server service install --mode system` would yield /root,
+// `sudo qatlasd service install --mode system` would yield /root,
 // poisoning ReadWritePaths (and the .env autodetect candidates) with
 // /root/.local/share/quantum-atlas — a path the eventual `User=<sudo-user>`
 // daemon will never write to, making the hardening grant useless.
@@ -399,7 +399,7 @@ func buildServiceConfig(opts serviceInstallOpts) (*service.Config, error) {
 }
 
 // resolveSystemUser picks a sensible User= value for system-mode units.
-// Prefers $SUDO_USER (operator ran `sudo qatlas-server service install`),
+// Prefers $SUDO_USER (operator ran `sudo qatlasd service install`),
 // falls back to the username corresponding to the current effective uid,
 // finally empty (caller will run as root, not recommended but allowed).
 //
@@ -415,7 +415,7 @@ func resolveSystemUser() string {
 	return ""
 }
 
-// guardSudoUserModeMismatch refuses the broken `sudo qatlas-server service
+// guardSudoUserModeMismatch refuses the broken `sudo qatlasd service
 // install --mode user` combination upfront.
 //
 // Why it's broken: kardianos/service's user-mode backend computes the unit
@@ -438,7 +438,7 @@ func guardSudoUserModeMismatch(mode string, euid int, sudoUser string) error {
 		return fmt.Errorf("refusing `sudo ... service install --mode user`: " +
 			"sudo + user mode is not supported (the resulting unit would land in /root, not the invoking user's systemd --user dir). " +
 			"Use one of:\n" +
-			"  - to install a per-user service: drop sudo (`qatlas-server service install --mode user ...`)\n" +
+			"  - to install a per-user service: drop sudo (`qatlasd service install --mode user ...`)\n" +
 			"  - to install a system service: pass `--mode system` instead")
 	}
 	return nil

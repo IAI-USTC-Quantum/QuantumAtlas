@@ -17,7 +17,7 @@ from .optimizer import CircuitOptimizer, OptimizationLevel
 from .parameter_mapper import ParameterMapper
 
 # Knowledge-graph data models (optional). The graph itself is server-side:
-# the Go qatlas-server owns the Neo4j connection and exposes reads over
+# the Go qatlasd owns the Neo4j connection and exposes reads over
 # /api/graph/*. The Python client does not connect to Neo4j directly.
 try:
     from ..knowledge.models import Algorithm, Implementation
@@ -33,7 +33,7 @@ except ImportError:
 
 
 _KG_SERVER_ONLY = (
-    "Knowledge-graph access is server-side only. The Go qatlas-server owns the "
+    "Knowledge-graph access is server-side only. The Go qatlasd owns the "
     "Neo4j connection and exposes reads over /api/graph/*; client-side graph "
     "read/write is not implemented."
 )

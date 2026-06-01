@@ -1,9 +1,9 @@
-# `qatlas-server` 服务端 CLI 参考
+# `qatlasd` 服务端 CLI 参考
 
-`qatlas-server` 是 Go binary，单文件 ~30 MB，自带 SPA + PocketBase + SQLite。继承 PocketBase 全部命令 + QuantumAtlas 自有的 `service` / `pat` / `storage` 子命令树。
+`qatlasd` 是 Go binary，单文件 ~30 MB，自带 SPA + PocketBase + SQLite。继承 PocketBase 全部命令 + QuantumAtlas 自有的 `service` / `pat` / `storage` 子命令树。
 
 ```
-qatlas-server [global flags] <subcommand> [args...]
+qatlasd [global flags] <subcommand> [args...]
 ```
 
 ## 全局 flag（PocketBase 内置）
@@ -24,7 +24,7 @@ qatlas-server [global flags] <subcommand> [args...]
 ## `serve`：启动 HTTP server
 
 ```
-qatlas-server serve [--http=<host:port>] [--dev]
+qatlasd serve [--http=<host:port>] [--dev]
 ```
 
 | Flag | 默认 | 含义 |
@@ -36,13 +36,13 @@ qatlas-server serve [--http=<host:port>] [--dev]
 
 ```bash
 # 默认 127.0.0.1:4200
-qatlas-server serve
+qatlasd serve
 
 # 监听公网（前面必须有反代）
-qatlas-server serve --http=0.0.0.0:4200
+qatlasd serve --http=0.0.0.0:4200
 
 # 显式 .env 路径
-QATLAS_DOTENV=/etc/quantum-atlas/.env qatlas-server serve
+QATLAS_DOTENV=/etc/quantum-atlas/.env qatlasd serve
 ```
 
 ---
@@ -52,20 +52,20 @@ QATLAS_DOTENV=/etc/quantum-atlas/.env qatlas-server serve
 跨平台 service 管理（用 [kardianos/service](https://github.com/kardianos/service)）。
 
 ```
-qatlas-server service <install|uninstall|start|stop|restart|status>
+qatlasd service <install|uninstall|start|stop|restart|status>
 ```
 
 ### `service install`
 
 ```
-qatlas-server service install [--name qatlas-server] [--mode user|system]
+qatlasd service install [--name qatlasd] [--mode user|system]
                               [--dotenv-path <path>] [--bind <host:port>]
                               [--dry-run] [--force]
 ```
 
 | Flag | 默认 | 含义 |
 |---|---|---|
-| `--name` | `qatlas-server` | service unit 名（Linux 上是 `<name>.service`）|
+| `--name` | `qatlasd` | service unit 名（Linux 上是 `<name>.service`）|
 | `--mode user\|system` | TTY 下交互式询问；非 TTY 必填 | user-level systemd unit vs system-level（system 需要 sudo）|
 | `--dotenv-path` | `$QATLAS_DOTENV` → `~/QuantumAtlas/.env` → `./.env` | 写入 unit 的 `Environment=QATLAS_DOTENV=` |
 | `--bind` | `127.0.0.1:4200` | `serve --http=` 的值 |
@@ -83,7 +83,7 @@ qatlas-server service install [--name qatlas-server] [--mode user|system]
 **非交互模式**（CI / `curl|sh` 后跑）：
 
 ```bash
-sudo qatlas-server service install \
+sudo qatlasd service install \
     --mode system \
     --dotenv-path /etc/quantum-atlas/.env \
     --force
@@ -110,18 +110,18 @@ ReadWritePaths=<.env dir> <wiki dir> <data dir>
 ### `service start|stop|restart|status`
 
 ```bash
-qatlas-server service start
-qatlas-server service stop
-qatlas-server service restart
-qatlas-server service status
+qatlasd service start
+qatlasd service stop
+qatlasd service restart
+qatlasd service status
 ```
 
-跟 `systemctl <op> qatlas-server` 100% 等价（library 是 systemctl 的薄 wrapper）。
+跟 `systemctl <op> qatlasd` 100% 等价（library 是 systemctl 的薄 wrapper）。
 
 ### `service uninstall`
 
 ```bash
-qatlas-server service uninstall
+qatlasd service uninstall
 ```
 
 停服务 + 删 unit 文件 + `daemon-reload`。**不会删 pb_data / raw / data**——那是数据，需要你手动 trash-put。
@@ -133,13 +133,13 @@ qatlas-server service uninstall
 绕开 `/api/pat` 直接读写 pb_data。**需要在 server 主机上跑**（因为依赖 PocketBase DB 文件）。
 
 ```
-qatlas-server pat <mint|list|revoke|scopes>
+qatlasd pat <mint|list|revoke|scopes>
 ```
 
 ### `pat mint`
 
 ```
-qatlas-server pat mint --user <email|id> --name <name>
+qatlasd pat mint --user <email|id> --name <name>
                        --scopes <s1,s2,...> --expires-in-days <N>
                        [--description <text>]
 ```
@@ -157,7 +157,7 @@ qatlas-server pat mint --user <email|id> --name <name>
 ### `pat list`
 
 ```
-qatlas-server pat list [--user <email|id>] [--json]
+qatlasd pat list [--user <email|id>] [--json]
 ```
 
 按 user 过滤；`--json` 出机读格式。**不包含明文 / 哈希**——只有 prefix + 元数据。
@@ -165,7 +165,7 @@ qatlas-server pat list [--user <email|id>] [--json]
 ### `pat revoke`
 
 ```
-qatlas-server pat revoke <id>
+qatlasd pat revoke <id>
 ```
 
 硬删除该 PAT record，下次该 token 调任何端点立刻 401。
@@ -175,7 +175,7 @@ qatlas-server pat revoke <id>
 打印当前编译进 binary 的 scope 词表（同 `GET /api/pat/scopes` 返回内容，但不用起 HTTP）：
 
 ```bash
-qatlas-server pat scopes
+qatlasd pat scopes
 # papers:write    Upload paper PDFs / Markdown and run MinerU jobs
 # shares:read     List share tokens you created
 # shares:write    Create and revoke share tokens (includes read)
@@ -188,7 +188,7 @@ qatlas-server pat scopes
 仅 S3 / RustFS 后端可用。
 
 ```
-qatlas-server storage <prune> [options...]
+qatlasd storage <prune> [options...]
 ```
 
 ### `storage prune`
@@ -196,7 +196,7 @@ qatlas-server storage <prune> [options...]
 删除 noncurrent S3 object versions（即被 `--overwrite` 覆盖掉的旧版本）。
 
 ```
-qatlas-server storage prune [--prefix <key-prefix>] [--older-than <duration>]
+qatlasd storage prune [--prefix <key-prefix>] [--older-than <duration>]
                             [--keep-last <N>] [--yes] [--dry-run] [--json]
 ```
 
@@ -216,13 +216,13 @@ qatlas-server storage prune [--prefix <key-prefix>] [--older-than <duration>]
 
 ```bash
 # 预览：删 90 天前的所有 noncurrent
-qatlas-server storage prune --older-than 90d
+qatlasd storage prune --older-than 90d
 
 # 真删，每个 key 保留最近 5 个 noncurrent，超出的删
-qatlas-server storage prune --keep-last 5 --yes
+qatlasd storage prune --keep-last 5 --yes
 
 # 只处理 2025-11 的 cohort
-qatlas-server storage prune --prefix pdf/2511/ --older-than 30d --yes
+qatlasd storage prune --prefix pdf/2511/ --older-than 30d --yes
 ```
 
 **永远不会删的对象**：current version、delete marker、metadata sidecar（LocalStore）。
@@ -234,16 +234,16 @@ qatlas-server storage prune --prefix pdf/2511/ --older-than 30d --yes
 ## `superuser`：PocketBase 内置
 
 ```
-qatlas-server superuser upsert <email> <password>
-qatlas-server superuser create <email> <password>
-qatlas-server superuser delete <email>
+qatlasd superuser upsert <email> <password>
+qatlasd superuser create <email> <password>
+qatlasd superuser delete <email>
 ```
 
 管理 PocketBase admin UI 登录（`/_/`）。日常运维**不依赖** admin UI，仅在需要看 DB 结构或临时调试时用：
 
 ```bash
 # 改密码（已有就改，没有就建）
-qatlas-server superuser upsert admin@example.com NewSecurePass!
+qatlasd superuser upsert admin@example.com NewSecurePass!
 ```
 
 ---
@@ -251,9 +251,9 @@ qatlas-server superuser upsert admin@example.com NewSecurePass!
 ## `migrate`：PocketBase 数据库迁移
 
 ```
-qatlas-server migrate up
-qatlas-server migrate down [N]
-qatlas-server migrate collections
+qatlasd migrate up
+qatlasd migrate down [N]
+qatlasd migrate collections
 ```
 
 迁移文件在 `pb_migrations/`（迁移目录默认在 pb_data 旁）。**每次启动 server 时自动跑 pending migrations**，所以手工调用通常不必要。
@@ -265,8 +265,8 @@ qatlas-server migrate collections
 每个 subcommand 都有 `--help`，输出真实当前版本的 flag 集合（这份文档可能滞后于代码）：
 
 ```bash
-qatlas-server --help
-qatlas-server serve --help
-qatlas-server service install --help
-qatlas-server storage prune --help
+qatlasd --help
+qatlasd serve --help
+qatlasd service install --help
+qatlasd storage prune --help
 ```

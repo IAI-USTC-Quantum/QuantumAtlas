@@ -95,7 +95,7 @@ jobs:
       - name: Upload server binary
         uses: actions/upload-artifact@v4
         with:
-          name: qatlas-server-binary-${{ github.sha }}
-          path: build/qatlas-server
+          name: qatlasd-binary-${{ github.sha }}
+          path: build/qatlasd
           retention-days: 7
           if-no-files-found: error

@@ -88,7 +88,7 @@
 
 === ":material-server-network: 我是运维者"
 
-    我想部署 / 维护 qatlas-server。
+    我想部署 / 维护 qatlasd。
 
     **1. 装 binary：**
 
@@ -114,10 +114,10 @@
 
     ```bash
     # 交互式（会让你确认 mode + .env 路径 + 渲染 unit 预览）
-    qatlas-server service install
+    qatlasd service install
 
     # CI / 全自动
-    sudo qatlas-server service install --mode system \
+    sudo qatlasd service install --mode system \
         --dotenv-path /etc/quantum-atlas/.env --force
     ```
 
@@ -165,7 +165,7 @@
     cp .env.example .env
     # 编辑 .env：填 NEO4J_* 指向你自己起的 Neo4j
 
-    ./build/qatlas-server serve --http=0.0.0.0:4200
+    ./build/qatlasd serve --http=0.0.0.0:4200
     ```
 
     访问：

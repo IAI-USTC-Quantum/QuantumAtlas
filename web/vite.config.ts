@@ -21,7 +21,7 @@ export default defineConfig(({ mode }) => {
           target: proxyTarget,
           changeOrigin: true,
           // Accept self-signed certs (Caddy `tls internal`, dev
-          // qatlas-server with --tls-cert, etc.). Does not affect
+          // qatlasd with --tls-cert, etc.). Does not affect
           // production builds.
           secure: false,
           ws: true,
@@ -61,7 +61,7 @@ export default defineConfig(({ mode }) => {
       // dev-only: vite serves only the SPA bundle, so /api/* would
       // fall back to index.html and the SPA's fetch would crash with
       // "Unexpected token '<', \"<!doctype \" is not valid JSON".
-      // VITE_DEV_API_TARGET must point at a live qatlas-server instance
+      // VITE_DEV_API_TARGET must point at a live qatlasd instance
       // (local or remote) — see web/README.md "Dev workflow" section
       // for setup. Without it, /api/*, /_/* and /share/* requests have
       // nowhere to go.

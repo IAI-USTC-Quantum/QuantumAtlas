@@ -54,10 +54,10 @@
 
     ```dockerfile
     FROM alpine:3
-    COPY qatlas-server-linux-amd64 /usr/local/bin/qatlas-server
-    RUN chmod +x /usr/local/bin/qatlas-server
+    COPY qatlasd-linux-amd64 /usr/local/bin/qatlasd
+    RUN chmod +x /usr/local/bin/qatlasd
     EXPOSE 4200
-    CMD ["qatlas-server", "serve", "--http=0.0.0.0:4200"]
+    CMD ["qatlasd", "serve", "--http=0.0.0.0:4200"]
     ```
 
     pb_data / wiki / raw 用 volume mount 进容器，`.env` 用 `--env-file` 注入。pb_data 路径用 `QATLAS_PB_DATA_DIR` 控制。
@@ -116,7 +116,7 @@
     不会自动更新。
 
     - 触发 `POST /api/wiki/sync/pull` → server 端 git fast-forward → in-memory cache 刷新
-    - Neo4j 图谱的派生是**服务端职责**，由 Go `qatlas-server` 基于 canonical Wiki 重建；Python 客户端不直连 Neo4j
+    - Neo4j 图谱的派生是**服务端职责**，由 Go `qatlasd` 基于 canonical Wiki 重建；Python 客户端不直连 Neo4j
 
     或者你把 sync 加进 GitHub Action：每次 Wiki repo PR 合并触发 server 端 sync。
 
@@ -130,7 +130,7 @@
 
 ## 部署 / 运维
 
-??? question "qatlas-server 默认监听 127.0.0.1，怎么对外？"
+??? question "qatlasd 默认监听 127.0.0.1，怎么对外？"
 
     前面挂反代（Caddy 推荐）做 TLS 终结。**不要**直接 `--http=0.0.0.0:4200` 暴露——会绕过反代的 TLS / 鉴权 / Host header preserve。详见 [反向代理](../deployment/reverse-proxy.md)。
 

@@ -72,10 +72,10 @@ joined from PocketBase's internal _externalAuths table — comma-separated
 list of OAuth providers each user has linked (typically just "github"
 for QuantumAtlas).`,
 		Example: `  # Tabular view (default)
-  qatlas-server users list
+  qatlasd users list
 
   # Machine-readable
-  qatlas-server users list --json`,
+  qatlasd users list --json`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			collection, err := app.FindCollectionByNameOrId(auth.UsersCollection)

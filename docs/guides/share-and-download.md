@@ -93,13 +93,13 @@ S3 后端开启时，share 服务实际是：
 
 ```mermaid
 flowchart LR
-    C[Client 浏览器] -->|GET /share/&lt;token&gt;/pdf/...| Q[qatlas-server]
+    C[Client 浏览器] -->|GET /share/&lt;token&gt;/pdf/...| Q[qatlasd]
     Q -->|307 Temporary Redirect| R[https://&lt;public-endpoint&gt;/...presigned...]
     R -->|GET 含 SigV4| RFS[RustFS]
     RFS -->|对象字节| C
 ```
 
-server 给 client 一个 **307 redirect** 到 RustFS 公网 endpoint 的 presigned URL（5 分钟有效）。**没有字节通过 qatlas-server**——省 WAN 带宽。
+server 给 client 一个 **307 redirect** 到 RustFS 公网 endpoint 的 presigned URL（5 分钟有效）。**没有字节通过 qatlasd**——省 WAN 带宽。
 
 如果是 LocalStore 后端（dev），share 直接从 server 流字节。
 

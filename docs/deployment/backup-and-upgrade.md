@@ -15,14 +15,14 @@ QuantumAtlas 有三层状态，各自的备份 / 升级语义不同：
 
 ```bash
 # 1. 停 server
-sudo systemctl stop qatlas-server
+sudo systemctl stop qatlasd
 
 # 2. 直接 cp（mode preserve）
 sudo cp -a /home/timidly/.local/share/quantum-atlas/pb_data \
           /var/backups/pb_data-$(date +%F)
 
 # 3. 起回来
-sudo systemctl start qatlas-server
+sudo systemctl start qatlasd
 ```
 
 5 秒 downtime。**周期：周一次 + 大动作前**。
@@ -55,9 +55,9 @@ curl -OJ https://<server>/api/backups/weekly-2026-05-29.zip \
 set -euo pipefail
 DEST=/var/backups/qatlas/pb_data-$(date +%F).tar.gz
 mkdir -p $(dirname "$DEST")
-systemctl stop qatlas-server
+systemctl stop qatlasd
 tar czf "$DEST" -C /home/timidly/.local/share/quantum-atlas pb_data
-systemctl start qatlas-server
+systemctl start qatlasd
 # 保留最近 4 周
 find /var/backups/qatlas/ -name 'pb_data-*.tar.gz' -mtime +28 -delete
 ```
@@ -88,14 +88,14 @@ rclone sync myrustfs:qatlas-raw  \
 
 ### Prune noncurrent
 
-定期跑 `qatlas-server storage prune` 防止 noncurrent 堆爆：
+定期跑 `qatlasd storage prune` 防止 noncurrent 堆爆：
 
 ```bash
 # 干跑预览：90 天前 + 保留最近 5 个
-qatlas-server storage prune --older-than 90d --keep-last 5
+qatlasd storage prune --older-than 90d --keep-last 5
 
 # 满意了真删
-qatlas-server storage prune --older-than 90d --keep-last 5 --yes
+qatlasd storage prune --older-than 90d --keep-last 5 --yes
 ```
 
 详见 [RustFS / storage prune](rustfs.md#prune)。
@@ -147,7 +147,7 @@ sudo cp -a /home/timidly/.local/share/quantum-atlas/pb_data \
           /var/backups/pb_data-pre-v0.2.9
 
 # 4. Restart
-sudo systemctl restart qatlas-server
+sudo systemctl restart qatlasd
 
 # 5. 等 PocketBase 自动跑 pending migrations
 sleep 3
@@ -157,7 +157,7 @@ curl http://127.0.0.1:4200/api/health | jq .data.version
 # "0.2.9"
 
 # 7. 看日志确认 migration 顺利
-journalctl -u qatlas-server -n 30 | grep -iE 'migration|error'
+journalctl -u qatlasd -n 30 | grep -iE 'migration|error'
 ```
 
 总 downtime 一般 < 10 秒。
@@ -173,11 +173,11 @@ journalctl -u qatlas-server -n 30 | grep -iE 'migration|error'
 curl -fsSL https://quantum-atlas.ai/install-server.sh | sh -s -- --version v0.2.7
 
 # 恢复 pb_data（如果 migration 改了 schema）
-sudo systemctl stop qatlas-server
+sudo systemctl stop qatlasd
 sudo rm -rf /home/timidly/.local/share/quantum-atlas/pb_data
 sudo cp -a /var/backups/pb_data-pre-v0.2.9 \
           /home/timidly/.local/share/quantum-atlas/pb_data
-sudo systemctl start qatlas-server
+sudo systemctl start qatlasd
 ```
 
 **注意**：PocketBase migration 是向前的（up），通常没有 down migration。所以：
@@ -194,7 +194,7 @@ sudo systemctl start qatlas-server
 3. 恢复 pb_data：`tar xzf pb_data-latest.tar.gz -C <data_dir>`
 4. 恢复 wiki：`git clone <wiki-repo>`
 5. 指向同一 RustFS bucket 和 Neo4j（mesh 内网 IP）
-6. `qatlas-server service install --mode system --force ...`
+6. `qatlasd service install --mode system --force ...`
 7. 走 [健康检查 checklist](health-and-monitoring.md#self-check)
 
 完整恢复时间应该 ≤ 30 分钟。

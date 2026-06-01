@@ -4,7 +4,7 @@
 // SCOPE: in v0.7.0 the *execution* of the full bootstrap is decoupled
 // (see handoff.md) — this package provides the compiling, unit-tested
 // building blocks (arxiv-id extraction, work→node mapping, batched
-// MERGE ingest, gzip jsonl streaming) that the `qatlas-server openalex`
+// MERGE ingest, gzip jsonl streaming) that the `qatlasd openalex`
 // subcommand drives. Nothing here runs at server boot.
 package openalex
 

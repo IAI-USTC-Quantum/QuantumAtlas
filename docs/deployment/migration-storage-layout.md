@@ -29,7 +29,7 @@ checkout 内的 `wiki/` / `raw/` / `data/` / `pb_data/`。这有几个长期
 所有默认都是显式覆盖优先（QATLAS_* > 旧 alias > 内置默认），生产部署
 **不**强制要求重新写 `.env`：什么都不写就走 XDG 默认。`pb_data` 的位置
 完全由 `QATLAS_PB_DATA_DIR` 控制；server 启动时
-`cmd/qatlas-server/main.go::injectPBDataDirFlag` 会自动把它注入 PocketBase
+`cmd/qatlasd/main.go::injectPBDataDirFlag` 会自动把它注入 PocketBase
 （在 `os.Args` 里补 `--dir=$QATLAS_PB_DATA_DIR`），所以 systemd unit /
 启动脚本里**不需要**也**不应该**再硬写 `--dir=`，整套配置走 `.env`
 统一管。
@@ -46,7 +46,7 @@ APP_HOME=~/QuantumAtlas                    # 改成你自己的 checkout 路径
 # 0. 停掉本地 server，避免边搬边写
 #    （根据你的运行方式，二选一）
 systemctl --user stop qatlas.service                # systemd user
-pkill -f 'qatlas-server serve' || true                # 手起 binary
+pkill -f 'qatlasd serve' || true                # 手起 binary
 
 # 1. 准备 XDG 目标目录
 xdg_root="${XDG_DATA_HOME:-$HOME/.local/share}/quantum-atlas"
@@ -75,7 +75,7 @@ cd ../QuantumAtlas-Wiki && git init && git add -A && git commit -m "import from 
 cd -
 
 # 5. 启动验证
-~/.local/bin/qatlas-server serve --http=127.0.0.1:4200 &
+~/.local/bin/qatlasd serve --http=127.0.0.1:4200 &
 sleep 2
 curl -s http://127.0.0.1:4200/health                # {"status":"healthy",...}
 curl -s http://127.0.0.1:4200/api/stats | jq .      # total_pages 应非 0
@@ -150,7 +150,7 @@ QATLAS_PB_DATA_DIR=./pb_data
 # Go 侧
 pixi run vet                                                # 0 warning
 pixi run test-go                                            # config tests pass
-~/.local/bin/qatlas-server serve --http=127.0.0.1:4200 &
+~/.local/bin/qatlasd serve --http=127.0.0.1:4200 &
 sleep 2
 curl -s http://127.0.0.1:4200/health
 curl -s http://127.0.0.1:4200/api/stats | jq .total_pages   # 应 > 0

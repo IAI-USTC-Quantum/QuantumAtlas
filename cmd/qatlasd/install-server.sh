@@ -1,8 +1,8 @@
 #!/usr/bin/env sh
 # QuantumAtlas server installer
 #
-# Downloads the latest qatlas-server binary from GitHub Releases and
-# installs it to ~/.local/bin/qatlas-server.
+# Downloads the latest qatlasd binary from GitHub Releases and
+# installs it to ~/.local/bin/qatlasd.
 #
 # POSIX sh (no bash-isms) so it runs on Alpine / BusyBox / macOS sh too.
 # Strictly binary-install only — no `service install` chaining, no TTY
@@ -12,7 +12,7 @@
 # subsequent `exec </dev/tty` either hangs waiting on tty input or
 # corrupts the already-buffered slice. Bash sidesteps this by slurping
 # the whole script, but we can't depend on bash on minimal targets.
-# After install, the printed next-step calls `qatlas-server service
+# After install, the printed next-step calls `qatlasd service
 # install` explicitly — that's a real cobra program with its own TTY
 # handling, not a sub-shell, so it has none of the curl|sh problems.
 #
@@ -39,7 +39,7 @@ while [ $# -gt 0 ]; do
         --dir)            INSTALL_DIR="$2"; shift 2 ;;
         --help|-h)
             cat <<'EOF'
-qatlas-server installer
+qatlasd installer
 
 Usage:
   curl -fsSL https://quantum-atlas.ai/install-server.sh | sh
@@ -56,7 +56,7 @@ Environment overrides:
   QATLAS_REPO         GitHub owner/repo
                       (default: IAI-USTC-Quantum/QuantumAtlas)
 
-After install, run `qatlas-server service install` to register a
+After install, run `qatlasd service install` to register a
 managed systemd / launchd / SCM service. That command has its own
 interactive flow and supports --mode / --dotenv-path / --bind /
 --force flags for unattended use.
@@ -65,7 +65,7 @@ EOF
             ;;
         *)
             echo "qatlas-installer: unknown argument: $1" >&2
-            echo "(service install / TTY-driven flags moved to 'qatlas-server service install')" >&2
+            echo "(service install / TTY-driven flags moved to 'qatlasd service install')" >&2
             exit 2
             ;;
     esac
@@ -101,14 +101,14 @@ case "$ARCH" in
     *) fail "unsupported architecture: $ARCH (need x86_64 or aarch64/arm64)" ;;
 esac
 
-ASSET="qatlas-server-${OS}-${ARCH}"
+ASSET="qatlasd-${OS}-${ARCH}"
 info "Target: ${bold}${OS}/${ARCH}${reset} (asset: ${ASSET})"
 
 # darwin-amd64 isn't published because GitHub's free-tier macos-13 Intel
 # runners spend 20-40 minutes in queue (blocking the entire release).
 # Tell Intel Mac users explicitly so they don't see a generic 404.
 if [ "$OS" = "darwin" ] && [ "$ARCH" = "amd64" ]; then
-    fail "Intel Mac binary not published; use \`go install github.com/$REPO/cmd/qatlas-server@latest\` (needs Go 1.26+) or build from source"
+    fail "Intel Mac binary not published; use \`go install github.com/$REPO/cmd/qatlasd@latest\` (needs Go 1.26+) or build from source"
 fi
 
 # --- Required tools --------------------------------------------------------
@@ -187,7 +187,7 @@ fi
 
 # --- Install binary --------------------------------------------------------
 mkdir -p "$INSTALL_DIR" || fail "cannot create $INSTALL_DIR"
-DEST="$INSTALL_DIR/qatlas-server"
+DEST="$INSTALL_DIR/qatlasd"
 
 # Atomic install: install(1) fsyncs and chmods 0755.
 install -m 0755 "$TMPBIN" "$DEST" || fail "install to $DEST failed"

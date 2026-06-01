@@ -17,7 +17,7 @@
 
 ## Go server 部署（当前路径）
 
-QuantumAtlas server 是单个 Go 二进制 `qatlas-server`（~35MB，CGO-free，
+QuantumAtlas server 是单个 Go 二进制 `qatlasd`（~35MB，CGO-free，
 静态链接，自带 PocketBase + SQLite + 嵌入式 SPA 前端）。下游部署 =
 拿到 binary + 装 systemd unit + 反代。这里给出一份**单机部署模板**，
 路径都用占位变量（`<USER>` / `<APP_HOME>` / `<WIKI_DIR>` /
@@ -34,7 +34,7 @@ CI release pipeline 已经把 3 平台预编译 binary（`linux/amd64`、`linux/
 `<your-server>/install-server.sh`，会自动选 OS/arch、下载、SHA256 校验：
 
 ```bash
-# 装 binary 到 ~/.local/bin/qatlas-server，自动校验 SHA256
+# 装 binary 到 ~/.local/bin/qatlasd，自动校验 SHA256
 curl -fsSL https://quantum-atlas.ai/install-server.sh | sh
 
 # 钉 release tag
@@ -51,19 +51,19 @@ curl -fsSL https://quantum-atlas.ai/install-server.sh | sh -s -- --dir /opt/qatl
 install`——见下文"为什么 install-server.sh 不自动起服务"）：
 
 ```bash
-qatlas-server service install                    # 交互模式，问 mode + .env path
+qatlasd service install                    # 交互模式，问 mode + .env path
 # 或全自动：
-qatlas-server service install \
+qatlasd service install \
     --mode user --dotenv-path ~/QuantumAtlas/.env --force
 ```
 
 底层就是从 `github.com/IAI-USTC-Quantum/QuantumAtlas/releases/<tag>` 下
-`qatlas-server-<os>-<arch>` 那个 asset，所以**目标机不需要装任何 toolchain**——
+`qatlasd-<os>-<arch>` 那个 asset，所以**目标机不需要装任何 toolchain**——
 连 Go / npm / pixi 都不要，只要 `curl` 或 `wget` + `install`。也可以走 B/C/D
 本地编译，但只在你想钉未发布 commit、或在隔离环境里复现 build 时才需要。
 
 > **为什么 install-server.sh 不自动起服务**：早期版本里 `curl|sh` 会在 binary
-> 装完后顺手 chain 进 `qatlas-server service install`。在 dash（Debian / Ubuntu
+> 装完后顺手 chain 进 `qatlasd service install`。在 dash（Debian / Ubuntu
 > 的 `/bin/sh`）上这条链不可靠——dash 是流式 parser，会在执行到 `exec </dev/tty`
 > 切换 stdin 之前已经从 pipe 预读了大量未消费字节，切换后这些字节既不能用作
 > 脚本继续解析也不能用作终端输入，要么 hang 要么报 `Syntax error: word
@@ -78,8 +78,8 @@ qatlas-server service install \
 落到 `$GOBIN`（默认 `~/go/bin/`）：
 
 ```bash
-go install github.com/IAI-USTC-Quantum/QuantumAtlas/cmd/qatlas-server@latest
-~/go/bin/qatlas-server --help
+go install github.com/IAI-USTC-Quantum/QuantumAtlas/cmd/qatlasd@latest
+~/go/bin/qatlasd --help
 ```
 
 钉版本：把 `@latest` 换成 `@v0.2.3` / `@<commit-sha>`。Go module
@@ -92,7 +92,7 @@ proxy（`proxy.golang.org`）会自动缓存与做哈希校验。
 装完挪到 systemd 引用的路径：
 
 ```bash
-install -m 0755 ~/go/bin/qatlas-server ~/.local/bin/qatlas-server
+install -m 0755 ~/go/bin/qatlasd ~/.local/bin/qatlasd
 ```
 
 #### C. 源码 + `pixi run build`
@@ -103,7 +103,7 @@ install -m 0755 ~/go/bin/qatlas-server ~/.local/bin/qatlas-server
 git clone https://github.com/IAI-USTC-Quantum/QuantumAtlas.git
 cd QuantumAtlas
 pixi run build                 # 自动跑 npm ci + npm run build + go build
-install -m 0755 build/qatlas-server ~/.local/bin/qatlas-server
+install -m 0755 build/qatlasd ~/.local/bin/qatlasd
 ```
 
 #### D. 自带预编译 binary
@@ -111,7 +111,7 @@ install -m 0755 build/qatlas-server ~/.local/bin/qatlas-server
 build host 上编完再传给目标 host（典型场景：目标 host 资源紧张，跨网传输
 代替本机交叉编译）。怎么把 binary 传到目标 host 本文不规定——`scp` / `rsync`
 / artifact 下载 / `kubectl cp` 都行。落到目标 host 后 `install -m 0755 <src>
-~/.local/bin/qatlas-server` 即可。
+~/.local/bin/qatlasd` 即可。
 
 ### 2. 目录布局（推荐）
 
@@ -130,7 +130,7 @@ raw / data / pb_data 默认塞进 git checkout 内。
 │   └── .env                       # 运行配置；server 用 godotenv 读
 ├── QuantumAtlas-Wiki/             # 兄弟 checkout — WIKI_DIR 默认值
 ├── .local/
-│   ├── bin/qatlas-server           # binary（user-writable，sudoless deploy）
+│   ├── bin/qatlasd           # binary（user-writable，sudoless deploy）
 │   └── share/quantum-atlas/       # XDG_DATA_HOME 下，所有 stateful 状态
 │       ├── raw/                   # RAW_DIR 默认值（PDF / MinerU 输出）
 │       ├── data/                  # DATA_DIR 默认值（shares / claims）
@@ -141,7 +141,7 @@ raw / data / pb_data 默认塞进 git checkout 内。
 
 ```
 /etc/quantum-atlas/.env            # 配置；ExecStart 用 QATLAS_DOTENV 指过来
-/usr/local/bin/qatlas-server        # 系统 binary
+/usr/local/bin/qatlasd        # 系统 binary
 /var/lib/quantum-atlas/            # FHS 状态根
 ├── raw/
 ├── data/
@@ -157,16 +157,16 @@ binary 路径选 `~/.local/bin/` vs `/usr/local/bin/` 的取舍：
 
 - `~/.local/bin/` 归运行用户所有，**滚 binary 不需要 sudo**——`go
   install` 默认就落在用户 `$GOBIN`，`install -m 0755 <src>
-  ~/.local/bin/qatlas-server` 全程普通用户身份。配 user-mode systemd
+  ~/.local/bin/qatlasd` 全程普通用户身份。配 user-mode systemd
   单元时连 restart 也免 sudo。
 - `/usr/local/bin/` 是 root-owned，每次 binary 滚动都得 sudo install。
   典型 system-mode 部署（FHS / 多用户共享）会这么放。
-- systemd 单元可以引用任意路径——`ExecStart=/home/<USER>/.local/bin/qatlas-server`
-  跟 `/usr/local/bin/qatlas-server` 在 systemd 视角下完全等价。
+- systemd 单元可以引用任意路径——`ExecStart=/home/<USER>/.local/bin/qatlasd`
+  跟 `/usr/local/bin/qatlasd` 在 systemd 视角下完全等价。
 
 ### 3. systemd unit 模板
 
-QuantumAtlas server 内置 `qatlas-server service install` 子命令，**主推这条
+QuantumAtlas server 内置 `qatlasd service install` 子命令，**主推这条
 路径**——自动生成 systemd unit（含 hardening）+ daemon-reload + enable +
 start 一步到位，免手抄、免漂移。手写模板降级到本节末 §3.C 作为"想自定义
 hardening 时的参考"。
@@ -181,27 +181,27 @@ hardening 时的参考"。
 | systemd hardening 能力 | 基本（`PrivateTmp` 等部分指令不可用） | 完整（`ProtectSystem` / `ReadWritePaths` 全可用） |
 | 适用场景 | 个人维护 / 频繁迭代 / 一人一服务 | 严格 hardening / 多用户共享 / 标准 FHS 部署 |
 
-#### 3.A `qatlas-server service install`（推荐）
+#### 3.A `qatlasd service install`（推荐）
 
 子命令包装 [`github.com/kardianos/service`](https://github.com/kardianos/service)
 做 unit 生成 + systemctl 操作；装完之后 unit 跟原生 systemctl 100% 互通
-（`qatlas-server service start` ≡ `systemctl --user start qatlas-server`，
+（`qatlasd service start` ≡ `systemctl --user start qatlasd`，
 都调同一个 systemd unit）。
 
 ```bash
 # 完全交互式 — 自动检测 mode（按 uid）、自动检测 .env、渲染 unit 给你
 # [Y/n] 确认后再写
-qatlas-server service install
+qatlasd service install
 
 # CI / 脚本式 — 全显式参数，零交互
-qatlas-server service install \
+qatlasd service install \
     --mode user \
     --dotenv-path ~/QuantumAtlas/.env \
     --bind 127.0.0.1:4200 \
     --force
 
 # 只看会写什么（不写文件）
-qatlas-server service install --dry-run --mode user \
+qatlasd service install --dry-run --mode user \
     --dotenv-path ~/QuantumAtlas/.env
 ```
 
@@ -212,7 +212,7 @@ flag 含义：
 | `--mode` | TTY 时按 uid 提示（root→system / 非 root→user）；非 TTY 必填 | `user` 或 `system` |
 | `--dotenv-path` | TTY 时按 `$QATLAS_DOTENV` → `~/QuantumAtlas/.env` → `./.env` 顺序自动检测并确认 | 传给 server 的 `.env` 路径，用作相对路径 anchor |
 | `--bind` | `127.0.0.1:4200` | server 监听地址（生产应配合 Caddy 反代用 127.0.0.1） |
-| `--name` | `qatlas-server` | systemd unit 名（生成 `<name>.service`） |
+| `--name` | `qatlasd` | systemd unit 名（生成 `<name>.service`） |
 | `--dry-run` | false | 只打印渲染后的 unit，不写文件、不 reload | 
 | `--force` | false | 跳过所有交互确认（覆盖既有 unit 也不问）；非 TTY 上下文必填 |
 
@@ -223,30 +223,30 @@ flag 含义：
 
 **自动检测 ReadWritePaths** 仅覆盖默认布局；如果你的 .env 显式覆盖
 `QATLAS_RAW_DIR` / `QATLAS_DATA_DIR` / `QATLAS_PB_DATA_DIR` / `QATLAS_WIKI_DIR`
-到非默认目录，install 之后用 `systemctl edit qatlas-server` 加 drop-in
+到非默认目录，install 之后用 `systemctl edit qatlasd` 加 drop-in
 追加 `ReadWritePaths=...` 即可（systemd 会合并）。
 
 #### 3.B 其他管理命令
 
 ```bash
-qatlas-server service status      # = systemctl --user status qatlas-server（含 cgroup + journal 最近几行）
-qatlas-server service start
-qatlas-server service stop
-qatlas-server service restart
-qatlas-server service uninstall   # stop + disable + 删 unit 文件 + daemon-reload
+qatlasd service status      # = systemctl --user status qatlasd（含 cgroup + journal 最近几行）
+qatlasd service start
+qatlasd service stop
+qatlasd service restart
+qatlasd service uninstall   # stop + disable + 删 unit 文件 + daemon-reload
 ```
 
-跟原生 `systemctl [--user] <verb> qatlas-server` **完全等价**——任选其一，
-不会冲突。`systemctl edit qatlas-server` 添加 drop-in 文件后两边都看得到。
+跟原生 `systemctl [--user] <verb> qatlasd` **完全等价**——任选其一，
+不会冲突。`systemctl edit qatlasd` 添加 drop-in 文件后两边都看得到。
 
 #### 3.C 手写 unit 模板（自定义 hardening 时的参考）
 
-`qatlas-server service install` 内部用的就是下面这个模板（user/system mode
+`qatlasd service install` 内部用的就是下面这个模板（user/system mode
 分支几行差异）。直接手写 unit 适合需要**严格定制**的场景（额外的
 `CapabilityBoundingSet=` / `SystemCallFilter=` / `MemoryMax=` 等
 sandboxing；自定义 logging；与 monitoring agent 联动等）。
 
-**A. user-mode** (`~/.config/systemd/user/qatlas-server.service`)：
+**A. user-mode** (`~/.config/systemd/user/qatlasd.service`)：
 
 ```ini
 [Unit]
@@ -276,7 +276,7 @@ WorkingDirectory=%h/QuantumAtlas
 # $XDG_DATA_HOME/quantum-atlas/pb_data），server 启动时自动转换为
 # PocketBase 的 --dir= 参数。**不要**在 ExecStart 里硬写 --dir=...：
 # cmdline 优先级最高，会让 .env 里的同字段失效，排障时容易踩。
-ExecStart=%h/.local/bin/qatlas-server serve --http=0.0.0.0:<HTTP_PORT>
+ExecStart=%h/.local/bin/qatlasd serve --http=0.0.0.0:<HTTP_PORT>
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGINT
@@ -290,12 +290,12 @@ WantedBy=default.target
 
 ```bash
 systemctl --user daemon-reload
-systemctl --user enable --now qatlas-server.service
-systemctl --user status qatlas-server.service
+systemctl --user enable --now qatlasd.service
+systemctl --user status qatlasd.service
 loginctl enable-linger "$USER"   # 一次性：未登录也保活
 ```
 
-**B. system-mode** (`/etc/systemd/system/qatlas-server.service`)：
+**B. system-mode** (`/etc/systemd/system/qatlasd.service`)：
 
 ```ini
 [Unit]
@@ -314,7 +314,7 @@ Environment=QATLAS_DOTENV=/home/<USER>/QuantumAtlas/.env
 WorkingDirectory=/home/<USER>/QuantumAtlas
 # pb_data 路径同 user-mode：靠 .env 的 QATLAS_PB_DATA_DIR 控制，
 # 不要在 ExecStart 里写 --dir=...
-ExecStart=/home/<USER>/.local/bin/qatlas-server serve --http=0.0.0.0:<HTTP_PORT>
+ExecStart=/home/<USER>/.local/bin/qatlasd serve --http=0.0.0.0:<HTTP_PORT>
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGINT
@@ -339,44 +339,44 @@ WantedBy=multi-user.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now qatlas-server.service
-sudo systemctl status qatlas-server.service
+sudo systemctl enable --now qatlasd.service
+sudo systemctl status qatlasd.service
 ```
 
 ### 4. 日常 deploy 流程
 
 按你在 §1 选的获取方式分支。**首次部署**直接走 §3.A 的
-`qatlas-server service install` 一键搞定（生成 unit + enable + start）。
+`qatlasd service install` 一键搞定（生成 unit + enable + start）。
 **后续滚 binary** 只需要 binary 替换 + 重启 service：
 
 **A. `go install` 直滚**——target 上一条命令：
 
 ```bash
 # 在 target host 上跑
-go install github.com/IAI-USTC-Quantum/QuantumAtlas/cmd/qatlas-server@latest
-install -m 0755 ~/go/bin/qatlas-server ~/.local/bin/qatlas-server
-qatlas-server service restart       # 等价于 systemctl [--user] restart qatlas-server
+go install github.com/IAI-USTC-Quantum/QuantumAtlas/cmd/qatlasd@latest
+install -m 0755 ~/go/bin/qatlasd ~/.local/bin/qatlasd
+qatlasd service restart       # 等价于 systemctl [--user] restart qatlasd
 ```
 
 钉版本：`@latest` → `@v0.1.0` / `@<commit-sha>`。GitHub Action /
 ansible / 任何远程执行框架同样适用。
 
-**B. 自带 binary（B 或 C 路径产出的 `qatlas-server`）**——target 已有
+**B. 自带 binary（B 或 C 路径产出的 `qatlasd`）**——target 已有
 binary 时：
 
 ```bash
 # binary 已用 pixi 或 CI 编出来；用你惯用的传输方式（scp / rsync /
 # kubectl cp / S3 / artifact 下载）把它放到 target 的某个临时路径
-# /tmp/qatlas-server，然后在 target host 上跑：
-install -m 0755 /tmp/qatlas-server ~/.local/bin/qatlas-server
-qatlas-server service restart
+# /tmp/qatlasd，然后在 target host 上跑：
+install -m 0755 /tmp/qatlasd ~/.local/bin/qatlasd
+qatlasd service restart
 ```
 
-`qatlas-server service restart` 跟 `systemctl [--user] restart
-qatlas-server` 完全等价（库内部就是调 systemctl）；任选其一不冲突。
-读 systemd 状态用 `qatlas-server service status` 或
-`systemctl [--user] status qatlas-server` / `journalctl [--user] -u
-qatlas-server`，都不需要 sudo。
+`qatlasd service restart` 跟 `systemctl [--user] restart
+qatlasd` 完全等价（库内部就是调 systemctl）；任选其一不冲突。
+读 systemd 状态用 `qatlasd service status` 或
+`systemctl [--user] status qatlasd` / `journalctl [--user] -u
+qatlasd`，都不需要 sudo。
 
 ### 5. .env 必填字段
 

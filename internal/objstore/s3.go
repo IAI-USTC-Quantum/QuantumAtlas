@@ -14,8 +14,8 @@ import (
 )
 
 // appInfoName / appInfoVersion are folded into the minio-go client
-// User-Agent (e.g. "qatlas-server/0.9.0/racknerd minio-go/v7…") so the
-// RustFS audit trail can distinguish legitimate qatlas-server writes
+// User-Agent (e.g. "qatlasd/0.9.0/racknerd minio-go/v7…") so the
+// RustFS audit trail can distinguish legitimate qatlasd writes
 // from direct-to-bucket access (mc/…, boto3/…). Set once at process
 // start via SetClientAppInfo, before any store is constructed; the
 // values are read by buildMinioClient for every client it builds.
@@ -24,7 +24,7 @@ import (
 // audit stream readable at a glance; the load-bearing forensic key is
 // the SigV4 accessKey recorded by the RustFS-side audit trail (T10).
 var (
-	appInfoName    = "qatlas-server"
+	appInfoName    = "qatlasd"
 	appInfoVersion = "dev"
 )
 
@@ -154,7 +154,7 @@ func buildMinioClient(endpoint, accessKeyID, secretAccessKey string) (*minio.Cli
 		return nil, fmt.Errorf("objstore: minio.New: %w", err)
 	}
 	// Stamp the app name/version into the request User-Agent so the
-	// RustFS audit trail visibly separates qatlas-server writes from
+	// RustFS audit trail visibly separates qatlasd writes from
 	// direct mc/boto3 access. Forgeable — readability only, never authz.
 	client.SetAppInfo(appInfoName, appInfoVersion)
 	return client, nil
@@ -426,7 +426,7 @@ func (s *S3Store) PresignGet(ctx context.Context, key string, ttl time.Duration)
 
 // EnsureVersioning makes sure bucket versioning is "Enabled" so a later
 // PutObject-with-same-key keeps the old version reachable via
-// ListObjectVersions / GetObject?versionId=. Called by cmd/qatlas-server/main.go
+// ListObjectVersions / GetObject?versionId=. Called by cmd/qatlasd/main.go
 // at boot.
 //
 // Idempotent: if status is already "Enabled" we skip the Set call to

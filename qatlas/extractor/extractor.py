@@ -17,7 +17,7 @@ class AlgorithmExtractor:
 
     This class orchestrates the extraction process from paper text to
     Algorithm IR. Persisting results to the knowledge graph is a server-side
-    concern (the Go ``qatlas-server`` owns the Neo4j connection); the client
+    concern (the Go ``qatlasd`` owns the Neo4j connection); the client
     produces an :class:`AlgorithmIR` and exports it (e.g. to YAML).
 
     Usage:

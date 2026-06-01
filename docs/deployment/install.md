@@ -3,14 +3,14 @@
 两步：
 
 1. **`install-server.sh`** 下载 binary（不动 systemd）
-2. **`qatlas-server service install`** 注册成 systemd / launchd / SCM 服务
+2. **`qatlasd service install`** 注册成 systemd / launchd / SCM 服务
 
 两步分开是有意的——install 脚本要 POSIX sh 极简，service 注册需要交互 / 多 flag，分开后各自负责自己的事。
 
 ## 一行装 binary
 
 ```bash
-# 装最新 release 到 ~/.local/bin/qatlas-server
+# 装最新 release 到 ~/.local/bin/qatlasd
 curl -fsSL https://quantum-atlas.ai/install-server.sh | sh
 
 # 锁定版本
@@ -30,7 +30,7 @@ QATLAS_VERSION=v0.2.8 QATLAS_INSTALL_DIR=/opt/qatlas/bin \
 
 1. 检测 OS/arch
 2. 解析 GitHub Release 的 `latest` redirect 拿 tag（不调 API，避免限流）
-3. 下载 `qatlas-server-<os>-<arch>` 到目标目录
+3. 下载 `qatlasd-<os>-<arch>` 到目标目录
 4. 下载 `checksums.txt` 验 SHA256
 5. `chmod +x`
 6. 打印 next-step 提示
@@ -53,14 +53,14 @@ QATLAS_VERSION=v0.2.8 QATLAS_INSTALL_DIR=/opt/qatlas/bin \
 binary 装好后，启动一次确认它能跑：
 
 ```bash
-qatlas-server --version
-# qatlas-server version 0.2.8
+qatlasd --version
+# qatlasd version 0.2.8
 ```
 
 然后用 `service install` 注册成 systemd：
 
 ```bash
-qatlas-server service install
+qatlasd service install
 ```
 
 交互模式会：
@@ -76,13 +76,13 @@ qatlas-server service install
 
 ```bash
 # user mode（不需要 sudo）
-qatlas-server service install \
+qatlasd service install \
     --mode user \
     --dotenv-path ~/QuantumAtlas/.env \
     --force
 
 # system mode（需要 sudo）
-sudo qatlas-server service install \
+sudo qatlasd service install \
     --mode system \
     --dotenv-path /etc/quantum-atlas/.env \
     --bind 127.0.0.1:4200 \
@@ -94,15 +94,15 @@ sudo qatlas-server service install \
 | `--mode user\|system` | TTY 询问；非 TTY 必填 | unit 安装位置 |
 | `--dotenv-path <path>` | auto-detect | 写入 unit 的 `Environment=QATLAS_DOTENV=` |
 | `--bind <addr>` | `127.0.0.1:4200` | `serve --http=` 的值 |
-| `--name <name>` | `qatlas-server` | unit 名（影响 `<name>.service`）|
+| `--name <name>` | `qatlasd` | unit 名（影响 `<name>.service`）|
 | `--dry-run` | false | 只渲染 unit，不写盘 |
 | `--force` | false | 已有同名 unit 直接覆盖；非 TTY 必填 |
 
 ### 渲染出来的 unit 长什么样
 
-system mode 下 unit 在 `/etc/systemd/system/qatlas-server.service`，大致如下：
+system mode 下 unit 在 `/etc/systemd/system/qatlasd.service`，大致如下：
 
-```ini title="/etc/systemd/system/qatlas-server.service"
+```ini title="/etc/systemd/system/qatlasd.service"
 [Unit]
 Description=QuantumAtlas server
 After=network-online.target
@@ -113,7 +113,7 @@ User=timidly
 Group=timidly
 WorkingDirectory=/home/timidly
 Environment=QATLAS_DOTENV=/etc/quantum-atlas/.env
-ExecStart=/home/timidly/.local/bin/qatlas-server serve --http=127.0.0.1:4200
+ExecStart=/home/timidly/.local/bin/qatlasd serve --http=127.0.0.1:4200
 Restart=on-failure
 RestartSec=5
 
@@ -136,19 +136,19 @@ WantedBy=multi-user.target
     ```bash
     mkdir -p /var/lib/quantum-atlas/{raw,data,pb_data}     # 确认新路径存在
     sudo systemctl daemon-reload                            # 让 systemd 重读 unit
-    sudo systemctl restart qatlas-server                    # 试一次 restart
+    sudo systemctl restart qatlasd                    # 试一次 restart
     ```
 
 ### 验证
 
 ```bash
 # 服务状态
-qatlas-server service status
+qatlasd service status
 # 或等价
-systemctl status qatlas-server
+systemctl status qatlasd
 
 # 看日志
-journalctl -u qatlas-server -n 50
+journalctl -u qatlasd -n 50
 
 # 健康检查
 curl http://127.0.0.1:4200/api/health | jq
@@ -165,7 +165,7 @@ curl http://127.0.0.1:4200/api/health | jq
 curl -fsSL https://quantum-atlas.ai/install-server.sh | sh -s -- --version v0.2.9
 
 # 让 service 用新 binary
-sudo systemctl restart qatlas-server
+sudo systemctl restart qatlasd
 
 # 看新版本起来没
 curl http://127.0.0.1:4200/api/health | jq .data.version
@@ -177,10 +177,10 @@ curl http://127.0.0.1:4200/api/health | jq .data.version
 
 ```bash
 # 停 + 删 unit
-qatlas-server service uninstall
+qatlasd service uninstall
 
 # 删 binary
-trash-put ~/.local/bin/qatlas-server
+trash-put ~/.local/bin/qatlasd
 
 # pb_data / wiki / raw 不会被自动删 —— 你自己决定是否保留
 # trash-put ~/.local/share/quantum-atlas/
@@ -191,7 +191,7 @@ trash-put ~/.local/bin/qatlas-server
 直接前台跑：
 
 ```bash
-QATLAS_DOTENV=/path/to/.env qatlas-server serve --http=0.0.0.0:4200
+QATLAS_DOTENV=/path/to/.env qatlasd serve --http=0.0.0.0:4200
 ```
 
 在 Docker / systemd 别的方式管理。

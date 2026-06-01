@@ -71,10 +71,10 @@ an upload) and rebuilds the asset layer after a catalog wipe.
 
 Examples:
   # Reconcile everything from the buckets (disaster rebuild)
-  qatlas-server papers sync --full --from-rustfs
+  qatlasd papers sync --full --from-rustfs
 
   # Preview the diff without writing to Neo4j
-  qatlas-server papers sync --full --from-rustfs --dry-run
+  qatlasd papers sync --full --from-rustfs --dry-run
 `,
 		SilenceUsage:  true,
 		SilenceErrors: false,

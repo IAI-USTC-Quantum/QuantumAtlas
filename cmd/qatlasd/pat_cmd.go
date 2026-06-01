@@ -1,6 +1,6 @@
 // Command-line management surface for QuantumAtlas Personal Access Tokens
 // (PATs). Mounted on the Go server binary's root cobra command, so the
-// same `qatlas-server` (or `qatlas-server`) executable that runs `serve`
+// same `qatlasd` (or `qatlasd`) executable that runs `serve`
 // also exposes `pat mint`, `pat list`, `pat revoke`, and `pat scopes`.
 //
 // Why a server-side CLI when /api/pat already exists?
@@ -23,7 +23,7 @@
 //
 // Output contract for `mint`:
 //   * stdout: the plaintext token, exactly once, terminated by '\n'.
-//     Designed for `SECRET=$(qatlas-server pat mint ...)` capture.
+//     Designed for `SECRET=$(qatlasd pat mint ...)` capture.
 //   * stderr: human-friendly summary (id, prefix, scopes, expiry).
 //     Goes through fmt.Fprintln so `2>/dev/null` cleanly silences it.
 
@@ -95,11 +95,11 @@ func patMintCommand(app core.App) *cobra.Command {
 		Use:   "mint",
 		Short: "Mint a new PAT for the given user",
 		Example: `  # Mint a 365-day shares:write PAT for a CI nightly job
-  qatlas-server pat mint --user me@example.com --name nightly-ci \
+  qatlasd pat mint --user me@example.com --name nightly-ci \
       --scopes shares:write --expires-in-days 365
 
   # Capture the plaintext directly into a variable
-  SECRET=$(qatlas-server pat mint --user me@example.com --name x \
+  SECRET=$(qatlasd pat mint --user me@example.com --name x \
       --scopes shares:write --expires-in-days 30)`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -109,7 +109,7 @@ func patMintCommand(app core.App) *cobra.Command {
 
 			if userRef == "" {
 				return errors.New("--user is required (email or users record id)\n" +
-					"hint: run `qatlas-server users list` to see who's registered on this edge")
+					"hint: run `qatlasd users list` to see who's registered on this edge")
 			}
 			if name == "" {
 				return errors.New("--name is required")
@@ -166,7 +166,7 @@ func patMintCommand(app core.App) *cobra.Command {
 			// Plaintext: stdout, exactly one line.
 			fmt.Fprintln(cmd.OutOrStdout(), plaintext)
 
-			// Summary: stderr, so SECRET=$(qatlas-server pat mint ...)
+			// Summary: stderr, so SECRET=$(qatlasd pat mint ...)
 			// captures only the plaintext.
 			fmt.Fprintf(cmd.ErrOrStderr(),
 				"minted PAT id=%s prefix=%s user=%s name=%q scopes=%v expires_at=%s\n",
@@ -195,13 +195,13 @@ func patListCommand(app core.App) *cobra.Command {
 		Use:   "list",
 		Short: "List PAT records (optionally filtered by user)",
 		Example: `  # List every PAT on this box
-  qatlas-server pat list
+  qatlasd pat list
 
   # Filter to one user's tokens
-  qatlas-server pat list --user me@example.com
+  qatlasd pat list --user me@example.com
 
   # JSON output for tooling
-  qatlas-server pat list --json`,
+  qatlasd pat list --json`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var records []*core.Record
@@ -313,13 +313,13 @@ func lookupUser(app core.App, ref string) (*core.Record, error) {
 	if strings.Contains(ref, "@") {
 		rec, err := app.FindAuthRecordByEmail(auth.UsersCollection, ref)
 		if err != nil {
-			return nil, fmt.Errorf("no users record with email %q (run `qatlas-server users list` to see candidates)", ref)
+			return nil, fmt.Errorf("no users record with email %q (run `qatlasd users list` to see candidates)", ref)
 		}
 		return rec, nil
 	}
 	rec, err := app.FindRecordById(auth.UsersCollection, ref)
 	if err != nil {
-		return nil, fmt.Errorf("no users record with id %q (run `qatlas-server users list` to see candidates)", ref)
+		return nil, fmt.Errorf("no users record with id %q (run `qatlasd users list` to see candidates)", ref)
 	}
 	return rec, nil
 }

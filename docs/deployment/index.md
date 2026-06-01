@@ -10,7 +10,7 @@ QuantumAtlas server 是一个 Go 单 binary。这一节覆盖从"裸 VPS"到"生
 
     ---
 
-    `install-server.sh` + `qatlas-server service install` 的全自动 / 半自动 / 全手动三种模式。
+    `install-server.sh` + `qatlasd service install` 的全自动 / 半自动 / 全手动三种模式。
 
 -   :material-server-network:{ .lg .middle } **[反向代理模板](reverse-proxy.md)**
 

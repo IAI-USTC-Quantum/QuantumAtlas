@@ -41,7 +41,7 @@ func TestRenderSystemdUnitUserMode(t *testing.T) {
 	home, dotenvPath := fakeHomeForTest(t)
 
 	cfg, err := buildServiceConfig(serviceInstallOpts{
-		Name:       "qatlas-server",
+		Name:       "qatlasd",
 		Mode:       "user",
 		DotenvPath: dotenvPath,
 		Bind:       "127.0.0.1:4200",
@@ -50,7 +50,7 @@ func TestRenderSystemdUnitUserMode(t *testing.T) {
 		t.Fatalf("buildServiceConfig: %v", err)
 	}
 
-	got, err := renderSystemdUnit(cfg, "/fixed/bin/qatlas-server")
+	got, err := renderSystemdUnit(cfg, "/fixed/bin/qatlasd")
 	if err != nil {
 		t.Fatalf("renderSystemdUnit: %v", err)
 	}
@@ -64,7 +64,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=` + filepath.Join(home, "QuantumAtlas") + `
 Environment=QATLAS_DOTENV=` + dotenvPath + `
-ExecStart=/fixed/bin/qatlas-server "serve" "--http=127.0.0.1:4200"
+ExecStart=/fixed/bin/qatlasd "serve" "--http=127.0.0.1:4200"
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGINT
@@ -96,7 +96,7 @@ func TestRenderSystemdUnitSystemMode(t *testing.T) {
 	t.Setenv("SUDO_USER", "deployer")
 
 	cfg, err := buildServiceConfig(serviceInstallOpts{
-		Name:       "qatlas-server",
+		Name:       "qatlasd",
 		Mode:       "system",
 		DotenvPath: dotenvPath,
 		Bind:       "0.0.0.0:4200",
@@ -105,7 +105,7 @@ func TestRenderSystemdUnitSystemMode(t *testing.T) {
 		t.Fatalf("buildServiceConfig: %v", err)
 	}
 
-	got, err := renderSystemdUnit(cfg, "/usr/local/bin/qatlas-server")
+	got, err := renderSystemdUnit(cfg, "/usr/local/bin/qatlasd")
 	if err != nil {
 		t.Fatalf("renderSystemdUnit: %v", err)
 	}
@@ -120,7 +120,7 @@ Type=simple
 User=deployer
 WorkingDirectory=` + filepath.Join(home, "QuantumAtlas") + `
 Environment=QATLAS_DOTENV=` + dotenvPath + `
-ExecStart=/usr/local/bin/qatlas-server "serve" "--http=0.0.0.0:4200"
+ExecStart=/usr/local/bin/qatlasd "serve" "--http=0.0.0.0:4200"
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGINT
@@ -227,7 +227,7 @@ func TestValidateDotenvPathRejectsDirectory(t *testing.T) {
 // account's home, NOT the current process's $HOME.
 //
 // Regression target: pre-fix `computeReadWritePaths` called os.UserHomeDir
-// directly, which under `sudo qatlas-server service install` returns /root
+// directly, which under `sudo qatlasd service install` returns /root
 // (sudo's default HOME reset). The resulting ReadWritePaths granted writes
 // to /root/.local/share/quantum-atlas — a path the eventual User=<sudo-user>
 // daemon never touches, leaving the *actual* state dir blocked by

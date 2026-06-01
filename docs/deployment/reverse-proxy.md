@@ -1,6 +1,6 @@
 # 反向代理
 
-`qatlas-server` 默认监听 `127.0.0.1:4200`，**不直接暴露在公网**。前面应该挂 Caddy / nginx / Traefik 之类做：
+`qatlasd` 默认监听 `127.0.0.1:4200`，**不直接暴露在公网**。前面应该挂 Caddy / nginx / Traefik 之类做：
 
 - TLS 终结
 - HTTP/2 / HTTP/3
@@ -207,4 +207,4 @@ curl -I -L https://quantum-atlas.ai/share/$SHARE
 
 ## 多边缘 active-active
 
-每条线路一台反代，对应一台 qatlas-server。共享后端 (RustFS / Neo4j) 通过 EasyTier mesh 互通。详见 [多边缘部署](../concepts/multi-edge.md)。
+每条线路一台反代，对应一台 qatlasd。共享后端 (RustFS / Neo4j) 通过 EasyTier mesh 互通。详见 [多边缘部署](../concepts/multi-edge.md)。

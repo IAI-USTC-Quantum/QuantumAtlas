@@ -2,7 +2,7 @@
 QuantumAtlas Configuration
 
 Environment-driven settings shared by the ``qatlas`` client CLI and the
-local workspace tooling. The HTTP service itself is the Go ``qatlas-server``
+local workspace tooling. The HTTP service itself is the Go ``qatlasd``
 binary; this module only resolves how the Python side reaches it and where
 local assets live.
 """

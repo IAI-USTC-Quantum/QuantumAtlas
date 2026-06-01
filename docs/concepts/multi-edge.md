@@ -13,7 +13,7 @@ flowchart TB
 
     subgraph EDGE_RN ["RackNerd 海外 VPS<br/>107.173.13.248"]
         CADDY_RN[Caddy<br/>LE 真证书]
-        QA_RN[qatlas-server<br/>独立 PocketBase]
+        QA_RN[qatlasd<br/>独立 PocketBase]
         PB_RN[(pb_data SQLite<br/>本地)]
         CADDY_RN --> QA_RN
         QA_RN --> PB_RN
@@ -21,7 +21,7 @@ flowchart TB
 
     subgraph EDGE_AL ["阿里云杭州<br/>47.102.36.175"]
         CADDY_AL[Caddy<br/>tls internal 自签]
-        QA_AL[qatlas-server<br/>独立 PocketBase]
+        QA_AL[qatlasd<br/>独立 PocketBase]
         PB_AL[(pb_data SQLite<br/>本地)]
         CADDY_AL --> QA_AL
         QA_AL --> PB_AL

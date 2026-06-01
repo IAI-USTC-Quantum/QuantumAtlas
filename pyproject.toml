@@ -128,7 +128,7 @@ ignore_missing_imports = true
 
 [tool.pixi.workspace]
 channels = ["conda-forge"]
-# All four target platforms for which we publish qatlas-server binaries
+# All four target platforms for which we publish qatlasd binaries
 # in the release workflow. Adding a platform here just tells pixi to
 # resolve the lockfile on that arch — the conda-forge `go` and `gxx`
 # packages are available for every entry. Without this, pixi refuses to
@@ -193,7 +193,7 @@ go = "1.26.*"
 gxx = "*"
 
 [tool.pixi.tasks]
-build = "go build -o build/qatlas-server ./cmd/qatlas-server"
+build = "go build -o build/qatlasd ./cmd/qatlasd"
 test-go = "go test ./internal/... ./cmd/..."
 test-py = "uv run pytest -m 'not e2e and not network'"
 # `go vet ./internal/... ./cmd/...` is intentionally scoped to *our*
@@ -215,12 +215,12 @@ test-py = "uv run pytest -m 'not e2e and not network'"
 # local dev cannot.
 vet = "go vet ./internal/... ./cmd/..."
 # Regenerate the OpenAPI spec from the swaggo annotations in
-# internal/routes/openapi.go (+ general info in cmd/qatlas-server/main.go).
+# internal/routes/openapi.go (+ general info in cmd/qatlasd/main.go).
 # Output lands in internal/apidocs/, which is blank-imported by main.go and
 # served at /swagger. swag is pinned via the `tool` directive in go.mod, so
 # `go tool swag` always matches the committed CLI version.
-swagger = "go tool swag init -g main.go -d ./cmd/qatlas-server,./internal/routes -o internal/apidocs --parseInternal --parseDepth 1"
+swagger = "go tool swag init -g main.go -d ./cmd/qatlasd,./internal/routes -o internal/apidocs --parseInternal --parseDepth 1"
 # CI drift-guard: regenerate the spec and fail if the committed files differ
 # from what the annotations produce. Keeps internal/apidocs/ in sync without
 # trusting humans to rerun `pixi run swagger`.
-swagger-check = "go tool swag init -g main.go -d ./cmd/qatlas-server,./internal/routes -o internal/apidocs --parseInternal --parseDepth 1 && git diff --exit-code -- internal/apidocs"
+swagger-check = "go tool swag init -g main.go -d ./cmd/qatlasd,./internal/routes -o internal/apidocs --parseInternal --parseDepth 1 && git diff --exit-code -- internal/apidocs"

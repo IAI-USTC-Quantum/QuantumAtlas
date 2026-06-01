@@ -131,9 +131,9 @@ type Config struct {
 
 	// EdgeName labels which edge this process runs on (e.g. "RackNerd",
 	// "Alibaba"). It is purely cosmetic: it's folded into the S3 client
-	// User-Agent (qatlas-server/<version>/<edge>) so the RustFS audit
+	// User-Agent (qatlasd/<version>/<edge>) so the RustFS audit
 	// trail can tell apart writes coming from different edges at a
-	// glance. Empty → the UA is just qatlas-server/<version>. Never
+	// glance. Empty → the UA is just qatlasd/<version>. Never
 	// load-bearing for auth (UA is forgeable; the load-bearing forensic
 	// key is the SigV4 accessKey recorded by the audit trail — T10).
 	//

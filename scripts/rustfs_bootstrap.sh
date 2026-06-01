@@ -3,7 +3,7 @@
 # 并打印新生成的 access_key/secret_key 供写入 server .env。
 #
 # 复用场景：
-#   - 首次部署时创建 qatlas-{pdf,md,images} 三桶 + qatlas-server svcacct
+#   - 首次部署时创建 qatlas-{pdf,md,images} 三桶 + qatlasd svcacct
 #   - 灾难恢复后重建对象存储侧权限
 #   - 之后再开新桶（如 qatlas-openalex）只需把它加进 BUCKETS 变量
 #
@@ -24,7 +24,7 @@
 #   export RUSTFS_ROOT_SECRET_KEY=<root_sk>
 #   # 可选覆盖（默认对应当前 QuantumAtlas v0.7.0 三桶部署）：
 #   # export BUCKETS="qatlas-pdf qatlas-md qatlas-images"
-#   # export IAM_USER=qatlas-server          # 注意：用 IAM_USER 而非 USER，避免与 shell 内置 $USER 冲突
+#   # export IAM_USER=qatlasd          # 注意：用 IAM_USER 而非 USER，避免与 shell 内置 $USER 冲突
 #   # export POLICY=qatlas-assets-rw
 #   bash scripts/rustfs_bootstrap.sh
 #
@@ -46,7 +46,7 @@ BUCKETS="${BUCKETS:-qatlas-pdf qatlas-md qatlas-images}"
 # IAM_USER (not USER): bash auto-sets $USER to the login name in every
 # interactive shell, so "${USER:-default}" never falls through to the
 # default. Use IAM_USER to dodge the collision.
-IAM_USER="${IAM_USER:-qatlas-server}"
+IAM_USER="${IAM_USER:-qatlasd}"
 POLICY="${POLICY:-qatlas-assets-rw}"
 ALIAS="rustfs_bootstrap_$$"
 
@@ -84,7 +84,7 @@ echo "[3/6] ensure policy: $POLICY (scoped to buckets: $BUCKETS)"
 #      separate AWS perms from #1. Stat/Get on the current version
 #      works under s3:GetObject, but reading a specific version-id
 #      (?versionId=) needs s3:GetObjectVersion. Same split for delete.
-#      `qatlas-server storage prune` calls DeleteObject with a version-id
+#      `qatlasd storage prune` calls DeleteObject with a version-id
 #      to drop noncurrent versions, so this perm is required.
 #   3. Bucket read (ListBucket/ListBucketVersions/GetBucketLocation):
 #      ListBucketVersions backs `storage prune`'s enumeration call.
@@ -99,7 +99,7 @@ echo "[3/6] ensure policy: $POLICY (scoped to buckets: $BUCKETS)"
 #     RustFS 1.0.0-beta.5 rejects these action names ("invalid action").
 #     We don't currently use lifecycle anyway — noncurrent versions are
 #     retained forever (Synology-Snapshot model), cleanup is via
-#     `qatlas-server storage prune` not automatic expiration.
+#     `qatlasd storage prune` not automatic expiration.
 #   - s3:DeleteBucket / s3:PutBucketPolicy / s3:PutBucketAcl: bucket
 #     destruction and ACL changes are root-only ops, never qatlas's job.
 POLICY_FILE="$WORKDIR/${POLICY}.json"

@@ -8,7 +8,7 @@ import (
 	"github.com/kardianos/service"
 )
 
-// serviceUnitTemplate is the systemd unit body installed by `qatlas-server
+// serviceUnitTemplate is the systemd unit body installed by `qatlasd
 // service install`. It is passed to kardianos/service via
 // Config.Option["SystemdScript"], replacing the library's default template
 // in full. The library's default template lacks fields we need (After=,
@@ -25,14 +25,14 @@ import (
 //   {{.Description}}       -> service.Config.Description
 //   {{.UserName}}          -> service.Config.UserName (empty in user mode)
 //   {{.WorkingDirectory}}  -> service.Config.WorkingDirectory
-//   {{.Path|cmdEscape}}    -> os.Executable() of the running qatlas-server
+//   {{.Path|cmdEscape}}    -> os.Executable() of the running qatlasd
 //   {{range .Arguments}}   -> service.Config.Arguments ("serve" "--http=...")
 //   {{range .EnvVars}}     -> service.Config.EnvVars (we inject QATLAS_DOTENV)
 //   {{index .Option "X"}}  -> service.Config.Option[X] (we inject
 //                              ReadWritePaths and WantedBy)
 //
 // The hardening block is unconditional — operators who want a minimal
-// unit can `systemctl edit qatlas-server` and override individual
+// unit can `systemctl edit qatlasd` and override individual
 // directives via a drop-in. We don't expose a --no-hardening flag
 // because production should always run hardened.
 const serviceUnitTemplate = `[Unit]
@@ -98,7 +98,7 @@ var templateFuncs = template.FuncMap{
 // execPath is the resolved binary path (what os.Executable() returns at
 // install time). Tests pass a fixed string so snapshots are stable.
 func renderSystemdUnit(cfg *service.Config, execPath string) (string, error) {
-	tmpl, err := template.New("qatlas-server.service").Funcs(templateFuncs).Parse(serviceUnitTemplate)
+	tmpl, err := template.New("qatlasd.service").Funcs(templateFuncs).Parse(serviceUnitTemplate)
 	if err != nil {
 		return "", err
 	}

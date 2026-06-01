@@ -36,7 +36,7 @@ QuantumAtlas 用 **PocketBase session token (JWT)** 和 **Personal Access Token 
     在 server 主机上：
 
     ```bash
-    qatlas-server pat mint \
+    qatlasd pat mint \
         --user user@example.com \
         --name "emergency-fix" \
         --scopes papers:write,shares:write \
@@ -142,13 +142,13 @@ flowchart TD
 
     ```bash
     # 列你管理的所有用户的所有 PAT
-    qatlas-server pat list
+    qatlasd pat list
 
     # 列单一用户
-    qatlas-server pat list --user user@example.com --json
+    qatlasd pat list --user user@example.com --json
 
     # 撤销
-    qatlas-server pat revoke <id>
+    qatlasd pat revoke <id>
     ```
 
 === "API"

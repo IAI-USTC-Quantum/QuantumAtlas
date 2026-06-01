@@ -66,10 +66,10 @@ PAPER_CITES citation edges.
 
 Examples:
   # Smoke test: ingest just the first part file
-  qatlas-server openalex bootstrap --limit 1
+  qatlasd openalex bootstrap --limit 1
 
   # Full ingest including citation edges
-  qatlas-server openalex bootstrap --citations
+  qatlasd openalex bootstrap --citations
 `,
 		SilenceUsage:  true,
 		SilenceErrors: false,

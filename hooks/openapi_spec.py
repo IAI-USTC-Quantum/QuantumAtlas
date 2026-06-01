@@ -2,7 +2,7 @@
 
 The single source of truth for the API spec is ``internal/apidocs/swagger.json``,
 generated from the swaggo annotations by ``pixi run swagger`` and compiled into
-the qatlas-server binary (served live at ``/swagger``). To avoid committing a
+the qatlasd binary (served live at ``/swagger``). To avoid committing a
 second copy that could silently drift, we do NOT keep a copy under ``docs/``.
 Instead this hook copies the committed spec into ``docs/reference/openapi.json``
 at build time so the ``mkdocs-swagger-ui-tag`` plugin can render it, then removes

@@ -2,7 +2,7 @@ nav:
   - 概览: index.md
   - CLI:
     - qatlas (客户端): cli-qatlas.md
-    - qatlas-server (服务端): cli-qatlas-server.md
+    - qatlasd (服务端): cli-qatlasd.md
   - API:
     - REST API 总览: rest-api.md
     - API Explorer: api-explorer.md

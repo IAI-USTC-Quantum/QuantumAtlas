@@ -1,12 +1,12 @@
-// Command qatlas-server is the Go + PocketBase rewrite of the QuantumAtlas
+// Command qatlasd is the Go + PocketBase rewrite of the QuantumAtlas
 // FastAPI server. It embeds PocketBase as a Go library and exposes the same
 // /api/* surface that the existing Python CLI consumes.
 //
 // Usage:
 //
-//	qatlas-server serve --http=0.0.0.0:4200
-//	qatlas-server migrate up
-//	qatlas-server superuser upsert <email> <password>
+//	qatlasd serve --http=0.0.0.0:4200
+//	qatlasd migrate up
+//	qatlasd superuser upsert <email> <password>
 //
 // All standard PocketBase subcommands are inherited. QuantumAtlas-specific
 // business routes are registered via the OnServe hook.
@@ -49,7 +49,7 @@ import (
 
 // installServerScript is the shell installer served at
 // /install-server.sh. It detects OS/arch, downloads the latest
-// qatlas-server release artifact from GitHub, installs to
+// qatlasd release artifact from GitHub, installs to
 // ~/.local/bin, and prints next-step pointers. Kept in a separate
 // file so it can be edited as a real .sh (syntax highlighting +
 // shellcheck) and reviewed standalone.
@@ -61,7 +61,7 @@ var installServerScript string
 //
 //	go build -ldflags "-X main.Version=$(cat pyproject.toml ...)"
 //
-// Defaults to "dev" as a sentinel — if `qatlas-server --version` or
+// Defaults to "dev" as a sentinel — if `qatlasd --version` or
 // /api/health reports "dev" in production, the binary was built without
 // the release pipeline's -ldflags injection (most likely a manual
 // `go build` instead of a GitHub Actions artifact). A real version
@@ -93,7 +93,7 @@ func main() {
 	// Early --version / version short-circuit. Everything below
 	// (loadDotEnv, config.Load, initNeo4jClient, initRawStore, ...)
 	// runs in main() body BEFORE cobra parses os.Args, so a naked
-	// `qatlas-server --version` would otherwise trigger network I/O
+	// `qatlasd --version` would otherwise trigger network I/O
 	// (.env load, Neo4j connect attempt, S3 client init) before
 	// printing the version. Detect the version flag at the top so the
 	// command is cheap, side-effect-free, and dependency-free (no .env
@@ -101,7 +101,7 @@ func main() {
 	if len(os.Args) >= 2 {
 		switch os.Args[1] {
 		case "--version", "version":
-			fmt.Printf("qatlas-server version %s\n", Version)
+			fmt.Printf("qatlasd version %s\n", Version)
 			return
 		}
 	}
@@ -122,8 +122,8 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
-	// Stamp the S3 client User-Agent (T10): qatlas-server/<version> or
-	// qatlas-server/<version>/<edge> when QATLAS_EDGE_NAME is set. This
+	// Stamp the S3 client User-Agent (T10): qatlasd/<version> or
+	// qatlasd/<version>/<edge> when QATLAS_EDGE_NAME is set. This
 	// makes legitimate server writes visually separable from direct
 	// mc/boto3 bucket access in the RustFS audit trail. Must run before
 	// any S3Store is built (initRawStore fires later at OnServe). UA is
@@ -133,7 +133,7 @@ func main() {
 	if cfg.EdgeName != "" {
 		uaVersion = Version + "/" + cfg.EdgeName
 	}
-	objstore.SetClientAppInfo("qatlas-server", uaVersion)
+	objstore.SetClientAppInfo("qatlasd", uaVersion)
 
 	// Inject CLI flags from env BEFORE pocketbase.New() — that
 	// constructor eagerly parses os.Args[1:] to materialise its
@@ -141,7 +141,7 @@ func main() {
 	// into the BaseApp. Anything we mutate after construction is
 	// ignored by the app instance even though cobra.Execute() does
 	// see it. Bug repro: setting QATLAS_PB_DATA_DIR and running
-	// `qatlas-server superuser upsert ...` used to silently write to
+	// `qatlasd superuser upsert ...` used to silently write to
 	// ./build/pb_data because the injection happened post-New().
 	injectHTTPFlag(cfg)
 	injectPBDataDirFlag(cfg)
@@ -155,9 +155,9 @@ func main() {
 	})
 
 	// Surface main.Version (set via -ldflags "-X main.Version=$VERSION")
-	// to PocketBase's cobra root command so `qatlas-server --version`
-	// prints "qatlas-server version 0.2.4" instead of the default
-	// "qatlas-server version (untracked)". Without this, the version
+	// to PocketBase's cobra root command so `qatlasd --version`
+	// prints "qatlasd version 0.2.4" instead of the default
+	// "qatlasd version (untracked)". Without this, the version
 	// string we inject is only visible in /api/health's `data.version`
 	// field — operators running `--version` on the CLI see nothing.
 	app.RootCmd.Version = Version
@@ -552,7 +552,7 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	})
 
 	// /install-server.sh — public installer that downloads the latest
-	// qatlas-server binary from GitHub releases. Serves the static
+	// qatlasd binary from GitHub releases. Serves the static
 	// script verbatim. Caching: short max-age so a fresh release is
 	// picked up within ~5 min of cutover but we don't hammer the
 	// server for every curl|sh.
@@ -610,7 +610,7 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 
 // injectHTTPFlag mutates os.Args to add --http=<addr> when the user invokes
 // the "serve" subcommand without supplying their own --http. This lets a
-// plain `qatlas-server serve` pick up QATLAS_SERVER_HOST/PORT from .env.
+// plain `qatlasd serve` pick up QATLAS_SERVER_HOST/PORT from .env.
 func injectHTTPFlag(cfg *config.Config) {
 	if len(os.Args) < 2 || os.Args[1] != "serve" {
 		return
@@ -634,11 +634,11 @@ func injectHTTPFlag(cfg *config.Config) {
 // don't want SQLite state landing in. cfg.PBDataDir always carries a
 // value (XDG default in config.Load), so injecting it makes
 //
-//	qatlas-server serve
+//	qatlasd serve
 //
 // equivalent to
 //
-//	qatlas-server --dir=$HOME/.local/share/quantum-atlas/pb_data serve
+//	qatlasd --dir=$HOME/.local/share/quantum-atlas/pb_data serve
 //
 // on a fresh box, while still respecting any operator-supplied --dir.
 //
@@ -733,7 +733,7 @@ func maybeIPv4Listener(addr string) (net.Listener, error) {
 // Resolution order (first hit wins):
 //  1. $QATLAS_DOTENV — explicit override; required for systemd installs
 //     where CWD is not the .env-containing dir.
-//  2. ./.env — relative to CWD, for ad-hoc dev `qatlas-server serve`
+//  2. ./.env — relative to CWD, for ad-hoc dev `qatlasd serve`
 //     invocations from the project directory.
 //
 // We deliberately do NOT walk up the filesystem looking for any .env —

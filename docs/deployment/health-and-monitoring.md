@@ -146,7 +146,7 @@ cron 每分钟跑一下，输出有 ALERT 就邮件/Slack。
 
 ## 日志
 
-`journalctl -u qatlas-server -n 100` 看 server 日志。关键模式：
+`journalctl -u qatlasd -n 100` 看 server 日志。关键模式：
 
 | 日志关键字 | 含义 |
 |---|---|

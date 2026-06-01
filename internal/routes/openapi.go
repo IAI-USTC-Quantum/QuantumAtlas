@@ -4,7 +4,7 @@ package routes
 //
 // PocketBase registers routes as closures on se.Router (see RegisterWiki,
 // RegisterGraph, RegisterShares, RegisterPAT, RegisterPapers and the
-// closures in cmd/qatlas-server/main.go). swaggo/swag can only attach an
+// closures in cmd/qatlasd/main.go). swaggo/swag can only attach an
 // operation to a Go function's doc comment, and most of our handlers are
 // anonymous closures with no addressable declaration. Rather than refactor
 // every route into a named function purely to host a comment, we keep all
@@ -45,11 +45,11 @@ func docHealthCheck() {}
 // @Router      /api/server/info [get]
 func docServerInfo() {}
 
-// installServer serves the POSIX-sh installer for the qatlas-server binary.
+// installServer serves the POSIX-sh installer for the qatlasd binary.
 //
 // @Summary     Installer script
 // @Description Returns a POSIX sh script (text/x-shellscript) that downloads
-// @Description and verifies the latest qatlas-server release binary.
+// @Description and verifies the latest qatlasd release binary.
 // @Tags        System
 // @Produce     plain
 // @Success     200 {string} string "shell script"

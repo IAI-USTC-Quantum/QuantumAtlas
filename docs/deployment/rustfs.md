@@ -1,8 +1,8 @@
 # QuantumAtlas ↔ RustFS integration
 
-> How the Go server (`cmd/qatlas-server`) wires to RustFS (S3-compatible
+> How the Go server (`cmd/qatlasd`) wires to RustFS (S3-compatible
 > object store) for paper assets. Covers env vars, IAM policy spec,
-> bucket layout, version lifecycle, the `qatlas-server storage prune`
+> bucket layout, version lifecycle, the `qatlasd storage prune`
 > operator command, and known RustFS-vs-MinIO quirks.
 >
 > Application-level upload semantics (sha256 dedup, 409 conflict
@@ -36,7 +36,7 @@ on every boot. Without them it logs
 raw store: local backend /home/timidly/.local/share/quantum-atlas/raw
 ```
 
-The split is in `cmd/qatlas-server/main.go::initRawStore` and the
+The split is in `cmd/qatlasd/main.go::initRawStore` and the
 all-or-nothing rule is enforced by
 `internal/config/config.go::validateS3Config`.
 
@@ -46,7 +46,7 @@ all-or-nothing rule is enforced by
 | -------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------- |
 | `QATLAS_S3_ENDPOINT`             | `http://10.144.18.10:9000`           | Must include scheme. Production prefers mesh-direct (avoids edge-Caddy self-loop).    |
 | `QATLAS_S3_BUCKET`               | `qatlas-raw`                         | Must exist; bootstrap script creates it idempotently.                                 |
-| `QATLAS_S3_ACCESS_KEY_ID`        | `CNEDAZ2HQDU9TX8A2BUO`               | Service-account key (`qatlas-server` IAM user). Never use root keys here.             |
+| `QATLAS_S3_ACCESS_KEY_ID`        | `CNEDAZ2HQDU9TX8A2BUO`               | Service-account key (`qatlasd` IAM user). Never use root keys here.             |
 | `QATLAS_S3_SECRET_ACCESS_KEY`    | `…`                                  | Secret printed once by bootstrap; copy directly into `.env` (mode 600).               |
 | `QATLAS_S3_PUBLIC_ENDPOINT` (可选) | `https://raw.quantum-atlas.ai`      | 公网入口，给 client presigned URL 用；留空 = 单 endpoint 模式（仅适合 dev）|
 
@@ -95,7 +95,7 @@ raw store: S3 backend http://10.144.18.10:9000/qatlas-raw (presign via https://r
 
 ## IAM policy: `qatlas-raw-rw`
 
-The `qatlas-server` IAM user is bound to this policy (created by
+The `qatlasd` IAM user is bound to this policy (created by
 `scripts/rustfs_bootstrap.sh`):
 
 ```json
@@ -135,9 +135,9 @@ What each permission is for:
 | `s3:GetObject` / `s3:PutObject`          | Routine PDF / markdown / JSON I/O via the upload handlers.                                                             |
 | `s3:DeleteObject`                        | Soft-delete via the (currently unimplemented) `DELETE /api/papers/*` route + admin cleanup.                            |
 | `s3:GetObjectVersion`                    | Reading a specific past version (for future rollback CLI; not yet exposed in HTTP).                                    |
-| `s3:DeleteObjectVersion`                 | **Required by `qatlas-server storage prune --yes`** — versioned deletes are a separate AWS perm from `s3:DeleteObject`. |
+| `s3:DeleteObjectVersion`                 | **Required by `qatlasd storage prune --yes`** — versioned deletes are a separate AWS perm from `s3:DeleteObject`. |
 | `s3:ListBucket` / `s3:GetBucketLocation` | minio-go probes the endpoint and walks prefixes (e.g. enumerate-needs-mineru).                                         |
-| `s3:ListBucketVersions`                  | Powers `ObjectVersion`-aware listing — backs `qatlas-server storage prune` enumeration.                                 |
+| `s3:ListBucketVersions`                  | Powers `ObjectVersion`-aware listing — backs `qatlasd storage prune` enumeration.                                 |
 | `s3:GetBucketVersioning` / `s3:PutBucketVersioning` | Lets qatlas self-manage versioning at boot (see "Versioning" below).                                                  |
 
 **Deliberately not granted** (re-test before adding):
@@ -172,7 +172,7 @@ listings manageable.
 
 User metadata always includes `x-amz-meta-sha256` (lowercase) with
 the hex digest of the bytes — see [upload-api.md](../reference/upload-api.md).
-This is the field `qatlas-server storage prune` and the upload handler
+This is the field `qatlasd storage prune` and the upload handler
 both rely on for idempotency / dedup.
 
 ## Versioning: qatlas self-manages { #versioning }
@@ -223,7 +223,7 @@ Reasoning:
 - Auto-expiration windows are operationally fraught: pick 30d and
   you regret it the day someone needs to restore a 6-week-old
   draft; pick 365d and the cost picture matters again.
-- The ops side has full visibility + control via `qatlas-server
+- The ops side has full visibility + control via `qatlasd
   storage prune` (see next section), so manual policy is just as
   good in our scale regime.
 
@@ -231,15 +231,15 @@ When (if ever) the bucket grows past a few hundred GB of noncurrent
 versions, revisit. RustFS may by then support the standard
 `s3:*LifecycleConfiguration` actions and we can add a rule.
 
-## `qatlas-server storage prune` { #prune }
+## `qatlasd storage prune` { #prune }
 
 The on-server CLI for manual cleanup. Lives in
-`cmd/qatlas-server/storage_cmd.go`; runs against whatever the server's
+`cmd/qatlasd/storage_cmd.go`; runs against whatever the server's
 own env vars say (`QATLAS_S3_*` from the same `.env` qatlas reads at
 boot).
 
 ```
-qatlas-server storage prune [--prefix P]
+qatlasd storage prune [--prefix P]
                            [--older-than DUR]
                            [--keep-last N]
                            [--yes]
@@ -259,7 +259,7 @@ Flags:
 | `--dry-run`      | preview only. Defaults to true; `--yes` is the only way to actually delete.                                                                                                                                                     |
 
 Hard safety invariants (enforced by `planPruneCandidates` + unit
-tested in `cmd/qatlas-server/storage_cmd_test.go`):
+tested in `cmd/qatlasd/storage_cmd_test.go`):
 
 - **Current (latest) versions are NEVER deleted.** No flag combination
   can override this.
@@ -292,7 +292,7 @@ sudo -u timidly $TARGET storage prune --older-than 1y --yes
 sudo -u timidly $TARGET storage prune --json | tee prune-$(date +%F).log
 ```
 
-`$TARGET` = the qatlas binary (`/home/timidly/.local/bin/qatlas-server`
+`$TARGET` = the qatlas binary (`/home/timidly/.local/bin/qatlasd`
 on the production deploy). Run as the `timidly` user (the systemd
 unit's `User=`) so the env / file paths resolve identically to the
 running server.
@@ -322,7 +322,7 @@ deleted: 2, failed: 0, freed: 0.18 MiB
 ## Bootstrap (initial RustFS setup) { #bootstrap }
 
 `scripts/rustfs_bootstrap.sh` is idempotent and creates everything
-the server expects: bucket `qatlas-raw`, IAM user `qatlas-server`,
+the server expects: bucket `qatlas-raw`, IAM user `qatlasd`,
 policy `qatlas-raw-rw`, and one fresh service-account key pair.
 
 ```bash
@@ -340,7 +340,7 @@ deleted) — useful for key rotation, see the script's own comments.
 
 Local variable naming: the script uses `IAM_USER` (not `USER`)
 internally. `$USER` is auto-set in every interactive shell to the
-login user, so `${USER:-qatlas-server}` would never fall through to
+login user, so `${USER:-qatlasd}` would never fall through to
 the default. Setting `IAM_USER=…` from the environment if you want
 to bootstrap a non-default IAM user.
 
@@ -351,8 +351,8 @@ to bootstrap a non-default IAM user.
 Probably the IAM user record got deleted (RustFS quirk) while the
 service-account key remained. Symptoms:
 
-- `mc admin user info qatlas qatlas-server` → "user does not exist"
-- `mc admin user svcacct ls qatlas qatlas-server` → still shows your key
+- `mc admin user info qatlas qatlasd` → "user does not exist"
+- `mc admin user svcacct ls qatlas qatlasd` → still shows your key
 - Server boots fine (versioning Get/Put succeed somehow)
 - Upload returns `500 {"detail": "stat …: objstore: stat …: Access Denied."}`
 
@@ -360,10 +360,10 @@ Recovery:
 
 ```bash
 RAND_PW=$(openssl rand -base64 24)
-mc admin user add    qatlas qatlas-server "$RAND_PW"
-mc admin policy attach qatlas qatlas-raw-rw --user qatlas-server
+mc admin user add    qatlas qatlasd "$RAND_PW"
+mc admin policy attach qatlas qatlas-raw-rw --user qatlasd
 # verify
-mc admin user info qatlas qatlas-server  # should now show PolicyName
+mc admin user info qatlas qatlasd  # should now show PolicyName
 ```
 
 Existing service-account keys re-associate with the recreated user
@@ -419,7 +419,7 @@ still recoverable until `storage prune` decides otherwise).
 
 ## 写入留痕 audit sink (T10) { #写入留痕-audit-sink-t10 }
 
-**问题**：S3 svcacct key 一旦泄露，持有者能绕过 `qatlas-server` API 直连桶
+**问题**：S3 svcacct key 一旦泄露，持有者能绕过 `qatlasd` API 直连桶
 写/删对象。我们要能在日志里**看到**这种直连，并区分它和正规 server 写，
 且**跨 edge 一致**（两台 edge 共享 RustFS，审计要落在一处）。
 
@@ -447,8 +447,8 @@ variables and cannot be modified from the console`）。死循环，beta.5 上�
 - `accessKey` ≠ 任何预期 svcacct（既非 edge 写 key、也非 sink 自己）→ 有人拿别的 key 直连。
 - `sourceIPAddress` 非预期网段 → 佐证。
 - **UA 只作辅助提示，绝不作判定主键**——UA 可伪造，靠 UA 判定的话攻击者把 UA
-  伪装成 `qatlas-server/*` 就隐身了。`QATLAS_EDGE_NAME` 打的 UA 标
-  （`qatlas-server/<ver>/<edge>`）只是让正规写在事件流里"一眼可读"，不是安全边界。
+  伪装成 `qatlasd/*` 就隐身了。`QATLAS_EDGE_NAME` 打的 UA 标
+  （`qatlasd/<ver>/<edge>`）只是让正规写在事件流里"一眼可读"，不是安全边界。
   注意：两台 edge **共享同一把 svcacct key**，光看 `accessKey` 分不出是哪台 edge
   写的——这正是 UA edge 标唯一的用处（要它生效得在每台 edge `.env` 设 `QATLAS_EDGE_NAME`）。
 
@@ -501,7 +501,7 @@ bash scripts/rustfs_notify_bootstrap.sh
 1. 建 `qatlas-s3-events` 桶（无 versioning，事件对象 write-once）；
 2. 建 `qatlas-s3-events-rw` policy（Get/Put/ListBucket，**故意不给 Delete** =
    审计不可变）+ `qatlas-s3-events-writer` user/svcacct；
-3. 建 `qatlas-s3-events-ro` 只读 policy 挂到现有 `qatlas-server` 父用户（edge
+3. 建 `qatlas-s3-events-ro` 只读 policy 挂到现有 `qatlasd` 父用户（edge
    svcacct 自动继承读，给未来 Go 侧对账/扫描预留只读）；
 4. **5 个资产桶逐一绑定**小写 ARN `arn:rustfs:sqs::qatlas:webhook`（`qatlas-raw`、
    `qatlas-pdf`、`qatlas-md`、`qatlas-images`、`qatlas-openalex`），`qatlas-s3-events`

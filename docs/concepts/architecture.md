@@ -179,7 +179,7 @@ QuantumAtlas 对外分享原始资源时统一走 `/api/shares` 和 `/share/{tok
                           │  │  GetObject (~7 MB) + 内存查询
                           │  │
                           │  └─ DuckDB (Go in-process, cgo lib)
-                          │     在 qatlas-server 进程里跑
+                          │     在 qatlasd 进程里跑
                           │
                           └─ minio-go (Go in-process)
                              同一进程，同一个 svcacct 凭据
@@ -188,7 +188,7 @@ QuantumAtlas 对外分享原始资源时统一走 `/api/shares` 和 `/share/{tok
 **关键性质**：
 
 - **"数据库"就是 bucket 里那个 `index/papers.parquet`**。**没有第二个 stateful 系统**。备份 / 迁移 / DR 跟 PDF 们走完全相同的路径。
-- **DuckDB 是嵌入式查询库（不是 server）**——通过 cgo binding (`marcboeker/go-duckdb`) 链进 qatlas-server 二进制。**没有第二个进程**、没有 `.db` 文件。你可以把它理解成"会读 parquet 的 `sql.DB`"，跟 `database/sql` 接口完全一致。
+- **DuckDB 是嵌入式查询库（不是 server）**——通过 cgo binding (`marcboeker/go-duckdb`) 链进 qatlasd 二进制。**没有第二个进程**、没有 `.db` 文件。你可以把它理解成"会读 parquet 的 `sql.DB`"，跟 `database/sql` 接口完全一致。
 - **凭据复用 qatlas 现有 svcacct**：DuckDB 通过 `CREATE SECRET (TYPE S3, ENDPOINT '10.144.18.10:9000', KEY_ID ..., SECRET ...)` 拿 RustFS 凭据，KEY/SECRET 就是 `.env` 里 `QATLAS_S3_*` 那一组，policy `qatlas-raw-rw` 已经把权限钉到这一个 bucket。**不开新 svcacct，不改 policy**。
 - **跨 edge 一致性**：两台 edge 看的是同一个 bucket 里的同一个 `index/papers.parquet`，**天然一致**。SQLite-per-edge 那种漂移问题在结构上就不存在。
 
@@ -206,11 +206,11 @@ QuantumAtlas 对外分享原始资源时统一走 `/api/shares` 和 `/share/{tok
 
 **跨 edge 并发**：两台 edge 都可能 flush parquet → 用 If-Match etag 做 CAS，冲突时 retry max 5 次。上传频率低（每天几十次），冲突极罕见。
 
-**drift 兜底**：每天凌晨跑一次 `qatlas-server bootstrap-index --reconcile`，全桶 LIST 比对 parquet，修复任何漂移行。即"主索引 + 定期对账"模式（跟 Iceberg / Delta Lake 的设计哲学一致，只是简化版）。
+**drift 兜底**：每天凌晨跑一次 `qatlasd bootstrap-index --reconcile`，全桶 LIST 比对 parquet，修复任何漂移行。即"主索引 + 定期对账"模式（跟 Iceberg / Delta Lake 的设计哲学一致，只是简化版）。
 
 ### 查询路径（毫秒级）
 
-qatlas-server 启动时一次性 GET parquet → DuckDB 内存表 (~70 MB 内存)；后续所有查询命中内存，**sub-millisecond**。后台每 60s 检查远端 etag，变了就重 load（其他 edge 改了的话能拿到）。
+qatlasd 启动时一次性 GET parquet → DuckDB 内存表 (~70 MB 内存)；后续所有查询命中内存，**sub-millisecond**。后台每 60s 检查远端 etag，变了就重 load（其他 edge 改了的话能拿到）。
 
 ```text
 GET /api/papers/needs-mineru

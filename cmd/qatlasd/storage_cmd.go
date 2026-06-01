@@ -56,7 +56,7 @@
 //     - summary header + final tallies (candidates, deleted, freed bytes)
 //
 // Operator sequence we recommend:
-//   1. `qatlas-server storage prune --older-than 90d` (dry-run preview)
+//   1. `qatlasd storage prune --older-than 90d` (dry-run preview)
 //   2. eyeball the list
 //   3. add `--yes` to execute
 
@@ -119,16 +119,16 @@ By default this is a DRY RUN — pass --yes to actually delete.
 
 Examples:
   # Preview every noncurrent version in the bucket
-  qatlas-server storage prune
+  qatlasd storage prune
 
   # Preview noncurrent versions under one paper's key, older than 90 days
-  qatlas-server storage prune --prefix pdf/2511/2511.00010v1.pdf --older-than 90d
+  qatlasd storage prune --prefix pdf/2511/2511.00010v1.pdf --older-than 90d
 
   # Keep at most 5 noncurrent versions per object key, delete the rest
-  qatlas-server storage prune --keep-last 5 --yes
+  qatlasd storage prune --keep-last 5 --yes
 
   # Aggressive: drop EVERY noncurrent version across the bucket
-  qatlas-server storage prune --yes
+  qatlasd storage prune --yes
 `,
 		// Don't dump usage on RunE error — operator-visible failure
 		// (S3 perm denied, network timeout, etc.) deserves to surface

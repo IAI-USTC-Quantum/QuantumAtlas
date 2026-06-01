@@ -178,7 +178,7 @@ qatlas wiki lint
 ```
 
 !!! warning "Go 必须 CGO_ENABLED=1（2026-05 起）"
-    自 paperindex 包引入 `marcboeker/go-duckdb` 后，**整个 qatlas-server build 强制需要 cgo**（libduckdb 是 C++ 库）。`pixi run build/test-go/vet` 已经在 `[tool.pixi.activation.env]` 里 export `CGO_ENABLED=1`，直接用 pixi 就行。
+    自 paperindex 包引入 `marcboeker/go-duckdb` 后，**整个 qatlasd build 强制需要 cgo**（libduckdb 是 C++ 库）。`pixi run build/test-go/vet` 已经在 `[tool.pixi.activation.env]` 里 export `CGO_ENABLED=1`，直接用 pixi 就行。
 
     如果你想脱离 pixi 直接 `go build`，先确保用户级 env 不强制关 cgo：
 
@@ -194,7 +194,7 @@ qatlas wiki lint
 ```
 atlas/                 Python client + Wiki + 电路工具
 internal/              Go server 内部包（route / auth / store / config）
-cmd/qatlas-server/     Go server 入口 (main + cobra subcommands)
+cmd/qatlasd/     Go server 入口 (main + cobra subcommands)
 web/                   React SPA (Vite + TanStack Router)
 examples/              可独立 demo
 scripts/               运维脚本
@@ -217,7 +217,7 @@ docs/                  这份文档
 ### 添加新功能注意
 
 - **client 新命令** → 在 `atlas/cli.py::COMMANDS` 加条目，新建 `atlas/client/<name>.py`
-- **server 新 endpoint** → 在 `internal/routes/` 加 handler，wire 在 `cmd/qatlas-server/main.go::registerRoutes`
+- **server 新 endpoint** → 在 `internal/routes/` 加 handler，wire 在 `cmd/qatlasd/main.go::registerRoutes`
 - **加 PAT scope** → 改 `internal/pat/scopes.go`（必须重新部署，**不可热加载**）
 - **新 PocketBase migration** → 放 `pb_migrations/`，下次启动自动跑
 - **前端新页面** → 在 `web/src/routes/` 加 file，TanStack Router 自动生成路由

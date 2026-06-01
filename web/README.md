@@ -90,12 +90,12 @@ backend, so `fetch('/api/...')` would fall back to `index.html` and the
 SPA would crash with `Unexpected token '<', "<!doctype "... is not
 valid JSON`. To work on the UI you have two options:
 
-1. **Run a local qatlas-server** alongside vite (recommended when you
+1. **Run a local qatlasd** alongside vite (recommended when you
    are also changing Go handlers). Build and run:
    ```bash
-   pixi run -- go run ./cmd/qatlas-server serve --http=127.0.0.1:4200
+   pixi run -- go run ./cmd/qatlasd serve --http=127.0.0.1:4200
    ```
-2. **Reverse-proxy to a remote qatlas-server** (recommended when you
+2. **Reverse-proxy to a remote qatlasd** (recommended when you
    only touch frontend and want real data). Any deployment you can
    reach over HTTP(S) works — production, staging, a self-hosted dev
    instance, etc.

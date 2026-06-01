@@ -38,7 +38,7 @@
 #   export AUDIT_BUCKET=qatlas-s3-events
 #   export SINK_USER=qatlas-s3-events-writer              # sink 专属身份
 #   export SINK_POLICY=qatlas-s3-events-rw                # 只对事件桶 RW
-#   export EDGE_USER=qatlas-server                        # 现有 edge 父用户（挂只读）
+#   export EDGE_USER=qatlasd                        # 现有 edge 父用户（挂只读）
 #   export RO_POLICY=qatlas-s3-events-ro                  # 只对事件桶只读
 #   export NOTIFY_TARGET=qatlas                           # 必须小写，与 env 后缀 _QATLAS
 #                                                         # 内部小写化后的 account_id 一致
@@ -62,7 +62,7 @@ set -uo pipefail
 AUDIT_BUCKET="${AUDIT_BUCKET:-qatlas-s3-events}"
 SINK_USER="${SINK_USER:-qatlas-s3-events-writer}"
 SINK_POLICY="${SINK_POLICY:-qatlas-s3-events-rw}"
-EDGE_USER="${EDGE_USER:-qatlas-server}"
+EDGE_USER="${EDGE_USER:-qatlasd}"
 RO_POLICY="${RO_POLICY:-qatlas-s3-events-ro}"
 SKIP_EDGE_RO="${SKIP_EDGE_RO:-0}"
 ALIAS="rustfs_audit_bootstrap_$$"
@@ -166,7 +166,7 @@ if [ "$SKIP_EDGE_RO" = "1" ]; then
 else
   # Edge Go reads qatlas-s3-events/<date>/ objects on a timer to scan for anomalies
   # (accessKey != expected svcacct / accessKey == root / unexpected remotehost).
-  # Read-only is all it needs. We attach this to the *parent user* qatlas-server;
+  # Read-only is all it needs. We attach this to the *parent user* qatlasd;
   # the existing edge svcacct (CNEDAZ2HQDU9TX8A2BUO) inherits the union of its
   # parent user's policies (it was minted without an inline --policy), so the
   # read grant propagates automatically — no new edge key, no .env change.

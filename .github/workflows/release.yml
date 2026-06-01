@@ -198,13 +198,13 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Build qatlas-server
+      - name: Build qatlasd
         env:
           CGO_ENABLED: "1"
         run: |
           set -euo pipefail
           mkdir -p dist/bin
-          OUT="dist/bin/qatlas-server-${{ matrix.target }}"
+          OUT="dist/bin/qatlasd-${{ matrix.target }}"
 
           LDFLAGS="-s -w -X main.Version=${{ needs.prep.outputs.version }}"
           case "${{ matrix.target }}" in
@@ -217,7 +217,7 @@ jobs:
               ;;
           esac
 
-          go build -trimpath -buildvcs=false -ldflags "$LDFLAGS" -o "$OUT" ./cmd/qatlas-server
+          go build -trimpath -buildvcs=false -ldflags "$LDFLAGS" -o "$OUT" ./cmd/qatlasd
 
           # Audit: surface what the binary links against.
           file "$OUT" || true
@@ -234,8 +234,8 @@ jobs:
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: qatlas-server-${{ matrix.target }}
-          path: dist/bin/qatlas-server-${{ matrix.target }}
+          name: qatlasd-${{ matrix.target }}
+          path: dist/bin/qatlasd-${{ matrix.target }}
           retention-days: 7
 
   # --------------------------------------------------------------------
@@ -267,7 +267,7 @@ jobs:
       - name: Download Go binaries
         uses: actions/download-artifact@v4
         with:
-          pattern: qatlas-server-*
+          pattern: qatlasd-*
           path: dist/bin/
           merge-multiple: true
 
@@ -283,7 +283,7 @@ jobs:
           cd dist/bin
           # install-server.sh expects "<sha256>  <basename>" lines, which
           # is sha256sum's default when given relative paths.
-          sha256sum qatlas-server-* > checksums.txt
+          sha256sum qatlasd-* > checksums.txt
           cat checksums.txt
 
       - name: Extract latest changelog
@@ -324,7 +324,7 @@ jobs:
           files: |
             dist/*.tar.gz
             dist/*.whl
-            dist/bin/qatlas-server-*
+            dist/bin/qatlasd-*
             dist/bin/checksums.txt
           draft: false
           prerelease: false

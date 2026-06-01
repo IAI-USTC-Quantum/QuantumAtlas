@@ -12,7 +12,7 @@
 
     全部子命令（`ingest` / `upload` / `mineru` / `auth` / `wiki` / `designer` / `codegen` / `validator` / `estimator` / ...）+ 每个 flag 完整说明。
 
--   :material-server-network:{ .lg .middle } **[`qatlas-server` 服务端 CLI](cli-qatlas-server.md)**
+-   :material-server-network:{ .lg .middle } **[`qatlasd` 服务端 CLI](cli-qatlasd.md)**
 
     ---
 

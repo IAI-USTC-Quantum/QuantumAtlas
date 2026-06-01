@@ -23,11 +23,11 @@
 >   [`storage-design.md` § 桶布局](../concepts/architecture.md)）。
 > - **upload 路径同步写**：v0.7.0 起 upload handler **同请求里**完成 S3 + Neo4j
 >   MERGE（不再 worker queue / DLQ 链）。Neo4j 挂时 fail-open on write：S3 仍写
->   成功，回 `201 + X-Catalog-Sync: deferred`，下次 `qatlas-server papers sync`
+>   成功，回 `201 + X-Catalog-Sync: deferred`，下次 `qatlasd papers sync`
 >   兜底补齐。详见 [`auth-model.md`](auth-model.md) 与
 >   [`upload-api.md`](../reference/upload-api.md)。
-> - **OpenAlex bootstrap CLI**（`cmd/qatlas-server/openalex_cmd.go`）+ **papers
->   sync CLI**（`cmd/qatlas-server/papers_cmd.go`）都已就绪——取代了早期设想的
+> - **OpenAlex bootstrap CLI**（`cmd/qatlasd/openalex_cmd.go`）+ **papers
+>   sync CLI**（`cmd/qatlasd/papers_cmd.go`）都已就绪——取代了早期设想的
 >   "neo4j-admin offline import" + "worker pipeline"。
 >
 > 下文若提到 `qatlas-raw` 单桶 / `raw.quantum-atlas.ai` 公网域名 / "worker
@@ -180,8 +180,8 @@ content-addressed 命名（按内容 sha256 分桶）的好处：
     下面这套 "upload → ingest worker → resolve worker → graph loader worker → 状态机"
     流水线是**早期设计**。生产 v0.7.0 起：upload handler **同一个 HTTP 请求里**完成
     S3 写入 + Neo4j MERGE，不再有 worker queue + DLQ 链；Neo4j 挂时 fail-open on
-    write（S3 仍写成功，回 `201 + X-Catalog-Sync: deferred`，由 `qatlas-server
-    papers sync` 兜底）。OpenAlex 批量灌入走 `qatlas-server openalex bootstrap`
+    write（S3 仍写成功，回 `201 + X-Catalog-Sync: deferred`，由 `qatlasd
+    papers sync` 兜底）。OpenAlex 批量灌入走 `qatlasd openalex bootstrap`
     CLI，**不**走下方 worker pipeline。下方流水线保留作为"为什么早期设计成 worker
     队列、为什么后来收敛"的教学材料。
 
@@ -346,12 +346,12 @@ GetObject/PutObject/DeleteObject/ListBucket（+ GetBucketLocation）。
 | 公网入口 | `https://raw.quantum-atlas.ai` | 边缘 Caddy → graph-host netsh portproxy 9000 → mesh `<graph-host>:9000` → NAS Docker |
 | Bucket | `qatlas-raw` | private，content-addressed 命名 `raw/<sha[:2]>/<sha>.pdf` |
 | Policy | `qatlas-raw-rw` | get/put/delete on object + list/getLocation on bucket，ARN 钉死 `qatlas-raw` |
-| IAM user | `qatlas-server` | 启用，已 attach `qatlas-raw-rw` |
+| IAM user | `qatlasd` | 启用，已 attach `qatlas-raw-rw` |
 | Access key | （Phase 3 写 server `.env` 时再生成新对） | 见下面 bootstrap 脚本 |
 
 > RustFS root 凭据**永不进 server `.env`**、永不进任何 git 仓库——只
 > 在维护者密码管理器和 RustFS 容器自己的 env vars 里活。Server 用的
-> 是 `qatlas-server` 子用户的 access_key + secret_key，权限钉死单桶。
+> 是 `qatlasd` 子用户的 access_key + secret_key，权限钉死单桶。
 
 ### 一键 bootstrap：`scripts/rustfs_bootstrap.sh`
 
@@ -657,7 +657,7 @@ Neo4j 数据本身落 apt 默认路径 `/var/lib/neo4j/data/`（graph-host WSL2 
 | 阶段 | 触发条件 | 工作内容 |
 |---|---|---|
 | **P0** | — | RAW_DIR 本地、`internal/neo4j/client.go` 客户端代码 ready（driver v6.1.0、`/api/graph/{stats,query,schema}` 三端点 wire）、**Neo4j server 未部署** |
-| **P1**（部署起步，**已完成 + sha256 dedup / versioning extension**） | 决定上 Neo4j | graph-host WSL2 **apt 装** `neo4j` 5.26 LTS（systemd 服务，**不是 docker**）、`/etc/neo4j/neo4j.conf` 改 `server.bolt.listen_address=0.0.0.0:7687` + `server.jvm.additional=-Djava.net.preferIPv4Stack=true`（#14154 fix）、Windows host 加 `<graph-host>:7687 → 127.0.0.1:7687` portproxy（写到 registry persistent）、server 节点填 `.env` `NEO4J_*`、`/api/graph/stats` 返回真 0 ✅；RustFS 已部署在 NAS Docker（bucket `qatlas-raw`、user `qatlas-server`、policy `qatlas-raw-rw` 见 `scripts/rustfs_bootstrap.sh`）、**Go server 已接 minio-go**（`internal/objstore.{LocalStore,S3Store}`，`QATLAS_S3_*` 四字段 all-or-nothing 切换，详见 `.env.example`）、生产 RackNerd 已切到 S3（endpoint mesh `http://10.144.18.10:9000`）；**2026-05-28 加上 content-aware idempotency**（upload sha256 入 `x-amz-meta-sha256` metadata，重传同字节短路 200/unchanged，不同字节 409 带两个 hash；详见 copilot-instructions.md "写口语义"段）+ **bucket versioning qatlas-managed**（`S3Store.EnsureVersioning` 启动自动开启 + policy 加 `s3:Put/GetBucketVersioning`）+ **client `?expected_sha256=` in-transit guard** |
+| **P1**（部署起步，**已完成 + sha256 dedup / versioning extension**） | 决定上 Neo4j | graph-host WSL2 **apt 装** `neo4j` 5.26 LTS（systemd 服务，**不是 docker**）、`/etc/neo4j/neo4j.conf` 改 `server.bolt.listen_address=0.0.0.0:7687` + `server.jvm.additional=-Djava.net.preferIPv4Stack=true`（#14154 fix）、Windows host 加 `<graph-host>:7687 → 127.0.0.1:7687` portproxy（写到 registry persistent）、server 节点填 `.env` `NEO4J_*`、`/api/graph/stats` 返回真 0 ✅；RustFS 已部署在 NAS Docker（bucket `qatlas-raw`、user `qatlasd`、policy `qatlas-raw-rw` 见 `scripts/rustfs_bootstrap.sh`）、**Go server 已接 minio-go**（`internal/objstore.{LocalStore,S3Store}`，`QATLAS_S3_*` 四字段 all-or-nothing 切换，详见 `.env.example`）、生产 RackNerd 已切到 S3（endpoint mesh `http://10.144.18.10:9000`）；**2026-05-28 加上 content-aware idempotency**（upload sha256 入 `x-amz-meta-sha256` metadata，重传同字节短路 200/unchanged，不同字节 409 带两个 hash；详见 copilot-instructions.md "写口语义"段）+ **bucket versioning qatlas-managed**（`S3Store.EnsureVersioning` 启动自动开启 + policy 加 `s3:Put/GetBucketVersioning`）+ **client `?expected_sha256=` in-transit guard** |
 | **P2** | 有 paper 进来要测引用图 | 实现 extract worker（MinerU 调用 + refs_raw 落库）+ resolve worker（CrossRef/OpenAlex 匹配），先**不写 Neo4j**，refs 仅入 ref_edges 表 |
 | **P3** | ref_edges 表积累几万行 | 实现 graph loader worker + `qatlas graph rebuild` CLI；写第一批 `:CITES` 边到 Neo4j |
 | **P4** | 节点数破百万 | 切换冷启动路径到 offline import（`neo4j-admin database import full`）；写部署 cron 备份；接 GDS 算法跑 PageRank/Louvain 写回 metadata |

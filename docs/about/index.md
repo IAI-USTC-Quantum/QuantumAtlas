@@ -25,7 +25,7 @@ QuantumAtlas/
 │   ├── validator/         电路等价 / 仿真验证
 │   ├── estimator/         资源估计
 │   └── parser/            arXiv fetch + MinerU / PyMuPDF 解析
-├── cmd/qatlas-server/     Go server 入口（main + 各 cobra 子命令）
+├── cmd/qatlasd/     Go server 入口（main + 各 cobra 子命令）
 ├── internal/              Go server 内部包（路由 / auth / 存储 / config 等）
 ├── web/                   React SPA 前端（Vite + TanStack Router）
 ├── examples/              可独立运行的 demo

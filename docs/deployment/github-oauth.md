@@ -29,7 +29,7 @@ GITHUB_CLIENT_SECRET=ghxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ### 3. 重启 server
 
 ```bash
-sudo systemctl restart qatlas-server
+sudo systemctl restart qatlasd
 ```
 
 启动时 `internal/auth/oauth.go::Register` 会把这两个值注入 PocketBase users collection 的 OAuth2 providers 设置——**无需手动在 admin UI 配**。
@@ -50,7 +50,7 @@ curl https://quantum-atlas.ai/api/collections/users/auth-methods | jq
 sequenceDiagram
     actor U as 用户
     participant SPA as SPA
-    participant QA as qatlas-server
+    participant QA as qatlasd
     participant GH as GitHub
     U->>SPA: 点 "Sign in with GitHub"
     SPA->>QA: GET /api/oauth2-redirect?provider=github
@@ -75,7 +75,7 @@ sequenceDiagram
 如果**现在**需要 admin，用 server CLI 改 PocketBase 内置 superuser：
 
 ```bash
-qatlas-server superuser upsert your-admin@example.com NewSecurePass
+qatlasd superuser upsert your-admin@example.com NewSecurePass
 ```
 
 然后 `https://<server>/_/` 用这个邮箱密码登录 admin UI。
@@ -97,7 +97,7 @@ qatlas-server superuser upsert your-admin@example.com NewSecurePass
     `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` 没设；或设了但 server 没 restart。检查：
 
     ```bash
-    journalctl -u qatlas-server | grep -i oauth
+    journalctl -u qatlasd | grep -i oauth
     # 应该有 "oauth: registered github provider" 之类日志
     ```
 
@@ -105,7 +105,7 @@ qatlas-server superuser upsert your-admin@example.com NewSecurePass
     callback URL 不匹配。GitHub OAuth App 设置里改成跟实际访问的 server URL 完全一致。
 
 !!! failure "登录后看不到 admin UI"
-    OAuth 登录的是 users collection（普通用户），不是 PocketBase 内置 superuser。要 admin UI 用 `qatlas-server superuser upsert` 建。
+    OAuth 登录的是 users collection（普通用户），不是 PocketBase 内置 superuser。要 admin UI 用 `qatlasd superuser upsert` 建。
 
 !!! failure "登录后 cookie 没设上"
     server 在反代后面但反代没 forward cookie / 没 preserve Host。看 [反向代理](reverse-proxy.md) 的三条铁律。

@@ -1302,7 +1302,7 @@ const docTemplate = `{
         },
         "/install-server.sh": {
             "get": {
-                "description": "Returns a POSIX sh script (text/x-shellscript) that downloads\nand verifies the latest qatlas-server release binary.",
+                "description": "Returns a POSIX sh script (text/x-shellscript) that downloads\nand verifies the latest qatlasd release binary.",
                 "produces": [
                     "text/plain"
                 ],

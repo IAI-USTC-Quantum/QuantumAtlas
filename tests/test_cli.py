@@ -65,7 +65,7 @@ def test_release_workflow_publishes_python_and_go_artifacts():
     assert "- target: linux-amd64" in release_workflow
     assert "- target: linux-arm64" in release_workflow
     assert "- target: darwin-arm64" in release_workflow
-    assert "qatlas-server-${{ matrix.target }}" in release_workflow
+    assert "qatlasd-${{ matrix.target }}" in release_workflow
     assert "manylinux_2_28_x86_64" in release_workflow
     assert "manylinux_2_28_aarch64" in release_workflow
     # -static-libstdc++ bakes libstdc++ into the binary (no CXXABI dep);
