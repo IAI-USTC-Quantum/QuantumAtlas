@@ -72,76 +72,98 @@ BREAKING CHANGE: clients before 0.2.0 must update to use the new path.
 
 ### Commitizen 与发版
 
+我们用 [Commitizen](https://commitizen-tools.github.io/commitizen/) 自动算下个版本号 + 写 CHANGELOG + 打 tag。配置在 `pyproject.toml [tool.commitizen]`：
+
+```toml
+[tool.commitizen]
+name = "cz_conventional_commits"
+tag_format = "v$version"
+version_scheme = "pep440"           # PEP 440 版本号格式（支持 0.12.0a1 / 0.12.0.dev3 等 Python 标记）
+version_provider = "pep621"         # 从 [project] version 字段读写（不是 [tool.poetry]）
+update_changelog_on_bump = true
+major_version_zero = true           # 0.x 期间 feat 也只 bump minor
+```
+
+`version_provider = "pep621"` 这条意思是 cz **读写 `pyproject.toml` 顶层 `[project] version`**——PEP 621 标准位置。`uv` 不参与，因为 `uv.lock` 里的 self-package version 字段在工程上无人依赖（详见下"为什么 uv.lock 不用同步"）。
+
 ```bash
-# 用 commitizen 交互式建 commit（不写错格式）
+# 写 commit 不会格式（type / scope / subject）
 uv run cz commit
 
-# Bump version + 更新 CHANGELOG.md + 打 tag（推荐 4 步法见下）
+# 算下个版本 + 改 pyproject + 改 CHANGELOG + commit + tag（一条命令搞定）
 uv run cz bump
 ```
 
-`cz bump` 默认行为：
+`cz bump` 默认行为（参考 commitizen 源码 `commands/bump.py:384`）：
 
-1. 算下个版本号（按 commit type；feat 是 minor，fix 是 patch，feat! 是 major）
-2. 改 `pyproject.toml` 的 `version`
-3. 在 `CHANGELOG.md` 顶部插新版本段
-4. `git commit + git tag`
-5. **不会自动 push**——你 review 完 `git push --follow-tags`
+1. 按 git log 算下个版本号（feat → minor，fix → patch，`feat!` / `BREAKING CHANGE` → major；0.x 期间 feat 仍 minor）
+2. 改 `pyproject.toml [project] version` + 在 `CHANGELOG.md` 顶部插新版本段
+3. **`git add` 这俩文件**（**不会** `git add -A`，**不会** `git commit -a`——工作树其他 WIP 不会被卷进 bump commit）
+4. `git commit -m "bump: version <旧> → <新>"` + `git tag v<新>`
+5. **不 push**——你 review 完手动 push
 
-**release.yml 只在 `git push origin v<X.Y.Z>`（push tag）时触发**，所以不 push tag 就不会发版。push tag 后 [`release.yml`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.github/workflows/release.yml) 自动 build wheel/sdist + 3 个平台 Go binary + 发 PyPI + 发 GitHub Release。
+**release.yml 只在 `git push origin v<X.Y.Z>`（push tag）时触发**。不 push tag 就不会发版。push tag 后 [`release.yml`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.github/workflows/release.yml) 自动 build wheel/sdist + 3 个平台 Go binary + 发 PyPI + 发 GitHub Release + 签 SLSA attestation。
 
-!!! tip "推荐 4 步法（防 cz bump 把工作区脏文件卷进 bump commit）"
+#### 标准发版流程（推荐 — 跟社区主流一致）
 
-    多 agent / 多 PR 同时进行时，`cz bump` 默认会 `git add -A` 把工作区所有改动塞进 bump commit，污染 git blame + tag 范围。隔离工作区改动：
+```bash
+# 1. 本地跑全部 CI mirror，全绿再 bump
+pixi run vet \
+  && pixi run test-go \
+  && pixi run build \
+  && uv run pytest -m "not network and not e2e"
+
+# 2. 算版本 + 改文件 + commit + tag 一条搞定
+uv run cz bump
+
+# 3. Review commit 和 tag 内容
+git show HEAD                               # 看 bump commit diff
+git show --stat $(git describe --tags --abbrev=0)  # 看 tag 指向
+
+# 4. Push branch + tag（--follow-tags 同时推 main 和 annotated tag）
+git push --follow-tags
+```
+
+!!! info "为什么必须先本地跑 CI mirror"
+
+    CI 有三个独立 workflow（`go.yml` / `pytest.yml` / `release.yml`）平行跑。**`release.yml` 不跑 vet/pytest**，所以本地不跑 vet 就直接 push tag → release artifact 照常发了，但 `go.yml` 红着，得 push fix commit 才能消红——一次 release 留个红 badge 在 commit history 不好看。
+
+!!! info "为什么 uv.lock 不用同步"
+
+    cz 改 pyproject `[project] version` 后，`uv.lock` 里 `[[package]] name = "quantum-atlas"` 块的 `version` 字段会 stale 一拍。但：
+
+    - `release.yml` 用 `python -m build`，**不读 uv.lock**
+    - `pytest.yml` 用 `uv sync --frozen`，`--frozen` 检查 dep tree 但 **self-package 是 editable install，不参与 dep resolve**，不会失败
+    - dev 运行时直接读 pyproject
+
+    所以 uv.lock 里 self-version 字段过期**不影响任何 CI / build / runtime**，纯粹是 cosmetic。强迫症想清，bump 后单跑：
 
     ```bash
-    # 0. 隔离 WIP（防 cz bump 卷进无关改动）
-    git stash push --include-untracked -m "pre-bump WIP"
-
-    # 1. cz bump --files-only → 只改 pyproject + CHANGELOG，不 commit、不 tag
-    uv run cz bump --files-only --yes
-    #    ↑↑↑ 看 cz 输出！它会说 "bumped to 0.X.Y"——这个版本号是接下来 tag 要用的。
-    #    cz 按你的 commit 算 PATCH/MINOR/MAJOR，不一定是你预期的那个。
-
-    # 2. 显式 add 三个文件（不要 git add -A）
-    git add pyproject.toml CHANGELOG.md uv.lock
-
-    # 3. commit + tag（VERSION 从 pyproject 读，防 typo）
-    VERSION="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')"
-    git commit -m "bump: version <旧> → ${VERSION}"
-    git tag "v${VERSION}"
-
-    # 4. push main + push tag（push tag 才触发 release.yml）
-    git push origin main
-    git push origin "v${VERSION}"
-
-    # 5. 恢复 WIP
-    git stash pop
+    uv lock && git add uv.lock && git commit --amend --no-edit && git tag -f v$(cz version --project)
     ```
 
-    bump commit 已经卷进无关文件、tag 没 push 出去时还能补救：
+    （`tag -f` 是因为 amend 改了 commit hash，原 tag 还指向旧 hash 需要重指。）
+
+    uv.lock 也不能挂到 cz 的 `version_files` 自动更新——cz 单行 regex 替换，uv.lock 里几十个 dep 都有 `version = "..."` 行，迟早撞车（今天 0.12.0 不撞，明天 0.13.0 可能跟某 dep 撞）。
+
+!!! warning "bump 出错怎么撤"
+
+    tag **没** push 出去：
 
     ```bash
-    git reset --soft HEAD~1   # 撤销 commit 但保留改动
+    git reset --soft HEAD~1   # 撤 commit 保留改动
     git tag -d v<n>           # 删本地 tag
     git reset HEAD            # unstage
-    # 然后按 4 步法重做
     ```
 
-    tag 已经 push 出去再撤销很麻烦（需要 `git push origin :refs/tags/v<n>` 删远端 tag + force-push 修正后的 main），能避免就避免。
-
-!!! tip "bump 前必须本地跑 CI mirror（防 push 后 CI 红）"
-
-    CI 有三个独立 workflow（`go.yml` / `pytest.yml` / `release.yml`）平行跑。**release.yml 不跑 vet/pytest**，所以不本地跑 vet 直接 push → release artifact 发了但 go.yml 红着，得 push fix commit 才能消红。bump 前先：
+    tag 已经 push 出去：
 
     ```bash
-    pixi run vet \
-      && pixi run test-go \
-      && pixi run build \
-      && uv run pytest -m "not network and not e2e"
+    git push origin :refs/tags/v<n>           # 删远端 tag
+    git push origin main --force-with-lease   # force push 修正后的 main
     ```
 
-    全绿再 bump。
+    后者会让任何 fetch 过该 tag 的 client 看到不一致，能避免就避免——所以 push 前一定 `git show HEAD` review 一次。
 
 ---
 
