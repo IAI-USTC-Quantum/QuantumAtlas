@@ -158,6 +158,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         _print_usage_error(f"unknown command '{args[0]}'")
         return 2
 
+    # Mirror dotenv file values into os.environ ONCE at CLI entry so
+    # every subcommand (and every direct os.getenv reader inside them)
+    # sees the same precedence chain pydantic-settings would. Idempotent
+    # and respects existing env vars (override=False).
+    #
+    # Exception: skip for `qatlas config` itself — it inspects the file
+    # directly and would confuse the precedence-aware get/show output if
+    # we silently merged values into the environment first.
+    if command_name != "config":
+        try:
+            from qatlas.config import bootstrap_env
+            bootstrap_env()
+        except Exception:
+            # Defensive: never block a subcommand on a dotenv glitch;
+            # the user can still pass --token etc explicitly.
+            pass
+
     return _run_module(
         command.module,
         argv0=f"qatlas {command_name}",

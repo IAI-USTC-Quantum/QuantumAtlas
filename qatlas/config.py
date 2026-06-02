@@ -12,12 +12,41 @@ import os
 from pathlib import Path
 from typing import Any, Optional
 
+from dotenv import dotenv_values
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from qatlas.paths import resolve_dotenv_path, user_dotenv_path
 
 logger = logging.getLogger(__name__)
+
+
+def bootstrap_env(dotenv_path: Optional[Path] = None) -> None:
+    """Mirror dotenv file values into ``os.environ`` with ``override=False``.
+
+    Direct ``os.getenv`` readers elsewhere in the codebase
+    (``qatlas.client._common.resolve_token`` reading ``QATLAS_TOKEN``,
+    ``qatlas.wiki.engine`` reading ``QATLAS_WIKI_DIR``, etc.) historically
+    only saw real environment variables, NOT values pydantic-settings
+    loaded from a dotenv file — because pydantic-settings populates
+    fields on the model instance, never touches ``os.environ``.
+
+    This shim closes the gap: after resolving the user's dotenv file
+    we copy each key into ``os.environ`` only when the variable isn't
+    already set, so a real env var always wins. Matches the precedence
+    chain documented in :meth:`ServerConfig.from_env`.
+
+    Pass ``dotenv_path=None`` to use the standard resolution chain.
+    """
+    if dotenv_path is None:
+        dotenv_path, _ = resolve_dotenv_path()
+    if dotenv_path is None or not dotenv_path.is_file():
+        return
+    for key, value in dotenv_values(dotenv_path).items():
+        if value is None:
+            continue
+        # override=False semantic: real env var wins.
+        os.environ.setdefault(key, value)
 
 
 def get_project_root() -> Path:
@@ -165,7 +194,7 @@ class ServerConfig(BaseSettings):
            ``--token`` style CLI flags layer on top via argparse).
         2. ``QATLAS_DOTENV=<path>`` explicit override (for systemd
            units that ship a deployment-specific .env).
-        3. ``~/.config/quantum-atlas/.env`` (XDG, recommended for
+        3. ``~/.config/qatlas/.env`` (XDG, recommended for
            ``uv tool install`` users).
         4. ``./.env`` in current working directory (legacy fallback;
            emits a deprecation warning suggesting migration).
@@ -173,6 +202,11 @@ class ServerConfig(BaseSettings):
 
         ``QATLAS_SKIP_DOTENV=1`` disables all dotenv loading and
         forces env-vars-only.
+
+        Also calls :func:`bootstrap_env` so the same precedence chain
+        is visible to direct ``os.getenv`` readers elsewhere in the
+        codebase (e.g. ``qatlas.client._common.resolve_token`` which
+        reads ``QATLAS_TOKEN`` via os.getenv, not via this model).
         """
         if _skip_dotenv():
             return cls(_env_file=None)
@@ -186,6 +220,13 @@ class ServerConfig(BaseSettings):
                 "fallback may be removed in a future release.",
                 user_dotenv_path(),
             )
+        # Mirror the values into os.environ so that direct os.getenv
+        # readers (resolve_token, get_wiki_root, etc.) see the same
+        # values pydantic-settings just loaded into the model. Done
+        # with override=False so a real env var always wins, matching
+        # the documented precedence.
+        if dotenv_path is not None:
+            bootstrap_env(dotenv_path)
         return cls(_env_file=dotenv_path)
 
     def get_raw_root(self) -> Path:

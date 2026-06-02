@@ -104,3 +104,62 @@ class TestResolveDotenv:
         path, source = paths.resolve_dotenv_path()
         assert source == "env_override"
         assert path == (isolated_env / "nope.env").resolve()
+
+
+class TestBootstrapEnv:
+    """bootstrap_env() bridges pydantic-settings → os.environ so direct
+    os.getenv readers (resolve_token, wiki engine, llm_interface) all see
+    the values pydantic-settings loaded."""
+
+    def test_populates_os_environ_from_xdg_file(
+        self, isolated_env: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from qatlas.config import bootstrap_env
+
+        xdg = paths.user_dotenv_path()
+        xdg.parent.mkdir(parents=True)
+        xdg.write_text(
+            "QATLAS_TOKEN=qat_from_xdg\n"
+            "QATLAS_SERVER_URL=https://from.xdg/\n"
+        )
+        # Ensure clean slate before bootstrap.
+        monkeypatch.delenv("QATLAS_TOKEN", raising=False)
+        monkeypatch.delenv("QATLAS_SERVER_URL", raising=False)
+
+        bootstrap_env()
+
+        assert os.environ.get("QATLAS_TOKEN") == "qat_from_xdg"
+        assert os.environ.get("QATLAS_SERVER_URL") == "https://from.xdg/"
+
+    def test_does_not_override_existing_env_var(
+        self, isolated_env: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from qatlas.config import bootstrap_env
+
+        xdg = paths.user_dotenv_path()
+        xdg.parent.mkdir(parents=True)
+        xdg.write_text("QATLAS_TOKEN=qat_from_xdg\n")
+        # Pre-existing env var must win (env var > file in precedence).
+        monkeypatch.setenv("QATLAS_TOKEN", "qat_from_env")
+
+        bootstrap_env()
+
+        assert os.environ["QATLAS_TOKEN"] == "qat_from_env"
+
+    def test_no_file_no_change(self, isolated_env: Path) -> None:
+        from qatlas.config import bootstrap_env
+        # No .env anywhere → noop, no error.
+        bootstrap_env()  # should not raise
+
+    def test_explicit_path_argument(
+        self, isolated_env: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from qatlas.config import bootstrap_env
+
+        custom = isolated_env / "custom.env"
+        custom.write_text("QATLAS_TOKEN=qat_custom\n")
+        monkeypatch.delenv("QATLAS_TOKEN", raising=False)
+
+        bootstrap_env(custom)
+
+        assert os.environ["QATLAS_TOKEN"] == "qat_custom"
