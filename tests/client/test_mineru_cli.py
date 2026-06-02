@@ -419,3 +419,49 @@ class TestFinaliseDoneEntry:
         entry = BatchTaskState(data_id="a", state="done", full_zip_url="https://z/a.zip")
         assert cli._finalise_done_entry(args, "http://s", mineru, job, entry, True, {}) is True
         mineru.download_full_zip.assert_not_called()
+
+
+class TestIsAcceptablePDFURL:
+    """Whitelist for the URL the claim handler hands us — refuse anything
+    not arxiv / our edge / our S3 public endpoint, so a hostile or
+    misconfigured server can't make this CLI fetch attacker.com."""
+
+    @pytest.mark.parametrize(
+        "url,server,want",
+        [
+            # arxiv (always accepted regardless of edge)
+            ("https://arxiv.org/pdf/2401.0001v1", "https://quantum-atlas.ai", True),
+            ("https://export.arxiv.org/pdf/2401.0001v1", "https://quantum-atlas.ai", True),
+
+            # RackNerd-style edge: dedicated raw.* subdomain
+            ("https://raw.quantum-atlas.ai/qatlas-pdf/0207/0207065v3.pdf?X-Amz-Signature=ABC",
+             "https://quantum-atlas.ai", True),
+
+            # Any *.quantum-atlas.ai subdomain (suffix match)
+            ("https://other.quantum-atlas.ai/anything", "https://quantum-atlas.ai", True),
+
+            # Main edge host itself matches (same-host rule)
+            ("https://quantum-atlas.ai/qatlas-pdf/x.pdf", "https://quantum-atlas.ai", True),
+
+            # Alibaba-style: IP + port shared between API and S3 public endpoint
+            ("https://47.102.36.175:9000/qatlas-pdf/x.pdf", "https://47.102.36.175", True),
+
+            # Rejections
+            ("https://evil.example.com/anything", "https://quantum-atlas.ai", False),
+            ("http://attacker.com/x.pdf", "https://quantum-atlas.ai", False),
+            ("https://attacker-quantum-atlas.ai/x.pdf",  # not a suffix match, prefix-spoofed
+             "https://quantum-atlas.ai", False),
+            ("not-a-url", "https://quantum-atlas.ai", False),
+            ("", "https://quantum-atlas.ai", False),
+        ],
+    )
+    def test_cases(self, url: str, server: str, want: bool) -> None:
+        assert cli._is_acceptable_pdf_url(url, server) is want
+
+    def test_attacker_cannot_spoof_subdomain(self) -> None:
+        # Sanity: somebody.evil-quantum-atlas.ai must NOT match — suffix
+        # check is on ".quantum-atlas.ai" with a leading dot precisely to
+        # prevent this attack.
+        assert cli._is_acceptable_pdf_url(
+            "https://evil-quantum-atlas.ai/x.pdf", "https://quantum-atlas.ai"
+        ) is False

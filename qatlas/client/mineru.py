@@ -93,6 +93,20 @@ from qatlas.config import ServerConfig
 
 _ARXIV_PDF_HOSTS = frozenset({"arxiv.org", "export.arxiv.org"})
 
+# Suffix-match hosts the claim handler is allowed to point us at when
+# it signs an S3 presigned URL for our edge's RustFS PDF bucket. Three
+# common deployment shapes:
+#
+#   - "raw.quantum-atlas.ai" — RackNerd-style: dedicated raw.* subdomain
+#     in front of the bucket
+#   - any host ending in ".quantum-atlas.ai" — flexibility for other
+#     edges that may pick a different subdomain
+#   - direct IP+port (e.g. "47.102.36.175:9000" on Alibaba) — handled
+#     dynamically below via the QATLAS_SERVER_URL host since the same
+#     box hosts both API and RustFS public endpoint
+_S3_PUBLIC_HOST_SUFFIXES = (".quantum-atlas.ai",)
+_S3_PUBLIC_HOSTS = frozenset({"raw.quantum-atlas.ai"})
+
 # In-flight terminal states from MinerU's batch result entries.
 _TERMINAL_BATCH_STATES = frozenset({"done", "failed"})
 
@@ -103,18 +117,61 @@ EXIT_DAILY_LIMIT = getattr(os, "EX_TEMPFAIL", 75)
 
 
 def _is_arxiv_url(url: str) -> bool:
-    """Defensive client-side check: refuse to feed MinerU any URL not on arxiv.
-
-    The server in the OSS edition only ever hands back arxiv URLs (see
-    ``papers.ArxivVersionedURL``), but a malicious or buggy server return
-    could otherwise turn this CLI into a generic URL-fetch tool. Belt and
-    braces.
-    """
+    """True if `url` points at arxiv.org (legacy whitelist)."""
     try:
-        host = urlparse(url).hostname or ""
+        host = (urlparse(url).hostname or "").lower()
     except ValueError:
         return False
-    return host.lower() in _ARXIV_PDF_HOSTS
+    return host in _ARXIV_PDF_HOSTS
+
+
+def _is_acceptable_pdf_url(url: str, server_url: str) -> bool:
+    """Defensive client-side check: refuse to feed MinerU any URL not
+    coming from a known-safe source.
+
+    Since v0.15.0 the server prefers handing back a RustFS presigned URL
+    (per qatlas/client/mineru.py module docstring); arxiv.org is only
+    the fallback when the store can't presign. So three sources are
+    OK:
+
+      - arxiv.org / export.arxiv.org           (legacy / fallback)
+      - raw.* or .quantum-atlas.ai subdomain   (RackNerd-style edge)
+      - the same host:port as QATLAS_SERVER_URL (Alibaba-style edge
+        that shares one IP/cert with the API and the public RustFS
+        endpoint, e.g. https://47.102.36.175:9000)
+
+    Everything else is treated as a misconfigured / hostile server
+    response and the claim is released without firing the URL at
+    MinerU. Keeps this CLI from being turned into a generic URL-fetch
+    tool by a buggy or compromised server.
+    """
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return False
+    if host in _ARXIV_PDF_HOSTS:
+        return True
+    if host in _S3_PUBLIC_HOSTS:
+        return True
+    for suffix in _S3_PUBLIC_HOST_SUFFIXES:
+        if host.endswith(suffix):
+            return True
+    # Same host:port as the configured QATLAS_SERVER_URL — covers
+    # IP-based edges (Alibaba) where API and RustFS public endpoint
+    # share an IP + port (different ports also OK since edge can pin
+    # the public endpoint to e.g. :9000).
+    try:
+        srv = urlparse(server_url)
+    except ValueError:
+        srv = None
+    if srv:
+        srv_host = (srv.hostname or "").lower()
+        if srv_host and srv_host == host:
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -398,9 +455,9 @@ def _process_one(
         f"Claim acquired for {arxiv_id} (id={claim_id}); submitting {pdf_url} to MinerU."
     )
 
-    if not _is_arxiv_url(pdf_url):
+    if not _is_acceptable_pdf_url(pdf_url, base_url):
         _print_err(
-            f"[skip] {arxiv_id}: server returned non-arxiv pdf_url {pdf_url!r} — refusing to fetch"
+            f"[skip] {arxiv_id}: server returned untrusted pdf_url {pdf_url!r} — refusing to fetch"
         )
         _release_claim(
             base_url,
@@ -854,9 +911,9 @@ def _prepare_batch_jobs(
         pdf_url = claim["pdf_url"]
         server_pdf_sha256 = (claim.get("pdf_sha256") or "").lower() or None
 
-        if not _is_arxiv_url(pdf_url):
+        if not _is_acceptable_pdf_url(pdf_url, base_url):
             _print_err(
-                f"[skip] {arxiv_id}: server returned non-arxiv pdf_url {pdf_url!r}"
+                f"[skip] {arxiv_id}: server returned untrusted pdf_url {pdf_url!r}"
             )
             _release_claim(
                 base_url, arxiv_id, claim_id,
