@@ -277,13 +277,6 @@ func (c *Config) S3Enabled() bool {
 		c.S3BucketImages != "" && c.S3AccessKeyID != "" && c.S3SecretAccessKey != ""
 }
 
-// MinerUEnabled reports whether server-side silent markdown conversion is
-// configured. When false, GET /api/papers/{id}/markdown only serves
-// already-cached markdown and returns 503 on a miss.
-func (c *Config) MinerUEnabled() bool {
-	return c.MinerUAPIToken != ""
-}
-
 // validateS3Config enforces the all-or-nothing rule for the S3 connection
 // quartet plus the three per-kind buckets, and fails fast when the
 // removed single-bucket var QATLAS_S3_BUCKET is still set (a stale .env
@@ -347,21 +340,8 @@ func firstEnvDefault(def string, names ...string) string {
 	return def
 }
 
-// firstEnvInt parses the first non-empty env value as an int. Returns 0 on
-// parse error (silent — same forgiving behavior as pydantic Optional[int]).
-func firstEnvInt(names ...string) int {
-	raw := firstEnv(names...)
-	if raw == "" {
-		return 0
-	}
-	v, err := strconv.Atoi(raw)
-	if err != nil {
-		return 0
-	}
-	return v
-}
-
-// firstEnvIntDefault is firstEnvInt with a fallback when unset / unparseable.
+// firstEnvIntDefault parses the first non-empty env value as an int, falling
+// back to def when unset or unparseable.
 func firstEnvIntDefault(def int, names ...string) int {
 	raw := firstEnv(names...)
 	if raw == "" {

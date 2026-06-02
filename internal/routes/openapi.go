@@ -241,7 +241,12 @@ func docUploadMineRU() {}
 // @Produce     json
 // @Security    BearerAuth
 // @Param       arxiv_id path string true "arXiv identifier"
-// @Success     200 {object} map[string]interface{}
+// @Success     201 {object} map[string]interface{} "claim granted (body is the claim record)"
+// @Failure     400 {object} map[string]string      "invalid arxiv_id"
+// @Failure     404 {object} map[string]string      "not claimable (no PDF in catalog, or markdown already exists)"
+// @Failure     409 {object} map[string]interface{} "already claimed by someone else (body includes existing claim details)"
+// @Failure     500 {object} map[string]string      "internal error"
+// @Failure     503 {object} map[string]string      "catalog unavailable (Neo4j unreachable)"
 // @Router      /api/papers/{arxiv_id}/mineru-claim [post]
 func docMineruClaim() {}
 
@@ -249,12 +254,14 @@ func docMineruClaim() {}
 //
 // @Summary     Release MinerU claim
 // @Tags        Papers
-// @Produce     json
 // @Security    BearerAuth
 // @Param       arxiv_id path string true "arXiv identifier"
 // @Param       claim_id path string true "claim id"
-// @Success     200 {object} map[string]interface{}
-// @Failure     404 {object} map[string]string
+// @Success     204 "claim released (empty body)"
+// @Failure     400 {object} map[string]string "invalid arxiv_id"
+// @Failure     409 {object} map[string]string "claim_id does not match the active claim"
+// @Failure     500 {object} map[string]string "internal error"
+// @Failure     503 {object} map[string]string "catalog unavailable (Neo4j unreachable)"
 // @Router      /api/papers/{arxiv_id}/mineru-claim/{claim_id} [delete]
 func docMineruClaimRelease() {}
 
