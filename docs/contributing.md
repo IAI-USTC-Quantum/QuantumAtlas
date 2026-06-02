@@ -95,11 +95,11 @@ uv run cz commit
 uv run cz bump
 ```
 
-`cz bump` 默认行为（参考 commitizen 源码 `commands/bump.py:384`）：
+`cz bump` 默认行为：
 
 1. 按 git log 算下个版本号（feat → minor，fix → patch，`feat!` / `BREAKING CHANGE` → major；0.x 期间 feat 仍 minor）
 2. 改 `pyproject.toml [project] version` + 在 `CHANGELOG.md` 顶部插新版本段
-3. **`git add` 这俩文件**（**不会** `git add -A`，**不会** `git commit -a`——工作树其他 WIP 不会被卷进 bump commit）
+3. **`git commit -a` —— 卷入所有 modified tracked files**，不只 pyproject + CHANGELOG。源码 `commitizen/commands/bump.py::Bump._get_commit_args` 永远返回 `["-a"]`。所以 bump 前**必须先 `git stash` 工作树里所有未完成 WIP**，或者把它们 commit 完再 bump，否则 bump commit 会卷进 unrelated 改动 + commit message 失实
 4. `git commit -m "bump: version <旧> → <新>"` + `git tag v<新>`
 5. **不 push**——你 review 完手动 push
 
