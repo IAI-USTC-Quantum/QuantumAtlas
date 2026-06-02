@@ -9,7 +9,7 @@
 # 为什么不用 RustFS 原生 audit：1.0.0-beta.5 上 has_any_audit_targets 门控 bug
 # 导致 env-only target 永远 not_loaded_in_runtime，console 改 target 又被
 # 「env-source 锁定」挡掉。改用 notify webhook（per-bucket subscribe）路径，
-# 经 1810 实测可靠。详见 docs/deployment/rustfs.md#写入留痕-audit-sink-t10。
+# 经实测可靠。详见 docs/deployment/rustfs.md#写入留痕-audit-sink-t10。
 #
 # 为什么单独一支脚本（不复用 rustfs_bootstrap.sh）：
 #   - 资源边界完全不同：这里要的是「sink 独立身份」+「edge 只读」+「5 个资产桶

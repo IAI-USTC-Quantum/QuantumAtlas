@@ -68,7 +68,7 @@ ss -tlnp | grep :7687
 
     WSL2 里如果不加 `server.jvm.additional=-Djava.net.preferIPv4Stack=true`，JVM 默认 dual-stack v6 socket，`ss` 显示 `*:7687`，**Windows host 的 portproxy 转 v4 SYN 进来直接 RST**。
 
-    完整说明：QuantumAtlas AGENTS.md "Neo4j 服务（@ 1810 WSL）" 段。两条配置缺一不可：
+    两条配置缺一不可：
 
     ```ini
     server.bolt.listen_address=0.0.0.0:7687
@@ -187,7 +187,7 @@ curl -X POST https://<server>/api/graph/query \
 ## 性能 / 容量
 
 - 当前 schema 节点 / 边数都在万级，Community Edition 足够
-- 内存：JVM heap 1-2 GB 足够（1810 WSL 实测）
+- 内存：JVM heap 1-2 GB 足够（WSL2 部署实测）
 - 磁盘：少于 100 MB
 - Bolt connection pool：默认 100，QuantumAtlas 没有持续高并发图查询，不需要调
 

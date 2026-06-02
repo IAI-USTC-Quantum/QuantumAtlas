@@ -8,8 +8,7 @@ import (
 )
 
 // MinerU returns its application-level status as `code` in the envelope.
-// We classify each code into one of three buckets, mirroring the
-// taxonomy proven out by pdf2md (1810:/home/timidly/pdf2md):
+// We classify each code into one of three buckets:
 //
 //   - Retryable: a transient backend hiccup. Try the *same* request again
 //     after a short pause; typically the call succeeds within a few retries.
