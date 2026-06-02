@@ -661,13 +661,14 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/papers/{arxiv_id}/upload-markdown": {
+        "/api/papers/{arxiv_id}/upload-mineru": {
             "post": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
+                "description": "Accepts the entire MinerU result zip exactly as returned by ` + "`" + `full_zip_url` + "`" + `. Server extracts ` + "`" + `full.md` + "`" + ` plus every ` + "`" + `images/*` + "`" + ` entry and stores them to the markdown and images object buckets respectively. Images are written before the markdown so any reader that observes the markdown also observes all referenced images. Replaces the v0.7.x ` + "`" + `upload-markdown` + "`" + ` endpoint (which only accepted a single .md file and silently dropped images).",
                 "consumes": [
                     "multipart/form-data"
                 ],
@@ -677,11 +678,11 @@ const docTemplate = `{
                 "tags": [
                     "Papers"
                 ],
-                "summary": "Upload paper markdown",
+                "summary": "Upload paper MinerU bundle",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "arXiv identifier",
+                        "description": "arXiv identifier (must include version suffix vN)",
                         "name": "arxiv_id",
                         "in": "path",
                         "required": true
@@ -694,14 +695,20 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "client-computed markdown sha256",
+                        "description": "client-computed zip sha256 (in-transit integrity check)",
                         "name": "expected_sha256",
                         "in": "query"
                     },
                     {
+                        "type": "string",
+                        "description": "short label of the contributor's MinerU run (truncated to 64 chars)",
+                        "name": "source",
+                        "in": "query"
+                    },
+                    {
                         "type": "file",
-                        "description": "markdown file",
-                        "name": "markdown",
+                        "description": "MinerU result zip (must contain full.md; optional images/*)",
+                        "name": "mineru_zip",
                         "in": "formData",
                         "required": true
                     }
@@ -716,6 +723,13 @@ const docTemplate = `{
                     },
                     "201": {
                         "description": "Created",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -770,23 +784,11 @@ const docTemplate = `{
                         "in": "query"
                     },
                     {
-                        "type": "string",
-                        "description": "client-computed metadata sha256",
-                        "name": "expected_metadata_sha256",
-                        "in": "query"
-                    },
-                    {
                         "type": "file",
                         "description": "PDF file",
                         "name": "pdf",
                         "in": "formData",
                         "required": true
-                    },
-                    {
-                        "type": "file",
-                        "description": "metadata JSON",
-                        "name": "metadata",
-                        "in": "formData"
                     }
                 ],
                 "responses": {

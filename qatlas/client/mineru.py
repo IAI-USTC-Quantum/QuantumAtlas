@@ -15,17 +15,33 @@ Modes::
     qatlas mineru quant-ph/9508027v1    # single mode: claim and process one
                                         # specific paper.
 
+    qatlas mineru --watch               # daemon mode: loop forever, sleeping
+                                        # --watch-interval (default 300s)
+                                        # between batches. SIGINT / SIGTERM
+                                        # gracefully release any in-flight
+                                        # claim before exiting.
+
 Concurrency::
 
     Multiple contributors can run ``qatlas mineru`` in parallel; the server
     issues atomic per-paper claims (default 30-minute lease) so two clients
     never burn MinerU quota on the same paper. If a claim is already held by
     someone else the client silently skips and moves to the next candidate.
+
+Push path (since v0.8.0)::
+
+    We send the *entire* MinerU result zip to ``POST upload-mineru`` rather
+    than extracting just ``full.md`` ourselves. The server then unzips, writes
+    ``full.md`` to the markdown bucket, and writes every ``images/<name>``
+    to the images bucket. Pre-v0.8.0 the client did the extraction and only
+    pushed the .md, silently dropping every image — a regression that's now
+    fixed.
 """
 
 from __future__ import annotations
 
 import argparse
+import signal
 import sys
 import tempfile
 import time
@@ -38,12 +54,45 @@ from qatlas.client._common import (
     add_common_http_args,
     auth_headers,
     base_url_from_args,
+    check_response_version,
+    client_version_headers,
     print_json,
     request_verify,
     run_with_request_errors,
 )
 from qatlas.parser.mineru_client import MinerUClient
 from qatlas.config import ServerConfig
+
+
+# ---------------------------------------------------------------------------
+# Cooperative shutdown
+# ---------------------------------------------------------------------------
+#
+# `--watch` mode runs forever; a single Ctrl-C should release any in-flight
+# claim (so it doesn't dangle for the rest of the 30-minute TTL) before the
+# process exits. A second Ctrl-C aborts immediately. We use a module-level
+# flag set by the SIGINT/SIGTERM handler; the work loop checks it between
+# papers and after MinerU polls.
+
+_SHUTDOWN_REQUESTED = False
+
+
+def _install_signal_handlers() -> None:
+    def _handler(signum, _frame):
+        global _SHUTDOWN_REQUESTED
+        if _SHUTDOWN_REQUESTED:
+            # Second signal — exit hard right now, don't wait for graceful
+            # cleanup. The first signal already triggered claim release.
+            _print_err(f"Second {signal.Signals(signum).name} — aborting now.")
+            raise SystemExit(130)
+        _SHUTDOWN_REQUESTED = True
+        _print_err(
+            f"Received {signal.Signals(signum).name} — finishing current paper "
+            "then exiting. Press again to abort immediately."
+        )
+
+    signal.signal(signal.SIGINT, _handler)
+    signal.signal(signal.SIGTERM, _handler)
 
 
 def _print_err(msg: str) -> None:
@@ -79,12 +128,13 @@ def _claim_one(
         resp = requests.post(
             f"{base_url}/api/papers/{arxiv_id}/mineru-claim",
             params=params or None,
-            headers=headers,
+            headers={**headers, **client_version_headers()},
             timeout=request_timeout,
             verify=verify,
         )
     except requests.RequestException as exc:
         return None, f"claim request errored: {exc}"
+    check_response_version(resp, write=True)
     if resp.status_code == 201:
         return resp.json(), None
     if resp.status_code in (404, 409):
@@ -108,7 +158,7 @@ def _release_claim(
     try:
         requests.delete(
             f"{base_url}/api/papers/{arxiv_id}/mineru-claim/{claim_id}",
-            headers=headers,
+            headers={**headers, **client_version_headers()},
             timeout=request_timeout,
             verify=verify,
         )
@@ -116,15 +166,21 @@ def _release_claim(
         _print_err(f"warning: could not release claim for {arxiv_id}: {exc}")
 
 
-def _run_mineru_to_markdown(
+def _run_mineru_to_zip(
     *,
     config: ServerConfig,
     pdf_url: str,
     no_cache: bool,
 ) -> Optional[Path]:
-    """Submit pdf_url to MinerU, poll until done, download full.md to a tempfile.
+    """Submit pdf_url to MinerU, poll until done, download the entire result zip.
 
-    Returns the path to the downloaded markdown, or None on failure.
+    Returns the path to the downloaded zip on disk, or None on failure. The
+    zip is what gets POSTed verbatim to ``upload-mineru``; the server side
+    unpacks it and stores ``full.md`` plus every ``images/<name>``.
+
+    Previously this helper extracted only ``full.md`` (via
+    ``download_markdown_from_zip``) — that silently dropped images. The new
+    flow preserves the whole bundle.
     """
     client = MinerUClient(
         config.mineru_api_token,
@@ -145,6 +201,9 @@ def _run_mineru_to_markdown(
     deadline = time.monotonic() + float(config.mineru_timeout)
     full_zip_url: Optional[str] = None
     while time.monotonic() < deadline:
+        if _SHUTDOWN_REQUESTED:
+            _print_err("Shutdown requested mid-poll; abandoning MinerU task.")
+            return None
         state_payload = client.get_task(mineru_task_id)
         state = state_payload.get("state")
         _print_err(f"MinerU state: {state}")
@@ -164,37 +223,46 @@ def _run_mineru_to_markdown(
         return None
 
     workdir = Path(tempfile.mkdtemp(prefix="qatlas-mineru-"))
-    md_path = workdir / "full.md"
-    client.download_markdown_from_zip(full_zip_url, md_path)
-    _print_err(f"Downloaded MinerU markdown -> {md_path}")
-    return md_path
+    zip_path = workdir / "mineru-result.zip"
+    client.download_full_zip(full_zip_url, zip_path)
+    _print_err(f"Downloaded MinerU zip -> {zip_path} ({zip_path.stat().st_size} bytes)")
+    return zip_path
 
 
-def _upload_markdown(
+def _upload_mineru_zip(
     *,
     base_url: str,
     arxiv_id: str,
-    md_path: Path,
+    zip_path: Path,
     overwrite: bool,
     request_timeout: float,
     verify: bool,
     headers: dict[str, str],
 ) -> tuple[bool, Any]:
+    """POST the whole MinerU zip to /api/papers/{id}/upload-mineru.
+
+    The server extracts ``full.md`` and every ``images/<name>`` and writes
+    them to their respective per-kind buckets (markdown / images) under the
+    paper's canonical key. Conditional create-only PUT semantics apply per
+    object so multiple contributors racing on the same paper still get
+    consistent state.
+    """
     params: dict[str, str] = {"source": "mineru"}
     if overwrite:
         params["overwrite"] = "true"
-    with md_path.open("rb") as fh:
-        files = {"markdown": (md_path.name, fh, "text/markdown")}
+    with zip_path.open("rb") as fh:
+        files = {"mineru_zip": (zip_path.name, fh, "application/zip")}
         resp = requests.post(
-            f"{base_url}/api/papers/{arxiv_id}/upload-markdown",
+            f"{base_url}/api/papers/{arxiv_id}/upload-mineru",
             files=files,
             params=params,
-            headers=headers,
+            headers={**headers, **client_version_headers()},
             timeout=request_timeout,
             verify=verify,
         )
+    check_response_version(resp, write=True)
     if not resp.ok:
-        return False, _http_error(resp, f"Markdown upload for {arxiv_id}")
+        return False, _http_error(resp, f"MinerU upload for {arxiv_id}")
     return True, resp.json()
 
 
@@ -227,14 +295,14 @@ def _process_one(
         f"Claim acquired for {arxiv_id} (id={claim_id}); submitting {pdf_url} to MinerU."
     )
 
-    md_path: Optional[Path] = None
+    zip_path: Optional[Path] = None
     try:
-        md_path = _run_mineru_to_markdown(
+        zip_path = _run_mineru_to_zip(
             config=config,
             pdf_url=pdf_url,
             no_cache=args.no_cache,
         )
-        if md_path is None:
+        if zip_path is None:
             _release_claim(
                 base_url,
                 arxiv_id,
@@ -246,7 +314,7 @@ def _process_one(
             return 1
 
         if args.no_push:
-            _print_err(f"--no-push set; claim released, markdown left at {md_path}")
+            _print_err(f"--no-push set; claim released, zip left at {zip_path}")
             _release_claim(
                 base_url,
                 arxiv_id,
@@ -257,10 +325,10 @@ def _process_one(
             )
             return 0
 
-        ok, payload = _upload_markdown(
+        ok, payload = _upload_mineru_zip(
             base_url=base_url,
             arxiv_id=arxiv_id,
-            md_path=md_path,
+            zip_path=zip_path,
             overwrite=args.overwrite,
             request_timeout=args.request_timeout,
             verify=verify,
@@ -291,6 +359,54 @@ def _process_one(
         raise
 
 
+def _drain_queue_once(
+    args: argparse.Namespace,
+    base_url: str,
+    config: ServerConfig,
+    verify: bool,
+    headers: dict[str, str],
+) -> tuple[int, int]:
+    """Run one queue-drain pass. Returns (processed_count, failure_count).
+
+    Splits out from cmd_mineru so --watch can call it in a loop.
+    """
+    list_resp = requests.get(
+        f"{base_url}/api/papers/needs-mineru",
+        params={"limit": args.max},
+        headers={**headers, **client_version_headers()},
+        timeout=args.request_timeout,
+        verify=verify,
+    )
+    check_response_version(list_resp, write=False)
+    if not list_resp.ok:
+        _print_err(_http_error(list_resp, "needs-mineru list"))
+        return 0, 1
+    queue = list_resp.json()
+    candidates = queue.get("papers") or []
+    if not candidates:
+        _print_err(
+            "Nothing to do — no PDFs in RAW_DIR are waiting for MinerU. "
+            f"(unclaimed={queue.get('total_unclaimed')}, claimed={queue.get('total_claimed')})"
+        )
+        return 0, 0
+    _print_err(
+        f"Queue: {len(candidates)} candidate(s) (unclaimed total={queue.get('total_unclaimed')})"
+    )
+
+    processed = 0
+    failures = 0
+    for paper in candidates:
+        if _SHUTDOWN_REQUESTED:
+            break
+        rc = _process_one(args, base_url, config, paper["arxiv_id"], verify, headers)
+        processed += 1
+        if rc != 0:
+            failures += 1
+            if not args.continue_on_error:
+                break
+    return processed, failures
+
+
 def cmd_mineru(args: argparse.Namespace) -> int:
     config = ServerConfig.from_env()
     if not config.mineru_api_token:
@@ -301,39 +417,41 @@ def cmd_mineru(args: argparse.Namespace) -> int:
     verify = request_verify(args)
     headers = auth_headers(args)
 
+    # Single-paper mode short-circuits the queue path.
     if args.arxiv_id:
         return _process_one(args, base_url, config, args.arxiv_id, verify, headers)
 
-    # Queue mode: iterate the server's needs-mineru list.
-    list_resp = requests.get(
-        f"{base_url}/api/papers/needs-mineru",
-        params={"limit": args.max},
-        headers=headers,
-        timeout=args.request_timeout,
-        verify=verify,
-    )
-    if not list_resp.ok:
-        _print_err(_http_error(list_resp, "needs-mineru list"))
-        return 1
-    queue = list_resp.json()
-    candidates = queue.get("papers") or []
-    if not candidates:
+    if args.watch:
+        _install_signal_handlers()
+        interval = max(int(args.watch_interval), 1)
         _print_err(
-            "Nothing to do — no PDFs in RAW_DIR are waiting for MinerU. "
-            f"(unclaimed={queue.get('total_unclaimed')}, claimed={queue.get('total_claimed')})"
+            f"--watch enabled; polling needs-mineru every {interval}s. "
+            "Send SIGINT/SIGTERM (Ctrl-C) to stop after current paper."
         )
+        consecutive_empty = 0
+        while not _SHUTDOWN_REQUESTED:
+            processed, failures = _drain_queue_once(args, base_url, config, verify, headers)
+            if processed == 0:
+                consecutive_empty += 1
+                if consecutive_empty == 1:
+                    _print_err("Queue empty. Will keep polling.")
+            else:
+                consecutive_empty = 0
+                _print_err(
+                    f"Batch done: {processed} processed, {failures} failures. "
+                    f"Sleeping {interval}s before next poll."
+                )
+            # Sleep in 1-second slices so SIGINT can wake us up promptly
+            # rather than waiting for the full interval.
+            for _ in range(interval):
+                if _SHUTDOWN_REQUESTED:
+                    break
+                time.sleep(1)
+        _print_err("Watch loop exiting cleanly.")
         return 0
-    _print_err(
-        f"Queue mode: {len(candidates)} candidate(s) (unclaimed total={queue.get('total_unclaimed')})"
-    )
 
-    failures = 0
-    for paper in candidates:
-        rc = _process_one(args, base_url, config, paper["arxiv_id"], verify, headers)
-        if rc != 0:
-            failures += 1
-            if not args.continue_on_error:
-                return rc
+    # Default queue mode: one pass, then exit.
+    processed, failures = _drain_queue_once(args, base_url, config, verify, headers)
     return 0 if failures == 0 else 1
 
 
@@ -383,15 +501,30 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--overwrite",
         action="store_true",
-        help="Replace existing markdown on the server (rare; claim only succeeds when none exists).",
+        help="Replace existing markdown / images on the server (rare; claim only succeeds when no md exists).",
     )
     parser.add_argument(
         "--no-push",
         action="store_true",
         help=(
-            "Run MinerU but skip uploading; leave the markdown in a temp directory and "
+            "Run MinerU but skip uploading; leave the result zip in a temp directory and "
             "release the claim immediately."
         ),
+    )
+    parser.add_argument(
+        "--watch",
+        action="store_true",
+        help=(
+            "Daemon mode: after each queue drain, sleep --watch-interval seconds "
+            "and poll again. Implies --continue-on-error. SIGINT/SIGTERM exit "
+            "cleanly after the current paper."
+        ),
+    )
+    parser.add_argument(
+        "--watch-interval",
+        type=int,
+        default=300,
+        help="Daemon mode poll interval in seconds between batches (default 300 = 5 min).",
     )
     add_common_http_args(parser)
     parser.set_defaults(func=cmd_mineru)
@@ -401,8 +534,13 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
+    # --watch implies --continue-on-error; otherwise a single 5xx would
+    # exit the daemon and defeat the whole point.
+    if getattr(args, "watch", False):
+        args.continue_on_error = True
     return run_with_request_errors(args.func, args)
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

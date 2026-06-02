@@ -27,8 +27,9 @@ var (
 //
 //	_UPLOAD_MAX_PDF_BYTES, _UPLOAD_MAX_MARKDOWN_BYTES, _UPLOAD_MAX_METADATA_BYTES
 const (
-	MaxPDFBytes      = 100 * 1024 * 1024
-	MaxMarkdownBytes = 25 * 1024 * 1024
+	MaxPDFBytes       = 100 * 1024 * 1024
+	MaxMarkdownBytes  = 25 * 1024 * 1024
+	MaxMineruZipBytes = 200 * 1024 * 1024 // ~200 MB upper bound for `qatlas upload mineru` zip payloads (markdown + images bundle)
 	MaxMetadataBytes = 2 * 1024 * 1024
 )
 

@@ -1,25 +1,44 @@
 # 用 MinerU 解析 PDF
 
-`qatlas mineru` 用**你自己的 `MINERU_API_TOKEN`** 在本地跑 [MinerU](https://mineru.net) 解析 server 上已有的 PDF，然后把 Markdown 推回。这是**贡献者主动用自己配额贡献解析能力**的方式。
+QuantumAtlas 有**两条** MinerU 转换路径，分别面向"使用者"和"贡献者"。先看清边界再挑用哪条。
 
-另有一条 **server 端静默转换**路径并存（见下）：拿 Markdown 时如果没缓存，server 会用**自己的** token 在后台静默转换，调用方轮询直到 ready。两条路互不冲突——前者是"我出配额帮库攒资产"，后者是"我只想读，库帮我转"。
+## 两条路径对比
 
-## server 端静默转换（`qatlas markdown` / `GET /api/papers/{id}/markdown`）
+| 维度 | `qatlas markdown` (使用者) | `qatlas mineru` (贡献者) |
+|---|---|---|
+| **谁出 MinerU 配额** | **server 自己的** `MINERU_API_TOKEN`（写在服务器 `.env`） | **你自己的** `MINERU_API_TOKEN`（写在本地 `.env`） |
+| **谁发起 MinerU 请求** | qatlasd 在 server 端调 MinerU API | 你的 client 本地直接调 MinerU API |
+| **谁拉 PDF 喂给 MinerU** | qatlasd 拉本 edge 的 RustFS presign 直链（`QATLAS_S3_PUBLIC_ENDPOINT` 签）发给 MinerU | server 在 `mineru-claim` 响应里把 arxiv.org 原始 PDF URL 告诉你的 client，client 转给 MinerU |
+| **PAT scope** | 不需要（开放读）—— 任何登录用户都能 GET md | 需要 `papers:write` —— claim + 上传都受门禁 |
+| **没 PDF 怎么办** | server 返回 `404 {status: no_pdf}`，需要先 `qatlas ingest` 或 `qatlas upload pdf` | 同上：claim 直接 404，提示先 ingest/upload PDF |
+| **没 md 怎么办** | server 后台异步起转换 + 立即回 `202` + `Retry-After`，client 轮询到 `200` 拿正文 | client 自己跑 MinerU，结果直接 `upload-mineru` 推回 |
+| **失败模式** | server 把失败标记到 job 状态；client 拿到 `failed` 报错退出 | client 控制；超时 / MinerU 报错由 client 主动 `DELETE` claim 释放 |
+| **场景**| "我只是想读这篇的 md，server 帮我处理掉" | "我有 MinerU 额度，主动帮库攒解析资产" |
+
+**共同点**：两条路径都用**直链 / share URL**喂 PDF 给 MinerU，**不**把 PDF bytes 通过 server 中转再上传给 MinerU——直链让 MinerU 直接去拉，省一次 server 出入流量。两边 PDF 内容是同一份（同一篇 arxiv），但喂法不同：
+- `qatlas markdown`：server-side `internal/mineru/converter.go::buildPDFURL` 用 `QATLAS_S3_PUBLIC_ENDPOINT` 签 5 分钟 TTL presign URL（每 edge 自己的入口，RackNerd 用域名 + LE 证书，Alibaba 用 IP + 自签）发给 MinerU
+- `qatlas mineru`：server `mineru-claim` handler 在响应里返回 `pdf_url`，**当前实现是 arxiv.org 原始 URL**（不是 RustFS presign）——MinerU 自己去 arxiv 拉。理由：减少一次内部 IO，且 MinerU 与 arxiv.org 的连通性比与本 edge 公网入口好。
+
+## 路径 A：`qatlas markdown`（server 静默转换）
 
 ```bash
 qatlas markdown 2501.00010v1          # 有缓存直接给；无缓存 server 静默转，client 轮询
 qatlas markdown 2501.00010v1 -o out.md
+qatlas markdown 2501.00010v1 --no-wait    # 不轮询，挂起则退码 75 (EX_TEMPFAIL)
 ```
 
 - 用 server `.env` 的 `MINERU_API_TOKEN`，**调用方无需自己的 token / `papers:write` scope**（开放读）
 - 无缓存 → server 后台起转换 + 立即回 `202`，client 轮询直到 `200`
 - 产出的 markdown + images 落对象存储，下次直接命中缓存
-- 适合"只想读 markdown"的用户；要主动用自己配额贡献则用下面的 `qatlas mineru`
+- 适合"只想读 markdown"的用户
 
-为什么还保留 `qatlas mineru` 这条贡献者路径？
+## 路径 B：`qatlas mineru`（贡献者本地解析）
+
+为什么还保留这条贡献者路径？
 
 1. **配额归属**——贡献者用自己的 token 跑，不吃 server 共享配额
-2. **批量贡献**——队列模式可一次攒很多篇，主动暖缓存
+2. **批量贡献**——队列 / `--watch` daemon 模式可一次攒很多篇，主动暖缓存
+3. **离线工具链组合**——你可能想用别的解析器 / 自托管 MinerU，跑完后用 `qatlas upload mineru --zip <result.zip>` 推上去
 
 ## 前置条件（`qatlas mineru`）
 
@@ -46,8 +65,8 @@ PDF 必须**已经在 server 上**（通过 `qatlas ingest` 或 `qatlas upload p
     1. client POST `/api/papers/<id>/mineru-claim` 拿 30 分钟原子 claim + 临时 share URL
     2. 用 `MINERU_API_TOKEN` 提交解析任务给 MinerU
     3. 轮询 MinerU 直到 done（带 timeout）
-    4. 下载 `full.md` 到临时目录
-    5. POST `/api/papers/<id>/upload-markdown` 推回，标记 `source=mineru`
+    4. 下载 **完整结果 zip**（含 `full.md` + `images/*`）到临时目录
+    5. POST `/api/papers/<id>/upload-mineru` 把整 zip 推回，server 解包后 markdown 落 `qatlas-md`，每张图落 `qatlas-images/<canonical>/`
     6. 完成后 server 端 claim 自动释放
 
 === "队列模式（推荐多人协作）"
@@ -64,19 +83,39 @@ PDF 必须**已经在 server 上**（通过 `qatlas ingest` 或 `qatlas upload p
 
     多个贡献者同时跑 `qatlas mineru` 不会撞 MinerU 配额——claim 是 atomic。
 
+=== "daemon 模式（挂着持续贡献）"
+
+    ```bash
+    qatlas mineru --watch
+    # 或显式给间隔
+    qatlas mineru --watch --watch-interval 600
+    ```
+
+    跑完一轮 queue → sleep `--watch-interval`（默认 300 秒）→ 再来一轮，循环直到收到 SIGINT/SIGTERM。Ctrl-C 一次会**等当前 paper 完事再退**并释放 claim；两次直接 abort。隐含 `--continue-on-error`（不然单篇 5xx 会让整个 daemon 退）。
+
+    ```bash
+    # 后台跑 + 把 stderr 重定向到日志
+    nohup qatlas mineru --watch --max 5 > qatlas-mineru.log 2>&1 &
+    ```
+
 ## 完整 flags
 
 | Flag | 默认 | 含义 |
 |---|---|---|
 | `<arxiv_id>` (可选) | — | 指定单篇；省略走队列模式 |
 | `--max N` | 10 | 队列模式：本次最多处理几篇 |
-| `--continue-on-error` | false | 队列模式：单篇失败时继续下一篇 |
+| `--continue-on-error` | false | 队列模式：单篇失败时继续下一篇（`--watch` 自动启用）|
 | `--ttl-seconds N` | server 默认 1800 | claim 租约秒数（最长 7200）|
 | `--no-cache` | false | 让 MinerU bypass 它的服务端缓存（重新跑）|
-| `--overwrite` | false | server 已有 markdown 时仍允许覆盖 |
-| `--no-push` | false | 跑 MinerU 但**不**推回 server（留在本地 tmp）|
+| `--overwrite` | false | server 已有 markdown / images 时仍允许覆盖 |
+| `--no-push` | false | 跑 MinerU 但**不**推回 server（zip 留在本地 tmp，方便 debug）|
+| `--watch` | false | daemon 模式：循环跑直到收 SIGINT/SIGTERM |
+| `--watch-interval N` | 300 | daemon 模式 sleep 秒数 |
 
 加 [通用 client flags](manage-credentials.md#client-flags)。
+
+!!! note "v0.8.0：不再丢图"
+    旧版本 (`qatlas mineru` ≤ v0.7.x) 在 step 4 只从 zip 抽出 `full.md`，**所有 `images/*` 都被静默丢弃**，导致详情页图片引用 404。v0.8.0 改为把整个 zip 原样 push 给 server 端 `upload-mineru`，server 复用同款 zip 解析逻辑写入两个桶——client 端贡献的图片现在能完整落地。
 
 ## MinerU 环境变量（可选调优）
 

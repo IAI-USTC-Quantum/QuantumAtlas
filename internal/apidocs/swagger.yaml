@@ -426,12 +426,18 @@ paths:
       summary: Paper resources
       tags:
       - Papers
-  /api/papers/{arxiv_id}/upload-markdown:
+  /api/papers/{arxiv_id}/upload-mineru:
     post:
       consumes:
       - multipart/form-data
+      description: Accepts the entire MinerU result zip exactly as returned by `full_zip_url`.
+        Server extracts `full.md` plus every `images/*` entry and stores them to the
+        markdown and images object buckets respectively. Images are written before
+        the markdown so any reader that observes the markdown also observes all referenced
+        images. Replaces the v0.7.x `upload-markdown` endpoint (which only accepted
+        a single .md file and silently dropped images).
       parameters:
-      - description: arXiv identifier
+      - description: arXiv identifier (must include version suffix vN)
         in: path
         name: arxiv_id
         required: true
@@ -440,13 +446,18 @@ paths:
         in: query
         name: overwrite
         type: boolean
-      - description: client-computed markdown sha256
+      - description: client-computed zip sha256 (in-transit integrity check)
         in: query
         name: expected_sha256
         type: string
-      - description: markdown file
+      - description: short label of the contributor's MinerU run (truncated to 64
+          chars)
+        in: query
+        name: source
+        type: string
+      - description: MinerU result zip (must contain full.md; optional images/*)
         in: formData
-        name: markdown
+        name: mineru_zip
         required: true
         type: file
       produces:
@@ -462,6 +473,11 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
         "409":
           description: Conflict
           schema:
@@ -469,7 +485,7 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: Upload paper markdown
+      summary: Upload paper MinerU bundle
       tags:
       - Papers
   /api/papers/{arxiv_id}/upload-pdf:
@@ -494,18 +510,10 @@ paths:
         in: query
         name: expected_sha256
         type: string
-      - description: client-computed metadata sha256
-        in: query
-        name: expected_metadata_sha256
-        type: string
       - description: PDF file
         in: formData
         name: pdf
         required: true
-        type: file
-      - description: metadata JSON
-        in: formData
-        name: metadata
         type: file
       produces:
       - application/json

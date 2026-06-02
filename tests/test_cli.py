@@ -33,6 +33,7 @@ def test_commitizen_uses_pyproject_version_and_v_tags():
         "version_provider": "pep621",
         "update_changelog_on_bump": True,
         "major_version_zero": True,
+        "annotated_tag": True,
     }
 
 

@@ -16,7 +16,7 @@
 
     ---
 
-    `qatlas upload pdf/markdown` 手动推送资产，sha256 dedup、冲突处理、`--overwrite` 语义。
+    `qatlas upload pdf/mineru` 手动推送资产，sha256 dedup、冲突处理、`--overwrite` 语义；mineru 子命令一次提交 markdown + 全部图片（v0.8.0 替换原 `upload markdown`）。
 
 -   :material-file-document-edit:{ .lg .middle } **[用 MinerU 解析 PDF](parse-with-mineru.md)**
 

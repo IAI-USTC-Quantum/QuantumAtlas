@@ -66,8 +66,8 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
 | `GET` | `/api/papers/{arxiv_id}/resources` | `papers:read` | 列单篇论文已有的资产 |
 | `GET` | `/api/papers/{arxiv_id}/markdown` | `papers:read` | 取论文 markdown；无缓存时由 server 用自身 MinerU token 静默后台转换（轮询）|
 | `GET` | `/api/papers/{arxiv_id}/markdown/status` | `papers:read` | 查询 markdown 转换 job 状态（无副作用，恒 200）|
-| `POST` | `/api/papers/{arxiv_id}/upload-pdf` | `papers:write` | 上传 PDF（+ metadata），见 [Upload API](upload-api.md) |
-| `POST` | `/api/papers/{arxiv_id}/upload-markdown` | `papers:write` | 上传 markdown |
+| `POST` | `/api/papers/{arxiv_id}/upload-pdf` | `papers:write` | 上传 PDF，见 [Upload API](upload-api.md) |
+| `POST` | `/api/papers/{arxiv_id}/upload-mineru` | `papers:write` | 上传 MinerU 结果 zip（含 markdown + images）|
 | `POST` | `/api/papers/{arxiv_id}/mineru-claim` | `papers:write` | 申请 MinerU 处理 claim |
 | `DELETE` | `/api/papers/{arxiv_id}/mineru-claim/{claim_id}` | `papers:write` | 释放 claim |
 
@@ -170,8 +170,8 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
 
 完整流程详见 [Upload API](upload-api.md)。要点：
 
-- multipart form 字段：`pdf` (必)、`metadata` (可选)
-- query 参数：`expected_sha256=<hex>` (强烈推荐) / `expected_metadata_sha256=` / `overwrite=true`
+- multipart form 字段：`pdf` (必)
+- query 参数：`expected_sha256=<hex>` (强烈推荐) / `overwrite=true`
 - 状态码：
     - `201 Created` — 写了新对象
     - `200 OK` — 全部 unchanged 短路，零写入

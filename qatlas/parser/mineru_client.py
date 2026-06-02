@@ -81,8 +81,34 @@ class MinerUClient:
             raise MinerUError("MinerU response did not include task data")
         return data
 
+    def download_full_zip(self, full_zip_url: str, output_path: str | Path) -> Path:
+        """Download MinerU's result zip verbatim to output_path and return it.
+
+        This is what `qatlas mineru` uses (since v0.8.0) — the entire zip is
+        pushed to the server's `upload-mineru` endpoint, which unpacks both
+        the markdown and every image into their respective per-kind buckets.
+
+        Earlier `download_markdown_from_zip` extracted only `full.md` and
+        silently dropped images; this method is the strict-superset replacement
+        that preserves the full bundle.
+        """
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        response = requests.get(full_zip_url, stream=True, timeout=(10, 300))
+        response.raise_for_status()
+        with open(output_path, "wb") as out:
+            for chunk in response.iter_content(1024 * 64):
+                if chunk:
+                    out.write(chunk)
+        return output_path
+
     def download_markdown_from_zip(self, full_zip_url: str, output_path: str | Path) -> Path:
-        """Download MinerU's result zip and extract the first full.md file."""
+        """Download MinerU's result zip and extract the first full.md file.
+
+        Kept for backwards compatibility with anything that still pulls
+        markdown directly from MinerU bypassing the server. New code should
+        prefer :meth:`download_full_zip` so the images stay attached.
+        """
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         zip_path = output_path.with_suffix(output_path.suffix + ".mineru.zip")

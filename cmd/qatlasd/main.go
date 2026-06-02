@@ -571,6 +571,23 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 		return re.Next()
 	})
 
+	// X-Qatlas-Server-Version — advertise this server's build version
+	// on every /api/* response so the qatlas CLI client can do a
+	// "client must be >= server" semver check (major+minor) and warn
+	// on read ops / hard-fail on write ops when the local client is
+	// older than the server it's talking to. Old clients that don't
+	// look at this header simply ignore it (no contract change).
+	// Old servers don't emit the header at all; new clients treat
+	// "no header" as "unknown server version, skip negotiation"
+	// — preserving forward compatibility for new clients hitting
+	// pre-version-header deployments.
+	se.Router.BindFunc(func(re *core.RequestEvent) error {
+		if strings.HasPrefix(re.Request.URL.Path, "/api/") {
+			re.Response.Header().Set("X-Qatlas-Server-Version", Version)
+		}
+		return re.Next()
+	})
+
 	// Override PocketBase's built-in /api/health with our dependency-
 	// aware version. Implementation note:
 	//

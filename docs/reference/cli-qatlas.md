@@ -59,17 +59,16 @@ qatlas ingest status <task_id>
 
 ### `qatlas upload pdf`
 
-上传本地 PDF（+ 可选 metadata JSON）。需要 `papers:write` scope。
+上传本地 PDF。需要 `papers:write` scope。
 
 ```
-qatlas upload pdf <arxiv_id> --pdf <path> [--metadata <path>] [--overwrite]
+qatlas upload pdf <arxiv_id> --pdf <path> [--overwrite]
 ```
 
 | Flag | 必填 | 默认 | 含义 |
 |---|---|---|---|
 | `<arxiv_id>` | ✅ | — | **必含版本** `vN`，如 `2501.00010v1` |
 | `--pdf <path>` | ✅ | — | 本地 PDF 文件 |
-| `--metadata <path>` | ❌ | — | 可选 metadata JSON |
 | `--overwrite` | ❌ | false | 字节不同时允许覆盖（旧版本保留在 S3 versioning 中）|
 
 调用：`POST /api/papers/{arxiv_id}/upload-pdf`（multipart），自动加 `?expected_sha256=<hex>`。
@@ -78,28 +77,31 @@ qatlas upload pdf <arxiv_id> --pdf <path> [--metadata <path>] [--overwrite]
 
 ---
 
-### `qatlas upload markdown`
+### `qatlas upload mineru`
 
-上传本地解析后的 Markdown。需要 `papers:write` scope。
+上传 MinerU 结果 zip（`full.md` + 可选 `images/*`）。server 解包后 markdown 落 `qatlas-md` 桶、每张图落 `qatlas-images/<canonical>/`。需要 `papers:write` scope。
 
 ```
-qatlas upload markdown <arxiv_id> --markdown <path> [--source <tool>] [--overwrite]
+qatlas upload mineru <arxiv_id> --zip <path> [--source <tool>] [--overwrite]
 ```
 
 | Flag | 必填 | 默认 | 含义 |
 |---|---|---|---|
 | `<arxiv_id>` | ✅ | — | 必含版本 |
-| `--markdown <path>` | ✅ | — | 本地 markdown 文件 |
-| `--source <tool>` | ❌ | — | 解析工具名（写入审计：mineru / manual / ...）|
-| `--overwrite` | ❌ | false | 字节不同时允许覆盖 |
+| `--zip <path>` | ✅ | — | 本地 MinerU 结果 zip（保留原样，不要自己解开）|
+| `--source <tool>` | ❌ | — | 解析 pipeline 名（写入审计：mineru-client-v0.8 / manual / ...）|
+| `--overwrite` | ❌ | false | 字节不同时允许覆盖（markdown 和 images 分别走 dedup）|
 
-调用：`POST /api/papers/{arxiv_id}/upload-markdown`。
+调用：`POST /api/papers/{arxiv_id}/upload-mineru`。
+
+!!! warning "v0.8.0 BREAKING"
+    旧的 `qatlas upload markdown` 已**删除**。原命令只接受 `.md` 单文件、会丢图；改成 `upload mineru` 推完整 zip。详见 [Upload API §Breaking change v0.8.0](upload-api.md#breaking-change-v080)。
 
 ---
 
 ### `qatlas mineru`
 
-本地跑 MinerU 解析 server 上的 PDF，推回 Markdown。需要 `papers:write` scope + 本地 `MINERU_API_TOKEN`。
+本地跑 MinerU 解析 server 上的 PDF，推回完整 MinerU bundle。需要 `papers:write` scope + 本地 `MINERU_API_TOKEN`。
 
 ```
 qatlas mineru [arxiv_id] [options...]
@@ -113,9 +115,11 @@ qatlas mineru [arxiv_id] [options...]
 | `--ttl-seconds N` | ❌ | server 默认 1800 | claim 租约（最长 7200）|
 | `--no-cache` | ❌ | false | 让 MinerU bypass 服务端缓存 |
 | `--overwrite` | ❌ | false | server 已有 markdown 时仍允许覆盖 |
-| `--no-push` | ❌ | false | 跑 MinerU 但不推回（留 tmp）|
+| `--no-push` | ❌ | false | 跑 MinerU 但不推回（留 tmp zip）|
+| `--watch` | ❌ | false | daemon 模式：跑完一轮 sleep `--watch-interval` 再继续（Ctrl-C 干净退出）|
+| `--watch-interval N` | ❌ | 300 | daemon 模式 sleep 秒数 |
 
-调用：`POST /api/papers/{id}/mineru-claim` → MinerU API → `POST /api/papers/{id}/upload-markdown` → `DELETE /api/papers/{id}/mineru-claim/{cid}`。
+调用链：`POST /api/papers/{id}/mineru-claim` → MinerU API → **`POST /api/papers/{id}/upload-mineru`**（推完整 zip）→ `DELETE /api/papers/{id}/mineru-claim/{cid}`。
 
 详细：[用 MinerU 解析](../guides/parse-with-mineru.md)。
 

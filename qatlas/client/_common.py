@@ -5,11 +5,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from typing import Any
 
 import requests
 
+from qatlas import __version__ as _CLIENT_VERSION
 from qatlas.config import ServerConfig
 
 
@@ -66,7 +68,9 @@ def resolve_token(args: argparse.Namespace) -> str:
     Empty string means the caller will not send an Authorization header; the
     server then either accepts the call (open read endpoints) or rejects with
     401 (write endpoints gated by authGuard). The 401 response body points
-    the user at the /pat page in the SPA either way.
+    the user at the ``/pat`` page in the SPA either way (``/pat`` is a
+    top-level redirect to the localized ``/$lang/pat`` route — e.g.
+    ``/zh/pat`` or ``/en/pat`` — defined in ``web/src/routes/pat.tsx``).
     """
     explicit = getattr(args, "token", None)
     if explicit:
@@ -121,9 +125,9 @@ def add_common_http_args(parser: argparse.ArgumentParser) -> None:
         help=(
             "Bearer token sent as 'Authorization: Bearer <token>' on every "
             "request. Defaults to QATLAS_TOKEN env. Create one at "
-            "https://<server>/pat after signing in with GitHub (a 'qat_'-"
-            "prefixed PAT with explicit scopes); session tokens copied from "
-            "the SPA also work."
+            "https://<server>/pat (top-level redirect to /<lang>/pat) "
+            "after signing in with GitHub — a 'qat_'-prefixed PAT with "
+            "explicit scopes; session tokens copied from the SPA also work."
         ),
     )
 
@@ -138,3 +142,87 @@ def run_with_request_errors(func, *args, **kwargs) -> int:
     except requests.RequestException as exc:
         print(f"Request failed: {exc}", file=sys.stderr)
         return 1
+
+
+# ---------------------------------------------------------------------------
+# Client/server version negotiation (since v0.8.0)
+# ---------------------------------------------------------------------------
+#
+# Contract: the client version MUST be >= the server version (major+minor
+# semver). Rationale: when the server adds a new endpoint (e.g. the v0.8.0
+# `upload-mineru` replacing `upload-markdown`), an old client doesn't know
+# the new wire shape and will fail in confusing ways. Forcing client >=
+# server prevents the silent broken state.
+#
+# Mechanism:
+#   1. Every request adds  `X-Qatlas-Client-Version: <version>`  (Headers
+#      injected by client_version_headers()). The server logs / future
+#      rate-limit policies can use it.
+#   2. Every response (when from a v0.8.0+ server) includes
+#      `X-Qatlas-Server-Version: <version>`. The client compares major+
+#      minor against its own __version__.
+#   3. If server > client AND the call is a write op → raise SystemExit
+#      (hard fail). Read ops just emit a one-shot stderr warning.
+#   4. If the header is absent (older server) the client treats the
+#      server as "unknown version" and silently skips negotiation —
+#      forward-compatible with pre-v0.8.0 deployments.
+#
+# Patch-level differences are ignored on purpose: a patch bump is supposed
+# to be backwards-compatible bug-fix, so cross-patch usage is fine.
+
+_VERSION_TUPLE_RE = re.compile(r"^(\d+)\.(\d+)(?:\.(\d+))?(?:[.+-].*)?$")
+
+
+def _parse_semver(v: str) -> tuple[int, int] | None:
+    """Return (major, minor) for a semver string, or None if unparseable."""
+    if not v:
+        return None
+    m = _VERSION_TUPLE_RE.match(v.strip())
+    if not m:
+        return None
+    return (int(m.group(1)), int(m.group(2)))
+
+
+def client_version_headers() -> dict[str, str]:
+    """Headers every outgoing request should include for version negotiation."""
+    return {"X-Qatlas-Client-Version": _CLIENT_VERSION}
+
+
+_WARNED_OLDER_CLIENT: set[str] = set()
+
+
+def check_response_version(response: requests.Response, *, write: bool) -> None:
+    """Compare X-Qatlas-Server-Version against this client's version.
+
+    * `write=True` callers (POST/PUT/PATCH/DELETE) hard-fail (SystemExit 4)
+      when the server is newer than the client at major+minor level — the
+      server's wire contract may have moved and silent breakage is the
+      worst failure mode.
+    * `write=False` callers (GET, status polls) only emit a one-shot
+      warning per unique server version, so read-mostly workflows still
+      function while signalling the upgrade is needed.
+
+    Older servers (pre-v0.8.0) don't send the header — we treat the
+    absence as "unknown" and do nothing, preserving the new client's
+    ability to talk to legacy deployments.
+    """
+    server_version = response.headers.get("X-Qatlas-Server-Version", "").strip()
+    if not server_version:
+        return  # pre-v0.8.0 server, skip negotiation
+    server = _parse_semver(server_version)
+    client = _parse_semver(_CLIENT_VERSION)
+    if server is None or client is None:
+        return  # unparseable on either side — fail open, don't block calls
+    if server <= client:
+        return  # client >= server, contract satisfied
+    msg = (
+        f"server version {server_version} is newer than client {_CLIENT_VERSION}.\n"
+        f"This client may not understand new endpoints/fields. Upgrade with:\n"
+        f"  pip install --upgrade quantum-atlas"
+    )
+    if write:
+        print(f"ERROR: {msg}", file=sys.stderr)
+        raise SystemExit(4)
+    if server_version not in _WARNED_OLDER_CLIENT:
+        print(f"WARNING: {msg}", file=sys.stderr)
+        _WARNED_OLDER_CLIENT.add(server_version)

@@ -28,7 +28,7 @@ COMMANDS: Mapping[str, Command] = {
     "ingest": Command("qatlas.client.__main__", "Submit paper ingest tasks over HTTP"),
     "upload": Command(
         "qatlas.client.upload",
-        "Upload contributed PDF or parsed Markdown to the server",
+        "Upload contributed PDF or MinerU result zip (markdown + images) to the server",
     ),
     "mineru": Command(
         "qatlas.client.mineru",
@@ -95,8 +95,8 @@ Aliases:
 
 Examples:
   qatlas ingest quant-ph/9508027 --stop-after parse
-  qatlas upload pdf quant-ph/9508027v1 --pdf paper.pdf --metadata meta.json
-  qatlas upload markdown 2501.00010v1 --markdown paper.md --source mineru
+  qatlas upload pdf quant-ph/9508027v1 --pdf paper.pdf
+  qatlas upload mineru 2501.00010v1 --zip mineru-result.zip --source mineru
   qatlas mineru quant-ph/9508027v1 --push-pdf
   qatlas markdown 2501.00010v1 -o paper.md
   qatlas designer <kg_algorithm_id> -o circuit_ir.json

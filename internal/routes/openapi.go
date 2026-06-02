@@ -226,7 +226,7 @@ func docPaperMarkdown() {}
 // @Router      /api/papers/{arxiv_id}/markdown/status [get]
 func docPaperMarkdownStatus() {}
 
-// uploadPDF stores a paper PDF (and optional metadata JSON).
+// uploadPDF stores a paper PDF.
 //
 // @Summary     Upload paper PDF
 // @Description Content-addressed upload with sha256 idempotency. 200 when
@@ -236,12 +236,10 @@ func docPaperMarkdownStatus() {}
 // @Accept      mpfd
 // @Produce     json
 // @Security    BearerAuth
-// @Param       arxiv_id                 path     string true  "arXiv identifier"
-// @Param       overwrite                query    bool   false "overwrite on content conflict"
-// @Param       expected_sha256          query    string false "client-computed PDF sha256 (in-transit guard)"
-// @Param       expected_metadata_sha256 query    string false "client-computed metadata sha256"
-// @Param       pdf                      formData file   true  "PDF file"
-// @Param       metadata                 formData file   false "metadata JSON"
+// @Param       arxiv_id        path     string true  "arXiv identifier"
+// @Param       overwrite       query    bool   false "overwrite on content conflict"
+// @Param       expected_sha256 query    string false "client-computed PDF sha256 (in-transit guard)"
+// @Param       pdf             formData file   true  "PDF file"
 // @Success     201 {object} map[string]interface{} "created"
 // @Success     200 {object} map[string]interface{} "unchanged"
 // @Failure     400 {object} map[string]interface{}
@@ -249,22 +247,25 @@ func docPaperMarkdownStatus() {}
 // @Router      /api/papers/{arxiv_id}/upload-pdf [post]
 func docUploadPDF() {}
 
-// uploadMarkdown stores converted markdown for a paper.
+// uploadMineRU stores a MinerU result zip (markdown + images bundle) for a paper.
 //
-// @Summary     Upload paper markdown
+// @Summary     Upload paper MinerU bundle
+// @Description Accepts the entire MinerU result zip exactly as returned by `full_zip_url`. Server extracts `full.md` plus every `images/*` entry and stores them to the markdown and images object buckets respectively. Images are written before the markdown so any reader that observes the markdown also observes all referenced images. Replaces the v0.7.x `upload-markdown` endpoint (which only accepted a single .md file and silently dropped images).
 // @Tags        Papers
 // @Accept      mpfd
 // @Produce     json
 // @Security    BearerAuth
-// @Param       arxiv_id        path     string true  "arXiv identifier"
+// @Param       arxiv_id        path     string true  "arXiv identifier (must include version suffix vN)"
 // @Param       overwrite       query    bool   false "overwrite on content conflict"
-// @Param       expected_sha256 query    string false "client-computed markdown sha256"
-// @Param       markdown        formData file   true  "markdown file"
+// @Param       expected_sha256 query    string false "client-computed zip sha256 (in-transit integrity check)"
+// @Param       source          query    string false "short label of the contributor's MinerU run (truncated to 64 chars)"
+// @Param       mineru_zip      formData file   true  "MinerU result zip (must contain full.md; optional images/*)"
 // @Success     201 {object} map[string]interface{}
 // @Success     200 {object} map[string]interface{}
+// @Failure     400 {object} map[string]interface{}
 // @Failure     409 {object} map[string]interface{}
-// @Router      /api/papers/{arxiv_id}/upload-markdown [post]
-func docUploadMarkdown() {}
+// @Router      /api/papers/{arxiv_id}/upload-mineru [post]
+func docUploadMineRU() {}
 
 // mineruClaim acquires a MinerU processing claim for a paper.
 //

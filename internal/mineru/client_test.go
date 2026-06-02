@@ -155,7 +155,7 @@ func TestExtractResultNoMarkdown(t *testing.T) {
 	_, _ = w.Write([]byte("nope"))
 	_ = zw.Close()
 
-	_, err := extractResult(buf.Bytes())
+	_, err := ExtractResult(buf.Bytes())
 	if err == nil {
 		t.Fatal("expected error when zip has no full.md")
 	}

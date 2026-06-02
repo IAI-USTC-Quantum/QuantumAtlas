@@ -181,14 +181,18 @@ func (c *Client) FetchResult(ctx context.Context, fullZipURL string) (Result, er
 	if err != nil {
 		return Result{}, err
 	}
-	return extractResult(raw)
+	return ExtractResult(raw)
 }
 
-// extractResult parses a MinerU result zip: it locates the markdown
+// ExtractResult parses a MinerU result zip: it locates the markdown
 // (any entry ending in "full.md") and treats everything under an
 // "images/" path component as an image keyed by the path relative to the
 // markdown's directory.
-func extractResult(zipBytes []byte) (Result, error) {
+//
+// Exported so HTTP upload handlers (POST /api/papers/{id}/upload-mineru)
+// can reuse the same parsing logic the server-side silent-conversion
+// converter uses, without copy/paste drift.
+func ExtractResult(zipBytes []byte) (Result, error) {
 	zr, err := zip.NewReader(bytes.NewReader(zipBytes), int64(len(zipBytes)))
 	if err != nil {
 		return Result{}, &Error{Msg: "open result zip: " + err.Error()}
@@ -219,12 +223,12 @@ func extractResult(zipBytes []byte) (Result, error) {
 				return Result{}, err
 			}
 			res.Markdown = b
-		case isImageEntry(f.Name):
+		case IsImageEntry(f.Name):
 			b, err := readZipEntry(f)
 			if err != nil {
 				return Result{}, err
 			}
-			res.Images[relImageName(f.Name, mdDir)] = b
+			res.Images[RelImageName(f.Name, mdDir)] = b
 		}
 	}
 	if res.Markdown == nil {
@@ -233,10 +237,10 @@ func extractResult(zipBytes []byte) (Result, error) {
 	return res, nil
 }
 
-// isImageEntry reports whether a zip entry path sits under an "images/"
+// IsImageEntry reports whether a zip entry path sits under an "images/"
 // directory component — MinerU writes figures there and references them as
 // "images/<name>" from full.md.
-func isImageEntry(name string) bool {
+func IsImageEntry(name string) bool {
 	parts := strings.Split(name, "/")
 	for i, p := range parts {
 		if p == "images" && i < len(parts)-1 {
@@ -246,9 +250,9 @@ func isImageEntry(name string) bool {
 	return false
 }
 
-// relImageName returns the image path relative to the markdown's directory
+// RelImageName returns the image path relative to the markdown's directory
 // so the stored key mirrors the markdown's "images/<name>" references.
-func relImageName(name, mdDir string) string {
+func RelImageName(name, mdDir string) string {
 	if mdDir != "." && mdDir != "" {
 		if rel := strings.TrimPrefix(name, mdDir+"/"); rel != name {
 			return rel

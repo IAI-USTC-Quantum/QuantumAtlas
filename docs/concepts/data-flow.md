@@ -75,11 +75,11 @@ flowchart TB
 === "2. 用户直接上传"
 
     ```bash
-    qatlas upload pdf 2501.00010v1 --pdf paper.pdf --metadata meta.json
-    qatlas upload markdown 2501.00010v1 --markdown out.md --source mineru
+    qatlas upload pdf 2501.00010v1 --pdf paper.pdf
+    qatlas upload mineru 2501.00010v1 --zip mineru-result.zip --source mineru
     ```
 
-    适合：手里已经有 PDF（公司内部论文、扫描件、preprint 私下流传版本）、或在别处跑过 MinerU。**需要 `papers:write` scope**。
+    适合：手里已经有 PDF（公司内部论文、扫描件、preprint 私下流传版本）、或在别处跑过 MinerU 留下了完整结果 zip。**需要 `papers:write` scope**。
 
 === "3. 用户本地跑 MinerU 推回"
 

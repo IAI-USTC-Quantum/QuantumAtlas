@@ -1,25 +1,30 @@
 # Upload API & sha256-aware idempotency
 
-> Users uploading PDFs / markdown / metadata to QuantumAtlas server,
-> via the `qatlas upload …` CLI or direct HTTP calls. Covers the
-> request shape, response shape, status code contract, sha256
-> deduplication semantics, conflict handling, and `?expected_sha256=`
-> in-transit guard.
+> Users uploading PDFs / markdown to QuantumAtlas server, via the
+> `qatlas upload …` CLI or direct HTTP calls. Covers the request
+> shape, response shape, status code contract, sha256 deduplication
+> semantics, conflict handling, and `?expected_sha256=` in-transit
+> guard.
 >
 > Storage / ops perspective (RustFS env vars, IAM policy, bucket
 > versioning lifecycle, `qatlasd storage prune` operator guide)
 > lives in [storage-rustfs.md](../deployment/rustfs.md).
+>
+> Paper metadata (title / authors / abstract / DOI / citations) is
+> sourced upstream from OpenAlex into the Neo4j catalog as of
+> v0.7.0; the upload endpoint no longer accepts a metadata JSON
+> sidecar.
 
 ## Endpoints
 
 | Method  | Path                                          | Scope          |
 | ------- | --------------------------------------------- | -------------- |
 | `POST`  | `/api/papers/{arxiv_id}/upload-pdf`           | `papers:write` |
-| `POST`  | `/api/papers/{arxiv_id}/upload-markdown`      | `papers:write` |
+| `POST`  | `/api/papers/{arxiv_id}/upload-mineru`        | `papers:write` |
 
 Both routes require auth: either a browser session token or a PAT
 (`Authorization: Bearer qat_…`) whose scopes include `papers:write`.
-See [contribution-workflow.md](../guides/contribute-content.md) for how to
+See [contribute-content.md](../guides/contribute-content.md) for how to
 mint a PAT.
 
 `{arxiv_id}` MUST include the explicit `vN` version suffix. Both
@@ -31,13 +36,20 @@ schemes are accepted:
 The server rejects bare ids without `vN` to keep on-disk paths and
 listings deterministic.
 
+> **v0.8.0 BREAKING CHANGE**: the legacy `POST upload-markdown`
+> endpoint that accepted a bare `.md` file has been removed. Use
+> `upload-mineru` with the **entire MinerU result zip** instead —
+> the server unpacks the zip and writes both the markdown and every
+> referenced image into their respective per-kind buckets, so
+> contributions no longer silently drop figures. See
+> [upgrade notes](#breaking-change-v080) at the bottom for the
+> migration recipe.
+
 ## CLI quick start
 
 ```bash
-# Upload a fresh PDF (and optional metadata JSON sibling)
-qatlas upload pdf 2501.00010v1 \
-    --pdf ./paper.pdf \
-    --metadata ./paper.json
+# Upload a fresh PDF
+qatlas upload pdf 2501.00010v1 --pdf ./paper.pdf
 
 # Re-upload the same bytes → 200 OK unchanged (no S3 write)
 qatlas upload pdf 2501.00010v1 --pdf ./paper.pdf
@@ -49,15 +61,15 @@ qatlas upload pdf 2501.00010v1 --pdf ./paper-v2.pdf
 # recoverable until the next storage prune)
 qatlas upload pdf 2501.00010v1 --pdf ./paper-v2.pdf --overwrite
 
-# Markdown (e.g. MinerU output) uses the same flag shape
-qatlas upload markdown 2501.00010v1 \
-    --markdown ./paper.md \
-    --source mineru
+# Upload a MinerU result bundle (full.md + images/*) — push the
+# raw zip MinerU returned at its `full_zip_url`, the server unzips it.
+qatlas upload mineru 2501.00010v1 \
+    --zip ./mineru-result.zip \
+    --source mineru-client-v0.8
 ```
 
 The CLI streams the file once through sha256 before posting and
-attaches `?expected_sha256=<hex>` automatically. Same for
-`--metadata` → `?expected_metadata_sha256=<hex>`. So in-transit byte
+attaches `?expected_sha256=<hex>` automatically. So in-transit byte
 corruption is caught by the server BEFORE any object-store write —
 the client doesn't need to do anything extra.
 
@@ -82,9 +94,6 @@ own).
 
 ## Response body (POST /api/papers/{arxiv_id}/upload-pdf)
 
-The handler returns the same JSON shape regardless of branch — caller
-inspects `unchanged` + `overwritten` to know what happened:
-
 ```json
 {
   "arxiv_id": "2501.00010v1",
@@ -93,10 +102,6 @@ inspects `unchanged` + `overwritten` to know what happened:
   "pdf_bytes": 92606,
   "pdf_sha256": "d1f79cb5b6a0a5466848c2389a549355cb1d6be6caf02dfa197b065b48576ffc",
   "pdf_unchanged": false,
-  "metadata_path": "json/2501/2501.00010v1.json",
-  "metadata_bytes": 538,
-  "metadata_sha256": "a7d48eabac9d70f75a2656bd6a8199dd…",
-  "metadata_unchanged": false,
   "overwritten": false,
   "unchanged": false,
   "uploaded_by": "TMYTiMidlY"
@@ -112,14 +117,13 @@ Field semantics:
 | `pdf_bytes`                  | bytes actually staged on the server (post-validation)                                                         |
 | `pdf_sha256`                 | hex digest of the staged bytes (always present; clients can persist for later integrity audits)               |
 | `pdf_unchanged`              | `true` if the existing object had the same sha256 and the server skipped the PutObject                       |
-| `metadata_*`                 | populated when the `metadata` multipart part was provided                                                     |
 | `overwritten`                | `true` only when `?overwrite=true` was set                                                                    |
-| `unchanged`                  | `true` only when EVERY part was a no-op (full idempotent retry)                                               |
+| `unchanged`                  | `true` only when the PDF was a no-op (full idempotent retry)                                                  |
 | `uploaded_by`                | filled when the deployment configures `QATLAS_USER_HEADER` for a reverse-proxy-injected identity              |
 
 Status code:
 
-- `201 Created` — at least one part was written.
+- `201 Created` — PDF was written.
 - `200 OK` — full idempotent no-op (`unchanged: true`).
 - `400 Bad Request` — schema / sha256 / size validation failed (see
   error body for details).
@@ -128,7 +132,7 @@ Status code:
   can decide whether to `--overwrite`.
 - `403 Forbidden` — PAT lacks the `papers:write` scope.
 - `413 Request Entity Too Large` — file exceeded the per-kind cap
-  (PDF 100 MiB, markdown 25 MiB, metadata JSON 2 MiB).
+  (PDF 100 MiB, markdown 25 MiB).
 - `500 Internal Server Error` — store I/O failed; body has the
   underlying error message.
 
@@ -140,7 +144,7 @@ a meaningful diff prompt:
 
 ```json
 {
-  "detail": "PDF already exists at pdf/2501/2501.00010v1.pdf with different content; pass overwrite=true to replace (prior version preserved by bucket versioning when enabled)",
+  "detail": "upload conflict; pass overwrite=true to replace (prior version preserved by bucket versioning when enabled)",
   "existing_path": "pdf/2501/2501.00010v1.pdf",
   "existing_sha256": "d1f79cb5b6a0a5466848c2389a549355cb1d6be6caf02dfa197b065b48576ffc",
   "new_sha256": "1af8383a1d54750ad881f54ed1ceff5de98f5d54c00db1a01a064acee76675b0"
@@ -178,9 +182,6 @@ curl -X POST \
     "https://quantum-atlas.ai/api/papers/2501.00010v1/upload-pdf?expected_sha256=$SHA"
 ```
 
-For `upload-pdf` with metadata, the metadata part has its own param:
-`?expected_metadata_sha256=<hex>`.
-
 ## Concurrency &amp; race-safety
 
 Two clients uploading the SAME `arxiv_id` at the same time (different
@@ -208,35 +209,6 @@ Behind the scenes this rides on RustFS' S3 conditional-write semantics
 already exists). The dev-mode `LocalStore` emulates the same contract
 with atomic `os.Link` so test suites running against either backend
 see identical concurrency behavior.
-
-## Multipart atomicity (per-key, not cross-key)
-
-`POST /api/papers/.../upload-pdf` accepts two form parts: `pdf` and
-optional `metadata`. The server stages BOTH parts to memory + computes
-sha256 + validates `?expected_sha256=` BEFORE touching the bucket, so
-input-side failures (bad PDF header, corrupt JSON, transit corruption)
-never write anything.
-
-Each part then runs the conditional-PUT flow **independently**:
-
-- Both keys succeed → `201` with `pdf_path` + `metadata_path` set.
-- PDF key conflicts (different bytes already there, no `--overwrite`)
-  → the server SHORT-CIRCUITS before attempting the metadata write and
-  returns `409` naming the PDF conflict.
-- PDF succeeds but metadata key conflicts → response is `409` with
-  `metadata_conflict: true`. The PDF write that already happened stays
-  — but that's safe to retry: the next attempt with the same PDF bytes
-  sees `pdf_unchanged: true` (sha256 short-circuit), so the only thing
-  that actually needs resolving is the metadata conflict (pass
-  `--overwrite` or update your metadata to match).
-
-This is a deliberate relaxation from the older "stage both, decide
-both, write both atomically" model: that model still had a TOCTOU
-window between the Stat and the Put, so it wasn't really atomic — it
-just *looked* atomic until two clients raced. The new per-key contract
-is genuinely race-safe at each key, and the multi-key idempotency
-property (retries converge to the desired state) is preserved by
-sha256 dedup.
 
 ## Recovering an overwritten version (operator side)
 
@@ -280,3 +252,37 @@ preservation, delete markers). It does NOT give us:
 The 200-odd lines of handler logic are the "UPSERT policy" on top
 of RustFS's "INSERT" primitive — same relationship a typical app
 has with a SQL store. See README.md for the wider design rationale.
+
+## Breaking change v0.8.0
+
+The pre-v0.8 `POST /api/papers/{arxiv_id}/upload-markdown` endpoint
+took a single `.md` file as the multipart part `markdown`. It is
+**gone** as of v0.8.0 — calling it returns `404 no POST handler`.
+
+Migration:
+
+```diff
+- POST /api/papers/2501.00010v1/upload-markdown
+-   multipart "markdown": full.md
++ POST /api/papers/2501.00010v1/upload-mineru
++   multipart "mineru_zip": full MinerU result zip (full.md + images/*)
+```
+
+CLI:
+
+```diff
+- qatlas upload markdown 2501.00010v1 --markdown full.md --source mineru
++ qatlas upload mineru   2501.00010v1 --zip path/to/mineru.zip --source mineru
+```
+
+Why the change: the old endpoint only stored the markdown and
+silently dropped every figure in the bundle, leaving detail pages
+with broken image references. `upload-mineru` keeps the bundle
+intact; the server unpacks it so the same parser used for
+server-side silent conversion writes both the markdown and every
+image to their respective buckets.
+
+Client-server version skew: the `X-Qatlas-Server-Version` response
+header (added in v0.8.0) lets the `qatlas` CLI detect when it's
+talking to a newer server and refuse writes (hard fail) / warn on
+reads. Old clients that don't inspect the header simply ignore it.

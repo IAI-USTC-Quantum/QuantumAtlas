@@ -12,6 +12,21 @@ import (
 	"sync/atomic"
 )
 
+// newInMemoryBodyFromBytes wraps an already-in-hand byte slice as a
+// stagedBody, computing sha256 over the contents. Used by handlers
+// that have to pre-process the request body (e.g. unzipping a
+// `mineru_zip` upload into its component md/image parts) before
+// driving uploadOne against each part — at that point the bytes are
+// already in memory so the stream-reading machinery in stageInMemory
+// would be wasted work.
+func newInMemoryBodyFromBytes(b []byte) *inMemoryBody {
+	h := sha256.Sum256(b)
+	return &inMemoryBody{
+		bytes: b,
+		sha:   hex.EncodeToString(h[:]),
+	}
+}
+
 // stagedBody is the body that has been fully received from the client,
 // validated, sha256'd, and is ready to be re-read by the store
 // PUT. It abstracts over two backings:

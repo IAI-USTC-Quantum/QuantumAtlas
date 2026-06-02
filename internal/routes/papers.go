@@ -7,13 +7,13 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"path"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineru"
@@ -104,8 +104,8 @@ func RegisterPapers(
 		switch action {
 		case "upload-pdf":
 			return uploadPDFHandler(re, cfg, rawStore, catalog, arxiv)
-		case "upload-markdown":
-			return uploadMarkdownHandler(re, cfg, rawStore, catalog, arxiv)
+		case "upload-mineru":
+			return uploadMinerUHandler(re, cfg, rawStore, catalog, arxiv)
 		case "mineru-claim":
 			ttl, _ := strconv.Atoi(re.Request.URL.Query().Get("ttl_seconds"))
 			if ttl <= 0 {
@@ -736,9 +736,9 @@ func uploadPDFHandler(re *core.RequestEvent, cfg *config.Config, store objstore.
 	}
 
 	// v0.7.0: the json/metadata sidecar bucket was cut — paper metadata
-	// now lives in the Neo4j catalog (sourced from OpenAlex), so we no
-	// longer accept or write a "metadata" multipart part. Any such part
-	// in the request is ignored.
+	// now lives in the Neo4j catalog (sourced from OpenAlex), so the
+	// handler only accepts a single 'pdf' multipart part. Any other
+	// parts in the request are ignored.
 	pdfOutcome, err := uploadOne(ctx, store, pdfKey, pdfStaged, "application/pdf", overwrite, "PDF")
 	if err != nil {
 		return re.JSON(http.StatusInternalServerError, map[string]string{"detail": err.Error()})
@@ -788,18 +788,15 @@ func uploadPDFHandler(re *core.RequestEvent, cfg *config.Config, store objstore.
 	)
 
 	resp := map[string]any{
-		"arxiv_id":        canonical,
-		"key":             paperassets.StorageKey(canonical),
-		"pdf_path":        pdfKey,
-		"pdf_bytes":       pdfSize,
-		"pdf_sha256":      pdfSha,
-		"pdf_unchanged":   pdfOutcome.kind == outcomeUnchanged,
-		"metadata_path":   nil,
-		"metadata_bytes":  nil,
-		"metadata_sha256": nil,
-		"uploaded_by":     nil,
-		"overwritten":     overwrite,
-		"unchanged":       overallUnchanged,
+		"arxiv_id":      canonical,
+		"key":           paperassets.StorageKey(canonical),
+		"pdf_path":      pdfKey,
+		"pdf_bytes":     pdfSize,
+		"pdf_sha256":    pdfSha,
+		"pdf_unchanged": pdfOutcome.kind == outcomeUnchanged,
+		"uploaded_by":   nil,
+		"overwritten":   overwrite,
+		"unchanged":     overallUnchanged,
 	}
 	if requester != "" {
 		resp["uploaded_by"] = requester
@@ -817,7 +814,42 @@ func uploadPDFHandler(re *core.RequestEvent, cfg *config.Config, store objstore.
 	return jsonBody(re, resp)
 }
 
-func uploadMarkdownHandler(re *core.RequestEvent, cfg *config.Config, store objstore.Store, catalog *papers.Store, arxivID string) error {
+// uploadMinerUHandler accepts a MinerU output bundle (a zip containing
+// `full.md` and optional `images/<file>` entries) and stores the
+// markdown plus every extracted image to the asset backend.
+//
+// This endpoint replaces the v0.7.x `upload-markdown` route (which
+// only accepted a single .md file and silently dropped any images).
+// The new contract:
+//
+//   - Request: multipart/form-data, single part `mineru_zip` containing
+//     the raw MinerU result zip exactly as returned by MinerU's
+//     `full_zip_url`. Query params: overwrite=true (default false),
+//     expected_sha256=<hex> (validates the zip bytes haven't been
+//     corrupted in transit), source=<short label>.
+//   - On success: markdown lands at AssetKey("markdown", canonical),
+//     each image at AssetKey("images", canonical)+"/"+<name>. Catalog
+//     write-through flips has_md=true and clears any pending claim.
+//   - Order: images first, markdown last — markdown is the completion
+//     marker (`papers sync` and detail-page readers use the markdown
+//     object's presence to know "this paper is parsed"), so writing
+//     every image before flipping that marker guarantees no reader
+//     ever sees the md before its referenced images are stored.
+//   - Conflict semantics: each object is uploaded via uploadOne's
+//     race-safe conditional Put. Same-bytes re-upload short-circuits
+//     to 200 unchanged (no S3 write); different bytes + no overwrite
+//     returns 409 with both sha256 values. A single 409 on any one
+//     image aborts the whole bundle — markdown is NOT written when
+//     any image conflicts (the bundle is treated as atomic from the
+//     contributor's POV).
+//
+// Memory note: the zip is held in memory once (capped at
+// MaxMineruZipBytes). After ExtractResult parses it into md + image
+// bytes the raw zip slice is dropped, so peak memory per upload is
+// ~zip_size during parsing then drops to ~sum(part_size). On the 1.4
+// GB RackNerd VM, concurrent contributors should keep total in-flight
+// zip volume under ~800 MB to leave headroom for everything else.
+func uploadMinerUHandler(re *core.RequestEvent, cfg *config.Config, store objstore.Store, catalog *papers.Store, arxivID string) error {
 	ctx := re.Request.Context()
 	canonical, ok := paperassets.ValidateUploadID(arxivID)
 	if !ok {
@@ -832,51 +864,144 @@ func uploadMarkdownHandler(re *core.RequestEvent, cfg *config.Config, store objs
 		source = source[:64]
 	}
 
-	if err := re.Request.ParseMultipartForm(int64(paperassets.MaxMarkdownBytes) + 1<<20); err != nil {
+	if err := re.Request.ParseMultipartForm(int64(paperassets.MaxMineruZipBytes) + 1<<20); err != nil {
 		return re.JSON(http.StatusBadRequest, map[string]string{"detail": "parse multipart: " + err.Error()})
 	}
 
-	mdKey := paperassets.AssetKey("markdown", canonical)
-
-	mdPart, _, err := re.Request.FormFile("markdown")
+	zipPart, _, err := re.Request.FormFile("mineru_zip")
 	if err != nil {
-		return re.JSON(http.StatusBadRequest, map[string]string{"detail": "missing 'markdown' multipart part: " + err.Error()})
+		return re.JSON(http.StatusBadRequest, map[string]string{
+			"detail": "missing 'mineru_zip' multipart part: " + err.Error(),
+		})
 	}
-	defer mdPart.Close()
+	defer zipPart.Close()
 
-	mdStaged, vErr := stageInMemory(ctx, mdPart, paperassets.MaxMarkdownBytes, "markdown",
+	// Stage the entire zip in memory, validating the magic prefix as
+	// the first 4 bytes arrive so obvious garbage (a stray .md, a PDF,
+	// etc.) is rejected cheaply before paying the full read.
+	zipStaged, vErr := stageInMemory(ctx, zipPart, paperassets.MaxMineruZipBytes, "mineru_zip",
 		func(b []byte) *uploadError {
-			if !utf8.Valid(b) {
-				return &uploadError{Status: http.StatusBadRequest, Detail: "markdown must be valid utf-8"}
+			if len(b) < 4 || b[0] != 'P' || b[1] != 'K' {
+				return &uploadError{Status: http.StatusBadRequest, Detail: "payload is not a zip archive (missing PK signature)"}
 			}
 			return nil
 		})
 	if vErr != nil {
 		return re.JSON(vErr.Status, map[string]string{"detail": vErr.Detail})
 	}
-	defer mdStaged.Close()
-	mdSha := mdStaged.Sha256()
-	mdSize := mdStaged.Size()
-	if expectedSha != "" && expectedSha != mdSha {
+	defer zipStaged.Close()
+	zipSha := zipStaged.Sha256()
+	zipSize := zipStaged.Size()
+	if expectedSha != "" && expectedSha != zipSha {
 		return re.JSON(http.StatusBadRequest, map[string]any{
 			"detail":          "expected_sha256 mismatch — upload may be corrupt in transit",
 			"expected_sha256": expectedSha,
-			"actual_sha256":   mdSha,
+			"actual_sha256":   zipSha,
 		})
 	}
 
-	outcome, err := uploadOne(ctx, store, mdKey, mdStaged, "text/markdown; charset=utf-8", overwrite, "markdown")
+	// archive/zip needs the whole byte slice for random access. Open
+	// the staged body once, slurp, then close — we don't need the
+	// staged body again after extraction.
+	zipR, err := zipStaged.Open()
+	if err != nil {
+		return re.JSON(http.StatusInternalServerError, map[string]string{"detail": "open zip: " + err.Error()})
+	}
+	zipBytes, err := io.ReadAll(zipR)
+	_ = zipR.Close()
+	if err != nil {
+		return re.JSON(http.StatusInternalServerError, map[string]string{"detail": "read zip: " + err.Error()})
+	}
+
+	result, err := mineru.ExtractResult(zipBytes)
+	if err != nil {
+		// ExtractResult's errors wrap "open zip", "result zip did not
+		// contain full.md", "result zip full.md was empty / unreadable"
+		// — all client mistakes from the server's POV.
+		return re.JSON(http.StatusBadRequest, map[string]string{"detail": err.Error()})
+	}
+	// Drop the raw zip bytes; from here on we only need result.Markdown
+	// and result.Images.
+	zipBytes = nil
+	_ = zipStaged.Close()
+
+	requester := ""
+	if cfg.UserHeader != "" {
+		requester = re.Request.Header.Get(cfg.UserHeader)
+	}
+
+	// Images first, markdown last (see top-of-function comment for
+	// rationale). Collect a per-image report for the response body and
+	// for the slog completion line.
+	imagesBase := paperassets.AssetKey("images", canonical)
+	type imageOutcome struct {
+		Key       string `json:"key"`
+		Sha256    string `json:"sha256"`
+		Bytes     int64  `json:"bytes"`
+		Unchanged bool   `json:"unchanged"`
+	}
+	imageReport := make([]imageOutcome, 0, len(result.Images))
+	for rel, data := range result.Images {
+		// rel is e.g. "images/abc.jpg"; strip the leading "images/"
+		// so we don't double the prefix under imagesBase (which
+		// already contains the "images/<shard>/<stem>" path).
+		name := strings.TrimPrefix(rel, "images/")
+		if name == "" || strings.Contains(name, "..") {
+			// Defensive: skip suspicious paths rather than fail the
+			// whole upload — these would never come from a real
+			// MinerU run.
+			continue
+		}
+		imgKey := imagesBase + "/" + name
+		ct := mime.TypeByExtension(path.Ext(name))
+		if ct == "" {
+			ct = "application/octet-stream"
+		}
+		imgBody := newInMemoryBodyFromBytes(data)
+		outcome, err := uploadOne(ctx, store, imgKey, imgBody, ct, overwrite, "image")
+		imgSha := imgBody.Sha256()
+		imgSize := imgBody.Size()
+		_ = imgBody.Close()
+		if err != nil {
+			return re.JSON(http.StatusInternalServerError, map[string]string{
+				"detail": fmt.Sprintf("upload image %s: %s", name, err.Error()),
+			})
+		}
+		if outcome.kind == outcomeConflict {
+			body := map[string]any{
+				"detail":          fmt.Sprintf("image %s already exists at %s with different content; pass overwrite=true to replace", name, imgKey),
+				"existing_path":   imgKey,
+				"new_sha256":      imgSha,
+				"existing_sha256": outcome.existingShaJSON(),
+				"failed_image":    name,
+			}
+			return re.JSON(http.StatusConflict, body)
+		}
+		imageReport = append(imageReport, imageOutcome{
+			Key:       imgKey,
+			Sha256:    imgSha,
+			Bytes:     imgSize,
+			Unchanged: outcome.kind == outcomeUnchanged,
+		})
+	}
+
+	mdKey := paperassets.AssetKey("markdown", canonical)
+	mdBody := newInMemoryBodyFromBytes(result.Markdown)
+	defer mdBody.Close()
+	mdSha := mdBody.Sha256()
+	mdSize := mdBody.Size()
+	mdOutcome, err := uploadOne(ctx, store, mdKey, mdBody, "text/markdown; charset=utf-8", overwrite, "markdown")
 	if err != nil {
 		return re.JSON(http.StatusInternalServerError, map[string]string{"detail": err.Error()})
 	}
-	if outcome.kind == outcomeConflict {
+	if mdOutcome.kind == outcomeConflict {
 		body := map[string]any{
 			"detail":        "markdown already exists at " + mdKey + " with different content; pass overwrite=true to replace (prior version preserved by bucket versioning when enabled)",
 			"existing_path": mdKey,
 			"new_sha256":    mdSha,
 		}
-		if outcome.existingSha != "" {
-			body["existing_sha256"] = outcome.existingSha
+		if mdOutcome.existingSha != "" {
+			body["existing_sha256"] = mdOutcome.existingSha
 		} else {
 			body["existing_sha256"] = nil
 			body["note"] = "existing object has no sha256 metadata (legacy upload or LocalStore backend) — content equality cannot be verified without overwrite=true"
@@ -884,24 +1009,21 @@ func uploadMarkdownHandler(re *core.RequestEvent, cfg *config.Config, store objs
 		return re.JSON(http.StatusConflict, body)
 	}
 
-	requester := ""
-	if cfg.UserHeader != "" {
-		requester = re.Request.Header.Get(cfg.UserHeader)
-	}
-	slog.Info("uploaded markdown",
+	slog.Info("uploaded mineru bundle",
 		"arxiv_id", canonical,
 		"requester", requester,
 		"source", source,
+		"zip_bytes", zipSize,
+		"zip_sha256", zipSha,
 		"md_bytes", mdSize,
 		"md_sha256", mdSha,
-		"md_unchanged", outcome.kind == outcomeUnchanged,
+		"md_unchanged", mdOutcome.kind == outcomeUnchanged,
 		"md_key", mdKey,
+		"image_count", len(imageReport),
 	)
 
-	// Catalog write-through: flip has_md=true and clear any active claim
-	// (markdown done ⇒ lease no longer needed). Deferred when Neo4j down.
 	catalogDeferred := false
-	if err := catalog.UpsertMD(ctx, canonical, mdSha, mdSize, outcome.existingSha); err != nil {
+	if err := catalog.UpsertMD(ctx, canonical, mdSha, mdSize, mdOutcome.existingSha); err != nil {
 		if !errors.Is(err, papers.ErrCatalogUnavailable) {
 			slog.Warn("papers: UpsertMD write-through failed", "arxiv_id", canonical, "error", err)
 		}
@@ -909,15 +1031,19 @@ func uploadMarkdownHandler(re *core.RequestEvent, cfg *config.Config, store objs
 	}
 
 	resp := map[string]any{
-		"arxiv_id":       canonical,
-		"key":            paperassets.StorageKey(canonical),
-		"markdown_path":  mdKey,
-		"markdown_bytes": mdSize,
-		"sha256":         mdSha,
-		"unchanged":      outcome.kind == outcomeUnchanged,
-		"source":         nil,
-		"uploaded_by":    nil,
-		"overwritten":    overwrite,
+		"arxiv_id":           canonical,
+		"key":                paperassets.StorageKey(canonical),
+		"markdown_path":      mdKey,
+		"markdown_bytes":     mdSize,
+		"markdown_sha256":    mdSha,
+		"markdown_unchanged": mdOutcome.kind == outcomeUnchanged,
+		"image_count":        len(imageReport),
+		"images":             imageReport,
+		"zip_bytes":          zipSize,
+		"zip_sha256":         zipSha,
+		"source":             nil,
+		"uploaded_by":        nil,
+		"overwritten":        overwrite,
 	}
 	if source != "" {
 		resp["source"] = source
@@ -928,7 +1054,21 @@ func uploadMarkdownHandler(re *core.RequestEvent, cfg *config.Config, store objs
 	if catalogDeferred {
 		re.Response.Header().Set("X-Catalog-Sync", "deferred")
 	}
-	if outcome.kind == outcomeUnchanged {
+
+	// Status code reflects "did anything new land?":
+	//   - 200 OK   → every part (md + every image) was already present
+	//                with matching sha256, zero writes
+	//   - 201 Created → at least one new object was stored
+	allUnchanged := mdOutcome.kind == outcomeUnchanged
+	if allUnchanged {
+		for _, img := range imageReport {
+			if !img.Unchanged {
+				allUnchanged = false
+				break
+			}
+		}
+	}
+	if allUnchanged {
 		re.Response.WriteHeader(http.StatusOK)
 	} else {
 		re.Response.WriteHeader(http.StatusCreated)
@@ -977,7 +1117,7 @@ const (
 )
 
 // uploadOne is the conditional-write driver shared by uploadPDFHandler
-// and uploadMarkdownHandler. It encodes the new race-safe contract:
+// and uploadMinerUHandler. It encodes the new race-safe contract:
 //
 //   - Without overwrite:
 //     1. Try `Put + If-None-Match: "*"`. On success, return Written.
