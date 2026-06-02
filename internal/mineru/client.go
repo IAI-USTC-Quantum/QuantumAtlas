@@ -150,6 +150,155 @@ func (c *Client) GetTask(ctx context.Context, taskID string) (TaskState, error) 
 	return st, nil
 }
 
+// MaxBatchSize is MinerU's per-batch file-count limit (POST
+// /api/v4/extract/task/batch rejects bigger batches). Driver code should
+// chunk longer queues at this boundary.
+const MaxBatchSize = 50
+
+// BatchFile is one entry in a SubmitURLBatch payload. Per-file knobs
+// beyond URL + DataID (e.g. is_ocr, page_ranges) are not currently
+// exposed; all files in one batch share the SubmitOptions passed to
+// SubmitURLBatch. Add them here when there's an actual need.
+type BatchFile struct {
+	// URL is the publicly fetchable file location. For PDFs uploaded to
+	// our RustFS, this is an S3 presigned GET URL whose lifetime must
+	// outlast MinerU's processing window (we use 24h).
+	URL string
+	// DataID is the caller's correlation key for this file. MinerU echoes
+	// it back in each per-file batch result so callers can match a
+	// finished extract to the right paper without parsing file_name.
+	// Optional but strongly recommended.
+	DataID string
+}
+
+// BatchTaskState is one per-file entry returned by GetBatch.
+//
+// State is one of the MinerU lifecycle strings:
+//
+//	done            — full_zip_url is populated, ready to download
+//	failed          — err_msg is populated; classify with classifyAPIError
+//	waiting-file    — file fetch hasn't started yet
+//	pending         — queued behind other tasks
+//	running         — being processed
+//	converting      — finalising the result zip
+//
+// Callers should treat anything other than done/failed as in-flight.
+type BatchTaskState struct {
+	FileName   string `json:"file_name"`
+	DataID     string `json:"data_id"`
+	State      string `json:"state"`
+	FullZipURL string `json:"full_zip_url"`
+	ErrMsg     string `json:"err_msg"`
+	// ExtractProgress is best-effort progress when State=running. Fields
+	// may be zero before MinerU has started processing.
+	ExtractProgress struct {
+		ExtractedPages int    `json:"extracted_pages"`
+		TotalPages     int    `json:"total_pages"`
+		StartTime      string `json:"start_time"`
+	} `json:"extract_progress"`
+}
+
+// SubmitURLBatch submits up to MaxBatchSize URL-extraction tasks in one
+// round-trip and returns MinerU's batch id. All files share the same
+// SubmitOptions; per-file overrides aren't exposed (see BatchFile).
+//
+// Caller must chunk longer queues into multiple batches and submit each
+// with its own SubmitURLBatch call.
+func (c *Client) SubmitURLBatch(ctx context.Context, files []BatchFile, opts SubmitOptions) (string, error) {
+	if len(files) == 0 {
+		return "", &Error{Msg: "SubmitURLBatch: no files"}
+	}
+	if len(files) > MaxBatchSize {
+		return "", &Error{Msg: fmt.Sprintf("SubmitURLBatch: %d files exceeds MinerU batch limit of %d", len(files), MaxBatchSize)}
+	}
+	if opts.ModelVersion == "" {
+		opts.ModelVersion = "vlm"
+	}
+	if opts.Language == "" {
+		opts.Language = "ch"
+	}
+
+	items := make([]map[string]any, 0, len(files))
+	for i, f := range files {
+		if f.URL == "" {
+			return "", &Error{Msg: fmt.Sprintf("SubmitURLBatch: empty url at index %d", i)}
+		}
+		item := map[string]any{
+			"url":    f.URL,
+			"is_ocr": opts.IsOCR,
+		}
+		if f.DataID != "" {
+			item["data_id"] = f.DataID
+		}
+		items = append(items, item)
+	}
+
+	body := map[string]any{
+		"files":          items,
+		"model_version":  opts.ModelVersion,
+		"language":       opts.Language,
+		"enable_formula": opts.EnableFormula,
+		"enable_table":   opts.EnableTable,
+		"no_cache":       opts.NoCache,
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return "", err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.baseURL+"/api/v4/extract/task/batch", bytes.NewReader(payload))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "*/*")
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	data, err := c.doEnvelope(req)
+	if err != nil {
+		return "", err
+	}
+	batchID, _ := data["batch_id"].(string)
+	if batchID == "" {
+		return "", &Error{Msg: "response did not include batch_id"}
+	}
+	return batchID, nil
+}
+
+// GetBatch returns per-file states for an in-flight batch. The slice has
+// one entry per file submitted; ordering is not guaranteed to match the
+// submission order, so callers should match by DataID.
+//
+// A nil/empty slice with no error means MinerU has accepted the batch
+// but has nothing to report yet — keep polling.
+func (c *Client) GetBatch(ctx context.Context, batchID string) ([]BatchTaskState, error) {
+	if batchID == "" {
+		return nil, &Error{Msg: "GetBatch: empty batch id"}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		c.baseURL+"/api/v4/extract-results/batch/"+batchID, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "*/*")
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	data, err := c.doEnvelope(req)
+	if err != nil {
+		return nil, err
+	}
+	raw, _ := json.Marshal(data["extract_result"])
+	if string(raw) == "null" {
+		return nil, nil
+	}
+	var results []BatchTaskState
+	if err := json.Unmarshal(raw, &results); err != nil {
+		return nil, &Error{Msg: "decode batch results: " + err.Error()}
+	}
+	return results, nil
+}
+
 // FetchResult downloads MinerU's result zip and extracts full.md plus any
 // sibling images. fullZipURL is the public URL MinerU returns on a done
 // task.

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -175,4 +176,149 @@ func asMineruError(err error, target **Error) bool {
 		return true
 	}
 	return false
+}
+
+func TestSubmitURLBatch(t *testing.T) {
+	var gotBody map[string]any
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":0,"msg":"ok","data":{"batch_id":"batch-7"}}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient("tok", srv.URL, srv.Client())
+	id, err := c.SubmitURLBatch(context.Background(), []BatchFile{
+		{URL: "https://example.com/a.pdf", DataID: "paper-a"},
+		{URL: "https://example.com/b.pdf", DataID: "paper-b"},
+	}, SubmitOptions{ModelVersion: "vlm", Language: "ch", EnableFormula: true, EnableTable: true})
+	if err != nil {
+		t.Fatalf("SubmitURLBatch: %v", err)
+	}
+	if id != "batch-7" {
+		t.Fatalf("batch_id = %q", id)
+	}
+	if gotPath != "/api/v4/extract/task/batch" {
+		t.Fatalf("path = %q", gotPath)
+	}
+	files, ok := gotBody["files"].([]any)
+	if !ok || len(files) != 2 {
+		t.Fatalf("files = %v", gotBody["files"])
+	}
+	first := files[0].(map[string]any)
+	if first["url"] != "https://example.com/a.pdf" || first["data_id"] != "paper-a" {
+		t.Fatalf("first file = %v", first)
+	}
+	if gotBody["model_version"] != "vlm" {
+		t.Fatalf("model_version = %v", gotBody["model_version"])
+	}
+}
+
+func TestSubmitURLBatchTooBig(t *testing.T) {
+	// No HTTP server: validation should fire *before* any request goes out.
+	c := NewClient("tok", "http://nowhere.invalid", nil)
+	files := make([]BatchFile, MaxBatchSize+1)
+	for i := range files {
+		files[i] = BatchFile{URL: "https://example.com/x.pdf", DataID: "d"}
+	}
+	_, err := c.SubmitURLBatch(context.Background(), files, SubmitOptions{})
+	if err == nil {
+		t.Fatal("expected error for oversized batch")
+	}
+	var me *Error
+	if !asMineruError(err, &me) {
+		t.Fatalf("error type = %T", err)
+	}
+}
+
+func TestSubmitURLBatchEmpty(t *testing.T) {
+	c := NewClient("tok", "http://nowhere.invalid", nil)
+	_, err := c.SubmitURLBatch(context.Background(), nil, SubmitOptions{})
+	if err == nil {
+		t.Fatal("expected error for empty batch")
+	}
+}
+
+func TestSubmitURLBatchDailyLimit(t *testing.T) {
+	// MinerU returns code -60018 mid-batch when quota is exhausted; we want
+	// it classified so the daemon can sleep until tomorrow rather than spin.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"code":-60018,"msg":"每日解析任务数量已达上限","data":null}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient("tok", srv.URL, srv.Client())
+	_, err := c.SubmitURLBatch(context.Background(), []BatchFile{{URL: "https://example.com/x.pdf"}}, SubmitOptions{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, ErrDailyLimit) {
+		t.Fatalf("expected ErrDailyLimit, got %v", err)
+	}
+}
+
+func TestGetBatch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v4/extract-results/batch/batch-7" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{
+			"code": 0,
+			"data": {
+				"batch_id": "batch-7",
+				"extract_result": [
+					{"file_name":"a.pdf","data_id":"paper-a","state":"done","full_zip_url":"https://z/a.zip"},
+					{"file_name":"b.pdf","data_id":"paper-b","state":"running","extract_progress":{"extracted_pages":12,"total_pages":40,"start_time":"2026-05-31 10:00:00"}},
+					{"file_name":"c.pdf","data_id":"paper-c","state":"failed","err_msg":"corrupted pdf"}
+				]
+			}
+		}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient("tok", srv.URL, srv.Client())
+	results, err := c.GetBatch(context.Background(), "batch-7")
+	if err != nil {
+		t.Fatalf("GetBatch: %v", err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("len(results) = %d", len(results))
+	}
+	if results[0].State != "done" || results[0].FullZipURL != "https://z/a.zip" || results[0].DataID != "paper-a" {
+		t.Fatalf("results[0] = %+v", results[0])
+	}
+	if results[1].ExtractProgress.ExtractedPages != 12 || results[1].ExtractProgress.TotalPages != 40 {
+		t.Fatalf("results[1] progress = %+v", results[1].ExtractProgress)
+	}
+	if results[2].State != "failed" || results[2].ErrMsg != "corrupted pdf" {
+		t.Fatalf("results[2] = %+v", results[2])
+	}
+}
+
+func TestGetBatchEmptyResults(t *testing.T) {
+	// MinerU sometimes accepts a batch and then has nothing to report yet
+	// — extract_result can be null. We must return (nil, nil), not crash.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"code":0,"data":{"batch_id":"batch-7","extract_result":null}}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient("tok", srv.URL, srv.Client())
+	results, err := c.GetBatch(context.Background(), "batch-7")
+	if err != nil {
+		t.Fatalf("GetBatch: %v", err)
+	}
+	if results != nil {
+		t.Fatalf("expected nil results, got %+v", results)
+	}
+}
+
+func TestGetBatchEmptyID(t *testing.T) {
+	c := NewClient("tok", "http://nowhere.invalid", nil)
+	_, err := c.GetBatch(context.Background(), "")
+	if err == nil {
+		t.Fatal("expected error for empty batch id")
+	}
 }
