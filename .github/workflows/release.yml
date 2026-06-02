@@ -427,3 +427,86 @@ jobs:
           # packages-dir defaults to dist/. We deliberately did NOT
           # download the binaries artifact in this job so the directory
           # contains only *.whl + *.tar.gz, matching what twine wants.
+
+  # --------------------------------------------------------------------
+  # 6. docker-image — build & push the multi-arch container image to
+  #    ghcr.io/iai-ustc-quantum/qatlasd and attest its build provenance.
+  #
+  #    Runs in parallel with create-release / pypi-publish: it consumes
+  #    only the source tree (which it Dockerfile-builds), not any
+  #    upstream artifacts, so the only dependency is `prep` for the
+  #    resolved version string.
+  #
+  #    Why this exists at all: docker-compose templates in deploy/ point
+  #    at `ghcr.io/iai-ustc-quantum/qatlasd:<tag>`. Without this job
+  #    operators would have to `docker build .` locally on every
+  #    install — slow, non-reproducible, and breaks the
+  #    install-qatlasd.sh-style "pull a pre-built artifact" workflow we
+  #    already use for binaries + wheels.
+  # --------------------------------------------------------------------
+  docker-image:
+    runs-on: ubuntu-latest
+    needs: prep
+    permissions:
+      contents: read
+      packages: write       # ghcr.io push
+      id-token: write       # SLSA attestation OIDC
+      attestations: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      # QEMU lets us cross-build linux/arm64 from amd64 runners. Slower
+      # than native, but free + reliable + matches the platform set the
+      # standalone binary job already produces.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          # GITHUB_TOKEN has push access to ghcr.io for the same repo
+          # when `permissions: packages: write` is set above.
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push multi-arch image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            VERSION=${{ needs.prep.outputs.version }}
+          # Three tags so consumers can pin at three granularities:
+          # exact version (vX.Y.Z), latest, and the bare version
+          # without 'v' (useful in compose interpolation).
+          tags: |
+            ghcr.io/iai-ustc-quantum/qatlasd:${{ needs.prep.outputs.tag }}
+            ghcr.io/iai-ustc-quantum/qatlasd:${{ needs.prep.outputs.version }}
+            ghcr.io/iai-ustc-quantum/qatlasd:latest
+          provenance: true
+          sbom: true
+
+      # SLSA build provenance for the image. Same security story as the
+      # binary / wheel attestations above:
+      #
+      #   gh attestation verify oci://ghcr.io/iai-ustc-quantum/qatlasd:<tag> \
+      #     --repo IAI-USTC-Quantum/QuantumAtlas
+      #
+      # Bound to the image digest, not the tag, so retagging can't
+      # forge attestation.
+      - name: Attest image build provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: ghcr.io/iai-ustc-quantum/qatlasd
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true

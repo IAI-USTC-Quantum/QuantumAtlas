@@ -95,6 +95,24 @@ def test_release_workflow_publishes_python_and_go_artifacts():
     assert "actions/attest-build-provenance@v3" in release_workflow
     assert "attestations: write" in release_workflow
 
+    # docker-image job (added in v0.16.0): multi-arch ghcr.io push with
+    # SLSA provenance bound to the image digest. Each rename / removal
+    # here breaks the docker-compose templates in deploy/ that pin
+    # ghcr.io/iai-ustc-quantum/qatlasd, so the test is intentionally
+    # strict about the registry path + platforms + provenance.
+    assert "docker-image:" in release_workflow
+    assert "docker/build-push-action@v6" in release_workflow
+    assert "linux/amd64,linux/arm64" in release_workflow
+    assert "ghcr.io/iai-ustc-quantum/qatlasd" in release_workflow
+    # Three tags so consumers can pin at three granularities (vX.Y.Z,
+    # bare X.Y.Z, latest). Removing any one of these is a user-visible
+    # break: docker-compose ships ${QATLAS_VERSION:-latest}.
+    assert "ghcr.io/iai-ustc-quantum/qatlasd:${{ needs.prep.outputs.tag }}" in release_workflow
+    assert "ghcr.io/iai-ustc-quantum/qatlasd:latest" in release_workflow
+    # Attestation must target the image digest (immutable), not a tag.
+    assert "subject-name: ghcr.io/iai-ustc-quantum/qatlasd" in release_workflow
+    assert "subject-digest: ${{ steps.build.outputs.digest }}" in release_workflow
+
 
 def test_top_level_help(capsys):
     result = cli.main(["--help"])
