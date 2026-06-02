@@ -305,3 +305,70 @@ qatlasd service install --dotenv-path /home/timidly/QuantumAtlas/.env --force
 ## 7. 完整 .env 模板
 
 参见 [`.env.example`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.env.example) —— 含所有字段 + 每个字段的角色注释（client 用 / server 用 / 共用）。
+
+## 8. `qatlasd config` 子命令
+
+binary 自带三个 config 工具，复刻 code-server / kubectl / gh 的常见用法。**全部 short-circuit 在 main 早期跑**——不依赖 .env / Neo4j / S3 配置正确，即便配置半填、Neo4j 没起、S3 字段缺失也能跑（这是它存在的意义之一）。
+
+### `qatlasd config init`
+
+写一份最小化默认 `.env` 模板（embed 在 binary 内的 [`cmd/qatlasd/templates/default.env`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/cmd/qatlasd/templates/default.env)，含 GitHub OAuth / Neo4j / S3 / SystemPAT 等最常用字段）到磁盘。完整字段参考仍是 repo 根的 `.env.example`。
+
+```bash
+# 写到 XDG 默认位置（$XDG_CONFIG_HOME/qatlasd/.env 或 ~/.config/qatlasd/.env）
+qatlasd config init
+
+# 写到指定路径（典型生产）
+sudo qatlasd config init --path /etc/quantum-atlas/.env
+
+# 已存在不覆盖（exit 1）；要覆盖加 --force
+qatlasd config init --path /etc/quantum-atlas/.env --force
+```
+
+文件 mode 强制 **0600**，避免 secret 被 group/other 读到。写完后会提示用 `qatlasd serve` 或 `qatlasd service install --dotenv-path ...` 把它接进 systemd。
+
+> 模板特意不全 —— 只列必填 / 强烈推荐字段。要看所有 alias / dev-only flag / 第三方 SDK 字段，去看 [`.env.example`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.env.example)。
+
+### `qatlasd config path`
+
+打印**当前进程**会 load 的 .env 路径（resolve 顺序跟 §1.1 一致）。找不到任何文件时 exit 1 + stderr 报错。
+
+```bash
+qatlasd config path
+# /etc/quantum-atlas/.env
+```
+
+适合 systemd 单元 / shell 脚本里调试"server 真的读到这个 .env 吗"。
+
+### `qatlasd config show`
+
+按 KEY=VALUE 形式打印**当前进程**可见的 QuantumAtlas 相关 env vars（按 name 排序，空值跳过，前缀过滤到 `QATLAS_*` / `NEO4J_*` / `MINERU_*` / `OPENAI_*` / `ANTHROPIC_*` / `GITHUB_CLIENT_*`）。
+
+```bash
+qatlasd config show
+# NEO4J_URI=bolt://localhost:7687
+# NEO4J_PASSWORD=***
+# QATLAS_S3_ENDPOINT=https://rustfs.example.com
+# QATLAS_S3_SECRET_ACCESS_KEY=***
+# QATLAS_SERVER_URL=https://atlas.example.com
+```
+
+**默认脱敏**：name 含 `TOKEN` / `SECRET` / `KEY` / `PASSWORD`（大小写不敏感）的 value 替成 `***`。要看明文（debug 用，仅在私有终端）：
+
+```bash
+qatlasd config show --no-redact
+```
+
+⚠️ **`show` 反映的是 `qatlasd config show` 这次调用看到的 env，不会自动 source 任何 .env**。要查"server 真起来时会看到什么"，先 source 那份 .env：
+
+```bash
+set -a; . /etc/quantum-atlas/.env; set +a
+qatlasd config show
+```
+
+或者直接登上 systemd 单元的 env：
+
+```bash
+sudo systemctl show qatlasd -p Environment
+```
+

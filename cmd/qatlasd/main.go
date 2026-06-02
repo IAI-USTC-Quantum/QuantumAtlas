@@ -42,6 +42,7 @@ import (
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
+	"github.com/spf13/cobra"
 	httpSwagger "github.com/swaggo/http-swagger/v2"
 )
 
@@ -113,6 +114,30 @@ func main() {
 			fmt.Printf("qatlasd version %s\n", Version)
 			return
 		}
+	}
+
+	// Early `config` subcommand short-circuit. Same reason as the
+	// --version one above, plus a critical extra: `qatlasd config
+	// show` is the operator's tool for diagnosing a half-configured
+	// .env, but config.Load() below fails fast on exactly that case
+	// (validateS3Config rejects half-set S3 fields with a fatal exit).
+	// If we let the normal main flow run first, config show could
+	// never see a broken config — it would die before getting a chance
+	// to display anything. So intercept `config` before any env
+	// validation, build a minimal cobra root, and dispatch directly.
+	if len(os.Args) >= 2 && os.Args[1] == "config" {
+		root := &cobra.Command{
+			Use:     "qatlasd",
+			Version: Version,
+		}
+		root.AddCommand(NewConfigCommand())
+		// Cobra's default behaviour on error is to print usage + the
+		// error to stderr and return; mirror that with a non-zero exit
+		// so scripts can detect "config init refused to overwrite" etc.
+		if err := root.Execute(); err != nil {
+			os.Exit(1)
+		}
+		return
 	}
 
 	// Load .env BEFORE config.Load so any vars it sets win over
@@ -226,6 +251,12 @@ func main() {
 	// otherwise no non-browser way to discover which emails are
 	// registered locally).
 	app.RootCmd.AddCommand(NewUsersCommand(app))
+
+	// Mount the `config` subcommand group (`config init` writes a
+	// default .env template; `config path` / `config show` inspect
+	// what qatlasd would load). Same cobra registration timing
+	// constraint as the other subcommand mounts above.
+	app.RootCmd.AddCommand(NewConfigCommand())
 
 	// Install our default PAT-surface rate-limit rules. Done at
 	// OnBootstrap (after PocketBase has loaded settings from the DB)

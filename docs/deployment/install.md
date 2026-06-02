@@ -106,6 +106,33 @@ qatlasd --version
 # qatlasd version 0.2.8
 ```
 
+### 准备 .env（可选但推荐）
+
+`qatlasd serve` 完全靠 process env / `.env` 文件读配置。开两条路：
+
+**A. 用 `qatlasd config init` 写默认 .env**（推荐起手式）：
+
+```bash
+# 写到 XDG 默认 $XDG_CONFIG_HOME/qatlasd/.env（或 ~/.config/qatlasd/.env）
+qatlasd config init
+
+# 写到指定路径（生产单机常见）
+sudo qatlasd config init --path /etc/quantum-atlas/.env
+```
+
+模板 mode 0600，含 GitHub OAuth / Neo4j / S3 / SystemPAT 等最常用字段（commented，按需取消注释）。完整字段参考仍是 [`.env.example`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.env.example)。详见 [server-config §8](server-config.md#8-qatlasd-config-子命令)。
+
+**B. 自己拷 `.env.example`**：从 repo 根 / GitHub raw 直接 wget 拷下来再改。等价于 A，多一份 alias / dev-only 注释，新手干扰多。
+
+写完 / 改完任何 .env，随时可以：
+
+```bash
+qatlasd config path             # 显示 server 会读哪个 .env
+qatlasd config show             # 打印当前进程可见的 env（默认脱敏 secret）
+```
+
+### 注册服务
+
 然后用 `service install` 注册成 systemd：
 
 ```bash

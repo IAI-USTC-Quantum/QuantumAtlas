@@ -131,8 +131,10 @@ Examples:
 	}
 	cmd.Flags().StringVar(&opts.Name, "name", defaultServiceName, "Service unit name (<name>.service on Linux)")
 	cmd.Flags().StringVar(&opts.Mode, "mode", "", `"user" or "system" (default: auto-detected from uid; prompted in TTY)`)
-	cmd.Flags().StringVar(&opts.DotenvPath, "dotenv-path", "", "Path to .env file (default: $QATLAS_DOTENV, then ~/QuantumAtlas/.env, then ./.env)")
-	cmd.Flags().StringVar(&opts.Bind, "bind", "127.0.0.1:4200", "HTTP bind address for `serve --http=...`")
+	cmd.Flags().StringVar(&opts.DotenvPath, "dotenv-path", "",
+		"Path to .env file (env: QATLAS_DOTENV; auto-detect order: $QATLAS_DOTENV, then ~/QuantumAtlas/.env, then ./.env)")
+	cmd.Flags().StringVar(&opts.Bind, "bind", "127.0.0.1:4200",
+		"HTTP bind address for `serve --http=...` (runtime env: QATLAS_HTTP_ADDR or QATLAS_SERVER_HOST+QATLAS_SERVER_PORT)")
 	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "Render the unit to stdout without writing or reloading systemd")
 	cmd.Flags().BoolVar(&opts.Force, "force", false, "Overwrite an existing unit without prompting; required in non-TTY contexts")
 	return cmd
