@@ -23,13 +23,8 @@ import (
 	"time"
 )
 
-// Error is returned when MinerU responds with a non-zero application code
-// or an otherwise unusable payload.
-type Error struct {
-	Msg string
-}
-
-func (e *Error) Error() string { return "mineru: " + e.Msg }
+// Error definitions live in errors.go (with the Kind sentinel system that
+// supports `errors.Is(err, mineru.ErrDailyLimit)` style classification).
 
 // SubmitOptions are the per-task extraction knobs forwarded to MinerU.
 // They map 1:1 onto the JSON body fields documented at
@@ -272,8 +267,10 @@ func readZipEntry(f *zip.File) ([]byte, error) {
 }
 
 // doEnvelope performs the request and decodes MinerU's standard
-// {code,msg,data} envelope, returning the `data` object. A non-zero code
-// or non-2xx HTTP status becomes an *Error.
+// {code,msg,data} envelope, returning the `data` object. Both non-zero
+// `code` values and non-2xx HTTP statuses become *Error with a Kind
+// sentinel set via classifyAPIError so callers can do
+// `errors.Is(err, mineru.ErrDailyLimit)` etc.
 func (c *Client) doEnvelope(req *http.Request) (map[string]any, error) {
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -284,23 +281,41 @@ func (c *Client) doEnvelope(req *http.Request) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, &Error{Msg: fmt.Sprintf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))}
-	}
+
+	// Try to parse the body as an envelope first — even 4xx responses
+	// from MinerU usually carry a code/msg we want to classify. Decode
+	// failures aren't fatal here: we fall back to HTTP-status-only classification.
 	var env struct {
 		Code json.Number    `json:"code"`
 		Msg  string         `json:"msg"`
 		Data map[string]any `json:"data"`
 	}
-	if err := json.Unmarshal(raw, &env); err != nil {
-		return nil, &Error{Msg: "decode envelope: " + err.Error()}
+	envOK := json.Unmarshal(raw, &env) == nil
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		code := ""
+		msg := ""
+		if envOK {
+			code = env.Code.String()
+			msg = env.Msg
+		}
+		if msg == "" {
+			// Surface a snippet of the body as a last resort so users see
+			// *something* meaningful when MinerU returns a raw 502/504 page.
+			snippet := strings.TrimSpace(string(raw))
+			if len(snippet) > 200 {
+				snippet = snippet[:200] + "..."
+			}
+			msg = snippet
+		}
+		return nil, classifyAPIError(code, msg, resp.StatusCode)
+	}
+
+	if !envOK {
+		return nil, &Error{Msg: "decode envelope: unparseable body"}
 	}
 	if env.Code.String() != "0" && env.Code.String() != "" {
-		msg := env.Msg
-		if msg == "" {
-			msg = "code " + env.Code.String()
-		}
-		return nil, &Error{Msg: msg}
+		return nil, classifyAPIError(env.Code.String(), env.Msg, 0)
 	}
 	if env.Data == nil {
 		return nil, &Error{Msg: "response did not include data object"}
