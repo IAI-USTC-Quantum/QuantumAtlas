@@ -3,6 +3,8 @@ nav:
   - 装机:
     - 安装与 service: install.md
     - 反向代理: reverse-proxy.md
+  - 配置:
+    - 服务端环境变量: server-config.md
   - 依赖服务:
     - GitHub OAuth: github-oauth.md
     - Neo4j: neo4j.md
