@@ -2,7 +2,7 @@
 
 QuantumAtlas server 的所有 HTTP endpoint。auth 模型详见 [概念/鉴权](../concepts/auth-model.md)。
 
-## 交互式 API 文档（Swagger UI）
+## 交互式 API 文档（Swagger UI） { #swagger-ui }
 
 server 内嵌了一份由 [swaggo](https://github.com/swaggo/swag) 从代码注解自动生成的
 OpenAPI spec，挂在 **`/swagger`**（如 <https://quantum-atlas.ai/swagger/>），可在浏览器里

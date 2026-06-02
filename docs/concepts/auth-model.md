@@ -24,7 +24,7 @@ QuantumAtlas 的鉴权回答两个问题：
 
 PAT 明文以 `qat_` 开头，**只在创建时显示一次**，server 只存 bcrypt 哈希。丢了就只能 revoke + 重建。
 
-System PAT 明文格式随意（推荐 `openssl rand -base64 32`），**只活在进程内存 + .env 里**，server 不持久化也不哈希。详见 [§System PAT](#system-pat-运维专用-breaking-glass-token)。
+System PAT 明文格式随意（推荐 `openssl rand -base64 32`），**只活在进程内存 + .env 里**，server 不持久化也不哈希。详见 [§System PAT](#system-pat)。
 
 ## 谁能登录（GitHub 白名单）
 
@@ -96,8 +96,9 @@ flowchart TD
 
 设计原则：**凡是返回语料数据的端点（读和写）都要鉴权**；只有"无数据"的探活 / 版本 / 安装脚本 / 文档 / SPA 外壳保持公开。知识库不再匿名可读。论文 PDF / Markdown 字节本服务**不通过 HTTP API 对外分发**——客户端只能查询元数据（OpenAlex 同步进来的内容）与论文具备何种资产的开关位（`stats` / `needs-mineru`）。
 
-!!! note "Graph 查询：同 scope 下危害最大的那一档"
-    `graph:read` 同时覆盖 `stats` / `schema`（server 自算的固定形状聚合）和 `POST /api/graph/query`。三者都要鉴权，但 `query` 风险最高：它执行调用方提供的 Cypher。查询**只读**（驱动层 `ExecuteRead` 拒绝写），但**故意不加查询代价上限**：过了 `graph:read` 的调用方即「自己人」，同一个人本就能直连 Bolt 跑同样的重查询，应用层限制器挡不住、只增复杂度。病态查询（如无界笛卡尔积）能拖垮 Neo4j，**唯一缓解是撤销出问题的凭据**。这是明确接受的风险，不是待办——细节见 [REST API · graph/query](../reference/rest-api.md) 与 [Neo4j 部署](../deployment/neo4j.md)。
+### Graph 查询：同 scope 下危害最大的那一档
+
+`graph:read` 同时覆盖 `stats` / `schema`（server 自算的固定形状聚合）和 `POST /api/graph/query`。三者都要鉴权，但 `query` 风险最高：它执行调用方提供的 Cypher。查询**只读**（驱动层 `ExecuteRead` 拒绝写），但**故意不加查询代价上限**：过了 `graph:read` 的调用方即「自己人」，同一个人本就能直连 Bolt 跑同样的重查询，应用层限制器挡不住、只增复杂度。病态查询（如无界笛卡尔积）能拖垮 Neo4j，**唯一缓解是撤销出问题的凭据**。这是明确接受的风险，不是待办——细节见 [REST API · graph/query](../reference/rest-api.md) 与 [Neo4j 部署](../deployment/neo4j.md)。
 
 ## 怎么实操
 
@@ -146,7 +147,7 @@ CI 多线路场景下需要为每条线路分别建 PAT。
 
 可选：反向代理可以注入 `X-Token-Subject`（具体头名由 `QATLAS_USER_HEADER` 决定）作为审计元数据。**这个头不参与鉴权**——只是审计层补充信息，跟 PAT/session 鉴权完全正交。
 
-## System PAT — 运维专用 breaking-glass token
+## System PAT — 运维专用 breaking-glass token { #system-pat }
 
 ```bash
 # .env / systemd Environment=

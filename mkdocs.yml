@@ -9,6 +9,10 @@ edit_uri: edit/main/docs/
 
 copyright: Copyright &copy; 2024–2026 IAI-USTC-Quantum &middot; Apache-2.0 License
 
+# build 时把 broken link / 找不到的 anchor / 孤儿 .md 等 WARNING 升格为 error。
+# 配合上面 toc.slugify 保留中文 anchor，绝大多数中文锚点都能被识别。
+strict: true
+
 theme:
   name: material
   language: zh
@@ -147,6 +151,12 @@ markdown_extensions:
       permalink: true
       permalink_title: 锚点链接
       toc_depth: 4
+      # 默认 Python slugify 会丢掉所有非 ASCII（中文标题 → 空 anchor），
+      # 用 pymdownx slugify 保留 unicode，跟文档里写的 #中文锚点 对得上；
+      # case=lower 保持小写一致性（跟 pymdownx.tabbed 同款配置）。
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
   # pymdownx 全家桶
   - pymdownx.betterem
   - pymdownx.caret

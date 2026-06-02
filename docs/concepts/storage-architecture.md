@@ -38,7 +38,7 @@ QuantumAtlas 处理论文图谱的本质问题是：
     3. **跨 edge 不友好**：两台 edge 各自一份 SQLite 就是漂移源；
     4. **凭据复用**：DuckDB 用同一组 `QATLAS_S3_*` svcacct 直读 Parquet，不开新 secret。
 
-    完整原理 + 跟 Iceberg / Delta Lake 关系见 [`architecture.md` § paperindex 节](architecture.md#paperindex-parquet-duckdb-lakehouse)。
+    完整原理 + 跟 Iceberg / Delta Lake 关系见 [`architecture.md` § paperindex 节](architecture.md#paperindex)。
 
 ??? note "PocketBase 还在做什么"
     PocketBase（v0.38，嵌入 qatlasd 二进制，SQLite 底）现在只承担 **用户 / PAT** 等本机

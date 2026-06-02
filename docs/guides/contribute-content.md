@@ -179,7 +179,7 @@ qatlas mineru 2501.00010v1 --no-push
 
 `authGuard` 接受**三种**凭据，按到达顺序检查：
 
-1. **System PAT**（环境变量加载） —— server 启动时从 `QATLAS_SYSTEM_PAT` env 读取；命中常时比较直接通过 authGuard。永不过期、跟 PocketBase 完全解耦、pb_data 挂了还能用——专供 CI / cron / 灾难恢复等 ops 路径。详见 [auth-model.md § System PAT](../concepts/auth-model.md#system-pat-运维专用-breaking-glass-token)。
+1. **System PAT**（环境变量加载） —— server 启动时从 `QATLAS_SYSTEM_PAT` env 读取；命中常时比较直接通过 authGuard。永不过期、跟 PocketBase 完全解耦、pb_data 挂了还能用——专供 CI / cron / 灾难恢复等 ops 路径。详见 [auth-model.md § System PAT](../concepts/auth-model.md#system-pat)。
 2. **Personal Access Token (PAT)** —— bearer 以 `qat_` 开头，从 SPA `/pat` 页面创建，明文一次性显示。**强制设置过期时间**（7 / 30 / 60 / 90 / 365 天，最长 1 年）。**每条 PAT 携带显式 scope 列表**，默认空集 = 什么写口都调不了，必须勾选具体 scope 才能用。撤销 = 同页 Revoke。**人工脚本 / 想钉到具体身份的 ingest 工具推荐这条。**
 3. **PocketBase 用户 session token** —— OAuth 登录后浏览器自动持有（`pb.authStore`），SPA 内所有调用自动带在 `Authorization` 头里。**没有 UI 入口去手动 copy**——只在浏览器里用得了。隐式拥有全部权限，跳过 scope 检查。
 

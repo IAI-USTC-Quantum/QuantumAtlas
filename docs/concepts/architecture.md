@@ -110,7 +110,7 @@ related: [paper-arxiv-9508027]
 字段可以拼出 canonical arxiv URL）。
 
 
-## 论文元数据索引 (`paperindex` — Parquet + DuckDB Lakehouse 模式)
+## 论文元数据索引 (`paperindex` — Parquet + DuckDB Lakehouse 模式) { #paperindex }
 
 > 这是 QuantumAtlas 区别于"原始 S3 cache"的一层。理解了它就理解了为什么不需要额外开一个 PostgreSQL / MySQL。
 

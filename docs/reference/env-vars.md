@@ -128,7 +128,7 @@ OAuth callback URL 必须填成 `https://<your-server>/api/oauth2-redirect`。
 
 ## Server: System PAT（运维兜底 bearer）
 
-可选的、与 PocketBase 完全无关的 bearer token，**直接从 env 加载、永不落 pb_data**。给"pb_data 不可用 / 还没人登录 / CI 不想绑具体人"等运维兜底场景。完整设计见 [鉴权模型 § System PAT](../concepts/auth-model.md#system-pat-运维专用-breaking-glass-token)。
+可选的、与 PocketBase 完全无关的 bearer token，**直接从 env 加载、永不落 pb_data**。给"pb_data 不可用 / 还没人登录 / CI 不想绑具体人"等运维兜底场景。完整设计见 [鉴权模型 § System PAT](../concepts/auth-model.md#system-pat)。
 
 | 变量 | 必填 | 默认 | 含义 |
 |---|---|---|---|
