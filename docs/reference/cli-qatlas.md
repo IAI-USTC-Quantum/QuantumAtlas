@@ -30,7 +30,7 @@ qatlas [--version] [--help] <subcommand> [args...]
 
 ### `qatlas config`
 
-管理 user-level 配置文件 `~/.config/qatlas/.env`。给 `uv tool install` 用户用，不需要手动 `export` 环境变量。
+管理 user-level 配置文件 `~/.config/qatlas/config.yaml`（v0.16.0+；老版本是 `~/.config/qatlas/.env`，首次 `qatlas config init` 会自动迁移）。给 `uv tool install` 用户用，不需要手动 `export` 环境变量。
 
 ```
 qatlas config <subcommand>
@@ -38,30 +38,37 @@ qatlas config <subcommand>
 
 | Subcommand | 含义 |
 |---|---|
-| `path` | 打印当前生效的配置文件路径 + 来源（`xdg` / `env_override` / no-file） |
-| `init [--force]` | 在 `~/.config/qatlas/.env` 写一份模板。`--force` 覆盖已有文件（同名 key 仍保留） |
-| `set <KEY> <VALUE>` | 写一个 key=value 到 user config 文件，文件不存在时自动建（0600 perms）。敏感字段（含 `TOKEN` / `SECRET` / `KEY` / `PASSWORD`）echo 时遮罩 |
-| `unset <KEY>` | 删除一个 key |
-| `get <KEY>` | 打印 key 解析后的真值（按完整优先级链：CLI flag > env var > `$QATLAS_DOTENV` > `~/.config/qatlas/.env` > 内置默认）。无值时 exit 1，suitable for shell 插值 |
+| `path` | 打印当前生效的配置文件路径 + 来源（`xdg_yaml` / `xdg_dotenv_legacy` / `env_override_yaml` / `env_override_dotenv_legacy` / no-file） |
+| `init [--force]` | 在 `~/.config/qatlas/config.yaml` 写一份空模板。**若存在 legacy `.env` 且无 yaml → 自动迁移**（原 .env 重命名为 `.env.migrated-from-v0.16.0.<timestamp>`，不删除）。`--force` 覆盖已有 yaml，**保留**现有键值 |
+| `set <KEY> <VALUE>` | 写一个 key=value 到 config.yaml（KEY 用 env var 名形式，如 `QATLAS_TOKEN`；不在 client schema 里的字段如 `NEO4J_*` / `QATLAS_S3_*` 会被 typo guard 拒绝）。文件不存在时自动建（0600 perms）。敏感字段（含 `TOKEN` / `SECRET` / `KEY` / `PASSWORD`）echo 时遮罩 |
+| `unset <KEY>` | 删除一个 key，空 section 自动 prune |
+| `get <KEY>` | 打印 key 解析后的真值（按完整优先级链：CLI flag > env var > `$QATLAS_CONFIG` > `$QATLAS_DOTENV` > `~/.config/qatlas/config.yaml` > `~/.config/qatlas/.env` > 内置默认）。无值时 exit 1，suitable for shell 插值 |
 | `show [--unmask]` | dump 所有解析后的字段；敏感值遮罩，`--unmask` 完整打印 |
 
 **配置文件优先级**（每个字段独立解析）：
 
 1. **CLI flag** — `--base-url` / `--token` / `--insecure` 等
-2. **OS 环境变量** — `QATLAS_*`、`MINERU_*` 等
-3. **`$QATLAS_DOTENV`** — 显式 .env 路径覆盖（systemd unit / container 等场景）
-4. **`~/.config/qatlas/.env`** — XDG 主入口（`qatlas config init` 创建）
-5. **内置默认** — 各字段定义的 Field default
+2. **OS 环境变量** — `QATLAS_*`、`MINERU_*`、`OPENAI_*`、`ANTHROPIC_*` 等
+3. **`$QATLAS_CONFIG`** — 显式 YAML 路径覆盖（systemd unit / docker / k8s）
+4. **`$QATLAS_DOTENV`** — 显式 legacy .env 路径（⚠️ deprecated，v0.17.0 移除）
+5. **`~/.config/qatlas/config.yaml`** — XDG 主入口（`qatlas config init` 创建）
+6. **`~/.config/qatlas/.env`** — XDG legacy（首次 init 自动迁移到 yaml）
+7. **内置默认** — 各字段定义的 Field default
 
-!!! note "不读 `./.env`"
-    跟 `gh` / `docker` / `kubectl` / `aws` 同款约定 —— user-level CLI **不**自动从 cwd 拾起 `.env`。想临时用某个目录的配置：`QATLAS_DOTENV=$PWD/.env qatlas ...` 一次性。v0.15.0a4 及更早版本曾有 cwd legacy fallback，v0.15.0a5 起去除。
+完整 yaml schema 见 [env-vars.md §「Client 配置文件解析」](../reference/env-vars.md#client-qatlas-配置文件解析)。
+
+!!! note "不读 `./.env` / `./config.yaml`"
+    跟 `gh` / `docker` / `kubectl` / `aws` 同款约定 —— user-level CLI **不**自动从 cwd 拾起任何配置。想临时用某个目录的配置：`QATLAS_CONFIG=$PWD/myconfig.yaml qatlas ...` 一次性。v0.15.0a4 及更早版本曾有 cwd legacy fallback，v0.15.0a5 起去除。
+
+!!! warning "`qatlas config set` 会抹掉手写注释"
+    PyYAML 不保留 round-trip 注释，跟 `gh` / `kubectl config set` 行为一致。要永久注释，直接编辑文件 + 不用 `set`；或维护一个 wrapper 脚本 `export QATLAS_*=...` 代替 yaml。`config init` 生成的 header 注释每次 `set` 都会被重写，是预期行为。
 
 **典型 workflow**：
 
 ```bash
-# 首次安装 + 配置
+# 首次安装 + 配置（v0.16.0+）
 uv tool install --prerelease=allow quantum-atlas
-qatlas config init                                        # 创建模板
+qatlas config init                                        # 创建 config.yaml 模板
 qatlas config set QATLAS_SERVER_URL https://quantum-atlas.ai
 qatlas config set QATLAS_TOKEN qat_xxxxxxxx               # 从 https://quantum-atlas.ai/pat 拿
 qatlas config set MINERU_API_TOKEN eyJ0eXBlI...           # 若要跑 qatlas mineru
@@ -69,6 +76,10 @@ qatlas config set MINERU_API_TOKEN eyJ0eXBlI...           # 若要跑 qatlas min
 # 之后任何 qatlas 子命令直接跑，无需 source / export
 qatlas wiki list --type source
 qatlas mineru --batch-size 3
+
+# 从 v0.15.x 升上来：legacy .env 自动迁移
+qatlas config init   # 检测到 ~/.config/qatlas/.env、yaml 不存在 → 自动迁移
+                     # 原文件保留为 .env.migrated-from-v0.16.0.<timestamp>
 ```
 
 详细：[管理凭证](../guides/manage-credentials.md)、[入门](../getting-started.md)。

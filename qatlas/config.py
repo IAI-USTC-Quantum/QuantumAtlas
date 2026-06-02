@@ -16,37 +16,65 @@ from dotenv import dotenv_values
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from qatlas.paths import resolve_dotenv_path
+from qatlas.paths import resolve_config_path
 
 logger = logging.getLogger(__name__)
 
 
-def bootstrap_env(dotenv_path: Optional[Path] = None) -> None:
-    """Mirror dotenv file values into ``os.environ`` with ``override=False``.
+def bootstrap_env_from_config(config_path: Optional[Path] = None) -> None:
+    """Mirror values from a config file into ``os.environ``, dispatching
+    on file format.
 
-    Direct ``os.getenv`` readers elsewhere in the codebase
-    (``qatlas.client._common.resolve_token`` reading ``QATLAS_TOKEN``,
-    ``qatlas.wiki.engine`` reading ``QATLAS_WIKI_DIR``, etc.) historically
-    only saw real environment variables, NOT values pydantic-settings
-    loaded from a dotenv file — because pydantic-settings populates
-    fields on the model instance, never touches ``os.environ``.
+    Supports two file formats:
 
-    This shim closes the gap: after resolving the user's dotenv file
-    we copy each key into ``os.environ`` only when the variable isn't
-    already set, so a real env var always wins. Matches the precedence
-    chain documented in :meth:`ServerConfig.from_env`.
+    * ``.yaml`` / ``.yml`` — the v0.16.0+ canonical format. Loaded via
+      :mod:`qatlas.config_yaml` which flattens nested keys
+      (``server.url`` → ``QATLAS_SERVER_URL``) using the
+      ``YAML_TO_ENV`` mapping.
+    * ``.env`` — the legacy format. Loaded via :func:`dotenv_values`
+      from python-dotenv with override-false semantic.
 
-    Pass ``dotenv_path=None`` to use the standard resolution chain.
+    Both paths use ``os.environ.setdefault`` so a real env var
+    (systemd ``Environment=``, shell ``export``, container ``-e``)
+    always wins over the file. Same precedence as
+    ``godotenv.Load`` on the Go side, so client and server share
+    one mental model.
+
+    ``config_path=None`` triggers the standard resolution chain
+    (:func:`qatlas.paths.resolve_config_path`).
     """
-    if dotenv_path is None:
-        dotenv_path, _ = resolve_dotenv_path()
-    if dotenv_path is None or not dotenv_path.is_file():
+    if config_path is None:
+        config_path, _ = resolve_config_path()
+    if config_path is None or not config_path.is_file():
         return
-    for key, value in dotenv_values(dotenv_path).items():
+
+    # Dispatch on extension. YAML wins for the canonical v0.16.0+ path;
+    # everything else (.env, plain extensionless) falls through to the
+    # legacy dotenv loader. We deliberately do NOT sniff file contents
+    # — extension-based dispatch is unambiguous and operators can name
+    # files clearly.
+    if config_path.suffix.lower() in (".yaml", ".yml"):
+        from qatlas import config_yaml
+        config_yaml.bootstrap_env_from_yaml(config_path)
+        return
+
+    for key, value in dotenv_values(config_path).items():
         if value is None:
             continue
         # override=False semantic: real env var wins.
         os.environ.setdefault(key, value)
+
+
+def bootstrap_env(dotenv_path: Optional[Path] = None) -> None:
+    """Back-compat alias for :func:`bootstrap_env_from_config`.
+
+    Older call sites pass a ``.env`` path and expect dotenv-only
+    semantics; the dispatcher in ``bootstrap_env_from_config`` handles
+    both formats correctly so this just forwards. Kept as a separate
+    name so the deprecation can be done in a follow-up PR rather than
+    touching every caller in this changeset.
+    """
+    bootstrap_env_from_config(dotenv_path)
 
 
 def get_project_root() -> Path:
@@ -192,40 +220,40 @@ class ServerConfig(BaseSettings):
 
         1. Real OS environment variables (always win; ``--server-url`` /
            ``--token`` style CLI flags layer on top via argparse).
-        2. ``QATLAS_DOTENV=<path>`` explicit override (for systemd
-           units that ship a deployment-specific .env, or for
-           containers that mount a pre-baked config file).
-        3. ``~/.config/qatlas/.env`` (XDG, the canonical location for
-           ``uv tool install`` users — populated via ``qatlas config
-           init`` / ``qatlas config set``).
-        4. Built-in defaults defined on each field.
+        2. ``QATLAS_CONFIG=<file>.yaml`` explicit YAML override
+           (preferred for systemd / docker / k8s).
+        3. ``QATLAS_DOTENV=<file>.env`` legacy .env override
+           (deprecated, removed in v0.17.0).
+        4. ``~/.config/qatlas/config.yaml`` (XDG, the canonical
+           location populated via ``qatlas config init``).
+        5. ``~/.config/qatlas/.env`` (legacy XDG, auto-migrated to
+           YAML on the next ``qatlas config init``).
+        6. Built-in defaults defined on each field.
 
-        ``QATLAS_SKIP_DOTENV=1`` disables all dotenv loading and
+        ``QATLAS_SKIP_DOTENV=1`` disables all file-based loading and
         forces env-vars-only.
 
         The cwd ``./.env`` fallback was removed in v0.15.0a5 to
         match the gh / docker / kubectl / aws pattern (user-level
-        CLIs MUST NOT silently pick up cwd config). Users who
-        relied on it should run ``qatlas config init`` once, or set
-        ``QATLAS_DOTENV=$PWD/.env`` for a one-off invocation.
+        CLIs MUST NOT silently pick up cwd config).
 
-        Also calls :func:`bootstrap_env` so the same precedence chain
-        is visible to direct ``os.getenv`` readers elsewhere in the
-        codebase (e.g. ``qatlas.client._common.resolve_token`` which
-        reads ``QATLAS_TOKEN`` via os.getenv, not via this model).
+        File loading goes through :func:`bootstrap_env_from_config`
+        which dispatches on extension (.yaml/.yml → YAML loader, .env
+        → dotenv loader) and injects values into ``os.environ`` with
+        ``setdefault`` so the precedence chain is identically visible
+        to pydantic-settings (via env-var aliases) AND to direct
+        ``os.getenv`` readers elsewhere in the codebase (e.g.
+        ``qatlas.client._common.resolve_token`` reading
+        ``QATLAS_TOKEN``).
         """
         if _skip_dotenv():
-            return cls(_env_file=None)
-
-        dotenv_path, _source = resolve_dotenv_path()
-        # Mirror the values into os.environ so that direct os.getenv
-        # readers (resolve_token, get_wiki_root, etc.) see the same
-        # values pydantic-settings just loaded into the model. Done
-        # with override=False so a real env var always wins, matching
-        # the documented precedence.
-        if dotenv_path is not None:
-            bootstrap_env(dotenv_path)
-        return cls(_env_file=dotenv_path)
+            return cls()
+        bootstrap_env_from_config()
+        # Don't pass _env_file= here: we've already injected values
+        # into os.environ above (covers both YAML and dotenv paths
+        # uniformly). pydantic-settings only knows how to parse .env,
+        # so passing a YAML path would silently fail.
+        return cls()
 
     def get_raw_root(self) -> Path:
         """Resolve RAW_DIR."""
