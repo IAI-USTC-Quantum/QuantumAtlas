@@ -1,6 +1,8 @@
 package config
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -434,6 +436,105 @@ func TestLoad_S3PartialConfigRejected(t *testing.T) {
 				t.Errorf("error %q does not mention any QATLAS_S3_* field name", err.Error())
 			}
 		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Deprecation warnings for unprefixed legacy aliases (Phase 1).
+//
+// The aliases still resolve via firstEnv() so existing .env files keep
+// working, but Load() now emits a slog.Warn per legacy var found. This
+// gives operators one minor cycle (v0.16.0 → v0.17.0) to migrate.
+// ---------------------------------------------------------------------------
+
+// captureSlog redirects the default slog logger to an in-memory buffer
+// for the duration of the calling test and returns the buffer. The
+// previous default is restored when the test ends.
+func captureSlog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	buf := &bytes.Buffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return buf
+}
+
+func TestLoad_DeprecatedAliasesEmitWarn(t *testing.T) {
+	clearStorageEnv(t)
+	clearS3Env(t)
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+
+	legacy := t.TempDir()
+	t.Setenv("WIKI_DIR", filepath.Join(legacy, "wiki"))
+	t.Setenv("PUBLIC_BASE_URL", "https://example.test")
+	t.Setenv("SERVER_HOST", "0.0.0.0")
+
+	buf := captureSlog(t)
+
+	if _, err := Load(""); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	out := buf.String()
+	for _, expected := range []string{"WIKI_DIR", "PUBLIC_BASE_URL", "SERVER_HOST"} {
+		if !strings.Contains(out, expected) {
+			t.Errorf("expected slog output to mention %q for deprecated alias; got:\n%s", expected, out)
+		}
+	}
+	if !strings.Contains(out, "without QATLAS_ prefix is deprecated") {
+		t.Errorf("expected deprecation message stem in slog output; got:\n%s", out)
+	}
+	for _, notExpected := range []string{"RAW_DIR", "DATA_DIR", "USER_HEADER"} {
+		// Match structured field (deprecated=NAME) so we don't false-positive
+		// on the canonical name appearing in the message body.
+		if strings.Contains(out, "deprecated="+notExpected) {
+			t.Errorf("unset alias %q must not produce a deprecation warn; got:\n%s", notExpected, out)
+		}
+	}
+}
+
+func TestLoad_DeprecatedAliasesQuietWhenAbsent(t *testing.T) {
+	clearStorageEnv(t)
+	clearS3Env(t)
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	for old := range deprecatedAliases() {
+		t.Setenv(old, "")
+	}
+
+	buf := captureSlog(t)
+
+	if _, err := Load(""); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if strings.Contains(buf.String(), "deprecated") {
+		t.Errorf("no aliases set, but Load emitted a deprecation warn:\n%s", buf.String())
+	}
+}
+
+func TestDeprecatedAliasesMapCoversAllReaders(t *testing.T) {
+	// Guard: every legacy alias we still read in Load() must appear in
+	// deprecatedAliases(). If a future refactor adds a new alias to
+	// firstEnv() without registering it here, operators silently lose
+	// the deprecation signal. Keep this list in sync with the
+	// firstEnv("...", "<alias>") calls in Load(). NEO4J_USER and
+	// SERVER_DEBUG intentionally excluded (see deprecatedAliases doc).
+	expected := []string{
+		"WIKI_DIR", "RAW_DIR", "DATA_DIR", "PB_DATA_DIR",
+		"SERVER_HOST", "SERVER_PORT",
+		"PUBLIC_BASE_URL", "USER_HEADER",
+	}
+	got := deprecatedAliases()
+	for _, name := range expected {
+		if _, ok := got[name]; !ok {
+			t.Errorf("deprecatedAliases() missing entry for %q", name)
+		}
+	}
+	if len(got) != len(expected) {
+		t.Errorf("deprecatedAliases() size = %d, want %d; check whether a new alias was added without registering",
+			len(got), len(expected))
 	}
 }
 

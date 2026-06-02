@@ -133,14 +133,7 @@ firstEnvIntDefault(0, "SOME_INT_VAR")               // 同上但 int
 | `QATLAS_SYSTEM_PAT` | — | 系统 PAT 明文（CI / ops 脚本用，bypass 浏览器 OAuth）。`internal/pat/system_pat.go` 启动时读 |
 | `QATLAS_SYSTEM_PAT_SCOPES` | — | CSV scope 列；不设时默认全 scope |
 
-### 2.7 LLM（当前未在 Go server 接入，留 placeholder）
-
-| Env | 用途 |
-|---|---|
-| `OPENAI_API_KEY` | server 端 LLM extraction；Go server 暂未接入，Python extractor 用 |
-| `ANTHROPIC_API_KEY` | 同上 |
-
-### 2.8 已弃用（设了**没有效果**，纯 noop）
+### 2.7 已弃用（设了**没有效果**，纯 noop）
 
 | 旧名 | 状态 |
 |---|---|
@@ -149,6 +142,10 @@ firstEnvIntDefault(0, "SOME_INT_VAR")               // 同上但 int
 | `QATLAS_POCKETBASE_URL` | 已删；server 自带 PocketBase |
 | `QATLAS_REQUIRE_RELEASE_TAG` | 已删；旧 FastAPI 的 release-tag 启动护栏 |
 | `CLI_TOKEN_*` | 已删；更早的 token 字段族 |
+| `QATLAS_SERVER_DEBUG` | 从未被读过的幽灵字段；v0.16.0 从 `.env.example` 清理 |
+| 无 `QATLAS_` 前缀的 alias（`WIKI_DIR` / `RAW_DIR` / `DATA_DIR` / `PB_DATA_DIR` / `SERVER_HOST` / `SERVER_PORT` / `PUBLIC_BASE_URL` / `USER_HEADER`） | **v0.17.0 移除**——v0.16.0 起 `Load()` 按字段 emit `slog.Warn`（journald 可见），给运维一个 minor 的迁移窗口 |
+
+> `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` 仍然有效，但只用于 client 侧 `qatlas extractor` 实验性子命令；qatlasd server 从未读过它们，所以不在 server 启动 env 范围里。
 
 ---
 

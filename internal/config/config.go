@@ -9,6 +9,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -237,7 +238,57 @@ func Load(dotenvPath string) (*Config, error) {
 		return nil, err
 	}
 
+	// Emit deprecation warnings for the legacy unprefixed env vars
+	// (WIKI_DIR / RAW_DIR / SERVER_HOST / ...). Functionally they still
+	// resolve via firstEnv() above so existing .env files keep working;
+	// the warning gives operators one minor cycle to migrate before the
+	// alias is removed in v0.17.0.
+	warnDeprecatedAliases()
+
 	return cfg, nil
+}
+
+// deprecatedAliases is the canonical map of legacy unprefixed env vars
+// to their QATLAS_-prefixed replacements. Kept exported via a function
+// for tests to assert against, not as a package-level var, so callers
+// can't accidentally mutate the table.
+//
+// NEO4J_USER deliberately stays out: both NEO4J_USERNAME and NEO4J_USER
+// are equally idiomatic across the Neo4j ecosystem (Python driver,
+// Go driver, neo4j-admin all accept either), so we treat them as peers
+// rather than deprecating one.
+//
+// SERVER_DEBUG is also absent because the codebase never read it — it
+// was a phantom alias referenced only in old .env.example comments.
+func deprecatedAliases() map[string]string {
+	return map[string]string{
+		"WIKI_DIR":        "QATLAS_WIKI_DIR",
+		"RAW_DIR":         "QATLAS_RAW_DIR",
+		"DATA_DIR":        "QATLAS_DATA_DIR",
+		"PB_DATA_DIR":     "QATLAS_PB_DATA_DIR",
+		"SERVER_HOST":     "QATLAS_SERVER_HOST",
+		"SERVER_PORT":     "QATLAS_SERVER_PORT",
+		"PUBLIC_BASE_URL": "QATLAS_SERVER_URL",
+		"USER_HEADER":     "QATLAS_USER_HEADER",
+	}
+}
+
+// warnDeprecatedAliases emits one slog.Warn per legacy unprefixed env
+// var found in the process environment. Deterministic order (sorted by
+// old name) so journald / log diffs are stable.
+func warnDeprecatedAliases() {
+	aliases := deprecatedAliases()
+	oldNames := make([]string, 0, len(aliases))
+	for old := range aliases {
+		oldNames = append(oldNames, old)
+	}
+	sort.Strings(oldNames)
+	for _, old := range oldNames {
+		if v := strings.TrimSpace(os.Getenv(old)); v != "" {
+			slog.Warn("env var without QATLAS_ prefix is deprecated, will be removed in v0.17.0",
+				"deprecated", old, "use_instead", aliases[old])
+		}
+	}
 }
 
 // S3Enabled reports whether the object-storage backend is configured.
