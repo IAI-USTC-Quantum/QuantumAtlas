@@ -291,10 +291,40 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
-          description: OK
+        "201":
+          description: claim granted (body is the claim record)
           schema:
             additionalProperties: true
+            type: object
+        "400":
+          description: invalid arxiv_id
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: not claimable (no PDF in catalog, or markdown already exists)
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: already claimed by someone else (body includes existing claim
+            details)
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: internal error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: catalog unavailable (Neo4j unreachable)
+          schema:
+            additionalProperties:
+              type: string
             type: object
       security:
       - BearerAuth: []
@@ -314,16 +344,29 @@ paths:
         name: claim_id
         required: true
         type: string
-      produces:
-      - application/json
       responses:
-        "200":
-          description: OK
+        "204":
+          description: claim released (empty body)
+        "400":
+          description: invalid arxiv_id
           schema:
-            additionalProperties: true
+            additionalProperties:
+              type: string
             type: object
-        "404":
-          description: Not Found
+        "409":
+          description: claim_id does not match the active claim
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: internal error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: catalog unavailable (Neo4j unreachable)
           schema:
             additionalProperties:
               type: string
