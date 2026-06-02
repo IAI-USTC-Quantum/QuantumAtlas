@@ -1,26 +1,28 @@
 name: Nightly production smoke
 
-# Hits the live qatlasd through both edges every night. Scope is
-# deliberately narrow — only things that REAL deployment can verify
-# (auth-aware health tier wiring, system PAT end-to-end, SPA + Caddy
-# stack). Everything else is covered by Go / pytest unit suites that
-# run on every push.
+# Hits the live qatlasd through every configured edge every night.
+# Scope is deliberately narrow — only things that REAL deployment can
+# verify (auth-aware health tier wiring, system PAT end-to-end, SPA +
+# Caddy stack). Everything else is covered by Go / pytest unit suites
+# that run on every push.
 #
-# Targets are NEVER hardcoded in this workflow. The list of edges +
-# their per-target system-PAT env vars lives in the
-# QATLAS_SERVER_TARGETS secret (so flipping an edge, adding a new
-# region, or testing a private staging URL doesn't require touching
-# committed code — and prod URLs / topology don't leak to anyone
-# who can read this YAML).
+# This workflow has exactly ONE knob: the QATLAS_SERVER_TARGETS repo
+# secret. URL list, per-target tokens, insecure-TLS flags, even how
+# many edges exist — all of it lives inside that one encrypted blob.
+# Adding / removing / rotating an edge or its PAT = edit one secret,
+# never touch this YAML. Prod URLs / topology / tokens never leak.
 #
 # Format: comma- or newline-separated entries, each `URL[|FLAG]*`.
-# Flags: `insecure` (TLS self-signed), `token-env=NAME` (per-target
-# PAT plaintext from the matching env var). See _parse_targets in
-# tests/integration/test_production_smoke.py for the grammar.
+# Flags:
+#   * `insecure`             — disable TLS verification (Caddy `tls internal`).
+#   * `token=PLAINTEXT`      — per-target system PAT bearer (CI default).
+#   * `token-env=VAR_NAME`   — pull bearer from $VAR_NAME instead (local dev).
+# See _parse_targets in tests/integration/test_production_smoke.py.
 #
 # Example (paste verbatim into the secret value, NOT into this YAML):
-#   https://quantum-atlas.ai|token-env=QATLAS_SYSTEM_PAT_RACKNERD
-#   https://47.102.36.175|insecure|token-env=QATLAS_SYSTEM_PAT_ALIBABA
+#   https://quantum-atlas.ai|token=qat_xxxxxxxxxxxxxxxxxxxx
+#   https://example.com|token=qat_yyyyyyyyyyyyyyyyyyyyyyyy
+#   https://192.0.2.10|insecure|token=qat_zzzzzzzzzzzzzzzzz
 #
 # Failure to set the secret = the suite collects 0 tests (the fixture
 # self-skips) and we fail the job below with a clear hint, NOT a
@@ -53,35 +55,27 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev --frozen
 
-      - name: Validate required secrets
-        # Fail loudly + immediately if the operator forgot to set
-        # the secrets. Without this guard, the test suite would
-        # self-skip every parametrisation and the job would appear
-        # green — exactly the silent-misconfig failure mode the
-        # nightly is supposed to catch.
+      - name: Validate required secret
+        # Fail loudly + immediately if the operator forgot to set the
+        # secret. Without this guard, the test suite would self-skip
+        # every parametrisation and the job would appear green —
+        # exactly the silent-misconfig failure mode the nightly is
+        # supposed to catch.
         env:
           QATLAS_SERVER_TARGETS: ${{ secrets.QATLAS_SERVER_TARGETS }}
-          QATLAS_SYSTEM_PAT_RACKNERD: ${{ secrets.QATLAS_SYSTEM_PAT_RACKNERD }}
-          QATLAS_SYSTEM_PAT_ALIBABA: ${{ secrets.QATLAS_SYSTEM_PAT_ALIBABA }}
         run: |
           set -e
-          missing=()
-          [ -n "$QATLAS_SERVER_TARGETS" ]      || missing+=(QATLAS_SERVER_TARGETS)
-          [ -n "$QATLAS_SYSTEM_PAT_RACKNERD" ] || missing+=(QATLAS_SYSTEM_PAT_RACKNERD)
-          [ -n "$QATLAS_SYSTEM_PAT_ALIBABA" ]  || missing+=(QATLAS_SYSTEM_PAT_ALIBABA)
-          if [ ${#missing[@]} -gt 0 ]; then
-            echo "::error::missing required nightly secret(s): ${missing[*]}"
-            echo "Set them at https://github.com/${{ github.repository }}/settings/secrets/actions"
+          if [ -z "$QATLAS_SERVER_TARGETS" ]; then
+            echo "::error::missing required nightly secret: QATLAS_SERVER_TARGETS"
+            echo "Set it at https://github.com/${{ github.repository }}/settings/secrets/actions"
             echo "See .github/workflows/nightly.yml header for the format."
             exit 1
           fi
-          echo "all 3 required secrets are set"
+          echo "QATLAS_SERVER_TARGETS is set"
 
-      - name: Run production smoke against both edges
+      - name: Run production smoke against every configured edge
         env:
           QATLAS_SERVER_TARGETS: ${{ secrets.QATLAS_SERVER_TARGETS }}
-          QATLAS_SYSTEM_PAT_RACKNERD: ${{ secrets.QATLAS_SYSTEM_PAT_RACKNERD }}
-          QATLAS_SYSTEM_PAT_ALIBABA: ${{ secrets.QATLAS_SYSTEM_PAT_ALIBABA }}
         run: uv run pytest -rs -m "e2e and not legacy"
 
 

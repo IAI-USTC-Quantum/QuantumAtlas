@@ -28,8 +28,8 @@
 #     agent 全程只见两把 *scoped* key：sink 的 RW（本脚本输出）+ edge 的只读
 #     （edge 现有 svcacct 继承本脚本给父用户挂的只读 policy），**从不见 root**。
 #
-# 用法（运维在能直连 RustFS 的机器上跑；endpoint 走 mesh 即可）：
-#   export RUSTFS_ENDPOINT=http://10.144.18.10:9000
+# 用法（运维在能直连 RustFS 的机器上跑）：
+#   export RUSTFS_ENDPOINT=http://<rustfs-host>:9000        # mesh/内网/公网均可
 #   export RUSTFS_ROOT_ACCESS_KEY=<root_ak>          # = compose 里的 RUSTFS_ACCESS_KEY
 #   export RUSTFS_ROOT_SECRET_KEY=<root_sk>          # = compose 里的 RUSTFS_SECRET_KEY
 #   bash scripts/rustfs_notify_bootstrap.sh
@@ -55,7 +55,7 @@
 
 set -uo pipefail
 
-: "${RUSTFS_ENDPOINT:?need RUSTFS_ENDPOINT (e.g. http://10.144.18.10:9000)}"
+: "${RUSTFS_ENDPOINT:?need RUSTFS_ENDPOINT (e.g. http://<rustfs-host>:9000)}"
 : "${RUSTFS_ROOT_ACCESS_KEY:?need RUSTFS_ROOT_ACCESS_KEY (= compose RUSTFS_ACCESS_KEY)}"
 : "${RUSTFS_ROOT_SECRET_KEY:?need RUSTFS_ROOT_SECRET_KEY (= compose RUSTFS_SECRET_KEY)}"
 

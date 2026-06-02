@@ -43,17 +43,20 @@ newline-separated ``URL`` / ``URL|insecure`` entries; see
 ``_parse_targets`` for the full grammar). Without it, every test
 self-skips.
 
-Per-edge system PAT is read from ``QATLAS_SYSTEM_PAT_<EDGE>`` via the
-``token-env=NAME`` flag on each target spec. Each edge has its own
-``QATLAS_SYSTEM_PAT`` in its .env, so per-edge secrets ARE required
-(they are not interchangeable).
+Per-target system PAT is carried inline inside the same secret via the
+``token=PLAINTEXT`` flag on each target spec. The whole secret value
+is encrypted at rest in GitHub and substring-masked in Actions logs,
+so co-locating the bearer with its URL is no more exposed than putting
+it in a separate secret — and it kills the need for per-edge YAML
+plumbing entirely. For local dev you can still use
+``token-env=VAR_NAME`` to source the bearer from your shell env.
 
-Token gotcha: ``QATLAS_SYSTEM_PAT`` is the server's env var name on the
-edge box (loaded by ``pat.LoadSystemPAT``); the GitHub Actions secret
-mirrors per-edge as ``QATLAS_SYSTEM_PAT_<EDGE>`` (one per deployment
-target). The test code just receives the resolved plaintext via the
-``token-env=`` spec — neither end of the wire knows about the
-"system PAT" name; it's just a long-lived bearer.
+The bearer itself is whatever each edge exposes as
+``QATLAS_SYSTEM_PAT`` in its own ``.env`` (loaded server-side by
+``pat.LoadSystemPAT``); the test code just receives the resolved
+plaintext via the ``token=`` / ``token-env=`` spec — neither end of
+the wire knows about the "system PAT" name, it's just a long-lived
+bearer.
 """
 
 from __future__ import annotations
@@ -95,7 +98,12 @@ def _parse_targets() -> list[Target]:
     comma- or newline-separated at the top level. Flags:
 
       * ``insecure`` — disable TLS verification (Caddy ``tls internal``).
-      * ``token-env=VAR_NAME`` — pull per-target bearer from ``$VAR_NAME``.
+      * ``token=PLAINTEXT`` — per-target bearer inline (recommended for
+        CI: the secret is encrypted at rest and substring-masked in logs).
+      * ``token-env=VAR_NAME`` — pull bearer from ``$VAR_NAME`` instead
+        (handy for local dev so you don't paste plaintext into a string).
+
+    ``token=`` wins if both are given on the same entry.
 
     Falls back to legacy ``QATLAS_SERVER_URL`` + ``QATLAS_INSECURE``
     + ``QATLAS_TOKEN`` when ``QATLAS_SERVER_TARGETS`` is unset.
@@ -115,13 +123,20 @@ def _parse_targets() -> list[Target]:
                     f = f.strip()
                     if f.lower() == "insecure":
                         insecure = True
+                    elif f.startswith("token="):
+                        token = f[len("token=") :].strip()
+                        if not token:
+                            raise ValueError(
+                                f"token= requires a non-empty value: {entry!r}"
+                            )
                     elif f.startswith("token-env="):
-                        var_name = f[len("token-env="):].strip()
+                        var_name = f[len("token-env=") :].strip()
                         if not var_name:
                             raise ValueError(
                                 f"token-env= requires a variable name: {entry!r}"
                             )
-                        token = os.environ.get(var_name, "").strip()
+                        if not token:
+                            token = os.environ.get(var_name, "").strip()
             else:
                 url = entry
             url = url.strip().rstrip("/")
