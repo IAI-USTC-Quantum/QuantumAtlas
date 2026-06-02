@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.15.0a0 (2026-06-02)
+
+### BREAKING CHANGE
+
+- Endpoints GET /api/papers/{id}/markdown, GET /api/papers/{id}/resources, /api/shares/*, /share/{token}/* are removed. PAT scopes shares:read and shares:write are no longer issued and existing tokens with those scopes silently lose access (re-mint needed). qatlas markdown CLI command is gone.
+
+### Feat
+
+- **mineru**: queue mode uses MinerU batch API + daily-limit back-off
+- **mineru**: add Python batch submission API (submit_url_batch / get_batch)
+- **mineru**: add Go batch submission API (SubmitURLBatch / GetBatch)
+- **mineru**: classify API errors (retryable / fatal / daily-limit)
+
+### Refactor
+
+- drop shares + server-side mineru + outbound asset endpoints (OSS-only)
+
 ## v0.14.1 (2026-06-02)
 
 ### Fix
