@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as PatRouteImport } from './routes/pat'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as LangRouteImport } from './routes/$lang'
 import { Route as IndexRouteImport } from './routes/index'
@@ -21,6 +22,11 @@ import { Route as LangWikiSearchRouteImport } from './routes/$lang.wiki.search'
 import { Route as LangWikiPageSplatRouteImport } from './routes/$lang.wiki.page.$'
 import { Route as LangGraphNodeSplatRouteImport } from './routes/$lang.graph.node.$'
 
+const PatRoute = PatRouteImport.update({
+  id: '/pat',
+  path: '/pat',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
@@ -81,6 +87,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/$lang': typeof LangRouteWithChildren
   '/login': typeof LoginRoute
+  '/pat': typeof PatRoute
   '/$lang/pat': typeof LangPatRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/$lang/': typeof LangIndexRoute
@@ -93,6 +100,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/pat': typeof PatRoute
   '/$lang/pat': typeof LangPatRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/$lang': typeof LangIndexRoute
@@ -107,6 +115,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/$lang': typeof LangRouteWithChildren
   '/login': typeof LoginRoute
+  '/pat': typeof PatRoute
   '/$lang/pat': typeof LangPatRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/$lang/': typeof LangIndexRoute
@@ -122,6 +131,7 @@ export interface FileRouteTypes {
     | '/'
     | '/$lang'
     | '/login'
+    | '/pat'
     | '/$lang/pat'
     | '/auth/callback'
     | '/$lang/'
@@ -134,6 +144,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/login'
+    | '/pat'
     | '/$lang/pat'
     | '/auth/callback'
     | '/$lang'
@@ -147,6 +158,7 @@ export interface FileRouteTypes {
     | '/'
     | '/$lang'
     | '/login'
+    | '/pat'
     | '/$lang/pat'
     | '/auth/callback'
     | '/$lang/'
@@ -161,11 +173,19 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   LangRoute: typeof LangRouteWithChildren
   LoginRoute: typeof LoginRoute
+  PatRoute: typeof PatRoute
   AuthCallbackRoute: typeof AuthCallbackRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/pat': {
+      id: '/pat'
+      path: '/pat'
+      fullPath: '/pat'
+      preLoaderRoute: typeof PatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/login': {
       id: '/login'
       path: '/login'
@@ -272,6 +292,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   LangRoute: LangRouteWithChildren,
   LoginRoute: LoginRoute,
+  PatRoute: PatRoute,
   AuthCallbackRoute: AuthCallbackRoute,
 }
 export const routeTree = rootRouteImport

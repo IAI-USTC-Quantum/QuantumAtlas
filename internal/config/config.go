@@ -80,6 +80,14 @@ type Config struct {
 	// GitHub login whitelist auto-promoted to admin on first OAuth login.
 	AdminGitHubLogins []string
 
+	// GitHub login allowlist gating OAuth sign-in. Only accounts whose
+	// GitHub login appears here (or in AdminGitHubLogins) may obtain an
+	// authenticated session. Parsed from QATLAS_ALLOWED_GITHUB_LOGINS.
+	// Fail-closed: when this AND AdminGitHubLogins are both empty, NOBODY
+	// may sign in (see IsGitHubLoginAllowed). The PocketBase superuser
+	// (email+password at /_/) is unaffected and is the recovery path.
+	AllowedGitHubLogins []string
+
 	// Object storage (RustFS / S3-compatible) for the RAW asset bucket.
 	// When S3Endpoint is empty the server falls back to RawDir on the
 	// local filesystem. When set, all four required fields must be
@@ -227,6 +235,17 @@ func Load(dotenvPath string) (*Config, error) {
 			login = strings.TrimSpace(login)
 			if login != "" {
 				cfg.AdminGitHubLogins = append(cfg.AdminGitHubLogins, login)
+			}
+		}
+	}
+
+	// QATLAS_ALLOWED_GITHUB_LOGINS is a comma-separated GitHub login
+	// allowlist gating OAuth sign-in. See Config.IsGitHubLoginAllowed.
+	if raw := firstEnv("QATLAS_ALLOWED_GITHUB_LOGINS"); raw != "" {
+		for _, login := range strings.Split(raw, ",") {
+			login = strings.TrimSpace(login)
+			if login != "" {
+				cfg.AllowedGitHubLogins = append(cfg.AllowedGitHubLogins, login)
 			}
 		}
 	}
@@ -430,6 +449,37 @@ func defaultIfEmpty(v, def string) string {
 // indistinguishable.
 func defaultWikiDir() string {
 	return filepath.Join("..", "QuantumAtlas-Wiki")
+}
+
+// IsGitHubLoginAllowed reports whether the given GitHub login (username)
+// is permitted to complete OAuth sign-in.
+//
+// Policy is fail-closed: a login is allowed iff it appears in either
+// AllowedGitHubLogins or AdminGitHubLogins. When BOTH lists are empty the
+// allowlist is unconfigured and this returns false for EVERYONE — a
+// deliberate locked-by-default posture so an operator who forgets to set
+// QATLAS_ALLOWED_GITHUB_LOGINS gets nobody-can-sign-in rather than the
+// whole internet. The PocketBase superuser (the _superusers collection,
+// email+password at /_/) is never gated by this and remains the recovery
+// path to fix a misconfigured allowlist.
+//
+// Comparison is case-insensitive because GitHub logins are.
+func (c *Config) IsGitHubLoginAllowed(login string) bool {
+	login = strings.ToLower(strings.TrimSpace(login))
+	if login == "" {
+		return false
+	}
+	for _, l := range c.AllowedGitHubLogins {
+		if strings.ToLower(strings.TrimSpace(l)) == login {
+			return true
+		}
+	}
+	for _, l := range c.AdminGitHubLogins {
+		if strings.ToLower(strings.TrimSpace(l)) == login {
+			return true
+		}
+	}
+	return false
 }
 
 // defaultXDGSubdir returns the XDG_DATA_HOME-rooted default location

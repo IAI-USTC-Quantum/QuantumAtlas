@@ -79,7 +79,7 @@ func TestUploadPDFHandler_ConcurrentDifferentBytes(t *testing.T) {
 			defer wg.Done()
 			<-gate
 
-			req := buildUploadPDFRequest(t, arxivID, pdfBytes, nil)
+			req := buildUploadPDFRequest(t, arxivID, pdfBytes)
 			rec := httptest.NewRecorder()
 			re := &core.RequestEvent{}
 			re.Request = req
@@ -190,7 +190,7 @@ func TestUploadPDFHandler_ConcurrentIdenticalBytes(t *testing.T) {
 			defer wg.Done()
 			<-gate
 
-			req := buildUploadPDFRequest(t, arxivID, pdfBytes, nil)
+			req := buildUploadPDFRequest(t, arxivID, pdfBytes)
 			rec := httptest.NewRecorder()
 			re := &core.RequestEvent{}
 			re.Request = req
@@ -249,7 +249,7 @@ func TestUploadPDFHandler_ConcurrentIdenticalBytes(t *testing.T) {
 // targeting /api/papers/{arxiv_id}/upload-pdf. The arxiv_id is only
 // embedded in the URL for parity with production; the handler takes it
 // as a separate parameter in the test call.
-func buildUploadPDFRequest(t *testing.T, arxivID string, pdfBytes []byte, metaBytes []byte) *http.Request {
+func buildUploadPDFRequest(t *testing.T, arxivID string, pdfBytes []byte) *http.Request {
 	t.Helper()
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
@@ -263,19 +263,6 @@ func buildUploadPDFRequest(t *testing.T, arxivID string, pdfBytes []byte, metaBy
 	}
 	if _, err := pw.Write(pdfBytes); err != nil {
 		t.Fatalf("write pdf: %v", err)
-	}
-
-	if metaBytes != nil {
-		mhdr := textproto.MIMEHeader{}
-		mhdr.Set("Content-Disposition", `form-data; name="metadata"; filename="meta.json"`)
-		mhdr.Set("Content-Type", "application/json")
-		mp, err := mw.CreatePart(mhdr)
-		if err != nil {
-			t.Fatalf("CreatePart metadata: %v", err)
-		}
-		if _, err := mp.Write(metaBytes); err != nil {
-			t.Fatalf("write metadata: %v", err)
-		}
 	}
 
 	if err := mw.Close(); err != nil {

@@ -14,6 +14,7 @@ import (
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 
+	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/auth"
 )
@@ -44,6 +45,13 @@ func Register(app core.App, cfg *config.Config) {
 	// so it only fires for end-user OAuth (the superusers collection
 	// rejects OAuth2 sign-up unconditionally, but we belt-and-brace).
 	app.OnRecordAuthWithOAuth2Request(UsersCollection).BindFunc(func(e *core.RecordAuthWithOAuth2RequestEvent) error {
+		// Gate FIRST: a non-allowlisted GitHub account must be rejected
+		// before any users record is minted or session token issued.
+		// Returning an error here aborts the OAuth2 request so a blocked
+		// account leaves no trace and gets a clean 403.
+		if err := enforceLoginAllowlist(e, cfg); err != nil {
+			return err
+		}
 		if err := syncStableUserID(e); err != nil {
 			// Logged-not-fatal: if our id injection fails (e.g. PB has
 			// already pre-populated CreateData[id] differently), let
@@ -54,6 +62,35 @@ func Register(app core.App, cfg *config.Config) {
 		}
 		return e.Next()
 	})
+}
+
+// enforceLoginAllowlist rejects OAuth sign-in for any GitHub account whose
+// login is not on the configured allowlist (Config.IsGitHubLoginAllowed).
+//
+// This is the membership gate that turns the read-locked knowledge base
+// into a members-only one: scopeGuard on every data endpoint makes an
+// unauthenticated caller get 401, and this hook ensures only vetted GitHub
+// accounts can obtain an authenticated session in the first place.
+//
+// Fail-closed: an empty allowlist blocks everyone (see IsGitHubLoginAllowed).
+// A nil OAuth2User (no identity to vet) yields an empty login, which is also
+// rejected — we never let an unidentified caller through.
+func enforceLoginAllowlist(e *core.RecordAuthWithOAuth2RequestEvent, cfg *config.Config) error {
+	if e == nil {
+		return nil
+	}
+	login := ""
+	if e.OAuth2User != nil {
+		login = e.OAuth2User.Username // GitHub provider maps `login` here
+	}
+	if cfg.IsGitHubLoginAllowed(login) {
+		return nil
+	}
+	slog.Warn("oauth: blocked sign-in for non-allowlisted github account",
+		"login", login,
+		"provider", e.ProviderName,
+	)
+	return apis.NewForbiddenError("This GitHub account is not authorized to sign in to QuantumAtlas.", nil)
 }
 
 // syncGitHubProvider makes the users collection's OAuth2 settings reflect

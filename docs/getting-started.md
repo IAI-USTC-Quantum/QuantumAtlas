@@ -72,7 +72,7 @@
 
     ```bash
     # 上传 PDF + 元数据 JSON
-    qatlas upload pdf 2501.00010v1 --pdf paper.pdf --metadata meta.json
+    qatlas upload pdf 2501.00010v1 --pdf paper.pdf
 
     # 用本地 MinerU 配额解析后推回云端
     export MINERU_API_TOKEN=<your-token>

@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.14.0 (2026-06-02)
+
+### BREAKING CHANGE
+
+- POST /api/papers/{id}/upload-markdown is removed
+without a transition period; calls return 404. CLI subcommand
+'qatlas upload markdown' is removed and prints an explicit migration
+error pointing at 'qatlas upload mineru --zip ...'. Client and server
+binaries must be upgraded together — the new
+X-Qatlas-Server-Version header lets older clients hard-fail clearly
+instead of dying at a 404 mid-upload.
+
+### Feat
+
+- **papers**: replace upload-markdown with upload-mineru (zip bundle, no image loss)
+
 ## v0.13.0 (2026-06-02)
 
 ### Feat

@@ -436,3 +436,33 @@ func TestLoad_S3PartialConfigRejected(t *testing.T) {
 		})
 	}
 }
+
+func TestIsGitHubLoginAllowed_FailClosedWhenEmpty(t *testing.T) {
+	c := &Config{} // both lists empty
+	if c.IsGitHubLoginAllowed("octocat") {
+		t.Error("empty allowlist must reject everyone (fail-closed)")
+	}
+	if c.IsGitHubLoginAllowed("") {
+		t.Error("empty login must be rejected")
+	}
+}
+
+func TestIsGitHubLoginAllowed_AllowedAndAdminUnion(t *testing.T) {
+	c := &Config{
+		AllowedGitHubLogins: []string{"Alice", " bob "},
+		AdminGitHubLogins:   []string{"carol"},
+	}
+	cases := map[string]bool{
+		"alice":   true, // case-insensitive
+		"ALICE":   true,
+		"bob":     true,  // trimmed entry
+		"carol":   true,  // admins implicitly allowed
+		"mallory": false, // not on any list
+		"":        false,
+	}
+	for login, want := range cases {
+		if got := c.IsGitHubLoginAllowed(login); got != want {
+			t.Errorf("IsGitHubLoginAllowed(%q) = %v, want %v", login, got, want)
+		}
+	}
+}

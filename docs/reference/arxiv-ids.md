@@ -45,7 +45,7 @@ server 端把 arxiv_id 拆成 prefix + filename：
 | `json` | `json/<prefix>/<id>v<n>.json` | arXiv 元数据（题目 / 作者 / abstract 等）|
 | `images/...` | `images/<prefix>/<id>v<n>/...` | MinerU 解析出的图片 |
 
-`qatlas upload pdf` 接受 `--pdf` + `--metadata` 两个参数，分别落到 `pdf/` 和 `json/`。
+`qatlas upload pdf --pdf` 把 PDF 字节落到 `pdf/`。论文元数据（题目 / 作者 / 摘要 / 引用）走 OpenAlex 上游同步进 Neo4j catalog，不再通过 upload 端点写 `json/`（v0.7.0 起；该前缀仅保留兼容历史对象的读路径）。
 
 ## 规范化函数
 
