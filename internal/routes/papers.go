@@ -231,20 +231,25 @@ func needsMineruHandler(re *core.RequestEvent, catalog *papers.Store) error {
 // without other contributors stepping on the same work. The response
 // is a Claim record carrying:
 //
-//   - pdf_url: the canonical arxiv.org versioned URL the contributor
-//     must fetch the PDF from. The OSS server never re-distributes
-//     PDF bytes — this is the only sanctioned source. arxiv URLs with
-//     an explicit version suffix are immutable (a published v1 keeps
-//     the same bytes forever even after v2 supersedes it), so the
-//     hash check on upload-mineru below is well-defined.
+//   - pdf_url: a short-lived public URL the contributor's MinerU job
+//     pulls the PDF bytes from. **Preferred: RustFS presigned GET URL**
+//     (24h TTL, served via the edge's QATLAS_S3_PUBLIC_ENDPOINT) — this
+//     is the canonical bytes our catalog references, with the sha256
+//     match guaranteed. **Fallback: arxiv.org versioned URL** when the
+//     object store can't presign (LocalStore dev backend, S3 transient
+//     error). The arxiv fallback only works for new-style IDs and for
+//     old-style IDs we still have the subject prefix for — pre-2007
+//     papers stored as bare IDs (catalog ingest dropped the prefix)
+//     fall through entirely if presign is unavailable; that's
+//     acceptable because production always has S3 backend.
 //   - pdf_sha256: the sha256 of the PDF currently stored in the
 //     catalog's RustFS, read from the object's user metadata. The
-//     contributor SHOULD verify the bytes they fetched from arxiv
-//     match this hash before running MinerU; on upload-mineru the
-//     server re-checks this hash and refuses 400 on mismatch. May
-//     be empty for legacy objects (uploaded before sidecar metadata
-//     persistence) — in that case verification is skipped and the
-//     contributor's bytes are trusted as a backfill.
+//     contributor SHOULD verify the bytes they fetched match this hash
+//     before running MinerU; on upload-mineru the server re-checks
+//     this hash and refuses 400 on mismatch. May be empty for legacy
+//     objects (uploaded before sidecar metadata persistence) — in that
+//     case verification is skipped and the contributor's bytes are
+//     trusted as a backfill.
 //
 // The lease itself is granted atomically by the catalog (single
 // MERGE/SET that only matches when the paper has a PDF, lacks
@@ -263,7 +268,7 @@ func mineruClaimHandler(re *core.RequestEvent, cfg *config.Config, store objstor
 		requester = re.Request.Header.Get(cfg.UserHeader)
 	}
 
-	pdfURL := papers.ArxivVersionedURL(canonical)
+	pdfURL := claimPDFURL(ctx, store, canonical)
 	pdfSha256 := lookupStoredPDFSha256(ctx, store, canonical)
 
 	claim, err := catalog.Claim(ctx, papers.CreateOptions{
@@ -306,6 +311,43 @@ func mineruClaimHandler(re *core.RequestEvent, cfg *config.Config, store objstor
 		"pdf_sha256_known", pdfSha256 != "",
 	)
 	return re.JSON(http.StatusCreated, claim)
+}
+
+// claimPDFTTL is how long the PDF presigned URL stays valid. 24h gives
+// MinerU plenty of headroom (typical batch takes minutes to a few hours
+// even under load) without making the URL useful as a generic
+// distribution channel — by the time anyone could leak and weaponise
+// it, it's already expired.
+const claimPDFTTL = 24 * time.Hour
+
+// claimPDFURL returns the URL the contributor's MinerU job will fetch
+// the PDF from. Preferred: short-lived RustFS presigned GET pointing at
+// our canonical bytes. Fallback: arxiv.org versioned URL — only useful
+// for IDs that arxiv itself can resolve (new-style + old-style with
+// subject prefix; bare old-style "9508027v3" would 404 on arxiv).
+//
+// LocalStore (dev backend) reports PresignGet supported=false and we
+// fall through to arxiv; tests with httptest are fine because they
+// stub the MinerU side, not the URL fetch itself.
+func claimPDFURL(ctx context.Context, store objstore.Store, canonical string) string {
+	pdfKey := paperassets.AssetKey("pdf", canonical)
+	// Quick existence check so we don't presign for a missing object.
+	// PresignGet itself doesn't validate the key exists at S3 — it just
+	// signs the URL, which would 403 on use; we'd rather fail-fast at
+	// claim time with the catalog's claim_failure path than hand back a
+	// URL that breaks 10 seconds later inside MinerU.
+	if _, exists, err := store.Stat(ctx, pdfKey); err == nil && !exists {
+		// Try the candidate-stem fallback (e.g. PDF stored under a
+		// non-canonical key) so we still presign when the resolver
+		// finds the bytes elsewhere.
+		if resolved := paperassets.ResolveAssetsViaStore(ctx, store, canonical); resolved.PDFPath != "" {
+			pdfKey = resolved.PDFPath
+		}
+	}
+	if url, ok, err := store.PresignGet(ctx, pdfKey, claimPDFTTL); err == nil && ok && url != "" {
+		return url
+	}
+	return papers.ArxivVersionedURL(canonical)
 }
 
 // lookupStoredPDFSha256 returns the sha256 (lowercase hex) of the

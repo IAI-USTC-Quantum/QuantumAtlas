@@ -21,6 +21,15 @@ var (
 	shardedKeyRE    = regexp.MustCompile(`^\d{4}`)
 	newStyleArxivRE = regexp.MustCompile(`^\d{4}\.\d{4,6}v\d+$`)
 	oldStyleArxivRE = regexp.MustCompile(`^[a-z][a-z\-]*(?:\.[A-Z]{2})?/\d{7}v\d+$`)
+	// oldStyleBareRE matches an old-style identifier that already has
+	// the subject prefix stripped — the form the catalog actually
+	// stores ("0207065v3"). Accepted by ValidateUploadID because:
+	//   (a) catalog stores bare form (subject prefix is lost at ingest),
+	//   (b) RustFS object key is bare form too (StorageKey strips),
+	// so refusing to honour mineru-claim for bare form leaves the queue
+	// permanently stuck on every pre-2007 paper. Equivalent semantically
+	// to the prefixed form for our internal routing.
+	oldStyleBareRE = regexp.MustCompile(`^\d{7}v\d+$`)
 )
 
 // Asset upload size caps. Wire equivalents of atlas/server/routers/api.py:
@@ -301,11 +310,27 @@ func globMatches(dir, pattern string) []string {
 // upload endpoints — version suffix is mandatory so the filename on
 // disk unambiguously identifies the revision.
 //
+// Three forms are accepted:
+//
+//   - new-style: "2401.12345v1"        (post-2007 papers)
+//   - old-style canonical: "quant-ph/9508027v1"
+//   - old-style bare: "9508027v1"      (catalog form — subject prefix
+//     was stripped at catalog ingest, so refusing this leaves every
+//     pre-2007 paper permanently uncliamable via the needs-mineru queue)
+//
+// All three normalize to the same downstream artifacts: StorageKey
+// strips subject prefixes regardless, and per-kind RustFS bucket keys
+// use the bare form ("0207/0207065v3.pdf"). The arxiv.org fallback URL
+// for old-style bare IDs is broken (arxiv requires the subject prefix),
+// so callers should prefer RustFS presign URLs over arxiv URLs.
+//
 // Returns ("", false) for invalid input; the caller is responsible for
 // emitting the appropriate 400 response.
 func ValidateUploadID(arxivID string) (string, bool) {
 	canonical := NormalizeIdentifier(arxivID)
-	if newStyleArxivRE.MatchString(canonical) || oldStyleArxivRE.MatchString(canonical) {
+	if newStyleArxivRE.MatchString(canonical) ||
+		oldStyleArxivRE.MatchString(canonical) ||
+		oldStyleBareRE.MatchString(canonical) {
 		return canonical, true
 	}
 	return "", false
