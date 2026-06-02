@@ -1,0 +1,58 @@
+# Build context exclusions — keep the image build pure (just web/ + Go
+# sources) and skip everything that would either bloat the build
+# context, leak local data, or break the deterministic build.
+
+# Git history / hooks — never useful inside the image and bigger than
+# you'd think.
+.git
+.github
+
+# Editor / IDE state.
+.idea
+.vscode
+.cursor
+*.swp
+*.swo
+
+# Dependency / build caches that the multi-stage build re-creates.
+node_modules
+web/node_modules
+web/dist
+build
+.pixi
+
+# Runtime data the dev / prod machine has but the image must not capture.
+pb_data
+raw
+data
+wiki
+
+# Local secrets / per-machine config. Never bake these into an image.
+# .env.example is whitelisted because the image references it as the
+# canonical reference template (and `qatlasd config init` embeds a
+# trimmed version, which lives in cmd/qatlasd/templates/).
+.env
+.env.*
+!.env.example
+
+# Documentation isn't needed at runtime — saves a few MB in the build
+# context. (README.md is whitelisted because some tooling looks for it.)
+docs
+*.md
+!README.md
+
+# Python tooling cruft.
+.pytest_cache
+__pycache__
+*.egg-info
+*.pyc
+.mypy_cache
+.ruff_cache
+
+# Test reports / coverage.
+coverage.out
+*.coverprofile
+
+# OS junk.
+.DS_Store
+Thumbs.db

@@ -1,0 +1,160 @@
+# ─────────────────────────────────────────────────────────────────────────
+# QuantumAtlas full-stack docker-compose
+#
+# Three services that, between them, give you a working QuantumAtlas
+# install on one host:
+#
+#   * rustfs   — S3-compatible object storage for PDF / MD / images.
+#                Internal-only (9000), admin console on 127.0.0.1:9001.
+#   * neo4j    — graph database for the algorithm/primitive/paper KG.
+#                Browser UI on 127.0.0.1:7474, Bolt on internal 7687.
+#   * qatlasd  — the Go server. Listens on 127.0.0.1:4200; put a TLS
+#                reverse proxy in front of it for the public hostname
+#                (see docs/deployment/reverse-proxy.md or add a Caddy
+#                service block below).
+#
+# This file is intended for single-host evaluation / lab / personal
+# setups. For production multi-edge use the systemd flavour
+# (qatlasd installed via install-qatlasd.sh + service install) plus an
+# external rustfs / neo4j — see docs/deployment/docker.md for the full
+# decision matrix.
+#
+# Usage:
+#   cp .env.docker.example .env
+#   $EDITOR .env                    # fill secrets + GitHub OAuth
+#   mkdir -p data/{raw,pb_data,wiki,rustfs,neo4j/data,neo4j/logs}
+#   chown -R 65532:65532 data/{raw,pb_data,wiki}    # distroless nonroot UID
+#   docker compose up -d
+#   docker compose logs -f qatlasd  # watch startup
+#   curl http://localhost:4200/api/health
+#
+# After rustfs comes up you'll need to create a service account + the
+# three buckets (qatlas-pdf, qatlas-md, qatlas-images) before qatlasd
+# can write to them. The docs/deployment/docker.md page walks through
+# the mc commands; the included scripts/rustfs_bootstrap.sh also works
+# (point it at http://localhost:9000).
+# ─────────────────────────────────────────────────────────────────────────
+
+services:
+  rustfs:
+    image: docker.io/rustfs/rustfs:latest
+    container_name: qatlas-rustfs
+    restart: unless-stopped
+    environment:
+      # Root credentials seed the rustfs admin user — used by mc / the
+      # bootstrap script to mint per-service svcaccts. Real workloads
+      # MUST then use the svcacct keys (QATLAS_S3_ACCESS_KEY_ID below),
+      # not these root creds.
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ROOT_ACCESS_KEY:?RUSTFS_ROOT_ACCESS_KEY required in .env}
+      RUSTFS_SECRET_KEY: ${RUSTFS_ROOT_SECRET_KEY:?RUSTFS_ROOT_SECRET_KEY required in .env}
+    volumes:
+      - ./data/rustfs:/data
+    expose:
+      - "9000"
+    ports:
+      # admin console — keep on loopback only; expose publicly via the
+      # reverse proxy if you really need it accessible.
+      - "127.0.0.1:9001:9001"
+
+  neo4j:
+    image: neo4j:5.26-community
+    container_name: qatlas-neo4j
+    restart: unless-stopped
+    environment:
+      # NEO4J_AUTH=<user>/<password> is the official way to seed the
+      # initial password on first boot. Subsequent password changes
+      # require `cypher-shell` against an unauth'd state, so set this
+      # once and don't change it after data exists.
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?NEO4J_PASSWORD required in .env}
+      # JVM heap caps — Neo4j is memory-sensitive. 1G suits the dev /
+      # 10k-node regime; bump to 2-4G once the graph grows past 100k
+      # nodes. See docs/deployment/neo4j.md "Hardware sizing".
+      NEO4J_server_memory_heap_max__size: ${NEO4J_HEAP:-1G}
+    volumes:
+      - ./data/neo4j/data:/data
+      - ./data/neo4j/logs:/logs
+    expose:
+      - "7687"
+    ports:
+      # browser UI — keep loopback-only.
+      - "127.0.0.1:7474:7474"
+
+  qatlasd:
+    # Pulled from GitHub Container Registry by default. Replace with a
+    # local build by uncommenting the `build:` line and removing the
+    # `image:` directive.
+    image: ghcr.io/iai-ustc-quantum/qatlasd:${QATLAS_VERSION:-latest}
+    # build:
+    #   context: ..
+    #   args:
+    #     VERSION: ${QATLAS_VERSION:-local}
+    container_name: qatlasd
+    restart: unless-stopped
+    depends_on:
+      - rustfs
+      - neo4j
+    environment:
+      # ── Object storage (talks to the in-compose rustfs over the
+      #    docker network — internal hostname `rustfs` is the service
+      #    name) ──
+      QATLAS_S3_ENDPOINT: http://rustfs:9000
+      # Empty when not split (single-host eval). Set to a public-facing
+      # HTTPS URL when clients sit outside the docker network and need
+      # presigned-URL access. See docs/deployment/rustfs.md#dual-endpoint.
+      QATLAS_S3_PUBLIC_ENDPOINT: ${QATLAS_S3_PUBLIC_ENDPOINT:-}
+      QATLAS_S3_BUCKET_PDF: qatlas-pdf
+      QATLAS_S3_BUCKET_MD: qatlas-md
+      QATLAS_S3_BUCKET_IMAGES: qatlas-images
+      QATLAS_S3_ACCESS_KEY_ID: ${QATLAS_S3_ACCESS_KEY_ID:?QATLAS_S3_ACCESS_KEY_ID required (svcacct, NOT root); see rustfs_bootstrap.sh}
+      QATLAS_S3_SECRET_ACCESS_KEY: ${QATLAS_S3_SECRET_ACCESS_KEY:?QATLAS_S3_SECRET_ACCESS_KEY required (svcacct, NOT root)}
+
+      # ── Neo4j (in-compose, hostname `neo4j`) ──
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USERNAME: neo4j
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:?NEO4J_PASSWORD required in .env}
+
+      # ── On-disk paths inside the container (must match volumes below) ──
+      QATLAS_WIKI_DIR: /data/wiki
+      QATLAS_PB_DATA_DIR: /data/pb_data
+      QATLAS_RAW_DIR: /data/raw
+
+      # ── GitHub OAuth (browser login) ──
+      QATLAS_ALLOWED_GITHUB_LOGINS: ${QATLAS_ALLOWED_GITHUB_LOGINS:-}
+      QATLAS_ADMIN_GITHUB_LOGINS: ${QATLAS_ADMIN_GITHUB_LOGINS:-}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+
+      # ── Optional system PAT for breakglass / CI ──
+      QATLAS_SYSTEM_PAT: ${QATLAS_SYSTEM_PAT:-}
+      QATLAS_SYSTEM_PAT_SCOPES: ${QATLAS_SYSTEM_PAT_SCOPES:-*}
+
+      # ── Multi-edge labelling (cosmetic; folded into S3 client UA) ──
+      QATLAS_EDGE_NAME: ${QATLAS_EDGE_NAME:-}
+
+    volumes:
+      # Bind mounts to host ./data/* so backups are `tar czf data.tgz
+      # data/` and there's no `docker volume export` ceremony. Replace
+      # with named volumes (see bottom of file) if you prefer.
+      - ./data/raw:/data/raw
+      - ./data/pb_data:/data/pb_data
+      - ./data/wiki:/data/wiki
+    ports:
+      # Loopback only by default — put a reverse proxy in front for
+      # public access (see Caddy / nginx snippets in
+      # docs/deployment/reverse-proxy.md). To expose directly, change
+      # to "4200:4200" — only safe on a private network.
+      - "127.0.0.1:4200:4200"
+
+# ── Alternative storage: docker named volumes ─────────────────────────────
+# Uncomment this block + delete the `./data/*` host paths above if you
+# prefer docker-managed volumes over bind mounts. Bind mounts give
+# easier backups + direct file inspection; named volumes give cleaner
+# uninstall (one `docker compose down -v` and everything's gone).
+#
+# volumes:
+#   rustfs_data: {}
+#   neo4j_data: {}
+#   neo4j_logs: {}
+#   qatlas_raw: {}
+#   qatlas_pb_data: {}
+#   qatlas_wiki: {}
