@@ -40,6 +40,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
+      is_prerelease: ${{ steps.version.outputs.is_prerelease }}
 
     steps:
       - uses: actions/checkout@v4
@@ -75,8 +76,23 @@ jobs:
             echo "tag $TAG (version=$VERSION) does not match pyproject.toml version $PYPROJECT_VERSION" >&2
             exit 1
           fi
+
+          # PEP 440 / SemVer pre-release detection. Anything containing
+          # a, b, rc, alpha, beta, pre, or '-' in the version segment is
+          # a pre-release; we tell action-gh-release to mark it that way
+          # so /releases/latest keeps pointing at the last stable
+          # version. Critical for install-qatlasd.sh users who don't
+          # pass --version — without this, an alpha would silently
+          # become the default install.
+          IS_PRERELEASE="false"
+          case "$VERSION" in
+            *a*|*b*|*rc*|*alpha*|*beta*|*pre*|*-*) IS_PRERELEASE="true" ;;
+          esac
+
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "is_prerelease=$IS_PRERELEASE" >> $GITHUB_OUTPUT
+          echo "Resolved tag=$TAG version=$VERSION is_prerelease=$IS_PRERELEASE"
 
   # --------------------------------------------------------------------
   # 2. python-build — wheel + sdist, single ubuntu job (Python builds
@@ -355,7 +371,14 @@ jobs:
             dist/bin/qatlasd-*
             dist/SHA256SUMS
           draft: false
-          prerelease: false
+          # prerelease auto-detected in the prep job based on PEP 440
+          # markers (a/b/rc/alpha/beta/pre/'-'). Stable tags like
+          # v0.15.0 → false (this release becomes "Latest" and is what
+          # install-qatlasd.sh's no-flag default picks up). Pre-release
+          # tags like v0.15.0a1 → true (action keeps the previous
+          # stable as Latest, so casual installers stay on the known
+          # version).
+          prerelease: ${{ needs.prep.outputs.is_prerelease == 'true' }}
           generate_release_notes: true
 
   # --------------------------------------------------------------------
