@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.14.1 (2026-06-02)
+
+### Fix
+
+- **papers**: mineru-claim PDF URL now uses RustFS presign, not arxiv.org
+- **spa**: commit /pat redirect route source (was untracked)
+
 ## v0.14.0 (2026-06-02)
 
 ### BREAKING CHANGE
