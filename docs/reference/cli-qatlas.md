@@ -110,16 +110,21 @@ qatlas mineru [arxiv_id] [options...]
 | Flag | 必填 | 默认 | 含义 |
 |---|---|---|---|
 | `<arxiv_id>` (可选) | ❌ | — | 指定单篇；省略走队列模式 |
-| `--max N` | ❌ | 10 | 队列模式最多处理几篇 |
-| `--continue-on-error` | ❌ | false | 队列模式：单篇失败继续下一篇 |
+| `--batch-size N` | ❌ | 50 | 队列模式：每批最多多少篇（硬上限 50 = MinerU 单批限制）|
+| `--max N` | ❌ | — | **已弃用**，`--batch-size` 的兼容别名；两个都给时 `--batch-size` 优先 |
+| `--continue-on-error` | ❌ | false | 队列模式：单篇失败继续下一篇（batch 模式下隐式启用）|
 | `--ttl-seconds N` | ❌ | server 默认 1800 | claim 租约（最长 7200）|
 | `--no-cache` | ❌ | false | 让 MinerU bypass 服务端缓存 |
 | `--overwrite` | ❌ | false | server 已有 markdown 时仍允许覆盖 |
 | `--no-push` | ❌ | false | 跑 MinerU 但不推回（留 tmp zip）|
-| `--watch` | ❌ | false | daemon 模式：跑完一轮 sleep `--watch-interval` 再继续（Ctrl-C 干净退出）|
-| `--watch-interval N` | ❌ | 300 | daemon 模式 sleep 秒数 |
+| `--watch` | ❌ | false | daemon 模式：跑完一批 sleep `--watch-interval` 再继续（Ctrl-C 干净退出；daily-limit 命中自动 sleep 到次日 00:01）|
+| `--watch-interval N` | ❌ | 300 | daemon 模式 sleep 秒数（不影响 daily-limit 命中后的睡眠时长）|
 
-调用链：`POST /api/papers/{id}/mineru-claim` → MinerU API → **`POST /api/papers/{id}/upload-mineru`**（推完整 zip）→ `DELETE /api/papers/{id}/mineru-claim/{cid}`。
+**退出码**：成功 = 0；失败 = 1；MinerU 每日额度耗尽 = 75（`EX_TEMPFAIL`，CI 可视为 transient 重试）。
+
+调用链（单篇模式）：`POST /api/papers/{id}/mineru-claim` → MinerU 单 task → `POST /api/papers/{id}/upload-mineru` → `DELETE /api/papers/{id}/mineru-claim/{cid}`。
+
+调用链（队列 / daemon 模式，v0.15.0+）：list `needs-mineru` → 逐篇 `mineru-claim` → 一次 `POST /api/v4/extract/task/batch` → 周期 `GET /api/v4/extract-results/batch/{id}` → 每 done 立即 `upload-mineru` + `DELETE mineru-claim`。
 
 详细：[用 MinerU 解析](../guides/parse-with-mineru.md)。
 

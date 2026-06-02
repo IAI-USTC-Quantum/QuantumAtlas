@@ -87,7 +87,7 @@ flowchart TB
     # 配 MINERU_API_TOKEN 后
     qatlas mineru 2501.00010v1 --push-pdf
     # 或队列模式，处理 server 列表里所有待解析的
-    qatlas mineru --max 10
+    qatlas mineru --batch-size 20
     ```
 
     本地用自己的 MinerU 配额跑解析。**server 颁发 30 分钟原子 claim**——多个贡献者并发跑不会撞重。需要 `papers:write` scope。

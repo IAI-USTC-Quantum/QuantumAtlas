@@ -136,17 +136,19 @@ qatlas upload mineru 2501.00010v1 --zip mineru-result.zip --source mineru
 **前置条件**：要处理的 PDF 必须已经在服务器的 `RAW_DIR` 里（通过 Path A 或 Path B 进入）。`qatlas mineru` 不接受用户自带 URL——这是为了保证生成的 markdown 永远对应 raw 中已知的 PDF，不会产生孤儿数据。
 
 ```bash
-# 队列模式：从服务器的“需要 MinerU”队列里取至多 --max 个还没人处理的论文，
-# 逐个领取（claim）→ 跑 MinerU → 上传完整 zip → 自动释放 claim。
+# 队列 / batch 模式：从服务器的"需要 MinerU"队列里取至多 --batch-size 个还没人处理的
+# 论文，逐个 claim + 校验后**一次 batch** 提交给 MinerU；每完成一篇立刻 upload +
+# 释放该 claim。默认 batch_size=50（MinerU 单批硬上限）。
 qatlas mineru
-qatlas mineru --max 20 --continue-on-error
+qatlas mineru --batch-size 20
 
-# 单篇模式：处理指定 arxiv 论文（同样要求服务器已有 PDF）。
+# 单篇模式：处理指定 arxiv 论文（同样要求服务器已有 PDF）。走单 task API，开销最小。
 qatlas mineru quant-ph/9508027v1
 
-# daemon 模式：挂着持续贡献，跑完一轮 sleep --watch-interval 再来。
+# daemon 模式：挂着持续贡献，跑完一批 sleep --watch-interval 再来。
+# 命中 MinerU 每日额度时自动 sleep 到次日 00:01 quota 重置。
 qatlas mineru --watch
-qatlas mineru --watch --watch-interval 600 --max 5
+qatlas mineru --watch --watch-interval 600 --batch-size 30
 
 # 只跑 MinerU 不上传（zip 留在本地临时目录，claim 立刻释放）
 qatlas mineru 2501.00010v1 --no-push
