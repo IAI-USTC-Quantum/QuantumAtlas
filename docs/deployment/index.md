@@ -86,6 +86,6 @@ QuantumAtlas server 是一个 Go 单 binary。这一节覆盖从"裸 VPS"到"生
 |---|---|
 | **单机** | 个人 / 实验室 1 个 server + 1 个 Neo4j + LocalStore（不用 RustFS） |
 | **单机 + S3** | 生产入门：1 个 server + RustFS（保留 versioning）|
-| **多边缘 active-active** | 跨地域：多个 server + 共享 RustFS + 共享 Neo4j，详见 [多边缘部署](../concepts/multi-edge.md)|
+| **多边缘 active-active** | 跨地域：多个 server + 共享 RustFS + 共享 Neo4j。每台 edge 独立 PocketBase（用户/PAT 不跨节点），共享 RustFS / Neo4j 通过 EasyTier 等内网 mesh 互通。|
 
 后续每个具体配置页都会说哪些选项适合哪个形态。

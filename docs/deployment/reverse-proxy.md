@@ -197,4 +197,4 @@ header 没 preserve**——回去检查反代配置。
 
 ## 多边缘 active-active
 
-每条线路一台反代，对应一台 qatlasd。共享后端 (RustFS / Neo4j) 通过 EasyTier mesh 互通。详见 [多边缘部署](../concepts/multi-edge.md)。
+每条线路一台反代，对应一台 qatlasd。共享后端 (RustFS / Neo4j) 通过 EasyTier mesh 互通。各边缘 PocketBase 独立（用户/PAT 不跨节点）。

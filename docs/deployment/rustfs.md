@@ -9,7 +9,7 @@
 > behaviour, `?expected_sha256=` guard) live in
 > [upload-api.md](../reference/upload-api.md). Wider storage architecture (why
 > we have separate Raw / Metadata / Graph layers) lives in
-> [storage-design.md](../concepts/storage-architecture.md).
+> [storage-architecture.md](../concepts/storage-architecture.md).
 
 ## Backend selection
 
@@ -90,8 +90,6 @@ raw store: S3 backend http://<rustfs-internal-host>:9000/qatlas-raw (presign via
 
 - Edge A: `https://<rustfs-public-host>`（举例：LE 真证书 + 独立子域）
 - Edge B: `https://<ip-or-host>:<port>`（举例：`tls internal` 自签，client 必须 `-k`）
-
-详见 [多边缘部署](../concepts/multi-edge.md)。
 
 ## IAM policy: `qatlas-raw-rw`
 
@@ -554,7 +552,6 @@ S3 无 append，但这里根本不需要 append（不是 read-modify-write 同�
 
 - [upload-api.md](../reference/upload-api.md) — request/response shape, sha256
   semantics, in-transit guard from the client's perspective.
-- [storage-design.md](../concepts/storage-architecture.md) — wider architecture (why
+- [storage-architecture.md](../concepts/storage-architecture.md) — wider architecture (why
   Raw / Metadata / Graph are separate layers).
-- [deployment.md](operations.md) — systemd unit, .env layout,
-  RackNerd / Alibaba edge topology.
+- [deployment.md](operations.md) — systemd unit, .env layout.

@@ -89,7 +89,7 @@ qatlasd superuser upsert your-admin@example.com NewSecurePass
 | Edge 1 | QuantumAtlas (Edge 1) | `https://edge1.example.com/api/oauth2-redirect` | Edge 1 的 `.env` |
 | Edge 2 | QuantumAtlas (Edge 2) | `https://edge2.example.com/api/oauth2-redirect` | Edge 2 的 `.env` |
 
-各边缘启动时只注入自己那一份 OAuth provider，互不冲突。**同一 GitHub 账号在多边缘各登一次会建多条 users 记录**（不同 user id），PAT 也是独立的——参见 [多边缘部署](../concepts/multi-edge.md)。
+各边缘启动时只注入自己那一份 OAuth provider，互不冲突。**同一 GitHub 账号在多边缘各登一次会建多条 users 记录**（不同 user id），PAT 也是独立的。
 
 ## 排查
 

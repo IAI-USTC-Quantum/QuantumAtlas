@@ -189,7 +189,7 @@ CI 这边更新 GitHub secret 后下次 workflow 跑就用新的。
     你在用 PAT 调 `/api/pat` —— **这条不通**。`/api/pat` 只接受 session token（浏览器登录后 `pb.authStore` 自动持有），有意为之防止 leaked PAT 自我复制。需要管理 PAT 请在浏览器 SPA 内打开 `/pat` 页操作。
 
 !!! failure "401 在另一台边缘用本机的 PAT"
-    PocketBase 各边缘独立，PAT 不跨节点。看 [多边缘部署](../concepts/multi-edge.md)。
+    PocketBase 各边缘独立，PAT 不跨节点。每条线路需要分别在该边缘登录、各自 mint PAT。
 
 ## hosts.yml 长什么样
 

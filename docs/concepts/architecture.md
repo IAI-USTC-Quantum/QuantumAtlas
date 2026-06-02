@@ -275,6 +275,6 @@ FHS / 12-factor 的常规约定。
 
 ## 延伸阅读
 
-- [storage-design.md](storage-architecture.md) — 当 RAW 资产体量上 TB / 引入对象存储（RustFS @ `raw.quantum-atlas.ai`）/ 用 Neo4j 装 paper 引用图时，三层（raw / metadata / graph）怎么分工、怎么对账、怎么重建。
+- [storage-architecture.md](storage-architecture.md) — 当 RAW 资产体量上 TB / 引入对象存储（RustFS / S3 兼容）/ 用 Neo4j 装 paper 引用图时，三层（raw / metadata / graph）怎么分工、怎么对账、怎么重建。
 - [migration-storage-layout.md](../deployment/migration-storage-layout.md) — 把 wiki / raw / data / pb_data 从仓库内搬到 XDG / 挂载点的实操步骤。
 - [graph-visualization-research.md](../about/graph-visualization-research.md) — 前端图谱库选型调研（Cytoscape.js / Sigma.js / ...）。

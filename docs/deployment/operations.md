@@ -427,7 +427,7 @@ Go server 通过 `internal/objstore` 抽象层接 minio-go SDK，**填齐
 
 物理部署、bucket / IAM user / policy 的创建、rotate 流程，以及配套的
 幂等 bootstrap 脚本 [`scripts/rustfs_bootstrap.sh`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/scripts/rustfs_bootstrap.sh)
-统一收录在 [`storage-design.md` 的 RustFS 部署后置一节](../concepts/storage-architecture.md#rustfs-bucket-user-policy)。
+统一收录在 [`deployment/rustfs.md`](rustfs.md)（RustFS ↔ qatlasd 集成 ops 指南）。
 
 简言之：
 
@@ -452,7 +452,7 @@ bash scripts/rustfs_bootstrap.sh
 不区分后端，redirect 由 server 透明处理。
 
 边缘 Caddy 多加一个站点把 `raw.your-domain.tld` 反代到 RustFS `:9000`
-即可，模板见 storage-design 文档对应章节。
+即可，模板见 [`deployment/rustfs.md`](rustfs.md) 对应章节。
 
 ## 推荐的单机生产目录
 

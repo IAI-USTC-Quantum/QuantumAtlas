@@ -140,7 +140,7 @@ QuantumAtlas 可以做多边缘 active-active 部署（多台 edge 各跑独立 
 - 同一 GitHub 账号在多台边缘各登一次 → 各创建一条 users 记录（不同 user_id）
 - Edge A 上建的 PAT **不能在 Edge B 用**（401）
 
-CI 多线路场景下需要为每条线路分别建 PAT。详见 [多边缘部署](multi-edge.md)。
+CI 多线路场景下需要为每条线路分别建 PAT。
 
 ## 反代注入的审计头
 

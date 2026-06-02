@@ -107,7 +107,7 @@
 
 ??? question "PAT 在某台边缘建的，在另一台用不了？"
 
-    对。多边缘各自独立 PocketBase，**用户和 PAT 不跨节点**。需要为每条线路各建 PAT。详见 [多边缘](../concepts/multi-edge.md)。
+    对。多边缘各自独立 PocketBase，**用户和 PAT 不跨节点**。需要为每条线路各建 PAT。
 
 ## Wiki / Neo4j
 
