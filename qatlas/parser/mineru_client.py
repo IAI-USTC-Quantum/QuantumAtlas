@@ -5,10 +5,18 @@ Client for MinerU's async document extraction API.
 from __future__ import annotations
 
 import zipfile
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 import requests
+
+
+# MAX_BATCH_SIZE is MinerU's hard limit on files per batch — keep in sync
+# with Go-side internal/mineru.MaxBatchSize. /api/v4/extract/task/batch
+# rejects oversize batches; callers should chunk their queues at this
+# boundary.
+MAX_BATCH_SIZE = 50
 
 
 class MinerUError(RuntimeError):
@@ -169,6 +177,53 @@ def classify_mineru_error(
     return MinerUError(msg or "unclassified MinerU error", code=code, http_status=http_status)
 
 
+
+@dataclass(frozen=True)
+class BatchFile:
+    """One entry in a :meth:`MinerUClient.submit_url_batch` payload.
+
+    Per-file knobs beyond URL + data_id (e.g. is_ocr, page_ranges) are
+    not currently exposed — all files in one batch share the kwargs of
+    the call. Add them here when there's a concrete need.
+    """
+
+    url: str
+    data_id: str = ""
+
+
+@dataclass
+class BatchProgress:
+    """Optional progress info attached to a running batch entry."""
+
+    extracted_pages: int = 0
+    total_pages: int = 0
+    start_time: str = ""
+
+
+@dataclass
+class BatchTaskState:
+    """One per-file state from a GET /extract-results/batch/{batch_id}.
+
+    state is one of the MinerU lifecycle strings:
+
+        done           — full_zip_url populated, ready to download
+        failed         — err_msg populated; pass to classify_mineru_error
+        waiting-file   — file fetch hasn't started yet
+        pending        — queued
+        running        — being processed (progress may be populated)
+        converting     — finalising the result zip
+
+    Treat anything other than done/failed as in-flight.
+    """
+
+    file_name: str = ""
+    data_id: str = ""
+    state: str = ""
+    full_zip_url: str = ""
+    err_msg: str = ""
+    progress: BatchProgress = field(default_factory=BatchProgress)
+
+
 class MinerUClient:
     """Small wrapper around MinerU's token-based precision extraction API."""
 
@@ -222,6 +277,107 @@ class MinerUClient:
             timeout=self.timeout,
         )
         return self._task_id_from_response(response)
+
+    def submit_url_batch(
+        self,
+        files: Sequence[BatchFile],
+        *,
+        model_version: str = "vlm",
+        language: str = "ch",
+        enable_formula: bool = True,
+        enable_table: bool = True,
+        is_ocr: bool = False,
+        no_cache: bool = False,
+    ) -> str:
+        """Submit up to MAX_BATCH_SIZE URL tasks and return the batch id.
+
+        Mirrors Go ``Client.SubmitURLBatch``. All files share the same
+        per-batch knobs; per-file overrides aren't exposed. Caller is
+        responsible for chunking longer queues.
+
+        Raises :class:`MinerUError` (or a typed subclass) on any failure.
+        """
+        if not files:
+            raise MinerUError("submit_url_batch: no files")
+        if len(files) > MAX_BATCH_SIZE:
+            raise MinerUError(
+                f"submit_url_batch: {len(files)} files exceeds MinerU batch limit of {MAX_BATCH_SIZE}"
+            )
+
+        items: List[Dict[str, Any]] = []
+        for i, f in enumerate(files):
+            if not f.url:
+                raise MinerUError(f"submit_url_batch: empty url at index {i}")
+            entry: Dict[str, Any] = {"url": f.url, "is_ocr": is_ocr}
+            if f.data_id:
+                entry["data_id"] = f.data_id
+            items.append(entry)
+
+        payload: Dict[str, Any] = {
+            "files": items,
+            "model_version": model_version,
+            "language": language,
+            "enable_formula": enable_formula,
+            "enable_table": enable_table,
+            "no_cache": no_cache,
+        }
+
+        response = self.session.post(
+            f"{self.base_url}/api/v4/extract/task/batch",
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=self.timeout,
+        )
+        envelope = self._json_response(response)
+        data = envelope.get("data")
+        if not isinstance(data, dict) or not data.get("batch_id"):
+            raise MinerUError("MinerU response did not include batch_id")
+        return str(data["batch_id"])
+
+    def get_batch(self, batch_id: str) -> List[BatchTaskState]:
+        """Return per-file states for an in-flight batch.
+
+        Ordering is not guaranteed to match submission order; callers
+        should match by ``data_id``.
+
+        Returns an empty list when MinerU has accepted the batch but
+        has no results to report yet — keep polling.
+        """
+        if not batch_id:
+            raise MinerUError("get_batch: empty batch id")
+
+        response = self.session.get(
+            f"{self.base_url}/api/v4/extract-results/batch/{batch_id}",
+            timeout=self.timeout,
+        )
+        envelope = self._json_response(response)
+        data = envelope.get("data")
+        if not isinstance(data, dict):
+            raise MinerUError("MinerU batch response did not include data")
+        raw_results = data.get("extract_result")
+        if not raw_results:
+            return []
+        out: List[BatchTaskState] = []
+        for entry in raw_results:
+            if not isinstance(entry, dict):
+                continue
+            prog_raw = entry.get("extract_progress") or {}
+            prog = BatchProgress(
+                extracted_pages=int(prog_raw.get("extracted_pages") or 0),
+                total_pages=int(prog_raw.get("total_pages") or 0),
+                start_time=str(prog_raw.get("start_time") or ""),
+            )
+            out.append(
+                BatchTaskState(
+                    file_name=str(entry.get("file_name") or ""),
+                    data_id=str(entry.get("data_id") or ""),
+                    state=str(entry.get("state") or ""),
+                    full_zip_url=str(entry.get("full_zip_url") or ""),
+                    err_msg=str(entry.get("err_msg") or ""),
+                    progress=prog,
+                )
+            )
+        return out
 
     def get_task(self, task_id: str) -> Dict[str, Any]:
         """Return the latest state for one MinerU extraction task."""

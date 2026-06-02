@@ -7,9 +7,18 @@ retry/quota handling looks the same regardless of which side hits the API.
 
 from __future__ import annotations
 
+import json
+from typing import Any, Dict, List
+from unittest.mock import MagicMock
+
 import pytest
+import requests
 
 from qatlas.parser.mineru_client import (
+    MAX_BATCH_SIZE,
+    BatchFile,
+    BatchTaskState,
+    MinerUClient,
     MinerUDailyLimitError,
     MinerUError,
     MinerUFatalError,
@@ -134,3 +143,173 @@ class TestExceptionAttributes:
         assert not isinstance(err, MinerUDailyLimitError)
         assert not isinstance(err, MinerUFatalError)
         assert not isinstance(err, MinerURetryableError)
+
+
+# ---------------------------------------------------------------------------
+# Batch API tests (Phase 2b)
+# ---------------------------------------------------------------------------
+
+
+def _fake_response(payload: Dict[str, Any], status: int = 200) -> MagicMock:
+    """Build a MagicMock that quacks like requests.Response for our client."""
+    resp = MagicMock(spec=requests.Response)
+    resp.status_code = status
+    resp.text = json.dumps(payload)
+    resp.json.return_value = payload
+    resp.raise_for_status.return_value = None
+    return resp
+
+
+def _capture_session(client: MinerUClient) -> Dict[str, Any]:
+    """Swap client.session for a recording mock; return the call captures."""
+    captures: Dict[str, Any] = {}
+    session = MagicMock(spec=requests.Session)
+    captures["post"] = session.post
+    captures["get"] = session.get
+    client.session = session
+    return captures
+
+
+class TestSubmitURLBatch:
+    def test_happy_path(self) -> None:
+        client = MinerUClient("tok")
+        caps = _capture_session(client)
+        caps["post"].return_value = _fake_response(
+            {"code": 0, "msg": "ok", "data": {"batch_id": "batch-9"}}
+        )
+
+        batch_id = client.submit_url_batch(
+            [
+                BatchFile(url="https://example.com/a.pdf", data_id="paper-a"),
+                BatchFile(url="https://example.com/b.pdf", data_id="paper-b"),
+            ],
+            model_version="vlm",
+            language="ch",
+            enable_formula=True,
+            enable_table=True,
+        )
+        assert batch_id == "batch-9"
+        # Verify URL + body shape.
+        call_args = caps["post"].call_args
+        assert call_args[0][0].endswith("/api/v4/extract/task/batch")
+        body = call_args[1]["json"]
+        assert body["model_version"] == "vlm"
+        assert body["enable_formula"] is True
+        assert len(body["files"]) == 2
+        assert body["files"][0] == {
+            "url": "https://example.com/a.pdf",
+            "is_ocr": False,
+            "data_id": "paper-a",
+        }
+
+    def test_empty_files_rejected(self) -> None:
+        client = MinerUClient("tok")
+        with pytest.raises(MinerUError, match="no files"):
+            client.submit_url_batch([])
+
+    def test_too_many_files_rejected_pre_request(self) -> None:
+        client = MinerUClient("tok")
+        caps = _capture_session(client)
+        files = [BatchFile(url="https://x", data_id=f"p{i}") for i in range(MAX_BATCH_SIZE + 1)]
+        with pytest.raises(MinerUError, match=str(MAX_BATCH_SIZE)):
+            client.submit_url_batch(files)
+        # Must reject before any HTTP round-trip.
+        caps["post"].assert_not_called()
+
+    def test_empty_url_rejected(self) -> None:
+        client = MinerUClient("tok")
+        with pytest.raises(MinerUError, match="empty url"):
+            client.submit_url_batch([BatchFile(url="", data_id="p1")])
+
+    def test_missing_batch_id_in_response(self) -> None:
+        client = MinerUClient("tok")
+        caps = _capture_session(client)
+        caps["post"].return_value = _fake_response({"code": 0, "data": {}})
+        with pytest.raises(MinerUError, match="batch_id"):
+            client.submit_url_batch([BatchFile(url="https://x", data_id="p1")])
+
+    def test_daily_limit_classified(self) -> None:
+        client = MinerUClient("tok")
+        caps = _capture_session(client)
+        caps["post"].return_value = _fake_response(
+            {"code": -60018, "msg": "每日解析任务数量已达上限", "data": None}
+        )
+        with pytest.raises(MinerUDailyLimitError):
+            client.submit_url_batch([BatchFile(url="https://x", data_id="p1")])
+
+    def test_data_id_omitted_when_empty(self) -> None:
+        client = MinerUClient("tok")
+        caps = _capture_session(client)
+        caps["post"].return_value = _fake_response({"code": 0, "data": {"batch_id": "b"}})
+        client.submit_url_batch([BatchFile(url="https://x")])
+        body = caps["post"].call_args[1]["json"]
+        assert "data_id" not in body["files"][0]
+
+
+class TestGetBatch:
+    def test_happy_path_with_progress_and_failure(self) -> None:
+        client = MinerUClient("tok")
+        caps = _capture_session(client)
+        caps["get"].return_value = _fake_response(
+            {
+                "code": 0,
+                "data": {
+                    "batch_id": "batch-9",
+                    "extract_result": [
+                        {
+                            "file_name": "a.pdf",
+                            "data_id": "paper-a",
+                            "state": "done",
+                            "full_zip_url": "https://z/a.zip",
+                        },
+                        {
+                            "file_name": "b.pdf",
+                            "data_id": "paper-b",
+                            "state": "running",
+                            "extract_progress": {
+                                "extracted_pages": 12,
+                                "total_pages": 40,
+                                "start_time": "2026-05-31 10:00:00",
+                            },
+                        },
+                        {
+                            "file_name": "c.pdf",
+                            "data_id": "paper-c",
+                            "state": "failed",
+                            "err_msg": "corrupted pdf",
+                        },
+                    ],
+                },
+            }
+        )
+        results = client.get_batch("batch-9")
+        assert caps["get"].call_args[0][0].endswith("/api/v4/extract-results/batch/batch-9")
+        assert len(results) == 3
+        assert results[0].state == "done"
+        assert results[0].full_zip_url == "https://z/a.zip"
+        assert results[1].progress.extracted_pages == 12
+        assert results[1].progress.total_pages == 40
+        assert results[2].state == "failed"
+        assert results[2].err_msg == "corrupted pdf"
+
+    def test_null_extract_result_returns_empty(self) -> None:
+        client = MinerUClient("tok")
+        caps = _capture_session(client)
+        caps["get"].return_value = _fake_response(
+            {"code": 0, "data": {"batch_id": "b", "extract_result": None}}
+        )
+        assert client.get_batch("b") == []
+
+    def test_empty_batch_id_rejected(self) -> None:
+        client = MinerUClient("tok")
+        with pytest.raises(MinerUError, match="empty batch id"):
+            client.get_batch("")
+
+    def test_fatal_classified(self) -> None:
+        client = MinerUClient("tok")
+        caps = _capture_session(client)
+        caps["get"].return_value = _fake_response(
+            {"code": "A0211", "msg": "token expired", "data": None}
+        )
+        with pytest.raises(MinerUFatalError):
+            client.get_batch("batch-x")
