@@ -38,28 +38,30 @@ qatlas config <subcommand>
 
 | Subcommand | 含义 |
 |---|---|
-| `path [--canonical]` | 打印当前生效的配置文件路径 + 来源（`xdg` / `cwd_legacy` / `env_override` / no-file）。`--canonical` 时如果命中 cwd legacy 给一句迁移提示 |
-| `init [--force]` | 在 `~/.config/qatlas/.env` 写一份模板。当前目录如有 `.env` 自动 seed（迁移工具）。`--force` 覆盖已有文件（同名 key 仍保留） |
+| `path` | 打印当前生效的配置文件路径 + 来源（`xdg` / `env_override` / no-file） |
+| `init [--force]` | 在 `~/.config/qatlas/.env` 写一份模板。`--force` 覆盖已有文件（同名 key 仍保留） |
 | `set <KEY> <VALUE>` | 写一个 key=value 到 user config 文件，文件不存在时自动建（0600 perms）。敏感字段（含 `TOKEN` / `SECRET` / `KEY` / `PASSWORD`）echo 时遮罩 |
 | `unset <KEY>` | 删除一个 key |
-| `get <KEY>` | 打印 key 解析后的真值（按完整优先级链：CLI flag > env var > `$QATLAS_DOTENV` > `~/.config/qatlas/.env` > `./.env` > 内置默认）。无值时 exit 1，suitable for shell 插值 |
+| `get <KEY>` | 打印 key 解析后的真值（按完整优先级链：CLI flag > env var > `$QATLAS_DOTENV` > `~/.config/qatlas/.env` > 内置默认）。无值时 exit 1，suitable for shell 插值 |
 | `show [--unmask]` | dump 所有解析后的字段；敏感值遮罩，`--unmask` 完整打印 |
 
 **配置文件优先级**（每个字段独立解析）：
 
 1. **CLI flag** — `--base-url` / `--token` / `--insecure` 等
 2. **OS 环境变量** — `QATLAS_*`、`MINERU_*` 等
-3. **`$QATLAS_DOTENV`** — 显式 .env 路径覆盖（systemd unit 等场景）
+3. **`$QATLAS_DOTENV`** — 显式 .env 路径覆盖（systemd unit / container 等场景）
 4. **`~/.config/qatlas/.env`** — XDG 主入口（`qatlas config init` 创建）
-5. **`./.env`** — cwd 兜底（**已弃用**，会发 deprecation warning，未来移除）
-6. **内置默认** — 各字段定义的 Field default
+5. **内置默认** — 各字段定义的 Field default
+
+!!! note "不读 `./.env`"
+    跟 `gh` / `docker` / `kubectl` / `aws` 同款约定 —— user-level CLI **不**自动从 cwd 拾起 `.env`。想临时用某个目录的配置：`QATLAS_DOTENV=$PWD/.env qatlas ...` 一次性。v0.15.0a4 及更早版本曾有 cwd legacy fallback，v0.15.0a5 起去除。
 
 **典型 workflow**：
 
 ```bash
 # 首次安装 + 配置
 uv tool install --prerelease=allow quantum-atlas
-qatlas config init                                        # 创建模板（若仓库内有 .env 自动 seed）
+qatlas config init                                        # 创建模板
 qatlas config set QATLAS_SERVER_URL https://quantum-atlas.ai
 qatlas config set QATLAS_TOKEN qat_xxxxxxxx               # 从 https://quantum-atlas.ai/pat 拿
 qatlas config set MINERU_API_TOKEN eyJ0eXBlI...           # 若要跑 qatlas mineru

@@ -58,8 +58,9 @@ class TestResolveDotenv:
     def test_no_files_returns_none(self, isolated_env: Path) -> None:
         assert paths.resolve_dotenv_path() == (None, None)
 
-    def test_xdg_wins_over_cwd(self, isolated_env: Path) -> None:
-        # Both exist; XDG wins.
+    def test_xdg_used_when_present_cwd_ignored(self, isolated_env: Path) -> None:
+        # cwd .env is intentionally NOT picked up (see
+        # test_cwd_env_no_longer_picked_up); only XDG counts.
         (isolated_env / ".env").write_text("CWD=yes\n")
         xdg = paths.user_dotenv_path()
         xdg.parent.mkdir(parents=True)
@@ -68,11 +69,13 @@ class TestResolveDotenv:
         assert path == xdg
         assert source == "xdg"
 
-    def test_cwd_fallback_when_xdg_missing(self, isolated_env: Path) -> None:
+    def test_cwd_env_no_longer_picked_up(self, isolated_env: Path) -> None:
+        # As of v0.15.0a5 the cwd ./.env fallback was dropped. A bare
+        # .env in the working directory MUST NOT be loaded — user-level
+        # CLIs shouldn't silently honour cwd config files (matches
+        # gh/docker/kubectl/aws pattern).
         (isolated_env / ".env").write_text("CWD=yes\n")
-        path, source = paths.resolve_dotenv_path()
-        assert path == (isolated_env / ".env").resolve()
-        assert source == "cwd_legacy"
+        assert paths.resolve_dotenv_path() == (None, None)
 
     def test_qatlas_dotenv_override_beats_everything(
         self, isolated_env: Path, monkeypatch: pytest.MonkeyPatch

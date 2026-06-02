@@ -18,11 +18,12 @@ Subcommands:
                                       file.
 
 Design: the file we write to is **always** the XDG location returned by
-:func:`qatlas.paths.user_dotenv_path` (i.e.
-``~/.config/qatlas/.env`` unless ``XDG_CONFIG_HOME`` is set).
-We never write to the legacy ``./.env`` — that's strictly read-only
-fallback. Writes go through a tempfile + atomic rename so a partial
-write can't corrupt the file even on SIGKILL mid-edit.
+:func:`qatlas.paths.user_dotenv_path` (i.e. ``~/.config/qatlas/.env``
+unless ``XDG_CONFIG_HOME`` is set). No cwd fallback — user-level CLIs
+shouldn't silently pick up ``./.env`` in whatever directory they
+happen to be launched from (this matches gh / docker / kubectl / aws).
+Writes go through a tempfile + atomic rename so a partial write can't
+corrupt the file even on SIGKILL mid-edit.
 """
 
 from __future__ import annotations
@@ -30,7 +31,6 @@ from __future__ import annotations
 import argparse
 import os
 import re
-import shutil
 import stat
 import sys
 import tempfile
@@ -171,11 +171,6 @@ def cmd_path(args: argparse.Namespace) -> int:
         print(f"(no config file found; XDG candidate would be {user_dotenv_path()})")
         return 0
     print(f"{path}\t({source})")
-    if args.canonical and source != "xdg":
-        _print_err(
-            f"note: this is the legacy cwd location. Run "
-            f"`qatlas config init` to migrate to {user_dotenv_path()}."
-        )
     return 0
 
 
@@ -188,15 +183,17 @@ def cmd_init(args: argparse.Namespace) -> int:
         )
         return 1
 
-    # Pre-fill from cwd .env if it exists, so migration is one command.
+    # If --force is being used to refresh an existing XDG file, seed
+    # from it so we don't blow away tokens the user already configured.
+    # We deliberately do NOT seed from ./.env — the cwd fallback was
+    # dropped in v0.15.0a5 to match gh/docker/kubectl, and silently
+    # importing cwd files would re-introduce the same security gap.
     seed: Dict[str, str] = {}
-    cwd_env = Path.cwd() / ".env"
-    if cwd_env.is_file() and cwd_env.resolve() != target.resolve():
-        seed = _parse_dotenv(cwd_env)
+    if target.exists() and args.force:
+        seed = _parse_dotenv(target)
         if seed:
             _print_err(
-                f"Seeding from existing {cwd_env} ({len(seed)} keys). "
-                "Review the resulting file before deleting the cwd copy."
+                f"Refreshing {target}: preserving {len(seed)} existing key(s)."
             )
 
     lines = [
@@ -209,7 +206,6 @@ def cmd_init(args: argparse.Namespace) -> int:
         "#   2. OS env var (QATLAS_*, MINERU_*)",
         "#   3. QATLAS_DOTENV=<file>",
         "#   4. This file",
-        "#   5. ./.env (legacy, deprecated)",
         "",
     ]
     for key, hint, required in _TEMPLATE:
@@ -228,7 +224,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     template_keys = {k for k, _, _ in _TEMPLATE}
     extras = {k: v for k, v in seed.items() if k not in template_keys}
     if extras:
-        lines.append("# Inherited from existing cwd .env (not in template):")
+        lines.append("# Inherited keys not in current template:")
         for k, v in extras.items():
             lines.append(f"{k}={v}")
         lines.append("")
@@ -236,11 +232,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     _write_dotenv_atomic(target, "\n".join(lines))
     print(f"Wrote {target}")
     if seed:
-        print("Set keys:", ", ".join(sorted(k for k, v in seed.items() if v)))
-        _print_err(
-            f"Migration done. You can now `rm {cwd_env}` or keep it "
-            "(env vars + XDG file take precedence anyway)."
-        )
+        print("Preserved keys:", ", ".join(sorted(k for k, v in seed.items() if v)))
     else:
         print("Edit the file or run `qatlas config set QATLAS_SERVER_URL <url>` etc.")
     return 0
@@ -372,16 +364,12 @@ def build_parser() -> argparse.ArgumentParser:
     subs = p.add_subparsers(dest="subcommand", required=True)
 
     sp = subs.add_parser("path", help="Print the active config file path")
-    sp.add_argument(
-        "--canonical", action="store_true",
-        help="Warn when the active path is the legacy cwd fallback",
-    )
     sp.set_defaults(func=cmd_path)
 
     sp = subs.add_parser("init", help="Create ~/.config/qatlas/.env from a template")
     sp.add_argument(
         "--force", action="store_true",
-        help="Overwrite an existing file (existing values are seeded back in)",
+        help="Overwrite an existing XDG file (existing keys are preserved)",
     )
     sp.set_defaults(func=cmd_init)
 

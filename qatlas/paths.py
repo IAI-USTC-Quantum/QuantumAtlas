@@ -3,19 +3,19 @@
 Resolution order for the user config file:
 
 1. ``QATLAS_DOTENV`` env var — explicit override (mostly for systemd
-   units on the server side that load a project-specific .env).
+   units on the server side that load a project-specific .env, or for
+   container deployments that mount a pre-baked config file).
 2. ``$XDG_CONFIG_HOME/qatlas/.env`` (default
-   ``~/.config/qatlas/.env``) — preferred location for
-   ``uv tool install`` users.
-3. ``./.env`` in the current working directory — **legacy fallback**
-   only, with a deprecation warning. Kept so users who developed
-   against an editable install in ``~/TiMidlY-projects/QuantumAtlas/``
-   keep working until they migrate.
+   ``~/.config/qatlas/.env``) — the canonical location, populated by
+   ``qatlas config init`` and edited by ``qatlas config set``.
 
-Mirrors the portal-mcp-server pattern (which itself cites ssh / git /
-gh / docker / kubectl / rclone / borg / mpv / age as the precedent for
-"user-level CLI = XDG, ignore cwd"). The cwd fallback is **only** kept
-for migration; new docs should always point at the XDG path.
+Mirrors the gh / docker / kubectl / aws / rclone pattern: a
+user-level CLI MUST NOT silently pick up a ``./.env`` in the current
+working directory, because that lets any directory the binary happens
+to be launched from override the user's real config. We removed the
+cwd_legacy fallback in v0.15.0a5 — if you previously relied on
+``./.env``, run ``qatlas config init`` once to migrate to the XDG
+location, or set ``QATLAS_DOTENV=$PWD/.env`` for a one-off.
 
 Intentionally NOT a singleton — every call re-reads the env vars so
 tests can monkey-patch ``HOME`` / ``XDG_CONFIG_HOME`` without import
@@ -96,9 +96,6 @@ def resolve_dotenv_path() -> tuple[Path | None, str | None]:
 
       * ``"env_override"`` — ``QATLAS_DOTENV`` env var
       * ``"xdg"``          — ``~/.config/qatlas/.env``
-      * ``"cwd_legacy"``   — ``./.env`` in current working directory
-                             (the caller SHOULD emit a deprecation
-                             warning recommending the XDG location)
 
     Returns ``(None, None)`` when nothing is found — the caller should
     fall back to OS env vars only (which is fine because every
@@ -107,6 +104,12 @@ def resolve_dotenv_path() -> tuple[Path | None, str | None]:
     A path is "found" if and only if the file exists. We intentionally
     don't probe inside zip / wheel files: this CLI assumes a real
     filesystem.
+
+    Note: as of v0.15.0a5 the ``./.env`` cwd fallback was dropped to
+    match the gh / docker / kubectl / aws pattern (user-level CLIs
+    don't pick up cwd config files). If a user previously relied on
+    it, they should run ``qatlas config init`` to migrate, or set
+    ``QATLAS_DOTENV=$PWD/.env`` for a one-off.
     """
     override = os.environ.get("QATLAS_DOTENV", "").strip()
     if override:
@@ -119,9 +122,5 @@ def resolve_dotenv_path() -> tuple[Path | None, str | None]:
     xdg = user_dotenv_path()
     if xdg.is_file():
         return xdg, "xdg"
-
-    cwd = Path.cwd() / ".env"
-    if cwd.is_file():
-        return cwd, "cwd_legacy"
 
     return None, None

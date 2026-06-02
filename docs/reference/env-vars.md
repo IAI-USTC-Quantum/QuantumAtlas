@@ -183,7 +183,7 @@ uuidgen
 | `OPENAI_API_KEY` | server 端 LLM extraction（当前 Go server 暂未接入，Python extractor 用）|
 | `ANTHROPIC_API_KEY` | 同上 |
 
-## Server 启动时 .env 解析
+## Server (qatlasd) 启动时 .env 解析
 
 server 启动时按顺序找 `.env`：
 
@@ -194,6 +194,18 @@ server 启动时按顺序找 `.env`：
 找到后用 `godotenv.Load(path)` 加载（**不覆盖已有 env 变量**）。
 
 `.env` 所在目录被用作**相对路径锚点**：`WIKI_DIR=../QuantumAtlas-Wiki` 相对该目录解析，不是相对 CWD 或 systemd `WorkingDirectory`。
+
+## Client (qatlas) 配置文件解析
+
+client 跟 server 不同，**不读 cwd `.env`**（跟 `gh` / `docker` / `kubectl` / `aws` 同款约定 —— user-level CLI 不能让任意 cwd 静默覆盖用户配置）：
+
+1. CLI flag（`--base-url` / `--token` / `--insecure` ...）
+2. OS env var（`QATLAS_*` / `MINERU_*` 直接 export）
+3. `$QATLAS_DOTENV` 显式路径（systemd 单元 / 容器场景）
+4. `~/.config/qatlas/.env`（XDG，用 `qatlas config init/set` 管）
+5. 内置 Field default
+
+具体子命令见 [`qatlas config` reference](cli-qatlas.md#qatlas-config)。
 
 ## 弃用的变量（不要再用）
 

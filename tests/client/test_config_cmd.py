@@ -59,21 +59,25 @@ class TestInit:
         assert "# QATLAS_INSECURE=" in content
         assert "# MINERU_API_TOKEN=" in content
 
-    def test_init_seeds_from_cwd_env(self, isolated_env: Path) -> None:
-        # Pre-populate a cwd .env that init should pick up.
+    def test_init_does_not_seed_from_cwd_env(self, isolated_env: Path) -> None:
+        # As of v0.15.0a5 init only seeds from an existing XDG file
+        # (when --force is used). A cwd ./.env must NOT be silently
+        # imported — that would re-introduce the security gap we
+        # closed by dropping the cwd fallback in the loader.
         (isolated_env / ".env").write_text(
             "QATLAS_SERVER_URL=https://staging.example.com\n"
-            "MINERU_API_TOKEN=eyJ0fake\n"
-            "QATLAS_TOKEN=qat_seeded\n"
+            "QATLAS_TOKEN=qat_should_not_leak_in\n"
         )
         rc = _run(["init"])
         assert rc == 0
         target = isolated_env / "home" / ".config" / "qatlas" / ".env"
         content = target.read_text()
-        assert "QATLAS_SERVER_URL=https://staging.example.com" in content
-        assert "MINERU_API_TOKEN=eyJ0fake" in content
-        # Note: it's emitted UNCOMMENTED now because it has a value.
-        assert "# MINERU_API_TOKEN=" not in content.replace("# Required to run", "")
+        # Cwd value MUST NOT have made it into the XDG file.
+        assert "https://staging.example.com" not in content
+        assert "qat_should_not_leak_in" not in content
+        # Required keys are still emitted as empty templates.
+        assert "QATLAS_SERVER_URL=" in content
+        assert "QATLAS_TOKEN=" in content
 
     def test_init_refuses_to_overwrite_without_force(self, isolated_env: Path, capsys: pytest.CaptureFixture) -> None:
         target = isolated_env / "home" / ".config" / "qatlas" / ".env"
@@ -87,12 +91,19 @@ class TestInit:
         # File untouched.
         assert target.read_text() == "KEEP=me\n"
 
-    def test_init_force_overwrites(self, isolated_env: Path) -> None:
+    def test_init_force_preserves_existing_values(self, isolated_env: Path) -> None:
+        # --force refreshes the template (so new fields appear after
+        # version upgrades) while preserving the user's existing keys
+        # — they don't want to lose their token on every refresh.
         target = isolated_env / "home" / ".config" / "qatlas" / ".env"
         target.parent.mkdir(parents=True)
-        target.write_text("OLD=stuff\n")
+        target.write_text("QATLAS_TOKEN=qat_user_already_set\nCUSTOM_KEY=v\n")
         assert _run(["init", "--force"]) == 0
-        assert "OLD=stuff" not in target.read_text()
+        content = target.read_text()
+        # User's existing token must survive.
+        assert "qat_user_already_set" in content
+        # Non-template keys also preserved under "Inherited keys".
+        assert "CUSTOM_KEY=v" in content
 
     def test_init_file_has_0600_perms(self, isolated_env: Path) -> None:
         assert _run(["init"]) == 0
@@ -188,14 +199,18 @@ class TestPath:
         assert "xdg" in out
         assert ".config/qatlas/.env" in out
 
-    def test_reports_cwd_fallback(self, isolated_env: Path, capsys: pytest.CaptureFixture) -> None:
+    def test_cwd_env_not_reported_as_config(
+        self, isolated_env: Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        # A bare ./.env in cwd MUST be ignored — `path` should report
+        # no config found, not point at the cwd file.
         (isolated_env / ".env").write_text("QATLAS_SERVER_URL=https://x\n")
-        rc = _run(["path", "--canonical"])
+        rc = _run(["path"])
         assert rc == 0
         captured = capsys.readouterr()
-        assert "cwd_legacy" in captured.out
-        # --canonical adds a migration hint to stderr.
-        assert "migrate" in captured.err.lower()
+        assert "no config file" in captured.out
+        # XDG candidate path is shown so the user knows where to put it.
+        assert ".config/qatlas/.env" in captured.out
 
     def test_no_file_returns_friendly_message(self, isolated_env: Path, capsys: pytest.CaptureFixture) -> None:
         rc = _run(["path"])

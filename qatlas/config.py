@@ -16,7 +16,7 @@ from dotenv import dotenv_values
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from qatlas.paths import resolve_dotenv_path, user_dotenv_path
+from qatlas.paths import resolve_dotenv_path
 
 logger = logging.getLogger(__name__)
 
@@ -193,15 +193,21 @@ class ServerConfig(BaseSettings):
         1. Real OS environment variables (always win; ``--server-url`` /
            ``--token`` style CLI flags layer on top via argparse).
         2. ``QATLAS_DOTENV=<path>`` explicit override (for systemd
-           units that ship a deployment-specific .env).
-        3. ``~/.config/qatlas/.env`` (XDG, recommended for
-           ``uv tool install`` users).
-        4. ``./.env`` in current working directory (legacy fallback;
-           emits a deprecation warning suggesting migration).
-        5. Built-in defaults defined on each field.
+           units that ship a deployment-specific .env, or for
+           containers that mount a pre-baked config file).
+        3. ``~/.config/qatlas/.env`` (XDG, the canonical location for
+           ``uv tool install`` users — populated via ``qatlas config
+           init`` / ``qatlas config set``).
+        4. Built-in defaults defined on each field.
 
         ``QATLAS_SKIP_DOTENV=1`` disables all dotenv loading and
         forces env-vars-only.
+
+        The cwd ``./.env`` fallback was removed in v0.15.0a5 to
+        match the gh / docker / kubectl / aws pattern (user-level
+        CLIs MUST NOT silently pick up cwd config). Users who
+        relied on it should run ``qatlas config init`` once, or set
+        ``QATLAS_DOTENV=$PWD/.env`` for a one-off invocation.
 
         Also calls :func:`bootstrap_env` so the same precedence chain
         is visible to direct ``os.getenv`` readers elsewhere in the
@@ -211,15 +217,7 @@ class ServerConfig(BaseSettings):
         if _skip_dotenv():
             return cls(_env_file=None)
 
-        dotenv_path, source = resolve_dotenv_path()
-        if source == "cwd_legacy":
-            logger.warning(
-                "Loading qatlas config from ./.env (legacy cwd fallback). "
-                "Prefer the XDG location: move this file to %s, or run "
-                "`qatlas config init` to set up a fresh one. The cwd "
-                "fallback may be removed in a future release.",
-                user_dotenv_path(),
-            )
+        dotenv_path, _source = resolve_dotenv_path()
         # Mirror the values into os.environ so that direct os.getenv
         # readers (resolve_token, get_wiki_root, etc.) see the same
         # values pydantic-settings just loaded into the model. Done

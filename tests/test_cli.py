@@ -205,17 +205,19 @@ def test_child_system_exit_code_is_returned(monkeypatch):
 
 
 def test_ingest_client_defaults_to_public_base_url(tmp_path, monkeypatch):
-    (tmp_path / ".env").write_text(
+    # Drop config into the XDG location (~/.config/qatlas/.env) since
+    # cwd ./.env fallback was removed in v0.15.0a5.
+    fake_home = tmp_path / "fake-home"
+    xdg = fake_home / ".config" / "qatlas"
+    xdg.mkdir(parents=True)
+    (xdg / ".env").write_text(
         "PUBLIC_BASE_URL=https://atlas.example\nSERVER_PORT=9000\n",
         encoding="utf-8",
     )
     monkeypatch.delenv("QATLAS_SKIP_DOTENV", raising=False)
     monkeypatch.delenv("QUANTUMATLAS_SKIP_DOTENV", raising=False)
-    # XDG loader uses cwd as the legacy-fallback location, not get_project_root.
-    # Also clear any user-level XDG file the dev environment might have so the
-    # cwd fallback is exercised.
-    monkeypatch.setenv("HOME", str(tmp_path / "fake-home"))
-    (tmp_path / "fake-home").mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     monkeypatch.chdir(tmp_path)
 
     assert client_cli._default_base_url() == "https://atlas.example"
