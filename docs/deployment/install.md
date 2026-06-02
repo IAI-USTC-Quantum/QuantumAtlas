@@ -1,5 +1,18 @@
 # 安装与 service 注册
 
+## 选择部署流派（v0.16.0+）
+
+| 流派 | 适合 | 起手命令 |
+|---|---|---|
+| **systemd（裸 binary）** | 长期生产、单机 / 多边缘、最少依赖 / 最少层 | `curl … install-qatlasd.sh \| sh && qatlasd service install` |
+| **docker compose 全家桶** | 评估、一键起完整栈（含 RustFS + Neo4j）、k8s 友好 | `docker compose up -d`（见 [docker.md](docker.md)） |
+
+> 两套流派**完全可互换**：同一份数据（pb_data / wiki / raw / RustFS bucket）可以今天 systemd 跑，明天迁到 compose；env vars 同名同义。
+
+下面默认按 systemd 流派教。docker 流派完整教程见 **[docker.md](docker.md)**。
+
+---
+
 两步：
 
 1. **`install-qatlasd.sh`** 下载 binary（不动 systemd）

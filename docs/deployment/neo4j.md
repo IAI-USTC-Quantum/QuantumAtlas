@@ -184,12 +184,36 @@ curl -X POST https://<server>/api/graph/query \
 
 或浏览器打开 Neo4j Browser <http://localhost:7474> 直接跑。
 
-## 性能 / 容量
+## 硬件 / 容量建议
 
-- 当前 schema 节点 / 边数都在万级，Community Edition 足够
-- 内存：JVM heap 1-2 GB 足够（WSL2 部署实测）
-- 磁盘：少于 100 MB
-- Bolt connection pool：默认 100，QuantumAtlas 没有持续高并发图查询，不需要调
+Neo4j 是图数据库，瓶颈在**内存**（JVM heap 决定可热查询的子图大小），CPU 一般够、磁盘极小：
+
+| 资源 | 当前 QuantumAtlas 规模（万级节点） | 团队规模（10 万级） |
+|---|---|---|
+| **JVM heap（内存）⭐** | 1 GB | 4 GB |
+| **CPU** | 2 核 | 4 核 |
+| **磁盘** | < 200 MB | < 2 GB |
+| **网络** | 不敏感（结果集小） | 同左 |
+
+> 选机器优先选**内存大**的，其次 CPU；磁盘随便。游戏机改 server / 二手工作站 / 中端 VPS 都合适。
+
+Heap 调整方法：
+
+- **apt 装的 systemd Neo4j**：编辑 `/etc/neo4j/neo4j.conf` 加 / 改 `server.memory.heap.max_size=4G`，`sudo systemctl restart neo4j`
+- **docker compose 全家桶**：改 `.env` 的 `NEO4J_HEAP=4G`，`docker compose up -d neo4j`
+- **docker 单 image**：`docker run -e NEO4J_server_memory_heap_max__size=4G ...`
+
+## 分离部署：Neo4j 放另一台机
+
+跟 [对象存储分离](rustfs.md#分离部署对象存储放另一台机) 同理 —— Neo4j Bolt 端口（7687）跨机 / 跨 mesh 暴露给 qatlasd 即可。已有 §「[跨 mesh 暴露给多边缘节点](#跨-mesh-暴露给多边缘节点)」详细 portproxy 教程，本节不重复。
+
+适合**单独 Neo4j 机器**的设备：
+
+- 内存大的二手工作站 / 游戏机（16-32 GB RAM 是甜点；Neo4j 单进程吃内存）
+- 内存型 VPS（云服务商的 "memory-optimized" instance type）
+- 已有 NAS 但 CPU/IO 不太够 → Neo4j 放在 NAS 旁边的小机器，存对象走 NAS
+
+NUC / 树莓派 5 也跑得动小规模图（1 GB heap，万级节点），适合 home lab。
 
 ## 安全：`/api/graph/query` 的 Cypher 无代价上限（已接受的风险）
 

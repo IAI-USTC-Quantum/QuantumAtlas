@@ -10,7 +10,13 @@ QuantumAtlas server 是一个 Go 单 binary。这一节覆盖从"裸 VPS"到"生
 
     ---
 
-    `install-qatlasd.sh` + `qatlasd service install` 的全自动 / 半自动 / 全手动三种模式。
+    `install-qatlasd.sh` + `qatlasd service install` 的全自动 / 半自动 / 全手动三种模式（systemd 流派）。
+
+-   :material-docker:{ .lg .middle } **[Docker 部署](docker.md)**
+
+    ---
+
+    `docker compose up -d` 一键起 qatlasd + RustFS + Neo4j 全家桶；ghcr.io 多架构 image；适合评估、k8s 友好部署。
 
 -   :material-server-network:{ .lg .middle } **[反向代理模板](reverse-proxy.md)**
 
@@ -68,24 +74,35 @@ QuantumAtlas server 是一个 Go 单 binary。这一节覆盖从"裸 VPS"到"生
 
 </div>
 
+## 部署形态
+
+| 形态 | 推荐流派 | 拓扑示意 |
+|---|---|---|
+| 个人 / 实验室（评估） | **docker compose 全家桶** | qatlasd + rustfs + neo4j 一台 |
+| 个人 / 实验室（长期） | systemd 单机 + LocalStore | qatlasd 一台，无对象存储 |
+| 团队（数据规模 < 100k 论文） | systemd 三件套（分机） | qatlasd@A · rustfs@NAS · neo4j@内存大设备 |
+| 生产单边缘 | systemd + 公有云 S3 / 自托管 RustFS | qatlasd@VPS · rustfs@专属 VPS / R2 · neo4j@专属 VPS |
+| 多边缘 active-active | systemd × N + 共享存储 | qatlasd × N edges → 共享 rustfs + neo4j（mesh） |
+| k8s / Nomad / Swarm | docker image | helm chart / nomad job — image 当 building block |
+
+后续每个具体配置页都会说哪些选项适合哪个形态。
+
 ## 建议阅读顺序
 
-第一次部署：
+**systemd 流派**（生产单边 / 多边 / 长期部署）：
 
 1. **[install](install.md)** — 装好 binary + service
 2. **[reverse-proxy](reverse-proxy.md)** — 前面挂 TLS
 3. **[github-oauth](github-oauth.md)** — 用户能登录
-4. **[neo4j](neo4j.md)** — 图谱功能（可选，但是核心）
-5. **[rustfs](rustfs.md)** — 对象存储（生产强烈建议）
+4. **[neo4j](neo4j.md)** — 图谱功能（可选，但是核心；可放另一台机）
+5. **[rustfs](rustfs.md)** — 对象存储（生产强烈建议；可放另一台机或公有云）
 6. **[health-and-monitoring](health-and-monitoring.md)** — 接监控
 7. **[backup-and-upgrade](backup-and-upgrade.md)** — 备份策略
 
-## 部署形态
+**docker 流派**（一键评估 / k8s 友好）：
 
-| 形态 | 适用 |
-|---|---|
-| **单机** | 个人 / 实验室 1 个 server + 1 个 Neo4j + LocalStore（不用 RustFS） |
-| **单机 + S3** | 生产入门：1 个 server + RustFS（保留 versioning）|
-| **多边缘 active-active** | 跨地域：多个 server + 共享 RustFS + 共享 Neo4j。每台 edge 独立 PocketBase（用户/PAT 不跨节点），共享 RustFS / Neo4j 通过 EasyTier 等内网 mesh 互通。|
-
-后续每个具体配置页都会说哪些选项适合哪个形态。
+1. **[docker](docker.md)** — compose 起栈 / standalone / `docker run`
+2. **[reverse-proxy](reverse-proxy.md)** — 公网 TLS（可选；compose 内也能挂 caddy sidecar）
+3. **[github-oauth](github-oauth.md)** — OAuth app 注册（跟流派无关）
+4. **[health-and-monitoring](health-and-monitoring.md)** — `docker logs` / 监控接入
+5. **[backup-and-upgrade](backup-and-upgrade.md)** — bind mount 备份 + `docker compose pull`

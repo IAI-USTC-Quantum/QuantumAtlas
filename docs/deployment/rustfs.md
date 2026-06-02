@@ -40,6 +40,59 @@ The split is in `cmd/qatlasd/main.go::initRawStore` and the
 all-or-nothing rule is enforced by
 `internal/config/config.go::validateS3Config`.
 
+## 对象存储不必跟 qatlasd 同机：支持哪些后端？
+
+qatlasd 通过 [`minio-go/v7`](https://github.com/minio/minio-go) 走 **AWS SigV4** 协议，所以**任何 S3-compatible 后端都能用**。验证过 / 强推荐：
+
+| 后端 | 部署形态 | 备注 |
+|---|---|---|
+| **RustFS** | 自托管（推荐） | 默认选型；NAS / VPS / k8s 都行 |
+| **MinIO** | 自托管 | RustFS 的前身，行为接近；CE / community 版免费 |
+| **AWS S3** | 公有云 | 真 S3；按调用次数计费，dev 慎用 |
+| **Cloudflare R2** | 公有云 | 零 egress 费；endpoint = `https://<account>.r2.cloudflarestorage.com` |
+| **Backblaze B2 (S3-compat)** | 公有云 | 低价 cold storage 友好 |
+| **Wasabi** | 公有云 | 同上 |
+| **DigitalOcean Spaces** | 公有云 | 同上 |
+| **Ceph RadosGW** | 私有云 | SigV4 全兼容 |
+| **SeaweedFS (S3 gateway)** | 自托管 | 跨地域 erasure coding 场景 |
+
+**部分支持**（需要 path-style URL + 验证 SigV4 实现完整性）：
+
+| 后端 | 注意事项 |
+|---|---|
+| **阿里云 OSS（S3 兼容模式）** | endpoint 用 `https://oss-<region>.aliyuncs.com`；某些 bucket policy 字段不支持 |
+| **腾讯云 COS（S3 兼容模式）** | 同上，endpoint `https://cos.<region>.myqcloud.com` |
+| **华为云 OBS（S3 兼容）** | 同上 |
+
+**不支持**（不是 SigV4 协议，需要换 SDK）：
+
+- Azure Blob Storage（native API）
+- Google Cloud Storage（native API）
+- WebDAV / NFS / SMB / FTP（不是 S3）
+- Synology Drive、Nextcloud（不是 S3）
+
+> 想用 Azure / GCS 必须前面挂个 [s3proxy](https://github.com/gaul/s3proxy) 翻译协议；社区有用例但 QuantumAtlas 未官方验证。
+
+## 分离部署：对象存储放另一台机
+
+RustFS / S3 backend 跟 qatlasd 不需要同机。常见拓扑：
+
+- **NAS 模式**：家用 NAS（Synology / QNAP / 自组）跑 RustFS docker；qatlasd 在 VPS / 工作站；走家用宽带反代或 EasyTier mesh
+- **公有云对象存储**：qatlasd 自托管，对象走 R2 / AWS S3 / Wasabi；省自管存储的运维
+- **跨地域多边缘**：qatlasd 在多个 edge（VPS / 不同机房），共享同一 RustFS（active-active 写入；audit 留痕由 RustFS notify 兜底）
+
+### 硬件 / 容量建议（对象存储侧）
+
+对象存储的瓶颈在**磁盘容量**和**网络带宽**，CPU/内存要求低：
+
+| 用量级别 | 容量估算 | 推荐设备 |
+|---|---|---|
+| 个人 / 实验室 | 万篇 paper ≈ 10 GB PDF + 50 GB images = 60 GB | 任意 NAS / SBC / 廉价 VPS |
+| 团队 | 10 万篇 ≈ 600 GB | 中等 NAS / 中端 VPS |
+| 多边缘共享 | 取决于增长曲线，建议 EC 起步 | 高 IO NAS / 专属对象存储 VPS |
+
+CPU 2 核 + 内存 2 GB 已绰绰有余（HDD 场景见现有 `RUSTFS_DRIVE_TIMEOUT_PROFILE=high_latency` 优化）。
+
 ## Required env vars
 
 | Var                              | Example                              | Notes                                                                                 |
