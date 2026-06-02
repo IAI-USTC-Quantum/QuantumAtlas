@@ -65,9 +65,8 @@ class MinerUFatalError(MinerUError):
     """
 
 
-# Source: MinerU error code table (mineru.net/apiManage/docs) cross-referenced
-# with pdf2md's MINERU_RETRYABLE_ERROR_CODES. Keep in sync with
-# internal/mineru/errors.go retryableErrorCodes.
+# Source: MinerU error code table (mineru.net/apiManage/docs). Keep in sync
+# with internal/mineru/errors.go retryableErrorCodes.
 _RETRYABLE_CODES = frozenset(
     {
         "-10001",  # 服务异常

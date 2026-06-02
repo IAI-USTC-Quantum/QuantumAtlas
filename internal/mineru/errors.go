@@ -31,8 +31,7 @@ var (
 )
 
 // retryableErrorCodes are MinerU `code` values that indicate a transient
-// problem. Source: MinerU error code table (mineru.net/apiManage/docs)
-// cross-referenced with pdf2md's MINERU_RETRYABLE_ERROR_CODES.
+// problem. Source: MinerU error code table (mineru.net/apiManage/docs).
 var retryableErrorCodes = map[int]struct{}{
 	-10001: {}, // 服务异常 / service unavailable
 	-60001: {}, // 生成上传 URL 失败

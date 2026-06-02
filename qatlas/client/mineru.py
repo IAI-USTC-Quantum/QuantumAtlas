@@ -992,8 +992,7 @@ def _cleanup_workdirs(jobs: list[_BatchJob]) -> None:
 def _seconds_until_next_daily_run() -> float:
     """Seconds until the next local 00:01 — when MinerU resets daily quota.
 
-    01 (not 00) gives MinerU a minute of slack to actually reset; matches
-    pdf2md's seconds_until_next_midnight_plus_one.
+    01 (not 00) gives MinerU a minute of slack to actually reset.
     """
     now = datetime.now()
     tomorrow = (now + timedelta(days=1)).replace(
