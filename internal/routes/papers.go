@@ -111,7 +111,7 @@ func RegisterPapers(
 			if ttl <= 0 {
 				ttl = papers.DefaultTTLSeconds
 			}
-			return mineruClaimHandler(re, cfg, rawStore, catalog, arxiv, ttl)
+			return mineruClaimHandler(re, cfg, rawStore, shareStore, catalog, arxiv, ttl)
 		}
 		return re.JSON(http.StatusNotFound, map[string]string{
 			"detail": fmt.Sprintf("no POST handler for /api/papers/%s", raw),
@@ -586,7 +586,7 @@ func streamMarkdown(re *core.RequestEvent, store objstore.Store, mdKey string) e
 // MinerU claim handlers
 // ---------------------------------------------------------------------------
 
-func mineruClaimHandler(re *core.RequestEvent, cfg *config.Config, store objstore.Store, catalog *papers.Store, arxivID string, ttl int) error {
+func mineruClaimHandler(re *core.RequestEvent, cfg *config.Config, store objstore.Store, shareStore *shares.Store, catalog *papers.Store, arxivID string, ttl int) error {
 	ctx := re.Request.Context()
 	canonical, ok := paperassets.ValidateUploadID(arxivID)
 	if !ok {
@@ -600,16 +600,37 @@ func mineruClaimHandler(re *core.RequestEvent, cfg *config.Config, store objstor
 		requester = re.Request.Header.Get(cfg.UserHeader)
 	}
 
+	// Build the URL MinerU will fetch the PDF from. Prefer a presigned
+	// RustFS direct link to THIS edge's public S3 endpoint so MinerU
+	// sees exactly the bytes the catalog has — never arxiv.org's live
+	// (possibly newer / retracted) PDF. Same helper the server-side
+	// silent converter uses, so client- and server-side conversion
+	// paths produce byte-identical results.
+	//
+	// The URL TTL bundles the claim TTL plus a 10-minute margin so a
+	// slow MinerU fetch doesn't expire the link mid-conversion.
+	//
+	// On failure we fall back to the public arxiv URL as a safety net
+	// (only triggers if PresignGet itself errors — e.g. S3 endpoint
+	// transiently unreachable). The fallback keeps the claim flow
+	// working but logs a WARN so ops can fix the underlying issue.
+	pdfKey := paperassets.AssetKey("pdf", canonical)
+	pdfURLTTL := time.Duration(ttl)*time.Second + 10*time.Minute
+	pdfURL, urlErr := mineru.BuildPDFURL(ctx, cfg, store, shareStore, canonical, pdfKey, pdfURLTTL)
+	if urlErr != nil {
+		slog.Warn("mineru-claim: presign PDF URL failed; falling back to public arxiv URL",
+			"arxiv_id", canonical, "error", urlErr)
+		pdfURL = papers.ArxivAbsURL(canonical)
+	}
+
 	// The lease is granted atomically by the catalog (single MERGE/SET
-	// that only matches when the paper has a PDF, lacks markdown, and has
-	// no live claim). The PDF URL handed to MinerU is the public arxiv
-	// abstract URL — compliance-safe and avoids minting a share token per
-	// claim.
+	// that only matches when the paper has a PDF, lacks markdown, and
+	// has no live claim).
 	claim, err := catalog.Claim(ctx, papers.CreateOptions{
 		ArxivID:    canonical,
 		Requester:  requester,
 		TTLSeconds: ttl,
-		PDFURL:     papers.ArxivAbsURL(canonical),
+		PDFURL:     pdfURL,
 	})
 	if err != nil {
 		switch {

@@ -175,7 +175,8 @@ func (c *Converter) convert(ctx context.Context, canonical string) (mdKey string
 
 	// 2. Build the direct PDF URL MinerU will fetch (private presigned
 	// link to the real bytes; no arxiv redirect).
-	pdfURL, err := c.buildPDFURL(ctx, canonical, pdfKey)
+	pdfURL, err := BuildPDFURL(ctx, c.cfg, c.store, c.shareStore, canonical, pdfKey,
+		time.Duration(c.cfg.MinerUTimeout)*time.Second+10*time.Minute)
 	if err != nil {
 		return "", 0, err
 	}
