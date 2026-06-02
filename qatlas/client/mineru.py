@@ -54,12 +54,16 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
+import shutil
 import signal
 import sys
 import tempfile
 import time
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, List, Optional
 from urllib.parse import urlparse
 
 import requests
@@ -74,11 +78,28 @@ from qatlas.client._common import (
     request_verify,
     run_with_request_errors,
 )
-from qatlas.parser.mineru_client import MinerUClient
+from qatlas.parser.mineru_client import (
+    MAX_BATCH_SIZE,
+    BatchFile,
+    BatchTaskState,
+    MinerUClient,
+    MinerUDailyLimitError,
+    MinerUError,
+    MinerUFatalError,
+    MinerURetryableError,
+)
 from qatlas.config import ServerConfig
 
 
 _ARXIV_PDF_HOSTS = frozenset({"arxiv.org", "export.arxiv.org"})
+
+# In-flight terminal states from MinerU's batch result entries.
+_TERMINAL_BATCH_STATES = frozenset({"done", "failed"})
+
+# os.EX_TEMPFAIL is the canonical "try again later" exit code (75 on Unix).
+# Windows lacks it; fall back to the same numeric value so CI on either
+# platform reports identically.
+EXIT_DAILY_LIMIT = getattr(os, "EX_TEMPFAIL", 75)
 
 
 def _is_arxiv_url(url: str) -> bool:
@@ -482,6 +503,17 @@ def _process_one(
             return 1
         print_json(payload)
         return 0
+    except MinerUDailyLimitError as exc:
+        _print_err(
+            f"[daily-limit] {arxiv_id}: MinerU quota exhausted ({exc}). "
+            f"Releasing claim; exiting {EXIT_DAILY_LIMIT} (EX_TEMPFAIL)."
+        )
+        _release_claim(
+            base_url, arxiv_id, claim_id,
+            request_timeout=args.request_timeout,
+            verify=verify, headers=headers,
+        )
+        return EXIT_DAILY_LIMIT
     except Exception:
         _release_claim(
             base_url,
@@ -500,14 +532,26 @@ def _drain_queue_once(
     config: ServerConfig,
     verify: bool,
     headers: dict[str, str],
-) -> tuple[int, int]:
-    """Run one queue-drain pass. Returns (processed_count, failure_count).
+) -> "_BatchOutcome":
+    """Run one queue-drain pass via the MinerU batch API.
 
-    Splits out from cmd_mineru so --watch can call it in a loop.
+    Pulls up to ``--batch-size`` candidates, claims & verifies each,
+    submits the survivors as a single MinerU batch (POST
+    /api/v4/extract/task/batch), then polls the batch every
+    ``MINERU_POLL_INTERVAL`` seconds. Done entries are downloaded,
+    uploaded to the server, and their claims released; failed entries
+    have their err_msg classified (so we can detect mid-batch daily-limit
+    hits) and their claims released. In-flight entries (waiting / pending
+    / running / converting) are simply polled again.
+
+    Returns a :class:`_BatchOutcome` so the caller (watch loop) can react
+    to ``daily_limit_hit`` by sleeping until next 00:01 local time.
     """
+    batch_size = max(1, min(int(args.batch_size), MAX_BATCH_SIZE))
+
     list_resp = requests.get(
         f"{base_url}/api/papers/needs-mineru",
-        params={"limit": args.max},
+        params={"limit": batch_size},
         headers={**headers, **client_version_headers()},
         timeout=args.request_timeout,
         verify=verify,
@@ -515,7 +559,7 @@ def _drain_queue_once(
     check_response_version(list_resp, write=False)
     if not list_resp.ok:
         _print_err(_http_error(list_resp, "needs-mineru list"))
-        return 0, 1
+        return _BatchOutcome(processed=0, failures=1, daily_limit_hit=False)
     queue = list_resp.json()
     candidates = queue.get("papers") or []
     if not candidates:
@@ -523,23 +567,439 @@ def _drain_queue_once(
             "Nothing to do — no PDFs in RAW_DIR are waiting for MinerU. "
             f"(unclaimed={queue.get('total_unclaimed')}, claimed={queue.get('total_claimed')})"
         )
-        return 0, 0
+        return _BatchOutcome(processed=0, failures=0, daily_limit_hit=False)
     _print_err(
-        f"Queue: {len(candidates)} candidate(s) (unclaimed total={queue.get('total_unclaimed')})"
+        f"Queue: {len(candidates)} candidate(s) "
+        f"(unclaimed total={queue.get('total_unclaimed')}, batch_size={batch_size})"
     )
 
-    processed = 0
+    # Phase 1: claim + verify each candidate. Failures here are released
+    # immediately and counted, but do NOT abort batch submission for the
+    # survivors — quota is too precious to waste on a stuck candidate.
+    jobs, prep_failures = _prepare_batch_jobs(
+        args, base_url, candidates, verify, headers
+    )
+    if not jobs:
+        _print_err(f"No survivable jobs in this batch ({prep_failures} prep failures).")
+        return _BatchOutcome(
+            processed=prep_failures,
+            failures=prep_failures,
+            daily_limit_hit=False,
+        )
+
+    # Phase 2: submit the batch. Daily-limit at this point is the cleanest
+    # signal we get — release every claim and tell the caller to back off.
+    mineru = MinerUClient(
+        config.mineru_api_token,
+        base_url=config.mineru_api_base_url,
+    )
+    batch_id: str
+    try:
+        batch_id = mineru.submit_url_batch(
+            [BatchFile(url=j.pdf_url, data_id=j.arxiv_id) for j in jobs],
+            model_version=config.mineru_model_version,
+            language=config.mineru_language,
+            enable_formula=config.mineru_enable_formula,
+            enable_table=config.mineru_enable_table,
+            is_ocr=config.mineru_is_ocr,
+            no_cache=args.no_cache,
+        )
+    except MinerUDailyLimitError as exc:
+        _print_err(
+            f"[daily-limit] MinerU rejected batch submission ({exc}). "
+            "Releasing all claims; will back off until tomorrow."
+        )
+        _release_all(args, base_url, jobs, verify, headers)
+        _cleanup_workdirs(jobs)
+        return _BatchOutcome(
+            processed=prep_failures,
+            failures=prep_failures + len(jobs),
+            daily_limit_hit=True,
+        )
+    except MinerUFatalError as exc:
+        _print_err(f"[fatal] MinerU rejected batch submission: {exc}")
+        _release_all(args, base_url, jobs, verify, headers)
+        _cleanup_workdirs(jobs)
+        return _BatchOutcome(
+            processed=prep_failures,
+            failures=prep_failures + len(jobs),
+            daily_limit_hit=False,
+        )
+    except (MinerUError, requests.RequestException) as exc:
+        _print_err(f"[error] MinerU batch submission failed: {exc}")
+        _release_all(args, base_url, jobs, verify, headers)
+        _cleanup_workdirs(jobs)
+        return _BatchOutcome(
+            processed=prep_failures,
+            failures=prep_failures + len(jobs),
+            daily_limit_hit=False,
+        )
+    _print_err(f"MinerU batch id: {batch_id} ({len(jobs)} files)")
+
+    # Phase 3: poll until all entries terminal, downloading + uploading
+    # done ones as we see them. Mid-batch daily-limit (rare but possible)
+    # is detected via classification of failed entries' err_msg.
+    poll_interval = max(float(config.mineru_poll_interval), 1.0)
+    deadline = time.monotonic() + float(config.mineru_timeout)
+    jobs_by_id = {j.arxiv_id: j for j in jobs}
+    done_ids: set[str] = set()
+    processed = prep_failures
+    failures = prep_failures
+    daily_limit_hit = False
+
+    while jobs_by_id and time.monotonic() < deadline:
+        if _SHUTDOWN_REQUESTED:
+            _print_err("Shutdown requested; releasing remaining claims.")
+            _release_all(args, base_url, list(jobs_by_id.values()), verify, headers)
+            _cleanup_workdirs(list(jobs_by_id.values()))
+            jobs_by_id.clear()
+            break
+
+        try:
+            results = mineru.get_batch(batch_id)
+        except MinerUDailyLimitError as exc:
+            _print_err(
+                f"[daily-limit] MinerU rejected batch poll ({exc}); "
+                "in-flight tasks may still complete server-side but we "
+                "give up our claims now and back off until tomorrow."
+            )
+            _release_all(args, base_url, list(jobs_by_id.values()), verify, headers)
+            _cleanup_workdirs(list(jobs_by_id.values()))
+            failures += len(jobs_by_id)
+            jobs_by_id.clear()
+            daily_limit_hit = True
+            break
+        except MinerURetryableError as exc:
+            _print_err(f"[retryable] get_batch hiccup, will retry: {exc}")
+            time.sleep(poll_interval)
+            continue
+        except (MinerUError, requests.RequestException) as exc:
+            _print_err(f"[error] get_batch failed: {exc}; will retry")
+            time.sleep(poll_interval)
+            continue
+
+        if not results:
+            _print_err("MinerU: no results yet, polling again.")
+            time.sleep(poll_interval)
+            continue
+
+        new_terminal = 0
+        for entry in results:
+            if entry.data_id in done_ids:
+                continue
+            if entry.state not in _TERMINAL_BATCH_STATES:
+                continue
+            job = jobs_by_id.get(entry.data_id)
+            if job is None:
+                # MinerU returned an entry for a paper we never submitted —
+                # log and ignore. Possible if we cancelled mid-batch and a
+                # retry got duplicated, but should never happen in practice.
+                _print_err(
+                    f"[warn] MinerU reported unknown data_id={entry.data_id!r} (state={entry.state}); ignoring"
+                )
+                continue
+            done_ids.add(entry.data_id)
+            new_terminal += 1
+            del jobs_by_id[entry.data_id]
+
+            if entry.state == "done":
+                ok = _finalise_done_entry(
+                    args, base_url, mineru, job, entry, verify, headers
+                )
+                processed += 1
+                if not ok:
+                    failures += 1
+                _release_claim(
+                    base_url,
+                    job.arxiv_id,
+                    job.claim_id,
+                    request_timeout=args.request_timeout,
+                    verify=verify,
+                    headers=headers,
+                )
+                _cleanup_workdirs([job])
+                continue
+
+            # state == "failed": classify err_msg for daily-limit detection.
+            from qatlas.parser.mineru_client import classify_mineru_error
+
+            classified = classify_mineru_error(msg=entry.err_msg or "")
+            processed += 1
+            failures += 1
+            if isinstance(classified, MinerUDailyLimitError):
+                _print_err(
+                    f"[daily-limit] {job.arxiv_id} failed with quota signal "
+                    f"({entry.err_msg!r}); releasing remaining claims and "
+                    "backing off until tomorrow."
+                )
+                daily_limit_hit = True
+                _release_claim(
+                    base_url,
+                    job.arxiv_id,
+                    job.claim_id,
+                    request_timeout=args.request_timeout,
+                    verify=verify,
+                    headers=headers,
+                )
+                _cleanup_workdirs([job])
+                # Release everything else still in flight.
+                _release_all(args, base_url, list(jobs_by_id.values()), verify, headers)
+                _cleanup_workdirs(list(jobs_by_id.values()))
+                failures += len(jobs_by_id)
+                jobs_by_id.clear()
+                break
+            _print_err(f"[failed] {job.arxiv_id}: {entry.err_msg or 'unknown error'}")
+            _release_claim(
+                base_url,
+                job.arxiv_id,
+                job.claim_id,
+                request_timeout=args.request_timeout,
+                verify=verify,
+                headers=headers,
+            )
+            _cleanup_workdirs([job])
+
+        if jobs_by_id and not daily_limit_hit:
+            still_running = ", ".join(sorted(jobs_by_id.keys())[:5])
+            if len(jobs_by_id) > 5:
+                still_running += f", ... (+{len(jobs_by_id) - 5} more)"
+            _print_err(
+                f"Batch progress: {len(done_ids)} done, "
+                f"{len(jobs_by_id)} still in flight ({still_running}); "
+                f"sleeping {poll_interval:.0f}s."
+            )
+            time.sleep(poll_interval)
+    else:
+        # Loop exited via timeout (not break) with work still pending.
+        if jobs_by_id:
+            _print_err(
+                f"Batch timed out after MINERU_TIMEOUT={config.mineru_timeout}s "
+                f"with {len(jobs_by_id)} task(s) still in flight; releasing claims."
+            )
+            _release_all(args, base_url, list(jobs_by_id.values()), verify, headers)
+            _cleanup_workdirs(list(jobs_by_id.values()))
+            failures += len(jobs_by_id)
+
+    return _BatchOutcome(
+        processed=processed, failures=failures, daily_limit_hit=daily_limit_hit
+    )
+
+
+@dataclass
+class _BatchOutcome:
+    """Summary of one _drain_queue_once pass.
+
+    daily_limit_hit signals the watch loop to sleep until the next local
+    00:01 (when MinerU's free quota resets) rather than just waiting
+    --watch-interval seconds; one-shot runs surface it via exit code 75
+    (EX_TEMPFAIL) so CI can treat it as transient.
+    """
+
+    processed: int
+    failures: int
+    daily_limit_hit: bool
+
+
+@dataclass
+class _BatchJob:
+    """One paper claimed and verified, ready to feed into MinerU batch.
+
+    workdir is a per-job tempdir (so concurrent downloads of full_zip
+    don't collide on the same file name); it's cleaned up after upload
+    via _cleanup_workdirs.
+    """
+
+    arxiv_id: str
+    claim_id: str
+    pdf_url: str
+    server_pdf_sha256: Optional[str]
+    client_pdf_sha256: Optional[str]
+    workdir: Path
+
+
+def _prepare_batch_jobs(
+    args: argparse.Namespace,
+    base_url: str,
+    candidates: list[dict[str, Any]],
+    verify: bool,
+    headers: dict[str, str],
+) -> tuple[List[_BatchJob], int]:
+    """Claim + verify each candidate; return (valid_jobs, prep_failures).
+
+    Any candidate that fails (claim error, non-arxiv URL, PDF hash
+    mismatch, claim race) has its claim released and counts as one prep
+    failure; survivors are returned in submission order.
+    """
+    jobs: List[_BatchJob] = []
     failures = 0
     for paper in candidates:
         if _SHUTDOWN_REQUESTED:
             break
-        rc = _process_one(args, base_url, config, paper["arxiv_id"], verify, headers)
-        processed += 1
-        if rc != 0:
+        arxiv_id = paper["arxiv_id"]
+        claim, skip = _claim_one(
+            base_url,
+            arxiv_id,
+            request_timeout=args.request_timeout,
+            verify=verify,
+            headers=headers,
+            ttl_seconds=args.ttl_seconds,
+        )
+        if claim is None:
+            _print_err(f"[skip] {arxiv_id}: {skip}")
+            # 404/409 ("skip") aren't counted as failures; transport errors are.
+            if skip and not skip.startswith("skip"):
+                failures += 1
+            continue
+        claim_id = claim["claim_id"]
+        pdf_url = claim["pdf_url"]
+        server_pdf_sha256 = (claim.get("pdf_sha256") or "").lower() or None
+
+        if not _is_arxiv_url(pdf_url):
+            _print_err(
+                f"[skip] {arxiv_id}: server returned non-arxiv pdf_url {pdf_url!r}"
+            )
+            _release_claim(
+                base_url, arxiv_id, claim_id,
+                request_timeout=args.request_timeout,
+                verify=verify, headers=headers,
+            )
             failures += 1
-            if not args.continue_on_error:
-                break
-    return processed, failures
+            continue
+
+        client_pdf_sha256: Optional[str] = None
+        if server_pdf_sha256:
+            client_pdf_sha256 = _hash_arxiv_pdf(
+                pdf_url,
+                request_timeout=args.request_timeout,
+                verify=verify,
+            )
+            if client_pdf_sha256 is None:
+                _print_err(f"[error] {arxiv_id}: could not hash arxiv PDF")
+                _release_claim(
+                    base_url, arxiv_id, claim_id,
+                    request_timeout=args.request_timeout,
+                    verify=verify, headers=headers,
+                )
+                failures += 1
+                continue
+            if client_pdf_sha256 != server_pdf_sha256:
+                _print_err(
+                    f"[error] {arxiv_id}: PDF sha256 mismatch — arxiv served "
+                    f"{client_pdf_sha256} but server holds {server_pdf_sha256}"
+                )
+                _release_claim(
+                    base_url, arxiv_id, claim_id,
+                    request_timeout=args.request_timeout,
+                    verify=verify, headers=headers,
+                )
+                failures += 1
+                continue
+        else:
+            _print_err(
+                f"note: {arxiv_id} has no server-stored sha256 (legacy); skipping verify"
+            )
+
+        workdir = Path(tempfile.mkdtemp(prefix=f"qatlas-mineru-{arxiv_id.replace('/', '_')}-"))
+        jobs.append(
+            _BatchJob(
+                arxiv_id=arxiv_id,
+                claim_id=claim_id,
+                pdf_url=pdf_url,
+                server_pdf_sha256=server_pdf_sha256,
+                client_pdf_sha256=client_pdf_sha256,
+                workdir=workdir,
+            )
+        )
+    return jobs, failures
+
+
+def _finalise_done_entry(
+    args: argparse.Namespace,
+    base_url: str,
+    mineru: MinerUClient,
+    job: _BatchJob,
+    entry: BatchTaskState,
+    verify: bool,
+    headers: dict[str, str],
+) -> bool:
+    """Download a done entry's zip and upload it to our server.
+
+    Returns True on full success; False if the download or upload failed.
+    Caller still releases the claim either way.
+    """
+    if not entry.full_zip_url:
+        _print_err(f"[error] {job.arxiv_id}: state=done but full_zip_url is empty")
+        return False
+    if args.no_push:
+        _print_err(
+            f"[no-push] {job.arxiv_id}: would download {entry.full_zip_url} but --no-push is set"
+        )
+        return True
+
+    zip_path = job.workdir / "mineru-result.zip"
+    try:
+        mineru.download_full_zip(entry.full_zip_url, zip_path)
+    except (MinerUError, requests.RequestException) as exc:
+        _print_err(f"[error] {job.arxiv_id}: download_full_zip failed: {exc}")
+        return False
+    _print_err(
+        f"Downloaded MinerU zip for {job.arxiv_id} -> {zip_path} "
+        f"({zip_path.stat().st_size} bytes)"
+    )
+
+    ok, payload = _upload_mineru_zip(
+        base_url=base_url,
+        arxiv_id=job.arxiv_id,
+        zip_path=zip_path,
+        overwrite=args.overwrite,
+        request_timeout=args.request_timeout,
+        verify=verify,
+        headers=headers,
+        pdf_sha256=job.client_pdf_sha256,
+    )
+    if not ok:
+        _print_err(str(payload))
+        return False
+    print_json(payload)
+    return True
+
+
+def _release_all(
+    args: argparse.Namespace,
+    base_url: str,
+    jobs: list[_BatchJob],
+    verify: bool,
+    headers: dict[str, str],
+) -> None:
+    """Best-effort release of every claim in jobs (errors logged only)."""
+    for job in jobs:
+        _release_claim(
+            base_url,
+            job.arxiv_id,
+            job.claim_id,
+            request_timeout=args.request_timeout,
+            verify=verify,
+            headers=headers,
+        )
+
+
+def _cleanup_workdirs(jobs: list[_BatchJob]) -> None:
+    """Remove the per-job tempdir; tolerate already-removed."""
+    for job in jobs:
+        shutil.rmtree(job.workdir, ignore_errors=True)
+
+
+def _seconds_until_next_daily_run() -> float:
+    """Seconds until the next local 00:01 — when MinerU resets daily quota.
+
+    01 (not 00) gives MinerU a minute of slack to actually reset; matches
+    pdf2md's seconds_until_next_midnight_plus_one.
+    """
+    now = datetime.now()
+    tomorrow = (now + timedelta(days=1)).replace(
+        hour=0, minute=1, second=0, microsecond=0
+    )
+    return max(60.0, (tomorrow - now).total_seconds())
 
 
 def cmd_mineru(args: argparse.Namespace) -> int:
@@ -552,7 +1012,9 @@ def cmd_mineru(args: argparse.Namespace) -> int:
     verify = request_verify(args)
     headers = auth_headers(args)
 
-    # Single-paper mode short-circuits the queue path.
+    # Single-paper mode short-circuits the queue/batch path: just one
+    # paper, one task — no batching, no quota bookkeeping beyond what the
+    # single SubmitURLTask path naturally surfaces.
     if args.arxiv_id:
         return _process_one(args, base_url, config, args.arxiv_id, verify, headers)
 
@@ -560,34 +1022,57 @@ def cmd_mineru(args: argparse.Namespace) -> int:
         _install_signal_handlers()
         interval = max(int(args.watch_interval), 1)
         _print_err(
-            f"--watch enabled; polling needs-mineru every {interval}s. "
-            "Send SIGINT/SIGTERM (Ctrl-C) to stop after current paper."
+            f"--watch enabled; polling needs-mineru every {interval}s "
+            f"(batch_size={args.batch_size}). Send SIGINT/SIGTERM (Ctrl-C) "
+            "to stop after current batch."
         )
         consecutive_empty = 0
         while not _SHUTDOWN_REQUESTED:
-            processed, failures = _drain_queue_once(args, base_url, config, verify, headers)
-            if processed == 0:
+            outcome = _drain_queue_once(args, base_url, config, verify, headers)
+            if outcome.daily_limit_hit:
+                # Quota burnt — no point hammering MinerU until reset.
+                sleep_s = _seconds_until_next_daily_run()
+                wake_at = datetime.now() + timedelta(seconds=sleep_s)
+                _print_err(
+                    f"[daily-limit] Sleeping {sleep_s / 3600:.1f}h until "
+                    f"{wake_at.strftime('%Y-%m-%d %H:%M:%S')} "
+                    "(local) for MinerU quota reset."
+                )
+                _sleep_interruptible(sleep_s)
+                consecutive_empty = 0
+                continue
+            if outcome.processed == 0:
                 consecutive_empty += 1
                 if consecutive_empty == 1:
                     _print_err("Queue empty. Will keep polling.")
             else:
                 consecutive_empty = 0
                 _print_err(
-                    f"Batch done: {processed} processed, {failures} failures. "
-                    f"Sleeping {interval}s before next poll."
+                    f"Batch done: {outcome.processed} processed, "
+                    f"{outcome.failures} failures. Sleeping {interval}s before next poll."
                 )
-            # Sleep in 1-second slices so SIGINT can wake us up promptly
-            # rather than waiting for the full interval.
-            for _ in range(interval):
-                if _SHUTDOWN_REQUESTED:
-                    break
-                time.sleep(1)
+            _sleep_interruptible(interval)
         _print_err("Watch loop exiting cleanly.")
         return 0
 
-    # Default queue mode: one pass, then exit.
-    processed, failures = _drain_queue_once(args, base_url, config, verify, headers)
-    return 0 if failures == 0 else 1
+    # Default queue mode: one batch pass, then exit.
+    outcome = _drain_queue_once(args, base_url, config, verify, headers)
+    if outcome.daily_limit_hit:
+        _print_err(
+            f"[daily-limit] MinerU quota exhausted; exiting {EXIT_DAILY_LIMIT} "
+            "(EX_TEMPFAIL). Re-run after local 00:01."
+        )
+        return EXIT_DAILY_LIMIT
+    return 0 if outcome.failures == 0 else 1
+
+
+def _sleep_interruptible(seconds: float) -> None:
+    """Sleep in 1-second slices so SIGINT/SIGTERM wakes us promptly."""
+    end = time.monotonic() + max(0.0, seconds)
+    while time.monotonic() < end:
+        if _SHUTDOWN_REQUESTED:
+            return
+        time.sleep(min(1.0, end - time.monotonic()))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -609,15 +1094,33 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=MAX_BATCH_SIZE,
+        help=(
+            f"Queue mode only: max papers per MinerU batch (default {MAX_BATCH_SIZE}, "
+            f"hard cap {MAX_BATCH_SIZE} = MinerU's per-batch limit). Smaller batches "
+            "release per-paper failures sooner but waste round-trips."
+        ),
+    )
+    parser.add_argument(
         "--max",
         type=int,
-        default=10,
-        help="Queue mode only: maximum number of papers to process in one run (default 10).",
+        default=None,
+        dest="max_alias",
+        help=(
+            "Deprecated alias for --batch-size; kept for back-compat. "
+            "If both given, --batch-size wins."
+        ),
     )
     parser.add_argument(
         "--continue-on-error",
         action="store_true",
-        help="Queue mode only: keep processing the next paper even if one fails.",
+        help=(
+            "Queue mode only: keep processing despite per-paper failures. "
+            "In batch mode this is implicit (one paper's failure never aborts "
+            "the rest of the batch); only daily-limit short-circuits."
+        ),
     )
     parser.add_argument(
         "--ttl-seconds",
@@ -669,6 +1172,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
+    # --max is a deprecated alias for --batch-size. If only --max was
+    # given, propagate. If both were given, --batch-size wins (the
+    # default factory makes that unambiguous).
+    if getattr(args, "max_alias", None) is not None and args.batch_size == MAX_BATCH_SIZE:
+        args.batch_size = args.max_alias
     # --watch implies --continue-on-error; otherwise a single 5xx would
     # exit the daemon and defeat the whole point.
     if getattr(args, "watch", False):
