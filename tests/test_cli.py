@@ -211,7 +211,12 @@ def test_ingest_client_defaults_to_public_base_url(tmp_path, monkeypatch):
     )
     monkeypatch.delenv("QATLAS_SKIP_DOTENV", raising=False)
     monkeypatch.delenv("QUANTUMATLAS_SKIP_DOTENV", raising=False)
-    monkeypatch.setattr("qatlas.config.get_project_root", lambda: tmp_path)
+    # XDG loader uses cwd as the legacy-fallback location, not get_project_root.
+    # Also clear any user-level XDG file the dev environment might have so the
+    # cwd fallback is exercised.
+    monkeypatch.setenv("HOME", str(tmp_path / "fake-home"))
+    (tmp_path / "fake-home").mkdir()
+    monkeypatch.chdir(tmp_path)
 
     assert client_cli._default_base_url() == "https://atlas.example"
 

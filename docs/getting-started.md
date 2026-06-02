@@ -22,10 +22,14 @@
     **2. 指向远端 server：**
 
     ```bash
-    export QATLAS_SERVER_URL=https://quantum-atlas.ai
+    # 一次性配好（写入 ~/.config/qatlas/.env）
+    qatlas config init                                    # 创建模板
+    qatlas config set QATLAS_SERVER_URL https://quantum-atlas.ai
+    qatlas config path                                    # 看真实文件路径
+    qatlas config show                                    # 看当前所有解析值（敏感字段自动遮罩）
     ```
 
-    或写在 `~/.config/qatlas/.env`（推荐永久配置）。**不需要 token** —— 所有读接口都是公开的（Wiki 是公开仓库）。
+    或一次性设环境变量：`export QATLAS_SERVER_URL=https://quantum-atlas.ai`。**不需要 token** —— 所有读接口都是公开的（Wiki 是公开仓库）。
 
     **3. 跑起来：**
 

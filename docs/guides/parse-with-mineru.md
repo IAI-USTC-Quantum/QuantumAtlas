@@ -26,8 +26,9 @@ QuantumAtlas 只暴露**一条** MinerU 路径——**贡献者本地解析**（
 # 1. PAT 带 papers:write
 qatlas auth login -H <server>
 
-# 2. 配 MinerU token（client 端本地 .env）
-echo 'MINERU_API_TOKEN=msk_...' >> ~/.config/qatlas/.env
+# 2. 配 MinerU token —— 写到 user-level config（推荐 qatlas config，不需要手动 source）
+qatlas config set MINERU_API_TOKEN msk_...
+# 或老式直接编辑：echo 'MINERU_API_TOKEN=msk_...' >> ~/.config/qatlas/.env
 ```
 
 PDF 必须**已经在 server 上**（通过 `qatlas ingest` 或 `qatlas upload pdf` 推上去）。

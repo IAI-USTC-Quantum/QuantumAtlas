@@ -79,7 +79,7 @@ QuantumAtlas 用 **PocketBase session token (JWT)** 和 **Personal Access Token 
     qatlas upload pdf 2501.00010v1 --pdf paper.pdf
     ```
 
-    `QATLAS_TOKEN` 优先级**高于** hosts.yml。换 shell session 就失效（推荐写到 `~/.config/qatlas/.env` 让 direnv / dotenv 自动加载，或加到 systemd EnvironmentFile）。
+    `QATLAS_TOKEN` 优先级**高于** hosts.yml。换 shell session 就失效。推荐用 `qatlas config set QATLAS_TOKEN <pat>` 写到 `~/.config/qatlas/.env`，下次 `qatlas` 调用会自动捡起来（不需 source）。完整子命令见 [CLI reference `qatlas config`](../reference/cli-qatlas.md#qatlas-config)。
 
 === "CI / GitHub Actions"
 

@@ -7,12 +7,17 @@ binary; this module only resolves how the Python side reaches it and where
 local assets live.
 """
 
+import logging
 import os
 from pathlib import Path
 from typing import Any, Optional
 
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from qatlas.paths import resolve_dotenv_path, user_dotenv_path
+
+logger = logging.getLogger(__name__)
 
 
 def get_project_root() -> Path:
@@ -154,9 +159,34 @@ class ServerConfig(BaseSettings):
 
     @classmethod
     def from_env(cls) -> "ServerConfig":
-        """Load configuration from environment variables."""
-        env_file = None if _skip_dotenv() else get_project_root() / ".env"
-        return cls(_env_file=env_file)
+        """Load configuration with the canonical precedence:
+
+        1. Real OS environment variables (always win; ``--server-url`` /
+           ``--token`` style CLI flags layer on top via argparse).
+        2. ``QATLAS_DOTENV=<path>`` explicit override (for systemd
+           units that ship a deployment-specific .env).
+        3. ``~/.config/quantum-atlas/.env`` (XDG, recommended for
+           ``uv tool install`` users).
+        4. ``./.env`` in current working directory (legacy fallback;
+           emits a deprecation warning suggesting migration).
+        5. Built-in defaults defined on each field.
+
+        ``QATLAS_SKIP_DOTENV=1`` disables all dotenv loading and
+        forces env-vars-only.
+        """
+        if _skip_dotenv():
+            return cls(_env_file=None)
+
+        dotenv_path, source = resolve_dotenv_path()
+        if source == "cwd_legacy":
+            logger.warning(
+                "Loading qatlas config from ./.env (legacy cwd fallback). "
+                "Prefer the XDG location: move this file to %s, or run "
+                "`qatlas config init` to set up a fresh one. The cwd "
+                "fallback may be removed in a future release.",
+                user_dotenv_path(),
+            )
+        return cls(_env_file=dotenv_path)
 
     def get_raw_root(self) -> Path:
         """Resolve RAW_DIR."""
