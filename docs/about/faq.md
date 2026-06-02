@@ -77,7 +77,7 @@
     qatlas mineru 2501.00010v1
     ```
 
-    如果 MinerU API 本身返回失败（quota 满 / 限流 / 服务挂了），看 `/share/...` 的 PDF 文件是不是格式有问题——某些 scanned-only PDF 需要 `MINERU_IS_OCR=true`。
+    如果 MinerU API 本身返回失败（quota 满 / 限流 / 服务挂了），看 `qatlas-pdf` 桶里那个 PDF 是不是格式有问题——某些 scanned-only PDF 需要 `MINERU_IS_OCR=true`。
 
 ??? question "上传同样的 PDF 第二次返回 200 而不是 201，是不是失败了？"
 
@@ -105,9 +105,9 @@
 
     设计如此。PAT **不能**操作 `/api/pat`（防止 leaked PAT 自我复制）。用 session token 调（浏览器登录后 SPA 内部已自动持有；如需用 SDK / CLI 调用 `/api/pat`，请在浏览器 SPA 内操作）。
 
-??? question "PAT 在 RackNerd 上建的，在阿里云用不了？"
+??? question "PAT 在某台边缘建的，在另一台用不了？"
 
-    对。两台边缘各自独立 PocketBase，**用户和 PAT 不跨节点**。需要为每条线路各建 PAT。详见 [多边缘](../concepts/multi-edge.md)。
+    对。多边缘各自独立 PocketBase，**用户和 PAT 不跨节点**。需要为每条线路各建 PAT。详见 [多边缘](../concepts/multi-edge.md)。
 
 ## Wiki / Neo4j
 
@@ -136,7 +136,7 @@
 
 ??? question "pb_data 多大？"
 
-    用户少（<100）时几 MB；几万 PAT + share record 时百 MB 级。不会非常大——大头数据（PDF / Markdown）在 RustFS，不在 pb_data。
+    用户少（<100）时几 MB；几万 PAT 时百 MB 级。不会非常大——大头数据（PDF / Markdown）在 RustFS，不在 pb_data。
 
 ??? question "RustFS 跟 MinIO 兼容吗？"
 

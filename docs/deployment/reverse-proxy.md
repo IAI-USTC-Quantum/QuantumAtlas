@@ -17,8 +17,8 @@
 
 !!! danger "三条铁律"
 
-    1. **`Host` header 必须 preserve**——RustFS 用 SigV4 验签把 Host 算进 canonical request，反代改写 Host 会让 `/share/...` presigned URL 返回 `SignatureDoesNotMatch`。
-    2. **`/_/`、`/api/`、`/share/`、`/install-qatlasd.sh` 全部转发**——SPA catch-all 在 server 这边处理，不要在反代层面截留。
+    1. **`Host` header 必须 preserve**——RustFS 用 SigV4 验签把 Host 算进 canonical request，反代改写 Host 会让 presigned URL 返回 `SignatureDoesNotMatch`。
+    2. **`/_/`、`/api/`、`/install-qatlasd.sh` 全部转发**——SPA catch-all 在 server 这边处理，不要在反代层面截留。
     3. **WebSocket 透传**——PocketBase realtime 用 SSE/WS；Caddy v2 默认透传，nginx 需要显式 `proxy_http_version 1.1` + `Upgrade` 头。
 
 ## Caddy（推荐）
@@ -37,9 +37,9 @@ quantum-atlas.ai {
 
 Caddy 自动从 Let's Encrypt 拿证书，自动 HTTP→HTTPS 重定向，自动 HTTP/2 + HTTP/3。
 
-### 多 site（同台机部署 + share 子域）
+### 多 site（同台机部署 + RustFS 公网入口）
 
-如果用 RustFS dual endpoint 模式，share 子域要单独反代到 RustFS：
+如果用 RustFS dual endpoint 模式，公网 RustFS 子域要单独反代到 RustFS：
 
 ```caddyfile
 quantum-atlas.ai {
@@ -50,9 +50,9 @@ quantum-atlas.ai {
 }
 
 # RustFS 公网入口（给 presigned URL 用）
-raw.quantum-atlas.ai {
+<rustfs-public-host> {
     encode gzip zstd
-    reverse_proxy 10.144.18.10:9000 {
+    reverse_proxy <rustfs-internal-host>:9000 {
         # 关键：preserve Host，SigV4 才能验签通过
         header_up Host {host}
     }
@@ -64,8 +64,8 @@ raw.quantum-atlas.ai {
 ### 自签证书（开发 / 未备案 IP）
 
 ```caddyfile
-# 阿里云未备案直 IP 场景
-https://47.102.36.175 {
+# 直 IP 场景（未备案 / 内网）
+https://<your-ip-or-host> {
     tls internal
     encode gzip zstd
     reverse_proxy 127.0.0.1:4200 {
@@ -73,9 +73,9 @@ https://47.102.36.175 {
     }
 }
 
-https://47.102.36.175:9000 {
+https://<your-ip-or-host>:9000 {
     tls internal
-    reverse_proxy 10.144.18.10:9000 {
+    reverse_proxy <rustfs-internal-host>:9000 {
         header_up Host {host}
     }
 }
@@ -86,8 +86,8 @@ https://47.102.36.175:9000 {
 ### 加 GitHub OAuth 反代头审计（可选）
 
 ```caddyfile
-quantum-atlas.ai {
-    @api path /api/* /share/*
+atlas.example.com {
+    @api path /api/*
     reverse_proxy @api 127.0.0.1:4200 {
         header_up Host {host}
         # 假设你前面有 caddy-security 之类做 SSO，这里把 GitHub username 注入
@@ -96,7 +96,8 @@ quantum-atlas.ai {
 }
 ```
 
-然后在 `.env` 配 `QATLAS_USER_HEADER=X-Token-Subject`——server 会把这个值存进 share record 的 `created_by` 字段。
+然后在 `.env` 配 `QATLAS_USER_HEADER=X-Token-Subject`——server 会把这个值
+存进相关审计字段。
 
 ## nginx
 
@@ -155,15 +156,15 @@ nginx 需要自己跑 certbot / acme.sh 拿 LE 证书，比 Caddy 多一步。
 ```nginx
 server {
     listen 443 ssl http2;
-    server_name raw.quantum-atlas.ai;
+    server_name <rustfs-public-host>;
 
-    ssl_certificate     /etc/letsencrypt/live/raw.quantum-atlas.ai/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/raw.quantum-atlas.ai/privkey.pem;
+    ssl_certificate     /etc/letsencrypt/live/<rustfs-public-host>/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/<rustfs-public-host>/privkey.pem;
 
     client_max_body_size 0;  # 不限大小（presigned URL 用）
 
     location / {
-        proxy_pass http://10.144.18.10:9000;
+        proxy_pass http://<rustfs-internal-host>:9000;
 
         # ★★★ 必须 preserve Host
         proxy_set_header Host $host;
@@ -185,25 +186,14 @@ server {
 
 ```bash
 # 1. 健康检查（应该返回 200 + JSON）
-curl https://quantum-atlas.ai/api/health | jq
+curl https://atlas.example.com/api/health | jq
 
 # 2. 检查 Host header 是否 preserve
-curl -sI https://quantum-atlas.ai/api/health | grep -i 'access-control\|content-type'
-
-# 3. 创建一个 share 看 presigned URL 形状
-TOKEN=qat_xxx
-SHARE=$(curl -X POST https://quantum-atlas.ai/api/shares/ \
-    -H "Authorization: Bearer $TOKEN" \
-    -H "Content-Type: application/json" \
-    -d '{"paths":["pdf/2501/2501.00010v1.pdf"],"expires_in":3600}' \
-    | jq -r .token)
-
-# 用 share 下载，会 307 redirect 到 RustFS
-curl -I -L https://quantum-atlas.ai/share/$SHARE
-# 应该看到 307 → https://raw.quantum-atlas.ai/qatlas-raw/... → 200
+curl -sI https://atlas.example.com/api/health | grep -i 'access-control\|content-type'
 ```
 
-如果第三步出现 `SignatureDoesNotMatch`，**几乎一定是 Host header 没 preserve**——回去检查反代配置。
+如果 RustFS 公网入口 presign 出现 `SignatureDoesNotMatch`，**几乎一定是 Host
+header 没 preserve**——回去检查反代配置。
 
 ## 多边缘 active-active
 

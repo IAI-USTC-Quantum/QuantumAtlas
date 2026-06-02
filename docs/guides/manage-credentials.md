@@ -24,7 +24,7 @@ QuantumAtlas 用 **PocketBase session token (JWT)** 和 **Personal Access Token 
     4. 填：
         - **Name**：人类可读，例如 `ci-upload-2026`
         - **Expires in days**：1–365
-        - **Scopes**：勾上需要的 —— `papers:write` 给上传，`shares:write` 给分享，等等
+        - **Scopes**：勾上需要的 —— `papers:write` 给上传，`wiki:read` 给读 wiki，等等
     5. 点 Create
     6. **立即复制以 `qat_` 开头的明文**（不会再显示）
 
@@ -39,7 +39,7 @@ QuantumAtlas 用 **PocketBase session token (JWT)** 和 **Personal Access Token 
     qatlasd pat mint \
         --user user@example.com \
         --name "emergency-fix" \
-        --scopes papers:write,shares:write \
+        --scopes papers:write,wiki:read \
         --expires-in-days 7
     ```
 
@@ -52,7 +52,7 @@ QuantumAtlas 用 **PocketBase session token (JWT)** 和 **Personal Access Token 
     存到 `~/.config/qatlas/hosts.yml`：
 
     ```bash
-    qatlas auth login -H quantum-atlas.ai
+    qatlas auth login -H atlas.example.com
     # 粘贴 qat_xxx 明文（getpass 隐藏输入）
     ```
 
@@ -61,14 +61,14 @@ QuantumAtlas 用 **PocketBase session token (JWT)** 和 **Personal Access Token 
     **支持多 host**：
 
     ```bash
-    qatlas auth login -H quantum-atlas.ai
-    qatlas auth login -H 47.102.36.175
+    qatlas auth login -H atlas.example.com
+    qatlas auth login -H atlas-edge2.example.com
     qatlas auth status
-    # quantum-atlas.ai
+    # atlas.example.com
     #   ✓ Logged in (stored at ~/.config/qatlas/hosts.yml)
     #   - Token type:  PAT
     #   - Token value: qat_xxx********
-    # 47.102.36.175
+    # atlas-edge2.example.com
     #   ...
     ```
 
@@ -188,17 +188,17 @@ CI 这边更新 GitHub secret 后下次 workflow 跑就用新的。
 !!! failure "403 this endpoint requires a browser session token"
     你在用 PAT 调 `/api/pat` —— **这条不通**。`/api/pat` 只接受 session token（浏览器登录后 `pb.authStore` 自动持有），有意为之防止 leaked PAT 自我复制。需要管理 PAT 请在浏览器 SPA 内打开 `/pat` 页操作。
 
-!!! failure "401 在 RackNerd 用阿里云的 PAT"
+!!! failure "401 在另一台边缘用本机的 PAT"
     PocketBase 各边缘独立，PAT 不跨节点。看 [多边缘部署](../concepts/multi-edge.md)。
 
 ## hosts.yml 长什么样
 
 ```yaml title="~/.config/qatlas/hosts.yml"
 hosts:
-  quantum-atlas.ai:
+  atlas.example.com:
     token: qat_xxxxxxxxxxxxxxx
     added_at: "2026-05-29T01:23:45Z"
-  47.102.36.175:
+  atlas-edge2.example.com:
     token: qat_yyyyyyyyyyyyyyy
     added_at: "2026-05-29T01:23:50Z"
 ```
@@ -208,7 +208,7 @@ mode 600，归你。可以手 edit（但用 `qatlas auth login/logout` 更不容
 ## 退出登录
 
 ```bash
-qatlas auth logout -H quantum-atlas.ai
+qatlas auth logout -H atlas.example.com
 # 删 hosts.yml 中此 host 条目（不调 server，只是本地清理）
 ```
 

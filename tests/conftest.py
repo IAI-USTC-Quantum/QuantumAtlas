@@ -13,8 +13,6 @@ CONFIG_ENV_KEYS = [
     "QATLAS_DATA_DIR",
     "QATLAS_SERVER_URL",
     "QATLAS_INSECURE",
-    "QATLAS_SHARE_ACCESS_TOKEN",
-    "QATLAS_DEFAULT_SHARE_EXPIRES_IN",
     "QATLAS_USER_HEADER",
     # Legacy bare aliases (kept active for back-compat)
     "SERVER_HOST",
@@ -24,9 +22,6 @@ CONFIG_ENV_KEYS = [
     "RAW_DIR",
     "DATA_DIR",
     "PUBLIC_BASE_URL",
-    "SHARE_ACCESS_TOKEN",
-    "PUBLIC_SHARE_TOKEN",
-    "DEFAULT_SHARE_EXPIRES_IN",
     "USER_HEADER",
     # Third-party vendor names (no prefix by design)
     "NEO4J_URI",

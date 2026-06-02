@@ -40,7 +40,7 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
 
 ## 公开端点（不需要 Authorization 头）
 
-> 仅以下"无语料数据"端点保持公开：探活 / 版本 / 安装脚本 / API 文档 / scope 词表 / SPA 外壳，以及"凭据自带授权"的 share 短链。**知识库本身不再匿名可读**——Wiki 页面、搜索、统计、论文资产、图谱等读口都已收敛到 `*:read` scope（见下方鉴权端点）。
+> 仅以下"无语料数据"端点保持公开：探活 / 版本 / 安装脚本 / API 文档 / scope 词表 / SPA 外壳。**知识库本身不再匿名可读**——Wiki 页面、搜索、统计、论文资产、图谱等读口都已收敛到 `*:read` scope（见下方鉴权端点）。
 
 | Method | Path | 用途 |
 |---|---|---|
@@ -50,8 +50,6 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
 | `GET` | `/swagger/index.html` | 交互式 API 文档（Swagger UI）|
 | `GET` | `/swagger/doc.json` | OpenAPI 2.0 JSON spec |
 | `GET` | `/api/pat/scopes` | 列 PAT scope 词表（纯常量，无用户数据）|
-| `GET` | `/share/{token}` | share token 入口（token 即凭据）|
-| `GET` | `/share/{token}/{path...}` | share token 下载 |
 | `GET` | `/{path...}` | SPA 前端静态外壳（数据在被门禁的 API 后面）|
 | `GET` | `/_/` ... | PocketBase admin UI |
 
@@ -63,15 +61,16 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
 |---|---|---|---|
 | `GET` | `/api/papers/stats` | `papers:read` | 论文资产统计（`available`、`total`、`has_pdf`、`has_md`、`has_json`、`needs_mineru`、`total_images`、`loaded_at`）；paperindex 不可用时返回 `{available:false}` |
 | `GET` | `/api/papers/needs-mineru?limit=&include_claimed=` | `papers:read` | 列等待 MinerU 解析的论文 |
-| `GET` | `/api/papers/{arxiv_id}/resources` | `papers:read` | 列单篇论文已有的资产 |
-| `GET` | `/api/papers/{arxiv_id}/markdown` | `papers:read` | 取论文 markdown；无缓存时由 server 用自身 MinerU token 静默后台转换（轮询）|
-| `GET` | `/api/papers/{arxiv_id}/markdown/status` | `papers:read` | 查询 markdown 转换 job 状态（无副作用，恒 200）|
 | `POST` | `/api/papers/{arxiv_id}/upload-pdf` | `papers:write` | 上传 PDF，见 [Upload API](upload-api.md) |
 | `POST` | `/api/papers/{arxiv_id}/upload-mineru` | `papers:write` | 上传 MinerU 结果 zip（含 markdown + images）|
 | `POST` | `/api/papers/{arxiv_id}/mineru-claim` | `papers:write` | 申请 MinerU 处理 claim |
 | `DELETE` | `/api/papers/{arxiv_id}/mineru-claim/{claim_id}` | `papers:write` | 释放 claim |
 
 > `papers:write` 隐式含 `papers:read`。
+>
+> **本服务不通过 API 对外分发 PDF / markdown 字节**：服务端持有这些原文供
+> MinerU 流水线和上游 wiki 生成使用，但**没有**对外的 download / share /
+> redirect 端点。需要原文请到论文原始来源（arXiv）拉取。
 
 ### Wiki
 
@@ -91,14 +90,6 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
     QuantumAtlas **没有**在线 ingest 端点。Wiki 内容追加走离线多 subagent 流水线
     （读 paper → 总结 concept → 去重合并 → commit 到 wiki repo），server 只读地
     serve 生成好的词条。详见 [生成 wiki 内容](../guides/generate-wiki-content.md)。
-
-### Shares
-
-| Method | Path | 鉴权 | 用途 |
-|---|---|---|---|
-| `POST` | `/api/shares/` | `shares:write` | 创建 share token |
-| `GET` | `/api/shares/` | `shares:read` | 列 share |
-| `DELETE` | `/api/shares/{token}` | `shares:write` | 撤销 |
 
 ### Graph（Neo4j）
 
@@ -137,19 +128,19 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
       "rawstore": {
         "status": "ok",
         "backend": "s3",
-        "endpoint": "http://10.144.18.10:9000",
+        "endpoint": "http://<rustfs-internal-host>:9000",
         "bucket": "qatlas-raw",
         "latency_ms": 12
       },
       "neo4j": {
         "status": "ok",
-        "uri": "bolt://10.144.18.10:7687",
+        "uri": "bolt://<neo4j-bolt-host>:7687",
         "database": "neo4j",
         "latency_ms": 8
       },
       "wiki": {
         "status": "ok",
-        "dir": "/home/timidly/QuantumAtlas-Wiki",
+        "dir": "/home/<USER>/QuantumAtlas-Wiki",
         "commit": "abc123de",
         "commit_time": "2026-05-28T22:10:33Z",
         "branch": "main",
@@ -178,34 +169,6 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
     - `409 Conflict` — sha256 不同且没 `overwrite`，body 含 `existing_sha256` + `new_sha256`
     - `400 Bad Request` — sha256 mismatch / 损坏的 multipart / PDF header 不对等
 - 并发安全（S3 conditional PUT `If-None-Match`），多 client 同字节并发只产生 1 个 201 + 其余 200
-
-### `GET /api/papers/{arxiv_id}/markdown`
-
-开放读，无需 auth。语义：**有缓存直接给，无缓存 server 用自身 `MINERU_API_TOKEN` 静默后台转换**，client / 网页轮询直到拿到 markdown。与 `qatlas mineru`（贡献者用自己 key 主动 claim→转→上传）并行存在、互不冲突。
-
-- 状态码：
-    - `200 OK` — `Content-Type: text/markdown; charset=utf-8`，body 即缓存的 markdown
-    - `202 Accepted` — 后台转换进行中，body `{arxiv_id, status:"processing", state, started_at, status_url, detail}`；同时带响应头 `Operation-Location: /api/papers/{id}/markdown/status`（job 状态资源，Azure/Google AIP 风格）和 `Retry-After: 5`（建议的最小轮询间隔，client 在其上叠加带 jitter 的指数退避）。client 应轮询 `status_url` 而非反复打本端点
-    - `404 Not Found` — `{status:"no_pdf"}`，库里没有该论文的 PDF（先 upload-pdf 才能转）
-    - `502 Bad Gateway` — `{status:"failed", error}`，MinerU 转换失败（带冷却，过冷却期后再次请求会重试）
-    - `503 Service Unavailable` — `{status:"unavailable"}`，server 未配置 MinerU token
-    - `400 Bad Request` — arxiv_id 非法
-- 转换产出的 markdown + images 会写入对象存储（images 经现有 resources / share 系列暴露）
-- in-process 按 canonical arxiv_id 去重，并发请求同一论文只起一个转换 job
-- **本端点 GET 带副作用**（miss 时会触发转换）；只想观测状态、不想触发转换时改用 `/markdown/status`
-- client 用法见 [`qatlas markdown`](cli-qatlas.md)
-
-### `GET /api/papers/{arxiv_id}/markdown/status`
-
-开放读，无需 auth。**无副作用的 job 状态资源**：永不触发转换、永不要求 PDF，只汇报当前状态。因此**恒返回 `200 OK`**，转换结果在 body 的 `status` 字段（GET 状态资源本身成功 = 200；这与 content 端点失败时响亮的 502 是有意的分工）。
-
-- body `status` ∈：
-    - `done` — markdown 已就绪，`markdown_url` 指向 content 端点（命中缓存即此态，覆盖进程重启后 job map 空但 md 已存在的情况）
-    - `processing` — job 排队 / 运行中，附带响应头 `Retry-After: 5`；body 含 `state`、`started_at`
-    - `failed` — 上次转换失败，`error` + `finished_at` 给出原因；下次请求 content 端点会重试
-    - `not_started` — 尚未发起转换（GET content 端点以触发）
-    - `unavailable` — server 未配置 MinerU token
-- `400 Bad Request` — arxiv_id 非法（唯一的非 200）
 
 ### `POST /api/wiki/sync/pull`
 
@@ -262,36 +225,13 @@ curl -X POST https://<server>/api/graph/query \
 !!! warning "已接受的风险：Cypher 无代价上限"
     `query` 是只读的（驱动层 `ExecuteRead` 拒绝写），但**没有查询代价上限**——理论上一条病态查询（如无界笛卡尔积）能拖垮 Neo4j。**这是有意不加限制的取舍**：过了 `graph:read` 鉴权的调用方即「自己人」（登录用户或显式勾了 `graph:read` 的 PAT 持有者），同一个人本就能直连 Bolt 跑同样的查询，加应用层限制器只是徒增复杂度而挡不住真正想跑重查询的人。唯一缓解手段是**撤销出问题的凭据**（删 PAT / 登出用户）。详见 [鉴权模型](../concepts/auth-model.md) 与 [Neo4j 部署](../deployment/neo4j.md)。
 
-### `POST /api/shares/`
-
-```json
-{
-  "paths": ["pdf/2501/2501.00010v1.pdf"],
-  "label": "Reviewer A access",
-  "expires_in": 86400
-}
-```
-
-响应：
-
-```json
-{
-  "token": "abc123def456...",
-  "url_prefix": "https://<server>/share/abc123.../",
-  "paths": ["pdf/2501/2501.00010v1.pdf"],
-  "created_at": "2026-05-29T03:00:00Z",
-  "expires_at": "2026-05-30T03:00:00Z",
-  "label": "Reviewer A access"
-}
-```
-
 ### `POST /api/pat`（session only）
 
 ```json
 {
   "name": "ci-upload",
   "description": "...",
-  "scopes": ["papers:write", "shares:write"],
+  "scopes": ["papers:write", "wiki:read"],
   "expires_in_days": 365
 }
 ```
@@ -311,7 +251,7 @@ curl -X POST https://<server>/api/graph/query \
   "prefix": "qat_AB",
   "plaintext": "qat_ABXXXXX...XXXXX",
   "description": "",
-  "scopes": ["papers:write", "shares:write"],
+  "scopes": ["papers:write", "wiki:read"],
   "expires_at": "2027-05-29 03:00:00.000Z",
   "created": "2026-05-29 03:00:00.000Z"
 }

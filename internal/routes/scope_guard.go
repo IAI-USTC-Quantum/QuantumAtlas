@@ -13,7 +13,7 @@
 //                    Allows short-circuit to true).
 //
 // Putting the scope label on the endpoint keeps the policy table next
-// to the wire surface (easy to audit "what does shares:write actually
+// to the wire surface (easy to audit "what does papers:write actually
 // grant?" by grepping for scopeGuard calls). The casbin enforcer is
 // just the rules engine — the *mapping* of endpoints to scope labels
 // lives in plain Go.

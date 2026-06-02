@@ -130,11 +130,6 @@ var schemaStatements = []string{
 	   FOR (i:PaperInstitution) REQUIRE i.openalex_id IS UNIQUE`,
 	`CREATE INDEX institution_ror IF NOT EXISTS
 	   FOR (i:PaperInstitution) ON (i.ror)`,
-	// Share tokens keyed by random hex.
-	`CREATE CONSTRAINT share_token_unique IF NOT EXISTS
-	   FOR (s:PaperShareToken) REQUIRE s.token IS UNIQUE`,
-	`CREATE INDEX share_expires IF NOT EXISTS
-	   FOR (s:PaperShareToken) ON (s.expires_at)`,
 }
 
 // EnsureSchema applies all constraints + indexes. Non-fatal: returns an

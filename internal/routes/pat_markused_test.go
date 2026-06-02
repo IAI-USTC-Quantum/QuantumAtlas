@@ -26,7 +26,7 @@ func mintForMarkUsedTest(t *testing.T, h *patHarness, name string) (string, *cor
 	t.Helper()
 	tok := h.sessionToken()
 	status, _, body := h.do("POST", "/api/pat",
-		`{"name":"`+name+`","scopes":["shares:write"],"expires_in_days":30}`,
+		`{"name":"`+name+`","scopes":["papers:write"],"expires_in_days":30}`,
 		rawHeader(tok),
 	)
 	if status != 200 {
@@ -82,7 +82,7 @@ func TestPATMarkUsed_PersistsTimestampWithoutBumpingUpdated(t *testing.T) {
 	if rec2.GetString("name") != "mu" {
 		t.Errorf("name corrupted: %q", rec2.GetString("name"))
 	}
-	if !strings.Contains(rec2.GetString("scopes"), "shares:write") {
+	if !strings.Contains(rec2.GetString("scopes"), "papers:write") {
 		t.Errorf("scopes corrupted: %q", rec2.GetString("scopes"))
 	}
 }

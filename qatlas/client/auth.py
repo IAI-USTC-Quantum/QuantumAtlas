@@ -229,7 +229,7 @@ def _cmd_login(args: argparse.Namespace) -> int:
 To mint a Personal Access Token (PAT), open
   https://{host}/pat
 in your browser, click "New token", grant the scopes you need (most CI
-callers want at least 'shares:write'), set the expiry, and copy the
+callers want at least 'papers:write'), set the expiry, and copy the
 plaintext.
 
 The plaintext starts with '{_PAT_PREFIX}' and is shown only once.""",

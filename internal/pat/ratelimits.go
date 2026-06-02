@@ -28,11 +28,11 @@
 //     and anti-brute-bcrypt; all guest /api/pat calls 401 immediately
 //     so this is generous, but caps the worst case)
 //
-// Rules are NOT applied to /api/shares/ or the rest of the write
-// surface — at PAT entropy (143 bits) the brute-force angle is
-// already unreachable, and we don't want to surprise legitimate
-// callers (CI pipelines, batch uploaders) with 429s. Per-endpoint
-// rate limits can be added later by extending this slice.
+// Rules are NOT applied to the rest of the write surface — at PAT
+// entropy (143 bits) the brute-force angle is already unreachable, and
+// we don't want to surprise legitimate callers (CI pipelines, batch
+// uploaders) with 429s. Per-endpoint rate limits can be added later by
+// extending this slice.
 
 package pat
 

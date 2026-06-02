@@ -28,7 +28,7 @@
 
     ---
 
-    `/api/papers/*` / `/api/wiki/*` / `/api/shares/*` / `/api/pat/*` / `/api/graph/*` / `/api/health` 全 endpoint 参考（method / path / auth / payload / response / status codes）。
+    `/api/papers/*` / `/api/wiki/*` / `/api/pat/*` / `/api/graph/*` / `/api/health` 全 endpoint 参考（method / path / auth / payload / response / status codes）。
 
 -   :material-upload:{ .lg .middle } **[Upload API 详解](upload-api.md)**
 

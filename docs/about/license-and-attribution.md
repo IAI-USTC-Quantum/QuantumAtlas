@@ -7,21 +7,21 @@
 
 | 数据类别 | 来源 | 我们持有 / 分发？ | 用户拿到什么 |
 |---|---|---|---|
-| **论文 PDF 字节** | arxiv.org（作者保留版权） | ❌ **从不分发字节** | `share/download` 接口 `307 redirect` 到 `https://arxiv.org/pdf/<id>.pdf`，用户直接从 arxiv 下载 |
+| **论文 PDF 字节** | arxiv.org（作者保留版权） | ❌ **从不分发字节** | OSS 公开 server **无 PDF 下载 API**；从 [arxiv.org](https://arxiv.org/) 自行下载 |
 | **论文 metadata**（标题 / 作者 / DOI / 引用 / 发表日期 等） | OpenAlex（CC0）+ Crossref（CC0） | ✅ 镜像 + Neo4j MERGE | 公开 API 返回，CC0 transitively 公开 |
-| **MinerU 解析后的 Markdown 全文** | 由我们用自己的 MinerU quota 从 PDF 转换 | ✅ 缓存在 `qatlas-md` 桶 | **require login**（PocketBase session token 或带 `papers:read` 的 PAT） |
+| **MinerU 解析后的 Markdown 全文** | 由我们用自己的 MinerU quota 从 PDF 转换 | ✅ 缓存在 `qatlas-md` 桶 | OSS 公开 server **不提供字节级下载 API**——markdown 仅供 server 内部检索 / 渲染元数据 |
 | **Wiki 知识页面**（概念 / 算法 / paper 笔记） | 团队 + 贡献者撰写 | ✅ 在独立 [QuantumAtlas-Wiki repo](https://github.com/IAI-USTC-Quantum/QuantumAtlas-Wiki) | require login（同上） |
 
 **核心合规设计**：
 
 ```
-不分发 PDF 字节 + metadata 来自 CC0 上游 + md 全文 require login
+不分发 PDF 字节 + metadata 来自 CC0 上游 + Markdown 全文不通过 API 外发
   → 论文 license 风险天然规避，无需 per-paper license 过滤
 ```
 
 这意味着我们**不需要**在 ingest 时检查每篇论文的 license（许多 arxiv 论文是
 "作者保留版权 + 授予 arxiv 永久非排他分发权"，license 字段在 OpenAlex 里**不**
-统一记录）。靠"不持字节 + 全文需登录"两条规则在源头规避，比 per-paper license
+统一记录）。靠"不持字节 + 全文不外发"两条规则在源头规避，比 per-paper license
 匹配可靠得多。
 
 ## 上游数据源 license 汇总
@@ -35,7 +35,7 @@
 | **Crossref metadata** | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) | ✅ | ❌ | 2017 起 Crossref 全部 metadata 转 CC0 |
 | **arXiv metadata**（via OAI-PMH） | [arXiv ToU](https://arxiv.org/help/license) | ✅（read access） | ✅ "Source: arXiv" | 元数据可读、可镜像；归属到 arxiv.org |
 | **arXiv 论文全文（PDF）** | **作者保留版权** | ❌ 不可随意再分发 | — | 我们**不**镜像 PDF 字节；用户从 arxiv 自己下 |
-| **MinerU 解析输出** | 衍生作品 — 受**原 PDF 版权**约束 | ⚠️ 仅 fair-use / 研究教育 | — | 全文 require login；不对外公开 |
+| **MinerU 解析输出** | 衍生作品 — 受**原 PDF 版权**约束 | ⚠️ 仅 fair-use / 研究教育 | — | 公开 server 无字节下载 API；不对外公开 |
 | **Semantic Scholar Open Research Corpus** | [ODC-BY 1.0](https://opendatacommons.org/licenses/by/1-0/) | ✅ | ✅ "Data provided by Semantic Scholar" | 当前未使用，预留 |
 | **ORCID public profile** | CC0 | ✅ | ❌ | 当前未使用，预留 |
 
@@ -59,11 +59,10 @@ X-Attribution: OpenAlex (CC0), Crossref (CC0), arXiv
 
 ## 用户责任
 
-如果你**复用**从 QuantumAtlas API / share 链接拿到的内容：
+如果你**复用**从 QuantumAtlas API 拿到的内容：
 
 - **Metadata（CC0）**：随便用，**仍请**归属到 OpenAlex（公益项目，归属能帮它们拿持续资助）
-- **PDF**：你拿到的是 arxiv 的 redirect 链接，**license 跟 arxiv 上原文一致**——按原作者声明使用
-- **MinerU markdown**：你登录才能拿；**仅供研究 / 教育用**，**禁止商业再分发**（见 [Terms of Service](terms-of-service.md)）
+- **PDF**：公开 server 不提供 PDF 下载——请自行到 [arxiv.org](https://arxiv.org/) 拉，按原作者声明使用
 - **Wiki 内容**：Apache-2.0（与 [QuantumAtlas-Wiki repo](https://github.com/IAI-USTC-Quantum/QuantumAtlas-Wiki) LICENSE 一致），归属到本项目即可
 
 ## 撤稿 / 删除请求
@@ -72,7 +71,6 @@ X-Attribution: OpenAlex (CC0), Crossref (CC0), arXiv
 
 - 从 Neo4j catalog 移除某 paper 节点
 - 从 `qatlas-md` 桶删除某 paper 的解析 markdown
-- 不再 redirect 到某 paper 的 arxiv URL
 
 请提 [GitHub issue](https://github.com/IAI-USTC-Quantum/QuantumAtlas/issues) 或邮件
 联系维护者（见 [致谢](credits.md#维护者)）。我们会在合理时间内处理（不保证 SLA，

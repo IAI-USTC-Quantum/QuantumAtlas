@@ -19,8 +19,22 @@ const (
 	MaxTTLSeconds     = 7200 // 2 hours
 )
 
-// Claim is the lease record returned to the API. JSON tags mirror the
-// v0.6.0 mineruclaim.Claim so the /mineru-claim response shape is stable.
+// Claim is the lease record returned to the API.
+//
+// Contract changed in v0.9.0: PDFURL is now always the canonical
+// arxiv.org versioned URL (https://arxiv.org/pdf/<id>v<n>), never a
+// presigned link to our RustFS bucket — the OSS server no longer
+// serves PDF bytes outbound. Contributors fetch the PDF from arxiv
+// themselves and verify it matches our catalog via PDFSha256 (the
+// sha256 of the canonical PDF currently stored in RustFS, populated
+// from object metadata when available). On upload-mineru the server
+// re-checks the contributor's reported sha256 against this same
+// metadata — mismatch → 400.
+//
+// PDFSha256 may be empty when the stored PDF has no sha256 metadata
+// (legacy upload before P15 sidecar metadata, or any backend that
+// doesn't surface metadata). In that case the contributor is free
+// to proceed but the server can't enforce byte equality.
 type Claim struct {
 	ClaimID    string `json:"claim_id"`
 	ArxivID    string `json:"arxiv_id"`
@@ -30,6 +44,7 @@ type Claim struct {
 	ExpiresAt  string `json:"expires_at"`
 	TTLSeconds int    `json:"ttl_seconds"`
 	PDFURL     string `json:"pdf_url,omitempty"`
+	PDFSha256  string `json:"pdf_sha256,omitempty"`
 }
 
 // CreateOptions parameterizes Claim.
@@ -38,6 +53,7 @@ type CreateOptions struct {
 	Requester  string
 	TTLSeconds int
 	PDFURL     string
+	PDFSha256  string
 }
 
 // ErrAlreadyClaimed is returned when an active lease (held by anyone)
@@ -124,6 +140,7 @@ func (s *Store) Claim(ctx context.Context, opts CreateOptions) (*Claim, error) {
 		ExpiresAt:  now.Add(time.Duration(ttl) * time.Second).Format(time.RFC3339),
 		TTLSeconds: ttl,
 		PDFURL:     opts.PDFURL,
+		PDFSha256:  opts.PDFSha256,
 	}, nil
 }
 

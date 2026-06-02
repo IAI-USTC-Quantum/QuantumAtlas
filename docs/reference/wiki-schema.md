@@ -460,7 +460,7 @@ QuantumAtlas/
         └── neo4j_sync.py
 ```
 
-`RAW_DIR` 是 canonical 论文资产根。本地开发可以设 `RAW_DIR=raw`，生产环境建议指向应用 checkout 之外的路径。目录下必须直接包含 `pdf/`、`markdown/`、`json/`、`images/`。Share API 路径如 `papers/pdf/{key}.pdf` 是 share 相对的虚拟路径，会解析到 `RAW_DIR/pdf/` 下的实际文件。
+`RAW_DIR` 是 canonical 论文资产根。本地开发可以设 `RAW_DIR=raw`，生产环境建议指向应用 checkout 之外的路径。目录下必须直接包含 `pdf/`、`markdown/`、`json/`、`images/`。Object key 在 RustFS / LocalStore 后端均按 `<asset>/<arxiv-prefix>/<arxiv_id>v<n>.<ext>` 结构组织（由 `paperassets.AssetKey` 构造）。
 
 ## Frontmatter Schema
 

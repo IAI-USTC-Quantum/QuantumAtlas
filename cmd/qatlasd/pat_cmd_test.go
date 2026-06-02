@@ -89,7 +89,7 @@ func TestPATMint_HappyPath(t *testing.T) {
 		"mint",
 		"--user", email,
 		"--name", "ci-nightly",
-		"--scopes", "shares:write",
+		"--scopes", "papers:write",
 		"--expires-in-days", "365",
 		"--description", "for the nightly smoke",
 	)
@@ -115,13 +115,13 @@ func TestPATMint_HappyPath(t *testing.T) {
 	if strings.Contains(stderr, plaintext) {
 		t.Errorf("stderr leaked the plaintext token; stderr=%q", stderr)
 	}
-	for _, mustHave := range []string{"minted PAT", "id=", "prefix=", "ci-nightly", "shares:write", email} {
+	for _, mustHave := range []string{"minted PAT", "id=", "prefix=", "ci-nightly", "papers:write", email} {
 		if !strings.Contains(stderr, mustHave) {
 			t.Errorf("stderr summary missing %q; got %q", mustHave, stderr)
 		}
 	}
 
-	// DB state: exactly one record, scopes JSON-encoded as ["shares:write"].
+	// DB state: exactly one record, scopes JSON-encoded as ["papers:write"].
 	records, err := app.FindAllRecords(pat.CollectionName)
 	if err != nil {
 		t.Fatalf("list pat_tokens: %v", err)
@@ -146,8 +146,8 @@ func TestPATMint_HappyPath(t *testing.T) {
 	if err := json.Unmarshal([]byte(rec.GetString("scopes")), &savedScopes); err != nil {
 		t.Fatalf("scopes column not valid JSON: %v", err)
 	}
-	if len(savedScopes) != 1 || savedScopes[0] != "shares:write" {
-		t.Errorf("scopes = %v, want [shares:write]", savedScopes)
+	if len(savedScopes) != 1 || savedScopes[0] != "papers:write" {
+		t.Errorf("scopes = %v, want [papers:write]", savedScopes)
 	}
 	if rec.GetDateTime("expires_at").Time().IsZero() {
 		t.Error("expires_at not set — would render the PAT a perpetual one")
@@ -192,7 +192,7 @@ func TestPATMint_RejectsPerpetual(t *testing.T) {
 				"mint",
 				"--user", email,
 				"--name", "should-not-exist",
-				"--scopes", "shares:write",
+				"--scopes", "papers:write",
 				"--expires-in-days", tc.expiryFlag,
 			)
 			if err == nil {
@@ -263,7 +263,7 @@ func TestPATMint_RejectsUnknownUser(t *testing.T) {
 		"mint",
 		"--user", "nobody@example.invalid",
 		"--name", "x",
-		"--scopes", "shares:write",
+		"--scopes", "papers:write",
 		"--expires-in-days", "30",
 	)
 	if err == nil {
@@ -303,7 +303,7 @@ func TestPATList_AfterMint(t *testing.T) {
 
 	if _, _, err := runPATCmd(t, app,
 		"mint", "--user", email, "--name", "alpha",
-		"--scopes", "shares:write", "--expires-in-days", "30",
+		"--scopes", "papers:write", "--expires-in-days", "30",
 	); err != nil {
 		t.Fatalf("mint alpha: %v", err)
 	}
@@ -318,7 +318,7 @@ func TestPATList_AfterMint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	for _, want := range []string{"alpha", "beta", "shares:write", "papers:write", email} {
+	for _, want := range []string{"alpha", "beta", "papers:write", "papers:write", email} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("list output missing %q; got %q", want, stdout)
 		}
@@ -331,7 +331,7 @@ func TestPATList_JSONShape(t *testing.T) {
 	email := seedUserEmail(t, app)
 	if _, _, err := runPATCmd(t, app,
 		"mint", "--user", email, "--name", "j",
-		"--scopes", "shares:write", "--expires-in-days", "30",
+		"--scopes", "papers:write", "--expires-in-days", "30",
 	); err != nil {
 		t.Fatalf("mint: %v", err)
 	}
@@ -376,7 +376,7 @@ func TestPATRevoke_DropsRecordAndAuth(t *testing.T) {
 
 	stdoutMint, _, err := runPATCmd(t, app,
 		"mint", "--user", email, "--name", "to-revoke",
-		"--scopes", "shares:write", "--expires-in-days", "30",
+		"--scopes", "papers:write", "--expires-in-days", "30",
 	)
 	if err != nil {
 		t.Fatalf("mint: %v", err)

@@ -51,3 +51,15 @@ func ArxivAbsURL(arxivID string) string {
 	id := paperassets.StripVersion(paperassets.NormalizeIdentifier(arxivID))
 	return "https://arxiv.org/pdf/" + id
 }
+
+// ArxivVersionedURL returns the arxiv.org PDF URL WITH its version
+// suffix preserved, e.g. "https://arxiv.org/pdf/2401.12345v1". Used by
+// the mineru-claim contract: contributors must fetch the exact version
+// our catalog references so the sha256 verification on upload-mineru
+// succeeds. arxiv treats version URLs as immutable — once "v1" is
+// published its bytes never change, even if v2 supersedes it — which
+// is what makes "ship arxiv URL + sha256 to the contributor" safe.
+func ArxivVersionedURL(arxivID string) string {
+	id := paperassets.NormalizeIdentifier(arxivID)
+	return "https://arxiv.org/pdf/" + id
+}

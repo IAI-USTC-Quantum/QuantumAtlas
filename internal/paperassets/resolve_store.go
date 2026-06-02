@@ -226,35 +226,5 @@ func appendUnique(out []string, s string) []string {
 	return append(out, s)
 }
 
-// ShareRelPathForKey converts an object key returned by AssetKey or
-// findAssetKey into the share-relative URL fragment used under
-// /share/{token}/. The conversion is simply "papers/" prepended —
-// share-fragment scheme: "papers/<kind>/<shard>/<stem>.<ext>".
-//
-// Callers that need to derive a share path from a full local fs path
-// should keep using SharePathForAsset; this helper exists for the
-// objstore code path where keys are already in the right shape.
-func ShareRelPathForKey(key string) string {
-	if key == "" {
-		return ""
-	}
-	return "papers/" + strings.TrimPrefix(key, "/")
-}
-
-// ObjectKeyFromSharePath inverts ShareRelPathForKey. Returns ("", false)
-// when relPath doesn't begin with one of the recognised "papers/<kind>/"
-// prefixes — same set the original ResolveTarget enforced.
-func ObjectKeyFromSharePath(relPath string) (string, bool) {
-	rel := strings.Trim(relPath, "/")
-	for _, kind := range []string{"pdf", "markdown", "json", "images"} {
-		prefix := "papers/" + kind
-		if rel == prefix {
-			return kind, true
-		}
-		if strings.HasPrefix(rel, prefix+"/") {
-			suffix := strings.TrimPrefix(rel[len(prefix):], "/")
-			return kind + "/" + suffix, true
-		}
-	}
-	return "", false
-}
+// (Share-fragment helpers ShareRelPathForKey / ObjectKeyFromSharePath
+// were removed in v0.9.0 along with the /share/{token}/ tree.)

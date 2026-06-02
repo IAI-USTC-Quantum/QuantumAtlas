@@ -143,7 +143,7 @@ created_at: 2026-05-29
     doi_source: arxiv
     external_links:
       - {label: arXiv abstract, url: "https://arxiv.org/abs/quant-ph/9508027"}
-      - {label: PDF, url: "/share/.../9508027v1.pdf"}
+      - {label: PDF, url: "https://arxiv.org/pdf/quant-ph/9508027v1"}
     related:
       - algo-shor
       - person-peter-shor

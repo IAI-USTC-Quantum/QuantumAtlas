@@ -9,10 +9,8 @@
 !!! tip "想实际调用（Try it out）？"
     本页是 Read the Docs 上的**静态文档镜像**，与 API server 不同源，已禁用
     "Try it out"。要在线点测请用 server 自带的 Swagger UI（与 API 同源、host
-    正确、点 **Authorize** 填 `Bearer <token>` 即可带鉴权调写口）：
-
-    - RackNerd（默认线路）：<https://quantum-atlas.ai/swagger/>
-    - Alibaba（国内线路，自签证书需信任）：`https://47.102.36.175/swagger/`
+    正确、点 **Authorize** 填 `Bearer <token>` 即可带鉴权调写口）—— 浏览器
+    打开你部署的 `https://<your-server>/swagger/` 即可。
 
 !!! info "spec 怎么保持同步"
     单一数据源是 `internal/apidocs/swagger.json`（`pixi run swagger` 生成、编译进

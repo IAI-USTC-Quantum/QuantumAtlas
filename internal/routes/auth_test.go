@@ -118,8 +118,8 @@ func TestDecodeScopes(t *testing.T) {
 			want []string
 		}{
 			{`["papers:write"]`, []string{"papers:write"}},
-			{`["papers:write","shares:read"]`, []string{"papers:write", "shares:read"}},
-			{`  ["shares:write"]  `, []string{"shares:write"}}, // surrounding whitespace tolerated
+			{`["papers:write","wiki:read"]`, []string{"papers:write", "wiki:read"}},
+			{`  ["graph:read"]  `, []string{"graph:read"}}, // surrounding whitespace tolerated
 		}
 		for _, tc := range cases {
 			got := decodeScopes(tc.raw)

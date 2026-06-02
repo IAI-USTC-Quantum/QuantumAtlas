@@ -280,66 +280,6 @@ paths:
       summary: Get wiki page
       tags:
       - Wiki
-  /api/papers/{arxiv_id}/markdown:
-    get:
-      parameters:
-      - description: arXiv identifier
-        in: path
-        name: arxiv_id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-        "401":
-          description: Unauthorized
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "404":
-          description: Not Found
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Paper markdown
-      tags:
-      - Papers
-  /api/papers/{arxiv_id}/markdown/status:
-    get:
-      parameters:
-      - description: arXiv identifier
-        in: path
-        name: arxiv_id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-        "401":
-          description: Unauthorized
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Paper markdown status
-      tags:
-      - Papers
   /api/papers/{arxiv_id}/mineru-claim:
     post:
       parameters:
@@ -391,39 +331,6 @@ paths:
       security:
       - BearerAuth: []
       summary: Release MinerU claim
-      tags:
-      - Papers
-  /api/papers/{arxiv_id}/resources:
-    get:
-      parameters:
-      - description: arXiv identifier
-        in: path
-        name: arxiv_id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-        "401":
-          description: Unauthorized
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "404":
-          description: Not Found
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Paper resources
       tags:
       - Papers
   /api/papers/{arxiv_id}/upload-mineru:
@@ -752,78 +659,6 @@ paths:
       summary: Server info
       tags:
       - System
-  /api/shares/:
-    get:
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-      security:
-      - BearerAuth: []
-      summary: List shares
-      tags:
-      - Shares
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: '{paths: []string, label: string, expires_in: int}'
-        in: body
-        name: body
-        required: true
-        schema:
-          type: object
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Create share
-      tags:
-      - Shares
-  /api/shares/{token}:
-    delete:
-      parameters:
-      - description: share token
-        in: path
-        name: token
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties:
-              type: boolean
-            type: object
-        "404":
-          description: Not Found
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Delete share
-      tags:
-      - Shares
   /api/stats:
     get:
       produces:
@@ -934,42 +769,6 @@ paths:
       summary: Installer script
       tags:
       - System
-  /share/{token}:
-    get:
-      description: |-
-        Public download surface. /share/{token} shows the index;
-        /share/{token}/{path} serves (or 307-redirects to a presigned
-        URL for) the asset. No auth — the token IS the credential.
-      parameters:
-      - description: share token
-        in: path
-        name: token
-        required: true
-        type: string
-      responses:
-        "200":
-          description: asset bytes or index html
-          schema:
-            type: string
-        "307":
-          description: redirect to presigned URL
-          schema:
-            type: string
-        "404":
-          description: Not Found
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "410":
-          description: expired
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      summary: Public share access
-      tags:
-      - Shares
 securityDefinitions:
   BearerAuth:
     description: |-

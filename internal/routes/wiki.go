@@ -1,6 +1,6 @@
 // Package routes hosts the HTTP route handlers for the QuantumAtlas Go
 // server. Each business module gets its own file: wiki.go, pages.go,
-// graph.go, papers.go, shares.go, info.go.
+// graph.go, papers.go, info.go.
 //
 // Handlers are wired up by Register(se, app, cfg) called from main.go
 // inside the OnServe hook.

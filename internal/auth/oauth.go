@@ -185,11 +185,10 @@ const stableUserIDLength = 15
 
 // syncStableUserID derives a deterministic users.id from the OAuth2
 // provider's user id, so the same GitHub account ends up with the
-// same PocketBase record id across both edge nodes (RackNerd +
-// Alibaba). Without this, each edge node's auto-generated random id
-// for the same GitHub user diverges, which complicates cross-node
-// reconciliation (PATs are still per-node, but at least the user
-// identity is portable).
+// same PocketBase record id across all edge nodes. Without this, each
+// edge node's auto-generated random id for the same GitHub user
+// diverges, which complicates cross-node reconciliation (PATs are
+// still per-node, but at least the user identity is portable).
 //
 // # When this fires
 //
@@ -199,9 +198,9 @@ const stableUserIDLength = 15
 //
 //   - e.Record non-nil: PB found an existing user by email or by an
 //     existing externalAuths link. We do NOT rename them — PB has no
-//     in-place id-change API, and the linked PATs / shares would all
-//     dangle. Log a warning if the existing id doesn't match what we
-//     would have picked (operator can manually reconcile later via
+//     in-place id-change API, and the linked PATs would all dangle.
+//     Log a warning if the existing id doesn't match what we would
+//     have picked (operator can manually reconcile later via
 //     pb_data migration). This path is rare in active-active because
 //     both nodes have independent DBs.
 //

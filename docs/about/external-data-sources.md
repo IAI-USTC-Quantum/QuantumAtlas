@@ -133,7 +133,7 @@ arxiv 自己通过 OAI-PMH 接口对外发布的全量论文 metadata 快照。
 
 - ✅ **arxiv OAI snapshot 在团队 NAS**（`/mnt/team/Papercrawl/arxiv-metadata/`），4.9 GB，但**还没在 qatlas 代码里用**
 - ✅ **CLI `qatlas wiki enrich-doi`** 已支持 `arxiv-self → Crossref → OpenAlex` chain（按 title 匹配作 fallback；详见 [Wiki Schema 文档 Crossref 附录](../reference/wiki-schema.md#附录crossref--openalex-元数据参考)）
-- ✅ **RustFS 对象存储**（`http://10.144.18.10:9000`，bucket `qatlas-raw`）已经在生产用于 paper-asset PDF/Markdown/JSON 三件套
+- ✅ **RustFS 对象存储**（S3 兼容）已经在生产用于 paper-asset PDF/Markdown/JSON 三件套
 - ❌ OpenAlex bulk dump 还没拉到 RustFS
 
 ### 短期（P1）：读本地 OAI snapshot

@@ -60,12 +60,6 @@
 
 <div class="grid cards" markdown>
 
--   :material-share-variant:{ .lg .middle } **[分享与下载](share-and-download.md)**
-
-    ---
-
-    `POST /api/shares/` 创建分享链接、TTL、单文件 vs 目录、presign 转发。
-
 -   :material-key-chain:{ .lg .middle } **[管理凭据](manage-credentials.md)**
 
     ---

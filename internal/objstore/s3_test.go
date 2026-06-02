@@ -445,8 +445,7 @@ func TestS3Store_PutWithOptions_IfMatchOnMissingKey(t *testing.T) {
 // integration counterpart to the LocalStore concurrency test. Multiple
 // goroutines race to create-only the same key. Exactly one must win
 // according to RustFS's S3 semantics; this is what protects us from
-// the active-active race across RackNerd + Alibaba edge nodes sharing
-// one bucket.
+// the active-active race across multiple edge nodes sharing one bucket.
 func TestS3Store_PutWithOptions_ConcurrentIfNoneMatchSerializes(t *testing.T) {
 	s, prefix := newS3(t)
 	ctx := context.Background()

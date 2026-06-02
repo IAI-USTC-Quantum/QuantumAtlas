@@ -104,38 +104,3 @@ func TestResolveAssetsViaStore_OldStyleArxivID(t *testing.T) {
 		t.Errorf("old-style MarkdownPath = %q", got.MarkdownPath)
 	}
 }
-
-func TestObjectKeyFromSharePath(t *testing.T) {
-	cases := []struct {
-		in      string
-		wantKey string
-		wantOK  bool
-	}{
-		{"papers/pdf/24/2401.00001v1.pdf", "pdf/24/2401.00001v1.pdf", true},
-		{"papers/markdown/9508/9508027v1.md", "markdown/9508/9508027v1.md", true},
-		{"papers/images/24/2401.00001v1/fig.png", "images/24/2401.00001v1/fig.png", true},
-		{"papers/pdf", "pdf", true},
-		{"random/other/path", "", false},
-		{"", "", false},
-	}
-	for _, c := range cases {
-		key, ok := ObjectKeyFromSharePath(c.in)
-		if key != c.wantKey || ok != c.wantOK {
-			t.Errorf("ObjectKeyFromSharePath(%q) = (%q, %v), want (%q, %v)",
-				c.in, key, ok, c.wantKey, c.wantOK)
-		}
-	}
-}
-
-func TestShareRelPathForKey(t *testing.T) {
-	cases := []struct{ in, want string }{
-		{"pdf/24/2401.00001v1.pdf", "papers/pdf/24/2401.00001v1.pdf"},
-		{"images/24/2401.00001v1", "papers/images/24/2401.00001v1"},
-		{"", ""},
-	}
-	for _, c := range cases {
-		if got := ShareRelPathForKey(c.in); got != c.want {
-			t.Errorf("ShareRelPathForKey(%q) = %q, want %q", c.in, got, c.want)
-		}
-	}
-}

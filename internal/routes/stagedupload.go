@@ -37,7 +37,7 @@ func newInMemoryBodyFromBytes(b []byte) *inMemoryBody {
 //
 //   - on-disk temp file (for PDFs up to 100 MiB) where holding the
 //     bytes in process memory would let 10 concurrent uploads pin
-//     ~1 GB of RSS — enough to OOM the 1.4 GB RackNerd VM.
+//     ~1 GB of RSS — enough to OOM a memory-tight VM (~1 GB class).
 //
 // Both implementations are race-safe to Open() concurrently (handlers
 // don't actually do this today, but it costs nothing and protects

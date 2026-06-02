@@ -15,7 +15,7 @@ qatlas [--version] [--help] <subcommand> [args...]
 
 ## 通用 client flags
 
-所有调 server 的子命令（ingest / upload / mineru / shares 等）都接受这几个 flag：
+所有调 server 的子命令（ingest / upload / mineru 等）都接受这几个 flag：
 
 | Flag | 默认 | 含义 |
 |---|---|---|

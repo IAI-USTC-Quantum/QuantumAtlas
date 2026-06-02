@@ -22,12 +22,9 @@ func TestNewEnforcer(t *testing.T) {
 		want            bool
 	}{
 		{ScopePapersWrite, "papers", "write", true},
-		{ScopePapersWrite, "shares", "write", false},
-		{ScopeSharesRead, "shares", "read", true},
-		{ScopeSharesRead, "shares", "write", false},
-		{ScopeSharesWrite, "shares", "read", true}, // write implies read
-		{ScopeSharesWrite, "shares", "write", true},
-		{ScopeSharesWrite, "papers", "write", false},
+		{ScopePapersWrite, "wiki", "write", false},
+		{ScopePapersRead, "papers", "read", true},
+		{ScopePapersRead, "papers", "write", false},
 		{ScopeGraphRead, "graph", "read", true},
 		{ScopeGraphRead, "papers", "write", false},
 		{ScopePapersWrite, "graph", "read", false},
@@ -60,20 +57,20 @@ func TestAllows(t *testing.T) {
 		want     bool
 	}{
 		// Empty held = always deny (default-deny invariant).
-		{"empty held denies", nil, "shares", "read", false},
+		{"empty held denies", nil, "papers", "read", false},
 		{"empty held denies write", nil, "papers", "write", false},
 
 		// Single-scope grants.
 		{"papers:write covers papers/write", []string{ScopePapersWrite}, "papers", "write", true},
-		{"papers:write does not cover shares", []string{ScopePapersWrite}, "shares", "read", false},
+		{"papers:write does not cover wiki", []string{ScopePapersWrite}, "wiki", "read", false},
 
 		// Write implies read.
-		{"shares:write covers shares/read", []string{ScopeSharesWrite}, "shares", "read", true},
-		{"shares:read does not cover shares/write", []string{ScopeSharesRead}, "shares", "write", false},
+		{"papers:write covers papers/read", []string{ScopePapersWrite}, "papers", "read", true},
+		{"papers:read does not cover papers/write", []string{ScopePapersRead}, "papers", "write", false},
 
 		// Multiple scopes are OR-ed together.
-		{"multi-scope covers union", []string{ScopePapersWrite, ScopeSharesRead}, "shares", "read", true},
-		{"multi-scope still denies uncovered", []string{ScopePapersWrite, ScopeSharesRead}, "shares", "write", false},
+		{"multi-scope covers union", []string{ScopePapersWrite, ScopeWikiRead}, "wiki", "read", true},
+		{"multi-scope still denies uncovered", []string{ScopePapersRead, ScopeWikiRead}, "papers", "write", false},
 
 		// Graph read is its own resource — not implied by any other scope.
 		{"graph:read covers graph/read", []string{ScopeGraphRead}, "graph", "read", true},
@@ -85,8 +82,8 @@ func TestAllows(t *testing.T) {
 
 		// Master wildcard short-circuit (session-token path).
 		{"master covers anything", []string{ScopeMaster}, "papers", "write", true},
-		{"master covers anything 2", []string{ScopeMaster}, "shares", "write", true},
-		{"master in mixed list still wins", []string{ScopePapersWrite, ScopeMaster}, "shares", "write", true},
+		{"master covers anything 2", []string{ScopeMaster}, "graph", "read", true},
+		{"master in mixed list still wins", []string{ScopePapersRead, ScopeMaster}, "wiki", "write", true},
 
 		// Unknown scope just doesn't match — it isn't an error, it
 		// simply matches no policy. Validation is a separate concern

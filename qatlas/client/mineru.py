@@ -1,10 +1,8 @@
 """``qatlas mineru`` — run MinerU parsing locally and push the result to the server.
 
-Designed so the server's ``RAW_DIR`` is the single source of truth for which
-papers are eligible. Contributors never feed arbitrary PDF URLs into MinerU:
-the PDF must already be on the server (uploaded via ``qatlas upload pdf`` or
-fetched by ``qatlas ingest``), and the share URL the server hands back is what
-gets passed to MinerU.
+The OSS edition is arxiv-only: the server hands back an arxiv.org versioned URL
+(stable bytes — arxiv never mutates a published version) and we feed that URL
+to MinerU. The server **never** redistributes PDFs back to clients.
 
 Modes::
 
@@ -28,6 +26,20 @@ Concurrency::
     never burn MinerU quota on the same paper. If a claim is already held by
     someone else the client silently skips and moves to the next candidate.
 
+PDF sha256 verification (since v0.9.0)::
+
+    The claim response carries the sha256 the server stored for that paper's
+    PDF (read from RustFS object metadata). We download the arxiv URL, hash
+    the bytes, compare to the server's hash, then pass the hash back on
+    upload-mineru via ``?pdf_sha256=<hex>``. The server cross-checks against
+    its own RustFS metadata one more time. A mismatch at either end aborts
+    the upload — better than silently uploading markdown derived from a
+    different PDF revision.
+
+    Legacy objects (uploaded before v0.7.0) have no sha256 metadata; in that
+    case ``claim.pdf_sha256`` is empty and we skip verification (trust the
+    contributor + arxiv URL stability).
+
 Push path (since v0.8.0)::
 
     We send the *entire* MinerU result zip to ``POST upload-mineru`` rather
@@ -41,12 +53,14 @@ Push path (since v0.8.0)::
 from __future__ import annotations
 
 import argparse
+import hashlib
 import signal
 import sys
 import tempfile
 import time
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 import requests
 
@@ -62,6 +76,24 @@ from qatlas.client._common import (
 )
 from qatlas.parser.mineru_client import MinerUClient
 from qatlas.config import ServerConfig
+
+
+_ARXIV_PDF_HOSTS = frozenset({"arxiv.org", "export.arxiv.org"})
+
+
+def _is_arxiv_url(url: str) -> bool:
+    """Defensive client-side check: refuse to feed MinerU any URL not on arxiv.
+
+    The server in the OSS edition only ever hands back arxiv URLs (see
+    ``papers.ArxivVersionedURL``), but a malicious or buggy server return
+    could otherwise turn this CLI into a generic URL-fetch tool. Belt and
+    braces.
+    """
+    try:
+        host = urlparse(url).hostname or ""
+    except ValueError:
+        return False
+    return host.lower() in _ARXIV_PDF_HOSTS
 
 
 # ---------------------------------------------------------------------------
@@ -166,6 +198,47 @@ def _release_claim(
         _print_err(f"warning: could not release claim for {arxiv_id}: {exc}")
 
 
+def _hash_arxiv_pdf(
+    pdf_url: str,
+    *,
+    request_timeout: float,
+    verify: bool,
+) -> Optional[str]:
+    """Stream-download the arxiv PDF and return its sha256 (lowercase hex).
+
+    We don't keep the bytes — MinerU will refetch the same URL itself.
+    Returning the hash lets us cross-check with the server's stored RustFS
+    metadata: if they disagree, something between arxiv and the server
+    drifted (server has a different version cached, arxiv served different
+    bytes, etc.) and we should bail rather than upload markdown derived
+    from a different revision.
+
+    Returns ``None`` on transport error so the caller can decide whether
+    to skip the paper or fail the whole batch.
+    """
+    try:
+        with requests.get(
+            pdf_url,
+            stream=True,
+            timeout=request_timeout,
+            verify=verify,
+            headers=client_version_headers(),
+        ) as resp:
+            if not resp.ok:
+                _print_err(
+                    f"PDF download for hash check failed: HTTP {resp.status_code} {resp.reason}"
+                )
+                return None
+            sha = hashlib.sha256()
+            for chunk in resp.iter_content(chunk_size=65536):
+                if chunk:
+                    sha.update(chunk)
+            return sha.hexdigest()
+    except requests.RequestException as exc:
+        _print_err(f"PDF download for hash check errored: {exc}")
+        return None
+
+
 def _run_mineru_to_zip(
     *,
     config: ServerConfig,
@@ -238,6 +311,7 @@ def _upload_mineru_zip(
     request_timeout: float,
     verify: bool,
     headers: dict[str, str],
+    pdf_sha256: Optional[str] = None,
 ) -> tuple[bool, Any]:
     """POST the whole MinerU zip to /api/papers/{id}/upload-mineru.
 
@@ -246,10 +320,17 @@ def _upload_mineru_zip(
     paper's canonical key. Conditional create-only PUT semantics apply per
     object so multiple contributors racing on the same paper still get
     consistent state.
+
+    ``pdf_sha256`` (since v0.9.0) is the sha256 the *client* computed from
+    the arxiv PDF it just fetched. The server cross-checks against its own
+    RustFS-stored hash; mismatch → 400. Pass ``None`` when the claim
+    response had no server-side hash to compare against (legacy objects).
     """
     params: dict[str, str] = {"source": "mineru"}
     if overwrite:
         params["overwrite"] = "true"
+    if pdf_sha256:
+        params["pdf_sha256"] = pdf_sha256
     with zip_path.open("rb") as fh:
         files = {"mineru_zip": (zip_path.name, fh, "application/zip")}
         resp = requests.post(
@@ -291,9 +372,62 @@ def _process_one(
 
     claim_id = claim["claim_id"]
     pdf_url = claim["pdf_url"]
+    server_pdf_sha256 = (claim.get("pdf_sha256") or "").lower() or None
     _print_err(
         f"Claim acquired for {arxiv_id} (id={claim_id}); submitting {pdf_url} to MinerU."
     )
+
+    if not _is_arxiv_url(pdf_url):
+        _print_err(
+            f"[skip] {arxiv_id}: server returned non-arxiv pdf_url {pdf_url!r} — refusing to fetch"
+        )
+        _release_claim(
+            base_url,
+            arxiv_id,
+            claim_id,
+            request_timeout=args.request_timeout,
+            verify=verify,
+            headers=headers,
+        )
+        return 1
+
+    client_pdf_sha256: Optional[str] = None
+    if server_pdf_sha256:
+        client_pdf_sha256 = _hash_arxiv_pdf(
+            pdf_url,
+            request_timeout=args.request_timeout,
+            verify=verify,
+        )
+        if client_pdf_sha256 is None:
+            _print_err(f"[error] {arxiv_id}: could not hash arxiv PDF for verification")
+            _release_claim(
+                base_url,
+                arxiv_id,
+                claim_id,
+                request_timeout=args.request_timeout,
+                verify=verify,
+                headers=headers,
+            )
+            return 1
+        if client_pdf_sha256 != server_pdf_sha256:
+            _print_err(
+                f"[error] {arxiv_id}: PDF sha256 mismatch — arxiv served "
+                f"{client_pdf_sha256} but server holds {server_pdf_sha256}; aborting upload"
+            )
+            _release_claim(
+                base_url,
+                arxiv_id,
+                claim_id,
+                request_timeout=args.request_timeout,
+                verify=verify,
+                headers=headers,
+            )
+            return 1
+    else:
+        _print_err(
+            f"note: {arxiv_id} has no server-stored sha256 (legacy object); "
+            "skipping client-side PDF verification"
+        )
 
     zip_path: Optional[Path] = None
     try:
@@ -333,6 +467,7 @@ def _process_one(
             request_timeout=args.request_timeout,
             verify=verify,
             headers=headers,
+            pdf_sha256=client_pdf_sha256,
         )
         if not ok:
             _print_err(payload)

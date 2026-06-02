@@ -20,10 +20,10 @@
 //     endpoint → 403, with the missing scope echoed in the body
 //
 // Why we register a private /__test_scoped endpoint instead of
-// reusing /api/shares/: the production shares handler depends on
-// ShareStore + RawStore + config, none of which are interesting for
-// proving the auth+scope path. A 4-line passthrough endpoint with
-// scopeGuard wrapped around it is more self-contained.
+// reusing an existing scope-gated route: the production handlers
+// depend on RawStore + config + catalog, none of which are
+// interesting for proving the auth+scope path. A 4-line passthrough
+// endpoint with scopeGuard wrapped around it is more self-contained.
 
 package routes
 
@@ -97,7 +97,7 @@ func newPATHarness(t testing.TB) *patHarness {
 	err = app.OnServe().Trigger(se, func(e *core.ServeEvent) error {
 		// Routes under test.
 		RegisterPAT(e, app)
-		e.Router.POST("/__test_scoped", scopeGuard(enforcer, "shares", "write", func(re *core.RequestEvent) error {
+		e.Router.POST("/__test_scoped", scopeGuard(enforcer, "papers", "write", func(re *core.RequestEvent) error {
 			return re.JSON(http.StatusOK, map[string]bool{"ok": true})
 		}))
 
@@ -221,7 +221,7 @@ func TestAPI_PAT_SessionGuardRejectsPATAuth(t *testing.T) {
 	// Bootstrap: mint a PAT through the session-token path so we
 	// have a real qat_... plaintext to attack with.
 	bootstrapStatus, _, mintBody := h.do(http.MethodPost, "/api/pat",
-		`{"name":"bootstrap","scopes":["shares:write"],"expires_in_days":30}`,
+		`{"name":"bootstrap","scopes":["papers:write"],"expires_in_days":30}`,
 		rawHeader(h.sessionToken()),
 	)
 	if bootstrapStatus != http.StatusOK {
@@ -309,7 +309,7 @@ func TestAPI_PAT_CreateRejectsBlankName(t *testing.T) {
 	tok := h.sessionToken()
 
 	status, _, body := h.do(http.MethodPost, "/api/pat",
-		`{"name":"","scopes":["shares:write"],"expires_in_days":30}`,
+		`{"name":"","scopes":["papers:write"],"expires_in_days":30}`,
 		rawHeader(tok),
 	)
 	if status != http.StatusBadRequest {
@@ -328,9 +328,9 @@ func TestAPI_PAT_LifecycleMintUseRevoke(t *testing.T) {
 	h := newPATHarness(t)
 	tok := h.sessionToken()
 
-	// Step 1: mint with shares:write scope.
+	// Step 1: mint with papers:write scope.
 	status, _, mintBody := h.do(http.MethodPost, "/api/pat",
-		`{"name":"lifecycle","scopes":["shares:write"],"expires_in_days":30}`,
+		`{"name":"lifecycle","scopes":["papers:write"],"expires_in_days":30}`,
 		rawHeader(tok),
 	)
 	if status != http.StatusOK {
@@ -390,8 +390,8 @@ func TestAPI_PAT_ScopeEnforcement(t *testing.T) {
 		t.Fatalf("scope-less PAT status=%d, want 403; body=%v", useStatus, useBody)
 	}
 	detail := asString(useBody["detail"])
-	if !strings.Contains(detail, "shares") || !strings.Contains(detail, "write") {
-		t.Errorf("403 detail should name (shares, write); got %q", detail)
+	if !strings.Contains(detail, "papers") || !strings.Contains(detail, "write") {
+		t.Errorf("403 detail should name (papers, write); got %q", detail)
 	}
 }
 

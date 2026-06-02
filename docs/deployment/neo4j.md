@@ -77,13 +77,13 @@ ss -tlnp | grep :7687
 
 ## 跨 mesh 暴露给多边缘节点
 
-如果 qatlasd 和 Neo4j **不在同一台机**（典型场景：Neo4j 跑在团队后端 1810 WSL，server 跑在 RackNerd / 阿里云），需要把 Neo4j 通过 EasyTier mesh 暴露：
+如果 qatlasd 和 Neo4j **不在同一台机**（典型场景：Neo4j 跑在团队后端 WSL2，qatlasd 跑在远端 edge VPS），需要把 Neo4j 通过 EasyTier mesh 暴露：
 
 ```mermaid
 flowchart LR
-    QA_RN[qatlasd<br/>RackNerd] -->|bolt://10.144.18.10:7687| MESH
-    QA_AL[qatlasd<br/>阿里云] -->|bolt://10.144.18.10:7687| MESH
-    MESH[EasyTier mesh<br/>10.144.18.0/24] --> PROXY[Windows portproxy<br/>10.144.18.10:7687<br/>↓<br/>127.0.0.1:7687]
+    QA_A[qatlasd<br/>Edge A] -->|bolt://<neo4j-bolt-host>:7687| MESH
+    QA_B[qatlasd<br/>Edge B] -->|bolt://<neo4j-bolt-host>:7687| MESH
+    MESH[EasyTier mesh<br/><mesh-cidr>] --> PROXY[Windows portproxy<br/><neo4j-bolt-host>:7687<br/>↓<br/>127.0.0.1:7687]
     PROXY --> NEO4J[(Neo4j @ WSL2)]
 ```
 
@@ -92,14 +92,14 @@ Windows host portproxy 配置（一次性，永久）：
 ```powershell
 # 以管理员 PowerShell 跑
 netsh interface portproxy add v4tov4 \
-    listenport=7687 listenaddress=10.144.18.10 \
+    listenport=7687 listenaddress=<mesh-host> \
     connectport=7687 connectaddress=127.0.0.1
 ```
 
 每台 qatlasd `.env`：
 
 ```bash
-NEO4J_URI=bolt://10.144.18.10:7687
+NEO4J_URI=bolt://<neo4j-bolt-host>:7687
 NEO4J_USERNAME=neo4j
 NEO4J_PASSWORD=your-strong-password
 ```

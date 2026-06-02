@@ -86,20 +86,6 @@ class ServerConfig(BaseSettings):
         False,
         validation_alias="QATLAS_INSECURE",
     )
-    share_access_token: Optional[str] = Field(
-        None,
-        validation_alias=AliasChoices(
-            "QATLAS_SHARE_ACCESS_TOKEN",
-            "SHARE_ACCESS_TOKEN",
-            "PUBLIC_SHARE_TOKEN",
-        ),
-    )
-    default_share_expires_in: Optional[int] = Field(
-        600,
-        validation_alias=AliasChoices(
-            "QATLAS_DEFAULT_SHARE_EXPIRES_IN", "DEFAULT_SHARE_EXPIRES_IN"
-        ),
-    )
     user_header: Optional[str] = Field(
         None,
         validation_alias=AliasChoices("QATLAS_USER_HEADER", "USER_HEADER"),
@@ -158,7 +144,6 @@ class ServerConfig(BaseSettings):
 
     @field_validator(
         "server_url",
-        "share_access_token",
         mode="before",
     )
     @classmethod

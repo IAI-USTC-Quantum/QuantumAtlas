@@ -176,11 +176,11 @@ After=network-online.target
 
 [Service]
 Type=simple
-User=timidly
-Group=timidly
-WorkingDirectory=/home/timidly
+User=<USER>
+Group=<USER>
+WorkingDirectory=/home/<USER>
 Environment=QATLAS_DOTENV=/etc/quantum-atlas/.env
-ExecStart=/home/timidly/.local/bin/qatlasd serve --http=127.0.0.1:4200
+ExecStart=/home/<USER>/.local/bin/qatlasd serve --http=127.0.0.1:4200
 Restart=on-failure
 RestartSec=5
 
@@ -191,7 +191,7 @@ ProtectSystem=full
 ProtectHome=no
 LockPersonality=true
 RestrictRealtime=true
-ReadWritePaths=/etc/quantum-atlas /var/lib/quantum-atlas /home/timidly/.local/share/quantum-atlas
+ReadWritePaths=/etc/quantum-atlas /var/lib/quantum-atlas /home/<USER>/.local/share/quantum-atlas
 
 [Install]
 WantedBy=multi-user.target

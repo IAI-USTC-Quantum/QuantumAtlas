@@ -27,13 +27,11 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/auth"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/healthz"
-	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineru"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/neo4j"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/papers"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/pat"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/routes"
-	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/shares"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/wiki"
 	qweb "github.com/IAI-USTC-Quantum/QuantumAtlas/web"
 
@@ -254,15 +252,11 @@ func main() {
 		return nil
 	})
 
-	// Initialize the share-token store. When Neo4j is configured the
-	// records live in the catalog (:PaperShareToken nodes); otherwise
-	// they fall back to {DATA_DIR}/shares JSON files. Construction is
-	// no-op-safe on every boot.
+	// Initialize Neo4j client (shared by the papers catalog). When
+	// NEO4J_URI is unset NewClient returns nil and the catalog
+	// degrades to ErrCatalogUnavailable on every read/write — endpoints
+	// surface this as {available: false} rather than 5xx.
 	nc := initNeo4jClient(cfg)
-	shareStore, err := initShareStore(cfg, nc)
-	if err != nil {
-		log.Fatalf("init share store: %v", err)
-	}
 
 	// Build the Neo4j-backed papers catalog (stats / needs-mineru /
 	// claims / upload write-through). nc may be nil/unconnected — the
@@ -307,27 +301,17 @@ func main() {
 		log.Fatalf("build PAT scope enforcer: %v", err)
 	}
 
-	// Background janitor: sweep expired MinerU claims + share tokens
-	// every JanitorInterval. Idempotent and safe to run on both edges.
+	// Background janitor: sweep expired MinerU claims every
+	// JanitorInterval. Idempotent and safe to run on both edges.
 	// Stops when the app terminates.
 	janitorCtx, janitorCancel := context.WithCancel(context.Background())
 	if catalog.Configured() {
-		go catalog.RunJanitor(janitorCtx, shareStore)
+		go catalog.RunJanitor(janitorCtx)
 	}
 	app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
 		janitorCancel()
 		return e.Next()
 	})
-
-	// Build the server-side MinerU converter. Always constructed; it only
-	// actually converts when MINERU_API_TOKEN is set (Converter.Enabled).
-	// Powers the silent conversion behind GET /api/papers/{id}/markdown.
-	mineruConverter := mineru.NewConverter(cfg, rawStore, shareStore)
-	if mineruConverter.Enabled() {
-		log.Printf("mineru: server-side silent conversion enabled (base=%s)", cfg.MinerUAPIBaseURL)
-	} else {
-		log.Printf("mineru: server-side conversion disabled (MINERU_API_TOKEN unset); markdown served from cache only")
-	}
 
 	// Build the wiki in-memory cache. Walks cfg.WikiDir once at
 	// startup so the first /api/pages request hits warm data; a
@@ -362,14 +346,15 @@ func main() {
 		// for community deployments — you would shut out v6-only callers.
 		//
 		// WSL2 + Windows netsh portproxy is the exception: the v4-only
-		// portproxy rule (10.144.18.10:4200 -> 127.0.0.1:4200) injects
+		// portproxy rule (mesh-IPv4:4200 -> 127.0.0.1:4200) injects
 		// raw v4 SYNs into the WSL2 NAT layer which then cannot match a
-		// pure v6 socket, even with bindv6only=0. Edge Caddy reverse-
-		// proxying through the mesh sees endless 502s while curl from
+		// pure v6 socket, even with bindv6only=0. Edge reverse-proxies
+		// going through the mesh see endless 502s while curl from
 		// inside WSL2 to 127.0.0.1:4200 works. The fix is to bind a
 		// tcp4 socket ourselves and inject it into ServeEvent.
 		//
-		// Toggled on for our 1810 systemd unit; unset for everyone else.
+		// Opt-in for WSL2-on-Windows deployments via QATLAS_FORCE_TCP4=1;
+		// unset for everyone else.
 		if forceTCP4() && se.Listener == nil && se.Server != nil {
 			if l, err := maybeIPv4Listener(se.Server.Addr); err == nil && l != nil {
 				se.Listener = l
@@ -379,7 +364,7 @@ func main() {
 			}
 		}
 
-		registerRoutes(se, app, cfg, rawStore, shareStore, catalog, mineruConverter, wikiCache, enforcer, serverStarted)
+		registerRoutes(se, app, cfg, rawStore, catalog, wikiCache, enforcer, serverStarted)
 
 		// Serve the embedded SPA last as the catch-all. apis.Static's
 		// indexFallback=true means any path that doesn't match a real
@@ -396,20 +381,20 @@ func main() {
 }
 
 // initNeo4jClient builds the long-lived Neo4j client shared by the
-// papers catalog and the share-token store. It attempts an initial
-// Connect (best-effort, short timeout) so the first request after boot
-// doesn't pay the dial latency, but a down/unconfigured Neo4j is
-// non-fatal: NewClient returns ErrNotConfigured when NEO4J_URI is
-// empty, in which case we return nil and every catalog op degrades to
-// "unavailable". A configured-but-unreachable Neo4j returns a client
-// that lazily reconnects (backoff-gated) on later requests.
+// papers catalog. It attempts an initial Connect (best-effort, short
+// timeout) so the first request after boot doesn't pay the dial
+// latency, but a down/unconfigured Neo4j is non-fatal: NewClient
+// returns ErrNotConfigured when NEO4J_URI is empty, in which case we
+// return nil and every catalog op degrades to "unavailable". A
+// configured-but-unreachable Neo4j returns a client that lazily
+// reconnects (backoff-gated) on later requests.
 // ensureCatalogSchema applies the Neo4j constraints + indexes in the
-// background, retrying until success. EnsureSchema is ~16 sequential DDL
+// background, retrying until success. EnsureSchema is ~14 sequential DDL
 // round-trips; over a cross-mesh link (~700ms/round-trip) the full pass
 // can exceed 10s, so a single short startup-blocking attempt would
-// silently leave the tail of the schema (e.g. the PaperShareToken
-// uniqueness constraint) uncreated. Each attempt gets a generous timeout
-// and statements are idempotent, so retries converge cheaply.
+// silently leave the tail of the schema uncreated. Each attempt gets a
+// generous timeout and statements are idempotent, so retries converge
+// cheaply.
 func ensureCatalogSchema(catalog *papers.Store) {
 	const (
 		attemptTimeout = 90 * time.Second
@@ -434,7 +419,7 @@ func ensureCatalogSchema(catalog *papers.Store) {
 func initNeo4jClient(cfg *config.Config) *neo4j.Client {
 	nc, err := neo4j.NewClient(cfg.Neo4jURI, cfg.Neo4jUser, cfg.Neo4jPassword, cfg.Neo4jDatabase)
 	if err != nil {
-		log.Printf("neo4j: not configured (%v); papers catalog + share tokens use file fallback", err)
+		log.Printf("neo4j: not configured (%v); papers catalog uses file fallback", err)
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -447,14 +432,8 @@ func initNeo4jClient(cfg *config.Config) *neo4j.Client {
 	return nc
 }
 
-// initShareStore returns a ready-to-use ShareStore. When a connected
-// Neo4j client is available the records live in the catalog as
-// :PaperShareToken nodes; otherwise they fall back to {DATA_DIR}/shares
-// JSON files. The on-disk path is always constructed so a later Neo4j
-// outage can still degrade to file storage.
-func initShareStore(cfg *config.Config, nc *neo4j.Client) (*shares.Store, error) {
-	return shares.NewNeo4jStore(filepath.Join(cfg.DataDir, "shares"), nc)
-}
+// initShareStore was removed in v0.9.0 along with the /share/*
+// surface (see RegisterPapers doc comment).
 
 // initRawStore returns the objstore.Store backing raw paper assets.
 // Selects between a single LocalStore (cfg.RawDir) and the v0.7.0
@@ -538,7 +517,7 @@ func ensureBucketVersioning(rawStore objstore.Store) {
 // registerRoutes wires the QuantumAtlas /api/* surface. Most endpoints are
 // implemented under internal/routes/ and pulled in by their respective
 // Register* helpers as we migrate each module in subsequent phases.
-func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawStore objstore.Store, shareStore *shares.Store, catalog *papers.Store, mineruConverter *mineru.Converter, wikiCache *wiki.Cache, enforcer *casbin.Enforcer, started time.Time) {
+func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawStore objstore.Store, catalog *papers.Store, wikiCache *wiki.Cache, enforcer *casbin.Enforcer, started time.Time) {
 	probes := healthz.Probes{
 		Cfg:      cfg,
 		RawStore: rawStore,
@@ -559,11 +538,9 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// BindFunc returns without calling e.Next() — if X-Attribution
 	// ran after it, the header would be missing on /api/health).
 	//
-	// Scope is /api/* only: SPA assets, /install-qatlasd.sh, /swagger,
-	// and /share/* either don't surface upstream metadata bytes
-	// (share returns 307 to arxiv.org for PDF) or aren't API
-	// responses in the contract sense. Footer in the SPA chrome
-	// covers the human-readable attribution side.
+	// Scope is /api/* only: SPA assets, /install-qatlasd.sh, /swagger
+	// aren't API responses in the contract sense. Footer in the SPA
+	// chrome covers the human-readable attribution side.
 	se.Router.BindFunc(func(re *core.RequestEvent) error {
 		if strings.HasPrefix(re.Request.URL.Path, "/api/") {
 			re.Response.Header().Set("X-Attribution", "OpenAlex (CC0), Crossref (CC0), arXiv")
@@ -688,11 +665,11 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// of the non-public-repo surface; sessions bypass via ScopeMaster.
 	routes.RegisterGraph(se, cfg, enforcer)
 
-	// Papers (resources, upload, mineru-claim) — see internal/routes/papers.go.
-	routes.RegisterPapers(se, cfg, rawStore, shareStore, catalog, mineruConverter, enforcer)
-
-	// Shares CRUD + public /share/{token}* — see internal/routes/shares.go.
-	routes.RegisterShares(se, cfg, shareStore, rawStore, enforcer)
+	// Papers (stats, needs-mineru, mineru-claim, uploads) — see
+	// internal/routes/papers.go. v0.9.0 dropped the byte-serving
+	// endpoints (markdown / resources / shares); the OSS server only
+	// exposes catalog metadata + the contribution flow now.
+	routes.RegisterPapers(se, cfg, rawStore, catalog, enforcer)
 
 	// Personal Access Tokens — see internal/routes/pat.go.
 	// /api/pat is session-token-only (PAT auth refused by sessionGuard);

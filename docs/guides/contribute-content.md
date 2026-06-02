@@ -175,7 +175,7 @@ qatlas mineru 2501.00010v1 --no-push
 
 ## 2. 鉴权与审计
 
-服务器使用 PocketBase 内嵌的 GitHub OAuth 流程做浏览器登录，并通过 `authGuard`（`internal/routes/auth.go`）门禁写操作。读口（wiki / pages / stats / search / graph / lint / share）保持公开（因为 wiki 仓库本身就是公开的）。
+服务器使用 PocketBase 内嵌的 GitHub OAuth 流程做浏览器登录，并通过 `authGuard`（`internal/routes/auth.go`）门禁写操作。读口（wiki / pages / stats / search / graph / lint）保持公开（因为 wiki 仓库本身就是公开的）。
 
 `authGuard` 接受**三种**凭据，按到达顺序检查：
 
@@ -192,8 +192,9 @@ qatlas mineru 2501.00010v1 --no-push
 | Scope | 覆盖端点 | 说明 |
 |---|---|---|
 | `papers:write` | `POST /api/papers/.../upload-pdf` / `upload-mineru` / `mineru-claim`，`DELETE .../mineru-claim/{id}` | 上传 PDF / MinerU 结果包、跑 MinerU 任务 |
-| `shares:read` | `GET /api/shares/` | 列出已创建的 share token |
-| `shares:write` | `POST /api/shares/`、`DELETE /api/shares/{token}` | 创建 / 撤销 share token（自动包含 read） |
+| `papers:read` | `GET /api/papers/...` 各只读 endpoint（stats / needs-mineru 等） | 读取 paper catalog 元数据 |
+| `wiki:read` / `wiki:write` | `/api/wiki/*` | wiki 内容只读 / 同步 |
+| `graph:read` | `/api/graph/*` | Neo4j 查询 |
 
 scope 的 obj/act 在 `scopeGuard` 抛 403 时会回显在 `detail` 里——CLI 报错能直接告诉你"该 PAT 缺 `papers:write` scope，去 /pat 重发一条"。
 
@@ -222,9 +223,9 @@ scope 的 obj/act 在 `scopeGuard` 抛 403 时会回显在 `detail` 里——CLI
 ```bash
 sudo -u qatlasd /opt/quantum-atlas/qatlasd pat mint \
     --user me@example.com --name nightly-ci \
-    --scopes shares:write --expires-in-days 365
+    --scopes papers:write --expires-in-days 365
 # stdout: qat_xxxxxxxxxxxxxxxxxxxxxxxxxxx
-# stderr: minted PAT id=... prefix=qat_xxxx... user=me@example.com scopes=[shares:write] expires_at=...
+# stderr: minted PAT id=... prefix=qat_xxxx... user=me@example.com scopes=[papers:write] expires_at=...
 ```
 
 `mint` 输出的明文走 stdout（可以 `SECRET=$(qatlasd pat mint ...)` 直接捕获到变量），元数据走 stderr。配套 `list` / `revoke <id>` / `scopes` 三个子命令分别看现状、撤销、查 scope 词表。这条路径绕开 `sessionGuard`（前提：你已经是有 shell 权限的运维人，DB 文件你本来就能直接改），适合 nightly secret 之类不开浏览器的场景。

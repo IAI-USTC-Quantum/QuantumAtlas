@@ -294,39 +294,8 @@ func globMatches(dir, pattern string) []string {
 	return m
 }
 
-// SharePathForAsset returns the share-relative URL fragment for an
-// asset under the public /share/{token}/ tree. Used by /api/papers/
-// uploads to surface a copy-pastable URL on success.
-//
-// If assetPath is provided (preferred), the result preserves the
-// shard subdirectory exactly. Otherwise we synthesize the path from key.
-func SharePathForAsset(kind, key, filename, assetPath, rawRoot string) string {
-	if assetPath != "" && rawRoot != "" {
-		// Strip the rawRoot/kind/ prefix to get the share-relative tail.
-		prefix := filepath.Join(rawRoot, kind) + string(filepath.Separator)
-		if strings.HasPrefix(assetPath, prefix) {
-			rel := filepath.ToSlash(assetPath[len(prefix):])
-			return "papers/" + kind + "/" + rel
-		}
-	}
-	var base string
-	switch kind {
-	case "pdf":
-		base = "papers/pdf/" + key + ".pdf"
-	case "markdown":
-		base = "papers/markdown/" + key + ".md"
-	case "json":
-		base = "papers/json/" + key + ".json"
-	case "images":
-		base = "papers/images/" + key
-	default:
-		return ""
-	}
-	if filename != "" {
-		return base + "/" + filename
-	}
-	return base
-}
+// (SharePathForAsset was removed in v0.9.0 along with the /share/{token}/
+// surface; upload handlers no longer surface a share-URL fragment.)
 
 // ValidateUploadID enforces the strict arXiv id format required for
 // upload endpoints — version suffix is mandatory so the filename on

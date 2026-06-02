@@ -17,19 +17,19 @@
       "rawstore": {
         "status": "ok",
         "backend": "s3",
-        "endpoint": "http://10.144.18.10:9000",
+        "endpoint": "http://<rustfs-internal-host>:9000",
         "bucket": "qatlas-raw",
         "latency_ms": 12
       },
       "neo4j": {
         "status": "ok",
-        "uri": "bolt://10.144.18.10:7687",
+        "uri": "bolt://<neo4j-bolt-host>:7687",
         "database": "neo4j",
         "latency_ms": 8
       },
       "wiki": {
         "status": "ok",
-        "dir": "/home/timidly/QuantumAtlas-Wiki",
+        "dir": "/home/<USER>/QuantumAtlas-Wiki",
         "commit": "abc12345",
         "commit_time": "2026-05-28T22:10:33Z",
         "branch": "main",
@@ -129,7 +129,7 @@ cron 每分钟跑一下，输出有 ALERT 就邮件/Slack。
 |---|---|---|
 | `rawstore: error: bucket does not exist` | bucket 名错或 RustFS 重启丢了 bucket | 跑 [`scripts/rustfs_bootstrap.sh`](rustfs.md#bootstrap) 重建 |
 | `rawstore: error: SignatureDoesNotMatch` | svcacct 凭据错 | 校验 `.env` 里 `QATLAS_S3_ACCESS_KEY_ID/SECRET` |
-| `rawstore: error: connection refused` | RustFS 挂了 / mesh 断了 | `systemctl status rustfs` / `ping 10.144.18.10` |
+| `rawstore: error: connection refused` | RustFS 挂了 / mesh 断了 | `systemctl status rustfs` / `ping <mesh-host>` |
 | `neo4j: error: connection refused` | Neo4j 没起 | `systemctl status neo4j` |
 | `neo4j: error: authentication failure` | 密码改了 | 校验 `.env` 里 `NEO4J_PASSWORD` |
 | `neo4j: error: context deadline exceeded` | mesh 不通 / portproxy 失效 | [Neo4j 部署](neo4j.md) 的连通性章节 |
@@ -178,13 +178,6 @@ curl -fsS https://<server>/api/stats | jq
 
 # 4. 图谱通了
 curl -fsS https://<server>/api/graph/stats | jq
-
-# 5. share + presign 通了
-TOKEN=$(curl -X POST https://<server>/api/shares/ \
-  -H "Authorization: Bearer $PAT" -H "Content-Type: application/json" \
-  -d '{"paths":["pdf/2501/2501.00010v1.pdf"],"expires_in":300}' | jq -r .token)
-curl -sIL https://<server>/share/$TOKEN | tail -5
-# 应该 307 → 200
 ```
 
 任何一步红了就照对应章节 fix。

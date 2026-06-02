@@ -3,7 +3,7 @@ package routes
 // OpenAPI / Swagger annotations.
 //
 // PocketBase registers routes as closures on se.Router (see RegisterWiki,
-// RegisterGraph, RegisterShares, RegisterPAT, RegisterPapers and the
+// RegisterGraph, RegisterPAT, RegisterPapers and the
 // closures in cmd/qatlasd/main.go). swaggo/swag can only attach an
 // operation to a Go function's doc comment, and most of our handlers are
 // anonymous closures with no addressable declaration. Rather than refactor
@@ -188,43 +188,10 @@ func docPaperStats() {}
 // @Router      /api/papers/needs-mineru [get]
 func docNeedsMineru() {}
 
-// paperResources returns the resource manifest (pdf/md/json) for one paper.
-//
-// @Summary     Paper resources
-// @Tags        Papers
-// @Produce     json
-// @Param       arxiv_id path string true "arXiv identifier"
-// @Success     200 {object} map[string]interface{}
-// @Failure     404 {object} map[string]string
-// @Security    BearerAuth
-// @Failure     401 {object} map[string]string
-// @Router      /api/papers/{arxiv_id}/resources [get]
-func docPaperResources() {}
-
-// paperMarkdown returns the converted markdown for one paper.
-//
-// @Summary     Paper markdown
-// @Tags        Papers
-// @Produce     json
-// @Param       arxiv_id path string true "arXiv identifier"
-// @Success     200 {object} map[string]interface{}
-// @Failure     404 {object} map[string]string
-// @Security    BearerAuth
-// @Failure     401 {object} map[string]string
-// @Router      /api/papers/{arxiv_id}/markdown [get]
-func docPaperMarkdown() {}
-
-// paperMarkdownStatus reports whether server-side conversion is in progress.
-//
-// @Summary     Paper markdown status
-// @Tags        Papers
-// @Produce     json
-// @Param       arxiv_id path string true "arXiv identifier"
-// @Success     200 {object} map[string]interface{}
-// @Security    BearerAuth
-// @Failure     401 {object} map[string]string
-// @Router      /api/papers/{arxiv_id}/markdown/status [get]
-func docPaperMarkdownStatus() {}
+// paperResources / paperMarkdown / paperMarkdownStatus stanzas were
+// removed in v0.9.0 — the OSS server no longer serves PDF / markdown /
+// image bytes outbound. See the RegisterPapers doc comment for the
+// compliance rationale.
 
 // uploadPDF stores a paper PDF.
 //
@@ -334,58 +301,6 @@ func docGraphQuery() {}
 // @Failure     403 {object} map[string]string
 // @Router      /api/graph/schema [get]
 func docGraphSchema() {}
-
-// --- Shares ------------------------------------------------------------------
-
-// createShare mints a share token for one or more asset paths.
-//
-// @Summary     Create share
-// @Tags        Shares
-// @Accept      json
-// @Produce     json
-// @Security    BearerAuth
-// @Param       body body object true "{paths: []string, label: string, expires_in: int}"
-// @Success     200 {object} map[string]interface{}
-// @Failure     400 {object} map[string]string
-// @Router      /api/shares/ [post]
-func docCreateShare() {}
-
-// listShares lists all share records.
-//
-// @Summary     List shares
-// @Tags        Shares
-// @Produce     json
-// @Security    BearerAuth
-// @Success     200 {object} map[string]interface{}
-// @Router      /api/shares/ [get]
-func docListShares() {}
-
-// deleteShare revokes a share token.
-//
-// @Summary     Delete share
-// @Tags        Shares
-// @Produce     json
-// @Security    BearerAuth
-// @Param       token path string true "share token"
-// @Success     200 {object} map[string]bool
-// @Failure     404 {object} map[string]string
-// @Router      /api/shares/{token} [delete]
-func docDeleteShare() {}
-
-// publicShare serves a shared asset (or its index) without auth.
-//
-// @Summary     Public share access
-// @Description Public download surface. /share/{token} shows the index;
-// @Description /share/{token}/{path} serves (or 307-redirects to a presigned
-// @Description URL for) the asset. No auth — the token IS the credential.
-// @Tags        Shares
-// @Param       token path string true "share token"
-// @Success     200 {string} string "asset bytes or index html"
-// @Success     307 {string} string "redirect to presigned URL"
-// @Failure     404 {object} map[string]string
-// @Failure     410 {object} map[string]string "expired"
-// @Router      /share/{token} [get]
-func docPublicShare() {}
 
 // --- PAT ---------------------------------------------------------------------
 

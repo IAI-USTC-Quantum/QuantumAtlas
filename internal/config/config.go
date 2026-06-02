@@ -34,7 +34,7 @@ type Config struct {
 	// or the process CWD when no .env was supplied.
 	WikiDir   string // local clone of the Wiki repo (markdown + frontmatter).
 	RawDir    string // RAW asset store (PDFs, MinerU outputs, etc.).
-	DataDir   string // server-managed metadata (shares.json, ingests/, etc.).
+	DataDir   string // server-managed metadata (ingests/, mineru-claim sidecars, etc.).
 	PBDataDir string // PocketBase pb_data (SQLite + uploads); passed to --dir=.
 
 	// Neo4j (server-only).
@@ -43,28 +43,24 @@ type Config struct {
 	Neo4jPassword string
 	Neo4jDatabase string
 
-	// Share URL signing / public visibility.
-	PublicBaseURL         string
-	ShareAccessToken      string
-	DefaultShareExpiresIn int // seconds; 0 means no default expiry.
+	// Public base URL: server's own canonical https origin. Required
+	// for OAuth callback construction and OpenAlex sync links.
+	PublicBaseURL string
 
 	// Audit header injected by the upstream reverse proxy.
 	UserHeader string
 
-	// MinerU PDF parser (third-party SDK; not QATLAS_*).
-	//
-	// MinerUAPIToken doubles as the credential for *server-side* silent
-	// markdown conversion (GET /api/papers/{id}/markdown). When it is
-	// empty that endpoint reports 503 "conversion not configured" and the
-	// server only serves already-cached markdown. The same token is also
-	// read by the client-side `qatlas mineru` command — the two flows are
-	// independent (server quota vs contributor quota) and may use
-	// different .env files.
+	// MinerU PDF parser (third-party SDK; not QATLAS_*). Read by the
+	// client-side `qatlas mineru` command (contributor quota). The OSS
+	// server does not run server-side silent markdown conversion — that
+	// surface was removed in v0.9.0 along with the rest of the
+	// distribution endpoints.
 	MinerUAPIToken   string
 	MinerUAPIBaseURL string
 
-	// MinerU extraction knobs (server-side silent conversion). Defaults
-	// mirror the Python ServerConfig so a single .env drives both.
+	// MinerU extraction knobs. Defaults mirror the Python ServerConfig so
+	// a single .env drives both client + any private fork that reinstates
+	// server-side conversion.
 	MinerUModelVersion  string
 	MinerULanguage      string
 	MinerUIsOCR         bool
@@ -106,11 +102,12 @@ type Config struct {
 	//                       hits = this value. Must front the same
 	//                       bucket + credentials as S3Endpoint.
 	//
-	// Per-edge example (production):
-	//   RackNerd .env: S3Endpoint=http://10.144.18.10:9000
-	//                  S3PublicEndpoint=https://raw.quantum-atlas.ai
-	//   Alibaba  .env: S3Endpoint=http://10.144.18.10:9000
-	//                  S3PublicEndpoint=https://47.102.36.175:9000
+	// Per-edge example (illustrative — concrete hosts depend on your
+	// deployment topology):
+	//   edge-A .env: S3Endpoint=http://<mesh-host>:9000
+	//                S3PublicEndpoint=https://<edge-a-public-host>
+	//   edge-B .env: S3Endpoint=http://<mesh-host>:9000
+	//                S3PublicEndpoint=https://<edge-b-public-host>
 	//
 	// When empty (or equal to S3Endpoint), presigned URLs reuse the
 	// internal endpoint — handy for single-network dev setups but
@@ -137,13 +134,14 @@ type Config struct {
 	S3AccessKeyID     string
 	S3SecretAccessKey string
 
-	// EdgeName labels which edge this process runs on (e.g. "RackNerd",
-	// "Alibaba"). It is purely cosmetic: it's folded into the S3 client
-	// User-Agent (qatlasd/<version>/<edge>) so the RustFS audit
-	// trail can tell apart writes coming from different edges at a
-	// glance. Empty → the UA is just qatlasd/<version>. Never
-	// load-bearing for auth (UA is forgeable; the load-bearing forensic
-	// key is the SigV4 accessKey recorded by the audit trail — T10).
+	// EdgeName labels which edge this process runs on (e.g. "edge-a",
+	// "us-east", "cn-shanghai"). It is purely cosmetic: it's folded
+	// into the S3 client User-Agent (qatlasd/<version>/<edge>) so the
+	// RustFS audit trail can tell apart writes coming from different
+	// edges at a glance. Empty → the UA is just qatlasd/<version>.
+	// Never load-bearing for auth (UA is forgeable; the load-bearing
+	// forensic key is the SigV4 accessKey recorded by the audit trail
+	// — T10).
 	//
 	// The audit *sink* itself is NOT part of this binary: a generic,
 	// convention-free log shipper (Fluent Bit) deployed as a sidecar
@@ -196,8 +194,6 @@ func Load(dotenvPath string) (*Config, error) {
 		Neo4jPassword:            firstEnv("NEO4J_PASSWORD"),
 		Neo4jDatabase:            firstEnv("NEO4J_DATABASE"),
 		PublicBaseURL:            firstEnv("QATLAS_SERVER_URL", "PUBLIC_BASE_URL"),
-		ShareAccessToken:         firstEnv("QATLAS_SHARE_ACCESS_TOKEN", "SHARE_ACCESS_TOKEN"),
-		DefaultShareExpiresIn:    firstEnvInt("QATLAS_DEFAULT_SHARE_EXPIRES_IN", "DEFAULT_SHARE_EXPIRES_IN"),
 		UserHeader:               firstEnv("QATLAS_USER_HEADER", "USER_HEADER"),
 		MinerUAPIToken:           firstEnv("MINERU_API_TOKEN"),
 		MinerUAPIBaseURL:         firstEnvDefault("https://mineru.net", "MINERU_API_BASE_URL"),

@@ -133,7 +133,7 @@ raw / data / pb_data 默认塞进 git checkout 内。
 │   ├── bin/qatlasd           # binary（user-writable，sudoless deploy）
 │   └── share/quantum-atlas/       # XDG_DATA_HOME 下，所有 stateful 状态
 │       ├── raw/                   # RAW_DIR 默认值（PDF / MinerU 输出）
-│       ├── data/                  # DATA_DIR 默认值（shares / claims）
+│       ├── data/                  # DATA_DIR 默认值（ingest claims / 运行时元数据）
 │       └── pb_data/               # PBDataDir 默认值（PocketBase SQLite）
 ```
 
@@ -439,17 +439,17 @@ bash scripts/rustfs_bootstrap.sh
 # 末尾打印出绑死单桶的 access_key / secret_key
 # 之后写进 server .env：
 #   QATLAS_S3_ENDPOINT=https://raw.your-domain.tld
-#   QATLAS_S3_BUCKET=qatlas-raw
+#   QATLAS_S3_BUCKET_PDF=qatlas-pdf
+#   QATLAS_S3_BUCKET_MD=qatlas-md
+#   QATLAS_S3_BUCKET_IMAGES=qatlas-images
 #   QATLAS_S3_ACCESS_KEY_ID=<上面打印的>
 #   QATLAS_S3_SECRET_ACCESS_KEY=<上面打印的>
-# 重启 server，启动 log 会打印 `raw store: S3 backend ...` 确认切换成功
+# 重启 server，启动 log 会打印每个 bucket 一行 `raw store: S3 backend ...` 确认切换成功
 ```
 
-切到 S3 后端后，`/share/{token}/...` 下载会自动 302 到 RustFS
-presigned URL（5min TTL，绕过 server 节省 VPS 带宽）；本地 RawDir
-后端继续 ServeFile 走老路。`/api/papers/{arxiv_id}/resources` 返回的
-URL 不区分后端 —— 客户端拿到 share URL 后直接 GET 即可，redirect 由
-server 透明处理。
+切到 S3 后端后，对应的 presigned URL（5 min TTL，绕过 server 节省 VPS 带宽）
+由 server 内部签发；本地 RawDir 后端继续走 ServeFile。客户端拿到的资源 URL
+不区分后端，redirect 由 server 透明处理。
 
 边缘 Caddy 多加一个站点把 `raw.your-domain.tld` 反代到 RustFS `:9000`
 即可，模板见 storage-design 文档对应章节。
@@ -475,7 +475,7 @@ NEO4J_URI=bolt://127.0.0.1:7687
 # QATLAS_PB_DATA_DIR=/var/lib/quantum-atlas/pb_data
 ```
 
-> 旧名（`WIKI_DIR` / `RAW_DIR` / `DATA_DIR` / `PB_DATA_DIR` / `SERVER_HOST` / `SERVER_PORT` / `PUBLIC_BASE_URL` / `SHARE_ACCESS_TOKEN` / `USER_HEADER` / `DEFAULT_SHARE_EXPIRES_IN`）仍作 alias 保留，新部署推荐用 `QATLAS_*` 前缀。`NEO4J_*` / `OPENAI_*` / `ANTHROPIC_*` / `MINERU_*` 等第三方 SDK 标准名保持原样。
+> 旧名（`WIKI_DIR` / `RAW_DIR` / `DATA_DIR` / `PB_DATA_DIR` / `SERVER_HOST` / `SERVER_PORT` / `PUBLIC_BASE_URL` / `USER_HEADER`）仍作 alias 保留，新部署推荐用 `QATLAS_*` 前缀。`NEO4J_*` / `OPENAI_*` / `ANTHROPIC_*` / `MINERU_*` 等第三方 SDK 标准名保持原样。
 
 建议：
 
@@ -497,11 +497,10 @@ NEO4J_URI=bolt://127.0.0.1:7687
 
 | 变量 | 何时需要 | 备注 |
 |---|---|---|
-| `QATLAS_SERVER_URL` | 必填 | 对外唯一根地址；share 链接、CLI 默认、MinerU 回调都基于它 |
+| `QATLAS_SERVER_URL` | 必填 | 对外唯一根地址；CLI 默认、OAuth callback、外部解析器都基于它 |
 | `QATLAS_SERVER_HOST` / `QATLAS_SERVER_PORT` | 默认 `127.0.0.1:4200` | 直接面向公网通常改 `0.0.0.0:<port>`，反代场景保留 `127.0.0.1` |
 | `NEO4J_URI` / `NEO4J_USER` / `NEO4J_PASSWORD` | 启用图谱时必填 | 不连图库可留空 |
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | 启用 GitHub OAuth 登录时必填 | 启动时由 `internal/auth/oauth.go` 注入 users collection |
-| `QATLAS_SHARE_ACCESS_TOKEN` | 想要稳定公开 share 入口时设 | 默认走每用户动态 share token |
 | `QATLAS_USER_HEADER` | 上游反代/SSO 注入审计身份头时设 | 不参与鉴权，仅用于日志 |
 | `QATLAS_FORCE_TCP4` | WSL2 + Windows netsh portproxy 场景设 | 普通 Linux VPS 不要打开 |
 
@@ -523,7 +522,7 @@ caddy-security / oauth2-proxy 这类身份代理；反代只承担 SNI 选路 + 
   根据前缀分发——`qat_*` 走 `internal/pat` 包做 prefix lookup + bcrypt
   校验并查 scope；其余走 PocketBase session token 验证。
 - 写口分两层：`scopeGuard(enforcer, obj, act, handler)` 给"PAT 可调"
-  的写口（papers / shares），强制 scope opt-in；`sessionGuard` 给"PAT
+  的写口（papers / wiki sync），强制 scope opt-in；`sessionGuard` 给"PAT
   不可调"的写口（PAT 自管理本身、admin 操作），只接受 session token。
 
 如需在边缘补一层 IP/路径 ACL、按域名分流多服务、或做 raw 对象存储反代
@@ -536,26 +535,9 @@ caddy-security / oauth2-proxy 这类身份代理；反代只承担 SNI 选路 + 
 | `/api/health` | open | 直接 reverse_proxy；监控可读（返回 `{code, message, data:{status, version, uptime_seconds, checks{rawstore, neo4j, wiki}}}`） |
 | `/install-qatlasd.sh` | open | 直接 reverse_proxy；公开的 `curl \| sh` 安装脚本 |
 | `/{path...}`、`/_/`、`/auth-with-oauth2` 等 SPA + PocketBase 内置 | open / 自管 | 直接 reverse_proxy；OAuth 由 server 自己处理 |
-| `/api/wiki/...`、`/api/pages`、`/api/search`、`/api/stats`、`/api/graph/*`、`/api/lint` | open（公开读） | 直接 reverse_proxy |
-| `/api/papers/...`、`/api/shares/...`、`/api/pat/...` | server 内的 `authGuard` / `scopeGuard` / `sessionGuard` | 直接 reverse_proxy；**不要**剥 `Authorization` header（server 要拿来鉴权） |
-| `/share/{token}` / `/share/{token}/{path...}` | open（只校验 token） | 直接 reverse_proxy；公网可访问 |
+| `/api/wiki/...`、`/api/pages`、`/api/search`、`/api/stats`、`/api/graph/*`、`/api/lint` | server 内 `authGuard + scope:read` | 直接 reverse_proxy |
+| `/api/papers/...`、`/api/pat/...` | server 内的 `authGuard` / `scopeGuard` / `sessionGuard` | 直接 reverse_proxy；**不要**剥 `Authorization` header（server 要拿来鉴权） |
 | `raw.your-domain.tld/*`（启用 S3/RustFS 时） | RustFS 自管（presigned URL） | 反代到 RustFS `:9000` |
-
-## Share 机制
-
-QuantumAtlas 的 share 是"按路径授权的公开链接"，不是用户登录态，也不是 API 鉴权。`/share/{token}` 和 `/share/{token}/{path}` 默认应允许公网访问；任何拿到 share URL 的人都能访问该 token 允许的资源。
-
-当前有两类 share token：
-
-- 登录用户创建的动态 share token：已登录用户通过受保护的 `POST /api/shares/`（鉴权：`shares:write` scope 或 session token）创建，记录保存在 PocketBase `shares` collection 里（DATA_DIR 不再持久化 share JSON，旧文档残留概念）。请求里可以指定 `paths`、`label` 和 `expires_in`；如果没有指定 `expires_in`，服务使用 `DEFAULT_SHARE_EXPIRES_IN`。这些 token 可以通过 `GET /api/shares/` 查看、`DELETE /api/shares/{token}` 撤销。
-- 部署者配置的 `SHARE_ACCESS_TOKEN`：这是额外的、可选的、稳定分享入口。设置后，QuantumAtlas 会把它当作一个不写入 collection、不自动过期的内置 share token，用于访问 canonical paper assets：`papers/pdf`、`papers/markdown`、`papers/json`、`papers/images`。不需要稳定公开链接时不要设置它。
-
-安全边界：
-
-- `/api/shares/` 写口（POST/DELETE）由 server 内 `scopeGuard` 强制鉴权（`shares:write`），反代不需要再叠一层。
-- `/share/*` 是公开资源入口，只校验 share token，不校验登录用户。
-- share token 只授权配置记录中的资源路径；路径必须是相对路径，不能包含绝对路径、反斜杠或 `..`。
-- `SHARE_ACCESS_TOKEN` 应使用足够长的随机值；不要用示例值、短词或可猜测字符串。
 
 ## Caddy 示例
 
@@ -611,7 +593,7 @@ raw.your-domain.tld {
 }
 ```
 
-share URL 会 302 到 `https://raw.your-domain.tld/...` 的 presigned URL
+启用 RustFS 后端时，资源 presigned URL 会指向 `https://raw.your-domain.tld/...`
 （5min TTL），bandwidth 绕开 server。
 
 ## 运行建议
@@ -620,7 +602,5 @@ share URL 会 302 到 `https://raw.your-domain.tld/...` 的 presigned URL
   bearer 鉴权（PAT 或 session token），剥掉会全部 4xx。
 - `/api/*` 中的写口 server 已经强制鉴权；反代上不要再叠 ACL，避免双重
   401 / 403 给 debug 添麻烦。
-- `/share/*` 公开并不意味着管理接口也应公开；`/api/shares/` 的写口由
-  server 内 `scopeGuard` 把关，公网可达没问题。
 - 如果启用了 MinerU 并需要它回拉 PDF，`QATLAS_SERVER_URL` 必须能从
   MinerU 所在环境访问到。

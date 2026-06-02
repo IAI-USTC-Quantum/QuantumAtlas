@@ -10,7 +10,7 @@
 用户："这些东西能不能反过来对我们有益" + "切个分支做下看看效果，特别是你说的那个**下载下来**，看看如何与我的**对象存储**一起用"。
 
 "那个下载下来" = Crossref / OpenAlex Public Data File / S3 snapshot
-"对象存储" = mesh 上的 RustFS（`http://10.144.18.10:9000`，bucket `qatlas-raw`）
+"对象存储" = mesh 上的 RustFS（`<rustfs-internal-host>`，bucket `qatlas-raw`）
 
 ## 关键数字（real probes，不是估算）
 
@@ -138,7 +138,7 @@
 
 ## 实测结果（live POC，2026-05-29 05:00-05:15）
 
-bucket: `qatlas-bibmeta-spike` (mesh 10.144.18.10:9000)，凭据用了 root key（一次性 spike 用，不落任何持久化配置）。
+bucket: `qatlas-bibmeta-spike` (RustFS on mesh)，凭据用了 root key（一次性 spike 用，不落任何持久化配置）。
 
 ### Path A POC：API → SQLite 映射表 ✅ 已跑
 

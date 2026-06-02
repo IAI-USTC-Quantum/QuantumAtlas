@@ -94,13 +94,13 @@ func patMintCommand(app core.App) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "mint",
 		Short: "Mint a new PAT for the given user",
-		Example: `  # Mint a 365-day shares:write PAT for a CI nightly job
+		Example: `  # Mint a 365-day papers:write PAT for a CI nightly job
   qatlasd pat mint --user me@example.com --name nightly-ci \
-      --scopes shares:write --expires-in-days 365
+      --scopes papers:write --expires-in-days 365
 
   # Capture the plaintext directly into a variable
   SECRET=$(qatlasd pat mint --user me@example.com --name x \
-      --scopes shares:write --expires-in-days 30)`,
+      --scopes papers:write --expires-in-days 30)`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			userRef = strings.TrimSpace(userRef)

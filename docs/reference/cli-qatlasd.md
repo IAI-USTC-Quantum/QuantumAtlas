@@ -148,7 +148,7 @@ qatlasd pat mint --user <email|id> --name <name>
 |---|---|---|
 | `--user` | ✅ | 目标用户（email 或 users record id）|
 | `--name` | ✅ | token 显示名（≤80 字符）|
-| `--scopes` | ✅ | 逗号分隔的 scope，如 `papers:write,shares:write` |
+| `--scopes` | ✅ | 逗号分隔的 scope，如 `papers:write,wiki:read` |
 | `--expires-in-days` | ✅ | 1–365 |
 | `--description` | ❌ | 备注（≤200 字符）|
 
@@ -176,9 +176,11 @@ qatlasd pat revoke <id>
 
 ```bash
 qatlasd pat scopes
-# papers:write    Upload paper PDFs / Markdown and run MinerU jobs
-# shares:read     List share tokens you created
-# shares:write    Create and revoke share tokens (includes read)
+# papers:read     Read paper catalog metadata (stats, needs-mineru)
+# papers:write    Upload paper PDFs / Markdown and run MinerU jobs (implies papers:read)
+# wiki:read       Read Wiki pages / search / stats
+# wiki:write      Trigger Wiki git sync (implies wiki:read)
+# graph:read      Query Neo4j (stats / schema / Cypher)
 ```
 
 ---

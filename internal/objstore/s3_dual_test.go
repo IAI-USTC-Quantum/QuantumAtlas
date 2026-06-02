@@ -36,8 +36,8 @@ func TestNewS3StoreDual_PublicEqualsInternal_NoSeparateClient(t *testing.T) {
 
 func TestNewS3StoreDual_PublicDiffers_BuildsSeparateClient(t *testing.T) {
 	s, err := NewS3StoreDual(
-		"http://10.144.18.10:9000",
-		"https://raw.quantum-atlas.ai",
+		"http://internal-rustfs.example:9000",
+		"https://public-rustfs.example",
 		"buck", "ak", "sk",
 	)
 	if err != nil {

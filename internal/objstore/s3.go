@@ -14,7 +14,7 @@ import (
 )
 
 // appInfoName / appInfoVersion are folded into the minio-go client
-// User-Agent (e.g. "qatlasd/0.9.0/racknerd minio-go/v7…") so the
+// User-Agent (e.g. "qatlasd/0.9.0/edge-a minio-go/v7…") so the
 // RustFS audit trail can distinguish legitimate qatlasd writes
 // from direct-to-bucket access (mc/…, boto3/…). Set once at process
 // start via SetClientAppInfo, before any store is constructed; the
@@ -46,7 +46,7 @@ func SetClientAppInfo(name, version string) {
 // (Amazon S3, RustFS, MinIO). We use minio-go because:
 //
 //   - the binary is small (~3 MiB added to the server) vs aws-sdk-go-v2
-//     (~30 MiB) — RackNerd has 1.4 GiB RAM, every MB matters;
+//     (~30 MiB) — every MB matters on memory-tight edges (~1 GB class);
 //   - RustFS and MinIO share the same wire dialect so the SDK keeps
 //     server-specific quirks contained in one place;
 //   - the API surface mirrors S3 verbs 1:1 so the Store glue stays thin.
@@ -57,11 +57,10 @@ func SetClientAppInfo(name, version string) {
 // presignClient (optional) is a second minio.Client bound to the same
 // bucket + credentials but a different endpoint host/scheme. It is
 // used ONLY by PresignGet, so the public-facing URLs handed to
-// end-user clients can point at a public ingress (e.g.
-// https://raw.quantum-atlas.ai or http://47.102.36.175:9000) while
-// server↔RustFS traffic stays on the internal mesh endpoint (e.g.
-// http://10.144.18.10:9000). When nil, PresignGet falls back to
-// client. See NewS3StoreDual for the wiring rationale.
+// end-user clients can point at a public ingress (e.g. an LE-fronted
+// subdomain or a direct IP) while server↔RustFS traffic stays on the
+// internal mesh endpoint. When nil, PresignGet falls back to client.
+// See NewS3StoreDual for the wiring rationale.
 type S3Store struct {
 	client        *minio.Client
 	presignClient *minio.Client
@@ -401,8 +400,7 @@ func (s *S3Store) ListPrefix(ctx context.Context, prefix string, limit int) ([]O
 // URL points at the same endpoint used for server-side operations.
 //
 // ttl is clamped to [1s, 7d] — minio-go's PresignedGetObject errors
-// out below 1s, and 7 days is the AWS S3 maximum for v4 sig. Operators
-// who need longer should use a permanent share-token instead.
+// out below 1s, and 7 days is the AWS S3 maximum for v4 sig.
 func (s *S3Store) PresignGet(ctx context.Context, key string, ttl time.Duration) (string, bool, error) {
 	if err := validateKey(key); err != nil {
 		return "", false, err

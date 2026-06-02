@@ -43,10 +43,8 @@ import (
 // limits, audit logs) can group by resource easily.
 const (
 	ScopeWikiRead    = "wiki:read"    // GET /api/pages*, /api/stats, /api/search, /api/lint, /api/wiki/sync/status
-	ScopePapersRead  = "papers:read"  // GET /api/papers/{path...} (asset download, stats, resources, markdown)
-	ScopePapersWrite = "papers:write" // upload-pdf / upload-markdown / mineru-claim CRUD (implies papers:read)
-	ScopeSharesRead  = "shares:read"  // GET /api/shares/
-	ScopeSharesWrite = "shares:write" // POST/DELETE /api/shares/  (implies shares:read)
+	ScopePapersRead  = "papers:read"  // GET /api/papers/{path...} (stats / needs-mineru only in OSS edition)
+	ScopePapersWrite = "papers:write" // upload-pdf / upload-mineru / mineru-claim CRUD (implies papers:read)
 	ScopeGraphRead   = "graph:read"   // GET /api/graph/stats, GET /api/graph/schema, POST /api/graph/query
 	ScopeWikiWrite   = "wiki:write"   // POST /api/wiki/sync/pull (server-side git fast-forward; implies wiki:read)
 
@@ -63,17 +61,15 @@ const (
 // scope picker. Keep these short — they appear next to a checkbox.
 var ScopeDescription = map[string]string{
 	ScopeWikiRead:    "Read wiki pages, stats, search and sync status",
-	ScopePapersRead:  "Download paper assets (PDF / Markdown / metadata)",
-	ScopePapersWrite: "Upload paper PDFs / Markdown and run MinerU jobs (includes read)",
-	ScopeSharesRead:  "List share tokens you created",
-	ScopeSharesWrite: "Create and revoke share tokens (includes read)",
+	ScopePapersRead:  "Read paper catalog (stats, needs-mineru)",
+	ScopePapersWrite: "Upload paper PDFs and submit MinerU markdown (includes read)",
 	ScopeGraphRead:   "Read the knowledge graph: stats, schema and read-only Cypher",
 	ScopeWikiWrite:   "Trigger server-side wiki git sync (fast-forward pull; includes read)",
 }
 
 // AllScopes is the canonical vocabulary surfaced to clients. Keep it
 // in the order you want users to see in the SPA (most common first).
-var AllScopes = []string{ScopeWikiRead, ScopePapersRead, ScopePapersWrite, ScopeSharesRead, ScopeSharesWrite, ScopeGraphRead, ScopeWikiWrite}
+var AllScopes = []string{ScopeWikiRead, ScopePapersRead, ScopePapersWrite, ScopeGraphRead, ScopeWikiWrite}
 
 // casbinModel is the in-memory casbin model. Each scope acts as its
 // own subject — the matcher just checks (scope, obj, act) equality
@@ -102,9 +98,6 @@ var scopePolicies = [][3]string{
 	{ScopePapersRead, "papers", "read"},
 	{ScopePapersWrite, "papers", "read"}, // write implies read
 	{ScopePapersWrite, "papers", "write"},
-	{ScopeSharesRead, "shares", "read"},
-	{ScopeSharesWrite, "shares", "read"}, // write implies read
-	{ScopeSharesWrite, "shares", "write"},
 	{ScopeGraphRead, "graph", "read"},
 	{ScopeWikiWrite, "wiki", "read"}, // write implies read
 	{ScopeWikiWrite, "wiki", "write"},

@@ -137,7 +137,7 @@ func downCreatePATTokens(app core.App) error {
 
 // upAddScopesField adds a "scopes" text column to the pat_tokens
 // collection. The column stores a JSON-encoded []string of granted
-// scopes (e.g. `["papers:write","shares:read"]`). New PATs default to
+// scopes (e.g. `["papers:write","wiki:read"]`). New PATs default to
 // the empty list, which means "this token can call no write
 // endpoint" — the same default-deny behaviour as GitHub fine-grained
 // PATs. Bumping this to a non-empty list is an explicit opt-in done

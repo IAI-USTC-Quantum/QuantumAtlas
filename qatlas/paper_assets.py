@@ -180,27 +180,3 @@ def resolve_paper_assets(paper_assets_root: Path, arxiv_id: str) -> Dict[str, Op
         "json_path": json_path,
         "images_dir": images_dir,
     }
-
-
-def share_path_for_asset(
-    kind: str,
-    key: str,
-    filename: Optional[str] = None,
-    *,
-    asset_path: Optional[Path] = None,
-    paper_assets_root: Optional[Path] = None,
-) -> str:
-    """Return the share-relative path for a paper asset."""
-    if asset_path is not None and paper_assets_root is not None:
-        rel = asset_path.relative_to(paper_assets_root / kind).as_posix()
-        return f"papers/{kind}/{rel}"
-
-    base = {
-        "pdf": f"papers/pdf/{key}.pdf",
-        "markdown": f"papers/markdown/{key}.md",
-        "json": f"papers/json/{key}.json",
-        "images": f"papers/images/{key}",
-    }[kind]
-    if filename:
-        return f"{base}/{filename}"
-    return base

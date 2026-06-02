@@ -26,18 +26,18 @@ func TestSanitise_StripsDetailFields(t *testing.T) {
 				Status:    "ok",
 				LatencyMS: 770,
 				Backend:   "s3-router",
-				Endpoint:  "http://10.144.18.10:9000",
+				Endpoint:  "http://internal-rustfs.example:9000",
 				Buckets:   []string{"qatlas-pdf", "qatlas-md", "qatlas-images"},
 			},
 			"neo4j": {
 				Status:    "ok",
 				LatencyMS: 742,
-				URI:       "bolt://10.144.18.10:7687",
+				URI:       "bolt://internal-neo4j.example:7687",
 				Database:  "neo4j",
 			},
 			"wiki": {
 				Status:     "ok",
-				Dir:        "/home/timidly/QuantumAtlas-Wiki",
+				Dir:        "/srv/qatlas/QuantumAtlas-Wiki",
 				Commit:     "38f365b",
 				CommitTime: "2026-05-29T13:16:58+08:00",
 				Branch:     "main",
@@ -67,8 +67,8 @@ func TestSanitise_StripsDetailFields(t *testing.T) {
 		// Concrete leak strings from the populated Result above.
 		// Any of them surfacing in the sanitised JSON = bug.
 		leakSamples := []string{
-			"10.144.18.10", "qatlas-pdf", "qatlas-md", "qatlas-images",
-			"bolt://", "neo4j", "/home/timidly/", "QuantumAtlas-Wiki",
+			"internal-rustfs.example", "qatlas-pdf", "qatlas-md", "qatlas-images",
+			"bolt://", "neo4j", "/srv/qatlas/", "QuantumAtlas-Wiki",
 			"38f365b", "2026-05-29", "main", "dirty",
 			"latency_ms", "backend", "endpoint", "uri", "database",
 			"dir", "commit", "commit_time", "branch", "error",
@@ -97,8 +97,8 @@ func TestSanitise_DropsErrorString(t *testing.T) {
 		Checks: map[string]Check{
 			"neo4j": {
 				Status:    "error",
-				Error:     "Neo4jError: connection refused to bolt://10.144.18.10:7687",
-				URI:       "bolt://10.144.18.10:7687",
+				Error:     "Neo4jError: connection refused to bolt://internal-neo4j.example:7687",
+				URI:       "bolt://internal-neo4j.example:7687",
 				LatencyMS: 5000,
 			},
 			"rawstore": {
@@ -132,7 +132,7 @@ func TestSanitise_DropsErrorString(t *testing.T) {
 			t.Fatalf("marshal check %s: %v", name, err)
 		}
 		s := string(b)
-		for _, leak := range []string{"10.144.18.10", "qatlas-pdf", "bolt://", "NoSuchBucket", "Neo4jError"} {
+		for _, leak := range []string{"internal-rustfs.example", "qatlas-pdf", "bolt://", "NoSuchBucket", "Neo4jError"} {
 			if contains(s, leak) {
 				t.Errorf("check %s: sanitised JSON %s leaks %q", name, s, leak)
 			}

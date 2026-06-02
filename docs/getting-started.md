@@ -52,7 +52,7 @@
 
     **1. 装 client（同上）**
 
-    **2. 拿一个 PAT**：浏览器打开 `https://<your-server>/pat` → 用 GitHub 登录 → 创建 PAT，**勾上 `papers:write` 和 `shares:write` 两个 scope** → 复制以 `qat_` 开头的明文。
+    **2. 拿一个 PAT**：浏览器打开 `https://<your-server>/pat` → 用 GitHub 登录 → 创建 PAT，**勾上 `papers:write`**（外加按需 `wiki:read` / `graph:read` 等） → 复制以 `qat_` 开头的明文。
 
     !!! warning "PAT 明文只会显示一次"
         复制后立即存好。丢了就只能 revoke + 重建。
@@ -61,7 +61,7 @@
 
     ```bash
     # 推荐：交互式存到 ~/.config/qatlas/hosts.yml
-    qatlas auth login -H quantum-atlas.ai
+    qatlas auth login -H <your-server>
     # 然后粘贴 PAT 明文
 
     # 验证

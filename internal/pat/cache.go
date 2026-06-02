@@ -10,7 +10,7 @@
 // concurrent uploads with the same PAT can pin a whole core and starve
 // other handlers (including unrelated read traffic) of scheduler time.
 //
-// On RackNerd's single 1.4 GB VM a steady-state of ~10 RPS with PATs
+// On a memory-tight VM (~1 GB class) a steady-state of ~10 RPS with PATs
 // translated to ~50% CPU just on bcrypt — measurably blowing tail
 // latency on every other route. The cache collapses repeat verifies
 // for the same token down to a map lookup + expiry check.

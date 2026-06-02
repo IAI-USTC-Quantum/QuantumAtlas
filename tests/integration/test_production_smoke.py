@@ -50,10 +50,10 @@ Per-edge system PAT is read from ``QATLAS_SYSTEM_PAT_<EDGE>`` via the
 
 Token gotcha: ``QATLAS_SYSTEM_PAT`` is the server's env var name on the
 edge box (loaded by ``pat.LoadSystemPAT``); the GitHub Actions secret
-mirrors per-edge as ``QATLAS_SYSTEM_PAT_RACKNERD`` /
-``QATLAS_SYSTEM_PAT_ALIBABA``. The test code just receives the resolved
-plaintext via the ``token-env=`` spec — neither end of the wire knows
-about the "system PAT" name; it's just a long-lived bearer.
+mirrors per-edge as ``QATLAS_SYSTEM_PAT_<EDGE>`` (one per deployment
+target). The test code just receives the resolved plaintext via the
+``token-env=`` spec — neither end of the wire knows about the
+"system PAT" name; it's just a long-lived bearer.
 """
 
 from __future__ import annotations

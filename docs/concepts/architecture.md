@@ -14,7 +14,7 @@ QuantumAtlas app repo      QuantumAtlas-Wiki repo      RAW_DIR/{pdf,markdown,jso
 - 应用仓库负责代码、模板、CLI、API、测试和脚本。
 - `WIKI_DIR` 指向可审阅、可追踪的 Markdown 知识库，生产环境推荐单独放在 `QuantumAtlas-Wiki` 这类普通 Git 仓库里。
 - `RAW_DIR` 保存 PDF、解析 Markdown、元数据 JSON 和图片等论文资产，是 canonical paper asset store。
-- Neo4j、share 记录、ingest 状态、临时任务属于派生或运行时层，不是长期主数据源。
+- Neo4j、ingest 状态、临时任务属于派生或运行时层，不是长期主数据源。
 
 ## 为什么要把 Wiki 和论文资产分开
 
@@ -99,33 +99,15 @@ related: [paper-arxiv-9508027]
 
 而 PDF、解析 Markdown、JSON 和图片等大文件，应放到 `RAW_DIR`，不要直接塞进 Wiki 页面目录。
 
-## Share 机制
+## Paper 资产
 
-QuantumAtlas 对外分享原始资源时统一走 `/api/shares` 和 `/share/{token}`。
+`qatlasd` 服务端**不通过 HTTP API 对外分发** PDF / Markdown 字节。资产
+桶里的对象只为内部处理（如解析、索引）服务，用户/客户端只能查询元数据
+（OpenAlex 同步进来的 title / authors / 引用关系等）与论文是否已经具备
+某项资产（`papers/stats`、`papers/needs-mineru`）。
 
-这意味着：
-
-- 外部调用方拿到的是 share URL，而不是服务器本地路径。
-- 公开访问的是 share token，而不是用户身份。
-- share 只负责"哪些资源可访问"，不负责"谁是调用者"。
-
-### Share 链私密性 + PDF 字节直服务（v0.7.3+）
-
-`/share/{token}/{path...}` 对**所有资源类型（PDF / Markdown / 图片）一律服务真实存储字节**——S3 后端 307 到短寿命 presigned 直链，本地后端流式回传。**没有** "PDF 请求自动 307 到 arxiv.org" 这种服务端重写（v0.7.3 移除；之前的 `serveSharedKey` 对 `pdf/` key 做 arxiv 重定向是错误设计）。
-
-约束与语义：
-
-- **Share 链是私密凭据，不是公开再分发面**。它只为两类消费方铸造：(a) MinerU 爬虫拉取 PDF 做服务端静默转换；(b) 团队内部分享。**不得对外公开传播**。暴露面由 presign TTL（5 分钟）+ share token 自身寿命双重收口。
-- **"跳转到 arxiv 官方页"是纯前端/client 行为**，不是服务端重定向。论文 API 把 canonical arxiv URL（`papers.ArxivAbsURL`）作为**数据字段**返回，前端在论文详情页渲染成可点击的"去 arxiv"链接。服务端从不把 raw / share 路径改写成 arxiv 跳转。
-- **服务端 MinerU 转换拉取 PDF 走 presigned 直链**（`internal/mineru/converter.go::buildPDFURL`），不走"上传到 MinerU"路径（主动拉取比上传快）。直链由**本 edge 自己的公网 S3 endpoint**（`QATLAS_S3_PUBLIC_ENDPOINT`）签发，每 edge 自包含、无跨 edge 依赖：RackNerd 走 `https://raw.quantum-atlas.ai`（LE 证书），Alibaba 走 `http://47.102.36.175:9000`（纯 HTTP——未备案无法挂域名，自签 TLS 被 MinerU 拒，遂降级明文；presign 签名不可猜测，TTL 5 分钟，泄露面可控）。
-
-### Share 方案 vs presigned 直链：原语 vs 托管层
-
-两者是 **presigned 直链 ⊂ share 方案**（包含关系，share 是超集），不互相取代：
-
-- **presigned 直链是传输原语**：单对象、单方法、短 TTL、SigV4 无状态。结构性局限——不可单独撤销（只能轮转 svcacct key）、寿命硬上限 7 天（SigV4 `X-Amz-Expires` 上限）、一 URL 一对象、URL 暴露对象存储端点 + 签名。
-- **share 方案是托管层**，建在直链之上（`serveSharedKey` 内部即 `Stat→PresignGet→307`），额外提供原语给不了的：可撤销（删 token 记录立即失效）、任意寿命（每次访问重签、绕开 7 天上限）、多文件打包（一 token 多 path）、app 域名稳定 URL（不泄端点/签名、key 轮转后仍有效）、审计/label/归属。
-- **选型**：机器/临时/单文件/两端可控 → 裸直链（MinerU 拉取正是此例，铸 token 是浪费）；人传人/团队/要撤销/要长效/要打包 → share。converter 旧时滥用 share 机制造 MinerU URL 已于 v0.8.x 改为直接 presign（right-sized），share 本身的用户分享功能完全保留。
+如果需要原始 PDF，请直接到 arXiv 等上游获取（`papers.ArxivAbsURL` 数据
+字段可以拼出 canonical arxiv URL）。
 
 
 ## 论文元数据索引 (`paperindex` — Parquet + DuckDB Lakehouse 模式)
@@ -189,7 +171,7 @@ QuantumAtlas 对外分享原始资源时统一走 `/api/shares` 和 `/share/{tok
 
 - **"数据库"就是 bucket 里那个 `index/papers.parquet`**。**没有第二个 stateful 系统**。备份 / 迁移 / DR 跟 PDF 们走完全相同的路径。
 - **DuckDB 是嵌入式查询库（不是 server）**——通过 cgo binding (`marcboeker/go-duckdb`) 链进 qatlasd 二进制。**没有第二个进程**、没有 `.db` 文件。你可以把它理解成"会读 parquet 的 `sql.DB`"，跟 `database/sql` 接口完全一致。
-- **凭据复用 qatlas 现有 svcacct**：DuckDB 通过 `CREATE SECRET (TYPE S3, ENDPOINT '10.144.18.10:9000', KEY_ID ..., SECRET ...)` 拿 RustFS 凭据，KEY/SECRET 就是 `.env` 里 `QATLAS_S3_*` 那一组，policy `qatlas-raw-rw` 已经把权限钉到这一个 bucket。**不开新 svcacct，不改 policy**。
+- **凭据复用 qatlas 现有 svcacct**：DuckDB 通过 `CREATE SECRET (TYPE S3, ENDPOINT '<rustfs-endpoint>', KEY_ID ..., SECRET ...)` 拿 RustFS 凭据，KEY/SECRET 就是 `.env` 里 `QATLAS_S3_*` 那一组，policy `qatlas-assets-rw` 已经把权限钉到资产桶上。**不开新 svcacct，不改 policy**。
 - **跨 edge 一致性**：两台 edge 看的是同一个 bucket 里的同一个 `index/papers.parquet`，**天然一致**。SQLite-per-edge 那种漂移问题在结构上就不存在。
 
 ### 写入路径（保证不漂移）
@@ -250,7 +232,7 @@ QuantumAtlas 现在的 single-parquet + 进程内 DuckDB + CAS 是"lakehouse-lit
 
 QuantumAtlas 既可以作为服务端运行，也可以作为远程客户端使用。
 
-- server 模式负责读取本机 `WIKI_DIR`，读写 `RAW_DIR` / `DATA_DIR`，并提供 Wiki 浏览、share、图谱和摄入能力。服务端不会生成或修改 Wiki 页面；如果启用 Wiki 同步接口，它只对 clean checkout 执行 fast-forward 更新。
+- server 模式负责读取本机 `WIKI_DIR`，读写 `RAW_DIR` / `DATA_DIR`，并提供 Wiki 浏览、图谱和摄入能力。服务端不会生成或修改 Wiki 页面；如果启用 Wiki 同步接口，它只对 clean checkout 执行 fast-forward 更新。
 - client 模式通过 HTTP API 使用这些能力，不要求拿到服务器文件系统权限。
 
 协作时的推荐主边界不是服务器 shell，而是 `QuantumAtlas-Wiki` 仓库本身：

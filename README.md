@@ -222,14 +222,14 @@ QuantumAtlas/
 项目处于 alpha 阶段，但主线骨架已经完整：
 
 - 论文摄入、Wiki、图谱、设计、代码生成、验证、估计都已打通。
-- Web API、分享链接和远程协作流程可用。
-- 项目更像“可持续扩展的研究基础设施”，而不是已经产品化的平台。
+- Web API 和远程协作流程可用。
+- 项目更像"可持续扩展的研究基础设施"，而不是已经产品化的平台。
 
 ## TODO
 
 - Agent 应用方向：用户 / 鉴权由 Go server 内嵌 PocketBase 直接处理（GitHub OAuth + PAT），
   CLI 与 SPA 都通过 `Authorization: Bearer <token>` 调写口；QuantumAtlas 后端集中提供
-  API、share 链接和构建产物托管；所有页面设计集中在 `web/` 的 Vite + React 工作台。
+  API 和构建产物托管；所有页面设计集中在 `web/` 的 Vite + React 工作台。
 
 ## 贡献
 
@@ -252,7 +252,7 @@ QuantumAtlas 最初的三层知识库设计受到 [Karpathy's LLM Wiki](https://
 QuantumAtlas 的论文 catalog 基于以下开放学术数据源：
 
 - **论文 metadata**（标题 / 作者 / DOI / 引用关系等）来自 [OpenAlex](https://openalex.org/) 与 [Crossref](https://www.crossref.org/)，均为 **[CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/)** 公共领域许可。
-- **论文条目本身**来自 [arXiv](https://arxiv.org/)，按 [arXiv ToU](https://arxiv.org/help/license) 镜像 metadata。**论文 PDF 字节我们不持有也不再分发**——`share/download` 接口 `307 redirect` 到 arxiv 原 URL，用户直接从 arxiv 下载。
+- **论文条目本身**来自 [arXiv](https://arxiv.org/)，按 [arXiv ToU](https://arxiv.org/help/license) 镜像 metadata。**论文 PDF 字节我们不持有也不再分发**——公开 server 没有 PDF / Markdown 下载 API，用户自行到 arxiv.org 拉 PDF。
 
 完整 license / attribution / 撤稿请求流程见 [License & Attribution](https://quantum-atlas.readthedocs.io/zh-cn/latest/about/license-and-attribution/)；服务使用条款见 [Terms of Service](https://quantum-atlas.readthedocs.io/zh-cn/latest/about/terms-of-service/)。
 

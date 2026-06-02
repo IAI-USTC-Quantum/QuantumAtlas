@@ -23,8 +23,8 @@ license 与归属义务详见 [License & Attribution](license-and-attribution.md
   起 [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/)。负责正向
   reference 列表（含 unstructured 引文文本，比 OpenAlex 更全）。
 - [**arXiv**](https://arxiv.org/) — preprint 源头。我们通过 OAI-PMH 镜像 metadata
-  ([arXiv ToU](https://arxiv.org/help/license))；**PDF 字节不镜像、不再分发**，
-  share 接口 `307` 跳 arxiv 原 URL。
+  ([arXiv ToU](https://arxiv.org/help/license))；**PDF 字节不通过 API 外发**——
+  用户自行到 arxiv.org 拉 PDF。
 
 OpenAlex / Crossref 是 CC0 ⇒ 无强制归属，但作为非营利基础设施仍需要可见归属帮它
 们持续争取资助。本项目除本节外，在 SPA 全局页脚、`/api/*` 响应 `X-Attribution`

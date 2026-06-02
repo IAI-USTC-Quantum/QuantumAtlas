@@ -10,7 +10,6 @@ import (
 	"mime"
 	"net/http"
 	"path"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -20,7 +19,6 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperassets"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/papers"
-	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/shares"
 
 	"github.com/casbin/casbin/v2"
 	"github.com/pocketbase/pocketbase/core"
@@ -29,12 +27,9 @@ import (
 // RegisterPapers wires the /api/papers/* endpoints.
 //
 // rawStore is the abstracted asset backend (LocalStore for cfg.RawDir
-// or S3Store for QATLAS_S3_* on RustFS). Every PDF / markdown / JSON /
-// image touched by these handlers flows through this interface — never
+// or S3Store for QATLAS_S3_* on RustFS). Every PDF / markdown / image
+// touched by these handlers flows through this interface — never
 // directly via os.*, so the same routes work against either backend.
-//
-// shareStore is the share-token record store (Neo4j-backed in
-// production, local-file fallback in dev) used to mint asset share URLs.
 //
 // catalog is the Neo4j-backed papers catalog (papers.Store) that owns
 // all collection-style metadata: aggregate stats, the needs-mineru
@@ -44,9 +39,19 @@ import (
 // and defer the catalog sync (X-Catalog-Sync: deferred).
 //
 // enforcer is the process-wide casbin enforcer used to gate endpoints by
-// PAT scope: GET (asset download) requires papers:read, POST/DELETE
-// require papers:write (which implies papers:read). Session-token
-// callers bypass via the ScopeMaster short-circuit in pat.Allows.
+// PAT scope: GET (stats / needs-mineru queue) requires papers:read,
+// POST/DELETE require papers:write (which implies papers:read).
+// Session-token callers bypass via the ScopeMaster short-circuit in
+// pat.Allows.
+//
+// Compliance note (v0.9.0): the OSS server only serves collection
+// metadata outbound. Endpoints that streamed PDF / markdown / image
+// bytes (/share/*, GET /api/papers/{id}/{markdown,resources}, the whole
+// /api/shares family) were removed — the OSS deployment holds papers
+// for internal use but does not redistribute them. Contributors fetch
+// PDFs from arxiv.org themselves (mineru-claim ships the arxiv URL +
+// our reference sha256 so they can verify byte equality) and push
+// MinerU output back via upload-mineru.
 //
 // Routing: we install three catch-all routes (GET / POST / DELETE) and
 // dispatch on the trailing path segment(s) inside the handler. This is
@@ -58,9 +63,7 @@ func RegisterPapers(
 	se *core.ServeEvent,
 	cfg *config.Config,
 	rawStore objstore.Store,
-	shareStore *shares.Store,
 	catalog *papers.Store,
-	converter *mineru.Converter,
 	enforcer *casbin.Enforcer,
 ) {
 	se.Router.GET("/api/papers/{path...}", scopeGuard(enforcer, "papers", "read", func(re *core.RequestEvent) error {
@@ -70,28 +73,6 @@ func RegisterPapers(
 		}
 		if raw == "stats" {
 			return paperStatsHandler(re, catalog)
-		}
-		// Two-segment action "<arxiv>/markdown/status" is the side-effect-free
-		// operation resource; check it before the single-segment dispatch
-		// (otherwise splitPapersPath would peel "status" off as the action).
-		if statusArxiv, ok := splitMarkdownStatus(raw); ok {
-			if statusArxiv == "" {
-				return re.JSON(http.StatusBadRequest, map[string]string{"detail": "missing arxiv_id"})
-			}
-			return markdownStatusHandler(re, rawStore, converter, statusArxiv)
-		}
-		arxiv, action := splitPapersPath(raw)
-		switch action {
-		case "resources":
-			if arxiv == "" {
-				return re.JSON(http.StatusBadRequest, map[string]string{"detail": "missing arxiv_id"})
-			}
-			return paperResourcesHandler(re, cfg, rawStore, shareStore, arxiv)
-		case "markdown":
-			if arxiv == "" {
-				return re.JSON(http.StatusBadRequest, map[string]string{"detail": "missing arxiv_id"})
-			}
-			return markdownHandler(re, rawStore, converter, arxiv)
 		}
 		return re.JSON(http.StatusNotFound, map[string]string{
 			"detail": fmt.Sprintf("no GET handler for /api/papers/%s", raw),
@@ -111,7 +92,7 @@ func RegisterPapers(
 			if ttl <= 0 {
 				ttl = papers.DefaultTTLSeconds
 			}
-			return mineruClaimHandler(re, cfg, rawStore, shareStore, catalog, arxiv, ttl)
+			return mineruClaimHandler(re, cfg, rawStore, catalog, arxiv, ttl)
 		}
 		return re.JSON(http.StatusNotFound, map[string]string{
 			"detail": fmt.Sprintf("no POST handler for /api/papers/%s", raw),
@@ -158,26 +139,14 @@ func splitMineruClaimRelease(raw string) (arxivID, claimID string, ok bool) {
 	return arxivID, claimID, true
 }
 
-// splitMarkdownStatus parses "<arxiv_id>/markdown/status" and returns the
-// arxiv_id + ok. arxiv_id may contain slashes (old-style ids), so we anchor
-// on the trailing two fixed segments.
-func splitMarkdownStatus(raw string) (arxivID string, ok bool) {
-	raw = strings.Trim(raw, "/")
-	parts := strings.Split(raw, "/")
-	if len(parts) < 3 || parts[len(parts)-1] != "status" || parts[len(parts)-2] != "markdown" {
-		return "", false
-	}
-	return strings.Join(parts[:len(parts)-2], "/"), true
-}
-
 // ---------------------------------------------------------------------------
 // stats
 // ---------------------------------------------------------------------------
 
-// paperStatsHandler answers GET /api/papers/stats — a read-open endpoint
-// exposing the catalog aggregate counters so the SPA can show
-// "downloaded papers" (has_pdf) and "converted markdown" (has_md) tiles
-// on the home/wiki pages.
+// paperStatsHandler answers GET /api/papers/stats — exposing the
+// catalog aggregate counters so the SPA can show "downloaded papers"
+// (has_pdf) and "converted markdown" (has_md) tiles on the home/wiki
+// pages.
 //
 // When the catalog is unreachable (Neo4j down, or NEO4J_URI unset in
 // local dev) we degrade to {available:false} rather than 500 — the
@@ -253,340 +222,34 @@ func needsMineruHandler(re *core.RequestEvent, catalog *papers.Store) error {
 }
 
 // ---------------------------------------------------------------------------
-// Paper resources
-// ---------------------------------------------------------------------------
-
-func paperResourcesHandler(re *core.RequestEvent, cfg *config.Config, store objstore.Store, shareStore *shares.Store, arxivID string) error {
-	ctx := re.Request.Context()
-	resolved := paperassets.ResolveAssetsViaStore(ctx, store, arxivID)
-
-	var sharePaths []string
-	if resolved.PDFPath != "" {
-		sharePaths = append(sharePaths, paperassets.ShareRelPathForKey(resolved.PDFPath))
-	}
-	if resolved.MarkdownPath != "" {
-		sharePaths = append(sharePaths, paperassets.ShareRelPathForKey(resolved.MarkdownPath))
-	}
-	if resolved.JSONPath != "" {
-		sharePaths = append(sharePaths, paperassets.ShareRelPathForKey(resolved.JSONPath))
-	}
-	if resolved.ImagesDir != "" {
-		sharePaths = append(sharePaths, paperassets.ShareRelPathForKey(resolved.ImagesDir))
-	}
-
-	shareToken := cfg.ShareAccessToken
-	shareBaseURL := ""
-	if shareToken != "" {
-		shareBaseURL = cfg.PublicBaseURL
-	} else if len(sharePaths) > 0 && shareStore != nil {
-		rec, err := shares.CreateRecord(shareStore, cfg, shares.CreateOptions{
-			Paths: sharePaths,
-			Label: "paper assets: " + resolved.ArxivID,
-		}, store)
-		if err == nil && rec != nil {
-			shareToken = rec.Token
-		}
-	}
-
-	asset := func(kind, key string) map[string]any {
-		out := map[string]any{"exists": key != ""}
-		if key != "" && shareToken != "" {
-			rel := paperassets.ShareRelPathForKey(key)
-			out["url"] = shares.BuildURL(shareToken, rel, shareBaseURL)
-			if info, exists, err := store.Stat(ctx, key); err == nil && exists {
-				out["size"] = info.Size
-			}
-		}
-		return out
-	}
-
-	var imageAssets []map[string]any
-	if resolved.ImagesDir != "" && shareToken != "" {
-		// One ListPrefix per resource lookup; bounded by typical
-		// MinerU image counts (~tens). Cap at 500 to avoid runaway
-		// response sizes for pathological inputs.
-		listed, _ := store.ListPrefix(ctx, resolved.ImagesDir+"/", 500)
-		sort.SliceStable(listed, func(i, j int) bool { return listed[i].Key < listed[j].Key })
-		for _, info := range listed {
-			rel := paperassets.ShareRelPathForKey(info.Key)
-			imageAssets = append(imageAssets, map[string]any{
-				"name": path.Base(info.Key),
-				"url":  shares.BuildURL(shareToken, rel, shareBaseURL),
-				"size": info.Size,
-			})
-		}
-	}
-
-	return re.JSON(http.StatusOK, map[string]any{
-		"arxiv_id": resolved.ArxivID,
-		"assets": map[string]any{
-			"pdf":      asset("pdf", resolved.PDFPath),
-			"markdown": asset("markdown", resolved.MarkdownPath),
-			"json":     asset("json", resolved.JSONPath),
-		},
-		"images": imageAssets,
-	})
-}
-
-// ---------------------------------------------------------------------------
-// Markdown (silent server-side conversion) handler
-// ---------------------------------------------------------------------------
-
-// markdownHandler answers GET /api/papers/{arxiv_id}/markdown.
-//
-// Silent server-side conversion semantics (the "have → give, none → wait"
-// contract): the client asks for a paper's markdown and either gets it
-// immediately from cache, or the server transparently kicks off a MinerU
-// conversion (using its own MINERU_API_TOKEN) and tells the client to come
-// back. The work runs in the background so this request never blocks for
-// the minutes MinerU can take.
-//
-//   - cached markdown present → 200 text/markdown with the content.
-//   - absent + conversion enabled → start a background job, return 202
-//     with `Operation-Location` pointing at the status resource and a
-//     `Retry-After` hint; clients poll the status resource until done.
-//   - absent + conversion disabled (no token) → 503 (cache-only mode).
-//   - no PDF to convert from → 404.
-//   - a recent conversion failed → 502 with the error (auto-retried after
-//     a cooldown on a later request).
-//
-// This handler sits behind scopeGuard("papers", "read") via the GET
-// /api/papers/{path...} catch-all: browsing users (session token) and
-// PAT holders with papers:read reach it; anonymous callers get 401. The
-// conversion it may trigger spends the server's MinerU quota, but it's
-// gated on the PDF already existing in the store and deduped per paper,
-// so it can't be used to convert arbitrary URLs or double-spend on the
-// same paper.
-//
-// The GET-with-side-effect (it may start a job) is a deliberate tradeoff
-// for the "just give me the markdown" UX: callers that only want to
-// observe state without triggering work use the side-effect-free
-// GET /api/papers/{arxiv_id}/markdown/status resource instead.
-func markdownHandler(re *core.RequestEvent, store objstore.Store, converter *mineru.Converter, arxivID string) error {
-	ctx := re.Request.Context()
-	canonical, ok := paperassets.ValidateUploadID(arxivID)
-	if !ok {
-		return re.JSON(http.StatusBadRequest, map[string]string{
-			"detail": fmt.Sprintf("invalid arxiv_id: %q (version suffix vN required)", arxivID),
-		})
-	}
-
-	// Cache hit: stream the stored markdown verbatim.
-	if mdKey := resolveMarkdownKey(ctx, store, canonical); mdKey != "" {
-		return streamMarkdown(re, store, mdKey)
-	}
-
-	if converter == nil || !converter.Enabled() {
-		return re.JSON(http.StatusServiceUnavailable, map[string]any{
-			"arxiv_id": canonical,
-			"status":   "unavailable",
-			"detail":   "server-side MinerU conversion is not configured (MINERU_API_TOKEN unset); markdown is only served from cache",
-		})
-	}
-
-	// Need a PDF to convert from.
-	if err := requirePDF(ctx, store, canonical); err != nil {
-		return re.JSON(http.StatusNotFound, map[string]any{
-			"arxiv_id": canonical,
-			"status":   "no_pdf",
-			"detail":   err.Error(),
-		})
-	}
-
-	job := converter.Ensure(canonical)
-
-	// The job may have finished between our cache check and Ensure;
-	// re-resolve so we don't make the client poll once more for nothing.
-	if job.State == mineru.StateDone {
-		if mdKey := resolveMarkdownKey(ctx, store, canonical); mdKey != "" {
-			return streamMarkdown(re, store, mdKey)
-		}
-	}
-	if job.State == mineru.StateFailed {
-		return re.JSON(http.StatusBadGateway, map[string]any{
-			"arxiv_id": canonical,
-			"status":   "failed",
-			"error":    job.Err,
-			"detail":   "MinerU conversion failed; it will be retried on a later request",
-		})
-	}
-
-	return markdownProcessing(re, canonical, job)
-}
-
-// markdownRetryAfterSeconds is the baseline Retry-After hint sent on a 202
-// (and on a "processing" status response). The client treats it as a lower
-// bound and layers its own capped exponential backoff + jitter on top, so
-// this only needs to be a sane floor — small enough that a quick conversion
-// is picked up promptly, large enough not to hammer the API.
-const markdownRetryAfterSeconds = 5
-
-// markdownContentPath / markdownStatusPath build the relative URLs the
-// client resolves against its own base URL. arxiv_id is already validated
-// (no control chars / spaces) so it's safe to embed unescaped, consistent
-// with the other /api/papers/* handlers.
-func markdownContentPath(canonical string) string {
-	return "/api/papers/" + canonical + "/markdown"
-}
-
-func markdownStatusPath(canonical string) string {
-	return "/api/papers/" + canonical + "/markdown/status"
-}
-
-// markdownProcessing writes the 202 Accepted response for an in-flight
-// conversion, including the Operation-Location + Retry-After headers.
-func markdownProcessing(re *core.RequestEvent, canonical string, job *mineru.Job) error {
-	re.Response.Header().Set("Operation-Location", markdownStatusPath(canonical))
-	re.Response.Header().Set("Retry-After", strconv.Itoa(markdownRetryAfterSeconds))
-	return re.JSON(http.StatusAccepted, map[string]any{
-		"arxiv_id":   canonical,
-		"status":     "processing",
-		"state":      job.State,
-		"started_at": job.StartedAt.UTC().Format(time.RFC3339),
-		"status_url": markdownStatusPath(canonical),
-		"detail":     "markdown is being generated by MinerU; poll the status_url (or Operation-Location header) until status==done, then GET the markdown endpoint",
-	})
-}
-
-// markdownStatusHandler answers GET /api/papers/{arxiv_id}/markdown/status.
-//
-// This is the side-effect-free operation resource (Azure/Google AIP style):
-// it never starts a conversion and never requires a PDF — it only reports
-// the current state. It therefore *always* returns HTTP 200; the outcome is
-// carried in the body's "status" field:
-//
-//   - done         → markdown is cached; "markdown_url" points at it.
-//   - processing   → a conversion is queued/running (+ Retry-After header).
-//   - failed       → the last conversion attempt failed ("error" set).
-//   - not_started  → no conversion has been requested yet (GET the markdown
-//     endpoint to start one).
-//   - unavailable  → server-side conversion isn't configured (no token).
-//
-// 200-wrapping a "failed" state is intentional: the GET on the operation
-// resource itself succeeded, so the HTTP status reflects the query, not the
-// operation outcome (which lives in the body). The markdown content
-// endpoint keeps the louder 502 for "I asked for markdown and couldn't get
-// it".
-func markdownStatusHandler(re *core.RequestEvent, store objstore.Store, converter *mineru.Converter, arxivID string) error {
-	ctx := re.Request.Context()
-	canonical, ok := paperassets.ValidateUploadID(arxivID)
-	if !ok {
-		return re.JSON(http.StatusBadRequest, map[string]string{
-			"detail": fmt.Sprintf("invalid arxiv_id: %q (version suffix vN required)", arxivID),
-		})
-	}
-
-	// Cache hit wins regardless of in-process job state (covers the case
-	// where markdown was produced in a previous process / by a contributor
-	// and our job map is empty after a restart).
-	if mdKey := resolveMarkdownKey(ctx, store, canonical); mdKey != "" {
-		return re.JSON(http.StatusOK, map[string]any{
-			"arxiv_id":     canonical,
-			"status":       "done",
-			"markdown_url": markdownContentPath(canonical),
-		})
-	}
-
-	if converter != nil {
-		if job := converter.Lookup(canonical); job != nil {
-			switch job.State {
-			case mineru.StateDone:
-				// Job says done but cache missed above — unusual, but
-				// report done + point at the content endpoint anyway.
-				return re.JSON(http.StatusOK, map[string]any{
-					"arxiv_id":     canonical,
-					"status":       "done",
-					"markdown_url": markdownContentPath(canonical),
-					"finished_at":  job.FinishedAt.UTC().Format(time.RFC3339),
-					"image_count":  job.ImageCount,
-				})
-			case mineru.StateFailed:
-				return re.JSON(http.StatusOK, map[string]any{
-					"arxiv_id":    canonical,
-					"status":      "failed",
-					"error":       job.Err,
-					"finished_at": job.FinishedAt.UTC().Format(time.RFC3339),
-					"detail":      "MinerU conversion failed; it will be retried on a later request to the markdown endpoint",
-				})
-			default: // queued / running
-				re.Response.Header().Set("Retry-After", strconv.Itoa(markdownRetryAfterSeconds))
-				return re.JSON(http.StatusOK, map[string]any{
-					"arxiv_id":   canonical,
-					"status":     "processing",
-					"state":      job.State,
-					"started_at": job.StartedAt.UTC().Format(time.RFC3339),
-				})
-			}
-		}
-	}
-
-	if converter == nil || !converter.Enabled() {
-		return re.JSON(http.StatusOK, map[string]any{
-			"arxiv_id": canonical,
-			"status":   "unavailable",
-			"detail":   "server-side MinerU conversion is not configured (MINERU_API_TOKEN unset); markdown is only served from cache",
-		})
-	}
-
-	return re.JSON(http.StatusOK, map[string]any{
-		"arxiv_id": canonical,
-		"status":   "not_started",
-		"detail":   "no conversion has been requested; GET /api/papers/{arxiv_id}/markdown to start one",
-	})
-}
-
-// resolveMarkdownKey returns the object key of the paper's cached markdown,
-// or "" when none exists. It tries the canonical key first (cheap Stat)
-// then falls back to the candidate-stem resolver.
-func resolveMarkdownKey(ctx context.Context, store objstore.Store, canonical string) string {
-	mdKey := paperassets.AssetKey("markdown", canonical)
-	if _, exists, err := store.Stat(ctx, mdKey); err == nil && exists {
-		return mdKey
-	}
-	if resolved := paperassets.ResolveAssetsViaStore(ctx, store, canonical); resolved.MarkdownPath != "" {
-		return resolved.MarkdownPath
-	}
-	return ""
-}
-
-// requirePDF returns nil when a PDF for canonical is present in the store,
-// else a descriptive error.
-func requirePDF(ctx context.Context, store objstore.Store, canonical string) error {
-	pdfKey := paperassets.AssetKey("pdf", canonical)
-	if _, exists, err := store.Stat(ctx, pdfKey); err == nil && exists {
-		return nil
-	}
-	if resolved := paperassets.ResolveAssetsViaStore(ctx, store, canonical); resolved.PDFPath != "" {
-		return nil
-	}
-	return fmt.Errorf("no PDF in raw storage for %s; upload it first via /api/papers/{arxiv_id}/upload-pdf", canonical)
-}
-
-// streamMarkdown copies the stored markdown object to the response with the
-// correct content type.
-func streamMarkdown(re *core.RequestEvent, store objstore.Store, mdKey string) error {
-	rc, info, err := store.Get(re.Request.Context(), mdKey)
-	if err != nil {
-		if objstore.IsNotFound(err) {
-			return re.JSON(http.StatusNotFound, map[string]string{"detail": "markdown not found"})
-		}
-		return re.JSON(http.StatusInternalServerError, map[string]string{"detail": "read markdown: " + err.Error()})
-	}
-	defer rc.Close()
-	re.Response.Header().Set("Content-Type", "text/markdown; charset=utf-8")
-	if info.Size > 0 {
-		re.Response.Header().Set("Content-Length", strconv.FormatInt(info.Size, 10))
-	}
-	re.Response.WriteHeader(http.StatusOK)
-	_, err = io.Copy(re.Response, rc)
-	return err
-}
-
-// ---------------------------------------------------------------------------
 // MinerU claim handlers
 // ---------------------------------------------------------------------------
 
-func mineruClaimHandler(re *core.RequestEvent, cfg *config.Config, store objstore.Store, shareStore *shares.Store, catalog *papers.Store, arxivID string, ttl int) error {
+// mineruClaimHandler answers POST /api/papers/{arxiv_id}/mineru-claim.
+//
+// The lease lets a contributor reserve a paper for MinerU conversion
+// without other contributors stepping on the same work. The response
+// is a Claim record carrying:
+//
+//   - pdf_url: the canonical arxiv.org versioned URL the contributor
+//     must fetch the PDF from. The OSS server never re-distributes
+//     PDF bytes — this is the only sanctioned source. arxiv URLs with
+//     an explicit version suffix are immutable (a published v1 keeps
+//     the same bytes forever even after v2 supersedes it), so the
+//     hash check on upload-mineru below is well-defined.
+//   - pdf_sha256: the sha256 of the PDF currently stored in the
+//     catalog's RustFS, read from the object's user metadata. The
+//     contributor SHOULD verify the bytes they fetched from arxiv
+//     match this hash before running MinerU; on upload-mineru the
+//     server re-checks this hash and refuses 400 on mismatch. May
+//     be empty for legacy objects (uploaded before sidecar metadata
+//     persistence) — in that case verification is skipped and the
+//     contributor's bytes are trusted as a backfill.
+//
+// The lease itself is granted atomically by the catalog (single
+// MERGE/SET that only matches when the paper has a PDF, lacks
+// markdown, and has no live claim).
+func mineruClaimHandler(re *core.RequestEvent, cfg *config.Config, store objstore.Store, catalog *papers.Store, arxivID string, ttl int) error {
 	ctx := re.Request.Context()
 	canonical, ok := paperassets.ValidateUploadID(arxivID)
 	if !ok {
@@ -600,37 +263,15 @@ func mineruClaimHandler(re *core.RequestEvent, cfg *config.Config, store objstor
 		requester = re.Request.Header.Get(cfg.UserHeader)
 	}
 
-	// Build the URL MinerU will fetch the PDF from. Prefer a presigned
-	// RustFS direct link to THIS edge's public S3 endpoint so MinerU
-	// sees exactly the bytes the catalog has — never arxiv.org's live
-	// (possibly newer / retracted) PDF. Same helper the server-side
-	// silent converter uses, so client- and server-side conversion
-	// paths produce byte-identical results.
-	//
-	// The URL TTL bundles the claim TTL plus a 10-minute margin so a
-	// slow MinerU fetch doesn't expire the link mid-conversion.
-	//
-	// On failure we fall back to the public arxiv URL as a safety net
-	// (only triggers if PresignGet itself errors — e.g. S3 endpoint
-	// transiently unreachable). The fallback keeps the claim flow
-	// working but logs a WARN so ops can fix the underlying issue.
-	pdfKey := paperassets.AssetKey("pdf", canonical)
-	pdfURLTTL := time.Duration(ttl)*time.Second + 10*time.Minute
-	pdfURL, urlErr := mineru.BuildPDFURL(ctx, cfg, store, shareStore, canonical, pdfKey, pdfURLTTL)
-	if urlErr != nil {
-		slog.Warn("mineru-claim: presign PDF URL failed; falling back to public arxiv URL",
-			"arxiv_id", canonical, "error", urlErr)
-		pdfURL = papers.ArxivAbsURL(canonical)
-	}
+	pdfURL := papers.ArxivVersionedURL(canonical)
+	pdfSha256 := lookupStoredPDFSha256(ctx, store, canonical)
 
-	// The lease is granted atomically by the catalog (single MERGE/SET
-	// that only matches when the paper has a PDF, lacks markdown, and
-	// has no live claim).
 	claim, err := catalog.Claim(ctx, papers.CreateOptions{
 		ArxivID:    canonical,
 		Requester:  requester,
 		TTLSeconds: ttl,
 		PDFURL:     pdfURL,
+		PDFSha256:  pdfSha256,
 	})
 	if err != nil {
 		switch {
@@ -662,8 +303,34 @@ func mineruClaimHandler(re *core.RequestEvent, cfg *config.Config, store objstor
 		"requester", requester,
 		"claim_id", claim.ClaimID,
 		"ttl_seconds", claim.TTLSeconds,
+		"pdf_sha256_known", pdfSha256 != "",
 	)
 	return re.JSON(http.StatusCreated, claim)
+}
+
+// lookupStoredPDFSha256 returns the sha256 (lowercase hex) of the
+// currently-stored PDF for canonical, read from object user metadata.
+// Returns "" when the object has no sha256 metadata (legacy upload,
+// LocalStore without sidecar, or backend that doesn't surface
+// metadata) — callers MUST treat empty as "verification unavailable"
+// rather than "verification failed".
+func lookupStoredPDFSha256(ctx context.Context, store objstore.Store, canonical string) string {
+	pdfKey := paperassets.AssetKey("pdf", canonical)
+	info, exists, err := store.Stat(ctx, pdfKey)
+	if err != nil || !exists {
+		// Try the candidate-stem resolver as fallback so we still
+		// surface the hash when the PDF lives under a non-canonical
+		// key (e.g. a categoryless old-style id variant).
+		if resolved := paperassets.ResolveAssetsViaStore(ctx, store, canonical); resolved.PDFPath != "" {
+			if alt, ok, err := store.Stat(ctx, resolved.PDFPath); err == nil && ok {
+				info = alt
+			}
+		}
+	}
+	if info.Metadata == nil {
+		return ""
+	}
+	return strings.ToLower(info.Metadata["sha256"])
 }
 
 func mineruClaimReleaseHandler(re *core.RequestEvent, catalog *papers.Store, arxivID, claimID string) error {
@@ -690,6 +357,7 @@ func mineruClaimReleaseHandler(re *core.RequestEvent, catalog *papers.Store, arx
 	re.Response.WriteHeader(http.StatusNoContent)
 	return nil
 }
+
 
 // ---------------------------------------------------------------------------
 // Upload handlers
@@ -729,8 +397,8 @@ func uploadPDFHandler(re *core.RequestEvent, cfg *config.Config, store objstore.
 	}
 
 	// Stage PDF to a tmp file. The 100 MiB cap × concurrency would
-	// blow process RAM on the 1.4 GB RackNerd VM; spooling to disk
-	// trades a few syscalls for predictable memory use. The head-
+	// blow process RAM on a memory-tight VM (~1 GB class); spooling to
+	// disk trades a few syscalls for predictable memory use. The head-
 	// peek validates %PDF- before we commit to copying the rest.
 	pdfStaged, vErr := stageToTmpFile(ctx, pdfPart, paperassets.MaxPDFBytes, "pdf",
 		5, // peek the first 5 bytes for the %PDF- magic
@@ -847,7 +515,12 @@ func uploadPDFHandler(re *core.RequestEvent, cfg *config.Config, store objstore.
 //     the raw MinerU result zip exactly as returned by MinerU's
 //     `full_zip_url`. Query params: overwrite=true (default false),
 //     expected_sha256=<hex> (validates the zip bytes haven't been
-//     corrupted in transit), source=<short label>.
+//     corrupted in transit), pdf_sha256=<hex> (the sha256 of the
+//     source PDF the contributor fed to MinerU; cross-checked against
+//     the catalog's stored PDF metadata to catch contributors who ran
+//     MinerU on the wrong arxiv version or a corrupted PDF — empty
+//     when the stored PDF has no sha256 metadata or the contributor
+//     opted out), source=<short label>.
 //   - On success: markdown lands at AssetKey("markdown", canonical),
 //     each image at AssetKey("images", canonical)+"/"+<name>. Catalog
 //     write-through flips has_md=true and clears any pending claim.
@@ -863,13 +536,21 @@ func uploadPDFHandler(re *core.RequestEvent, cfg *config.Config, store objstore.
 //     image aborts the whole bundle — markdown is NOT written when
 //     any image conflicts (the bundle is treated as atomic from the
 //     contributor's POV).
+//   - pdf_sha256 verification: when both the contributor's claimed
+//     pdf_sha256 and the catalog's stored sha256 are present, mismatch
+//     returns 400 (the contributor fetched / converted the wrong PDF
+//     and would pollute the catalog with mismatched markdown). When
+//     either side is empty we skip — the catalog has no reference
+//     for legacy uploads, and the contributor may legitimately opt
+//     out (e.g. backfilling old papers).
 //
 // Memory note: the zip is held in memory once (capped at
 // MaxMineruZipBytes). After ExtractResult parses it into md + image
 // bytes the raw zip slice is dropped, so peak memory per upload is
-// ~zip_size during parsing then drops to ~sum(part_size). On the 1.4
-// GB RackNerd VM, concurrent contributors should keep total in-flight
-// zip volume under ~800 MB to leave headroom for everything else.
+// ~zip_size during parsing then drops to ~sum(part_size). On a
+// memory-tight VM (~1 GB class), concurrent contributors should keep
+// total in-flight zip volume under ~800 MB to leave headroom for
+// everything else.
 func uploadMinerUHandler(re *core.RequestEvent, cfg *config.Config, store objstore.Store, catalog *papers.Store, arxivID string) error {
 	ctx := re.Request.Context()
 	canonical, ok := paperassets.ValidateUploadID(arxivID)
@@ -880,9 +561,27 @@ func uploadMinerUHandler(re *core.RequestEvent, cfg *config.Config, store objsto
 	}
 	overwrite := re.Request.URL.Query().Get("overwrite") == "true"
 	expectedSha := normaliseSha256Hex(re.Request.URL.Query().Get("expected_sha256"))
+	claimedPDFSha := normaliseSha256Hex(re.Request.URL.Query().Get("pdf_sha256"))
 	source := re.Request.URL.Query().Get("source")
 	if len(source) > 64 {
 		source = source[:64]
+	}
+
+	// Cross-check the contributor's claimed source-PDF sha256 against
+	// the PDF currently stored in the catalog (read from object
+	// metadata via the same helper mineru-claim uses). Mismatch ⇒
+	// contributor ran MinerU on a different PDF than the catalog has
+	// — refuse before we waste cycles parsing the zip and write the
+	// wrong markdown. Both sides empty ⇒ skip (legacy / opt-out).
+	if claimedPDFSha != "" {
+		storedPDFSha := lookupStoredPDFSha256(ctx, store, canonical)
+		if storedPDFSha != "" && storedPDFSha != claimedPDFSha {
+			return re.JSON(http.StatusBadRequest, map[string]any{
+				"detail":              "pdf_sha256 mismatch — the PDF you converted does not match the one in the catalog (wrong arxiv version, or corrupted source PDF). Re-fetch the PDF from the pdf_url returned by mineru-claim and try again.",
+				"claimed_pdf_sha256":  claimedPDFSha,
+				"catalog_pdf_sha256":  storedPDFSha,
+			})
+		}
 	}
 
 	if err := re.Request.ParseMultipartForm(int64(paperassets.MaxMineruZipBytes) + 1<<20); err != nil {
