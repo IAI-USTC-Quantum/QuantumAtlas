@@ -154,7 +154,7 @@ qatlas ingest quant-ph/9508027 --no-extract --no-sync-neo4j
 
 # 论文资产贡献（鉴权用户上传）
 qatlas upload pdf quant-ph/9508027v1 --pdf paper.pdf
-qatlas upload markdown 2501.00010v1 --markdown out.md --source mineru
+qatlas upload mineru 2501.00010v1 --zip mineru_result.zip --source mineru
 
 # 本地用自己的 MinerU token 解析后推给服务器
 qatlas mineru 2501.00010v1 --push-pdf

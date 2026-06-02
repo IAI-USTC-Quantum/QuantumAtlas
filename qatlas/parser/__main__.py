@@ -164,8 +164,9 @@ def main():
     if args.save_markdown or args.save_json:
         print(
             "\n⚠️  --save-markdown / --save-json are only available via MinerU; "
-            "run `qatlas mineru <arxiv_id>` after this fetch, or use "
-            "`qatlas upload markdown` once you have the parsed file.",
+            "run `qatlas mineru <arxiv_id>` to parse with your own token, "
+            "or `qatlas upload mineru <arxiv_id> --zip <bundle>.zip` "
+            "to push an already-produced MinerU result bundle.",
             file=sys.stderr,
         )
 

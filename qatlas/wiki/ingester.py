@@ -227,13 +227,15 @@ class WikiIngester:
         """Local PDF parsing has been removed from the open-source build.
 
         The previous implementation used a third-party local PDF library; the
-        only supported path now is to upload an existing markdown (e.g. one
-        produced by ``qatlas mineru``) via ``qatlas upload markdown``.
+        only supported path now is to run ``qatlas mineru`` (which uploads
+        the MinerU result zip for you when ``--push-pdf`` is set) or upload
+        an existing MinerU result bundle with ``qatlas upload mineru``.
         """
         raise NotImplementedError(
             "Local PDF parsing has been removed. "
-            "Run `qatlas mineru <arxiv_id>` to obtain markdown, then call "
-            "`qatlas upload markdown <arxiv_id>v<n> --markdown <path>`."
+            "Run `qatlas mineru <arxiv_id> --push-pdf` to parse and upload in one shot, "
+            "or `qatlas upload mineru <arxiv_id>v<n> --zip <bundle>.zip` "
+            "to push an already-produced MinerU result bundle."
         )
 
     def _extract_algorithm(self, arxiv_id: str, llm_provider: str = "openai") -> Any:

@@ -339,7 +339,8 @@ class TestWikiIngester:
         The previous test stubbed in a ``DummyParser`` via
         ``temp_wiki.ingester._pdf_parser = DummyParser()``; that hook no
         longer exists. We now assert ``_parse_pdf`` fails loudly so callers
-        know to route through `qatlas mineru` + `qatlas upload markdown`.
+        know to route through `qatlas mineru --push-pdf` or
+        `qatlas upload mineru --zip <bundle>.zip`.
         """
         requested_id = "quant-ph/9508027"
         resolved_id = "quant-ph/9508027v2"

@@ -27,7 +27,7 @@ class Command:
 COMMANDS: Mapping[str, Command] = {
     "config": Command(
         "qatlas.client.config",
-        "Manage the user-level config file (~/.config/quantum-atlas/.env)",
+        "Manage the user-level config file (~/.config/qatlas/.env)",
     ),
     "ingest": Command("qatlas.client.__main__", "Submit paper ingest tasks over HTTP"),
     "upload": Command(

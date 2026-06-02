@@ -177,31 +177,6 @@ qatlas mineru [arxiv_id] [options...]
 
 ---
 
-### `qatlas markdown`
-
-取某篇论文的 Markdown：**有缓存直接给，无缓存时 server 用自身 token 静默后台转换**，本命令轮询直到 ready。开放读，**不需要** `papers:write` scope 或本地 MinerU token——配额由 server 出。与 `qatlas mineru`（贡献者用自己 key 主动跑）是两个层面，互不冲突。
-
-轮询语义：先 GET content 端点触发转换（命中缓存即直接拿到正文）；拿到 `202` 后从 `Operation-Location` 头解析 job 状态资源 URL，轮询该资源直到 `status==done`，再取一次正文。轮询节奏为**带 jitter 的指数退避**，下界尊重 server 的 `Retry-After` 头，上界为 `--max-poll-interval`。
-
-```
-qatlas markdown <arxiv_id> [options...]
-```
-
-| Flag | 必填 | 默认 | 含义 |
-|---|---|---|---|
-| `<arxiv_id>` | ✅ | — | 带版本号，如 `2501.00010v1` |
-| `-o, --output <file>` | ❌ | stdout | 写到文件而非 stdout |
-| `--poll-interval N` | ❌ | 3.0 | 轮询退避的起始间隔（秒）；实际间隔指数增长并加 jitter |
-| `--max-poll-interval N` | ❌ | 30.0 | 轮询退避的上限间隔（秒）|
-| `--timeout N` | ❌ | 1800.0 | 等待 pending 转换的最长秒数；超时退出 75，server 仍在跑，稍后重跑即可 |
-| `--no-wait` | ❌ | false | 不轮询：server 仍在转就立即退 `75` (EX_TEMPFAIL) |
-
-退出码：`0` 拿到 markdown；`75` (EX_TEMPFAIL) 仍在转换 / 超时（`--no-wait` 或 `--timeout` 触发）；`1` 转换失败或无 PDF。
-
-调用：`GET /api/papers/{id}/markdown` 触发 + `GET /api/papers/{id}/markdown/status` 轮询（详见 [REST API](rest-api.md)）。
-
----
-
 ### `qatlas auth`
 
 管理本地存储的 PAT。
