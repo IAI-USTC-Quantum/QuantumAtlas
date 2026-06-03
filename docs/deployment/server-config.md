@@ -416,7 +416,7 @@ Configure runtime fields by:
 
 适合**不想用 .env 流派**的部署（§3.1.a 的 inline `Environment=` 风格）：先 `service install` 出骨架 unit + start，再手工 `systemctl edit qatlasd` 加 `Environment=NEO4J_URI=...` 等 drop-in。
 
-> 想直接生成 §3.1.a（inline `Environment=` 完整 unit）形式吗？目前 `service install` 还**没有** `--inline-env` 选项，需要 install 后手工 `systemctl edit`。tracked as future enhancement.
+> 想直接生成 §3.1.a（inline `Environment=` 完整 unit）形式吗？目前 `service install` 没有 `--inline-env` 选项 —— 装出 baseline unit 后用 `systemctl edit qatlasd` 手工加 drop-in `Environment=KEY=VAL`。
 
 ---
 

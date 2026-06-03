@@ -106,8 +106,6 @@ W001 / W002 / W006 是 ERROR 级别，会让 lint 非 0 退出阻塞合并。
 !!! info "Go server 还没有 lint"
     Server 端 `/api/lint` endpoint 当前返回固定空结果（占位）—— 完整 lint 仍在 Python 这边跑。CI 应该 `uv tool install quantum-atlas` 然后跑 `qatlas wiki lint`，不要依赖 server 端 endpoint。
 
-    会有的；这是已知 TODO。
-
 ## 下一步
 
 - 完整 schema：[Wiki schema 参考](../reference/wiki-schema.md)

@@ -230,9 +230,9 @@ QuantumAtlas/
 - Web API 和远程协作流程可用。
 - 项目更像"可持续扩展的研究基础设施"，而不是已经产品化的平台。
 
-## TODO
+## Agent 应用方向
 
-- Agent 应用方向：用户 / 鉴权由 Go server 内嵌 PocketBase 直接处理（GitHub OAuth + PAT），
+- 用户 / 鉴权由 Go server 内嵌 PocketBase 直接处理（GitHub OAuth + PAT），
   CLI 与 SPA 都通过 `Authorization: Bearer <token>` 调写口；QuantumAtlas 后端集中提供
   API 和构建产物托管；所有页面设计集中在 `web/` 的 Vite + React 工作台。
 

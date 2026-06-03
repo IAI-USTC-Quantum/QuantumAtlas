@@ -275,7 +275,7 @@ Important insights from the paper...
 - 仅仅因为论文进了 RAW 就为它建占位页；
 - frontmatter 里 `raw_status: pdf-only` 且正文只有 `## Metadata / ## Curation note: PDF is present but markdown has not been parsed`——这种页面没有 curation 价值，应让算法页通过 frontmatter 字段 `raw_paper_key` 直接指向 RAW，不必走 wiki 节点。
 
-> 历史上的 zoo backfill 批量生成了 400+ 个不满足条件的占位 source 页，后续会清理；新增内容必须按本规则执行。
+> 历史上的 zoo backfill 批量生成了 400+ 个不满足条件的占位 source 页，构成数据治理债务；新增内容必须按本规则执行。
 
 ### Comparisons (`wiki/comparisons/`)
 
