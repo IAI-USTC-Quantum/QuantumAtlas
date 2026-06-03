@@ -258,6 +258,82 @@ class TestSetGetUnset:
             with pytest.raises(SystemExit):
                 _run(["set", bad, "v"])
 
+    def test_set_sensitive_hidden_prompt_when_value_omitted(
+        self,
+        isolated_env: Path,
+        capsys: pytest.CaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Onboarding sugar: `qatlas config set MINERU_API_TOKEN` (no value)
+        prompts with getpass so the JWT never lands in shell history /
+        `ps aux` / scrollback. This is what the README's "30-second
+        contribute MinerU quota" path relies on.
+        """
+        secret = "eyJ0eXBlIjoiSldUIiwiYWxnIjoiSFM1MTIifQ.payload.signature"
+        captured: dict[str, str] = {}
+
+        def fake_getpass(prompt: str) -> str:
+            captured["prompt"] = prompt
+            return secret
+
+        # Pretend we're on a tty so cmd_set picks the getpass branch rather
+        # than the piped-stdin branch.
+        monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+        monkeypatch.setattr("getpass.getpass", fake_getpass)
+
+        rc = _run(["set", "MINERU_API_TOKEN"])
+        assert rc == 0
+        # Prompt mentions the key + "hidden" so user knows what to paste.
+        assert "MINERU_API_TOKEN" in captured["prompt"]
+        assert "hidden" in captured["prompt"].lower()
+        # Value persisted.
+        target = _yaml_path(isolated_env)
+        assert secret in target.read_text()
+        # Echo masks it.
+        out = capsys.readouterr().out
+        assert secret not in out
+
+    def test_set_value_from_stdin_when_piped(
+        self,
+        isolated_env: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Script-friendly path: `echo $TOKEN | qatlas config set MINERU_API_TOKEN`
+        reads one line from stdin and trims the trailing newline.
+        """
+        import io
+
+        secret = "eyJ.stdin-piped.value"
+        monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+        monkeypatch.setattr("sys.stdin", io.StringIO(secret + "\n"))
+
+        rc = _run(["set", "MINERU_API_TOKEN"])
+        assert rc == 0
+        target = _yaml_path(isolated_env)
+        # Load the YAML and check the *stored* value didn't accumulate the
+        # trailing newline (YAML naturally ends the file with \n, so a raw
+        # substring check would false-positive).
+        import yaml
+        data = yaml.safe_load(target.read_text())
+        assert data["mineru"]["api_token"] == secret
+
+    def test_set_empty_prompted_value_refuses(
+        self,
+        isolated_env: Path,
+        capsys: pytest.CaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Empty hidden input is a user mistake — refuse and point at the
+        right command to clear a key (`config unset KEY`)."""
+        monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+        monkeypatch.setattr("getpass.getpass", lambda prompt: "")
+
+        rc = _run(["set", "MINERU_API_TOKEN"])
+        assert rc == 1
+        err = capsys.readouterr().err
+        assert "empty value" in err.lower()
+        assert "qatlas config unset" in err
+
     def test_get_env_var_overrides_file(
         self, isolated_env: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
     ) -> None:

@@ -275,22 +275,43 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 
 def cmd_set(args: argparse.Namespace) -> int:
+    import getpass
+
     _validate_key(args.key)
     _ensure_known_key(args.key)
+
+    value = args.value
+    if value is None:
+        # No value on the command line: prompt interactively. For sensitive
+        # keys (TOKEN / SECRET / KEY / PASSWORD) hide the typed value with
+        # getpass so it doesn't end up in scrollback. For piped stdin (CI /
+        # scripts) read one line: `echo $TOKEN | qatlas config set KEY`.
+        if not sys.stdin.isatty():
+            value = sys.stdin.readline().rstrip("\n\r")
+        elif _is_sensitive(args.key):
+            value = getpass.getpass(f"{args.key} (hidden): ")
+        else:
+            value = input(f"{args.key}: ")
+        if value == "":
+            _print_err(
+                f"empty value entered for {args.key}; use "
+                f"`qatlas config unset {args.key}` to remove a key instead."
+            )
+            return 1
 
     target = user_config_yaml_path()
     data = config_yaml.load_yaml_file(target) if target.is_file() else {}
 
-    if not config_yaml.set_yaml_value(data, args.key, args.value):
+    if not config_yaml.set_yaml_value(data, args.key, value):
         # _ensure_known_key already filters unknown keys; this branch
         # should be unreachable but kept as defensive belt-and-braces.
         raise SystemExit(f"could not set {args.key}: not a known YAML key")
 
     _write_text_atomic(target, config_yaml.dump_yaml(data))
     if _is_sensitive(args.key):
-        print(f"set {args.key}={_mask(args.value)} in {target}")
+        print(f"set {args.key}={_mask(value)} in {target}")
     else:
-        print(f"set {args.key}={args.value} in {target}")
+        print(f"set {args.key}={value} in {target}")
     return 0
 
 
@@ -425,7 +446,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = subs.add_parser("set", help="Set a key in the user config file")
     sp.add_argument("key", help="Env var name, e.g. QATLAS_SERVER_URL")
-    sp.add_argument("value", help="Value (use --value '' to set empty)")
+    sp.add_argument(
+        "value",
+        nargs="?",
+        default=None,
+        help=(
+            "Value. Omit to prompt interactively (hidden for sensitive "
+            "keys like *TOKEN / *KEY / *SECRET / *PASSWORD). Reads stdin "
+            "if not a tty: `echo $TOKEN | qatlas config set MINERU_API_TOKEN`."
+        ),
+    )
     sp.set_defaults(func=cmd_set)
 
     sp = subs.add_parser("unset", help="Remove a key from the user config file")
