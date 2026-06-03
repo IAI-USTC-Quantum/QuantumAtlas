@@ -47,10 +47,9 @@ from typing import Any, Optional
 
 import yaml
 
-# Where the per-user credentials file lives. Respects XDG_CONFIG_HOME
-# (gh / docker / git config / etc. all do) so users with a customised
-# XDG setup land in the right place automatically.
-_CONFIG_DIR_NAME = "qatlas"
+from qatlas.paths import user_config_dir
+
+# Filename of the per-host credentials store inside the user config dir.
 _HOSTS_FILE_NAME = "hosts.yml"
 
 # The PAT shape sentinel from internal/pat/pat.go. Kept as a string
@@ -62,14 +61,17 @@ _PAT_PREFIX = "qat_"
 def config_dir() -> Path:
     """Resolve the QuantumAtlas per-user config directory.
 
-    Honors ``XDG_CONFIG_HOME`` if set (and non-empty), otherwise falls
-    back to ``~/.config``. We do NOT create the directory here — the
-    write path does, with 0700 permissions, so the dir's mode matches
-    the file's mode.
+    Delegates to :func:`qatlas.paths.user_config_dir`, which uses
+    ``platformdirs`` to pick the right location per platform
+    (``~/.config/qatlas/`` on Linux honoring XDG, ``~/Library/Application
+    Support/qatlas/`` on macOS, ``%APPDATA%\\qatlas\\`` on Windows).
+    Kept as a separate function so callers reading ``hosts.yml`` and
+    callers reading ``config.yaml`` resolve to the same root.
+
+    We do NOT create the directory here — the write path does, with
+    0700 permissions, so the dir's mode matches the file's mode.
     """
-    xdg = os.environ.get("XDG_CONFIG_HOME", "").strip()
-    base = Path(xdg) if xdg else Path.home() / ".config"
-    return base / _CONFIG_DIR_NAME
+    return user_config_dir()
 
 
 def hosts_file() -> Path:
@@ -230,7 +232,7 @@ def _default_host_for_lookup(arg: Optional[str]) -> str:
 def _cmd_login(args: argparse.Namespace) -> int:
     host = _default_host_for_login(args.host)
     if not host:
-        print("Error: host is required (--host or set server_url: in ~/.config/qatlas/config.yaml).", file=sys.stderr)
+        print("Error: host is required (--host, or set server_url: in your qatlas config — run `qatlas config path` to find the file).", file=sys.stderr)
         return 2
 
     print(

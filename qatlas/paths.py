@@ -1,80 +1,63 @@
 """Default filesystem locations for the ``qatlas`` user-level CLI.
 
-Self-contained, single-source-of-truth path resolution (v0.17.0+):
+Cross-platform paths via the standard ``platformdirs`` library, so
+users find config / state / cache in the spot their OS conventionally
+expects:
 
-* User config:  ``~/.config/qatlas/config.yaml``
-* User state:   ``~/.local/state/qatlas/``
-* User cache:   ``~/.cache/qatlas/``
+| Platform | user_config_dir                  | user_state_dir                                       |
+| -------- | -------------------------------- | ---------------------------------------------------- |
+| Linux    | ``$XDG_CONFIG_HOME/qatlas/``     | ``$XDG_STATE_HOME/qatlas/``                          |
+|          | (default ``~/.config/qatlas/``)  | (default ``~/.local/state/qatlas/``)                 |
+| macOS    | ``~/Library/Application Support/qatlas/`` | ``~/Library/Application Support/qatlas/``   |
+| Windows  | ``%APPDATA%\\qatlas\\``            | ``%LOCALAPPDATA%\\qatlas\\``                           |
 
-All honor the XDG Base Directory spec via ``XDG_CONFIG_HOME`` /
-``XDG_STATE_HOME`` / ``XDG_CACHE_HOME`` env vars; non-absolute values
-are ignored per the spec.
+(``platformdirs`` honors ``XDG_CONFIG_HOME`` / ``XDG_STATE_HOME`` /
+``XDG_CACHE_HOME`` on Linux per the freedesktop spec — Linux behavior
+is unchanged from the v0.17.0a0 hand-rolled implementation.)
+
+We pass ``appauthor=False`` so the Windows path is the clean
+``%APPDATA%\\qatlas\\`` rather than ``%APPDATA%\\qatlas\\qatlas\\``
+(default ``platformdirs`` doubles the app name there for vendor
+namespacing, irrelevant for a single-author project).
 
 No ``QATLAS_CONFIG`` / ``QATLAS_DOTENV`` overrides — the file location
-is fixed. Users move it via ``XDG_CONFIG_HOME=...`` (standard
-freedesktop mechanism) if needed.
+is fixed per ``platformdirs``. Users move it via the platform-native
+environment mechanism if needed (``XDG_CONFIG_HOME`` on Linux,
+``APPDATA`` on Windows; macOS users typically just symlink).
 
-Intentionally NOT a singleton — every call re-reads the env vars so
-tests can monkey-patch ``HOME`` / ``XDG_CONFIG_HOME`` without import
-order weirdness.
+Intentionally NOT cached — every call re-asks platformdirs so tests
+can monkey-patch ``HOME`` / ``XDG_CONFIG_HOME`` / ``APPDATA`` without
+import order weirdness.
 """
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
+
+import platformdirs
 
 _APP = "qatlas"
 
 logger = logging.getLogger(__name__)
 
 
-def _xdg_dir(env_var: str, fallback_rel_to_home: str) -> Path:
-    """Resolve an XDG base dir per the freedesktop spec.
-
-    Per the spec, relative values in ``XDG_*_HOME`` MUST be ignored
-    (treated as unset).
-    """
-    raw = os.environ.get(env_var)
-    if raw:
-        candidate = Path(raw).expanduser()
-        if candidate.is_absolute():
-            return candidate
-        logger.warning(
-            "Ignoring non-absolute %s=%r per XDG Base Directory spec; "
-            "falling back to ~/%s.",
-            env_var, raw, fallback_rel_to_home,
-        )
-    return Path.home() / fallback_rel_to_home
-
-
-def xdg_config_home() -> Path:
-    """Return ``$XDG_CONFIG_HOME`` (default ``~/.config``)."""
-    return _xdg_dir("XDG_CONFIG_HOME", ".config")
-
-
-def xdg_state_home() -> Path:
-    """Return ``$XDG_STATE_HOME`` (default ``~/.local/state``)."""
-    return _xdg_dir("XDG_STATE_HOME", ".local/state")
-
-
-def xdg_cache_home() -> Path:
-    """Return ``$XDG_CACHE_HOME`` (default ``~/.cache``)."""
-    return _xdg_dir("XDG_CACHE_HOME", ".cache")
-
-
 def user_config_dir() -> Path:
     """The directory for our user-level config files.
 
-    Defaults to ``~/.config/qatlas/`` but follows
-    ``$XDG_CONFIG_HOME`` when set.
+    Uses :func:`platformdirs.user_config_dir` so the right thing
+    happens on every supported OS (see module docstring table).
     """
-    return xdg_config_home() / _APP
+    return Path(platformdirs.user_config_dir(_APP, appauthor=False))
 
 
 def user_state_dir() -> Path:
-    """The directory for our user-level state files."""
-    return xdg_state_home() / _APP
+    """The directory for our user-level state files (PAT cache, etc.)."""
+    return Path(platformdirs.user_state_dir(_APP, appauthor=False))
+
+
+def user_cache_dir() -> Path:
+    """The directory for our user-level cache files."""
+    return Path(platformdirs.user_cache_dir(_APP, appauthor=False))
 
 
 def user_config_yaml_path() -> Path:

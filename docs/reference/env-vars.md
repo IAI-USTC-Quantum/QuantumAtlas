@@ -1,6 +1,6 @@
 # 环境变量参考
 
-> **本页只描述 server (`qatlasd`) 的 env / .env 字段**。client (`qatlas` Python CLI) 自 v0.17.0 起**不再读任何 env / .env**，所有配置写在 `~/.config/qatlas/config.yaml`（首次运行自动创建），见 [`qatlas config` reference](cli-qatlas.md#qatlas-config)。
+> **本页只描述 server (`qatlasd`) 的 env / .env 字段**。client (`qatlas` Python CLI) 自 v0.17.0 起**不再读任何 env / .env**，所有配置写在平台原生 user-config 路径下的 `config.yaml`（Linux `~/.config/qatlas/`、macOS `~/Library/Application Support/qatlas/`、Windows `%APPDATA%\qatlas\`；首次运行自动创建），见 [`qatlas config` reference](cli-qatlas.md#qatlas-config)。
 
 QuantumAtlas server（Go `qatlasd` 二进制）通过三入口读配置：
 
@@ -191,7 +191,11 @@ uuidgen
 
 client 现在**完全独立于 server**：
 
-- **只读** `~/.config/qatlas/config.yaml`
+- **只读** 平台原生 user-config 路径下的 `config.yaml`：
+  - **Linux**: `~/.config/qatlas/config.yaml`（honors `XDG_CONFIG_HOME`）
+  - **macOS**: `~/Library/Application Support/qatlas/config.yaml`
+  - **Windows**: `%APPDATA%\qatlas\config.yaml`
+  - 由 [`platformdirs`](https://platformdirs.readthedocs.io/) 解析；不确定具体路径 → `qatlas config path`
 - **首次跑任何 `qatlas <cmd>` 自动创建模板**——不用 `qatlas config init`
 - **不**支持 CLI flag（`--base-url` / `--token` / `--insecure` 全删）
 - **不**支持 OS env（`QATLAS_*` 等 env 对 client 不生效）
@@ -199,10 +203,10 @@ client 现在**完全独立于 server**：
 
 完整优先级（高 → 低）：
 
-1. `~/.config/qatlas/config.yaml`（auto-created on first run；用 `qatlas config set/unset` 改）
+1. 平台原生 user-config 路径下的 `config.yaml`（auto-created on first run；用 `qatlas config set/unset` 改）
 2. 内置 Field default
 
-要换文件位置只能走 `XDG_CONFIG_HOME=/path/to/dir`（freedesktop XDG 标准）。
+要换文件位置 → 用平台标准 env（Linux `XDG_CONFIG_HOME`、Windows `APPDATA`；macOS 没标准 env，symlink 就好）。
 
 具体子命令见 [`qatlas config` reference](cli-qatlas.md#qatlas-config)。
 
@@ -213,7 +217,7 @@ client 现在**完全独立于 server**：
 首次跑 `qatlas` 子命令时这个 yaml 模板会自动写到磁盘。
 
 ```yaml
-# ~/.config/qatlas/config.yaml — auto-created on first qatlas invocation
+# config.yaml — auto-created on first qatlas invocation (path per platform; see above)
 
 # Server endpoint + auth
 server_url: https://atlas.example.com

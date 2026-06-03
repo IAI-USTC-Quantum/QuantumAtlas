@@ -1,15 +1,17 @@
 """
 QuantumAtlas client configuration (v0.17.0+).
 
-Single source of truth: ``~/.config/qatlas/config.yaml``. No CLI flag,
-no OS env var, no ``$QATLAS_DOTENV`` / ``$QATLAS_CONFIG`` overrides.
-First call to any ``qatlas`` subcommand auto-creates a default template
-at the canonical path (the user only has to run the command and edit
-the file, no ``qatlas config init`` step required).
+Single source of truth: a ``config.yaml`` file at the OS-native
+user-config location (resolved via :mod:`platformdirs`):
 
-Standard XDG mechanism still applies: setting ``XDG_CONFIG_HOME`` moves
-the file location per the freedesktop spec (this is OS-level XDG, not
-a qatlas-specific override).
+* Linux:   ``~/.config/qatlas/config.yaml``  (honors ``XDG_CONFIG_HOME``)
+* macOS:   ``~/Library/Application Support/qatlas/config.yaml``
+* Windows: ``%APPDATA%\\qatlas\\config.yaml``
+
+Auto-created on first invocation of any ``qatlas`` subcommand. No CLI
+flag, no OS env var, no ``$QATLAS_DOTENV`` / ``$QATLAS_CONFIG``
+override. ``qatlas config path`` prints the resolved path at runtime
+when unsure.
 
 Rationale:
 
@@ -115,9 +117,10 @@ def ensure_default_config_exists() -> Path:
 class ServerConfig(BaseSettings):
     """User-level client config (v0.17.0+: YAML only).
 
-    All fields read from ``~/.config/qatlas/config.yaml``. Init args
-    (passed when constructing programmatically) still win for tests
-    and embedded callers. No env-var fallback.
+    All fields read from the qatlas config.yaml (see module docstring
+    for OS-specific paths). Init args (passed when constructing
+    programmatically) still win for tests and embedded callers. No
+    env-var fallback.
     """
 
     model_config = SettingsConfigDict(

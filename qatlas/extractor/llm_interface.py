@@ -285,8 +285,9 @@ class OpenAIProvider(LLMInterface):
         self.api_key = api_key
         if not self.api_key:
             raise ValueError(
-                "OpenAI API key is required. Set ``openai_api_key:`` in "
-                "~/.config/qatlas/config.yaml or pass api_key parameter."
+                "OpenAI API key is required. Set ``openai_api_key:`` in your "
+                "qatlas config file (run `qatlas config path` to find it) or "
+                "pass api_key parameter."
             )
         
         if OpenAI is None:
@@ -451,7 +452,8 @@ class ClaudeProvider(LLMInterface):
         if not self.api_key:
             raise ValueError(
                 "Anthropic API key is required. Set ``anthropic_api_key:`` in "
-                "~/.config/qatlas/config.yaml or pass api_key parameter."
+                "your qatlas config file (run `qatlas config path` to find it) "
+                "or pass api_key parameter."
             )
         
         if anthropic is None:

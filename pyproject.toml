@@ -25,6 +25,7 @@ dependencies = [
     "openai>=1.0.0,<2",
     "anthropic>=0.21.0,<0.22",
     "pyyaml>=6.0.1,<7",
+    "platformdirs>=4,<5",
 ]
 
 [project.optional-dependencies]

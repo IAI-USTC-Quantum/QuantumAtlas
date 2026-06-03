@@ -30,7 +30,17 @@ qatlas [--version] [--help] <subcommand> [args...]
 
 ### `qatlas config`
 
-inspect / edit user-level YAML 配置 `~/.config/qatlas/config.yaml`。**首次跑任何 `qatlas <cmd>` 自动创建模板**——不再需要 `qatlas config init` 步骤。给 `uv tool install` 用户用，不需要 `export` 任何 env。
+inspect / edit user-level YAML 配置文件（路径按平台，见下方表）。**首次跑任何 `qatlas <cmd>` 自动创建模板**——不再需要 `qatlas config init` 步骤。给 `uv tool install` 用户用，不需要 `export` 任何 env。
+
+**跨平台配置文件路径**（由 [`platformdirs`](https://platformdirs.readthedocs.io/) 解析，跟主流 Python CLI 一致）：
+
+| 平台 | 默认路径 | 控制 env |
+|---|---|---|
+| Linux | `~/.config/qatlas/config.yaml` | `XDG_CONFIG_HOME` |
+| macOS | `~/Library/Application Support/qatlas/config.yaml` | — |
+| Windows | `%APPDATA%\qatlas\config.yaml` | `APPDATA` |
+
+不确定具体到哪 → `qatlas config path` 打给你。本文档后面的例子用 Linux 形式 `~/.config/qatlas/config.yaml`，mac / win 用户照着替换路径即可。
 
 ```
 qatlas config <subcommand>
@@ -46,13 +56,17 @@ qatlas config <subcommand>
 
 **配置入口**（v0.17.0+ 极简）：
 
-1. **`~/.config/qatlas/config.yaml`** — **唯一**配置源（首次跑任意命令自动创建）
+1. **平台原生配置文件路径**（见上表）— **唯一**配置源（首次跑任意命令自动创建）
 2. **内置 Field default** — 各字段在 `qatlas/config.py` 的 `ServerConfig` 上定义
 
 没有 CLI flag overrides，没有 OS env vars，没有 `$QATLAS_DOTENV` / `$QATLAS_CONFIG`。这是有意的极简化——client 用户基本是"配一次长期用"的模式，多入口反而增加心智负担（v0.16 起 client 不再借 server 的 `.env` 跑）。
 
-!!! note "想换 config 文件位置？用 `XDG_CONFIG_HOME`"
-    遵循 freedesktop XDG 标准：`XDG_CONFIG_HOME=/etc/myconfig qatlas <cmd>` 让 yaml 落到 `/etc/myconfig/qatlas/config.yaml`。dev 切多份配置用同样套路。
+!!! note "想换 config 文件位置？用平台标准 env"
+    - **Linux**: `XDG_CONFIG_HOME=/etc/myconfig qatlas <cmd>` → yaml 落 `/etc/myconfig/qatlas/config.yaml`
+    - **macOS**: 没有 platformdirs 支持的标准 env，唯一办法是 symlink `~/Library/Application Support/qatlas/`
+    - **Windows**: `APPDATA=D:\my-config qatlas <cmd>` → yaml 落 `D:\my-config\qatlas\config.yaml`
+
+    都是 freedesktop / Microsoft / Apple 各自平台的原生机制（platformdirs 透传），不是 qatlas 自己定义的 override。
 
 !!! warning "`qatlas config set` 会抹掉手写注释"
     PyYAML 不保留 round-trip 注释，跟 `gh` / `kubectl config set` 行为一致。要永久注释，直接编辑 yaml 不用 `set`。auto-init 写出的 header 注释每次 `set` 都会被重写，是预期行为。
