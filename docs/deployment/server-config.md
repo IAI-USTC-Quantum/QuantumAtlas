@@ -2,7 +2,12 @@
 
 本文档描述 **`qatlasd` server**（Go binary）当前如何加载 / 解析 / 使用环境变量。
 
-> Client (`qatlas` Python CLI) **不读 .env** —— 自 v0.16.0 起改用 YAML 配置文件 `~/.config/qatlas/config.yaml`，详见 [`qatlas config` reference](../reference/cli-qatlas.md#qatlas-config)。本页只列 server 字段；client 字段映射见 [env-vars.md §Client](../reference/env-vars.md#client-qatlas-配置文件解析)。
+> **Client / Server 配置完全分离**：
+>
+> - **Server** (`qatlasd`): 三入口 **CLI flag > OS env > `.env` 文件 > default**（本页主题）
+> - **Client** (`qatlas` Python CLI): **只读 YAML** `~/.config/qatlas/config.yaml`，首次跑任意 `qatlas <cmd>` 自动创建模板（不再支持 CLI flag / OS env / `QATLAS_DOTENV`，自 v0.17.0 起）
+>
+> 设计哲学：server 是 long-lived daemon，运维要同时支持 systemd / docker / k8s / nohup 多形态，所以三入口；client 是 short-lived 命令，用户配置一次长期复用，YAML 单入口最简单。client 配置参考见 [`qatlas config` reference](../reference/cli-qatlas.md#qatlas-config)。
 
 ---
 
@@ -32,6 +37,10 @@ internal/config/config.go::Load(dotenv)    # 从 os.Environ 读出 Config 结构
 1. **已存在的 OS env var**（systemd `Environment=` 单条注入、docker `-e`、shell `export`）
 2. **.env 文件里的值**（通过 1.1 找到的那一个）
 3. **代码里的 default**（见 §2 各字段「默认」列）
+
+> ⚠️ **non-override 的调试陷阱**：在 shell 里 `export NEO4J_URI=bolt://test` 跑过一次后，**之后改 `.env` 里的 `NEO4J_URI=` 不会生效**——shell 残留的值赢。如果改 .env 后行为没变，先 `unset` 该 env 再启动，或开新 shell。systemd 不受影响（每次启动是干净 env）。
+>
+> 我们故意选 non-override 而不是 override，理由是 CI / 容器场景里 `docker -e KEY=val` 应该胜过 image 里 baked-in 的 `.env`——这是 dotenv 生态的事实标准（python-dotenv / Node dotenv / Ruby dotenv 默认全是 non-override）。
 
 ### 1.3 .env 路径作为相对路径锚点
 
@@ -226,7 +235,40 @@ docker run -it --rm \
 
 ### 3.1 systemd 单元（生产 RackNerd / Alibaba 现状）
 
-`/etc/systemd/system/qatlasd.service` 通过 `Environment=` 指 `QATLAS_DOTENV`，由 `qatlasd` 自己 load 该路径的 .env：
+systemd 部署有**两条等价路径**——选你团队习惯的，不要混用：
+
+#### 3.1.a Inline `Environment=`（v0.17.0+ 推荐：单文件无外部依赖）
+
+把每个字段直接写进 unit 文件的 `Environment=`，**不需要任何 .env 文件**：
+
+```ini
+[Service]
+ExecStart=/home/timidly/.local/bin/qatlasd serve --http=127.0.0.1:4200
+User=timidly
+Group=timidly
+WorkingDirectory=/home/timidly
+
+Environment=QATLAS_PB_DATA_DIR=/home/timidly/.local/share/qatlasd/pb_data
+Environment=QATLAS_WIKI_DIR=/home/timidly/QuantumAtlas-Wiki
+Environment=NEO4J_URI=bolt://10.144.18.10:7687
+Environment=NEO4J_USERNAME=neo4j
+Environment=NEO4J_PASSWORD=...
+Environment=QATLAS_S3_ENDPOINT=http://10.144.18.10:9000
+Environment=QATLAS_S3_BUCKET_PDF=qatlas-pdf
+Environment=QATLAS_S3_BUCKET_MD=qatlas-md
+Environment=QATLAS_S3_BUCKET_IMAGES=qatlas-images
+Environment=QATLAS_S3_ACCESS_KEY_ID=...
+Environment=QATLAS_S3_SECRET_ACCESS_KEY=...
+Environment=GITHUB_CLIENT_ID=...
+Environment=GITHUB_CLIENT_SECRET=...
+Environment=QATLAS_ALLOWED_GITHUB_LOGINS=alice,bob
+Environment=QATLAS_ADMIN_GITHUB_LOGINS=alice
+```
+
+**优点**：unit 文件是 single source of truth；`systemctl cat qatlasd` 一眼看完；不依赖文件 mode / 路径。
+**缺点**：unit 文件 644 给 root 可见，secret 在 `systemctl show qatlasd` 输出里——同主机上其它用户可读。生产敏感字段建议改 `LoadCredential=`（systemd 250+，可配 0600 文件）。
+
+#### 3.1.b 外部 .env + `QATLAS_DOTENV=`（v0.16 之前默认；适合多 unit 共享配置）
 
 ```ini
 [Service]
@@ -243,9 +285,30 @@ WorkingDirectory=/home/timidly/QuantumAtlas
 EnvironmentFile=/etc/qatlasd/qatlasd.env
 ```
 
-两种方式区别：
-- `Environment=QATLAS_DOTENV=...` + godotenv：**.env 所在目录** 是相对路径锚点（§1.3）
-- `EnvironmentFile=...` + systemd：env 直接进进程，**没有锚点**，相对路径相对 CWD
+三种方式区别：
+
+| 方式 | 相对路径锚点（如 `WIKI_DIR=../foo`） | 修改后生效需要 |
+|---|---|---|
+| `Environment=` inline | **无锚点**（相对 CWD） | `systemctl daemon-reload && systemctl restart qatlasd` |
+| `Environment=QATLAS_DOTENV=...` + godotenv | **.env 所在目录** 是锚点（§1.3） | 改 .env 后直接 `systemctl restart qatlasd` |
+| `EnvironmentFile=...` + systemd | **无锚点**（相对 CWD） | 改文件后 `systemctl restart qatlasd` |
+
+**生产**：推荐绝对路径，三种方式没差别。
+**dev**：相对路径只在 `Environment=QATLAS_DOTENV=...` 模式可控（锚点稳定），其它两种推荐绝对路径避免歧义。
+
+#### 3.1.c 混合：CLI flag 覆盖 unit env
+
+`Environment=` / `.env` 里写一份 baseline，`ExecStart` 用 flag 覆盖个别字段——典型场景是同一份配置在两台 edge 跑、只 edge name / port 不同：
+
+```ini
+ExecStart=/home/timidly/.local/bin/qatlasd serve \
+  --http=127.0.0.1:4200 \
+  --edge-name=alibaba \
+  --force-tcp4
+Environment=QATLAS_DOTENV=/etc/qatlasd/shared.env
+```
+
+CLI flag > OS env > .env 文件，所以 `--edge-name=alibaba` 总是赢，无论 .env 里写没写 `QATLAS_EDGE_NAME=`。
 
 ### 3.2 直接跑 / nohup
 
@@ -305,13 +368,15 @@ spec:
 
 ### 3.5 `qatlasd service install` 子命令
 
-辅助生成 systemd unit 的交互式 cobra 子命令。它自己也读 `$QATLAS_DOTENV`：
+辅助生成 systemd unit 的交互式 cobra 子命令。当前默认生成 §3.1.b（`Environment=QATLAS_DOTENV=` 引用外部 .env）形式：
 
 ```bash
 qatlasd service install --dotenv-path /home/timidly/QuantumAtlas/.env --force
 ```
 
 `--dotenv-path` 优先级：CLI flag > `$QATLAS_DOTENV` > `~/QuantumAtlas/.env` > `./.env`（TTY 时自动检测并要确认）。
+
+> 想生成 §3.1.a（inline `Environment=` 单文件无外部依赖）形式的 unit 吗？目前 `service install` 还**没有** `--inline-env` 选项，要手写 unit 文件。tracked as future enhancement.
 
 ---
 

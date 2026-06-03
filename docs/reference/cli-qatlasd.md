@@ -24,26 +24,82 @@ qatlasd [global flags] <subcommand> [args...]
 ## `serve`：启动 HTTP server
 
 ```
-qatlasd serve [--http=<host:port>] [--dev]
+qatlasd serve [domain(s)] [flags]
 ```
+
+### 全局 / 继承 flag（PocketBase 内置）
 
 | Flag | 默认 | 含义 |
 |---|---|---|
-| `--http <host:port>` | `127.0.0.1:4200`（从 `QATLAS_HTTP_ADDR` / `QATLAS_SERVER_HOST/PORT` 自动注入）| HTTP bind |
-| `--dev` | false | 启用 PocketBase dev 模式（绕过一些安全检查，**不要在生产用**）|
+| `--http <host:port>` | `127.0.0.1:8090` 或域名 → `0.0.0.0:80` | HTTP bind |
+| `--https <host:port>` | 域名时 `0.0.0.0:443`，否则空 | HTTPS bind + 自动 LE |
+| `--origins <list>` | `[*]` | CORS 允许的 origin |
+| `--dir <path>` | `<binary_dir>/pb_data` | PocketBase data 目录（**会被 `QATLAS_PB_DATA_DIR` 自动覆盖**） |
+| `--encryptionEnv <var>` | — | DB 加密 key 来源 env var |
+| `--queryTimeout <sec>` | 30 | SQL 查询超时 |
+| `--dev` | false | dev 模式（**不要在生产用**） |
+
+### qatlasd 自有 flag（v0.17.0+，20 个，easytier 风格）
+
+每个 flag 旁标 `[env: QATLAS_FOO=]`，等价 env var 名 = `qatlasd serve --help` 看到的标注：
+
+| Flag | 等价 env | 默认 |
+|---|---|---|
+| `--server-url <url>` | `QATLAS_SERVER_URL` | — |
+| `--user-header <name>` | `QATLAS_USER_HEADER` | — |
+| `--edge-name <name>` | `QATLAS_EDGE_NAME` | — |
+| `--force-tcp4` | `QATLAS_FORCE_TCP4` | false |
+| `--wiki-dir <path>` | `QATLAS_WIKI_DIR` | `<.env 目录>/../QuantumAtlas-Wiki` |
+| `--raw-dir <path>` | `QATLAS_RAW_DIR` | `${XDG_DATA_HOME}/qatlasd/raw` |
+| `--data-dir <path>` | `QATLAS_DATA_DIR` | `${XDG_DATA_HOME}/qatlasd/data` |
+| `--pb-data-dir <path>` | `QATLAS_PB_DATA_DIR` | `${XDG_DATA_HOME}/qatlasd/pb_data` |
+| `--system-pat <token>` | `QATLAS_SYSTEM_PAT` | — |
+| `--system-pat-scopes <csv>` | `QATLAS_SYSTEM_PAT_SCOPES` | `*`（全 scope） |
+| `--neo4j-uri <bolt://...>` | `NEO4J_URI` | — |
+| `--neo4j-username <user>` | `NEO4J_USERNAME` | — |
+| `--neo4j-password <pw>` | `NEO4J_PASSWORD` | — |
+| `--neo4j-database <db>` | `NEO4J_DATABASE` | — |
+| `--s3-endpoint <url>` | `QATLAS_S3_ENDPOINT` | — |
+| `--s3-public-endpoint <url>` | `QATLAS_S3_PUBLIC_ENDPOINT` | — |
+| `--s3-bucket-pdf <name>` | `QATLAS_S3_BUCKET_PDF` | — |
+| `--s3-bucket-md <name>` | `QATLAS_S3_BUCKET_MD` | — |
+| `--s3-bucket-images <name>` | `QATLAS_S3_BUCKET_IMAGES` | — |
+| `--s3-bucket-openalex <name>` | `QATLAS_S3_BUCKET_OPENALEX_SNAPSHOT` | — |
+| `--s3-access-key-id <id>` | `QATLAS_S3_ACCESS_KEY_ID` | — |
+| `--s3-secret-access-key <sec>` | `QATLAS_S3_SECRET_ACCESS_KEY` | — |
+
+**优先级**：CLI flag > OS env > `.env` 文件 > 内置 default。
+
+!!! warning "OAuth 4 字段没有 CLI flag"
+    `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` / `QATLAS_ALLOWED_GITHUB_LOGINS` / `QATLAS_ADMIN_GITHUB_LOGINS` 只能走 env / .env。原因：auth provider 在 PocketBase Bootstrap 阶段注册，跑在 cobra parse argv **之前**，CLI flag 来不及。详见 [issue #6](https://github.com/IAI-USTC-Quantum/QuantumAtlas/issues/6)。
 
 例子：
 
 ```bash
-# 默认 127.0.0.1:4200
+# 默认 127.0.0.1:8090
 qatlasd serve
 
 # 监听公网（前面必须有反代）
 qatlasd serve --http=0.0.0.0:4200
 
+# docker 一行起，不要 .env
+docker run --rm -p 4200:4200 \
+  -v /srv/qatlas/pb_data:/data \
+  ghcr.io/iai-ustc-quantum/qatlasd:v0.17.0 serve \
+    --http 0.0.0.0:4200 \
+    --pb-data-dir /data \
+    --neo4j-uri bolt://neo4j.example:7687 \
+    --neo4j-username neo4j --neo4j-password ... \
+    --s3-endpoint https://rustfs.example \
+    --s3-bucket-pdf qatlas-pdf --s3-bucket-md qatlas-md \
+    --s3-bucket-images qatlas-images \
+    --s3-access-key-id ... --s3-secret-access-key ...
+
 # 显式 .env 路径
 QATLAS_DOTENV=/etc/quantum-atlas/.env qatlasd serve
 ```
+
+完整字段语义见 [`server-config.md`](../deployment/server-config.md)。
 
 ---
 
