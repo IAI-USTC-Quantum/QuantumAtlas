@@ -41,6 +41,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/apis"
+	pbcmd "github.com/pocketbase/pocketbase/cmd"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/spf13/cobra"
 	httpSwagger "github.com/swaggo/http-swagger/v2"
@@ -438,7 +439,36 @@ func main() {
 		return se.Next()
 	})
 
-	if err := app.Start(); err != nil {
+	// Mount our wrapped `serve` subcommand (24 qatlasd-specific
+	// flags + env-alias help, on top of PocketBase's own --http /
+	// --dir / --encryptionEnv). The wrapper's RunE pre-step applies
+	// any --foo flags the operator passed onto cfg before falling
+	// through to PocketBase's original serve handler. See
+	// cmd/qatlasd/serve_flags.go for the flag list + the OAuth-flag
+	// limitation explanation.
+	//
+	// We also mount Superuser ourselves so we can skip pb.Start()
+	// (which would mount its own Serve and clobber the wrapped one).
+	app.RootCmd.AddCommand(pbcmd.NewSuperuserCommand(app))
+
+	serveCmd := pbcmd.NewServeCommand(app, true)
+	serveFlags := registerServeFlags(serveCmd)
+	originalServeRunE := serveCmd.RunE
+	serveCmd.RunE = func(cmd *cobra.Command, args []string) error {
+		applyServeFlags(cmd, serveFlags, cfg)
+		// Re-stamp the S3 client User-Agent in case --edge-name was
+		// supplied on the command line (cfg.EdgeName is the source
+		// of truth, regardless of where it came from).
+		uaVersion := Version
+		if cfg.EdgeName != "" {
+			uaVersion = Version + "/" + cfg.EdgeName
+		}
+		objstore.SetClientAppInfo("qatlasd", uaVersion)
+		return originalServeRunE(cmd, args)
+	}
+	app.RootCmd.AddCommand(serveCmd)
+
+	if err := app.Execute(); err != nil {
 		log.Fatal(err)
 	}
 }
