@@ -2,7 +2,7 @@
 
 欢迎给 QuantumAtlas 贡献——代码、文档、Wiki 内容、bug 报告都欢迎。
 
-## 三种贡献路径
+## 四种贡献路径
 
 <div class="grid cards" markdown>
 
@@ -23,6 +23,13 @@
     ---
 
     在独立的 [QuantumAtlas-Wiki](https://github.com/IAI-USTC-Quantum/QuantumAtlas-Wiki) repo 写算法 / 论文 / 原语页面。
+
+-   :material-server-network:{ .lg .middle } **[贡献 MinerU 额度](#mineru-quota)**
+
+    ---
+
+    挂 `qatlas mineru --watch` 把自家 MinerU 账号每天 5000 篇的免费配额导给 catalog，
+    把待解析队列里的 PDF 转成 markdown。零代码贡献路径。
 
 </div>
 
@@ -332,6 +339,34 @@ curl -X POST https://quantum-atlas.ai/api/wiki/sync/pull \
 ```
 
 即使是 fast-forward only，它仍会在服务端跑 git + 重建缓存，因此和其它写口一样需要鉴权，防匿名滥用。
+
+---
+
+## 贡献 MinerU 额度 { #mineru-quota }
+
+MinerU 给每个注册账号送 **5000 篇 / 天** 的免费 PDF→Markdown 解析配额。个人用户基本用不完，
+catalog 里却永远有几千篇 PDF 在 `/api/papers/needs-mineru` 队列里等着。
+把闲置配额挂给项目，就把这些 PDF 变成可全文搜索 / 可被 LLM 抽取 / 可被 wiki 引用的 markdown——
+**零代码贡献路径**。
+
+完整使用指南、错误码分类、daily-limit 退避语义、claim 原子租约模型见
+[用 MinerU 解析 PDF（贡献你的额度）](guides/parse-with-mineru.md)。
+最简流程：
+
+```bash
+# 1. PAT —— 浏览器登录 quantum-atlas.ai 后访问 /pat，勾 papers:write
+qatlas auth login -H quantum-atlas.ai
+
+# 2. MinerU JWT —— mineru.net 注册 → API 管理后台复制（eyJ... 开头）
+#    无 value 触发隐藏粘贴框，JWT 不进 shell history / ps aux。
+qatlas config set MINERU_API_TOKEN
+
+# 3. 挂着持续贡献。多人并发不会撞配额（每篇 30 分钟原子 claim）。
+qatlas mineru --watch
+```
+
+想跨终端 / 跨开关机持续跑（systemd unit、tmux、agent CLI 后台 shell 等方案）见指南里的
+[把 daemon 挂久一点](guides/parse-with-mineru.md#把-daemon-挂久一点)。
 
 ---
 

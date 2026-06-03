@@ -1,8 +1,71 @@
-# 用 MinerU 解析 PDF
+# 用 MinerU 解析 PDF（贡献你的额度）
 
 QuantumAtlas 只暴露**一条** MinerU 路径——**贡献者本地解析**（`qatlas mineru`）。
 合规清理后，server 端**不**提供"匿名读 markdown / server 用自身配额静默转换"
 的端点，也**不**通过 API 对外分发 PDF / markdown 字节。
+
+!!! tip "为什么这算贡献"
+    MinerU 给每个注册账号送 **5000 篇 / 天** 的免费解析额度。绝大多数个人用户每天用不
+    到这个量，而 catalog 里始终有几千篇 PDF 等着被解析成 markdown（解析完才能进
+    全文搜索、被 LLM 抽取、生成 wiki 引用片段）。**`qatlas mineru` 把你闲置的额度
+    导给项目**：你贡献的不是磁盘、不是带宽（PDF 已经在 server 上），而是你那个
+    MinerU 账号每天没用完的那几千篇配额。
+
+## 完全零基础？四条命令上手 { #zero-to-watch }
+
+如果你从来没装过 qatlas，全程就这四条命令，3 分钟搞定：
+
+```bash
+# 1. 装 qatlas（uv 是 https://docs.astral.sh/uv/ 的官方安装器；alpha 版本要 --prerelease=allow）
+uv tool install --prerelease=allow quantum-atlas
+
+# 2. 拿一个上传 PAT。会浏览器打开 GitHub OAuth → 颁发 PAT → 自动写到
+#    ~/.config/qatlas/hosts.yml（明文密钥不进 shell history）。
+qatlas auth login -H quantum-atlas.ai
+
+# 3. 配你的 MinerU token。回车后会出现一个**不显示**的密码输入框，
+#    粘贴 JWT（mineru.net 后台复制，eyJ... 开头）后回车即可。
+qatlas config set MINERU_API_TOKEN
+
+# 4. 挂着持续贡献。Ctrl-C 一次=等当前 batch 完成后优雅退出；两次=立即 abort。
+qatlas mineru --watch
+```
+
+就这样。后面所有章节都是细节展开 —— 跑起来之后再回头看就行。
+
+??? note "几个会让人疑惑的细节"
+    - **第 2 步的 PAT 默认 scope 是 `papers:write`**（包含 `papers:read`）。在
+      [Profile → PAT](https://quantum-atlas.ai/pat) 也能手工创建带其它 scope 的
+      token。
+    - **第 3 步没让你输 `QATLAS_SERVER_URL`** 是因为 default 已经指向
+      `https://quantum-atlas.ai`。换私有 instance 才需要
+      `qatlas config set QATLAS_SERVER_URL https://your-instance/`。
+    - **第 4 步遇到 daily-limit** 不退出——daemon 自动 sleep 到本地次日 00:01
+      额度重置后继续跑。想让它跨终端会话存活、自动重启崩溃的进程，看下面
+      [把 daemon 挂久一点](#把-daemon-挂久一点)。
+    - **JWT 不小心粘错了**？再跑一次 `qatlas config set MINERU_API_TOKEN`
+      覆盖即可，老值会被替换。
+
+## 30 秒上手（已装过 qatlas）
+
+```bash
+# 1. PAT（papers:write）——浏览器登录 quantum-atlas.ai → 顶栏 / 任意语言下的 /pat 申请，
+#    勾上 "Upload paper PDFs and submit MinerU markdown (includes read)" 一项即可。
+qatlas auth login -H quantum-atlas.ai
+
+# 2. MinerU JWT——mineru.net 注册 / OpenXLab 登录 → API 管理后台复制 token。
+#    无 value 触发隐藏粘贴框，避免 JWT 进 shell history / ps aux / scrollback。
+qatlas config set MINERU_API_TOKEN
+# CI 友好：echo "$MINERU_API_TOKEN" | qatlas config set MINERU_API_TOKEN
+# 想一行搞定（注意暴露 history）：qatlas config set MINERU_API_TOKEN eyJ0eXBlIjoi...
+
+# 3. 挂着持续贡献。第一次 Ctrl-C 会等当前 batch 完事再优雅退出并释放未完成的 claim；
+#    第二次直接 abort。
+qatlas mineru --watch
+```
+
+无空配额、无 PAT 的来宾用户也可以读 catalog 的 stats / 待解析队列（`papers:read`
+是 PAT 的默认 scope），但**实际提交 markdown** 需要 `papers:write`。
 
 ## 贡献者路径：`qatlas mineru`
 
@@ -26,9 +89,10 @@ QuantumAtlas 只暴露**一条** MinerU 路径——**贡献者本地解析**（
 # 1. PAT 带 papers:write
 qatlas auth login -H <server>
 
-# 2. 配 MinerU token —— 写到 user-level config（推荐 qatlas config，不需要手动 source）
-qatlas config set MINERU_API_TOKEN msk_...
-# 或老式直接编辑：echo 'MINERU_API_TOKEN=msk_...' >> ~/.config/qatlas/.env
+# 2. 配 MinerU token —— 写到 user-level config，无 value 触发隐藏粘贴框
+#    （JWT 不会进 shell history / ps aux / scrollback）。
+qatlas config set MINERU_API_TOKEN
+# 或老式直接编辑：echo 'MINERU_API_TOKEN=eyJ...' >> ~/.config/qatlas/.env
 ```
 
 PDF 必须**已经在 server 上**（通过 `qatlas ingest` 或 `qatlas upload pdf` 推上去）。
@@ -84,6 +148,82 @@ PDF 必须**已经在 server 上**（通过 `qatlas ingest` 或 `qatlas upload p
     # 后台跑 + 把 stderr 重定向到日志
     nohup qatlas mineru --watch --batch-size 50 > qatlas-mineru.log 2>&1 &
     ```
+
+## 把 daemon 挂久一点
+
+`--watch` 是个普通 foreground 进程；想让它跨终端会话存活，挑你顺手的就行：
+
+=== "tmux / screen"
+
+    ```bash
+    tmux new -s mineru
+    qatlas mineru --watch --batch-size 50
+    # Ctrl-B d 后台化；tmux a -t mineru 回来看进度
+    ```
+
+    最轻量，**没有自动重启**——daemon 自己崩了不会自愈。
+
+=== "nohup"
+
+    ```bash
+    nohup qatlas mineru --watch > qatlas-mineru.log 2>&1 &
+    disown
+    tail -f qatlas-mineru.log
+    ```
+
+    不依赖 tmux/screen，但同样没有自愈。
+
+=== "systemd --user"
+
+    `~/.config/systemd/user/qatlas-mineru.service`：
+
+    ```ini
+    [Unit]
+    Description=QuantumAtlas MinerU contributor daemon
+    After=network-online.target
+
+    [Service]
+    Type=simple
+    ExecStart=%h/.local/bin/qatlas mineru --watch --batch-size 50
+    Restart=on-failure
+    RestartSec=30
+    # 让它能在你登出后继续跑（默认 user instance 会随登出停掉）：
+    #   loginctl enable-linger $USER
+
+    [Install]
+    WantedBy=default.target
+    ```
+
+    ```bash
+    systemctl --user daemon-reload
+    systemctl --user enable --now qatlas-mineru
+    journalctl --user -fu qatlas-mineru
+    ```
+
+    **首选生产部署方式**——崩了自动重启，开机自启，logs 集中到 journal。
+
+=== "Agent CLI（GitHub Copilot CLI / Claude Code 等）"
+
+    把 daemon 挂在 agent 自己的后台 shell 里，让 agent 周期性自己看进度。
+    Copilot CLI 用法：
+
+    ```text
+    # agent 内部：
+    bash mode="async" shellId="mineru-watch"
+      command: qatlas mineru --watch --batch-size 50 2>&1 | tee /tmp/qatlas-mineru.log
+
+    # 过一阵子拉新 stderr 输出：
+    read_bash shellId="mineru-watch"
+
+    # 优雅停：
+    bash: pgrep -af "qatlas mineru" | head -2
+    bash: kill -INT <pid>   # SIGINT 触发"完成当前 batch 后退出"
+    ```
+
+    无 `detach=true` 时进程随 agent session 一起退；要跨 session 存活就用 systemd
+    或 `bash detach=true`。**已实测**（v0.15.0 client + 生产 `quantum-atlas.ai`）
+    在 agent CLI 里跑这条流程能完整走完 claim → submit → poll → upload → release，
+    且 SIGINT 会被 daemon 接住做 graceful shutdown。
 
 ## 完整 flags
 
@@ -158,10 +298,14 @@ server 维护 `<data_dir>/mineru-claims/*.json`：
 ## 常见问题
 
 !!! failure "MINERU_API_TOKEN must be set"
-    client 端 `.env` / 环境变量没配。在 `~/.config/qatlas/.env` 或 `~/QuantumAtlas/.env` 加：
+    client 端 `.env` / 环境变量没配。用 `qatlas config set MINERU_API_TOKEN`
+    无 value 触发隐藏粘贴框（JWT 不进 shell history / ps aux），从
+    mineru.net 拿你的 JWT 粘进去即可：
 
     ```bash
-    MINERU_API_TOKEN=msk_xxx
+    qatlas config set MINERU_API_TOKEN
+    # CI / 脚本：echo "$MINERU_API_TOKEN" | qatlas config set MINERU_API_TOKEN
+    # 老式直接编辑：echo 'MINERU_API_TOKEN=eyJ...' >> ~/.config/qatlas/.env
     ```
 
 !!! failure "skip (HTTP 409): paper already has markdown"
