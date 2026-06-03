@@ -1,5 +1,7 @@
 # 存储路径迁移
 
+> 历史文档。0.x 阶段允许 breaking change，下面是过去几次默认路径迁移的笔记 — 给操作员排查"为啥我的旧 install 找不到 pb_data 了"用。新 install 不需要看。
+
 ## v0.17.0+：XDG 子目录从 `quantum-atlas/` 改为 `qatlasd/`
 
 v0.17.0 把 server 默认 XDG 子目录从 `quantum-atlas/` 改成 `qatlasd/`，跟 binary 名一致：
@@ -10,12 +12,10 @@ v0.17.0 把 server 默认 XDG 子目录从 `quantum-atlas/` 改成 `qatlasd/`，
 | `~/.local/share/quantum-atlas/data` | `~/.local/share/qatlasd/data` |
 | `~/.local/share/quantum-atlas/pb_data` | `~/.local/share/qatlasd/pb_data` |
 
-**Client 路径 `~/.config/qatlas/` 不变**（client 是 `qatlas` Python package，不动）。
-**FHS 路径 `/etc/quantum-atlas/` / `/var/lib/quantum-atlas/` 不变**（systemd unit 历史 conventional path；改的话要重渲染 unit + sudo move，不值得）。
+**Client 路径**由 platformdirs 选定（Linux `~/.config/qatlas/`、macOS `~/Library/Application Support/qatlas/`、Windows `%APPDATA%\qatlas\`），**不变**。
+**FHS 路径 `/etc/quantum-atlas/` / `/var/lib/quantum-atlas/` 不变**（systemd unit 历史 conventional path）。
 
-### 升级 ≤ v0.16.x 的 server
-
-升级 binary 之前：
+### 从 ≤ v0.16.x 升级 server 时手动迁移
 
 ```bash
 # 1. 停服务
@@ -25,26 +25,24 @@ sudo systemctl stop qatlasd          # 或 systemctl --user stop qatlasd
 mv ~/.local/share/quantum-atlas ~/.local/share/qatlasd
 
 # 3. 升 binary
-curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh
+curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh -s -- --version vX.Y.Z
 
 # 4. 启动 + 验证
 sudo systemctl start qatlasd
 curl http://127.0.0.1:4200/api/health | jq
 ```
 
-**不想 rename？两条退路**：
+**忘记迁移会怎样**：server 会在新位置（`qatlasd/`）建一份空 pb_data，OAuth 引导从零跑，老数据保留在 `quantum-atlas/` 里但 server 看不到。补救：停服 → `mv ~/.local/share/quantum-atlas/* ~/.local/share/qatlasd/`（注意目标已有空目录）→ 重启。
 
-```bash
-# a) 显式 env 指回老路径（在 .env 或 systemd Environment= 里写）
+**不想 rename 也行**：在 .env 或 systemd `Environment=` 里显式指回老路径：
+
+```ini
 QATLAS_RAW_DIR=/home/<USER>/.local/share/quantum-atlas/raw
 QATLAS_DATA_DIR=/home/<USER>/.local/share/quantum-atlas/data
 QATLAS_PB_DATA_DIR=/home/<USER>/.local/share/quantum-atlas/pb_data
-
-# b) symlink 老路径 → 新路径
-ln -s ~/.local/share/quantum-atlas ~/.local/share/qatlasd
 ```
 
-不迁移 + 不显式 override 会导致 v0.17.0 server 在新位置建一份空目录，老数据保留但 server 看不到（pb_data 会重新跑 OAuth 引导等）。**fail-loud**：v0.17.0 启动时若 `~/.local/share/quantum-atlas/` 存在 + 显式 env 没指向它 → emit `slog.Warn` 提示需迁移。
+或 symlink `ln -s ~/.local/share/quantum-atlas ~/.local/share/qatlasd`。
 
 ---
 

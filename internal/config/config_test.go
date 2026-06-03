@@ -9,18 +9,6 @@ import (
 	"testing"
 )
 
-// TestMain installs QATLAS_SKIP_LEGACY_DIR_CHECK=1 for the whole
-// package so individual tests that don't care about the v0.17.0
-// migration guard aren't fooled by a real ~/.local/share/quantum-atlas
-// directory on the developer's machine (e.g. v0.16.0 prod data left
-// from local testing). Tests that DO care about the migration guard
-// explicitly t.Setenv("QATLAS_SKIP_LEGACY_DIR_CHECK", "") to opt back
-// in.
-func TestMain(m *testing.M) {
-	_ = os.Setenv("QATLAS_SKIP_LEGACY_DIR_CHECK", "1")
-	os.Exit(m.Run())
-}
-
 func TestExpandPath_RelativeUsesAnchor(t *testing.T) {
 	anchor := "/srv/quantum/checkout"
 	got := expandPath("../QuantumAtlas-Wiki", anchor)
@@ -555,162 +543,11 @@ func TestDeprecatedAliasesMapCoversAllReaders(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// v0.17.0 XDG rename: quantum-atlas/ → qatlasd/
+// (v0.17.0 XDG rename guard tests removed; the legacy quantum-atlas/ check
+// itself is gone now that we're still on 0.x and free to make breaking
+// changes without a soft-fallback. See git log for the previous
+// validateLegacyQuantumAtlasDir implementation if you ever need it back.)
 // ---------------------------------------------------------------------------
-
-// seedLegacyPBData creates the pre-v0.17.0 XDG layout that triggers
-// validateLegacyQuantumAtlasDir. The data.db sentinel file is what
-// makes the check fire (we want to distinguish "real populated
-// legacy install" from "empty stub dir somebody mkdir'd").
-func seedLegacyPBData(t *testing.T, base string) string {
-	t.Helper()
-	legacyPBData := filepath.Join(base, "quantum-atlas", "pb_data")
-	if err := os.MkdirAll(legacyPBData, 0o755); err != nil {
-		t.Fatalf("seed legacy dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(legacyPBData, "data.db"), []byte("stub"), 0o644); err != nil {
-		t.Fatalf("seed legacy data.db: %v", err)
-	}
-	return legacyPBData
-}
-
-func TestLoad_FailsLoudWhenLegacyPBDataPopulatedAndNewIsEmpty(t *testing.T) {
-	// This is the critical "operator upgraded to v0.17.0 without
-	// migrating" path. If we don't fail-loud here, the server boots
-	// against an empty SQLite that looks like a fresh install — every
-	// PAT, every OAuth login, every user record appears to have
-	// vanished.
-	clearStorageEnv(t)
-	clearS3Env(t)
-
-	tmp := t.TempDir()
-	t.Setenv("XDG_DATA_HOME", tmp)
-	t.Setenv("QATLAS_SKIP_LEGACY_DIR_CHECK", "")
-	legacy := seedLegacyPBData(t, tmp)
-
-	_, err := Load("")
-	if err == nil {
-		t.Fatal("expected Load to fail when legacy pb_data is populated and new path is empty; got success")
-	}
-	msg := err.Error()
-	for _, expected := range []string{
-		"pre-v0.17.0 XDG data directory",
-		legacy,
-		filepath.Join(tmp, "qatlasd", "pb_data"),
-		"mv",                              // operator-actionable command
-		"QATLAS_PB_DATA_DIR",              // alternative env override
-		"QATLAS_SKIP_LEGACY_DIR_CHECK",    // documented escape hatch
-	} {
-		if !strings.Contains(msg, expected) {
-			t.Errorf("error message missing %q; full message:\n%s", expected, msg)
-		}
-	}
-}
-
-func TestLoad_SucceedsWhenExplicitPBDataDirOverride(t *testing.T) {
-	// Operators who keep using the legacy paths via QATLAS_PB_DATA_DIR
-	// must not be blocked — they made an explicit decision.
-	clearStorageEnv(t)
-	clearS3Env(t)
-
-	tmp := t.TempDir()
-	t.Setenv("XDG_DATA_HOME", tmp)
-	legacy := seedLegacyPBData(t, tmp)
-	t.Setenv("QATLAS_PB_DATA_DIR", filepath.Dir(legacy)) // point back at legacy
-
-	_, err := Load("")
-	if err != nil {
-		t.Fatalf("Load should succeed with explicit PB_DATA_DIR override; got: %v", err)
-	}
-}
-
-func TestLoad_SucceedsWhenBothLegacyAndCurrentPBDataExist(t *testing.T) {
-	// Operator already migrated (current is populated). Don't block
-	// on the leftover legacy dir; soft-warn instead so they can clean
-	// it up at leisure.
-	clearStorageEnv(t)
-	clearS3Env(t)
-	t.Setenv("QATLAS_SKIP_LEGACY_DIR_CHECK", "")  // opt in (TestMain sets =1 globally)
-
-	tmp := t.TempDir()
-	t.Setenv("XDG_DATA_HOME", tmp)
-	_ = seedLegacyPBData(t, tmp)
-
-	currentPBData := filepath.Join(tmp, "qatlasd", "pb_data")
-	if err := os.MkdirAll(currentPBData, 0o755); err != nil {
-		t.Fatalf("seed current dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(currentPBData, "data.db"), []byte("stub"), 0o644); err != nil {
-		t.Fatalf("seed current data.db: %v", err)
-	}
-
-	buf := captureSlog(t)
-	if _, err := Load(""); err != nil {
-		t.Fatalf("Load should succeed when both layouts exist; got: %v", err)
-	}
-	// Soft warn lets the operator know they have cleanup pending.
-	if !strings.Contains(buf.String(), "both pre-v0.17.0 and current") {
-		t.Errorf("expected dual-layout warn; got:\n%s", buf.String())
-	}
-}
-
-func TestLoad_RespectsQATLAS_SKIP_LEGACY_DIR_CHECK(t *testing.T) {
-	// Documented escape hatch — the operator may have a weird setup
-	// our heuristic doesn't recognise. Must not block them.
-	clearStorageEnv(t)
-	clearS3Env(t)
-
-	tmp := t.TempDir()
-	t.Setenv("XDG_DATA_HOME", tmp)
-	_ = seedLegacyPBData(t, tmp)
-	t.Setenv("QATLAS_SKIP_LEGACY_DIR_CHECK", "1")
-
-	if _, err := Load(""); err != nil {
-		t.Errorf("Load should succeed with skip env var set; got: %v", err)
-	}
-}
-
-func TestLoad_NoFailWhenLegacyDirHasOnlyEmptyAuxiliaries(t *testing.T) {
-	// Legacy dir present but no pb_data/data.db sentinel — operator
-	// might have moved pb_data already and left raw/ behind. Don't
-	// block boot; soft-warn so they finish cleanup.
-	clearStorageEnv(t)
-	clearS3Env(t)
-	t.Setenv("QATLAS_SKIP_LEGACY_DIR_CHECK", "")  // opt in (TestMain sets =1 globally)
-
-	tmp := t.TempDir()
-	t.Setenv("XDG_DATA_HOME", tmp)
-	// Create raw/ but not pb_data/ — common after a partial mv.
-	if err := os.MkdirAll(filepath.Join(tmp, "quantum-atlas", "raw"), 0o755); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-
-	buf := captureSlog(t)
-	if _, err := Load(""); err != nil {
-		t.Fatalf("Load should succeed with auxiliary-only legacy dir; got: %v", err)
-	}
-	if !strings.Contains(buf.String(), "pre-v0.17.0 XDG sub-directory") {
-		t.Errorf("expected soft warn for legacy raw/; got:\n%s", buf.String())
-	}
-}
-
-func TestLoad_NoWarnWhenLegacyAbsent(t *testing.T) {
-	clearStorageEnv(t)
-	clearS3Env(t)
-
-	tmp := t.TempDir()
-	t.Setenv("XDG_DATA_HOME", tmp)
-	// Legacy path NOT created → no warn expected.
-
-	buf := captureSlog(t)
-	if _, err := Load(""); err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-
-	if strings.Contains(buf.String(), "pre-v0.17.0") {
-		t.Errorf("unexpected migration warn (legacy dir absent):\n%s", buf.String())
-	}
-}
 
 func TestIsGitHubLoginAllowed_FailClosedWhenEmpty(t *testing.T) {
 	c := &Config{} // both lists empty
