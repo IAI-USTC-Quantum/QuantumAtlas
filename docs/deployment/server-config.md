@@ -149,6 +149,18 @@ firstEnvIntDefault(0, "SOME_INT_VAR")               // 同上但 int
 
 > `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` 仍然有效，但只用于 client 侧 `qatlas extractor` 实验性子命令；qatlasd server 从未读过它们，所以不在 server 启动 env 范围里。
 
+### 2.8 pb_data 多进程防护（v0.17.0+）
+
+PocketBase + SQLite 的多写者语义是"WAL 允许多 reader / 单 writer"——两个 qatlasd 进程指同一份 `pb_data` 时，**不会启动失败**但**几乎必然数据腐败**（schema migration 撞，`_collections` / `_externalAuths` 写撞）。
+
+自 v0.17.0 起 server 启动时在 `<pb_data>/qatlasd.lock` 上取**OS 级 advisory flock**（`flock(2)`，库 `github.com/gofrs/flock`）。第二个 qatlasd 启动撞到锁 → fatal exit，错误信息含 pb_data 路径 + lock 路径 + 两条出路（换 pb_data 目录 / 紧急绕过）。
+
+- 进程崩溃 / `kill -9` / OOM → **内核自动释放 lock**，下次重启正常（不像 pid 文件可能 stale）
+- 操作员子命令（`qatlasd pat mint` / `users list` 等）**不**取这个 lock —— 它们走 SQLite 自己的短读事务，可以跟 running `serve` 共存
+- 紧急绕过：`QATLAS_SKIP_PB_DATA_LOCK=1`（**仅** disaster recovery / 实验，**不要**用于生产）
+
+要真跑两个 qatlasd，必须**两份不同的 `QATLAS_PB_DATA_DIR`**（其余 `QATLAS_S3_*` / `NEO4J_URI` 等都可以共享，多边缘 active-active 本来就是这套）。
+
 ---
 
 ## 3. 不同部署形态下的注入方式

@@ -360,6 +360,38 @@ func main() {
 	})
 
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
+		// Acquire the single-process lock on pb_data BEFORE any HTTP
+		// listener starts. Done in OnServe (not in main()) because the
+		// `qatlasd serve` subcommand is the only path that mutates
+		// PocketBase tables — operator subcommands like
+		// `qatlasd pat mint` / `qatlasd users list` also open
+		// pb_data but only need a transient read lock from SQLite's
+		// own machinery, so refusing to coexist with a live `serve`
+		// would just make the ops CLI useless during normal
+		// operation.
+		//
+		// The flock is held for the lifetime of this goroutine
+		// (process lifetime); kernel releases it on exit (graceful,
+		// SIGTERM, kill -9, OOM), so a crashed qatlasd never leaves
+		// a stale lock requiring manual cleanup.
+		if pbDataLockSkipRequested() {
+			slog.Warn("QATLAS_SKIP_PB_DATA_LOCK=1 — pb_data multi-process safety bypassed; corruption risk",
+				"pb_data_dir", cfg.PBDataDir)
+		} else {
+			lock, err := acquirePBDataLock(cfg.PBDataDir)
+			if err != nil {
+				return fmt.Errorf("failed to acquire pb_data lock: %w", err)
+			}
+			// Release on graceful PocketBase shutdown. The kernel
+			// will release it anyway on process exit, but being
+			// explicit lets a re-exec (e.g. in-process upgrade)
+			// hand the lock over cleanly.
+			app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
+				_ = lock.Unlock()
+				return e.Next()
+			})
+		}
+
 		// Capture process start time the first time a serve event
 		// fires. /api/health uses this to report uptime_seconds.
 		serverStarted := time.Now()
