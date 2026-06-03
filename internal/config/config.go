@@ -28,9 +28,9 @@ type Config struct {
 	// Filesystem roots. Defaults are computed by Load when the
 	// corresponding env vars are unset:
 	//   - WikiDir   -> <anchor>/../QuantumAtlas-Wiki (sibling checkout)
-	//   - RawDir    -> ${XDG_DATA_HOME:-$HOME/.local/share}/quantum-atlas/raw
-	//   - DataDir   -> ${XDG_DATA_HOME:-$HOME/.local/share}/quantum-atlas/data
-	//   - PBDataDir -> ${XDG_DATA_HOME:-$HOME/.local/share}/quantum-atlas/pb_data
+	//   - RawDir    -> ${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/raw
+	//   - DataDir   -> ${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/data
+	//   - PBDataDir -> ${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/pb_data
 	// "anchor" is the directory containing the .env loaded by the caller,
 	// or the process CWD when no .env was supplied.
 	WikiDir   string // local clone of the Wiki repo (markdown + frontmatter).
@@ -152,9 +152,9 @@ type Config struct {
 //
 // Filesystem defaults (applied when both alias names are unset):
 //   - WikiDir   -> "<anchor>/../QuantumAtlas-Wiki"
-//   - RawDir    -> "${XDG_DATA_HOME:-$HOME/.local/share}/quantum-atlas/raw"
-//   - DataDir   -> "${XDG_DATA_HOME:-$HOME/.local/share}/quantum-atlas/data"
-//   - PBDataDir -> "${XDG_DATA_HOME:-$HOME/.local/share}/quantum-atlas/pb_data"
+//   - RawDir    -> "${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/raw"
+//   - DataDir   -> "${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/data"
+//   - PBDataDir -> "${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/pb_data"
 //
 // These defaults intentionally land *outside* the git checkout so a
 // fresh `git clone` stays clean; see docs/migration-storage-layout.md
@@ -245,7 +245,45 @@ func Load(dotenvPath string) (*Config, error) {
 	// alias is removed in v0.17.0.
 	warnDeprecatedAliases()
 
+	// v0.17.0 renamed the XDG sub-namespace from "quantum-atlas" to
+	// "qatlasd" (matches the binary name). If the legacy directory
+	// still exists and the operator HASN'T overridden the data paths
+	// explicitly, warn that they should either migrate or set the
+	// QATLAS_*_DIR env vars to point at the old paths. Otherwise the
+	// server will silently start with an empty pb_data and the
+	// operator will think their OAuth setup vanished.
+	warnLegacyQuantumAtlasDir()
+
 	return cfg, nil
+}
+
+// warnLegacyQuantumAtlasDir emits a one-time slog.Warn when the
+// pre-v0.17.0 XDG layout ($XDG_DATA_HOME/quantum-atlas/) exists but the
+// process is using the new default ($XDG_DATA_HOME/qatlasd/). This is
+// the "you forgot to migrate" diagnostic — see
+// docs/deployment/migration-storage-layout.md.
+func warnLegacyQuantumAtlasDir() {
+	base := strings.TrimSpace(os.Getenv("XDG_DATA_HOME"))
+	if base == "" || !filepath.IsAbs(base) {
+		home, err := os.UserHomeDir()
+		if err != nil || home == "" {
+			return
+		}
+		base = filepath.Join(home, ".local", "share")
+	}
+	legacy := filepath.Join(base, "quantum-atlas")
+	info, err := os.Stat(legacy)
+	if err != nil || !info.IsDir() {
+		return
+	}
+	current := filepath.Join(base, "qatlasd")
+	slog.Warn(
+		"detected pre-v0.17.0 XDG data directory; server is using the new path. "+
+			"Run `mv` to migrate or set QATLAS_*_DIR env vars to the old paths. "+
+			"See docs/deployment/migration-storage-layout.md.",
+		"legacy_path", legacy,
+		"current_path", current,
+	)
 }
 
 // deprecatedAliases is the canonical map of legacy unprefixed env vars
@@ -453,26 +491,36 @@ func (c *Config) IsGitHubLoginAllowed(login string) bool {
 }
 
 // defaultXDGSubdir returns the XDG_DATA_HOME-rooted default location
-// for the named QuantumAtlas subdirectory (raw / data / pb_data).
+// for the named qatlasd subdirectory (raw / data / pb_data).
 //
 // Lookup order:
 //  1. $XDG_DATA_HOME, when set and absolute (per XDG spec — relative
 //     values are explicitly invalid).
 //  2. $HOME/.local/share, the spec's documented fallback.
-//  3. ./.quantum-atlas-<name>, a last-resort relative path when even
+//  3. ./.qatlasd-<name>, a last-resort relative path when even
 //     $HOME is missing (e.g. minimal container). This still beats
-//     emitting an absolute root like "/quantum-atlas/raw" that would
+//     emitting an absolute root like "/qatlasd/raw" that would
 //     fail with EACCES on the first write.
 //
 // All returned values are absolute when paths #1 or #2 apply.
+//
+// **App name = "qatlasd"** (matches the binary name). Older versions
+// (< v0.17.0) used "quantum-atlas" as the XDG sub-namespace. Operators
+// upgrading from < v0.17.0 should rename their data directory:
+//
+//	mv ~/.local/share/quantum-atlas ~/.local/share/qatlasd
+//
+// or set the explicit env vars (QATLAS_RAW_DIR / _DATA_DIR /
+// _PB_DATA_DIR) to point at the old paths. See
+// docs/deployment/migration-storage-layout.md.
 func defaultXDGSubdir(name string) string {
 	base := strings.TrimSpace(os.Getenv("XDG_DATA_HOME"))
 	if base == "" || !filepath.IsAbs(base) {
 		if home, err := os.UserHomeDir(); err == nil && home != "" {
 			base = filepath.Join(home, ".local", "share")
 		} else {
-			return filepath.Join(".quantum-atlas-" + name) // tiny last-resort
+			return filepath.Join(".qatlasd-" + name) // tiny last-resort
 		}
 	}
-	return filepath.Join(base, "quantum-atlas", name)
+	return filepath.Join(base, "qatlasd", name)
 }

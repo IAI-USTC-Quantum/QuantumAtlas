@@ -231,7 +231,7 @@ ProtectSystem=full
 ProtectHome=no
 LockPersonality=true
 RestrictRealtime=true
-ReadWritePaths=/etc/quantum-atlas /var/lib/quantum-atlas /home/<USER>/.local/share/quantum-atlas
+ReadWritePaths=/etc/quantum-atlas /var/lib/quantum-atlas /home/<USER>/.local/share/qatlasd
 
 [Install]
 WantedBy=multi-user.target
@@ -290,7 +290,7 @@ qatlasd service uninstall
 trash-put ~/.local/bin/qatlasd
 
 # pb_data / wiki / raw 不会被自动删 —— 你自己决定是否保留
-# trash-put ~/.local/share/quantum-atlas/
+# trash-put ~/.local/share/qatlasd/
 ```
 
 ## 不用 service 也行（开发 / 容器场景）

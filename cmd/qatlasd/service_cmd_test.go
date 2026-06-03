@@ -77,7 +77,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=no
-ReadWritePaths=` + filepath.Join(home, "QuantumAtlas") + ` ` + filepath.Join(home, ".local/share/quantum-atlas") + `
+ReadWritePaths=` + filepath.Join(home, "QuantumAtlas") + ` ` + filepath.Join(home, ".local/share/qatlasd") + `
 LockPersonality=true
 RestrictRealtime=true
 
@@ -133,7 +133,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=no
-ReadWritePaths=` + filepath.Join(home, "QuantumAtlas") + ` ` + filepath.Join(home, ".local/share/quantum-atlas") + `
+ReadWritePaths=` + filepath.Join(home, "QuantumAtlas") + ` ` + filepath.Join(home, ".local/share/qatlasd") + `
 LockPersonality=true
 RestrictRealtime=true
 
@@ -171,7 +171,7 @@ func TestComputeReadWritePathsHonoursXDG(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", customShare)
 
 	paths := computeReadWritePaths(dotenvPath)
-	want := filepath.Join(customShare, "quantum-atlas")
+	want := filepath.Join(customShare, "qatlasd")
 	found := false
 	for _, p := range paths {
 		if p == want {
@@ -229,9 +229,9 @@ func TestValidateDotenvPathRejectsDirectory(t *testing.T) {
 // Regression target: pre-fix `computeReadWritePaths` called os.UserHomeDir
 // directly, which under `sudo qatlasd service install` returns /root
 // (sudo's default HOME reset). The resulting ReadWritePaths granted writes
-// to /root/.local/share/quantum-atlas — a path the eventual User=<sudo-user>
 // daemon never touches, leaving the *actual* state dir blocked by
-// ProtectSystem=full.
+// ProtectSystem=full. (Pre-v0.17.0 the share path was named "quantum-atlas",
+// renamed to "qatlasd" to match the binary; the bug is identical either way.)
 //
 // The test impersonates a sudo invocation by setting $HOME to a junk dir
 // and $SUDO_USER to the current process's username (guaranteed to be
@@ -274,7 +274,7 @@ func TestEffectiveHomeDirFallsBackToEnvHome(t *testing.T) {
 // TestComputeReadWritePathsUnderSimulatedSudo is the integration-level
 // guard against the same bug: with $HOME pointing at a junk dir but
 // $SUDO_USER naming a real account, the resulting ReadWritePaths must
-// include the real account's $XDG_DATA_HOME/quantum-atlas, not the junk
+// include the real account's $XDG_DATA_HOME/qatlasd, not the junk
 // HOME's. This is the path that ultimately lands in the systemd unit.
 func TestComputeReadWritePathsUnderSimulatedSudo(t *testing.T) {
 	current, err := user.Current()
@@ -300,8 +300,8 @@ func TestComputeReadWritePathsUnderSimulatedSudo(t *testing.T) {
 	paths := computeReadWritePaths(dotenvPath)
 	joined := strings.Join(paths, " ")
 
-	wantShare := filepath.Join(current.HomeDir, ".local/share/quantum-atlas")
-	unwantedShare := filepath.Join(junkHome, ".local/share/quantum-atlas")
+	wantShare := filepath.Join(current.HomeDir, ".local/share/qatlasd")
+	unwantedShare := filepath.Join(junkHome, ".local/share/qatlasd")
 
 	if !strings.Contains(joined, wantShare) {
 		t.Errorf("expected ReadWritePaths to include %q (real SUDO_USER home), got: %s",

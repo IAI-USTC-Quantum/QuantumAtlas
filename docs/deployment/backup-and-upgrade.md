@@ -18,7 +18,7 @@ QuantumAtlas 有三层状态，各自的备份 / 升级语义不同：
 sudo systemctl stop qatlasd
 
 # 2. 直接 cp（mode preserve）
-sudo cp -a /home/<USER>/.local/share/quantum-atlas/pb_data \
+sudo cp -a /home/<USER>/.local/share/qatlasd/pb_data \
           /var/backups/pb_data-$(date +%F)
 
 # 3. 起回来
@@ -56,7 +56,7 @@ set -euo pipefail
 DEST=/var/backups/qatlas/pb_data-$(date +%F).tar.gz
 mkdir -p $(dirname "$DEST")
 systemctl stop qatlasd
-tar czf "$DEST" -C /home/<USER>/.local/share/quantum-atlas pb_data
+tar czf "$DEST" -C /home/<USER>/.local/share/qatlasd pb_data
 systemctl start qatlasd
 # 保留最近 4 周
 find /var/backups/qatlas/ -name 'pb_data-*.tar.gz' -mtime +28 -delete
@@ -143,7 +143,7 @@ curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh -s -- --version v0.2
 gh release view v0.2.9   # 或在 GitHub 网页看
 
 # 3. （可选）备份 pb_data
-sudo cp -a /home/<USER>/.local/share/quantum-atlas/pb_data \
+sudo cp -a /home/<USER>/.local/share/qatlasd/pb_data \
           /var/backups/pb_data-pre-v0.2.9
 
 # 4. Restart
@@ -174,9 +174,9 @@ curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh -s -- --version v0.2
 
 # 恢复 pb_data（如果 migration 改了 schema）
 sudo systemctl stop qatlasd
-sudo rm -rf /home/<USER>/.local/share/quantum-atlas/pb_data
+sudo rm -rf /home/<USER>/.local/share/qatlasd/pb_data
 sudo cp -a /var/backups/pb_data-pre-v0.2.9 \
-          /home/<USER>/.local/share/quantum-atlas/pb_data
+          /home/<USER>/.local/share/qatlasd/pb_data
 sudo systemctl start qatlasd
 ```
 

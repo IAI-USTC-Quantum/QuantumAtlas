@@ -338,7 +338,7 @@ func validateDotenvPath(path string) error {
 // `env_reset`), so a plain os.UserHomeDir() during
 // `sudo qatlasd service install --mode system` would yield /root,
 // poisoning ReadWritePaths (and the .env autodetect candidates) with
-// /root/.local/share/quantum-atlas — a path the eventual `User=<sudo-user>`
+// /root/.local/share/qatlasd — a path the eventual `User=<sudo-user>`
 // daemon will never write to, making the hardening grant useless.
 //
 // Resolution order:
@@ -359,7 +359,8 @@ func effectiveHomeDir() string {
 // computeReadWritePaths returns the paths systemd should grant write access
 // to under ReadWritePaths=. We include:
 //   - the .env directory (server may rewrite .env in future migrations)
-//   - $XDG_DATA_HOME/quantum-atlas (PB_DATA_DIR / DATA_DIR / RAW_DIR fallback)
+//   - $XDG_DATA_HOME/qatlasd (PB_DATA_DIR / DATA_DIR / RAW_DIR fallback;
+//     renamed from "quantum-atlas" in v0.17.0 to match the binary name)
 //   - ~/QuantumAtlas-Wiki if it exists (git fetch writes refs)
 //
 // Duplicates are removed. Order is preserved for stable test snapshots.
@@ -374,7 +375,7 @@ func computeReadWritePaths(absDotenv string) []string {
 		if share == "" {
 			share = filepath.Join(home, ".local", "share")
 		}
-		paths = append(paths, filepath.Join(share, "quantum-atlas"))
+		paths = append(paths, filepath.Join(share, "qatlasd"))
 
 		wiki := filepath.Join(home, "QuantumAtlas-Wiki")
 		if info, err := os.Stat(wiki); err == nil && info.IsDir() {

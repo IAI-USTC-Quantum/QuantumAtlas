@@ -14,7 +14,7 @@
 | 资源占用 | binary ~50 MB RSS | + container overhead 5-10 MB / service |
 | 默认日志去向 | journald (`journalctl -u qatlasd`) | stdout (`docker logs qatlasd` / log driver) |
 | Caddy / nginx 反代 | host 上跑（推荐） | host 上跑或者 compose 内 sidecar |
-| 备份 | rsync `~/.local/share/quantum-atlas/`（XDG）/ `/var/lib/quantum-atlas/`（FHS） | `tar czf data.tgz data/`（bind mount） |
+| 备份 | rsync `~/.local/share/qatlasd/`（XDG）/ `/var/lib/quantum-atlas/`（FHS） | `tar czf data.tgz data/`（bind mount） |
 
 简单原则：
 

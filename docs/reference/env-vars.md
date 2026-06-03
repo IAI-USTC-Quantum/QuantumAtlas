@@ -65,9 +65,9 @@ server 端项目自有变量带 `QATLAS_` 前缀；第三方 SDK 标准名（`NE
 
 | 变量 | Alias（⚠️ v0.17.0 移除） | 默认 |
 |---|---|---|
-| `QATLAS_RAW_DIR` | `RAW_DIR` | `${XDG_DATA_HOME:-$HOME/.local/share}/quantum-atlas/raw` |
-| `QATLAS_DATA_DIR` | `DATA_DIR` | `${XDG_DATA_HOME:-$HOME/.local/share}/quantum-atlas/data` |
-| `QATLAS_PB_DATA_DIR` | `PB_DATA_DIR` | `${XDG_DATA_HOME:-$HOME/.local/share}/quantum-atlas/pb_data` |
+| `QATLAS_RAW_DIR` | `RAW_DIR` | `${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/raw` |
+| `QATLAS_DATA_DIR` | `DATA_DIR` | `${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/data` |
+| `QATLAS_PB_DATA_DIR` | `PB_DATA_DIR` | `${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/pb_data` |
 
 - 想覆盖到挂载盘 / `/var/lib/`？显式赋绝对路径
 - `QATLAS_PB_DATA_DIR` 被自动注入为 PocketBase `--dir=`——**不要**在 systemd `ExecStart` 里再硬写 `--dir=`

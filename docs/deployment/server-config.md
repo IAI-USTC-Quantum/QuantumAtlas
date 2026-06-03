@@ -83,9 +83,9 @@ firstEnvIntDefault(0, "SOME_INT_VAR")               // 同上但 int
 |---|---|---|
 | `QATLAS_DOTENV` | — | **显式 .env 文件路径**；查找顺序见 §1.1 |
 | `QATLAS_WIKI_DIR` (alias `WIKI_DIR`) | `<.env 目录>/../QuantumAtlas-Wiki` | wiki repo checkout（git pull / lint / search 都在这） |
-| `QATLAS_RAW_DIR` (alias `RAW_DIR`) | `${XDG_DATA_HOME:-$HOME/.local/share}/quantum-atlas/raw` | LocalStore 文件后端目录；S3 backend 启用时不读 |
-| `QATLAS_DATA_DIR` (alias `DATA_DIR`) | `${XDG_DATA_HOME:-$HOME/.local/share}/quantum-atlas/data` | 业务派生数据（claim leases 等） |
-| `QATLAS_PB_DATA_DIR` (alias `PB_DATA_DIR`) | `${XDG_DATA_HOME:-$HOME/.local/share}/quantum-atlas/pb_data` | PocketBase SQLite + collections + uploads。通过 `--dir=` 自动注入 PocketBase cobra 根命令 |
+| `QATLAS_RAW_DIR` (alias `RAW_DIR`) | `${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/raw` | LocalStore 文件后端目录；S3 backend 启用时不读 |
+| `QATLAS_DATA_DIR` (alias `DATA_DIR`) | `${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/data` | 业务派生数据（claim leases 等） |
+| `QATLAS_PB_DATA_DIR` (alias `PB_DATA_DIR`) | `${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/pb_data` | PocketBase SQLite + collections + uploads。通过 `--dir=` 自动注入 PocketBase cobra 根命令 |
 | `XDG_DATA_HOME` | `~/.local/share` | 上面 3 个 dir 默认值的 base |
 
 ### 2.3 公开 URL

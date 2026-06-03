@@ -157,9 +157,9 @@ func TestLoad_DefaultsResolveXDGDataHome(t *testing.T) {
 	cases := []struct {
 		name, got, want string
 	}{
-		{"RawDir", cfg.RawDir, filepath.Join(xdg, "quantum-atlas", "raw")},
-		{"DataDir", cfg.DataDir, filepath.Join(xdg, "quantum-atlas", "data")},
-		{"PBDataDir", cfg.PBDataDir, filepath.Join(xdg, "quantum-atlas", "pb_data")},
+		{"RawDir", cfg.RawDir, filepath.Join(xdg, "qatlasd", "raw")},
+		{"DataDir", cfg.DataDir, filepath.Join(xdg, "qatlasd", "data")},
+		{"PBDataDir", cfg.PBDataDir, filepath.Join(xdg, "qatlasd", "pb_data")},
 	}
 	for _, c := range cases {
 		if c.got != c.want {
@@ -178,7 +178,7 @@ func TestLoad_DefaultsFallBackToHomeWhenXDGUnset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	base := filepath.Join(home, ".local", "share", "quantum-atlas")
+	base := filepath.Join(home, ".local", "share", "qatlasd")
 	cases := []struct {
 		name, got, want string
 	}{
@@ -206,7 +206,7 @@ func TestLoad_DefaultsRejectRelativeXDGDataHome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	want := filepath.Join(home, ".local", "share", "quantum-atlas", "raw")
+	want := filepath.Join(home, ".local", "share", "qatlasd", "raw")
 	if cfg.RawDir != want {
 		t.Errorf("RawDir = %q, want %q (relative XDG_DATA_HOME must be rejected)",
 			cfg.RawDir, want)
@@ -280,19 +280,19 @@ func TestLoad_LegacyAliasesStillRecognized(t *testing.T) {
 
 func TestDefaultXDGSubdir_Unit(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", "/srv/xdg")
-	if got := defaultXDGSubdir("raw"); got != "/srv/xdg/quantum-atlas/raw" {
+	if got := defaultXDGSubdir("raw"); got != "/srv/xdg/qatlasd/raw" {
 		t.Errorf("absolute XDG_DATA_HOME: got %q", got)
 	}
 
 	t.Setenv("XDG_DATA_HOME", "")
 	t.Setenv("HOME", "/home/test")
-	if got := defaultXDGSubdir("data"); got != "/home/test/.local/share/quantum-atlas/data" {
+	if got := defaultXDGSubdir("data"); got != "/home/test/.local/share/qatlasd/data" {
 		t.Errorf("HOME fallback: got %q", got)
 	}
 
 	t.Setenv("XDG_DATA_HOME", "relative-path-rejected")
 	t.Setenv("HOME", "/home/test")
-	if got := defaultXDGSubdir("pb_data"); got != "/home/test/.local/share/quantum-atlas/pb_data" {
+	if got := defaultXDGSubdir("pb_data"); got != "/home/test/.local/share/qatlasd/pb_data" {
 		t.Errorf("relative XDG should be rejected: got %q", got)
 	}
 }
@@ -535,6 +535,57 @@ func TestDeprecatedAliasesMapCoversAllReaders(t *testing.T) {
 	if len(got) != len(expected) {
 		t.Errorf("deprecatedAliases() size = %d, want %d; check whether a new alias was added without registering",
 			len(got), len(expected))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// v0.17.0 XDG rename: quantum-atlas/ → qatlasd/
+// ---------------------------------------------------------------------------
+
+func TestLoad_WarnsWhenLegacyQuantumAtlasDirExists(t *testing.T) {
+	clearStorageEnv(t)
+	clearS3Env(t)
+
+	tmp := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", tmp)
+	// Seed the pre-v0.17.0 layout so the warn condition fires.
+	legacy := filepath.Join(tmp, "quantum-atlas")
+	if err := os.MkdirAll(legacy, 0o755); err != nil {
+		t.Fatalf("seed legacy dir: %v", err)
+	}
+
+	buf := captureSlog(t)
+	if _, err := Load(""); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "pre-v0.17.0 XDG data directory") {
+		t.Errorf("expected migration warn message; got:\n%s", out)
+	}
+	if !strings.Contains(out, legacy) {
+		t.Errorf("expected warn to mention legacy path %q; got:\n%s", legacy, out)
+	}
+	if !strings.Contains(out, filepath.Join(tmp, "qatlasd")) {
+		t.Errorf("expected warn to mention current path; got:\n%s", out)
+	}
+}
+
+func TestLoad_NoWarnWhenLegacyAbsent(t *testing.T) {
+	clearStorageEnv(t)
+	clearS3Env(t)
+
+	tmp := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", tmp)
+	// Legacy path NOT created → no warn expected.
+
+	buf := captureSlog(t)
+	if _, err := Load(""); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if strings.Contains(buf.String(), "pre-v0.17.0") {
+		t.Errorf("unexpected migration warn (legacy dir absent):\n%s", buf.String())
 	}
 }
 

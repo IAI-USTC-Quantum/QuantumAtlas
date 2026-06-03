@@ -17,7 +17,7 @@
 implementations:
 
 - `LocalStore` — directory under `cfg.RawDir` (XDG default
-  `~/.local/share/quantum-atlas/raw/`). Dev / first-boot / CI.
+  `~/.local/share/qatlasd/raw/`). Dev / first-boot / CI.
   No version concept, no presigned URLs.
 - `S3Store` — RustFS / MinIO / Amazon S3, via `minio-go/v7`.
   Production.
@@ -33,7 +33,7 @@ raw store: S3 backend http://<rustfs-internal-host>:9000/qatlas-raw
 on every boot. Without them it logs
 
 ```
-raw store: local backend /home/<USER>/.local/share/quantum-atlas/raw
+raw store: local backend /home/<USER>/.local/share/qatlasd/raw
 ```
 
 The split is in `cmd/qatlasd/main.go::initRawStore` and the

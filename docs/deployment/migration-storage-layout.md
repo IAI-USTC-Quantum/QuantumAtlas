@@ -1,6 +1,54 @@
-# 存储路径迁移：把 wiki / raw / data / pb_data 搬出 git checkout
+# 存储路径迁移
 
-## 背景
+## v0.17.0+：XDG 子目录从 `quantum-atlas/` 改为 `qatlasd/`
+
+v0.17.0 把 server 默认 XDG 子目录从 `quantum-atlas/` 改成 `qatlasd/`，跟 binary 名一致：
+
+| 旧（≤ v0.16.x） | 新（≥ v0.17.0） |
+|---|---|
+| `~/.local/share/quantum-atlas/raw` | `~/.local/share/qatlasd/raw` |
+| `~/.local/share/quantum-atlas/data` | `~/.local/share/qatlasd/data` |
+| `~/.local/share/quantum-atlas/pb_data` | `~/.local/share/qatlasd/pb_data` |
+
+**Client 路径 `~/.config/qatlas/` 不变**（client 是 `qatlas` Python package，不动）。
+**FHS 路径 `/etc/quantum-atlas/` / `/var/lib/quantum-atlas/` 不变**（systemd unit 历史 conventional path；改的话要重渲染 unit + sudo move，不值得）。
+
+### 升级 ≤ v0.16.x 的 server
+
+升级 binary 之前：
+
+```bash
+# 1. 停服务
+sudo systemctl stop qatlasd          # 或 systemctl --user stop qatlasd
+
+# 2. 重命名 XDG 数据目录（同一 filesystem 内 mv 是原子的）
+mv ~/.local/share/quantum-atlas ~/.local/share/qatlasd
+
+# 3. 升 binary
+curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh
+
+# 4. 启动 + 验证
+sudo systemctl start qatlasd
+curl http://127.0.0.1:4200/api/health | jq
+```
+
+**不想 rename？两条退路**：
+
+```bash
+# a) 显式 env 指回老路径（在 .env 或 systemd Environment= 里写）
+QATLAS_RAW_DIR=/home/<USER>/.local/share/quantum-atlas/raw
+QATLAS_DATA_DIR=/home/<USER>/.local/share/quantum-atlas/data
+QATLAS_PB_DATA_DIR=/home/<USER>/.local/share/quantum-atlas/pb_data
+
+# b) symlink 老路径 → 新路径
+ln -s ~/.local/share/quantum-atlas ~/.local/share/qatlasd
+```
+
+不迁移 + 不显式 override 会导致 v0.17.0 server 在新位置建一份空目录，老数据保留但 server 看不到（pb_data 会重新跑 OAuth 引导等）。**fail-loud**：v0.17.0 启动时若 `~/.local/share/quantum-atlas/` 存在 + 显式 env 没指向它 → emit `slog.Warn` 提示需迁移。
+
+---
+
+## 历史：把 wiki / raw / data / pb_data 搬出 git checkout（v0.5.x → v0.6.x）
 
 历史上 `WIKI_DIR` / `RAW_DIR` / `DATA_DIR` / `pb_data` 都默认指向 git
 checkout 内的 `wiki/` / `raw/` / `data/` / `pb_data/`。这有几个长期
@@ -21,9 +69,9 @@ checkout 内的 `wiki/` / `raw/` / `data/` / `pb_data/`。这有几个长期
 | 字段 | 新默认 | 实现位置 |
 |---|---|---|
 | `WIKI_DIR` | `<.env 所在目录>/../QuantumAtlas-Wiki` | `internal/config/config.go::defaultWikiDir` |
-| `RAW_DIR` | `${XDG_DATA_HOME:-$HOME/.local/share}/quantum-atlas/raw` | `defaultXDGSubdir("raw")` |
-| `DATA_DIR` | `${XDG_DATA_HOME:-$HOME/.local/share}/quantum-atlas/data` | `defaultXDGSubdir("data")` |
-| `PB_DATA_DIR` | `${XDG_DATA_HOME:-$HOME/.local/share}/quantum-atlas/pb_data` | `defaultXDGSubdir("pb_data")` |
+| `RAW_DIR` | `${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/raw` | `defaultXDGSubdir("raw")` |
+| `DATA_DIR` | `${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/data` | `defaultXDGSubdir("data")` |
+| `PB_DATA_DIR` | `${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/pb_data` | `defaultXDGSubdir("pb_data")` |
 | `.env` | **保持 `<repo>/.env`** | 12-factor / dotenv 主流做法，未改 |
 
 所有默认都是显式覆盖优先（QATLAS_* > 旧 alias > 内置默认），生产部署
@@ -37,7 +85,7 @@ checkout 内的 `wiki/` / `raw/` / `data/` / `pb_data/`。这有几个长期
 ## 个人开发机：把仓库内的 wiki/raw/data/pb_data 搬出来
 
 假设你的仓库在 `<APP_HOME>`（举例 `~/QuantumAtlas/`），旧的状态目录都在
-那里面，目标是把它们挪到 `$XDG_DATA_HOME/quantum-atlas/` 下、让 git
+那里面，目标是把它们挪到 `$XDG_DATA_HOME/qatlasd/` 下、让 git
 checkout 重新干净。
 
 ```bash
@@ -49,7 +97,7 @@ systemctl --user stop qatlas.service                # systemd user
 pkill -f 'qatlasd serve' || true                # 手起 binary
 
 # 1. 准备 XDG 目标目录
-xdg_root="${XDG_DATA_HOME:-$HOME/.local/share}/quantum-atlas"
+xdg_root="${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd"
 mkdir -p "$xdg_root"
 
 cd "$APP_HOME"

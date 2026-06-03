@@ -738,7 +738,7 @@ func injectHTTPFlag(cfg *config.Config) {
 //
 // equivalent to
 //
-//	qatlasd --dir=$HOME/.local/share/quantum-atlas/pb_data serve
+//	qatlasd --dir=$HOME/.local/share/qatlasd/pb_data serve
 //
 // on a fresh box, while still respecting any operator-supplied --dir.
 //
