@@ -1,65 +1,45 @@
-"""``qatlas config`` — manage the user-level config file.
+"""``qatlas config`` — inspect / edit the user-level config file.
 
-v0.17.0 simplification: the YAML schema is derived automatically from
-``ServerConfig.model_fields`` (in ``qatlas/config.py``), and the
-read/write surface here just maps the operator's env-var-style key
-(``QATLAS_SERVER_URL``, ``MINERU_API_TOKEN``) onto the corresponding
-snake_case YAML field. No hand-maintained mapping table; adding a new
-field to ``ServerConfig`` automatically exposes it through
-``qatlas config set/get/unset/show``.
+v0.17.0: YAML-only config at ``~/.config/qatlas/config.yaml``. Auto-
+created on first run of any ``qatlas`` subcommand (no separate ``init``
+step). This module provides:
 
-Subcommands: path, init, show, get, set, unset. Keys are addressed by
-their canonical env-var name (``QATLAS_SERVER_URL``,
-``MINERU_API_TOKEN``, ...) — the identifier operators already know.
-Internally ``qatlas.config.env_alias_to_field`` maps it onto the
-snake_case YAML key (``server_url``, ``mineru_api_token``) before
-reading or writing.
+* ``qatlas config path`` — print the canonical YAML path
+* ``qatlas config show`` — dump current resolved values (secrets masked)
+* ``qatlas config get <key>`` — print one resolved value, exit 1 if unset
+* ``qatlas config set <key> <value>`` — write a value (hidden prompt for
+  sensitive keys; reads stdin when piped)
+* ``qatlas config unset <key>`` — remove a value (no-op if absent)
 
-Design notes:
+Keys are the snake_case YAML field names defined on ``ServerConfig``:
+``server_url``, ``token``, ``insecure``, ``mineru_api_token``, ... The
+full list comes from ``ServerConfig.model_fields`` so adding a field is
+automatically reflected here.
 
-* Writes go through a tempfile + atomic rename so a partial write
-  can't corrupt the file even on SIGKILL mid-edit. File mode 0600
-  (secrets like PAT, MinerU JWT live here).
-* PyYAML is used unconditionally — round-trip comment preservation
-  (ruamel.yaml) was rejected because ``set`` will always rewrite
-  the file anyway, and ``gh / kubectl`` operate the same way. The
-  generated header comment explicitly tells the user this.
-* User-facing CLI rejects unknown env var names rather than silently
-  ignoring them, so a typo in ``qatlas config set QATLS_TOKEN ...``
-  fails loudly.
+Writes go through tempfile + atomic rename; file mode is 0600.
 """
 
 from __future__ import annotations
 
 import argparse
-import os
 import re
 import sys
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from qatlas import config_yaml
-from qatlas.config import (
-    ServerConfig,
-    env_alias_to_field,
-    field_to_env_alias,
-)
-from qatlas.paths import (
-    resolve_config_path,
-    user_config_yaml_path,
-    user_dotenv_path,
-)
+from qatlas.config import ServerConfig
+from qatlas.paths import user_config_yaml_path
 
-_SENSITIVE_SUBSTRINGS = ("TOKEN", "SECRET", "KEY", "PASSWORD")
+_SENSITIVE_SUBSTRINGS = ("token", "secret", "key", "password")
 
 
 def _print_err(msg: str) -> None:
     print(msg, file=sys.stderr)
 
 
-def _is_sensitive(env_name: str) -> bool:
-    upper = env_name.upper()
-    return any(s in upper for s in _SENSITIVE_SUBSTRINGS)
+def _is_sensitive(field_name: str) -> bool:
+    lower = field_name.lower()
+    return any(s in lower for s in _SENSITIVE_SUBSTRINGS)
 
 
 def _mask(value: str) -> str:
@@ -70,85 +50,41 @@ def _mask(value: str) -> str:
     return f"{value[:4]}\u2026{value[-4:]} ({len(value)} chars)"
 
 
-_VALID_KEY_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
+_VALID_KEY_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
 
 
 def _validate_key(key: str) -> None:
     if not _VALID_KEY_RE.match(key):
         raise SystemExit(
             f"invalid key {key!r}: must match {_VALID_KEY_RE.pattern} "
-            "(uppercase, digits, underscores; no leading digit)"
+            "(lowercase snake_case, e.g. server_url / mineru_api_token)"
         )
 
 
-def _resolve_field(env_name: str) -> str:
-    """Map QATLAS_SERVER_URL -> server_url; raise SystemExit with a
-    friendly diagnostic when the env-var name doesn't claim any
-    ServerConfig field (typo or server-only field like
-    QATLAS_S3_ENDPOINT that the client schema doesn't carry).
+def _resolve_field(key: str) -> str:
+    """Map a YAML key onto a known ``ServerConfig`` field.
+
+    Rejects unknown keys with a clear error listing all known keys so a
+    typo (``qatlas config set servr_url ...``) fails loudly.
     """
-    field = env_alias_to_field(env_name)
-    if field is None:
-        known = sorted(
-            {field_to_env_alias(name) for name in ServerConfig.model_fields}
-            - {None}
-        )
-        raise SystemExit(
-            f"{env_name!r} is not a recognised client config key.\n"
-            f"Known keys: {', '.join(known)}\n"
-            f"For server-side env vars (NEO4J_*, QATLAS_S3_*, etc.) edit the\n"
-            f"server's .env directly - they're not part of the client config.yaml."
-        )
-    return field
+    if key in ServerConfig.model_fields:
+        return key
+    known = sorted(ServerConfig.model_fields)
+    raise SystemExit(
+        f"{key!r} is not a recognised client config key.\n"
+        f"Known keys: {', '.join(known)}\n"
+        f"Server-side fields (NEO4J_*, QATLAS_S3_*, GITHUB_*) live in the\n"
+        f"qatlasd server's .env, not here."
+    )
 
 
 def cmd_path(args: argparse.Namespace) -> int:
-    path, source = resolve_config_path()
-    if path is None:
-        print(
-            f"(no config file found; would default to {user_config_yaml_path()})"
-        )
-        return 0
-    print(f"{path}\t({source})")
-    return 0
-
-
-def cmd_init(args: argparse.Namespace) -> int:
-    yaml_target = user_config_yaml_path()
-    legacy_dotenv = user_dotenv_path()
-
-    if legacy_dotenv.is_file() and not yaml_target.exists():
-        dropped = config_yaml.migrate_dotenv_to_yaml(legacy_dotenv, yaml_target)
-        if dropped:
-            _print_err(
-                f"Note: {len(dropped)} key(s) had no client config field and were dropped:\n"
-                f"  {', '.join(dropped)}\n"
-                f"They were server-side env vars or unknown user vars; not used by "
-                f"the qatlas client. If you need them, set them via shell `export`."
-            )
-        print(f"Wrote {yaml_target}")
-        return 0
-
-    if yaml_target.exists() and not args.force:
-        _print_err(
-            f"{yaml_target} already exists. Use --force to overwrite "
-            "(existing values are PRESERVED unless overwritten)."
-        )
-        return 1
-
-    seed: Dict[str, Any] = {}
-    if yaml_target.exists() and args.force:
-        seed = config_yaml.load_yaml_file(yaml_target)
-        if seed:
-            _print_err(f"Refreshing {yaml_target}: preserving existing values.")
-
-    config_yaml.write_yaml_atomic(yaml_target, seed)
-    print(f"Wrote {yaml_target}")
-    if not seed:
-        print(
-            "Edit the file, or run "
-            "`qatlas config set QATLAS_SERVER_URL https://...` to populate."
-        )
+    """Print the canonical YAML path (whether or not it currently exists)."""
+    path = user_config_yaml_path()
+    print(path)
+    if not path.is_file():
+        print("(file not yet created; will be auto-created on next `qatlas` invocation)",
+              file=sys.stderr)
     return 0
 
 
@@ -163,7 +99,7 @@ def cmd_set(args: argparse.Namespace) -> int:
         # No value on the command line: prompt interactively. For sensitive
         # keys (TOKEN / SECRET / KEY / PASSWORD) hide the typed value with
         # getpass so it doesn't end up in scrollback. For piped stdin (CI /
-        # scripts) read one line: `echo $TOKEN | qatlas config set KEY`.
+        # scripts) read one line: `echo $TOKEN | qatlas config set token`.
         if not sys.stdin.isatty():
             value = sys.stdin.readline().rstrip("\n\r")
         elif _is_sensitive(args.key):
@@ -179,7 +115,7 @@ def cmd_set(args: argparse.Namespace) -> int:
 
     target = user_config_yaml_path()
     data = config_yaml.load_yaml_file(target) if target.is_file() else {}
-    data[field] = config_yaml._coerce_for_field(field, value)
+    data[field] = config_yaml.coerce_for_field(field, value)
     config_yaml.write_yaml_atomic(target, data)
 
     if _is_sensitive(args.key):
@@ -209,55 +145,56 @@ def cmd_unset(args: argparse.Namespace) -> int:
 
 
 def cmd_get(args: argparse.Namespace) -> int:
+    """Print the resolved value of one key. Exit 1 when unset/null.
+
+    The "resolved" value comes from ``ServerConfig.from_env()`` (i.e.
+    after Field defaults + YAML overlay), not the raw YAML — so e.g.
+    ``qatlas config get mineru_api_base_url`` on a fresh install prints
+    ``https://mineru.net`` even though the YAML doesn't carry it.
+    """
     _validate_key(args.key)
-    field = env_alias_to_field(args.key)
-
-    env_value = os.environ.get(args.key)
-    if env_value is not None and env_value != "":
-        print(env_value)
-        return 0
-
-    if field is not None:
-        cfg = ServerConfig.from_env()
-        value = getattr(cfg, field, None)
-        if value is not None and value != "":
-            if isinstance(value, bool):
-                print("true" if value else "false")
-            else:
-                print(value)
-            return 0
-    return 1
+    if args.key not in ServerConfig.model_fields:
+        return 1
+    cfg = ServerConfig.from_env()
+    value = getattr(cfg, args.key, None)
+    if value is None or value == "":
+        return 1
+    if isinstance(value, bool):
+        print("true" if value else "false")
+    else:
+        print(value)
+    return 0
 
 
 def cmd_show(args: argparse.Namespace) -> int:
-    path, source = resolve_config_path()
-    print(f"# config source: {path or '(env-only)'} ({source or 'no-file'})")
+    """Dump all field=value pairs after YAML overlay.
+
+    Sensitive fields (containing ``token`` / ``secret`` / ``key`` /
+    ``password`` in their name) are masked; pass ``--unmask`` for full
+    plaintext (debug only; avoid screen-sharing).
+    """
+    path = user_config_yaml_path()
+    print(f"# config file: {path}{'  (does not exist yet; using defaults)' if not path.is_file() else ''}")
     print()
 
     cfg = ServerConfig.from_env()
 
     rendered: Dict[str, Optional[str]] = {}
     for field_name in ServerConfig.model_fields:
-        env_name = field_to_env_alias(field_name)
-        if env_name is None:
-            continue
         value = getattr(cfg, field_name, None)
         if value is None:
-            rendered[env_name] = None
+            rendered[field_name] = None
         elif isinstance(value, bool):
-            rendered[env_name] = "true" if value else "false"
+            rendered[field_name] = "true" if value else "false"
         else:
-            rendered[env_name] = str(value)
+            rendered[field_name] = str(value)
 
-    for env_name in ("QATLAS_CONFIG", "QATLAS_DOTENV", "QATLAS_SKIP_DOTENV"):
-        rendered.setdefault(env_name, os.environ.get(env_name))
-
-    for env_name in sorted(rendered):
-        value = rendered[env_name]
+    for field_name in sorted(rendered):
+        value = rendered[field_name]
         text = "" if value is None else str(value)
-        if text and _is_sensitive(env_name) and not args.unmask:
+        if text and _is_sensitive(field_name) and not args.unmask:
             text = _mask(text)
-        print(f"{env_name}={text}")
+        print(f"{field_name}: {text}")
     return 0
 
 
@@ -265,48 +202,38 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="qatlas config",
         description=(
-            "Manage the user-level qatlas config file "
-            f"({user_config_yaml_path()}). Run `qatlas config init` first."
+            "Inspect / edit the user-level qatlas config file "
+            f"({user_config_yaml_path()}). Auto-created on first run; "
+            "edit directly or use the subcommands below."
         ),
     )
     subs = p.add_subparsers(dest="subcommand", required=True)
 
-    sp = subs.add_parser("path", help="Print the active config file path")
+    sp = subs.add_parser("path", help="Print the config file path")
     sp.set_defaults(func=cmd_path)
 
-    sp = subs.add_parser(
-        "init",
-        help="Create ~/.config/qatlas/config.yaml (auto-migrates legacy .env)",
-    )
-    sp.add_argument(
-        "--force",
-        action="store_true",
-        help="Overwrite an existing YAML file (existing values are preserved)",
-    )
-    sp.set_defaults(func=cmd_init)
-
     sp = subs.add_parser("set", help="Set a key in the user config file")
-    sp.add_argument("key", help="Env var name, e.g. QATLAS_SERVER_URL")
+    sp.add_argument("key", help="Field name, e.g. server_url / token / mineru_api_token")
     sp.add_argument(
         "value",
         nargs="?",
         default=None,
         help=(
             "Value. Omit to prompt interactively (hidden for sensitive "
-            "keys like *TOKEN / *KEY / *SECRET / *PASSWORD). Reads stdin "
-            "if not a tty: `echo $TOKEN | qatlas config set MINERU_API_TOKEN`."
+            "keys like *token / *key / *secret / *password). Reads stdin "
+            "if not a tty: `echo $TOKEN | qatlas config set token`."
         ),
     )
     sp.set_defaults(func=cmd_set)
 
     sp = subs.add_parser("unset", help="Remove a key from the user config file")
-    sp.add_argument("key", help="Env var name to delete")
+    sp.add_argument("key", help="Field name to delete")
     sp.set_defaults(func=cmd_unset)
 
     sp = subs.add_parser(
-        "get", help="Print the resolved value of one key (precedence-aware)"
+        "get", help="Print one resolved value (exit 1 if unset)"
     )
-    sp.add_argument("key", help="Env var name, e.g. QATLAS_SERVER_URL")
+    sp.add_argument("key", help="Field name, e.g. server_url")
     sp.set_defaults(func=cmd_get)
 
     sp = subs.add_parser("show", help="Dump all resolved config values")

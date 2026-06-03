@@ -1,19 +1,14 @@
 """YAML config IO helpers for the ``qatlas`` user-level CLI.
 
-v0.17.0 returned to a minimal surface: ``ServerConfig`` (in
-``qatlas/config.py``) talks to YAML directly through
-``pydantic_settings.YamlConfigSettingsSource``, and this module only
-houses the helpers that operate on the YAML *as a file* — read, write,
-atomic-replace, migrate from legacy ``.env``.
+v0.17.0 (this rewrite): client config is YAML-only. ``ServerConfig``
+in ``qatlas/config.py`` reads ``~/.config/qatlas/config.yaml`` through
+``pydantic_settings.YamlConfigSettingsSource``; this module only houses
+the file-IO helpers used by ``qatlas config show / set / get / unset``.
 
-The earlier v0.16.0 ``YAML_TO_ENV`` map + ``flatten_yaml_to_env`` /
-``bootstrap_env_from_yaml`` / hand-rolled set/get/unset are gone; that
-logic is now derived automatically from ``ServerConfig.model_fields``
-(via ``env_alias_to_field`` / ``field_to_env_alias`` in config.py).
-
-Migration semantics (``.env`` → ``config.yaml``) live here because
-they're a one-shot, file-system-level concern, not a configuration
-schema concern.
+The earlier ``.env`` → YAML migration logic is gone: v0.17.0 dropped
+all env / dotenv support, so users upgrading from v0.16 or earlier
+just need to copy their env values into the auto-created
+``config.yaml``.
 """
 
 from __future__ import annotations
@@ -21,36 +16,27 @@ from __future__ import annotations
 import logging
 import os
 import stat
-import sys
 import tempfile
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
 
 
 HEADER_COMMENT = """\
-# QuantumAtlas client config
+# QuantumAtlas client config (v0.17.0+)
 #
-# Managed by `qatlas config init/set/unset` — those commands REWRITE
-# this file and discard hand-written comments (matches the gh / kubectl
-# `config set` behaviour). If you want persistent notes, keep them in a
-# wrapper script that exports QATLAS_* / MINERU_* env vars instead.
+# Managed by `qatlas config set/unset` — those commands REWRITE this
+# file and discard hand-written comments (matches the gh / kubectl
+# `config set` behaviour). If you want persistent notes, keep them in
+# a wrapper script alongside this file.
 #
-# Resolution order (see `qatlas config path`):
-#   1. CLI flag (--server-url / --token / --insecure / ...)
-#   2. OS env var (QATLAS_*, MINERU_*, OPENAI_*, ANTHROPIC_*)
-#   3. $QATLAS_CONFIG (explicit YAML override)
-#   4. $QATLAS_DOTENV (legacy .env override; ⚠️ deprecated, removed in v0.18.0)
-#   5. ~/.config/qatlas/config.yaml          ← this file
-#   6. ~/.config/qatlas/.env                 ← legacy, auto-migrated by init
-#   7. Built-in defaults defined in qatlas/config.py
+# Resolution: this file is the ONLY config source. CLI flags / OS env
+# vars / `QATLAS_DOTENV` / `QATLAS_CONFIG` are NOT consulted in v0.17.0+.
+# Auto-created on first `qatlas` invocation; edit freely.
 #
-# Use snake_case keys at the top level (server_url, token,
-# mineru_api_token, openai_api_key, ...). The full field list is the
-# ServerConfig class in qatlas/config.py — keys not declared there are
-# silently ignored.
+# Field reference: see the ServerConfig class in qatlas/config.py.
+# Unknown keys are silently ignored.
 """
 
 
@@ -118,84 +104,12 @@ def write_yaml_atomic(path: Path, data: Dict[str, Any]) -> None:
         raise
 
 
-def parse_dotenv(path: Path) -> Dict[str, str]:
-    """Tiny dotenv parser used only by the .env → config.yaml
-    migration path. We deliberately don't pull in python-dotenv here
-    (already imported elsewhere) to keep the migration logic
-    self-contained — anybody chasing a migration bug can read this
-    file end-to-end without learning a third-party library.
-    """
-    out: Dict[str, str] = {}
-    if not path.is_file():
-        return out
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        if "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        key = key.strip()
-        value = value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
-            value = value[1:-1]
-        out[key] = value
-    return out
+def coerce_for_field(field_name: str, raw_value: str) -> Any:
+    """Coerce a string value (e.g. from ``qatlas config set <key> <value>``)
+    into the type the ``ServerConfig`` field expects.
 
-
-def migrate_dotenv_to_yaml(dotenv_path: Path, yaml_path: Path) -> List[str]:
-    """One-shot migration: read legacy .env, write equivalent YAML,
-    rename the .env to ``.env.migrated-from-vX.Y.Z.<timestamp>`` so
-    nothing is silently lost.
-
-    Returns the list of env-var names that had no corresponding
-    ``ServerConfig`` field and were therefore dropped (caller should
-    warn the user). The renamed backup file is kept indefinitely —
-    rollback path is "rename backup back to .env, delete config.yaml,
-    downgrade qatlas".
-
-    Performs the env→field mapping via :func:`qatlas.config.env_alias_to_field`,
-    so the migration automatically tracks any future schema additions
-    without touching this module.
-    """
-    from qatlas.config import env_alias_to_field
-
-    env_pairs = parse_dotenv(dotenv_path)
-    if not env_pairs:
-        return []
-
-    yaml_dict: Dict[str, Any] = {}
-    dropped: List[str] = []
-    for env_name, raw_value in env_pairs.items():
-        if raw_value == "":
-            continue
-        field = env_alias_to_field(env_name)
-        if field is None:
-            dropped.append(env_name)
-            continue
-        yaml_dict[field] = _coerce_for_field(field, raw_value)
-
-    yaml_path.parent.mkdir(parents=True, exist_ok=True)
-    write_yaml_atomic(yaml_path, yaml_dict)
-
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    backup = dotenv_path.with_name(f".env.migrated-from-v0.17.0.{timestamp}")
-    dotenv_path.rename(backup)
-    print(
-        f"Migrated {dotenv_path.name} -> {yaml_path.name}; "
-        f"original kept as {backup.name} for safety.",
-        file=sys.stderr,
-    )
-    return dropped
-
-
-def _coerce_for_field(field_name: str, raw_value: str) -> Any:
-    """Coerce a string value from a .env file into the type the
-    ``ServerConfig`` field expects. Lazy-imports config to avoid a
-    circular import on module load.
-
-    Only handles the field types we actually carry today (bool, int,
-    float). Anything else passes through as a string.
+    Handles ``bool`` / ``int`` / ``float``; everything else passes
+    through as a string. Lazy-imports config to avoid circular imports.
     """
     from qatlas.config import ServerConfig
 

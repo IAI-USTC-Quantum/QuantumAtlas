@@ -276,11 +276,18 @@ def test_token_subcommand_unknown_host_is_error(capsys):
     assert "Not logged into" in err
 
 
-def test_token_subcommand_falls_back_to_qatlas_server_url(monkeypatch, capsys):
-    """Omitting --host on `token` must use QATLAS_SERVER_URL so a
-    user-friendly default exists for shell substitution.
+def test_token_subcommand_falls_back_to_yaml_server_url(monkeypatch, tmp_path, capsys):
+    """Omitting --host on `token` must use ``server_url:`` from
+    ``~/.config/qatlas/config.yaml`` so a user-friendly default exists
+    for shell substitution (v0.17.0: yaml-only, no env fallback).
     """
-    monkeypatch.setenv("QATLAS_SERVER_URL", "https://quantum-atlas.ai")
+    home = tmp_path / "auth-home"
+    home.mkdir()
+    cfg_dir = home / ".config" / "qatlas"
+    cfg_dir.mkdir(parents=True)
+    (cfg_dir / "config.yaml").write_text("server_url: https://quantum-atlas.ai\n")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     auth.main(["login", "-H", "quantum-atlas.ai", "--token", "qat_envHost"])
     capsys.readouterr()
     rc = auth.main(["token"])

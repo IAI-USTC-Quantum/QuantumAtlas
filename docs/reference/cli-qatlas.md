@@ -13,16 +13,16 @@ qatlas [--version] [--help] <subcommand> [args...]
 | `--version` / `-V` | 打印 `qatlas X.Y.Z` |
 | `--help` / `-h` | 列出所有子命令 + 别名 |
 
-## 通用 client flags
+## 通用 client flag
 
-所有调 server 的子命令（ingest / upload / mineru 等）都接受这几个 flag：
+所有调 server 的子命令（ingest / upload / mineru 等）都接受这个 flag：
 
 | Flag | 默认 | 含义 |
 |---|---|---|
-| `--base-url <url>` | `$QATLAS_SERVER_URL` 或本地 .env 默认 | 显式指向 server |
-| `--token <plaintext>` | (按 [precedence](../guides/manage-credentials.md#precedence)) | bearer token |
-| `--insecure` | false / `$QATLAS_INSECURE=1` | 跳过 TLS 校验 |
-| `--request-timeout <seconds>` | 120.0 | 单 HTTP 请求超时 |
+| `--request-timeout <seconds>` | 120.0 | 单 HTTP 请求超时（per-call 临时调） |
+
+!!! info "v0.17.0 删除了 `--base-url` / `--token` / `--insecure` flag"
+    服务器 URL / token / TLS 选项现在**只能**写在 `~/.config/qatlas/config.yaml`。短命令调用是 client 的主要使用场景，每次重新指 server 反而麻烦。如果有"两个项目走两个 server"的需要，用 `XDG_CONFIG_HOME=/path/to/other-config qatlas ...` 临时切（freedesktop 标准机制）。
 
 ---
 
@@ -30,7 +30,7 @@ qatlas [--version] [--help] <subcommand> [args...]
 
 ### `qatlas config`
 
-管理 user-level 配置文件 `~/.config/qatlas/config.yaml`（v0.16.0+；老版本是 `~/.config/qatlas/.env`，首次 `qatlas config init` 会自动迁移）。给 `uv tool install` 用户用，不需要手动 `export` 环境变量。
+inspect / edit user-level YAML 配置 `~/.config/qatlas/config.yaml`。**首次跑任何 `qatlas <cmd>` 自动创建模板**——不再需要 `qatlas config init` 步骤。给 `uv tool install` 用户用，不需要 `export` 任何 env。
 
 ```
 qatlas config <subcommand>
@@ -38,49 +38,51 @@ qatlas config <subcommand>
 
 | Subcommand | 含义 |
 |---|---|
-| `path` | 打印当前生效的配置文件路径 + 来源（`xdg_yaml` / `xdg_dotenv_legacy` / `env_override_yaml` / `env_override_dotenv_legacy` / no-file） |
-| `init [--force]` | 在 `~/.config/qatlas/config.yaml` 写一份空模板。**若存在 legacy `.env` 且无 yaml → 自动迁移**（原 .env 重命名为 `.env.migrated-from-v0.16.0.<timestamp>`，不删除）。`--force` 覆盖已有 yaml，**保留**现有键值 |
-| `set <KEY> <VALUE>` | 写一个 key=value 到 config.yaml（KEY 用 env var 名形式，如 `QATLAS_TOKEN`；不在 client schema 里的字段如 `NEO4J_*` / `QATLAS_S3_*` 会被 typo guard 拒绝）。文件不存在时自动建（0600 perms）。敏感字段（含 `TOKEN` / `SECRET` / `KEY` / `PASSWORD`）echo 时遮罩 |
-| `unset <KEY>` | 删除一个 key，空 section 自动 prune |
-| `get <KEY>` | 打印 key 解析后的真值（按完整优先级链：CLI flag > env var > `$QATLAS_CONFIG` > `$QATLAS_DOTENV` > `~/.config/qatlas/config.yaml` > `~/.config/qatlas/.env` > 内置默认）。无值时 exit 1，suitable for shell 插值 |
-| `show [--unmask]` | dump 所有解析后的字段；敏感值遮罩，`--unmask` 完整打印 |
+| `path` | 打印 yaml 文件路径（无论是否存在） |
+| `set <key> <value>` | 写一个 key=value。`key` 用 **snake_case** YAML 字段名（如 `server_url` / `token` / `mineru_api_token`），不再用 env-var 大写形式。文件不存在时自动建（0600 perms）。敏感字段（含 `token` / `secret` / `key` / `password`）echo 时遮罩 |
+| `unset <key>` | 删除一个 key |
+| `get <key>` | 打印 key 在 yaml + Field default overlay 后的真值。无值时 exit 1，适合 shell 插值 |
+| `show [--unmask]` | dump 所有字段（snake_case key: value 形式）；敏感值遮罩，`--unmask` 完整打印 |
 
-**配置文件优先级**（每个字段独立解析）：
+**配置入口**（v0.17.0+ 极简）：
 
-1. **CLI flag** — `--base-url` / `--token` / `--insecure` 等
-2. **OS 环境变量** — `QATLAS_*`、`MINERU_*`、`OPENAI_*`、`ANTHROPIC_*` 等
-3. **`$QATLAS_CONFIG`** — 显式 YAML 路径覆盖（systemd unit / docker / k8s）
-4. **`$QATLAS_DOTENV`** — 显式 legacy .env 路径（⚠️ deprecated，v0.17.0 移除）
-5. **`~/.config/qatlas/config.yaml`** — XDG 主入口（`qatlas config init` 创建）
-6. **`~/.config/qatlas/.env`** — XDG legacy（首次 init 自动迁移到 yaml）
-7. **内置默认** — 各字段定义的 Field default
+1. **`~/.config/qatlas/config.yaml`** — **唯一**配置源（首次跑任意命令自动创建）
+2. **内置 Field default** — 各字段在 `qatlas/config.py` 的 `ServerConfig` 上定义
 
-完整 yaml schema 见 [env-vars.md §「Client 配置文件解析」](../reference/env-vars.md#client-qatlas-配置文件解析)。
+没有 CLI flag overrides，没有 OS env vars，没有 `$QATLAS_DOTENV` / `$QATLAS_CONFIG`。这是有意的极简化——client 用户基本是"配一次长期用"的模式，多入口反而增加心智负担（v0.16 起 client 不再借 server 的 `.env` 跑）。
 
-!!! note "不读 `./.env` / `./config.yaml`"
-    跟 `gh` / `docker` / `kubectl` / `aws` 同款约定 —— user-level CLI **不**自动从 cwd 拾起任何配置。想临时用某个目录的配置：`QATLAS_CONFIG=$PWD/myconfig.yaml qatlas ...` 一次性。v0.15.0a4 及更早版本曾有 cwd legacy fallback，v0.15.0a5 起去除。
+!!! note "想换 config 文件位置？用 `XDG_CONFIG_HOME`"
+    遵循 freedesktop XDG 标准：`XDG_CONFIG_HOME=/etc/myconfig qatlas <cmd>` 让 yaml 落到 `/etc/myconfig/qatlas/config.yaml`。dev 切多份配置用同样套路。
 
 !!! warning "`qatlas config set` 会抹掉手写注释"
-    PyYAML 不保留 round-trip 注释，跟 `gh` / `kubectl config set` 行为一致。要永久注释，直接编辑文件 + 不用 `set`；或维护一个 wrapper 脚本 `export QATLAS_*=...` 代替 yaml。`config init` 生成的 header 注释每次 `set` 都会被重写，是预期行为。
+    PyYAML 不保留 round-trip 注释，跟 `gh` / `kubectl config set` 行为一致。要永久注释，直接编辑 yaml 不用 `set`。auto-init 写出的 header 注释每次 `set` 都会被重写，是预期行为。
 
 **典型 workflow**：
 
 ```bash
-# 首次安装 + 配置（v0.16.0+）
+# 首次安装 + 配置（v0.17.0+）
 uv tool install --prerelease=allow quantum-atlas
-qatlas config init                                        # 创建 config.yaml 模板
-qatlas config set QATLAS_SERVER_URL https://quantum-atlas.ai
-qatlas config set QATLAS_TOKEN qat_xxxxxxxx               # 从 https://quantum-atlas.ai/pat 拿
-qatlas config set MINERU_API_TOKEN eyJ0eXBlI...           # 若要跑 qatlas mineru
+qatlas --help                                       # 任意命令都触发 yaml 自动创建
+qatlas config set server_url https://quantum-atlas.ai
+qatlas config set token qat_xxxxxxxx                # 从 https://quantum-atlas.ai/pat 拿
+qatlas config set mineru_api_token eyJ0eXBlI...     # 若要跑 qatlas mineru
 
-# 之后任何 qatlas 子命令直接跑，无需 source / export
+# 看 yaml 路径
+qatlas config path
+# /home/you/.config/qatlas/config.yaml
+
+# 看效果
+qatlas config show
+# server_url: https://quantum-atlas.ai
+# token: qat_…xxxx (12 chars)
+# ...
+
+# 之后任何 qatlas 子命令直接跑
 qatlas wiki list --type source
 qatlas mineru --batch-size 3
-
-# 从 v0.15.x 升上来：legacy .env 自动迁移
-qatlas config init   # 检测到 ~/.config/qatlas/.env、yaml 不存在 → 自动迁移
-                     # 原文件保留为 .env.migrated-from-v0.16.0.<timestamp>
 ```
+
+> v0.16 / 更早升级到 v0.17.0：删了 `qatlas config init` 子命令、删了 `.env` → yaml 自动迁移。如果你之前在用 `~/.config/qatlas/.env`，**手工**把内容搬到 `~/.config/qatlas/config.yaml`（字段名从 `QATLAS_SERVER_URL` 改成 `server_url`、`MINERU_API_TOKEN` 改成 `mineru_api_token`，去掉 `QATLAS_` 前缀小写化），原 .env 删掉。
 
 详细：[管理凭证](../guides/manage-credentials.md)、[入门](../getting-started.md)。
 

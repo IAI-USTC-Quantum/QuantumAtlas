@@ -1,17 +1,12 @@
 """Tests for ``qatlas.config_yaml`` (v0.17.0+ minimal surface).
 
-v0.17.0 removed the hand-maintained YAML_TO_ENV map / flatten /
-bootstrap_env_from_yaml; ``ServerConfig`` now reads YAML directly
-through ``pydantic_settings.YamlConfigSettingsSource``. config_yaml
-keeps only:
+config_yaml now houses only file-IO helpers used by ``qatlas config``:
 
 * load / dump / atomic write
-* legacy ``.env`` parser
-* one-shot ``migrate_dotenv_to_yaml``
+* coerce_for_field (string → bool/int/float per ServerConfig schema)
 
-These tests focus on those surface behaviours plus a guard that
-``_ENV_SYNC_TARGETS`` (in qatlas.config) stays in sync with the actual
-ServerConfig fields.
+The earlier ``.env`` migration logic was removed when v0.17.0 dropped
+all env / dotenv support.
 """
 
 from __future__ import annotations
@@ -22,12 +17,7 @@ from pathlib import Path
 import pytest
 
 from qatlas import config_yaml
-from qatlas.config import (
-    _ENV_SYNC_TARGETS,
-    ServerConfig,
-    env_alias_to_field,
-    field_to_env_alias,
-)
+from qatlas.config import ServerConfig
 
 
 # ---------------------------------------------------------------------------
@@ -59,256 +49,144 @@ class TestLoadYamlFile:
         with pytest.raises(ValueError, match=str(p)):
             config_yaml.load_yaml_file(p)
 
+    def test_simple_mapping_round_trip(self, tmp_path: Path) -> None:
+        p = tmp_path / "config.yaml"
+        p.write_text("server_url: https://atlas.example/\ninsecure: false\n")
+        loaded = config_yaml.load_yaml_file(p)
+        assert loaded == {"server_url": "https://atlas.example/", "insecure": False}
+
 
 class TestDumpYaml:
     def test_includes_header_comment(self) -> None:
-        text = config_yaml.dump_yaml({"server_url": "https://x"})
-        assert text.startswith("# QuantumAtlas client config")
-        assert "qatlas config init/set/unset" in text
-        # Header explicitly tells users `set` rewrites the file
-        # (matches kubectl/gh behaviour) — they shouldn't be surprised
-        # when hand-written notes vanish.
-        assert "REWRITE" in text or "rewrite" in text.lower()
+        out = config_yaml.dump_yaml({"server_url": "https://x"})
+        assert "QuantumAtlas client config" in out
+        assert "server_url: https://x" in out
 
-    def test_empty_dict_renders_blank_body(self) -> None:
-        # A fresh `qatlas config init` writes an empty dict; the file
-        # must NOT contain a literal `{}` — that would look like
-        # garbage to a human reader.
-        text = config_yaml.dump_yaml({})
-        assert "{}" not in text
+    def test_empty_dict_emits_header_only(self) -> None:
+        out = config_yaml.dump_yaml({})
+        # Body is empty but the header is preserved so a fresh file
+        # still tells the user how to fill it.
+        assert "QuantumAtlas client config" in out
+        # Verify no spurious null content.
+        assert "null" not in out
 
-    def test_preserves_insertion_order(self) -> None:
-        # sort_keys=False so the operator-friendly ordering survives a
-        # round-trip. server_url should appear before insecure when
-        # we add them in that order.
-        text = config_yaml.dump_yaml(
-            {"server_url": "https://x", "insecure": True, "token": "qat_y"}
+    def test_preserves_caller_ordering(self) -> None:
+        # PyYAML alphabetises by default; we override with
+        # ``sort_keys=False`` to keep the operator-relevant fields
+        # (server_url, token) on top.
+        out = config_yaml.dump_yaml(
+            {"server_url": "https://x", "anthropic_api_key": "sk-..."}
         )
-        idx_url = text.index("server_url:")
-        idx_insecure = text.index("insecure:")
-        idx_token = text.index("token:")
-        assert idx_url < idx_insecure < idx_token
+        server_idx = out.find("server_url:")
+        anth_idx = out.find("anthropic_api_key:")
+        assert server_idx < anth_idx, "caller-supplied ordering must survive dump"
 
 
 class TestWriteYamlAtomic:
-    def test_writes_with_0600_perms(self, tmp_path: Path) -> None:
-        target = tmp_path / "config.yaml"
-        config_yaml.write_yaml_atomic(target, {"server_url": "https://x"})
-
-        mode = stat.S_IMODE(target.stat().st_mode)
-        assert mode == 0o600, (
-            f"file perm = {oct(mode)}, want 0o600 (secrets must not be group/other readable)"
-        )
-
-    def test_creates_parent_directory(self, tmp_path: Path) -> None:
-        target = tmp_path / "deeply" / "nested" / "config.yaml"
+    def test_creates_file_with_0600_mode(self, tmp_path: Path) -> None:
+        target = tmp_path / "sub" / "config.yaml"
         config_yaml.write_yaml_atomic(target, {"server_url": "https://x"})
         assert target.is_file()
+        # 0600: user-only read/write.
+        actual_mode = stat.S_IMODE(target.stat().st_mode)
+        assert actual_mode == 0o600
 
-    def test_full_round_trip_through_disk(self, tmp_path: Path) -> None:
-        original = {
-            "server_url": "https://atlas.example",
-            "token": "qat_xxx",
-            "insecure": False,
-            "mineru_api_token": "jwt_y",
-            "mineru_timeout": 1200,
-        }
+    def test_atomic_replace_does_not_leave_tmp(self, tmp_path: Path) -> None:
         target = tmp_path / "config.yaml"
-        config_yaml.write_yaml_atomic(target, original)
-        reloaded = config_yaml.load_yaml_file(target)
-        assert reloaded == original
+        config_yaml.write_yaml_atomic(target, {"server_url": "https://x"})
+        # Sibling tmp files (config.yaml.XXX.tmp) must be cleaned up.
+        leftovers = [
+            p for p in tmp_path.iterdir()
+            if p.name.startswith("config.yaml.") and p.suffix == ".tmp"
+        ]
+        assert leftovers == []
+
+    def test_overwrites_existing(self, tmp_path: Path) -> None:
+        target = tmp_path / "config.yaml"
+        config_yaml.write_yaml_atomic(target, {"server_url": "https://v1"})
+        config_yaml.write_yaml_atomic(target, {"server_url": "https://v2"})
+        loaded = config_yaml.load_yaml_file(target)
+        assert loaded == {"server_url": "https://v2"}
 
 
 # ---------------------------------------------------------------------------
-# Migration from legacy .env
-# ---------------------------------------------------------------------------
-
-
-class TestMigrateDotenvToYaml:
-    def test_round_trip_known_keys(self, tmp_path: Path) -> None:
-        dotenv = tmp_path / ".env"
-        dotenv.write_text(
-            "QATLAS_SERVER_URL=https://from-env.example\n"
-            'QATLAS_TOKEN="qat_from_env"\n'
-            "MINERU_API_TOKEN=jwt_from_env\n"
-            "QATLAS_INSECURE=1\n"
-            "MINERU_TIMEOUT=600\n"
-            "MINERU_POLL_INTERVAL=2.5\n"
-        )
-        yaml_path = tmp_path / "config.yaml"
-
-        dropped = config_yaml.migrate_dotenv_to_yaml(dotenv, yaml_path)
-        assert dropped == []
-
-        data = config_yaml.load_yaml_file(yaml_path)
-        # Field names are snake_case (ServerConfig field), not env names.
-        assert data["server_url"] == "https://from-env.example"
-        assert data["token"] == "qat_from_env"
-        assert data["mineru_api_token"] == "jwt_from_env"
-        # Bool / int / float coerced from string via ServerConfig field types.
-        assert data["insecure"] is True
-        assert data["mineru_timeout"] == 600
-        assert data["mineru_poll_interval"] == 2.5
-
-    def test_unknown_envvars_dropped_and_reported(self, tmp_path: Path) -> None:
-        dotenv = tmp_path / ".env"
-        dotenv.write_text(
-            "QATLAS_SERVER_URL=https://x.example\n"
-            "NEO4J_URI=bolt://server.example:7687\n"  # server-only — no client field
-            "RANDOM_USER_VAR=foo\n"
-        )
-        yaml_path = tmp_path / "config.yaml"
-
-        dropped = config_yaml.migrate_dotenv_to_yaml(dotenv, yaml_path)
-        assert "NEO4J_URI" in dropped
-        assert "RANDOM_USER_VAR" in dropped
-        assert "QATLAS_SERVER_URL" not in dropped
-
-        data = config_yaml.load_yaml_file(yaml_path)
-        assert data == {"server_url": "https://x.example"}
-
-    def test_renames_original_with_timestamped_suffix(self, tmp_path: Path) -> None:
-        dotenv = tmp_path / ".env"
-        dotenv.write_text("QATLAS_SERVER_URL=https://x.example\n")
-        yaml_path = tmp_path / "config.yaml"
-
-        config_yaml.migrate_dotenv_to_yaml(dotenv, yaml_path)
-
-        # Original file gone; backup with version + timestamp present.
-        assert not dotenv.exists()
-        backups = list(tmp_path.glob(".env.migrated-from-v0.17.0.*"))
-        assert len(backups) == 1
-        # Backup retains the original content so an operator who
-        # mis-migrated can rename it back.
-        assert "QATLAS_SERVER_URL=https://x.example" in backups[0].read_text()
-
-    def test_empty_dotenv_is_noop(self, tmp_path: Path) -> None:
-        dotenv = tmp_path / ".env"
-        dotenv.write_text("# only comments\n\n")
-        yaml_path = tmp_path / "config.yaml"
-
-        dropped = config_yaml.migrate_dotenv_to_yaml(dotenv, yaml_path)
-        assert dropped == []
-        # No yaml written, no rename happened — there was nothing to do.
-        assert not yaml_path.exists()
-        assert dotenv.exists()
-
-
-class TestParseDotenv:
-    def test_handles_comments_quoted_values_blanks(self, tmp_path: Path) -> None:
-        p = tmp_path / ".env"
-        p.write_text(
-            "# top comment\n"
-            "\n"
-            "KEY1=plain\n"
-            'KEY2="double quoted"\n'
-            "KEY3='single quoted'\n"
-            "  # indented comment\n"
-            "KEY4=value with spaces\n"
-        )
-        out = config_yaml.parse_dotenv(p)
-        assert out == {
-            "KEY1": "plain",
-            "KEY2": "double quoted",
-            "KEY3": "single quoted",
-            "KEY4": "value with spaces",
-        }
-
-    def test_missing_file_returns_empty(self, tmp_path: Path) -> None:
-        assert config_yaml.parse_dotenv(tmp_path / "nope.env") == {}
-
-
-# ---------------------------------------------------------------------------
-# _coerce_for_field — used both by migration and by `qatlas config set`
+# coerce_for_field — used by `qatlas config set <key> <string-value>`
 # ---------------------------------------------------------------------------
 
 
 class TestCoerceForField:
-    def test_bool_field(self) -> None:
-        # The `insecure` field is bool in ServerConfig.
-        assert config_yaml._coerce_for_field("insecure", "1") is True
-        assert config_yaml._coerce_for_field("insecure", "true") is True
-        assert config_yaml._coerce_for_field("insecure", "TRUE") is True
-        assert config_yaml._coerce_for_field("insecure", "0") is False
-        assert config_yaml._coerce_for_field("insecure", "false") is False
-        assert config_yaml._coerce_for_field("insecure", "no") is False
+    def test_bool_field_truthy_strings(self) -> None:
+        for raw in ("1", "true", "TRUE", "yes", "on"):
+            assert config_yaml.coerce_for_field("insecure", raw) is True
 
-    def test_int_field(self) -> None:
-        assert config_yaml._coerce_for_field("mineru_timeout", "1800") == 1800
+    def test_bool_field_falsy_strings(self) -> None:
+        for raw in ("0", "false", "no", "off", ""):
+            assert config_yaml.coerce_for_field("insecure", raw) is False
 
-    def test_float_field(self) -> None:
-        assert config_yaml._coerce_for_field("mineru_poll_interval", "2.5") == 2.5
+    def test_int_field_parsed(self) -> None:
+        assert config_yaml.coerce_for_field("mineru_timeout", "300") == 300
+
+    def test_float_field_parsed(self) -> None:
+        assert config_yaml.coerce_for_field("mineru_poll_interval", "5.5") == 5.5
 
     def test_string_field_passes_through(self) -> None:
-        assert config_yaml._coerce_for_field("server_url", "https://x") == "https://x"
+        assert (
+            config_yaml.coerce_for_field("server_url", "https://x.example/")
+            == "https://x.example/"
+        )
 
     def test_unknown_field_passes_through_as_string(self) -> None:
-        assert config_yaml._coerce_for_field("nope_not_a_field", "x") == "x"
+        # Defensive: a future qatlas config set invocation against a
+        # since-removed field should still write _something_, not crash.
+        assert config_yaml.coerce_for_field("totally_made_up_field", "value") == "value"
 
-    def test_unparseable_numeric_falls_back_to_string(self) -> None:
-        # If a user wrote MINERU_TIMEOUT=fifteen, we'd rather pass the
-        # string through (yaml will fail to load later with a clear
-        # error) than crash the migration silently.
-        assert config_yaml._coerce_for_field("mineru_timeout", "fifteen") == "fifteen"
+    def test_int_parse_failure_keeps_raw_string(self) -> None:
+        # We never want a config set to hard-fail just because the
+        # operator typo'd a number — let pydantic's validator emit
+        # the real complaint when ServerConfig actually loads.
+        assert config_yaml.coerce_for_field("mineru_timeout", "not-a-number") == "not-a-number"
 
 
 # ---------------------------------------------------------------------------
-# Sanity: every ServerConfig field with a validation_alias is reachable
-# both ways through env_alias_to_field / field_to_env_alias
+# Integration: write → read via ServerConfig
 # ---------------------------------------------------------------------------
 
 
-class TestEnvAliasRoundTrip:
-    def test_known_pair(self) -> None:
-        assert env_alias_to_field("QATLAS_SERVER_URL") == "server_url"
-        assert field_to_env_alias("server_url") == "QATLAS_SERVER_URL"
+class TestYamlReadsBackThroughServerConfig:
+    """Sanity check the round-trip: config_yaml.write_yaml_atomic +
+    ServerConfig.from_env() must agree on a few representative fields
+    so a `qatlas config set` action is immediately reflected on
+    subsequent loads.
+    """
 
-    def test_third_party_sdk_alias(self) -> None:
-        # SDK-standard env names (MINERU_*, OPENAI_*) map to fields
-        # without the QATLAS_ prefix.
-        assert env_alias_to_field("MINERU_API_TOKEN") == "mineru_api_token"
-        assert field_to_env_alias("mineru_api_token") == "MINERU_API_TOKEN"
+    def _isolate_xdg(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+        return home / ".config" / "qatlas" / "config.yaml"
 
-    def test_unknown_env_returns_none(self) -> None:
-        assert env_alias_to_field("QATLAS_TYPO_KEY") is None
-        # Server-only env that no client field claims.
-        assert env_alias_to_field("QATLAS_S3_ENDPOINT") is None
+    def test_string_field(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        yaml_path = self._isolate_xdg(tmp_path, monkeypatch)
+        config_yaml.write_yaml_atomic(yaml_path, {"server_url": "https://wat.example/"})
+        cfg = ServerConfig.from_env()
+        assert cfg.server_url == "https://wat.example/"
 
-    def test_every_field_with_alias_round_trips(self) -> None:
-        # Schema-level guard: for every field that has a
-        # validation_alias, the primary alias must round-trip through
-        # the two helpers. If this breaks, future fields with quirky
-        # AliasChoices won't be addressable via `qatlas config set`.
-        for field_name, info in ServerConfig.model_fields.items():
-            if info.validation_alias is None:
-                continue
-            env_name = field_to_env_alias(field_name)
-            assert env_name is not None, f"no env alias for field {field_name}"
-            assert env_alias_to_field(env_name) == field_name, (
-                f"round-trip broken: field {field_name} -> env {env_name} -> "
-                f"{env_alias_to_field(env_name)}"
-            )
+    def test_bool_field(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        yaml_path = self._isolate_xdg(tmp_path, monkeypatch)
+        config_yaml.write_yaml_atomic(yaml_path, {"insecure": True})
+        cfg = ServerConfig.from_env()
+        assert cfg.insecure is True
 
+    def test_nested_mineru_field(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        yaml_path = self._isolate_xdg(tmp_path, monkeypatch)
+        config_yaml.write_yaml_atomic(yaml_path, {"mineru_api_token": "jwt-xyz"})
+        cfg = ServerConfig.from_env()
+        assert cfg.mineru_api_token == "jwt-xyz"
 
-class TestEnvSyncTargets:
-    def test_every_target_field_exists_on_model(self) -> None:
-        # _ENV_SYNC_TARGETS is the list of fields whose value gets
-        # mirrored back into os.environ at boot. Each entry must
-        # actually exist on ServerConfig — otherwise a typo here
-        # silently drops the env sync for that field.
-        model_fields = set(ServerConfig.model_fields.keys())
-        for field_name, _env_name in _ENV_SYNC_TARGETS:
-            assert field_name in model_fields, (
-                f"_ENV_SYNC_TARGETS references non-existent field {field_name!r}"
-            )
-
-    def test_every_target_env_matches_field_primary_alias(self) -> None:
-        # The env name in _ENV_SYNC_TARGETS must match the field's
-        # primary validation alias — otherwise we'd setdefault a name
-        # that no os.getenv call site actually reads.
-        for field_name, env_name in _ENV_SYNC_TARGETS:
-            primary = field_to_env_alias(field_name)
-            assert primary == env_name, (
-                f"_ENV_SYNC_TARGETS: field {field_name} primary alias is "
-                f"{primary!r} but the table says {env_name!r}"
-            )
+    def test_unknown_yaml_key_silently_ignored(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        yaml_path = self._isolate_xdg(tmp_path, monkeypatch)
+        config_yaml.write_yaml_atomic(yaml_path, {"server_url": "https://x", "not_a_field": "ignored"})
+        cfg = ServerConfig.from_env()
+        # Unknown keys don't raise (extra='ignore'); the known field still loads.
+        assert cfg.server_url == "https://x"

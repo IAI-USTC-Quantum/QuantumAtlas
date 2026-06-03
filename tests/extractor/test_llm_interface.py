@@ -172,19 +172,29 @@ class TestOpenAIProvider:
             assert provider.api_key == "test-key"
             mock_openai.assert_called_once_with(api_key="test-key")
     
-    def test_init_with_env_var(self):
-        """Test initialization with environment variable."""
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "env-key"}):
-            with patch("qatlas.extractor.llm_interface.OpenAI"):
-                provider = OpenAIProvider()
-                
-                assert provider.api_key == "env-key"
+    def test_init_with_yaml_config(self, tmp_path, monkeypatch):
+        """Test initialization reads ``openai_api_key`` from
+        ``~/.config/qatlas/config.yaml`` when ``api_key`` not passed."""
+        home = tmp_path / "home"
+        home.mkdir()
+        cfg = home / ".config" / "qatlas"
+        cfg.mkdir(parents=True)
+        (cfg / "config.yaml").write_text("openai_api_key: yaml-key\n")
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+        with patch("qatlas.extractor.llm_interface.OpenAI"):
+            provider = OpenAIProvider()
+            assert provider.api_key == "yaml-key"
     
-    def test_init_without_api_key_raises_error(self):
+    def test_init_without_api_key_raises_error(self, tmp_path, monkeypatch):
         """Test that initialization fails without API key."""
-        with patch.dict(os.environ, {}, clear=True):
-            with pytest.raises(ValueError, match="OpenAI API key is required"):
-                OpenAIProvider()
+        # Isolated empty home so no yaml is present.
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+        with pytest.raises(ValueError, match="OpenAI API key is required"):
+            OpenAIProvider()
     
     def test_total_token_usage_tracking(self):
         """Test that token usage is tracked across calls."""
@@ -227,19 +237,28 @@ class TestClaudeProvider:
             assert provider.api_key == "test-key"
             mock_anthropic.assert_called_once_with(api_key="test-key")
     
-    def test_init_with_env_var(self):
-        """Test initialization with environment variable."""
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "env-key"}):
-            with patch("qatlas.extractor.llm_interface.anthropic.Anthropic"):
-                provider = ClaudeProvider()
-                
-                assert provider.api_key == "env-key"
+    def test_init_with_yaml_config(self, tmp_path, monkeypatch):
+        """Test initialization reads ``anthropic_api_key`` from
+        ``~/.config/qatlas/config.yaml`` when ``api_key`` not passed."""
+        home = tmp_path / "home"
+        home.mkdir()
+        cfg = home / ".config" / "qatlas"
+        cfg.mkdir(parents=True)
+        (cfg / "config.yaml").write_text("anthropic_api_key: yaml-key\n")
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+        with patch("qatlas.extractor.llm_interface.anthropic.Anthropic"):
+            provider = ClaudeProvider()
+            assert provider.api_key == "yaml-key"
     
-    def test_init_without_api_key_raises_error(self):
+    def test_init_without_api_key_raises_error(self, tmp_path, monkeypatch):
         """Test that initialization fails without API key."""
-        with patch.dict(os.environ, {}, clear=True):
-            with pytest.raises(ValueError, match="Anthropic API key is required"):
-                ClaudeProvider()
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+        with pytest.raises(ValueError, match="Anthropic API key is required"):
+            ClaudeProvider()
 
 
 class TestCreateLLM:

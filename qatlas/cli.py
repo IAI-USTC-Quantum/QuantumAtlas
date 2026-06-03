@@ -158,21 +158,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         _print_usage_error(f"unknown command '{args[0]}'")
         return 2
 
-    # Mirror dotenv file values into os.environ ONCE at CLI entry so
-    # every subcommand (and every direct os.getenv reader inside them)
-    # sees the same precedence chain pydantic-settings would. Idempotent
-    # and respects existing env vars (override=False).
+    # v0.17.0+: client config lives exclusively in
+    # ~/.config/qatlas/config.yaml. Ensure it exists on first run so
+    # the user can immediately edit it; idempotent on subsequent runs.
     #
-    # Exception: skip for `qatlas config` itself — it inspects the file
-    # directly and would confuse the precedence-aware get/show output if
-    # we silently merged values into the environment first.
+    # Exception: skip for `qatlas config` itself — its `path` / `show`
+    # subcommands intentionally tolerate a missing file and would
+    # display misleading "auto-created on first read" behaviour
+    # otherwise.
     if command_name != "config":
         try:
-            from qatlas.config import bootstrap_env
-            bootstrap_env()
+            from qatlas.config import ensure_default_config_exists
+            ensure_default_config_exists()
         except Exception:
-            # Defensive: never block a subcommand on a dotenv glitch;
-            # the user can still pass --token etc explicitly.
+            # Defensive: never block a subcommand on config-file IO;
+            # the embedded defaults work for any read-only command.
             pass
 
     return _run_module(

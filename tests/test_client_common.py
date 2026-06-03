@@ -1,80 +1,89 @@
-"""Unit tests for atlas.client._common helpers (token / auth_headers / etc.).
+"""Unit tests for qatlas.client._common (v0.17.0+: YAML-only).
 
-These run fast (no network, no subprocess). End-to-end tests against a live
-server are in tests/integration/test_live_server.py and are skipped unless
-QATLAS_E2E=1 is set.
+v0.17.0 removed --base-url / --token / --insecure CLI flags and all
+``QATLAS_*`` env-var reads. Values come exclusively from
+``~/.config/qatlas/config.yaml``. ``--request-timeout`` is the only
+flag ``add_common_http_args`` still registers.
+
+The per-host ``hosts.yml`` store (populated by ``qatlas auth login``)
+is the only token fallback when ``config.yaml`` has no ``token:``.
 """
 
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 import pytest
 
+from qatlas import config_yaml
 from qatlas.client import _common
 
 
 @pytest.fixture(autouse=True)
-def _isolate_auth_store(monkeypatch, tmp_path):
-    """Point XDG_CONFIG_HOME at a fresh empty dir for every test.
+def _isolate_xdg(monkeypatch, tmp_path: Path):
+    """Point XDG_CONFIG_HOME + HOME at a fresh empty dir for every test.
 
-    Without this, ``resolve_token`` would fall through to whatever the
-    developer left in ``~/.config/qatlas/hosts.yml`` after a real
-    ``qatlas auth login``, making the "empty" / "env-fallback"
-    assertions in this file false-pass or false-fail depending on the
-    machine. The XDG fixture forces every test to see an empty store.
+    Both are needed because ``user_config_yaml_path()`` uses
+    XDG_CONFIG_HOME directly while ``auth.config_dir()`` honours
+    XDG_CONFIG_HOME but also reads HOME as a base for ``.config``.
     """
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    (tmp_path / "home").mkdir(exist_ok=True)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg-config"))
+    (tmp_path / "xdg-config").mkdir(exist_ok=True)
+    # Tests must not leak QATLAS_* env into ServerConfig (env source is
+    # disabled but we belt-and-suspenders here in case a contributor
+    # re-enables it).
+    for var in ("QATLAS_TOKEN", "QATLAS_SERVER_URL", "QATLAS_INSECURE"):
+        monkeypatch.delenv(var, raising=False)
 
 
 def _ns(**overrides):
     """Make an argparse.Namespace mimicking add_common_http_args output."""
-    base = dict(base_url=None, insecure=False, token=None, request_timeout=120.0)
+    base = dict(request_timeout=120.0)
     base.update(overrides)
     return argparse.Namespace(**base)
 
 
-def test_resolve_token_cli_flag_wins(monkeypatch):
-    monkeypatch.setenv("QATLAS_TOKEN", "env-token")
-    args = _ns(token="cli-flag-token")
-    assert _common.resolve_token(args) == "cli-flag-token"
+def _seed_config(server_url=None, token=None, insecure=None):
+    """Write a config.yaml under the isolated XDG dir."""
+    from qatlas.paths import user_config_yaml_path
+
+    data = {}
+    if server_url is not None:
+        data["server_url"] = server_url
+    if token is not None:
+        data["token"] = token
+    if insecure is not None:
+        data["insecure"] = insecure
+    config_yaml.write_yaml_atomic(user_config_yaml_path(), data)
 
 
-def test_resolve_token_env_fallback(monkeypatch):
-    monkeypatch.setenv("QATLAS_TOKEN", "env-token")
-    args = _ns(token=None)
-    assert _common.resolve_token(args) == "env-token"
+def test_resolve_token_from_yaml():
+    _seed_config(token="qat_from_yaml_token")
+    assert _common.resolve_token(_ns()) == "qat_from_yaml_token"
 
 
-def test_resolve_token_empty(monkeypatch):
-    monkeypatch.delenv("QATLAS_TOKEN", raising=False)
-    args = _ns(token=None)
-    assert _common.resolve_token(args) == ""
+def test_resolve_token_yaml_trims_whitespace():
+    _seed_config(token="  padded  ")
+    assert _common.resolve_token(_ns()) == "padded"
 
 
-def test_resolve_token_trims_whitespace(monkeypatch):
-    monkeypatch.setenv("QATLAS_TOKEN", "  padded-env  ")
-    args = _ns(token=None)
-    assert _common.resolve_token(args) == "padded-env"
-
-    args = _ns(token="  padded-flag  ")
-    assert _common.resolve_token(args) == "padded-flag"
+def test_resolve_token_empty_when_yaml_unset():
+    # Fresh isolated XDG, no config.yaml. Should return "" (no
+    # Authorization), not crash, not look at env.
+    assert _common.resolve_token(_ns()) == ""
 
 
-def test_resolve_token_store_fallback(monkeypatch, tmp_path):
-    """When --token and QATLAS_TOKEN are both absent, resolve_token
-    must consult the per-host store populated by ``qatlas auth login``.
+def test_resolve_token_per_host_store_fallback():
+    """When config.yaml has no token:, fall through to hosts.yml.
 
-    Mirrors the ``gh`` CLI precedence: explicit flag > env > stored
-    credentials > anonymous. Regression guard: do not let the
-    integration drift back to "env-only".
+    Mirrors gh CLI precedence: explicit config > stored credentials
+    > anonymous. Used for users who prefer `qatlas auth login`
+    over editing the yaml directly.
     """
-    monkeypatch.delenv("QATLAS_TOKEN", raising=False)
-    monkeypatch.setenv("QATLAS_SERVER_URL", "https://quantum-atlas.ai")
-
-    # Seed the store using auth.py's own writer so we exercise the
-    # same path qatlas auth login uses (host normalisation, file
-    # layout, etc.).
+    _seed_config(server_url="https://quantum-atlas.ai")
     from qatlas.client import auth
 
     store = auth._load_store()
@@ -84,17 +93,14 @@ def test_resolve_token_store_fallback(monkeypatch, tmp_path):
     }
     auth._save_store(store)
 
-    args = _ns(token=None)
-    assert _common.resolve_token(args) == "qat_StoredAbCdEfGhIjKl"
+    assert _common.resolve_token(_ns()) == "qat_StoredAbCdEfGhIjKl"
 
 
-def test_resolve_token_env_beats_store(monkeypatch, tmp_path):
-    """If both env and store have a value, env wins. Documented
-    precedence — without this, users would be unable to override a
-    stored token for one-off shell invocations.
-    """
-    monkeypatch.setenv("QATLAS_TOKEN", "env-wins")
-    monkeypatch.setenv("QATLAS_SERVER_URL", "https://quantum-atlas.ai")
+def test_resolve_token_yaml_beats_store():
+    """If both yaml and store have a value, yaml wins. Users editing
+    the canonical config file expect it to take precedence over a
+    stored auth-login token they may have forgotten about."""
+    _seed_config(server_url="https://quantum-atlas.ai", token="qat_yaml_wins")
 
     from qatlas.client import auth
 
@@ -105,55 +111,82 @@ def test_resolve_token_env_beats_store(monkeypatch, tmp_path):
     }
     auth._save_store(store)
 
-    args = _ns(token=None)
-    assert _common.resolve_token(args) == "env-wins"
+    assert _common.resolve_token(_ns()) == "qat_yaml_wins"
 
 
-def test_auth_headers_no_token(monkeypatch):
-    monkeypatch.delenv("QATLAS_TOKEN", raising=False)
-    args = _ns(token=None)
-    # Empty dict so callers can splat {**auth_headers(args), ...} safely.
-    assert _common.auth_headers(args) == {}
+def test_auth_headers_no_token():
+    # No yaml, no store. Empty dict so callers can splat
+    # {**auth_headers(args), ...} safely.
+    assert _common.auth_headers(_ns()) == {}
 
 
-def test_auth_headers_bearer_format(monkeypatch):
-    monkeypatch.delenv("QATLAS_TOKEN", raising=False)
-    args = _ns(token="abc123")
-    assert _common.auth_headers(args) == {"Authorization": "Bearer abc123"}
+def test_auth_headers_bearer_format():
+    _seed_config(token="abc123")
+    assert _common.auth_headers(_ns()) == {"Authorization": "Bearer abc123"}
 
 
-def test_add_common_http_args_registers_token_flag():
-    parser = argparse.ArgumentParser()
-    _common.add_common_http_args(parser)
-    # Argparse normalizes --token to dest=token.
-    parsed = parser.parse_args(["--token", "fixture-token"])
-    assert parsed.token == "fixture-token"
-    assert parsed.base_url is None
-    assert parsed.insecure is False
+def test_default_base_url_from_yaml():
+    _seed_config(server_url="https://my.atlas.example/")
+    # get_server_url strips trailing slash for consistency.
+    assert _common.default_base_url() == "https://my.atlas.example"
 
 
-def test_add_common_http_args_default_token_is_none():
+def test_default_base_url_no_trailing_slash_preserved():
+    _seed_config(server_url="https://my.atlas.example")
+    assert _common.default_base_url() == "https://my.atlas.example"
+
+
+def test_default_base_url_falls_back_to_local_pocketbase():
+    # No config.yaml at all: dev convenience — return localhost so a
+    # bare `qatlas` against `pixi run server` works without setup.
+    assert _common.default_base_url() == "http://127.0.0.1:8090"
+
+
+def test_base_url_from_args_returns_yaml_value():
+    _seed_config(server_url="https://yaml.example/")
+    # args is accepted for back-compat; no field is read from it.
+    assert _common.base_url_from_args(_ns()) == "https://yaml.example"
+
+
+def test_request_verify_default_is_strict():
+    # No config, no insecure: TLS verification ON (default secure).
+    assert _common.request_verify(_ns()) is True
+
+
+def test_request_verify_insecure_from_yaml(capsys):
+    _seed_config(insecure=True)
+    result = _common.request_verify(_ns())
+    assert result is False
+    err = capsys.readouterr().err
+    assert "TLS certificate verification is disabled" in err
+
+
+def test_request_verify_warning_one_shot_per_args(capsys):
+    _seed_config(insecure=True)
+    args = _ns()
+    _common.request_verify(args)
+    _ = capsys.readouterr()
+    # Second call on the same args namespace must not warn again.
+    _common.request_verify(args)
+    assert capsys.readouterr().err == ""
+
+
+def test_add_common_http_args_only_registers_request_timeout():
+    """v0.17.0 removed --base-url / --token / --insecure.
+
+    Argparse should still register --request-timeout (per-call
+    ergonomic knob) but reject the now-deleted flags.
+    """
     parser = argparse.ArgumentParser()
     _common.add_common_http_args(parser)
     parsed = parser.parse_args([])
-    assert parsed.token is None
+    assert parsed.request_timeout == 120.0
 
+    parsed = parser.parse_args(["--request-timeout", "30"])
+    assert parsed.request_timeout == 30.0
 
-@pytest.mark.parametrize(
-    "insecure_env,insecure_flag,expected_verify",
-    [
-        ("", False, True),
-        ("1", False, False),
-        ("true", False, False),
-        ("0", False, True),
-        ("", True, False),
-    ],
-)
-def test_request_verify_precedence(monkeypatch, insecure_env, insecure_flag, expected_verify):
-    """Regression coverage for the precedence in request_verify."""
-    if insecure_env:
-        monkeypatch.setenv("QATLAS_INSECURE", insecure_env)
-    else:
-        monkeypatch.delenv("QATLAS_INSECURE", raising=False)
-    args = _ns(insecure=insecure_flag)
-    assert _common.request_verify(args) is expected_verify
+    # Removed flags must be rejected by argparse (it exits with 2 on
+    # unknown arg, which surfaces as SystemExit in tests).
+    for removed_flag in ("--base-url", "--token", "--insecure"):
+        with pytest.raises(SystemExit):
+            parser.parse_args([removed_flag, "value"] if removed_flag != "--insecure" else [removed_flag])

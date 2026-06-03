@@ -268,17 +268,25 @@ class OpenAIProvider(LLMInterface):
         Initialize OpenAI provider.
         
         Args:
-            api_key: OpenAI API key (default: from OPENAI_API_KEY env var)
+            api_key: OpenAI API key (default: from ``openai_api_key:`` in
+                ``~/.config/qatlas/config.yaml``)
             model: Model name (default: gpt-4o)
             **kwargs: Additional configuration
         """
         super().__init__(LLMProvider.OPENAI, model, **kwargs)
-        
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+
+        if not api_key:
+            try:
+                from qatlas.config import ServerConfig
+
+                api_key = ServerConfig.from_env().openai_api_key
+            except Exception:
+                api_key = None
+        self.api_key = api_key
         if not self.api_key:
             raise ValueError(
-                "OpenAI API key is required. Set OPENAI_API_KEY environment variable "
-                "or pass api_key parameter."
+                "OpenAI API key is required. Set ``openai_api_key:`` in "
+                "~/.config/qatlas/config.yaml or pass api_key parameter."
             )
         
         if OpenAI is None:
@@ -425,17 +433,25 @@ class ClaudeProvider(LLMInterface):
         Initialize Claude provider.
         
         Args:
-            api_key: Anthropic API key (default: from ANTHROPIC_API_KEY env var)
+            api_key: Anthropic API key (default: from ``anthropic_api_key:``
+                in ``~/.config/qatlas/config.yaml``)
             model: Model name (default: claude-3-sonnet-20240229)
             **kwargs: Additional configuration
         """
         super().__init__(LLMProvider.ANTHROPIC, model, **kwargs)
-        
-        self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
+
+        if not api_key:
+            try:
+                from qatlas.config import ServerConfig
+
+                api_key = ServerConfig.from_env().anthropic_api_key
+            except Exception:
+                api_key = None
+        self.api_key = api_key
         if not self.api_key:
             raise ValueError(
-                "Anthropic API key is required. Set ANTHROPIC_API_KEY environment variable "
-                "or pass api_key parameter."
+                "Anthropic API key is required. Set ``anthropic_api_key:`` in "
+                "~/.config/qatlas/config.yaml or pass api_key parameter."
             )
         
         if anthropic is None:

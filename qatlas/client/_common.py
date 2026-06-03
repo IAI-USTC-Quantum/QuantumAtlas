@@ -1,10 +1,17 @@
-"""Shared helpers for QuantumAtlas client-side CLIs."""
+"""Shared helpers for QuantumAtlas client-side CLIs.
+
+Configuration source (v0.17.0+): every value comes from
+``~/.config/qatlas/config.yaml`` via ``qatlas.config.ServerConfig``.
+No CLI flag, no OS env, no ``QATLAS_DOTENV``. ``qatlas auth login``
+still maintains a separate per-host token file
+(``~/.config/qatlas/hosts.yml``) used as the last-resort token
+fallback when ``config.yaml`` has no ``token:``.
+"""
 
 from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import sys
 from typing import Any
@@ -15,35 +22,49 @@ from qatlas import __version__ as _CLIENT_VERSION
 from qatlas.config import ServerConfig
 
 
+def _client_config() -> ServerConfig:
+    """Build a fresh ServerConfig view of the current YAML.
+
+    Cheap (~ms), and re-reading per call means a `qatlas config set`
+    in between two `qatlas papers ...` invocations is picked up
+    immediately without process state.
+    """
+    return ServerConfig.from_env()
+
+
 def default_base_url() -> str:
-    """Resolve the server base URL from QATLAS_SERVER_URL (legacy PUBLIC_BASE_URL)
-    or fall back to .env host/port (for local dev where the client targets a
-    locally-running server)."""
-    config = ServerConfig.from_env()
-    server_url = config.get_server_url()
+    """Resolve the server base URL from ``config.yaml`` ``server_url``.
+
+    Falls back to ``http://127.0.0.1:8090`` (PocketBase default) when
+    unset so ``qatlas`` doesn't fatal on first run without a configured
+    server — useful for local dev.
+    """
+    cfg = _client_config()
+    server_url = cfg.get_server_url()
     if server_url:
         return server_url
-    host = "127.0.0.1" if config.host in {"0.0.0.0", "::"} else config.host
-    return f"http://{host}:{config.port}"
+    return "http://127.0.0.1:8090"
 
 
 def base_url_from_args(args: argparse.Namespace) -> str:
-    """Return the explicit --base-url if supplied, else the .env default."""
-    return args.base_url.rstrip("/") if args.base_url else default_base_url()
+    """Return the config-file server_url.
 
-
-def _env_insecure_default() -> bool:
-    """QATLAS_INSECURE=1 makes the client default to skipping TLS verification."""
-    return os.getenv("QATLAS_INSECURE", "").strip().lower() in {"1", "true", "yes"}
+    ``args`` is accepted for back-compat with the v0.16 signature; no
+    field is read from it anymore. Subcommands that need a different
+    server should set up a separate ``XDG_CONFIG_HOME``-isolated
+    config.
+    """
+    return default_base_url()
 
 
 def request_verify(args: argparse.Namespace) -> bool:
-    """Honor --insecure (or QATLAS_INSECURE=1) to disable TLS verification.
+    """Honor ``insecure: true`` in config.yaml to disable TLS verification.
 
-    Precedence: explicit ``--insecure`` flag > ``QATLAS_INSECURE`` env > default (verify).
+    Same one-shot warning behaviour as before. ``args`` kept for
+    signature back-compat.
     """
-    insecure = bool(getattr(args, "insecure", False)) or _env_insecure_default()
-    if not insecure:
+    cfg = _client_config()
+    if not cfg.insecure:
         return True
     if not getattr(args, "_insecure_warning_shown", False):
         requests.packages.urllib3.disable_warnings(  # type: ignore[attr-defined]
@@ -55,48 +76,42 @@ def request_verify(args: argparse.Namespace) -> bool:
 
 
 def resolve_token(args: argparse.Namespace) -> str:
-    """Resolve the bearer credential.
+    """Resolve the bearer credential from config.yaml, with per-host
+    ``hosts.yml`` fallback.
 
-    Precedence (mirrors gh CLI):
-      1. ``--token`` CLI flag (explicit per-call override)
-      2. ``QATLAS_TOKEN`` environment variable (per-shell override)
-      3. ``~/.config/qatlas/hosts.yml`` entry for the request's host
-         (populated by ``qatlas auth login``)
-      4. "" — no Authorization header, server replies 401 for write
-         endpoints
+    Precedence:
+      1. ``config.yaml`` ``token:`` field
+      2. ``~/.config/qatlas/hosts.yml`` entry for ``server_url`` (populated by
+         ``qatlas auth login``)
+      3. ``""`` — no Authorization header sent
 
-    Empty string means the caller will not send an Authorization header; the
-    server then either accepts the call (open read endpoints) or rejects with
-    401 (write endpoints gated by authGuard). The 401 response body points
-    the user at the ``/pat`` page in the SPA either way (``/pat`` is a
-    top-level redirect to the localized ``/$lang/pat`` route — e.g.
-    ``/zh/pat`` or ``/en/pat`` — defined in ``web/src/routes/pat.tsx``).
+    ``args`` kept for signature back-compat (used to honour
+    ``--token`` CLI flag, removed in v0.17.0).
+
+    An empty return value means no Authorization header will be set;
+    the server then either serves open reads or replies 401 for write
+    endpoints. The 401 body always points the user at ``/pat``
+    (top-level redirect to ``/<lang>/pat``, defined in
+    ``web/src/routes/pat.tsx``) regardless of language.
     """
-    explicit = getattr(args, "token", None)
-    if explicit:
-        return explicit.strip()
-    env_token = os.getenv("QATLAS_TOKEN", "").strip()
-    if env_token:
-        return env_token
-    # Fallback: per-host credential file populated by `qatlas auth login`.
-    # We deliberately resolve the host the SAME way base_url_from_args does
-    # so the lookup keys match what the user typed at login time.
+    cfg = _client_config()
+    if cfg.token:
+        return cfg.token.strip()
+    # Per-host fallback (``qatlas auth login``).
     try:
         from qatlas.client.auth import get_stored_token  # local import to avoid cycle
 
-        return get_stored_token(base_url_from_args(args))
+        return get_stored_token(default_base_url())
     except Exception:
         # Defensive: never let a config-file glitch break unrelated commands.
-        # The user can still set --token / QATLAS_TOKEN to bypass.
         return ""
 
 
 def auth_headers(args: argparse.Namespace) -> dict[str, str]:
     """Build the Authorization header for a CLI request.
 
-    Returns an empty dict when no token is configured so the caller can use
-    ``headers={**auth_headers(args), ...other...}`` without worrying about
-    overriding an explicit Authorization (there is none to override).
+    Returns an empty dict when no token is configured so callers can
+    safely splat ``{**auth_headers(args), ...other...}``.
     """
     token = resolve_token(args)
     if not token:
@@ -109,26 +124,19 @@ def print_json(payload: dict[str, Any]) -> None:
 
 
 def add_common_http_args(parser: argparse.ArgumentParser) -> None:
+    """Register the shared ``--request-timeout`` flag.
+
+    v0.17.0 removed ``--base-url`` / ``--token`` / ``--insecure``
+    flags — those fields now live exclusively in
+    ``~/.config/qatlas/config.yaml``. ``--request-timeout`` is kept
+    because it's an in-call ergonomic knob (raise the timeout for a
+    slow MinerU poll), not a persistent config concern.
+    """
     parser.add_argument(
-        "--base-url",
-        help="Server base URL; defaults to QATLAS_SERVER_URL (legacy PUBLIC_BASE_URL), then .env host/port",
-    )
-    parser.add_argument("--request-timeout", type=float, default=120.0)
-    parser.add_argument(
-        "--insecure",
-        action="store_true",
-        help="Skip TLS certificate verification (also enabled by QATLAS_INSECURE=1)",
-    )
-    parser.add_argument(
-        "--token",
-        default=None,
-        help=(
-            "Bearer token sent as 'Authorization: Bearer <token>' on every "
-            "request. Defaults to QATLAS_TOKEN env. Create one at "
-            "https://<server>/pat (top-level redirect to /<lang>/pat) "
-            "after signing in with GitHub — a 'qat_'-prefixed PAT with "
-            "explicit scopes; session tokens copied from the SPA also work."
-        ),
+        "--request-timeout",
+        type=float,
+        default=120.0,
+        help="HTTP request timeout in seconds (per-call override).",
     )
 
 

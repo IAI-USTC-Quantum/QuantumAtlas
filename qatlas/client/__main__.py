@@ -32,8 +32,14 @@ def _default_base_url() -> str:
 
 
 def _base_url_from_args(args: argparse.Namespace) -> str:
-    """Honor an explicit --base-url, otherwise call the module-local default."""
-    return args.base_url.rstrip("/") if args.base_url else _default_base_url()
+    """Return the configured server base URL.
+
+    v0.17.0 removed the ``--base-url`` flag; the URL comes solely from
+    ``~/.config/qatlas/config.yaml`` (``server_url:`` field) with the
+    PocketBase localhost as a dev fallback. ``args`` is kept in the
+    signature for back-compat.
+    """
+    return _default_base_url()
 
 
 # Legacy aliases kept for any callers that imported these private names.

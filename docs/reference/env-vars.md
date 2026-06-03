@@ -1,63 +1,55 @@
 # 环境变量参考
 
-> **Server-only 字段** 见本页 [§Server](#server-存储路径) 起；**client 用 YAML 配置文件**，不是 .env。client 字段映射见 [§Client 配置文件](#client-qatlas-配置文件解析)，子命令见 [`qatlas config` reference](cli-qatlas.md#qatlas-config)。
+> **本页只描述 server (`qatlasd`) 的 env / .env 字段**。client (`qatlas` Python CLI) 自 v0.17.0 起**不再读任何 env / .env**，所有配置写在 `~/.config/qatlas/config.yaml`（首次运行自动创建），见 [`qatlas config` reference](cli-qatlas.md#qatlas-config)。
 
-QuantumAtlas server（Go `qatlasd` 二进制）通过 `.env` / process env 读配置；自 v0.16.0 起 client（Python `qatlas` CLI）已切换到 `~/.config/qatlas/config.yaml` YAML 格式 —— 两边**不再共享同一份 .env**。
+QuantumAtlas server（Go `qatlasd` 二进制）通过三入口读配置：
 
-server 端项目自有变量带 `QATLAS_` 前缀；第三方 SDK 标准名（`NEO4J_*` / `GITHUB_CLIENT_*`）保留原始命名。
+**CLI flag > OS env > `.env` 文件 > 内置 default**
 
-> 完整 server 模板：[`.env.example`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.env.example)
-> 客户端 YAML schema：见下方 [§Client](#client-qatlas-配置文件解析)
+server 端项目自有变量带 `QATLAS_` 前缀；第三方 SDK 标准名（`NEO4J_*` / `GITHUB_CLIENT_*`）保留原始命名。每个字段都有等价 CLI flag（除了 OAuth 4 字段，详见 [issue #6](https://github.com/IAI-USTC-Quantum/QuantumAtlas/issues/6)），完整 flag 列见 [cli-qatlasd.md §serve](cli-qatlasd.md#serve)。
+
+> 完整 server `.env` 模板：[`.env.example`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.env.example)
 
 ## 角色矩阵速查
 
-| 变量族 | client（YAML） | server（.env） |
+| 字段 | client (YAML) | server (env / .env / flag) |
 |---|---|---|
-| `server.url` / `QATLAS_SERVER_URL` | ✅ 必填 | ✅ |
-| `server.token` / `QATLAS_TOKEN` | ✅ 写操作必填 | — |
-| `server.insecure` / `QATLAS_INSECURE` | ✅ | — |
-| `wiki.dir` / `QATLAS_WIKI_DIR` | ✅（用本地 wiki 命令时）| ✅ |
-| `mineru.*` / `MINERU_*` | ✅（本地跑 mineru 时）| — |
-| `extractor.openai_api_key` / `OPENAI_API_KEY` | ✅（本地跑 extractor 时）| — |
-| `extractor.anthropic_api_key` / `ANTHROPIC_API_KEY` | ✅（本地跑 extractor 时）| — |
+| `server_url` / `QATLAS_SERVER_URL` | ✅ 必填 | ✅ |
+| `token` (client only) | ✅ 写操作必填 | — |
+| `insecure` (client only) | ✅ | — |
+| `wiki_dir` / `QATLAS_WIKI_DIR` | ✅（本地 wiki 命令）| ✅ |
+| `mineru_*` / `MINERU_*` | ✅（本地跑 mineru）| — |
+| `openai_api_key` / `anthropic_api_key` | ✅（本地跑 extractor）| — |
 | `QATLAS_RAW_DIR` / `DATA_DIR` / `PB_DATA_DIR` | — | ✅ |
-| `QATLAS_SERVER_HOST` / `PORT` / `HTTP_ADDR` | — | ✅ |
+| `QATLAS_HTTP_ADDR` / `QATLAS_FORCE_TCP4` | — | ✅ |
 | `NEO4J_*` | — | ✅ |
 | `QATLAS_S3_*` | — | ✅ |
 | `QATLAS_USER_HEADER` | — | ✅ |
-| `GITHUB_CLIENT_ID` / `SECRET` | — | ✅ |
+| `GITHUB_CLIENT_ID` / `SECRET` | — | ✅（只能走 env，无 CLI flag） |
 | `QATLAS_SYSTEM_PAT` / `_SCOPES` | — | ✅ |
 | `QATLAS_EDGE_NAME` | — | ✅ |
 
-> 上面"client (YAML)"列那几个 `QATLAS_*` / `MINERU_*` / `OPENAI_*` env var 名仍然有效（OS env 优先级最高），但**不会再出现在 server 的 `.env.example` 模板里** —— 它们的 canonical 配置入口是 `~/.config/qatlas/config.yaml`。
+> 重要变化（v0.17.0+）：**client 端不再读任何 OS env**。如果之前在 shell 里 `export QATLAS_SERVER_URL=...` 给 client 用，现在那些 env 对 `qatlas` 不再生效——必须搬到 `~/.config/qatlas/config.yaml`（字段名小写化去前缀：`QATLAS_SERVER_URL` → `server_url`、`MINERU_API_TOKEN` → `mineru_api_token` 等）。
 
-## Client + Shared
+## Server (qatlasd) 配置入口
 
 ### `QATLAS_SERVER_URL`
 
-- **Alias**: `PUBLIC_BASE_URL`（旧名，**⚠️ deprecated，v0.17.0 移除**）
-- **必填（纯 client）**
+- **Alias**: `PUBLIC_BASE_URL`（旧名，已 deprecated）
 - **格式**: 完整 URL，带 scheme（`https://atlas.example.com`）
-- **作用**: client 默认 `--base-url`
-
-### `QATLAS_TOKEN`
-
-- **写操作必填**
-- **格式**: bearer token 明文（PAT 以 `qat_` 开头；或 PocketBase JWT）
-- **作用**: 所有 `qatlas` 命令的默认 Authorization
-- **优先级**: `--token` flag > `QATLAS_TOKEN` env > `~/.config/qatlas/hosts.yml`
-
-### `QATLAS_INSECURE`
-
-- **格式**: `1` / `true` / `yes` 启用
-- **作用**: client 跳过 TLS 证书校验，等价于 `--insecure`
-- **何时用**: 远端用 self-signed cert（如 Caddy `tls internal` 或直 IP 入站）
+- **作用**: server 自报的对外 URL；用于生成 share link 等
 
 ### `QATLAS_WIKI_DIR`
 
-- **Alias**: `WIKI_DIR`（**⚠️ deprecated，v0.17.0 移除**）
+- **Alias**: `WIKI_DIR`（**⚠️ v0.17.0 移除**）
 - **默认**: `<.env 所在目录>/../QuantumAtlas-Wiki`（兄弟 Git checkout）
-- **作用**: client 的 `qatlas wiki list/show/search/lint` 跑在这个本地 repo 上；server 的 wiki 读 endpoint 也用这个路径
+- **作用**: server 的 wiki 读 endpoint 用这个路径
+
+### `QATLAS_USER_HEADER`
+
+- **Alias**: `USER_HEADER`（**⚠️ v0.17.0 移除**）
+- **默认**: — （不启用 header-based 审计）
+- **作用**: 反代注入的审计用户头名，如 `X-Token-Subject`（caddy-security 时代遗留，可与 PocketBase auth 并行）
 
 ## Server: 存储路径
 
@@ -163,131 +155,96 @@ uuidgen
 
 ## 第三方 SDK 标准名
 
-### MinerU（**纯 client 字段**，YAML 段 `mineru:`）
+### MinerU（client-only — 仅 `qatlas mineru` 子命令读）
 
-下面这组变量由 Python `qatlas/config.py` 在贡献者本地跑 `qatlas mineru` 时读取并转发给 MinerU API；Go server (`qatlasd`) **不读这些字段**。canonical 配置入口是 `~/.config/qatlas/config.yaml` 的 `mineru:` 段；env var 名仍然有效（OS env 优先级高于 YAML）。
+这组字段由 Python client (`qatlas/extractor/llm_interface.py` / `qatlas/client/mineru.py`) 在用户本地跑 `qatlas mineru` 时读取并转发给 MinerU API；Go server (`qatlasd`) **不读这些字段**。**v0.17.0+ 只能放 `~/.config/qatlas/config.yaml`**，不再支持 env / `MINERU_*` env var。
 
-| YAML key | env var | 默认 | 作用 |
-|---|---|---|---|
-| `mineru.api_token` | `MINERU_API_TOKEN` | — | **必填**（贡献者本地跑 `qatlas mineru` 时调 MinerU API 的 bearer）|
-| `mineru.api_base_url` | `MINERU_API_BASE_URL` | `https://mineru.net` | 自部署 MinerU 实例时改 |
-| `mineru.model_version` | `MINERU_MODEL_VERSION` | `vlm` | `vlm` / `pipeline` |
-| `mineru.language` | `MINERU_LANGUAGE` | `ch` | 主语言 hint |
-| `mineru.is_ocr` | `MINERU_IS_OCR` | `false` | 强制 OCR |
-| `mineru.enable_formula` | `MINERU_ENABLE_FORMULA` | `true` | 公式识别 |
-| `mineru.enable_table` | `MINERU_ENABLE_TABLE` | `true` | 表格识别 |
-| `mineru.poll_interval` | `MINERU_POLL_INTERVAL` | `3` | 轮询间隔（秒）|
-| `mineru.timeout` | `MINERU_TIMEOUT` | `1800` | 单篇总超时（秒，30 分钟）|
+| YAML key | 默认 | 作用 |
+|---|---|---|
+| `mineru_api_token` | — | **必填**（用户本地跑 `qatlas mineru` 调 MinerU API 的 bearer JWT）|
+| `mineru_api_base_url` | `https://mineru.net` | 自部署 MinerU 实例时改 |
+| `mineru_model_version` | `vlm` | `vlm` / `pipeline` |
+| `mineru_language` | `ch` | 主语言 hint |
+| `mineru_is_ocr` | `false` | 强制 OCR |
+| `mineru_enable_formula` | `true` | 公式识别 |
+| `mineru_enable_table` | `true` | 表格识别 |
+| `mineru_poll_interval` | `3.0` | 轮询间隔（秒）|
+| `mineru_timeout` | `1800` | 单篇总超时（秒，30 分钟）|
 
-> 贡献者本地 `qatlas mineru` 流程会把自己机器上的 PDF 上传给 MinerU
+> 用户本地 `qatlas mineru` 流程把自己机器上的 PDF 上传给 MinerU
 > （contributor 拿自己的 MinerU 配额走完转换）。服务端**不**对外 serve PDF
 > 字节，也**不**有以服务端身份代客户做 MinerU 转换的 endpoint——下游
 > 拓扑里没有"MinerU 主动拉服务端 PDF"的链路，因此也无需为 MinerU 公网
 > 可达性维护 RustFS public endpoint。`QATLAS_S3_PUBLIC_ENDPOINT` 的用途
 > 是给已授权的内部工具签 presigned URL，与公开 MinerU 服务无关。
 
-### LLM（**纯 client 字段**，YAML 段 `extractor:`）
+### LLM（client-only — 仅 `qatlas extractor` 子命令读）
 
-| YAML key | env var | 作用 |
-|---|---|---|
-| `extractor.openai_api_key` | `OPENAI_API_KEY` | client 侧 `qatlas extractor` 用 OpenAI 模型抽取算法描述（`qatlas/extractor/llm_interface.py`）；qatlasd server 不读 |
-| `extractor.anthropic_api_key` | `ANTHROPIC_API_KEY` | 同上但用 Anthropic 模型 |
+| YAML key | 作用 |
+|---|---|
+| `openai_api_key` | client 侧 `qatlas extractor` 用 OpenAI 模型抽取算法描述（`qatlas/extractor/llm_interface.py`）；qatlasd server 不读 |
+| `anthropic_api_key` | 同上但用 Anthropic 模型 |
 
-> Extractor 是实验性 client 子命令——不跑 `qatlas extractor` 或用 `--no-extract` 时保持未设置即可。`OPENAI_API_KEY` / `ANTHROPIC_API_KEY` 沿用 SDK 标准名（不加 `QATLAS_` 前缀），同一份 yaml + 现有 OpenAI / Anthropic SDK 共用。
+> Extractor 是实验性 client 子命令——不跑 `qatlas extractor` 或用 `--no-extract` 时保持未设置即可。v0.17.0 起 SDK 标准 env 名（`OPENAI_API_KEY` / `ANTHROPIC_API_KEY`）**对 qatlas 不再有效**，只能写在 yaml。这是与 SDK 共享 env namespace 的取舍——qatlas 优先要"配置入口单一"，OpenAI / Anthropic SDK 自己仍读 env，但 qatlas client 不会再传 env 给它们，统一从 yaml 读 key 后显式 `api_key=` 注入。
 
-## Server (qatlasd) 启动时 .env 解析
+## Client (`qatlas`) 配置（YAML-only，v0.17.0+）
 
-server 启动时按顺序找 `.env`：
+client 现在**完全独立于 server**：
 
-1. `$QATLAS_DOTENV`（显式指定，systemd 推荐）
-2. `./.env`（CWD）
-3. 否则没有 .env，纯靠 process env
-
-找到后用 `godotenv.Load(path)` 加载（**不覆盖已有 env 变量**）。
-
-`.env` 所在目录被用作**相对路径锚点**：`WIKI_DIR=../QuantumAtlas-Wiki` 相对该目录解析，不是相对 CWD 或 systemd `WorkingDirectory`。
-
-## Client (qatlas) 配置文件解析
-
-client 跟 server 不同：
-
-- **不读 cwd `.env` / `config.yaml`**（跟 `gh` / `docker` / `kubectl` / `aws` 同款约定 —— user-level CLI 不能让任意 cwd 静默覆盖用户配置）
-- **v0.16.0 起切到 YAML 格式**：`~/.config/qatlas/config.yaml`（legacy `.env` 仍工作但启动会 warn，下次 `qatlas config init` 自动迁移；v0.17.0 完全下线）
+- **只读** `~/.config/qatlas/config.yaml`
+- **首次跑任何 `qatlas <cmd>` 自动创建模板**——不用 `qatlas config init`
+- **不**支持 CLI flag（`--base-url` / `--token` / `--insecure` 全删）
+- **不**支持 OS env（`QATLAS_*` 等 env 对 client 不生效）
+- **不**支持 `$QATLAS_DOTENV` / `$QATLAS_CONFIG`
 
 完整优先级（高 → 低）：
 
-1. CLI flag（`--base-url` / `--token` / `--insecure` ...）
-2. OS env var（`QATLAS_*` / `MINERU_*` / `OPENAI_*` / `ANTHROPIC_*` 直接 export）
-3. `$QATLAS_CONFIG` 显式 YAML 路径（systemd / docker / k8s 场景）
-4. `$QATLAS_DOTENV` 显式 .env 路径（legacy；⚠️ deprecated，v0.17.0 移除）
-5. `~/.config/qatlas/config.yaml`（XDG，用 `qatlas config init/set` 管）
-6. `~/.config/qatlas/.env`（legacy XDG；首次 `qatlas config init` 自动迁移到 yaml）
-7. 内置 Field default
+1. `~/.config/qatlas/config.yaml`（auto-created on first run；用 `qatlas config set/unset` 改）
+2. 内置 Field default
+
+要换文件位置只能走 `XDG_CONFIG_HOME=/path/to/dir`（freedesktop XDG 标准）。
 
 具体子命令见 [`qatlas config` reference](cli-qatlas.md#qatlas-config)。
 
 ### YAML schema
 
-**Flat snake_case** (v0.17.0+) — derived 1:1 from
-[`ServerConfig.model_fields`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/qatlas/config.py)
-via pydantic-settings' built-in `YamlConfigSettingsSource`. No
-hand-maintained mapping table.
+**Flat snake_case** — 字段名一对一 derived from
+[`ServerConfig.model_fields`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/qatlas/config.py)。
+首次跑 `qatlas` 子命令时这个 yaml 模板会自动写到磁盘。
 
 ```yaml
-# ~/.config/qatlas/config.yaml — generated by `qatlas config init`
+# ~/.config/qatlas/config.yaml — auto-created on first qatlas invocation
 
 # Server endpoint + auth
-server_url: https://atlas.example.com   # → QATLAS_SERVER_URL
-token: qat_...                          # → QATLAS_TOKEN     (sensitive, 0600)
-insecure: false                         # → QATLAS_INSECURE
+server_url: https://atlas.example.com
+token: qat_...                          # sensitive, file is mode 0600
+insecure: false
 
 # Local Wiki repo (qatlas wiki list/show/lint/search)
-wiki_dir: ../QuantumAtlas-Wiki          # → QATLAS_WIKI_DIR
+wiki_dir: ../QuantumAtlas-Wiki
 
-# MinerU (qatlas mineru — third-party SDK env names, no QATLAS_ prefix)
-mineru_api_token: jwt_...               # → MINERU_API_TOKEN
-mineru_api_base_url: https://mineru.net # → MINERU_API_BASE_URL
-mineru_model_version: vlm               # → MINERU_MODEL_VERSION
-mineru_is_ocr: false                    # → MINERU_IS_OCR
-mineru_enable_formula: true             # → MINERU_ENABLE_FORMULA
-mineru_enable_table: true               # → MINERU_ENABLE_TABLE
-mineru_poll_interval: 3.0               # → MINERU_POLL_INTERVAL
-mineru_timeout: 1800                    # → MINERU_TIMEOUT
-mineru_language: ch                     # → MINERU_LANGUAGE
+# MinerU (qatlas mineru)
+mineru_api_token: jwt_...
+mineru_api_base_url: https://mineru.net
+mineru_model_version: vlm
+mineru_is_ocr: false
+mineru_enable_formula: true
+mineru_enable_table: true
+mineru_poll_interval: 3.0
+mineru_timeout: 1800
+mineru_language: ch
 
-# LLM extractor (qatlas extractor — SDK standard env names)
-openai_api_key: sk-...                  # → OPENAI_API_KEY
-anthropic_api_key: sk-ant-...           # → ANTHROPIC_API_KEY
+# LLM extractor (qatlas extractor — third-party SDK names, no QATLAS_ prefix)
+openai_api_key: sk-...
+anthropic_api_key: sk-ant-...
 ```
-
-YAML keys are **snake_case ServerConfig field names** (not env-var
-names): use `server_url` not `QATLAS_SERVER_URL`, `mineru_api_token`
-not `MINERU_API_TOKEN`. Env-var names ARE still recognised by
-`qatlas config set/get/unset`: the CLI accepts the env-var name as
-KEY and writes the corresponding YAML field automatically (via
-`qatlas.config.env_alias_to_field`).
 
 设计要点：
 
-- **扁平 schema**：v0.17.0 起所有字段在 yaml top level（snake_case），不再分 `server: / mineru: / extractor:` 嵌套。映射 yaml field → env var 由 `ServerConfig.model_fields` 的 `validation_alias` 自动派生，**没有** hand-maintained 映射表。
-- **第三方 SDK 标准 env 名保留**：`MINERU_API_TOKEN`（不是 `QATLAS_MINERU_*`，沿用 MinerU SDK 标准）；`OPENAI_API_KEY` / `ANTHROPIC_API_KEY`（OpenAI/Anthropic SDK 标准）。同一份 yaml + 现有 SDK 共用 env namespace。
-- **`qatlas config set` 会重写整个文件，抹掉用户手写注释**（PyYAML round-trip 不保留注释，跟 gh / kubectl / k8s `config set` 行为一致）。要永久注释请编辑文件 + 不用 `qatlas config set`。生成的 header comment 也明确告知。
-- **客户端 schema 比 server `.env` 窄**：只含 client 用得到的字段；server-only 字段（`NEO4J_*` / `QATLAS_S3_*` / `GITHUB_*` 等）**不能**用 `qatlas config set` 设，会被 typo guard 拒绝。这些字段在 server 的 `.env` / `qatlasd serve --neo4j-uri ...` flag 里维护。
-
-### 一次性 override
-
-跟 server 一样，临时切配置不用改文件：
-
-```bash
-# 用别的 yaml
-QATLAS_CONFIG=/path/to/other.yaml qatlas upload pdf foo.pdf
-
-# 单个字段 override（OS env 优先级高于文件）
-QATLAS_TOKEN=qat_temp_token qatlas mineru arxiv-2501.12345
-
-# 把全部文件 loading 关掉，只走 process env
-QATLAS_SKIP_DOTENV=1 qatlas ...
-```
+- **扁平 schema**：所有字段在 yaml top level，不分 `server: / mineru: / extractor:` 嵌套——pydantic-settings 自带的 `YamlConfigSettingsSource` 直接 map 到 `ServerConfig` snake_case 字段，没有 hand-maintained 映射表。
+- **第三方 SDK 标准名保留**：`mineru_api_token`（沿用 MinerU SDK）；`openai_api_key` / `anthropic_api_key`（OpenAI / Anthropic SDK 标准 env 等价名小写化）。
+- **`qatlas config set` 重写整个文件**：PyYAML round-trip 不保留注释，跟 `gh` / `kubectl config set` 一致。要永久注释直接编辑文件不用 `set`。
+- **schema 比 server `.env` 窄**：server-only 字段（`NEO4J_*` / `QATLAS_S3_*` / `GITHUB_*`）**不能**用 `qatlas config set` 设，会被 typo guard 拒绝。这些字段在 `qatlasd serve --neo4j-uri ...` flag 或 server 的 `.env` 里维护。
 
 ## 弃用的变量（不要再用）
 
@@ -299,9 +256,10 @@ QATLAS_SKIP_DOTENV=1 qatlas ...
 | `QATLAS_REQUIRE_RELEASE_TAG` | 已删——旧 FastAPI 的 release-tag 启动护栏 |
 | `CLI_TOKEN_*` | 已删——更早的 token 字段族 |
 | `QATLAS_SERVER_DEBUG` | 从未被读过的幽灵字段；v0.16.0 从 `.env.example` 清理 |
-| 无 `QATLAS_` 前缀的 alias（`WIKI_DIR` / `RAW_DIR` / `DATA_DIR` / `PB_DATA_DIR` / `SERVER_HOST` / `SERVER_PORT` / `PUBLIC_BASE_URL` / `USER_HEADER`） | **v0.17.0 移除**——v0.16.0 起 server 启动会按字段 emit `slog.Warn`，给运维一个 minor 的迁移窗口；用对应的 `QATLAS_*` 名 |
-| **client 侧 `.env` 格式 + `$QATLAS_DOTENV`** | **v0.16.0 deprecated，v0.17.0 移除**——v0.16.0 起客户端切到 `config.yaml`，旧文件首次 `qatlas config init` 自动迁移并重命名为 `.env.migrated-from-v0.16.0.<timestamp>`（不删，可回滚）。systemd / docker 单元里 `Environment=QATLAS_DOTENV=...` 临时仍工作但会 warn —— 切到 `QATLAS_CONFIG=path/to/config.yaml` |
+| 无 `QATLAS_` 前缀的 server alias（`WIKI_DIR` / `RAW_DIR` / `DATA_DIR` / `PB_DATA_DIR` / `SERVER_HOST` / `SERVER_PORT` / `PUBLIC_BASE_URL` / `USER_HEADER`） | **v0.17.0 移除**——用对应 `QATLAS_*` 名 |
+| client 侧的所有 `QATLAS_TOKEN` / `QATLAS_SERVER_URL` / `QATLAS_INSECURE` 等 env | **v0.17.0 client 完全不读 env**——搬到 `~/.config/qatlas/config.yaml` |
+| client 侧 `--base-url` / `--token` / `--insecure` CLI flag | **v0.17.0 移除**——搬到 config.yaml |
+| `$QATLAS_DOTENV` / `$QATLAS_CONFIG`（client 端） | **v0.17.0 移除**——client 不再有 dotenv / config 路径 override；用 `XDG_CONFIG_HOME=` 切位置 |
+| `qatlas config init` 子命令 | **v0.17.0 移除**——首次跑任何 `qatlas` 子命令自动创建 |
 
-设这些字段（已删类）**没有效果**也**不报错**——纯 noop。新代码请用 PAT。设标了 v0.17.0 移除的 alias 会**继续工作但启动会有 warn**，看到 warn 请尽快改 `.env`。
-
-> `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` 仍然有效，但只用于 client 侧 `qatlas extractor` 实验性子命令；qatlasd server 从未读过它们。详见上方 [LLM](#llm-纯-client-字段) 段。
+设这些字段（已删类）**没有效果**也**不报错**——纯 noop。

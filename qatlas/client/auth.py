@@ -187,14 +187,19 @@ def _default_host_for_login(arg: Optional[str]) -> str:
 
     Order:
       1. explicit ``--host`` argument
-      2. ``QATLAS_SERVER_URL`` env (most users have this in .envrc / .env)
+      2. ``server_url`` from ``~/.config/qatlas/config.yaml``
       3. prompt the user — we can't guess
     """
     if arg:
         return _normalize_host(arg)
-    env = os.environ.get("QATLAS_SERVER_URL", "").strip()
-    if env:
-        return _normalize_host(env)
+    try:
+        from qatlas.config import ServerConfig
+
+        cfg_url = ServerConfig.from_env().get_server_url()
+        if cfg_url:
+            return _normalize_host(cfg_url)
+    except Exception:
+        pass
     prompted = input("Host (e.g. quantum-atlas.ai): ").strip()
     return _normalize_host(prompted)
 
@@ -206,9 +211,14 @@ def _default_host_for_lookup(arg: Optional[str]) -> str:
     """
     if arg:
         return _normalize_host(arg)
-    env = os.environ.get("QATLAS_SERVER_URL", "").strip()
-    if env:
-        return _normalize_host(env)
+    try:
+        from qatlas.config import ServerConfig
+
+        cfg_url = ServerConfig.from_env().get_server_url()
+        if cfg_url:
+            return _normalize_host(cfg_url)
+    except Exception:
+        pass
     return ""
 
 
@@ -220,7 +230,7 @@ def _default_host_for_lookup(arg: Optional[str]) -> str:
 def _cmd_login(args: argparse.Namespace) -> int:
     host = _default_host_for_login(args.host)
     if not host:
-        print("Error: host is required (--host or QATLAS_SERVER_URL).", file=sys.stderr)
+        print("Error: host is required (--host or set server_url: in ~/.config/qatlas/config.yaml).", file=sys.stderr)
         return 2
 
     print(

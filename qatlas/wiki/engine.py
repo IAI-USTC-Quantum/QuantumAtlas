@@ -118,19 +118,28 @@ class WikiEngine:
 
         self.project_root = Path(project_root)
 
-        # Set directories relative to project root. CLI callers usually configure these
-        # through the environment (preferring QATLAS_* names; legacy bare names still work),
-        # while tests and embedded callers pass them explicitly.
-        self.wiki_dir = self._resolve_path(
-            wiki_dir
-            or os.getenv("QATLAS_WIKI_DIR")
-            or os.getenv("WIKI_DIR", "wiki")
-        )
-        self.raw_dir = self._resolve_path(
-            raw_dir
-            or os.getenv("QATLAS_RAW_DIR")
-            or os.getenv("RAW_DIR", "raw")
-        )
+        # Set directories relative to project root. CLI callers
+        # configure these through ``~/.config/qatlas/config.yaml``
+        # (``wiki_dir:`` / ``raw_dir:`` keys), read via ServerConfig.
+        # Tests / embedded callers pass them explicitly.
+        if wiki_dir is None or raw_dir is None:
+            try:
+                from qatlas.config import ServerConfig
+
+                _cfg = ServerConfig.from_env()
+                if wiki_dir is None:
+                    wiki_dir = _cfg.wiki_dir
+                if raw_dir is None:
+                    raw_dir = _cfg.raw_dir
+            except Exception:
+                # Defensive: never block engine init on config-file IO.
+                if wiki_dir is None:
+                    wiki_dir = "wiki"
+                if raw_dir is None:
+                    raw_dir = "raw"
+
+        self.wiki_dir = self._resolve_path(wiki_dir)
+        self.raw_dir = self._resolve_path(raw_dir)
         self.wiki_content_writable = wiki_content_writable
 
         if ensure_directories:

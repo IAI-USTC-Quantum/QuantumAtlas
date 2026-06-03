@@ -222,18 +222,16 @@ def test_child_system_exit_code_is_returned(monkeypatch):
     assert cli.main(["wiki", "lint"]) == 7
 
 
-def test_ingest_client_defaults_to_public_base_url(tmp_path, monkeypatch):
-    # Drop config into the XDG location (~/.config/qatlas/.env) since
-    # cwd ./.env fallback was removed in v0.15.0a5.
+def test_ingest_client_defaults_to_server_url_in_yaml(tmp_path, monkeypatch):
+    # v0.17.0: client config lives in ~/.config/qatlas/config.yaml
+    # (auto-created on first run, or written by `qatlas config set`).
     fake_home = tmp_path / "fake-home"
     xdg = fake_home / ".config" / "qatlas"
     xdg.mkdir(parents=True)
-    (xdg / ".env").write_text(
-        "PUBLIC_BASE_URL=https://atlas.example\nSERVER_PORT=9000\n",
+    (xdg / "config.yaml").write_text(
+        "server_url: https://atlas.example\n",
         encoding="utf-8",
     )
-    monkeypatch.delenv("QATLAS_SKIP_DOTENV", raising=False)
-    monkeypatch.delenv("QUANTUMATLAS_SKIP_DOTENV", raising=False)
     monkeypatch.setenv("HOME", str(fake_home))
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     monkeypatch.chdir(tmp_path)
@@ -241,7 +239,7 @@ def test_ingest_client_defaults_to_public_base_url(tmp_path, monkeypatch):
     assert client_cli._default_base_url() == "https://atlas.example"
 
 
-def test_ingest_status_can_skip_tls_verification(monkeypatch, capsys):
+def test_ingest_status_skips_tls_verification_when_yaml_insecure(monkeypatch, capsys, tmp_path):
     captured = {}
 
     class FakeResponse:
@@ -258,15 +256,19 @@ def test_ingest_status_can_skip_tls_verification(monkeypatch, capsys):
 
     monkeypatch.setattr(client_cli.requests, "get", fake_get)
 
-    result = client_cli.main(
-        [
-            "status",
-            "task-1",
-            "--base-url",
-            "https://server",
-            "--insecure",
-        ]
+    # v0.17.0: --base-url / --insecure CLI flags removed; config
+    # lives only in ~/.config/qatlas/config.yaml.
+    fake_home = tmp_path / "fake-home"
+    xdg = fake_home / ".config" / "qatlas"
+    xdg.mkdir(parents=True)
+    (xdg / "config.yaml").write_text(
+        "server_url: https://server\ninsecure: true\n",
+        encoding="utf-8",
     )
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+
+    result = client_cli.main(["status", "task-1"])
 
     captured_output = capsys.readouterr()
     assert result == 0

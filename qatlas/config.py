@@ -1,42 +1,37 @@
 """
-QuantumAtlas Configuration
+QuantumAtlas client configuration (v0.17.0+).
 
-Environment-driven settings shared by the ``qatlas`` client CLI and the
-local workspace tooling. The HTTP service itself is the Go ``qatlasd``
-binary; this module only resolves how the Python side reaches it and where
-local assets live.
+Single source of truth: ``~/.config/qatlas/config.yaml``. No CLI flag,
+no OS env var, no ``$QATLAS_DOTENV`` / ``$QATLAS_CONFIG`` overrides.
+First call to any ``qatlas`` subcommand auto-creates a default template
+at the canonical path (the user only has to run the command and edit
+the file, no ``qatlas config init`` step required).
 
-Storage / precedence (v0.17.0+):
+Standard XDG mechanism still applies: setting ``XDG_CONFIG_HOME`` moves
+the file location per the freedesktop spec (this is OS-level XDG, not
+a qatlas-specific override).
 
-  1. CLI flag (each command's argparse)
-  2. OS env var (QATLAS_*, MINERU_*, OPENAI_*, ANTHROPIC_*)
-  3. $QATLAS_CONFIG (explicit YAML override path)
-  4. $QATLAS_DOTENV (legacy .env override; deprecated)
-  5. ~/.config/qatlas/config.yaml (XDG, canonical)
-  6. ~/.config/qatlas/.env (legacy XDG, auto-migrated on next config init)
-  7. Built-in Field default
+Rationale:
 
-The YAML schema is derived 1:1 from ServerConfig field names (snake_case)
-— no hand-maintained mapping table. Adding a new field automatically
-makes it readable from YAML; we use validation_alias to keep the env-var
-names (which often don't match the field name, e.g. SDK-standard
-``MINERU_API_TOKEN``) working.
+* Server (``qatlasd``) is a long-lived daemon — it lives behind systemd
+  / docker / k8s and needs CLI flag + env + .env so each deploy form
+  has a natural injection point.
+* Client (``qatlas``) is a short-lived per-call CLI — users configure
+  it once and reuse it forever. A single YAML file is the simplest
+  mental model and matches how ``gh`` / ``kubectl`` / ``aws`` /
+  ``rclone`` work.
 
-This is a v0.17.0 rewrite of the v0.16.0 "flatten YAML into os.environ
-then let pydantic-settings read env" hack. Now we go straight through
-``pydantic_settings.YamlConfigSettingsSource``, with a thin
-``sync_secrets_to_env`` shim that keeps the handful of legacy direct
-``os.getenv`` call sites (qatlas.client._common.resolve_token,
-qatlas.wiki.engine, etc.) working without touching them.
+The class is still named ``ServerConfig`` for back-compat with existing
+``from qatlas.config import ServerConfig`` imports; rename is left for
+a future major version to avoid churn.
 """
+from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 from typing import Any, Optional, Tuple, Type
 
-from dotenv import dotenv_values
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -44,115 +39,18 @@ from pydantic_settings import (
     YamlConfigSettingsSource,
 )
 
-from qatlas.paths import resolve_config_path, user_config_yaml_path
+from qatlas.paths import user_config_yaml_path
 
 logger = logging.getLogger(__name__)
 
 
-# Fields whose values must be visible to direct os.getenv readers
-# elsewhere in the codebase (qatlas.client._common.resolve_token reads
-# QATLAS_TOKEN; qatlas.client.mineru reads MINERU_*). We can't audit
-# every call site for every future field, so the simplest contract is
-# "every public env var the YAML can set gets pushed back into os.environ
-# at config-load time, with setdefault semantics so real env wins".
-#
-# Tuple of (model field name, env var name) — kept in sync with
-# ServerConfig field declarations below. The test
-# tests/test_config_yaml.py::test_sync_targets_cover_all_validation_aliases
-# guards this list against drift.
-_ENV_SYNC_TARGETS: list[Tuple[str, str]] = [
-    ("server_url", "QATLAS_SERVER_URL"),
-    ("token", "QATLAS_TOKEN"),
-    ("insecure", "QATLAS_INSECURE"),
-    ("wiki_dir", "QATLAS_WIKI_DIR"),
-    ("mineru_api_token", "MINERU_API_TOKEN"),
-    ("mineru_api_base_url", "MINERU_API_BASE_URL"),
-    ("mineru_model_version", "MINERU_MODEL_VERSION"),
-    ("mineru_language", "MINERU_LANGUAGE"),
-    ("mineru_is_ocr", "MINERU_IS_OCR"),
-    ("mineru_enable_formula", "MINERU_ENABLE_FORMULA"),
-    ("mineru_enable_table", "MINERU_ENABLE_TABLE"),
-    ("mineru_poll_interval", "MINERU_POLL_INTERVAL"),
-    ("mineru_timeout", "MINERU_TIMEOUT"),
-    ("openai_api_key", "OPENAI_API_KEY"),
-    ("anthropic_api_key", "ANTHROPIC_API_KEY"),
-]
-
-
-def _resolve_yaml_path() -> Optional[Path]:
-    """Pick the YAML file pydantic-settings should read.
-
-    Walks the same resolution chain documented in the module docstring,
-    but returns only YAML hits (legacy .env files are handled by a
-    separate dotenv shim in bootstrap_env_from_config).
-    """
-    path, source = resolve_config_path()
-    if path is None or source is None:
-        return None
-    if source.endswith("_yaml"):
-        return path
-    return None
-
-
-def sync_secrets_to_env(cfg: "ServerConfig") -> None:
-    """Mirror configured field values into ``os.environ`` for the
-    benefit of direct ``os.getenv`` readers elsewhere in the codebase.
-
-    Uses ``setdefault`` semantics: a real env var already in the
-    process environment wins over the YAML / .env value (matching
-    the precedence chain in the module docstring).
-
-    Only fields enumerated in :data:`_ENV_SYNC_TARGETS` are synced; the
-    list is purposely narrow (only fields with known external readers)
-    so we don't pollute the env with every server-only field a future
-    contributor might add.
-    """
-    for field_name, env_name in _ENV_SYNC_TARGETS:
-        value = getattr(cfg, field_name, None)
-        if value is None or value == "":
-            continue
-        if isinstance(value, bool):
-            os.environ.setdefault(env_name, "true" if value else "false")
-        else:
-            os.environ.setdefault(env_name, str(value))
-
-
-def bootstrap_env_from_config(config_path: Optional[Path] = None) -> None:
-    """Load the user config (YAML or legacy .env) and mirror its values
-    into ``os.environ`` so direct ``os.getenv`` readers see them.
-
-    This shim exists for back-compat with v0.16.0 callers; new code
-    should just call :meth:`ServerConfig.from_env`. Dispatches on file
-    extension; legacy .env files still go through python-dotenv with
-    override-false semantic, identical to v0.16.0 behaviour.
-    """
-    if config_path is None:
-        config_path, _ = resolve_config_path()
-    if config_path is None or not config_path.is_file():
-        return
-
-    if config_path.suffix.lower() in (".yaml", ".yml"):
-        # ServerConfig.from_env() reads the yaml + env in one go and
-        # syncs the result back to os.environ.
-        cfg = ServerConfig.from_env()
-        sync_secrets_to_env(cfg)
-        return
-
-    # Legacy .env path — keep the dotenv loader so v0.16.x users
-    # mid-migration aren't broken by a single config init.
-    for key, value in dotenv_values(config_path).items():
-        if value is None:
-            continue
-        os.environ.setdefault(key, value)
-
-
-def bootstrap_env(dotenv_path: Optional[Path] = None) -> None:
-    """Back-compat alias for :func:`bootstrap_env_from_config`."""
-    bootstrap_env_from_config(dotenv_path)
-
-
 def get_project_root() -> Path:
-    """Resolve repository root (directory containing the qatlas package)."""
+    """Resolve repository root (directory containing the qatlas package).
+
+    Used by ``get_raw_root`` / ``get_data_root`` to anchor relative
+    paths configured in YAML. Falls back to CWD for installed-only
+    usage where the qatlas source tree isn't on disk.
+    """
     current = Path(__file__).resolve()
     for parent in current.parents:
         if (parent / "qatlas").is_dir():
@@ -160,123 +58,102 @@ def get_project_root() -> Path:
     return Path.cwd()
 
 
-def _skip_dotenv() -> bool:
-    """Return whether file-based config loading is disabled.
+_DEFAULT_CONFIG_YAML = """\
+# QuantumAtlas client config — managed by `qatlas config` subcommand or
+# edit this file directly. See https://github.com/IAI-USTC-Quantum/QuantumAtlas
+#
+# All values are OPTIONAL. Defaults shown commented; uncomment and edit
+# the fields you need.
 
-    Honors ``QATLAS_SKIP_DOTENV`` first; falls back to the legacy
-    ``QUANTUMATLAS_SKIP_DOTENV`` for back-compat.
+# ── Server endpoint + auth ─────────────────────────────────────────
+# server_url: https://quantum-atlas.ai
+# token:                # PAT from https://<server>/pat; required for write ops
+# insecure: false       # skip TLS verification (dev / self-signed only)
 
-    Despite the name (history: the original mechanism only knew about
-    .env files), this flag now also disables YAML loading — the contract
-    is "force env-vars-only mode", which is what tests and CI runners
-    care about.
+# ── Local workspace (dev tooling: qatlas wiki / ingest) ────────────
+# wiki_dir: ./wiki      # local checkout of QuantumAtlas-Wiki
+# raw_dir: ./raw        # asset cache root
+
+# ── MinerU API (qatlas mineru) ─────────────────────────────────────
+# mineru_api_token:         # JWT from https://mineru.net
+# mineru_api_base_url: https://mineru.net
+# mineru_model_version: vlm
+# mineru_language: ch
+# mineru_is_ocr: false
+# mineru_enable_formula: true
+# mineru_enable_table: true
+# mineru_poll_interval: 3.0
+# mineru_timeout: 1800
+
+# ── LLM extractor (qatlas extractor; experimental) ────────────────
+# openai_api_key:
+# anthropic_api_key:
+"""
+
+
+def ensure_default_config_exists() -> Path:
+    """Create the default ``config.yaml`` template at the canonical
+    path if it does not already exist. Idempotent — safe to call on
+    every CLI invocation.
+
+    Returns the resolved path either way.
     """
-    for key in ("QATLAS_SKIP_DOTENV", "QUANTUMATLAS_SKIP_DOTENV"):
-        if os.getenv(key, "").lower() in {"1", "true", "yes"}:
-            return True
-    return False
+    path = user_config_yaml_path()
+    if path.exists():
+        return path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_DEFAULT_CONFIG_YAML, encoding="utf-8")
+    try:
+        path.chmod(0o600)
+    except OSError:
+        # E.g. SMB / FAT mounts without POSIX perms — survive but warn.
+        logger.warning("Could not chmod 0600 on %s; secrets may be world-readable.", path)
+    logger.info("Created default config at %s", path)
+    return path
 
 
 class ServerConfig(BaseSettings):
-    """User-level client config + a handful of fields the local workspace
-    tooling reads.
+    """User-level client config (v0.17.0+: YAML only).
 
-    Fields are declared once; pydantic-settings' built-in
-    ``YamlConfigSettingsSource`` + env source handle the [CLI > env >
-    YAML > default] precedence. No hand-maintained YAML_TO_ENV table.
-
-    Adding a new operator-tunable field: just declare it here with a
-    ``validation_alias`` (the env var name) and — if direct os.getenv
-    readers consume it elsewhere — add it to ``_ENV_SYNC_TARGETS`` at
-    the top of the module.
+    All fields read from ``~/.config/qatlas/config.yaml``. Init args
+    (passed when constructing programmatically) still win for tests
+    and embedded callers. No env-var fallback.
     """
 
     model_config = SettingsConfigDict(
+        # Disable pydantic-settings env loading entirely — yaml is the
+        # only source. Tests / embedded callers pass overrides as init
+        # args to ServerConfig(field=value).
         env_file=None,
-        env_file_encoding="utf-8",
         extra="ignore",
         populate_by_name=True,
     )
 
     # ── Server endpoint + auth ────────────────────────────────────
-    server_url: Optional[str] = Field(
-        None,
-        validation_alias=AliasChoices("QATLAS_SERVER_URL", "PUBLIC_BASE_URL"),
-    )
-    token: Optional[str] = Field(
-        None,
-        validation_alias=AliasChoices("QATLAS_TOKEN", "TOKEN"),
-    )
-    insecure: bool = Field(False, validation_alias="QATLAS_INSECURE")
-    user_header: Optional[str] = Field(
-        None,
-        validation_alias=AliasChoices("QATLAS_USER_HEADER", "USER_HEADER"),
-    )
+    server_url: Optional[str] = Field(default=None)
+    token: Optional[str] = Field(default=None)
+    insecure: bool = Field(default=False)
+    user_header: Optional[str] = Field(default=None)
 
-    # ── Server runtime (server-only; client reads only on local boot)
-    host: str = Field(
-        "127.0.0.1",
-        validation_alias=AliasChoices("QATLAS_SERVER_HOST", "SERVER_HOST"),
-    )
-    port: int = Field(
-        4200,
-        validation_alias=AliasChoices("QATLAS_SERVER_PORT", "SERVER_PORT"),
-    )
-    debug: bool = Field(
-        False,
-        validation_alias=AliasChoices("QATLAS_SERVER_DEBUG", "SERVER_DEBUG"),
-    )
+    # ── Local workspace (dev tooling reads these) ────────────────
+    wiki_dir: str = Field(default="wiki")
+    raw_dir: str = Field(default="raw")
+    data_dir: str = Field(default="data")
 
-    # ── Filesystem ────────────────────────────────────────────────
-    wiki_dir: str = Field(
-        "wiki",
-        validation_alias=AliasChoices("QATLAS_WIKI_DIR", "WIKI_DIR"),
-    )
-    raw_dir: str = Field(
-        "raw",
-        validation_alias=AliasChoices("QATLAS_RAW_DIR", "RAW_DIR"),
-    )
-    data_dir: str = Field(
-        "data",
-        validation_alias=AliasChoices("QATLAS_DATA_DIR", "DATA_DIR"),
-    )
+    # ── MinerU (third-party SDK; client-only) ────────────────────
+    mineru_api_token: Optional[str] = Field(default=None)
+    mineru_api_base_url: str = Field(default="https://mineru.net")
+    mineru_model_version: str = Field(default="vlm")
+    mineru_language: str = Field(default="ch")
+    mineru_is_ocr: bool = Field(default=False)
+    mineru_enable_formula: bool = Field(default=True)
+    mineru_enable_table: bool = Field(default=True)
+    mineru_poll_interval: float = Field(default=3.0)
+    mineru_timeout: int = Field(default=1800)
 
-    # ── Legacy / server-side PocketBase (untouched, kept for back-compat)
-    pocketbase_url: str = Field(
-        "http://127.0.0.1:8090",
-        validation_alias=AliasChoices("QATLAS_POCKETBASE_URL", "POCKETBASE_URL"),
-    )
-    pocketbase_data_dir: Optional[str] = Field(
-        None,
-        validation_alias="QATLAS_POCKETBASE_DATA_DIR",
-    )
-    pocketbase_port: Optional[str] = Field(
-        None,
-        validation_alias="QATLAS_POCKETBASE_PORT",
-    )
-    session_secret: Optional[str] = Field(
-        None,
-        validation_alias="QATLAS_SESSION_SECRET",
-    )
-    admin_github_logins: Optional[str] = Field(
-        None,
-        validation_alias="QATLAS_ADMIN_GITHUB_LOGINS",
-    )
-
-    # ── MinerU (third-party SDK env names — no QATLAS_ prefix)
-    mineru_api_token: Optional[str] = Field(None, validation_alias="MINERU_API_TOKEN")
-    mineru_api_base_url: str = Field("https://mineru.net", validation_alias="MINERU_API_BASE_URL")
-    mineru_model_version: str = Field("vlm", validation_alias="MINERU_MODEL_VERSION")
-    mineru_language: str = Field("ch", validation_alias="MINERU_LANGUAGE")
-    mineru_is_ocr: bool = Field(False, validation_alias="MINERU_IS_OCR")
-    mineru_enable_formula: bool = Field(True, validation_alias="MINERU_ENABLE_FORMULA")
-    mineru_enable_table: bool = Field(True, validation_alias="MINERU_ENABLE_TABLE")
-    mineru_poll_interval: float = Field(3.0, validation_alias="MINERU_POLL_INTERVAL")
-    mineru_timeout: int = Field(1800, validation_alias="MINERU_TIMEOUT")
-
-    # ── LLM extractor (third-party SDK env names — no QATLAS_ prefix)
-    openai_api_key: Optional[str] = Field(None, validation_alias="OPENAI_API_KEY")
-    anthropic_api_key: Optional[str] = Field(None, validation_alias="ANTHROPIC_API_KEY")
+    # ── LLM extractor (third-party SDK; client-only) ─────────────
+    openai_api_key: Optional[str] = Field(default=None)
+    anthropic_api_key: Optional[str] = Field(default=None)
 
     @property
     def public_base_url(self) -> Optional[str]:
@@ -284,29 +161,26 @@ class ServerConfig(BaseSettings):
         return self.server_url
 
     @field_validator(
-        "debug",
+        "insecure",
         "mineru_is_ocr",
         "mineru_enable_formula",
         "mineru_enable_table",
         mode="before",
     )
     @classmethod
-    def _parse_true_only_bool(cls, value: Any) -> Any:
-        """Keep legacy .env semantics: only the literal string ``true``
-        enables a flag (matches the Go server's behaviour in
-        internal/config). YAML native booleans pass through unchanged.
-        """
+    def _coerce_string_bool(cls, value: Any) -> Any:
+        """Tolerate legacy string booleans in user-edited YAML."""
         if isinstance(value, str):
-            return value.strip().lower() == "true"
+            return value.strip().lower() in {"1", "true", "yes", "on", "y", "t"}
         return value
 
-    @field_validator("server_url", "token", mode="before")
+    @field_validator("server_url", "token", "user_header", "mineru_api_token",
+                     "openai_api_key", "anthropic_api_key", mode="before")
     @classmethod
     def _empty_string_to_none(cls, value: Any) -> Any:
-        """An empty string in YAML / env should look "unset" to the
-        consumer; otherwise a freshly-init'd yaml with ``token:`` would
-        be treated as "no token" but the resolve_token() call site
-        would see ``QATLAS_TOKEN=""`` and fail differently.
+        """Treat an empty YAML string as "unset" so unconfigured fields
+        are uniformly ``None`` rather than ``""`` (the latter breaks
+        ``if cfg.token:`` checks).
         """
         if value == "":
             return None
@@ -314,18 +188,8 @@ class ServerConfig(BaseSettings):
 
     # ─── pydantic-settings source chain ───────────────────────────
     #
-    # Order matters — the first source to return a value wins, so the
-    # canonical precedence ends up being:
-    #
-    #   init args (CLI overrides passed by tests / programmatic callers)
-    #   > OS environment variables
-    #   > YAML config file (~/.config/qatlas/config.yaml or $QATLAS_CONFIG)
-    #   > built-in Field defaults
-    #
-    # We don't add ``dotenv_settings`` here: legacy .env files are
-    # handled by bootstrap_env_from_config() before pydantic-settings
-    # sees the env (it injects via os.environ.setdefault), so the env
-    # source picks them up naturally.
+    # Only init + YAML. No env source, no dotenv source.
+    # Precedence: init args > YAML file > Field default.
     @classmethod
     def settings_customise_sources(
         cls,
@@ -335,56 +199,30 @@ class ServerConfig(BaseSettings):
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> Tuple[PydanticBaseSettingsSource, ...]:
-        sources: list[PydanticBaseSettingsSource] = [init_settings, env_settings]
-        yaml_path = _resolve_yaml_path()
-        if yaml_path is not None and yaml_path.is_file():
+        sources: list[PydanticBaseSettingsSource] = [init_settings]
+        yaml_path = user_config_yaml_path()
+        if yaml_path.is_file():
             sources.append(YamlConfigSettingsSource(settings_cls, yaml_file=yaml_path))
         return tuple(sources)
 
     @classmethod
     def from_env(cls) -> "ServerConfig":
-        """Load configuration with the canonical precedence (see module
-        docstring).
-
-        ``QATLAS_SKIP_DOTENV=1`` disables all file-based loading and
-        forces env-vars-only.
+        """Load configuration from the YAML file (auto-creating it if
+        absent). Name kept for back-compat with v0.16.x callers; the
+        "env" in the name is now a misnomer (we no longer read env).
         """
-        if _skip_dotenv():
-            # Skip means "no YAML, no .env, env vars only". Build with
-            # the default sources only (init + env), bypassing
-            # settings_customise_sources's YAML hook.
-            saved = cls.settings_customise_sources
-            try:
-                cls.settings_customise_sources = classmethod(  # type: ignore[method-assign]
-                    lambda _cls, _settings_cls, init_settings, env_settings, *_args, **_kwargs: (
-                        init_settings,
-                        env_settings,
-                    )
-                )
-                return cls()
-            finally:
-                cls.settings_customise_sources = saved  # type: ignore[method-assign]
-
-        # Pre-load any legacy .env into os.environ so the env source
-        # below can see those values. (YAML hits go straight through
-        # YamlConfigSettingsSource attached by settings_customise_sources.)
-        path, source = resolve_config_path()
-        if path is not None and source and source.endswith("_dotenv_legacy"):
-            for key, value in dotenv_values(path).items():
-                if value is not None:
-                    os.environ.setdefault(key, value)
-
+        ensure_default_config_exists()
         return cls()
 
     def get_raw_root(self) -> Path:
-        """Resolve RAW_DIR."""
+        """Resolve RAW_DIR (relative paths anchored at project root)."""
         raw_path = Path(self.raw_dir)
         if not raw_path.is_absolute():
             raw_path = get_project_root() / raw_path
         return raw_path.resolve()
 
     def get_data_root(self) -> Path:
-        """Resolve DATA_DIR."""
+        """Resolve DATA_DIR (relative paths anchored at project root)."""
         data_path = Path(self.data_dir)
         if not data_path.is_absolute():
             data_path = get_project_root() / data_path
@@ -417,49 +255,3 @@ def get_config() -> ServerConfig:
     if config is None:
         config = ServerConfig.from_env()
     return config
-
-
-def env_alias_to_field(env_name: str) -> Optional[str]:
-    """Walk ServerConfig.model_fields to find the field whose
-    ``validation_alias`` (single string OR AliasChoices) contains
-    ``env_name``. Returns the snake_case field name (which is also the
-    YAML key) or ``None`` if no field claims this env name.
-
-    Used by ``qatlas config set/get/unset`` so operators can keep using
-    the env-var name they're already familiar with
-    (``QATLAS_SERVER_URL``, ``MINERU_API_TOKEN``) without learning the
-    YAML key separately.
-    """
-    target = env_name.strip()
-    for field_name, field_info in ServerConfig.model_fields.items():
-        alias = field_info.validation_alias
-        if alias is None:
-            continue
-        # AliasChoices wraps multiple aliases; plain string is the simple case.
-        if hasattr(alias, "choices"):
-            for choice in alias.choices:
-                if hasattr(choice, "alias"):
-                    if choice.alias == target:
-                        return field_name
-                elif choice == target:
-                    return field_name
-        elif alias == target:
-            return field_name
-    return None
-
-
-def field_to_env_alias(field_name: str) -> Optional[str]:
-    """Inverse of env_alias_to_field: return the canonical env var name
-    for a given snake_case field name. Returns the FIRST alias when
-    the field has multiple (canonical = primary).
-    """
-    info = ServerConfig.model_fields.get(field_name)
-    if info is None or info.validation_alias is None:
-        return None
-    alias = info.validation_alias
-    if hasattr(alias, "choices"):
-        first = next(iter(alias.choices))
-        if hasattr(first, "alias"):
-            return first.alias
-        return str(first)
-    return str(alias)
