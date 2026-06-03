@@ -131,7 +131,7 @@ raw / data / pb_data 默认塞进 git checkout 内。
 ├── QuantumAtlas-Wiki/             # 兄弟 checkout — WIKI_DIR 默认值
 ├── .local/
 │   ├── bin/qatlasd           # binary（user-writable，sudoless deploy）
-│   └── share/quantum-atlas/       # XDG_DATA_HOME 下，所有 stateful 状态
+│   └── share/qatlasd/             # XDG_DATA_HOME 下，所有 stateful 状态（v0.17.0+；老 install 是 quantum-atlas/，参见 migration-storage-layout.md）
 │       ├── raw/                   # RAW_DIR 默认值（PDF / MinerU 输出）
 │       ├── data/                  # DATA_DIR 默认值（ingest claims / 运行时元数据）
 │       └── pb_data/               # PBDataDir 默认值（PocketBase SQLite）
