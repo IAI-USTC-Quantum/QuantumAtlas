@@ -805,15 +805,32 @@ def _drain_queue_once(
                 failures += len(jobs_by_id)
                 jobs_by_id.clear()
                 break
-            _print_err(f"[failed] {job.arxiv_id}: {entry.err_msg or 'unknown error'}")
-            _release_claim(
-                base_url,
-                job.arxiv_id,
-                job.claim_id,
-                request_timeout=args.request_timeout,
-                verify=verify,
-                headers=headers,
+            _print_err(
+                f"[failed] {job.arxiv_id}: {entry.err_msg or 'unknown error'}"
             )
+            classified_fatal = isinstance(classified, MinerUFatalError)
+            if classified_fatal:
+                # Per-paper fatal (e.g. -60005 file too big, -60006 page count
+                # exceeded, or any other non-retryable). DO NOT release the
+                # claim — let the 30-min server-side lease expire naturally
+                # so the same poison PDF doesn't immediately re-appear at
+                # the top of needs-mineru and waste a batch slot on every
+                # subsequent poll. Bounds the per-day waste to
+                # (24 * 60 / 30) = 48 attempts per bad paper.
+                _print_err(
+                    f"[failed] {job.arxiv_id}: keeping claim until lease "
+                    f"expires (~30 min) so the same bad PDF doesn't reappear "
+                    f"next poll."
+                )
+            else:
+                _release_claim(
+                    base_url,
+                    job.arxiv_id,
+                    job.claim_id,
+                    request_timeout=args.request_timeout,
+                    verify=verify,
+                    headers=headers,
+                )
             _cleanup_workdirs([job])
 
         if jobs_by_id and not daily_limit_hit:

@@ -276,6 +276,60 @@ class TestDrainQueueDailyLimit:
         assert outcome.failures == 2
         assert release.call_count == 2
 
+    def test_per_paper_fatal_skips_release_to_avoid_queue_poison(self) -> None:
+        """Regression: oversize PDF (per-paper fatal) must NOT release the
+        server-side claim immediately.
+
+        Releasing it would put the bad PDF straight back at the top of
+        ``needs-mineru`` (ORDER BY pdf_uploaded_at DESC). Keeping the
+        30-minute claim lease lets the lease expire naturally and bounds
+        per-day retries on the same poison PDF to ~48. Pair test with
+        ``test_poll_classifies_per_entry_daily_limit`` which DOES release
+        on daily-limit because that's a global signal, not per-paper.
+        """
+        args = _make_args(batch_size=2)
+        config = _make_config()
+        candidates = [{"arxiv_id": "ok1v1"}, {"arxiv_id": "badv1"}]
+
+        with patch("qatlas.client.mineru.requests.get") as req_get, \
+             patch.object(cli, "_claim_one") as claim, \
+             patch.object(cli, "_release_claim") as release, \
+             patch.object(cli, "_finalise_done_entry", return_value=True), \
+             patch("qatlas.client.mineru.MinerUClient") as client_cls:
+            req_get.return_value = _mock_needs_mineru(candidates)
+            claim.side_effect = [
+                (_claim_response(c["arxiv_id"], f"c{i}"), None)
+                for i, c in enumerate(candidates)
+            ]
+            mineru = client_cls.return_value
+            mineru.submit_url_batch.return_value = "batch-FATAL"
+            mineru.get_batch.return_value = [
+                BatchTaskState(
+                    file_name="ok1.pdf", data_id="ok1v1", state="done",
+                    full_zip_url="https://z/ok1.zip",
+                ),
+                BatchTaskState(
+                    file_name="bad.pdf", data_id="badv1", state="failed",
+                    err_msg="number of pages exceeds limit (200 pages), please split the file and try again",
+                ),
+            ]
+            outcome = cli._drain_queue_once(args, "http://server", config, True, {})
+
+        # No daily-limit shutdown (the bug fix being asserted).
+        assert outcome.daily_limit_hit is False
+        # 1 done + 1 fatal = 1 failure recorded.
+        assert outcome.failures == 1
+        assert outcome.processed == 2
+        # Crucially: _release_claim called only for the done paper (ok1v1),
+        # NOT for the fatal paper (badv1). Keeping the 30-min lease on
+        # badv1 prevents immediate re-queue (queue-poison mitigation).
+        released_ids = {call.args[1] for call in release.call_args_list}
+        assert "ok1v1" in released_ids
+        assert "badv1" not in released_ids, (
+            f"Per-paper fatal must NOT release its claim "
+            f"(release was called with: {released_ids})"
+        )
+
 
 class TestDrainQueueHappy:
     def test_all_done_no_failures(self) -> None:
