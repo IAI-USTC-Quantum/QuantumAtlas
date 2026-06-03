@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.17.0a0 (2026-06-03)
+
+### Feat
+
+- **web**: inject dev system PAT into vite /api proxy
+- **serve**: add 20 qatlasd-specific CLI flags with [env: QATLAS_FOO=] tags
+- **server**: refuse to coexist with another qatlasd on the same pb_data
+
+### Fix
+
+- **qatlasd**: address rubber-duck findings on v0.17.0 config redesign
+
+### Refactor
+
+- client config is now YAML-only with auto-init (no env/CLI/dotenv)
+- rewrite client YAML config on pydantic-settings YamlConfigSettingsSource
+- rename XDG sub-namespace from quantum-atlas to qatlasd
+
 ## v0.16.0 (2026-06-03)
 
 ### Feat
