@@ -81,7 +81,7 @@ https://<your-ip-or-host>:9000 {
 }
 ```
 
-`tls internal` 用 Caddy 自带 CA 签 IP SAN 证书。client 必须接受自签（`QATLAS_INSECURE=1` 或 `--insecure`）。
+`tls internal` 用 Caddy 自带 CA 签 IP SAN 证书。client 必须接受自签——在 `~/.config/qatlas/config.yaml` 设 `insecure: true`（`qatlas config set insecure true`）。
 
 ### 加 GitHub OAuth 反代头审计（可选）
 

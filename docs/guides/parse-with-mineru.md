@@ -25,7 +25,7 @@ qatlas auth login -H quantum-atlas.ai
 
 # 3. 配你的 MinerU token。回车后会出现一个**不显示**的密码输入框，
 #    粘贴 JWT（mineru.net 后台复制，eyJ... 开头）后回车即可。
-qatlas config set MINERU_API_TOKEN
+qatlas config set mineru_api_token
 
 # 4. 挂着持续贡献。Ctrl-C 一次=等当前 batch 完成后优雅退出；两次=立即 abort。
 qatlas mineru --watch
@@ -37,13 +37,13 @@ qatlas mineru --watch
     - **第 2 步的 PAT 默认 scope 是 `papers:write`**（包含 `papers:read`）。在
       [Profile → PAT](https://quantum-atlas.ai/pat) 也能手工创建带其它 scope 的
       token。
-    - **第 3 步没让你输 `QATLAS_SERVER_URL`** 是因为 default 已经指向
+    - **第 3 步没让你输 `server_url`** 是因为 default 已经指向
       `https://quantum-atlas.ai`。换私有 instance 才需要
-      `qatlas config set QATLAS_SERVER_URL https://your-instance/`。
+      `qatlas config set server_url https://your-instance/`。
     - **第 4 步遇到 daily-limit** 不退出——daemon 自动 sleep 到本地次日 00:01
       额度重置后继续跑。想让它跨终端会话存活、自动重启崩溃的进程，看下面
       [把 daemon 挂久一点](#把-daemon-挂久一点)。
-    - **JWT 不小心粘错了**？再跑一次 `qatlas config set MINERU_API_TOKEN`
+    - **JWT 不小心粘错了**？再跑一次 `qatlas config set mineru_api_token`
       覆盖即可，老值会被替换。
 
 ## 30 秒上手（已装过 qatlas）
@@ -55,9 +55,9 @@ qatlas auth login -H quantum-atlas.ai
 
 # 2. MinerU JWT——mineru.net 注册 / OpenXLab 登录 → API 管理后台复制 token。
 #    无 value 触发隐藏粘贴框，避免 JWT 进 shell history / ps aux / scrollback。
-qatlas config set MINERU_API_TOKEN
-# CI 友好：echo "$MINERU_API_TOKEN" | qatlas config set MINERU_API_TOKEN
-# 想一行搞定（注意暴露 history）：qatlas config set MINERU_API_TOKEN eyJ0eXBlIjoi...
+qatlas config set mineru_api_token
+# CI 友好：echo "$MINERU_API_TOKEN" | qatlas config set mineru_api_token
+# 想一行搞定（注意暴露 history）：qatlas config set mineru_api_token eyJ0eXBlIjoi...
 
 # 3. 挂着持续贡献。第一次 Ctrl-C 会等当前 batch 完事再优雅退出并释放未完成的 claim；
 #    第二次直接 abort。
@@ -91,8 +91,8 @@ qatlas auth login -H <server>
 
 # 2. 配 MinerU token —— 写到 user-level config，无 value 触发隐藏粘贴框
 #    （JWT 不会进 shell history / ps aux / scrollback）。
-qatlas config set MINERU_API_TOKEN
-# 或老式直接编辑：echo 'MINERU_API_TOKEN=eyJ...' >> ~/.config/qatlas/.env
+qatlas config set mineru_api_token
+# 或直接编辑 yaml：echo 'mineru_api_token: eyJ...' >> $(qatlas config path)
 ```
 
 PDF 必须**已经在 server 上**（通过 `qatlas ingest` 或 `qatlas upload pdf` 推上去）。
@@ -108,7 +108,7 @@ PDF 必须**已经在 server 上**（通过 `qatlas ingest` 或 `qatlas upload p
     流程：
 
     1. client POST `/api/papers/<id>/mineru-claim` 拿 30 分钟原子 claim + 临时 presign URL
-    2. 用 `MINERU_API_TOKEN` 提交解析任务给 MinerU（**单 task API** `POST /api/v4/extract/task`，单篇不走 batch）
+    2. 用 `mineru_api_token` 提交解析任务给 MinerU（**单 task API** `POST /api/v4/extract/task`，单篇不走 batch）
     3. 轮询 MinerU 直到 done（带 timeout）
     4. 下载 **完整结果 zip**（含 `full.md` + `images/*`）到临时目录
     5. POST `/api/papers/<id>/upload-mineru` 把整 zip 推回，server 解包后 markdown 落 `qatlas-md`，每张图落 `qatlas-images/<canonical>/`
@@ -265,7 +265,7 @@ PDF 必须**已经在 server 上**（通过 `qatlas ingest` 或 `qatlas upload p
 
 | 变量 | 默认 | 含义 |
 |---|---|---|
-| `MINERU_API_TOKEN` | — | **必填**，从 <https://mineru.net> 拿 |
+| `mineru_api_token` | — | **必填**，从 <https://mineru.net> 拿 |
 | `MINERU_API_BASE_URL` | `https://mineru.net` | 自部署 MinerU 实例时改 |
 | `MINERU_MODEL_VERSION` | `vlm` | `vlm` / `pipeline` |
 | `MINERU_LANGUAGE` | `ch` | 主语言 hint |
@@ -298,14 +298,14 @@ server 维护 `<data_dir>/mineru-claims/*.json`：
 ## 常见问题
 
 !!! failure "MINERU_API_TOKEN must be set"
-    client 端 `.env` / 环境变量没配。用 `qatlas config set MINERU_API_TOKEN`
+    client 端 yaml 没配 `mineru_api_token:`。用 `qatlas config set mineru_api_token`
     无 value 触发隐藏粘贴框（JWT 不进 shell history / ps aux），从
     mineru.net 拿你的 JWT 粘进去即可：
 
     ```bash
-    qatlas config set MINERU_API_TOKEN
-    # CI / 脚本：echo "$MINERU_API_TOKEN" | qatlas config set MINERU_API_TOKEN
-    # 老式直接编辑：echo 'MINERU_API_TOKEN=eyJ...' >> ~/.config/qatlas/.env
+    qatlas config set mineru_api_token
+    # CI / 脚本：echo "$MINERU_API_TOKEN" | qatlas config set mineru_api_token
+    # 老式直接编辑 yaml：echo 'mineru_api_token: eyJ...' >> "$(qatlas config path)"
     ```
 
 !!! failure "skip (HTTP 409): paper already has markdown"
@@ -324,10 +324,10 @@ server 维护 `<data_dir>/mineru-claims/*.json`：
     MinerU 单文件上限 200 页。本 paper 自动 skip + release claim；client 不重试。要解析需先手工拆分 PDF（**`qatlas mineru` 不实现客户端 split**——拆完后再 ingest）。
 
 !!! failure "[fatal] MinerU rejected batch submission: code A0202 (Token 错误)"
-    `MINERU_API_TOKEN` 错或带 `Bearer ` 前缀。换 token 即可；client 不重试。
+    `mineru_api_token` 错或带 `Bearer ` 前缀。换 token 即可；client 不重试。
 
 !!! failure "[fatal] MinerU rejected batch submission: code A0211 (Token 过期)"
-    去 MinerU 重新拿 token，更新 `.env` 后重跑。
+    去 MinerU 重新拿 token，`qatlas config set mineru_api_token` 后重跑。
 
 !!! failure "Markdown upload for X failed: HTTP 400 ... expected_sha256 mismatch"
     下载到磁盘的 markdown 在上传期间被改了 / 磁盘损坏。重跑通常解决。

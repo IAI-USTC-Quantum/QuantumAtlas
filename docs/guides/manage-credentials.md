@@ -72,65 +72,62 @@ QuantumAtlas 用 **PocketBase session token (JWT)** 和 **Personal Access Token 
     #   ...
     ```
 
-=== "环境变量（脚本 / 临时）"
+=== "yaml 配置（推荐 — 一次配长用）"
+
+    把 token 写进 `~/.config/qatlas/config.yaml`（Linux 路径；mac / win 用 `qatlas config path` 查实际）：
 
     ```bash
-    export QATLAS_TOKEN=qat_xxxxxx
+    qatlas config set token qat_xxxxxx
     qatlas upload pdf 2501.00010v1 --pdf paper.pdf
     ```
 
-    `QATLAS_TOKEN` 优先级**高于** hosts.yml。换 shell session 就失效。推荐用 `qatlas config set QATLAS_TOKEN <pat>` 写到 `~/.config/qatlas/.env`，下次 `qatlas` 调用会自动捡起来（不需 source）。完整子命令见 [CLI reference `qatlas config`](../reference/cli-qatlas.md#qatlas-config)。
+    yaml 优先级高于 hosts.yml；token 持久化（不会因换 shell 丢）。完整子命令见 [CLI reference `qatlas config`](../reference/cli-qatlas.md#qatlas-config)。
 
 === "CI / GitHub Actions"
 
-    repo Settings → Secrets → 加 `QATLAS_TOKEN` = PAT 明文。
+    repo Settings → Secrets → 加 `QATLAS_TOKEN` = PAT 明文，然后在 step 里用 `qatlas config set` 写进 yaml：
 
     ```yaml title=".github/workflows/upload.yml"
-    - name: Upload to QuantumAtlas
+    - name: Configure qatlas
       env:
-        QATLAS_SERVER_URL: https://quantum-atlas.ai
         QATLAS_TOKEN: ${{ secrets.QATLAS_TOKEN }}
       run: |
         uv tool install quantum-atlas
+        qatlas config set server_url https://quantum-atlas.ai
+        echo "$QATLAS_TOKEN" | qatlas config set token   # 从 stdin 读，不进 history
+
+    - name: Upload to QuantumAtlas
+      run: |
         qatlas upload pdf 2501.00010v1 --pdf paper.pdf --overwrite
     ```
 
-=== "CLI 一次性（明文不推荐）"
-
-    ```bash
-    qatlas upload pdf ... --token qat_xxx
-    ```
-
-    `--token` 优先级最高，但**会进 shell history**——只在 ad-hoc 调试用。
+    > v0.17.0 起 client 不再读 `QATLAS_TOKEN` 等 env，必须经 `qatlas config set` 中转。
 
 ## token 解析优先级 { #precedence }
 
 ```mermaid
 flowchart TD
-    A[qatlas 命令] --> B{--token flag?}
-    B -->|有| H[用 --token 值]
-    B -->|无| C{$QATLAS_TOKEN env?}
-    C -->|有| H2[用 env 值]
-    C -->|无| D{~/.config/qatlas/hosts.yml 有此 host?}
-    D -->|有| H3[用 stored token]
-    D -->|无| H4[匿名请求]
-    H4 --> E{是写口?}
-    E -->|是| R401[401 Unauthorized]
-    E -->|否| OK[正常读]
+    A[qatlas 命令] --> D{config.yaml token: 设了?}
+    D -->|有| H3[用 yaml token]
+    D -->|无| E{~/.config/qatlas/hosts.yml 有此 host?}
+    E -->|有| H4[用 stored token]
+    E -->|无| H5[匿名请求]
+    H5 --> F{是写口?}
+    F -->|是| R401[401 Unauthorized]
+    F -->|否| OK[正常读]
 ```
 
-跟 `gh` CLI 同款的 precedence。
+v0.17.0+：精简到两层（yaml > hosts.yml > 匿名）。不再支持 `--token` flag、`QATLAS_TOKEN` env。
 
-## 通用 client flags { #client-flags }
+## 通用 client flag { #client-flags }
 
-所有 `qatlas <subcmd>` 都接受这几个：
+所有 `qatlas <subcmd>` 共享的 flag：
 
 | Flag | 默认 | 作用 |
 |---|---|---|
-| `--base-url <url>` | `QATLAS_SERVER_URL` | 指向特定 server |
-| `--token <plaintext>` | (按 precedence) | 显式 bearer |
-| `--insecure` | `QATLAS_INSECURE` | 跳过 TLS 校验 |
-| `--request-timeout 120.0` | 120s | 单 HTTP 请求超时 |
+| `--request-timeout 120.0` | 120s | 单 HTTP 请求超时（per-call ergonomic）|
+
+> v0.17.0 删了 `--base-url` / `--token` / `--insecure` — server URL / token / TLS 选项必须写进 `~/.config/qatlas/config.yaml`（`server_url:` / `token:` / `insecure:` 三个字段）。理由：client 是短命令多次调用，每次重复指 server 反而烦；YAML 单入口跟 `gh` / `kubectl` 主流认知一致。
 
 ## 查 / 撤销 PAT
 

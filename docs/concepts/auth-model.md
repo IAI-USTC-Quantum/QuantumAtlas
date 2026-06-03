@@ -123,14 +123,17 @@ flowchart TD
 
 === "CI / Agent"
 
-    跟 CLI 长期一样建 PAT，但通过环境变量传：
+    跟 CLI 长期一样建 PAT，但通过 stdin 注入到 yaml 而不是 env：
 
     ```bash
-    export QATLAS_TOKEN=qat_xxxxxxxx
+    # 从 secret 拿到 PAT 后，echo 给 qatlas config set 从 stdin 读（不进 history）
+    echo "$QATLAS_TOKEN_FROM_SECRET" | qatlas config set token
     qatlas upload pdf ...
     ```
 
-    或者 CLI 显式：`qatlas upload pdf ... --token "$QATLAS_TOKEN"`。
+    v0.17.0 起 client 不再读 `QATLAS_TOKEN` env、不再支持 `--token` flag——
+    都必须经 `qatlas config set token` 中转到 yaml。理由：单入口减少认知负担，
+    跟 `gh` / `kubectl` 主流认知一致。
 
 更详细的操作见 [管理凭据](../guides/manage-credentials.md)。
 

@@ -22,14 +22,13 @@
     **2. 指向远端 server：**
 
     ```bash
-    # 一次性配好（写入 ~/.config/qatlas/.env）
-    qatlas config init                                    # 创建模板
-    qatlas config set QATLAS_SERVER_URL https://quantum-atlas.ai
+    # 一次性配好（写入平台原生 user-config 路径下的 config.yaml）
+    qatlas config set server_url https://quantum-atlas.ai
     qatlas config path                                    # 看真实文件路径
     qatlas config show                                    # 看当前所有解析值（敏感字段自动遮罩）
     ```
 
-    或一次性设环境变量：`export QATLAS_SERVER_URL=https://quantum-atlas.ai`。**不需要 token** —— 所有读接口都是公开的（Wiki 是公开仓库）。
+    **不需要 token** —— 所有读接口都是公开的（Wiki 是公开仓库）。token 仅在写操作时需要，参见下面 §「贡献内容 / 上传论文」段。
 
     **3. 跑起来：**
 
@@ -78,8 +77,8 @@
     # 上传 PDF + 元数据 JSON
     qatlas upload pdf 2501.00010v1 --pdf paper.pdf
 
-    # 用本地 MinerU 配额解析后推回云端
-    export MINERU_API_TOKEN=<your-token>
+    # 用本地 MinerU 配额解析后推回云端（先把 token 写进 yaml）
+    qatlas config set mineru_api_token <your-jwt-from-mineru.net>
     qatlas mineru 2501.00010v1 --push-pdf
     ```
 
@@ -202,18 +201,25 @@
 
 ---
 
-## 通用配置：.env 文件
+## 通用配置：client YAML / server `.env`
 
-QuantumAtlas client 和 server 共享一份 `.env`，按角色取不同字段。**纯 client 最小配置**：
+**v0.17.0 起 client 和 server 配置完全分离**：
 
-```bash
-QATLAS_SERVER_URL=https://quantum-atlas.ai
-# QATLAS_INSECURE=1                  # 仅当远端用自签证书
-# QATLAS_TOKEN=<paste-pat-here>      # 需要写操作时
-# MINERU_API_TOKEN=<your-token>      # 仅当本地跑 qatlas mineru
-```
+- **Client (`qatlas`)**: YAML，由 [`platformdirs`](https://platformdirs.readthedocs.io/) 选定位置（Linux `~/.config/qatlas/`、macOS `~/Library/Application Support/qatlas/`、Windows `%APPDATA%\qatlas\`）。**首次跑任何 `qatlas <cmd>` 自动创建模板**——不需要 `qatlas config init` 步骤。
 
-详细字段语义见 [reference/env-vars](reference/env-vars.md) 和模板 [`.env.example`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.env.example)。
+    最小配置：
+
+    ```yaml
+    # config.yaml — auto-created on first qatlas invocation; edit directly or via `qatlas config set`
+    server_url: https://quantum-atlas.ai
+    # insecure: true              # 仅当远端用自签证书
+    # token: qat_xxxxxxxx         # 需要写操作时
+    # mineru_api_token: jwt_...   # 仅当本地跑 qatlas mineru
+    ```
+
+    或用 `qatlas config set` 维护：`qatlas config set server_url https://quantum-atlas.ai`。
+
+- **Server (`qatlasd`)**: 三入口 CLI flag > OS env > `.env` 文件 > default。最小 `.env` 见 [reference/env-vars](reference/env-vars.md) 和模板 [`.env.example`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.env.example)。
 
 ## 找不到答案？
 

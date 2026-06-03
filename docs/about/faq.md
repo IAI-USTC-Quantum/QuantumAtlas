@@ -32,7 +32,7 @@
 
 ??? question "client 必须装 server 吗？"
 
-    不必。**client 是独立的 PyPI 包**（`quantum-atlas`）；纯 client 用户只需要 `QATLAS_SERVER_URL` 指向远端 server（如 `https://quantum-atlas.ai`）。
+    不必。**client 是独立的 PyPI 包**（`quantum-atlas`）；纯 client 用户只需要在 `~/.config/qatlas/config.yaml` 设 `server_url:` 指向远端 server（如 `https://quantum-atlas.ai`）。
 
 ??? question "Windows 能跑 server 吗？"
 

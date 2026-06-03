@@ -11,34 +11,32 @@
 
 ## 0. 配置加载约定
 
-**Server 用 `.env` + process env**（Go `qatlasd` 走 godotenv non-override），**client 用 YAML**（Python `qatlas` 自 v0.16.0 起改用 `~/.config/qatlas/config.yaml`，用 `qatlas config init/set/get` 管）。两边**不共享**同一份配置文件。
+**v0.17.0 起 client 和 server 配置完全分离**：
 
-- 项目自有字段统一加 `QATLAS_` 前缀（如 `QATLAS_SERVER_URL`、`QATLAS_WIKI_DIR`、`QATLAS_USER_HEADER`）；旧名（`PUBLIC_BASE_URL`、`WIKI_DIR`、`USER_HEADER` 等）作 alias 兼容到 v0.17.0。
-- 第三方 / SDK 标准名（`NEO4J_*`、`OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`MINERU_*`、`GITHUB_CLIENT_*`）**不加**前缀。
-- 已有的 OS 环境变量优先级**高于**任何配置文件（client YAML 或 server `.env` 都遵守）。
-- 临时关闭 client 配置文件加载：`QATLAS_SKIP_DOTENV=1`（alias: `QUANTUMATLAS_SKIP_DOTENV`）。
+- **Server (`qatlasd`)**: 三入口 CLI flag > OS env > `.env` 文件 > default（godotenv non-override）；项目自有字段带 `QATLAS_` 前缀，第三方 SDK 标准名（`NEO4J_*` / `GITHUB_CLIENT_*` 等）原样保留
+- **Client (`qatlas`)**: 单入口 YAML，**首次跑任何 `qatlas <cmd>` 自动创建**模板到 [`platformdirs`](https://platformdirs.readthedocs.io/) 解析的位置（Linux `~/.config/qatlas/`、macOS `~/Library/Application Support/qatlas/`、Windows `%APPDATA%\qatlas\`）；**不读** 任何 CLI flag / OS env / `QATLAS_DOTENV`
 
 **贡献者通常只需要配 client**（不跑 server）：
 
 ```bash
-# 首次安装：写一份默认 yaml 到 ~/.config/qatlas/config.yaml
-qatlas config init
+# 路径在哪？（不同平台不一样）
+qatlas config path
 
-# 改 server URL（也可每次 --base-url 显式传）
-qatlas config set QATLAS_SERVER_URL https://quantum-atlas.ai
+# 设 server URL
+qatlas config set server_url https://quantum-atlas.ai
 
-# 改 PAT（写操作需要；浏览器登录 server 后到 /pat 创建）
-qatlas config set QATLAS_TOKEN qat_xxxxx
+# 设 PAT（写操作需要；浏览器登录 server 后到 /pat 创建）
+qatlas config set token qat_xxxxx
 
-# 远端是自签 HTTPS（开发环境 Caddy `tls internal`）时打开；等价于 CLI 的 --insecure
-qatlas config set QATLAS_INSECURE 1
+# 远端是自签 HTTPS（开发环境 Caddy `tls internal`）时打开
+qatlas config set insecure true
 
 # 仅在使用 qatlas mineru 本地解析时需要
-qatlas config set MINERU_API_TOKEN mn_xxxxx
-# 其余 MINERU_* 字段都有合理默认值，按需覆盖
+qatlas config set mineru_api_token mn_xxxxx
+# 其余 mineru_* 字段都有合理默认值，按需覆盖
 ```
 
-完整字段映射 + YAML schema 见 [client config reference](../reference/cli-qatlas.md#qatlas-config) 与 [env-vars.md §Client](../reference/env-vars.md#client-qatlas-配置文件解析)。
+完整字段映射 + YAML schema 见 [client config reference](../reference/cli-qatlas.md#qatlas-config) 与 [env-vars.md §Client](../reference/env-vars.md#client-qatlas-配置yaml-onlyv0170)。
 
 **服务端的 `.env`**（含 `NEO4J_*` / `QATLAS_S3_*` / `GITHUB_CLIENT_*` / `QATLAS_SYSTEM_PAT` 等）见 [server-config.md](../deployment/server-config.md) 与 [operations.md](../deployment/operations.md) 的「推荐的单机生产目录」段。
 
@@ -77,7 +75,7 @@ qatlas ingest --help
 
 | 选项 | 行为 |
 |---|---|
-| `--parser mineru` | 可省略；保留为显式 flag 是为了将来 wire 协议扩展（万一以后又加了新 parser，签名不动）。`mineru` 需要服务端配置 `MINERU_API_TOKEN` |
+| `--parser mineru` | 可省略；保留为显式 flag 是为了将来 wire 协议扩展（万一以后又加了新 parser，签名不动）。`mineru` 需要客户端配置 `mineru_api_token`（yaml 字段）|
 | `--stop-after fetch` / `--stop-after parse` | 在指定阶段后停止（`parse` 是末尾阶段，等价于跑完） |
 | `--stages a,b` | 只跑明确列出的阶段（`fetch` / `parse`），跳过的阶段如果有本地资产会被复用 |
 | `--force-fetch` / `--force-parse` | 即使本地已有 PDF/Markdown 也强制重做 |
@@ -137,7 +135,7 @@ qatlas upload mineru 2501.00010v1 --zip mineru-result.zip --source mineru
 
 ### Path C：本地跑 MinerU 后把解析结果推回云端
 
-适用场景：贡献者愿意用**自己的** MinerU 配额（`MINERU_API_TOKEN` 写在自己电脑的 `.env`），服务器配置可以完全不带这个 token。
+适用场景：贡献者愿意用**自己的** MinerU 配额（`mineru_api_token` 写在自己电脑的 yaml 里），服务器配置可以完全不带这个 token。
 
 **前置条件**：要处理的 PDF 必须已经在服务器的 `RAW_DIR` 里（通过 Path A 或 Path B 进入）。`qatlas mineru` 不接受用户自带 URL——这是为了保证生成的 markdown 永远对应 raw 中已知的 PDF，不会产生孤儿数据。
 
@@ -170,7 +168,7 @@ qatlas mineru 2501.00010v1 --no-push
 
 `qatlas mineru` 流程：
 
-1. 从本地 `.env` 读 `MINERU_API_TOKEN` 等字段。
+1. 从本地 `~/.config/qatlas/config.yaml` 读 `mineru_api_token` 等字段。
 2. 没传 arxiv_id → `GET /api/papers/needs-mineru?limit=<max>` 取队列；传了就只处理那一篇。
 3. 对每篇 → POST claim；服务端返回 `pdf_url`（指向 arxiv.org 原 PDF URL）+ `claim_id`。
 4. 提交 MinerU → 按 `MINERU_POLL_INTERVAL` / `MINERU_TIMEOUT` 轮询。
@@ -221,7 +219,7 @@ scope 的 obj/act 在 `scopeGuard` 抛 403 时会回显在 `detail` 里——CLI
 
 1. 浏览器登录后打开 `https://<server>/pat`；
 2. "New token" → 填名字（如 `nightly-ci`）+ 可选 description + 必选过期天数（默认 90 天）+ 勾选需要的 scope；
-3. 服务器返回的明文**只显示一次**——立即拷到 GH Actions secret / systemd `EnvironmentFile` / 本地 `.env`；
+3. 服务器返回的明文**只显示一次**——立即拷到 GH Actions secret / systemd `EnvironmentFile`（server 用）或 `qatlas config set token` 写入 client yaml；
 4. 之后这条 PAT 在列表里只显示前缀（`qat_xxxxxxxx…`）、scope 标签和 last-used 时间戳，需要换号就 Revoke 再创建一条。
 
 **B. 服务端 shell（运维 / CI 自动化）**
@@ -269,18 +267,14 @@ qatlas auth logout -H quantum-atlas.ai   # 撤销本地凭证
 qatlas upload pdf quant-ph/9508027v1 --pdf paper.pdf
 ```
 
-token 解析优先级（同 `gh`）：`--token` 命令行 > `QATLAS_TOKEN` 环境变量 > `~/.config/qatlas/hosts.yml` 里匹配当前 host 的条目 > 无凭证。
+token 解析优先级（v0.17.0+ 精简）：`~/.config/qatlas/config.yaml` 的 `token:` 字段 > `~/.config/qatlas/hosts.yml` 里匹配当前 host 的条目 > 无凭证。`gh CLI` 风格的 `--token` flag 和 `QATLAS_TOKEN` env 在 v0.17.0 已删除（client 只读 yaml；server 仍支持 env，详见 server-config.md）。
 
-**纯环境变量方式**仍然支持（适合一次性脚本 / CI runner）：
+**直接 curl 方式**（绕开 client，调底层 API）：
 
 ```bash
-export QATLAS_SERVER_URL=https://quantum-atlas.ai
-export QATLAS_TOKEN=qat_xxxxx                    # 或 --token 命令行覆盖
-
-qatlas upload pdf quant-ph/9508027v1 --pdf paper.pdf
-
-# 直接 curl 也行：
-curl -X POST -H "Authorization: Bearer $QATLAS_TOKEN" \
+# 先从 yaml 读出来
+TOKEN=$(qatlas config get token)
+curl -X POST -H "Authorization: Bearer $TOKEN" \
   -F pdf=@paper.pdf -F metadata=@meta.json \
   "https://quantum-atlas.ai/api/papers/quant-ph/9508027v1/upload-pdf?overwrite=true"
 ```

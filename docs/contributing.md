@@ -334,8 +334,9 @@ git push origin add-grover
 合并到 main 后，触发 server 端 fast-forward pull（需 `wiki:write` scope 的 PAT 或 session token）：
 
 ```bash
+TOKEN=$(qatlas config get token)  # 从 client yaml 读
 curl -X POST https://quantum-atlas.ai/api/wiki/sync/pull \
-    -H "Authorization: Bearer $QATLAS_TOKEN"
+    -H "Authorization: Bearer $TOKEN"
 ```
 
 即使是 fast-forward only，它仍会在服务端跑 git + 重建缓存，因此和其它写口一样需要鉴权，防匿名滥用。
@@ -359,7 +360,7 @@ qatlas auth login -H quantum-atlas.ai
 
 # 2. MinerU JWT —— mineru.net 注册 → API 管理后台复制（eyJ... 开头）
 #    无 value 触发隐藏粘贴框，JWT 不进 shell history / ps aux。
-qatlas config set MINERU_API_TOKEN
+qatlas config set mineru_api_token
 
 # 3. 挂着持续贡献。多人并发不会撞配额（每篇 30 分钟原子 claim）。
 qatlas mineru --watch
