@@ -1,14 +1,16 @@
-"""Tests for ``qatlas config <subcommand>`` (v0.16.0+ YAML format).
+"""Tests for ``qatlas config <subcommand>`` (v0.17.0+ flat YAML schema).
 
-Covers the user-visible behaviours after the YAML migration:
+Covers the user-visible behaviours after the v0.17.0 simplification
+(direct pydantic-settings YamlConfigSettingsSource, no hand-maintained
+YAML_TO_ENV map):
 
 * file is created with 0600 perms, in the right XDG location, with the
   right extension (.yaml, not .env)
-* `set`/`get`/`unset` round-trip through the YAML schema
+* `set`/`get`/`unset` round-trip through the flat YAML schema
 * sensitive values masked on `show` / `set` echo, unmaskable
 * `get` resolves via the full precedence chain (env > file)
 * `init` auto-migrates a legacy ``.env`` to ``config.yaml`` and
-  renames the original to ``.env.migrated-from-v0.16.0.*``
+  renames the original to ``.env.migrated-from-v0.17.0.*``
 * unknown env-var names rejected (typo guard)
 """
 
@@ -79,7 +81,7 @@ class TestInit:
     ) -> None:
         target = _yaml_path(isolated_env)
         target.parent.mkdir(parents=True)
-        target.write_text("server:\n  url: https://keep.example\n")
+        target.write_text("server_url: https://keep.example\n")
         rc = _run(["init"])
         assert rc == 1
         err = capsys.readouterr().err
@@ -91,9 +93,8 @@ class TestInit:
         target = _yaml_path(isolated_env)
         target.parent.mkdir(parents=True)
         target.write_text(
-            "server:\n"
-            "  url: https://user.example\n"
-            "  token: qat_user_already_set\n"
+            "server_url: https://user.example\n"
+            "token: qat_user_already_set\n"
         )
         assert _run(["init", "--force"]) == 0
         content = target.read_text()
@@ -113,7 +114,7 @@ class TestInit:
             "QATLAS_TOKEN=qat_should_not_leak_in\n"
         )
         (isolated_env / "config.yaml").write_text(
-            "server:\n  url: https://staging.example.com\n"
+            "server_url: https://staging.example.com\n"
         )
         rc = _run(["init"])
         assert rc == 0
@@ -151,20 +152,20 @@ class TestMigration:
         assert "insecure: true" in content
 
         assert not legacy.exists()
-        backups = list(legacy.parent.glob(".env.migrated-from-v0.16.0.*"))
+        backups = list(legacy.parent.glob(".env.migrated-from-v0.17.0.*"))
         assert len(backups) == 1
         assert backups[0].read_text().startswith("QATLAS_SERVER_URL=")
 
         err = capsys.readouterr().err
         assert "Migrated" in err
-        assert ".env.migrated-from-v0.16.0" in err
+        assert ".env.migrated-from-v0.17.0" in err
 
     def test_init_does_not_migrate_when_yaml_already_present(
         self, isolated_env: Path, capsys: pytest.CaptureFixture
     ) -> None:
         yaml_path = _yaml_path(isolated_env)
         yaml_path.parent.mkdir(parents=True)
-        yaml_path.write_text("server:\n  url: https://keep.example\n")
+        yaml_path.write_text("server_url: https://keep.example\n")
         legacy = _legacy_dotenv(isolated_env)
         legacy.write_text("QATLAS_SERVER_URL=https://stale.example\n")
 
@@ -187,7 +188,7 @@ class TestMigration:
         assert _run(["init"]) == 0
 
         err = capsys.readouterr().err
-        assert "no YAML home" in err
+        assert "no client config field" in err
         assert "NEO4J_URI" in err
 
 
@@ -203,8 +204,8 @@ class TestSetGetUnset:
         assert _run(["set", "QATLAS_SERVER_URL", "https://x.example.com"]) == 0
         assert target.is_file()
         content = target.read_text()
-        assert "url: https://x.example.com" in content
-        assert "server:" in content
+        # Flat schema: snake_case field at top level.
+        assert "server_url: https://x.example.com" in content
 
     def test_set_then_get_round_trip(self, isolated_env: Path, capsys: pytest.CaptureFixture) -> None:
         _run(["set", "QATLAS_SERVER_URL", "https://y.example.com"])
@@ -226,14 +227,22 @@ class TestSetGetUnset:
         assert "qat_VeryLongSensitiveValue1234" not in out
         assert "qat_" in out
 
-    def test_unset_removes_key_and_prunes_section(self, isolated_env: Path) -> None:
+    def test_unset_removes_key(self, isolated_env: Path) -> None:
+        # In v0.17.0 the YAML schema is flat (no nested sections), so
+        # there's no section to "prune"; unset just removes the key.
+        # Assert via parsed YAML to avoid false positives from the header
+        # comment which mentions "mineru_api_token" as an example.
+        import yaml
+
         _run(["set", "MINERU_API_TOKEN", "jwt_xxx"])
         target = _yaml_path(isolated_env)
-        assert "mineru:" in target.read_text()
+        data = yaml.safe_load(target.read_text())
+        assert data.get("mineru_api_token") == "jwt_xxx"
+
         rc = _run(["unset", "MINERU_API_TOKEN"])
         assert rc == 0
-        content = target.read_text()
-        assert "mineru:" not in content
+        data = yaml.safe_load(target.read_text()) or {}
+        assert "mineru_api_token" not in data
 
     def test_unset_missing_key_returns_1(self, isolated_env: Path, capsys: pytest.CaptureFixture) -> None:
         _run(["set", "QATLAS_SERVER_URL", "v"])
@@ -315,7 +324,7 @@ class TestSetGetUnset:
         # substring check would false-positive).
         import yaml
         data = yaml.safe_load(target.read_text())
-        assert data["mineru"]["api_token"] == secret
+        assert data["mineru_api_token"] == secret
 
     def test_set_empty_prompted_value_refuses(
         self,
@@ -402,11 +411,11 @@ class TestPath:
         self, isolated_env: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
     ) -> None:
         custom = isolated_env / "custom.yaml"
-        custom.write_text("server:\n  url: https://from-override\n")
+        custom.write_text("server_url: https://from-override\n")
         monkeypatch.setenv("QATLAS_CONFIG", str(custom))
 
         _yaml_path(isolated_env).parent.mkdir(parents=True)
-        _yaml_path(isolated_env).write_text("server:\n  url: https://xdg\n")
+        _yaml_path(isolated_env).write_text("server_url: https://xdg\n")
 
         rc = _run(["path"])
         assert rc == 0

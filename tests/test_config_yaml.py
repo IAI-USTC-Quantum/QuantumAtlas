@@ -1,277 +1,314 @@
-"""Tests for ``qatlas.config_yaml`` — YAML schema flatten/unflatten,
-.env auto-migration, and set/get/unset round-trips.
+"""Tests for ``qatlas.config_yaml`` (v0.17.0+ minimal surface).
+
+v0.17.0 removed the hand-maintained YAML_TO_ENV map / flatten /
+bootstrap_env_from_yaml; ``ServerConfig`` now reads YAML directly
+through ``pydantic_settings.YamlConfigSettingsSource``. config_yaml
+keeps only:
+
+* load / dump / atomic write
+* legacy ``.env`` parser
+* one-shot ``migrate_dotenv_to_yaml``
+
+These tests focus on those surface behaviours plus a guard that
+``_ENV_SYNC_TARGETS`` (in qatlas.config) stays in sync with the actual
+ServerConfig fields.
 """
 
 from __future__ import annotations
 
-import os
+import stat
 from pathlib import Path
 
 import pytest
 
 from qatlas import config_yaml
+from qatlas.config import (
+    _ENV_SYNC_TARGETS,
+    ServerConfig,
+    env_alias_to_field,
+    field_to_env_alias,
+)
 
 
 # ---------------------------------------------------------------------------
-# flatten_yaml_to_env
+# load / dump round-trip
 # ---------------------------------------------------------------------------
 
 
-class TestFlattenYamlToEnv:
-    def test_flat_known_keys_map_to_env(self) -> None:
-        data = {
-            "server": {"url": "https://atlas.example.com", "token": "qat_abc"},
-            "mineru": {"api_token": "jwt_token"},
-        }
-        env = config_yaml.flatten_yaml_to_env(data)
-        assert env["QATLAS_SERVER_URL"] == "https://atlas.example.com"
-        assert env["QATLAS_TOKEN"] == "qat_abc"
-        assert env["MINERU_API_TOKEN"] == "jwt_token"
-
-    def test_bool_coerced_to_lowercase_string(self) -> None:
-        env = config_yaml.flatten_yaml_to_env({"server": {"insecure": True}})
-        # field_validator._parse_true_only_bool matches the literal "true",
-        # nothing else — so this string must be lowercase.
-        assert env["QATLAS_INSECURE"] == "true"
-        env = config_yaml.flatten_yaml_to_env({"server": {"insecure": False}})
-        assert env["QATLAS_INSECURE"] == "false"
-
-    def test_numeric_stringified(self) -> None:
-        env = config_yaml.flatten_yaml_to_env({"mineru": {"poll_interval": 3.0, "timeout": 1800}})
-        assert env["MINERU_POLL_INTERVAL"] == "3.0"
-        assert env["MINERU_TIMEOUT"] == "1800"
-
-    def test_empty_string_and_none_dropped(self) -> None:
-        env = config_yaml.flatten_yaml_to_env({"server": {"url": "", "token": None}})
-        assert "QATLAS_SERVER_URL" not in env
-        assert "QATLAS_TOKEN" not in env
-
-    def test_unknown_key_silently_ignored(self) -> None:
-        # Unknown sections / keys are dropped (with a debug log) rather
-        # than raised, so a future schema addition we haven't seen yet
-        # can't crash an older qatlas version.
-        data = {"server": {"url": "https://x.example", "future_field": "ignored"}, "totally_new_section": {}}
-        env = config_yaml.flatten_yaml_to_env(data)
-        assert env == {"QATLAS_SERVER_URL": "https://x.example"}
-
-    def test_extractor_keys_use_third_party_env_names(self) -> None:
-        env = config_yaml.flatten_yaml_to_env({"extractor": {"openai_api_key": "sk-x", "anthropic_api_key": "ant-y"}})
-        # The yaml lives under `extractor:` but the env names stay the
-        # SDK-conventional OPENAI_API_KEY / ANTHROPIC_API_KEY (no
-        # QATLAS_EXTRACTOR_* prefix).
-        assert env["OPENAI_API_KEY"] == "sk-x"
-        assert env["ANTHROPIC_API_KEY"] == "ant-y"
-
-    def test_mineru_keys_use_third_party_env_names(self) -> None:
-        # Same as extractor — the yaml section name (mineru) doesn't
-        # propagate to env names; we keep the SDK-standard MINERU_*.
-        env = config_yaml.flatten_yaml_to_env({"mineru": {"api_token": "j"}})
-        assert "MINERU_API_TOKEN" in env
-        assert "QATLAS_MINERU_API_TOKEN" not in env
-
-
-# ---------------------------------------------------------------------------
-# env_dict_to_yaml (the .env → config.yaml migration direction)
-# ---------------------------------------------------------------------------
-
-
-class TestEnvDictToYaml:
-    def test_round_trip_through_known_keys(self) -> None:
-        env_pairs = {
-            "QATLAS_SERVER_URL": "https://atlas.example.com",
-            "QATLAS_TOKEN": "qat_abc",
-            "MINERU_API_TOKEN": "jwt_token",
-            "MINERU_POLL_INTERVAL": "5.5",
-            "QATLAS_INSECURE": "1",
-        }
-        yaml_dict = config_yaml.env_dict_to_yaml(env_pairs)
-        assert yaml_dict == {
-            "server": {
-                "url": "https://atlas.example.com",
-                "token": "qat_abc",
-                "insecure": True,  # coerced from "1" because path is in _BOOL_YAML_PATHS
-            },
-            "mineru": {
-                "api_token": "jwt_token",
-                "poll_interval": 5.5,  # coerced from "5.5" because numeric path
-            },
-        }
-
-    def test_unknown_envvars_dropped_and_reported(self) -> None:
-        env_pairs = {
-            "QATLAS_SERVER_URL": "https://x.example",
-            "QATLAS_POCKETBASE_URL": "http://127.0.0.1:8090",  # no YAML home (server-only legacy)
-            "RANDOM_USER_VAR": "foo",
-        }
-        yaml_dict = config_yaml.env_dict_to_yaml(env_pairs)
-        assert yaml_dict == {"server": {"url": "https://x.example"}}
-        unmigrated = config_yaml.unmigrated_keys(env_pairs)
-        assert "QATLAS_POCKETBASE_URL" in unmigrated
-        assert "RANDOM_USER_VAR" in unmigrated
-
-    def test_empty_values_dropped(self) -> None:
-        env_pairs = {"QATLAS_SERVER_URL": "", "QATLAS_TOKEN": "  "}
-        # Empty string is dropped; a whitespace-only value passes through
-        # (we trust the user; the dotenv parser is stricter).
-        yaml_dict = config_yaml.env_dict_to_yaml(env_pairs)
-        assert "server" not in yaml_dict or "url" not in yaml_dict.get("server", {})
-
-
-# ---------------------------------------------------------------------------
-# load + dump round-trip
-# ---------------------------------------------------------------------------
-
-
-class TestLoadDumpRoundTrip:
-    def test_load_missing_file_returns_empty_dict(self, tmp_path: Path) -> None:
+class TestLoadYamlFile:
+    def test_missing_file_returns_empty_dict(self, tmp_path: Path) -> None:
         assert config_yaml.load_yaml_file(tmp_path / "missing.yaml") == {}
 
-    def test_load_empty_file_returns_empty_dict(self, tmp_path: Path) -> None:
+    def test_empty_file_returns_empty_dict(self, tmp_path: Path) -> None:
         p = tmp_path / "config.yaml"
         p.write_text("")
         assert config_yaml.load_yaml_file(p) == {}
 
-    def test_load_non_mapping_top_level_raises(self, tmp_path: Path) -> None:
+    def test_non_mapping_top_level_raises(self, tmp_path: Path) -> None:
+        # The user might paste a YAML list by accident — fail with a
+        # clear message instead of letting pydantic raise an opaque
+        # validation error 30 stack frames deeper.
         p = tmp_path / "config.yaml"
-        p.write_text("- one\n- two\n")  # list, not dict
+        p.write_text("- one\n- two\n")
         with pytest.raises(ValueError, match="top-level mapping"):
             config_yaml.load_yaml_file(p)
 
-    def test_dump_preserves_section_order(self, tmp_path: Path) -> None:
-        # Sections must appear in YAML_TO_ENV declaration order so the
-        # most-relevant `server:` block lands at the top of the file
-        # instead of alphabetically buried after `extractor:`.
-        data = {
-            "extractor": {"openai_api_key": "x"},
-            "server": {"url": "https://y"},
-            "mineru": {"api_token": "z"},
-        }
-        text = config_yaml.dump_yaml(data)
-        idx_extractor = text.find("extractor:")
-        idx_server = text.find("server:")
-        idx_mineru = text.find("mineru:")
-        assert idx_extractor != -1 and idx_server != -1 and idx_mineru != -1
-        # We pass dicts to PyYAML in insertion order — sort_keys=False
-        # then preserves it. The test thus verifies our dump_yaml
-        # honours that.
-        assert text.index("extractor:") < text.index("server:") < text.index("mineru:")
+    def test_invalid_yaml_raises_with_path(self, tmp_path: Path) -> None:
+        p = tmp_path / "config.yaml"
+        p.write_text(": malformed yaml\n")
+        with pytest.raises(ValueError, match=str(p)):
+            config_yaml.load_yaml_file(p)
 
-    def test_dump_includes_header_comment(self) -> None:
-        text = config_yaml.dump_yaml({"server": {"url": "https://x"}})
+
+class TestDumpYaml:
+    def test_includes_header_comment(self) -> None:
+        text = config_yaml.dump_yaml({"server_url": "https://x"})
         assert text.startswith("# QuantumAtlas client config")
         assert "qatlas config init/set/unset" in text
-        assert "https://x" in text
+        # Header explicitly tells users `set` rewrites the file
+        # (matches kubectl/gh behaviour) — they shouldn't be surprised
+        # when hand-written notes vanish.
+        assert "REWRITE" in text or "rewrite" in text.lower()
 
-    def test_full_round_trip(self, tmp_path: Path) -> None:
+    def test_empty_dict_renders_blank_body(self) -> None:
+        # A fresh `qatlas config init` writes an empty dict; the file
+        # must NOT contain a literal `{}` — that would look like
+        # garbage to a human reader.
+        text = config_yaml.dump_yaml({})
+        assert "{}" not in text
+
+    def test_preserves_insertion_order(self) -> None:
+        # sort_keys=False so the operator-friendly ordering survives a
+        # round-trip. server_url should appear before insecure when
+        # we add them in that order.
+        text = config_yaml.dump_yaml(
+            {"server_url": "https://x", "insecure": True, "token": "qat_y"}
+        )
+        idx_url = text.index("server_url:")
+        idx_insecure = text.index("insecure:")
+        idx_token = text.index("token:")
+        assert idx_url < idx_insecure < idx_token
+
+
+class TestWriteYamlAtomic:
+    def test_writes_with_0600_perms(self, tmp_path: Path) -> None:
+        target = tmp_path / "config.yaml"
+        config_yaml.write_yaml_atomic(target, {"server_url": "https://x"})
+
+        mode = stat.S_IMODE(target.stat().st_mode)
+        assert mode == 0o600, (
+            f"file perm = {oct(mode)}, want 0o600 (secrets must not be group/other readable)"
+        )
+
+    def test_creates_parent_directory(self, tmp_path: Path) -> None:
+        target = tmp_path / "deeply" / "nested" / "config.yaml"
+        config_yaml.write_yaml_atomic(target, {"server_url": "https://x"})
+        assert target.is_file()
+
+    def test_full_round_trip_through_disk(self, tmp_path: Path) -> None:
         original = {
-            "server": {"url": "https://atlas", "token": "qat", "insecure": False},
-            "mineru": {"api_token": "j", "is_ocr": True, "timeout": 1200},
+            "server_url": "https://atlas.example",
+            "token": "qat_xxx",
+            "insecure": False,
+            "mineru_api_token": "jwt_y",
+            "mineru_timeout": 1200,
         }
-        p = tmp_path / "config.yaml"
-        p.write_text(config_yaml.dump_yaml(original))
-        reloaded = config_yaml.load_yaml_file(p)
+        target = tmp_path / "config.yaml"
+        config_yaml.write_yaml_atomic(target, original)
+        reloaded = config_yaml.load_yaml_file(target)
         assert reloaded == original
 
 
 # ---------------------------------------------------------------------------
-# bootstrap_env_from_yaml (the runtime injection path)
+# Migration from legacy .env
 # ---------------------------------------------------------------------------
 
 
-class TestBootstrapEnvFromYaml:
-    def test_injects_env_vars(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        for k in ("QATLAS_SERVER_URL", "QATLAS_TOKEN", "MINERU_API_TOKEN"):
-            monkeypatch.delenv(k, raising=False)
+class TestMigrateDotenvToYaml:
+    def test_round_trip_known_keys(self, tmp_path: Path) -> None:
+        dotenv = tmp_path / ".env"
+        dotenv.write_text(
+            "QATLAS_SERVER_URL=https://from-env.example\n"
+            'QATLAS_TOKEN="qat_from_env"\n'
+            "MINERU_API_TOKEN=jwt_from_env\n"
+            "QATLAS_INSECURE=1\n"
+            "MINERU_TIMEOUT=600\n"
+            "MINERU_POLL_INTERVAL=2.5\n"
+        )
+        yaml_path = tmp_path / "config.yaml"
 
-        p = tmp_path / "config.yaml"
-        p.write_text(config_yaml.dump_yaml({
-            "server": {"url": "https://from-yaml", "token": "qat_yaml"},
-            "mineru": {"api_token": "jwt_yaml"},
-        }))
-        config_yaml.bootstrap_env_from_yaml(p)
-        assert os.environ["QATLAS_SERVER_URL"] == "https://from-yaml"
-        assert os.environ["QATLAS_TOKEN"] == "qat_yaml"
-        assert os.environ["MINERU_API_TOKEN"] == "jwt_yaml"
+        dropped = config_yaml.migrate_dotenv_to_yaml(dotenv, yaml_path)
+        assert dropped == []
 
-    def test_existing_env_always_wins(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        # setdefault semantic — same as godotenv non-override.
-        monkeypatch.setenv("QATLAS_SERVER_URL", "https://shell-wins")
-        p = tmp_path / "config.yaml"
-        p.write_text(config_yaml.dump_yaml({"server": {"url": "https://from-yaml"}}))
-        config_yaml.bootstrap_env_from_yaml(p)
-        assert os.environ["QATLAS_SERVER_URL"] == "https://shell-wins"
+        data = config_yaml.load_yaml_file(yaml_path)
+        # Field names are snake_case (ServerConfig field), not env names.
+        assert data["server_url"] == "https://from-env.example"
+        assert data["token"] == "qat_from_env"
+        assert data["mineru_api_token"] == "jwt_from_env"
+        # Bool / int / float coerced from string via ServerConfig field types.
+        assert data["insecure"] is True
+        assert data["mineru_timeout"] == 600
+        assert data["mineru_poll_interval"] == 2.5
 
-    def test_missing_file_no_op(self, tmp_path: Path) -> None:
-        # Doesn't raise; just doesn't inject anything.
-        config_yaml.bootstrap_env_from_yaml(tmp_path / "nope.yaml")
+    def test_unknown_envvars_dropped_and_reported(self, tmp_path: Path) -> None:
+        dotenv = tmp_path / ".env"
+        dotenv.write_text(
+            "QATLAS_SERVER_URL=https://x.example\n"
+            "NEO4J_URI=bolt://server.example:7687\n"  # server-only — no client field
+            "RANDOM_USER_VAR=foo\n"
+        )
+        yaml_path = tmp_path / "config.yaml"
+
+        dropped = config_yaml.migrate_dotenv_to_yaml(dotenv, yaml_path)
+        assert "NEO4J_URI" in dropped
+        assert "RANDOM_USER_VAR" in dropped
+        assert "QATLAS_SERVER_URL" not in dropped
+
+        data = config_yaml.load_yaml_file(yaml_path)
+        assert data == {"server_url": "https://x.example"}
+
+    def test_renames_original_with_timestamped_suffix(self, tmp_path: Path) -> None:
+        dotenv = tmp_path / ".env"
+        dotenv.write_text("QATLAS_SERVER_URL=https://x.example\n")
+        yaml_path = tmp_path / "config.yaml"
+
+        config_yaml.migrate_dotenv_to_yaml(dotenv, yaml_path)
+
+        # Original file gone; backup with version + timestamp present.
+        assert not dotenv.exists()
+        backups = list(tmp_path.glob(".env.migrated-from-v0.17.0.*"))
+        assert len(backups) == 1
+        # Backup retains the original content so an operator who
+        # mis-migrated can rename it back.
+        assert "QATLAS_SERVER_URL=https://x.example" in backups[0].read_text()
+
+    def test_empty_dotenv_is_noop(self, tmp_path: Path) -> None:
+        dotenv = tmp_path / ".env"
+        dotenv.write_text("# only comments\n\n")
+        yaml_path = tmp_path / "config.yaml"
+
+        dropped = config_yaml.migrate_dotenv_to_yaml(dotenv, yaml_path)
+        assert dropped == []
+        # No yaml written, no rename happened — there was nothing to do.
+        assert not yaml_path.exists()
+        assert dotenv.exists()
+
+
+class TestParseDotenv:
+    def test_handles_comments_quoted_values_blanks(self, tmp_path: Path) -> None:
+        p = tmp_path / ".env"
+        p.write_text(
+            "# top comment\n"
+            "\n"
+            "KEY1=plain\n"
+            'KEY2="double quoted"\n'
+            "KEY3='single quoted'\n"
+            "  # indented comment\n"
+            "KEY4=value with spaces\n"
+        )
+        out = config_yaml.parse_dotenv(p)
+        assert out == {
+            "KEY1": "plain",
+            "KEY2": "double quoted",
+            "KEY3": "single quoted",
+            "KEY4": "value with spaces",
+        }
+
+    def test_missing_file_returns_empty(self, tmp_path: Path) -> None:
+        assert config_yaml.parse_dotenv(tmp_path / "nope.env") == {}
 
 
 # ---------------------------------------------------------------------------
-# set / get / unset (used by `qatlas config` subcommands)
+# _coerce_for_field — used both by migration and by `qatlas config set`
 # ---------------------------------------------------------------------------
 
 
-class TestSetGetUnset:
-    def test_set_creates_nested_path(self) -> None:
-        data: dict = {}
-        assert config_yaml.set_yaml_value(data, "QATLAS_SERVER_URL", "https://x") is True
-        assert data == {"server": {"url": "https://x"}}
+class TestCoerceForField:
+    def test_bool_field(self) -> None:
+        # The `insecure` field is bool in ServerConfig.
+        assert config_yaml._coerce_for_field("insecure", "1") is True
+        assert config_yaml._coerce_for_field("insecure", "true") is True
+        assert config_yaml._coerce_for_field("insecure", "TRUE") is True
+        assert config_yaml._coerce_for_field("insecure", "0") is False
+        assert config_yaml._coerce_for_field("insecure", "false") is False
+        assert config_yaml._coerce_for_field("insecure", "no") is False
 
-    def test_set_bool_coerces(self) -> None:
-        data: dict = {}
-        config_yaml.set_yaml_value(data, "QATLAS_INSECURE", "1")
-        assert data == {"server": {"insecure": True}}
-        config_yaml.set_yaml_value(data, "QATLAS_INSECURE", "0")
-        assert data == {"server": {"insecure": False}}
+    def test_int_field(self) -> None:
+        assert config_yaml._coerce_for_field("mineru_timeout", "1800") == 1800
 
-    def test_set_numeric_coerces(self) -> None:
-        data: dict = {}
-        config_yaml.set_yaml_value(data, "MINERU_TIMEOUT", "60")
-        config_yaml.set_yaml_value(data, "MINERU_POLL_INTERVAL", "1.5")
-        assert data == {"mineru": {"timeout": 60, "poll_interval": 1.5}}
+    def test_float_field(self) -> None:
+        assert config_yaml._coerce_for_field("mineru_poll_interval", "2.5") == 2.5
 
-    def test_set_unknown_envname_returns_false(self) -> None:
-        data: dict = {}
-        # QATLAS_POCKETBASE_URL has no yaml home — silent ignore would
-        # mask typos.
-        assert config_yaml.set_yaml_value(data, "QATLAS_POCKETBASE_URL", "x") is False
-        assert data == {}
+    def test_string_field_passes_through(self) -> None:
+        assert config_yaml._coerce_for_field("server_url", "https://x") == "https://x"
 
-    def test_unset_removes_and_prunes_empty_parent(self) -> None:
-        data = {"server": {"url": "https://x"}, "mineru": {"api_token": "y", "timeout": 60}}
-        # Unset the only key under mineru → mineru section should disappear.
-        assert config_yaml.unset_yaml_value(data, "MINERU_API_TOKEN") is True
-        assert "mineru" in data
-        assert data["mineru"] == {"timeout": 60}
-        # Now unset the last key → whole mineru section pruned.
-        assert config_yaml.unset_yaml_value(data, "MINERU_TIMEOUT") is True
-        assert "mineru" not in data
-        assert data == {"server": {"url": "https://x"}}
+    def test_unknown_field_passes_through_as_string(self) -> None:
+        assert config_yaml._coerce_for_field("nope_not_a_field", "x") == "x"
 
-    def test_unset_missing_returns_false(self) -> None:
-        data = {"server": {"url": "https://x"}}
-        assert config_yaml.unset_yaml_value(data, "QATLAS_TOKEN") is False
-        assert config_yaml.unset_yaml_value(data, "QATLAS_POCKETBASE_URL") is False
-
-    def test_get_returns_string_form(self) -> None:
-        data = {"server": {"insecure": True}, "mineru": {"timeout": 1800}}
-        assert config_yaml.get_yaml_value(data, "QATLAS_INSECURE") == "true"
-        assert config_yaml.get_yaml_value(data, "MINERU_TIMEOUT") == "1800"
-        assert config_yaml.get_yaml_value(data, "QATLAS_TOKEN") is None
-        # Unknown env name returns None (caller decides whether to error).
-        assert config_yaml.get_yaml_value(data, "QATLAS_POCKETBASE_URL") is None
+    def test_unparseable_numeric_falls_back_to_string(self) -> None:
+        # If a user wrote MINERU_TIMEOUT=fifteen, we'd rather pass the
+        # string through (yaml will fail to load later with a clear
+        # error) than crash the migration silently.
+        assert config_yaml._coerce_for_field("mineru_timeout", "fifteen") == "fifteen"
 
 
 # ---------------------------------------------------------------------------
-# guard: every entry in YAML_TO_ENV is also in ENV_TO_YAML (reverse map)
+# Sanity: every ServerConfig field with a validation_alias is reachable
+# both ways through env_alias_to_field / field_to_env_alias
 # ---------------------------------------------------------------------------
 
 
-def test_yaml_to_env_and_reverse_in_sync() -> None:
-    # The reverse map is built at import time — guard against someone
-    # accidentally hand-editing one direction without the other.
-    for path, env in config_yaml.YAML_TO_ENV.items():
-        assert config_yaml.ENV_TO_YAML[env] == path
-    assert len(config_yaml.YAML_TO_ENV) == len(config_yaml.ENV_TO_YAML), (
-        "ENV_TO_YAML lost entries — likely a duplicate env var name in YAML_TO_ENV"
-    )
+class TestEnvAliasRoundTrip:
+    def test_known_pair(self) -> None:
+        assert env_alias_to_field("QATLAS_SERVER_URL") == "server_url"
+        assert field_to_env_alias("server_url") == "QATLAS_SERVER_URL"
+
+    def test_third_party_sdk_alias(self) -> None:
+        # SDK-standard env names (MINERU_*, OPENAI_*) map to fields
+        # without the QATLAS_ prefix.
+        assert env_alias_to_field("MINERU_API_TOKEN") == "mineru_api_token"
+        assert field_to_env_alias("mineru_api_token") == "MINERU_API_TOKEN"
+
+    def test_unknown_env_returns_none(self) -> None:
+        assert env_alias_to_field("QATLAS_TYPO_KEY") is None
+        # Server-only env that no client field claims.
+        assert env_alias_to_field("QATLAS_S3_ENDPOINT") is None
+
+    def test_every_field_with_alias_round_trips(self) -> None:
+        # Schema-level guard: for every field that has a
+        # validation_alias, the primary alias must round-trip through
+        # the two helpers. If this breaks, future fields with quirky
+        # AliasChoices won't be addressable via `qatlas config set`.
+        for field_name, info in ServerConfig.model_fields.items():
+            if info.validation_alias is None:
+                continue
+            env_name = field_to_env_alias(field_name)
+            assert env_name is not None, f"no env alias for field {field_name}"
+            assert env_alias_to_field(env_name) == field_name, (
+                f"round-trip broken: field {field_name} -> env {env_name} -> "
+                f"{env_alias_to_field(env_name)}"
+            )
+
+
+class TestEnvSyncTargets:
+    def test_every_target_field_exists_on_model(self) -> None:
+        # _ENV_SYNC_TARGETS is the list of fields whose value gets
+        # mirrored back into os.environ at boot. Each entry must
+        # actually exist on ServerConfig — otherwise a typo here
+        # silently drops the env sync for that field.
+        model_fields = set(ServerConfig.model_fields.keys())
+        for field_name, _env_name in _ENV_SYNC_TARGETS:
+            assert field_name in model_fields, (
+                f"_ENV_SYNC_TARGETS references non-existent field {field_name!r}"
+            )
+
+    def test_every_target_env_matches_field_primary_alias(self) -> None:
+        # The env name in _ENV_SYNC_TARGETS must match the field's
+        # primary validation alias — otherwise we'd setdefault a name
+        # that no os.getenv call site actually reads.
+        for field_name, env_name in _ENV_SYNC_TARGETS:
+            primary = field_to_env_alias(field_name)
+            assert primary == env_name, (
+                f"_ENV_SYNC_TARGETS: field {field_name} primary alias is "
+                f"{primary!r} but the table says {env_name!r}"
+            )
