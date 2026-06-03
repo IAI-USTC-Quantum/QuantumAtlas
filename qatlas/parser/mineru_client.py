@@ -104,10 +104,7 @@ _FATAL_CODES: Dict[str, str] = {
 }
 
 _DAILY_LIMIT_KEYWORDS = (
-    "limit",
     "quota",
-    "too many",
-    "exceed",
     "5000",
     "restricted",
     "tomorrow",
@@ -120,6 +117,40 @@ _DAILY_LIMIT_KEYWORDS = (
     "明日",
     "明天",
 )
+
+# Substring patterns that unambiguously indicate a per-paper fatal failure
+# (not a daily-quota exhaustion). MinerU's batch-result `err_msg` lacks a
+# numeric code, so without these the free-text keyword scan below would
+# misclassify e.g. "number of pages exceeds limit (200 pages)" as a daily
+# limit (the words "limit"/"exceed" used to be daily-limit keywords) and
+# shut the watch daemon down for ~20 hours. Match these BEFORE the
+# keyword scan so a single oversize PDF only fails its own paper.
+#
+# Sources:
+# - MinerU `-60005` (file size > 200 MB): "文件大小超出限制（最大 200MB）"
+# - MinerU `-60006` (page count > 200): "文件页数超过限制（最多 200 页）"
+# - Observed EN phrasing from batch results: "number of pages exceeds
+#   limit (200 pages), please split the file and try again"
+_FATAL_FREE_TEXT_PATTERNS = (
+    "number of pages exceeds",
+    "exceeds limit (200 pages)",
+    "exceeds the page limit",
+    "exceeds page limit",
+    "split the file",
+    "页数超过",
+    "页数超出",
+    "页数已超",
+    "file size exceeds",
+    "exceeds 200mb",
+    "exceeds 200 mb",
+    "文件大小超出",
+    "文件大小超过",
+    "文件过大",
+)
+
+
+def _matches_fatal_freetext(msg_low: str) -> bool:
+    return any(p in msg_low for p in _FATAL_FREE_TEXT_PATTERNS)
 
 
 def classify_mineru_error(
@@ -160,9 +191,14 @@ def classify_mineru_error(
             http_status=http_status,
         )
 
-    # Free-text quota hints.
-    if msg and any(kw in msg.lower() for kw in _DAILY_LIMIT_KEYWORDS):
-        return MinerUDailyLimitError(msg, code=code, http_status=http_status)
+    # Free-text classifier: per-paper fatal first, then daily-limit hints.
+    if msg:
+        msg_low = msg.lower()
+        if _matches_fatal_freetext(msg_low):
+            # Map to -60006 / -60005 hint if message doesn't already carry one.
+            return MinerUFatalError(msg, code=code, http_status=http_status)
+        if any(kw in msg_low for kw in _DAILY_LIMIT_KEYWORDS):
+            return MinerUDailyLimitError(msg, code=code, http_status=http_status)
 
     # 5xx / 408 are retryable transport issues.
     if http_status >= 500 or http_status == 408:

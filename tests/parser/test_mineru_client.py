@@ -103,6 +103,12 @@ class TestKeywordScan:
             "免费额度已用尽",
             "请于次日重试",
             "请明天再试",
+            # Canonical Chinese daily-limit phrasing from real MinerU
+            # responses — uses 上限 ("upper limit"). The fatal-first
+            # classifier protects against 上限 false-firing on per-paper
+            # "页数上限" because fatalFreeTextPatterns ("页数超过" etc)
+            # short-circuit before this list is consulted.
+            "每日解析任务数量已达上限",
         ],
     )
     def test_quota_hints(self, msg: str) -> None:
@@ -113,6 +119,38 @@ class TestKeywordScan:
     def test_non_hints(self, msg: str) -> None:
         err = classify_mineru_error(msg=msg)
         assert type(err) is MinerUError
+
+    @pytest.mark.parametrize(
+        "msg",
+        [
+            # Real EN phrasing observed from MinerU batch-result failures.
+            "number of pages exceeds limit (200 pages), please split the file and try again",
+            # Variants kept in the pattern table.
+            "Number of pages exceeds 200",
+            "exceeds the page limit",
+            "Please split the file into smaller chunks.",
+            "页数超过限制（最多 200 页）",
+            "文件大小超出限制（最大 200MB）",
+            "file size exceeds 200MB",
+        ],
+    )
+    def test_per_paper_fatal_not_daily_limit(self, msg: str) -> None:
+        """Regression: oversize PDF must not trip daily-limit shutdown.
+
+        Before the fatal pre-check, the words 'limit'/'exceed' alone in
+        daily-limit keywords classified e.g. 'number of pages exceeds
+        limit (200 pages)' as MinerUDailyLimitError, putting the watch
+        daemon to sleep for ~20h over a single bad PDF.
+        """
+        err = classify_mineru_error(msg=msg)
+        assert isinstance(err, MinerUFatalError), (
+            f"Expected MinerUFatalError for per-paper page/size failure, "
+            f"got {type(err).__name__}: {err}"
+        )
+        # Crucially, must NOT be MinerUDailyLimitError (sibling subclass would
+        # still be a Fatal — both inherit from MinerUError — but they're
+        # disjoint runtime types).
+        assert not isinstance(err, MinerUDailyLimitError)
 
 
 class TestHintInjection:

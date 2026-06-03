@@ -95,10 +95,22 @@ func TestClassifyAPIErrorKeywordScan(t *testing.T) {
 		{"english tomorrow", "please try again tomorrow", ErrDailyLimit},
 		{"english 5000 limit", "you have hit the 5000/day limit", ErrDailyLimit},
 		{"chinese 额度", "免费额度已用尽", ErrDailyLimit},
+		{"chinese 上限", "每日解析任务数量已达上限", ErrDailyLimit},
 		{"chinese 次日", "请于次日重试", ErrDailyLimit},
 		{"chinese 明天", "请明天再试", ErrDailyLimit},
 		{"unrelated msg", "something went wrong", nil},
 		{"empty msg", "", nil},
+		// Regression: per-paper page/size limit must classify as Fatal,
+		// not DailyLimit. Before the fatal pre-check, the bare words
+		// "limit"/"exceed" in the daily-limit keyword list caused these
+		// phrases to put the watch daemon to sleep for ~20h on a single
+		// oversize PDF.
+		{"en page limit", "number of pages exceeds limit (200 pages), please split the file and try again", ErrFatal},
+		{"en split file", "please split the file and try again", ErrFatal},
+		{"en exceeds page limit", "exceeds the page limit", ErrFatal},
+		{"zh page limit", "页数超过限制（最多 200 页）", ErrFatal},
+		{"en file size", "file size exceeds 200MB", ErrFatal},
+		{"zh file size", "文件大小超出限制（最大 200MB）", ErrFatal},
 	}
 	for _, tc := range cases {
 		tc := tc

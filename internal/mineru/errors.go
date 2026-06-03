@@ -75,10 +75,45 @@ var fatalErrorCodes = map[string]string{
 // hint at quota exhaustion when the structured `code` field is absent
 // (some MinerU responses are looser, especially 4xx with a string body).
 // Lower-cased before comparison.
+//
+// IMPORTANT: keep this list narrow — but `上限` (Chinese "upper limit")
+// must stay because it's the canonical word in real daily-quota messages
+// ("每日解析任务数量已达上限"). Words like bare "limit" / "exceed" were
+// removed because they false-trigger on per-paper fatal phrases such as
+// "number of pages exceeds limit (200 pages)" and shut the watch daemon
+// down for ~20 hours over a single oversize PDF — fatal-first
+// classification (via fatalFreeTextPatterns) catches those before they
+// reach this list.
 var dailyLimitKeywords = []string{
-	"limit", "quota", "too many", "exceed", "5000", "restricted",
+	"quota", "5000", "restricted",
 	"tomorrow", "next day", "daily", "today",
 	"额度", "上限", "次日", "明日", "明天",
+}
+
+// fatalFreeTextPatterns are substrings that unambiguously indicate a
+// per-paper fatal failure (MinerU -60005 / -60006: file size > 200 MB or
+// page count > 200) when the batch-result envelope omits the numeric
+// code. Match BEFORE the daily-limit keyword scan.
+//
+// Sources: MinerU error-code table + observed batch-result phrasing
+// ("number of pages exceeds limit (200 pages), please split the file
+// and try again"). Keep in sync with Python
+// qatlas/parser/mineru_client.py::_FATAL_FREE_TEXT_PATTERNS.
+var fatalFreeTextPatterns = []string{
+	"number of pages exceeds",
+	"exceeds limit (200 pages)",
+	"exceeds the page limit",
+	"exceeds page limit",
+	"split the file",
+	"页数超过",
+	"页数超出",
+	"页数已超",
+	"file size exceeds",
+	"exceeds 200mb",
+	"exceeds 200 mb",
+	"文件大小超出",
+	"文件大小超过",
+	"文件过大",
 }
 
 // Error is the envelope-decoded MinerU error type.
@@ -181,11 +216,17 @@ func classifyAPIError(code, msg string, httpStatus int) *Error {
 		return e
 	}
 
-	// Free-text daily-limit hints (some quota responses arrive without a
-	// structured code, just an opaque string body).
-	if hasDailyLimitKeyword(msg) {
-		e.Kind = ErrDailyLimit
-		return e
+	// Free-text classifier: per-paper fatal first, then daily-limit hints.
+	if msg != "" {
+		low := strings.ToLower(msg)
+		if hasFatalFreeText(low) {
+			e.Kind = ErrFatal
+			return e
+		}
+		if hasDailyLimitKeywordLower(low) {
+			e.Kind = ErrDailyLimit
+			return e
+		}
 	}
 
 	// HTTP 5xx / 408 are retryable transport issues.
@@ -208,9 +249,24 @@ func hasDailyLimitKeyword(msg string) bool {
 	if msg == "" {
 		return false
 	}
-	low := strings.ToLower(msg)
+	return hasDailyLimitKeywordLower(strings.ToLower(msg))
+}
+
+func hasDailyLimitKeywordLower(low string) bool {
 	for _, kw := range dailyLimitKeywords {
 		if strings.Contains(low, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasFatalFreeText scans a lower-cased free-form message for unambiguous
+// per-paper fatal phrases (oversized / overlong PDFs). Used to prevent a
+// single bad PDF from being misread as daily-quota exhaustion.
+func hasFatalFreeText(low string) bool {
+	for _, p := range fatalFreeTextPatterns {
+		if strings.Contains(low, p) {
 			return true
 		}
 	}
