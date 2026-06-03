@@ -132,7 +132,7 @@ Examples:
 	cmd.Flags().StringVar(&opts.Name, "name", defaultServiceName, "Service unit name (<name>.service on Linux)")
 	cmd.Flags().StringVar(&opts.Mode, "mode", "", `"user" or "system" (default: auto-detected from uid; prompted in TTY)`)
 	cmd.Flags().StringVar(&opts.DotenvPath, "dotenv-path", "",
-		"Path to .env file (env: QATLAS_DOTENV; auto-detect order: $QATLAS_DOTENV, then ~/QuantumAtlas/.env, then ./.env)")
+		"Path to .env file (env: QATLAS_DOTENV; auto-detect order: $QATLAS_DOTENV, then ~/QuantumAtlas/.env, then ./.env). Empty / not found is OK — unit will be generated without pinning a .env, operator injects config via inline Environment= or EnvironmentFile=.")
 	cmd.Flags().StringVar(&opts.Bind, "bind", "127.0.0.1:4200",
 		"HTTP bind address for `serve --http=...` (runtime env: QATLAS_HTTP_ADDR or QATLAS_SERVER_HOST+QATLAS_SERVER_PORT)")
 	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "Render the unit to stdout without writing or reloading systemd")
@@ -217,6 +217,18 @@ func runServiceInstall(opts serviceInstallOpts) error {
 		return fmt.Errorf("install: %w", err)
 	}
 	fmt.Printf("Installed service %s (mode=%s).\n", opts.Name, opts.Mode)
+	if opts.DotenvPath != "" {
+		absDotenv, _ := filepath.Abs(opts.DotenvPath)
+		fmt.Printf("The unit reads runtime config from %s via Environment=QATLAS_DOTENV=.\n", absDotenv)
+		fmt.Printf("Edit that file and `systemctl%s restart %s` to apply config changes.\n",
+			userFlagFor(opts.Mode), opts.Name)
+	} else {
+		fmt.Println("The unit does NOT pin a .env file (none auto-detected, none supplied).")
+		fmt.Println("Configure runtime fields by:")
+		fmt.Println("  - editing the rendered unit's `[Service]` section to add inline `Environment=KEY=VAL` lines, or")
+		fmt.Println("  - adding `EnvironmentFile=/path/to/env` to the unit, or")
+		fmt.Println("  - rerunning `qatlasd service install --dotenv-path /path/to/.env --force` to pin one")
+	}
 
 	if err := svc.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: install succeeded but start failed: %v\n", err)
@@ -261,16 +273,24 @@ func resolveMode(opts *serviceInstallOpts, tty bool) error {
 }
 
 // resolveDotenvPath fills opts.DotenvPath: explicit flag > $QATLAS_DOTENV >
-// auto-detect, then validates the path exists and is a regular file.
+// auto-detect. Empty result is a valid outcome — the resulting unit will
+// then omit `Environment=QATLAS_DOTENV=` entirely, leaving the operator
+// to inject config via inline `Environment=KEY=...` on the unit or via
+// systemd `EnvironmentFile=` added by hand. This avoids the trap of
+// pointing the unit at a `~/QuantumAtlas/.env` that doesn't exist on
+// the target host just because such a file happens to exist on the
+// installer's machine.
 //
 // Whenever the path isn't from --dotenv-path (i.e. operator didn't type it
 // in this command line), we print an announcement to stdout so the chosen
 // path is visible in deploy logs without scrolling to the rendered-unit
-// preview. Three sources, three announcement styles:
+// preview. Four sources, four announcement styles:
 //   - --dotenv-path: silent (operator just typed it, no surprise)
 //   - $QATLAS_DOTENV: stdout note (env var might come from .bashrc / parent
 //     shell / systemd unit operator didn't write themselves)
 //   - autodetect: TTY prompts [Y/n]; non-TTY prints to stdout
+//   - none found / declined: stdout note that the unit will not pin any
+//     .env file (no fatal)
 func resolveDotenvPath(opts *serviceInstallOpts, tty bool) error {
 	if opts.DotenvPath != "" {
 		return validateDotenvPath(opts.DotenvPath)
@@ -289,7 +309,12 @@ func resolveDotenvPath(opts *serviceInstallOpts, tty bool) error {
 		}
 	}
 	if found == "" {
-		return fmt.Errorf("could not auto-detect .env file (tried: %s); pass --dotenv-path", strings.Join(candidates, ", "))
+		fmt.Printf("No .env auto-detected (tried: %s).\n", strings.Join(candidates, ", "))
+		fmt.Println("The generated unit will NOT set QATLAS_DOTENV — qatlasd will start " +
+			"with whatever env the operator inlines into the unit. Inject config via " +
+			"`Environment=KEY=...` lines, `EnvironmentFile=`, or rerun with --dotenv-path " +
+			"to pin a specific .env file.")
+		return nil
 	}
 	if tty {
 		ok, err := promptYesNo(fmt.Sprintf("Use auto-detected .env at %s?", found), true)
@@ -297,14 +322,17 @@ func resolveDotenvPath(opts *serviceInstallOpts, tty bool) error {
 			return err
 		}
 		if !ok {
-			return errors.New("aborted; pass --dotenv-path explicitly")
+			fmt.Println("Auto-detected .env declined. The generated unit will NOT set " +
+				"QATLAS_DOTENV; configure via `Environment=KEY=...` inline or rerun with " +
+				"--dotenv-path to pin one explicitly.")
+			return nil
 		}
 	} else {
 		// Non-TTY (CI / --force / sudo bash script) — can't prompt, but
 		// must not stay silent: deploy logs need to show which .env was
 		// picked, in case autodetect found the wrong one and the operator
 		// only notices when the service fails to start.
-		fmt.Printf("Auto-detected .env: %s (override with --dotenv-path)\n", found)
+		fmt.Printf("Auto-detected .env: %s (override with --dotenv-path; rerun without that file present to skip pinning any .env)\n", found)
 	}
 	opts.DotenvPath = found
 	return nil
@@ -358,7 +386,8 @@ func effectiveHomeDir() string {
 
 // computeReadWritePaths returns the paths systemd should grant write access
 // to under ReadWritePaths=. We include:
-//   - the .env directory (server may rewrite .env in future migrations)
+//   - the .env directory if a .env was pinned (server may rewrite .env in
+//     future migrations); absent when ``absDotenv`` is empty
 //   - $XDG_DATA_HOME/qatlasd (PB_DATA_DIR / DATA_DIR / RAW_DIR fallback;
 //     renamed from "quantum-atlas" in v0.17.0 to match the binary name)
 //   - ~/QuantumAtlas-Wiki if it exists (git fetch writes refs)
@@ -368,7 +397,10 @@ func effectiveHomeDir() string {
 // "Home" here resolves via effectiveHomeDir so sudo invocations target the
 // real daemon-user's home, not /root — see effectiveHomeDir docs.
 func computeReadWritePaths(absDotenv string) []string {
-	paths := []string{filepath.Dir(absDotenv)}
+	paths := []string{}
+	if absDotenv != "" {
+		paths = append(paths, filepath.Dir(absDotenv))
+	}
 
 	if home := effectiveHomeDir(); home != "" {
 		share := strings.TrimSpace(os.Getenv("XDG_DATA_HOME"))
@@ -398,13 +430,41 @@ func computeReadWritePaths(absDotenv string) []string {
 // buildServiceConfig assembles a *service.Config aligned with our template.
 // Exported (within the package) so tests can build a fixed config without
 // going through the interactive install flow.
+//
+// When ``opts.DotenvPath`` is empty, the generated unit:
+//   - sets ``WorkingDirectory`` to the daemon user's home (not the .env
+//     directory, which we don't have)
+//   - omits ``Environment=QATLAS_DOTENV=`` entirely (so qatlasd's
+//     `loadDotEnv` falls through to "no .env located; relying on process
+//     environment alone" — operator must provide config via inline
+//     ``Environment=KEY=...`` or systemd ``EnvironmentFile=``)
+//   - still grants the standard XDG / Wiki ReadWritePaths so the daemon
+//     can write pb_data even without a .env-relative anchor
 func buildServiceConfig(opts serviceInstallOpts) (*service.Config, error) {
-	absDotenv, err := filepath.Abs(opts.DotenvPath)
-	if err != nil {
-		return nil, fmt.Errorf("dotenv abs: %w", err)
+	envVars := map[string]string{}
+	var workingDir string
+	var rwPaths []string
+
+	if opts.DotenvPath != "" {
+		absDotenv, err := filepath.Abs(opts.DotenvPath)
+		if err != nil {
+			return nil, fmt.Errorf("dotenv abs: %w", err)
+		}
+		workingDir = filepath.Dir(absDotenv)
+		envVars["QATLAS_DOTENV"] = absDotenv
+		rwPaths = computeReadWritePaths(absDotenv)
+	} else {
+		// No .env pinned. Use the daemon user's home as WorkingDirectory
+		// (predictable cwd for any relative paths injected via inline
+		// Environment=); empty absDotenv → computeReadWritePaths skips
+		// the .env-dir entry.
+		if home := effectiveHomeDir(); home != "" {
+			workingDir = home
+		} else {
+			workingDir = "/"
+		}
+		rwPaths = computeReadWritePaths("")
 	}
-	workingDir := filepath.Dir(absDotenv)
-	rwPaths := computeReadWritePaths(absDotenv)
 
 	wantedBy := "default.target"
 	userName := ""
@@ -420,9 +480,7 @@ func buildServiceConfig(opts serviceInstallOpts) (*service.Config, error) {
 		UserName:         userName,
 		WorkingDirectory: workingDir,
 		Arguments:        []string{"serve", "--http=" + opts.Bind},
-		EnvVars: map[string]string{
-			"QATLAS_DOTENV": absDotenv,
-		},
+		EnvVars:          envVars,
 		Option: service.KeyValue{
 			"SystemdScript":  serviceUnitTemplate,
 			"UserService":    opts.Mode == "user",

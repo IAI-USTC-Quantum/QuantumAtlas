@@ -360,3 +360,115 @@ func TestGuardSudoUserModeMismatchAllowsRealRootUserMode(t *testing.T) {
 		t.Errorf("real root + --mode user must be allowed (only sudo-from-non-root is refused); got: %v", err)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// No-dotenv install path (v0.17.0a1+)
+// ---------------------------------------------------------------------------
+//
+// When no .env can be auto-detected and the operator didn't pass
+// --dotenv-path, the install should still succeed and generate a unit
+// that DOES NOT pin a QATLAS_DOTENV. Operator then supplies config via
+// inline `Environment=KEY=VAL` or systemd `EnvironmentFile=`. This was a
+// hard fatal pre-v0.17.0a1, but that ergonomics-trapped first-time
+// installers who wanted a clean unit and would inject env elsewhere.
+
+func TestResolveDotenvPath_NoFileNoEnvNonTTY_OmitsPath(t *testing.T) {
+	// Fresh empty home, no QATLAS_DOTENV, non-TTY → resolveDotenvPath
+	// must leave opts.DotenvPath empty AND return nil (not a fatal).
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("QATLAS_DOTENV", "")
+	t.Setenv("SUDO_USER", "")
+	// Make sure cwd has no .env either — chdir into the temp home.
+	if err := os.Chdir(home); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	opts := &serviceInstallOpts{}
+	if err := resolveDotenvPath(opts, false /* not a TTY */); err != nil {
+		t.Fatalf("expected nil (no fatal) when no .env discoverable; got: %v", err)
+	}
+	if opts.DotenvPath != "" {
+		t.Errorf("expected opts.DotenvPath empty (no .env); got: %q", opts.DotenvPath)
+	}
+}
+
+func TestBuildServiceConfig_EmptyDotenvOmitsEnvVar(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("SUDO_USER", "")
+
+	cfg, err := buildServiceConfig(serviceInstallOpts{
+		Name:       "qatlasd",
+		Mode:       "user",
+		DotenvPath: "",
+		Bind:       "127.0.0.1:4200",
+	})
+	if err != nil {
+		t.Fatalf("buildServiceConfig: %v", err)
+	}
+	if _, ok := cfg.EnvVars["QATLAS_DOTENV"]; ok {
+		t.Errorf("EnvVars must NOT contain QATLAS_DOTENV when DotenvPath is empty; got: %v", cfg.EnvVars)
+	}
+	// WorkingDirectory should fall back to $HOME (not crash, not "")
+	if cfg.WorkingDirectory != home {
+		t.Errorf("WorkingDirectory should fall back to effective HOME (%q); got: %q",
+			home, cfg.WorkingDirectory)
+	}
+}
+
+func TestRenderSystemdUnit_NoDotenvHasNoEnvironmentLine(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("SUDO_USER", "")
+
+	cfg, err := buildServiceConfig(serviceInstallOpts{
+		Name:       "qatlasd",
+		Mode:       "user",
+		DotenvPath: "",
+		Bind:       "127.0.0.1:4200",
+	})
+	if err != nil {
+		t.Fatalf("buildServiceConfig: %v", err)
+	}
+	rendered, err := renderSystemdUnit(cfg, "/fixed/bin/qatlasd")
+	if err != nil {
+		t.Fatalf("renderSystemdUnit: %v", err)
+	}
+	if strings.Contains(rendered, "QATLAS_DOTENV") {
+		t.Errorf("rendered unit should not mention QATLAS_DOTENV when DotenvPath is empty; got:\n%s",
+			rendered)
+	}
+	if !strings.Contains(rendered, "ExecStart=/fixed/bin/qatlasd") {
+		t.Errorf("rendered unit missing ExecStart; got:\n%s", rendered)
+	}
+}
+
+func TestComputeReadWritePaths_NoDotenvSkipsEnvDir(t *testing.T) {
+	home, _ := fakeHomeForTest(t)
+
+	paths := computeReadWritePaths("")
+	// Should NOT include any path from a hypothetical .env directory
+	// — there is no .env. Should still include the XDG share path so
+	// pb_data writes work.
+	wantShare := filepath.Join(home, ".local/share/qatlasd")
+	found := false
+	for _, p := range paths {
+		if p == wantShare {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected ReadWritePaths to include %q even without a .env; got: %v",
+			wantShare, paths)
+	}
+	// The .env dir wouldn't be filepath.Dir("") = "."; sanity-check we
+	// haven't accidentally appended that as a writable path.
+	for _, p := range paths {
+		if p == "." {
+			t.Errorf("ReadWritePaths should not contain '.' when DotenvPath is empty; got: %v", paths)
+		}
+	}
+}

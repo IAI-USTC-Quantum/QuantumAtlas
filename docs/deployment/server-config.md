@@ -374,9 +374,49 @@ spec:
 qatlasd service install --dotenv-path /home/timidly/QuantumAtlas/.env --force
 ```
 
-`--dotenv-path` 优先级：CLI flag > `$QATLAS_DOTENV` > `~/QuantumAtlas/.env` > `./.env`（TTY 时自动检测并要确认）。
+`--dotenv-path` 优先级：CLI flag > `$QATLAS_DOTENV` > 自动检测 `~/QuantumAtlas/.env` → `./.env`（TTY 时会列出找到的候选并要求确认）。
 
-> 想生成 §3.1.a（inline `Environment=` 单文件无外部依赖）形式的 unit 吗？目前 `service install` 还**没有** `--inline-env` 选项，要手写 unit 文件。tracked as future enhancement.
+#### 生成的 unit 跟 .env 的绑定关系
+
+跑完后命令会**显式告诉你绑定到哪个 .env**——这是以后改配置的唯一入口：
+
+```text
+$ sudo qatlasd service install --mode system --dotenv-path /etc/quantum-atlas/.env --force
+... rendered unit ...
+Installed service qatlasd (mode=system).
+The unit reads runtime config from /etc/quantum-atlas/.env via Environment=QATLAS_DOTENV=.
+Edit that file and `systemctl restart qatlasd` to apply config changes.
+Started service qatlasd. Manage via `qatlasd service status` or `systemctl status qatlasd`.
+```
+
+意思是：
+
+- 改 `/etc/quantum-atlas/.env` → `sudo systemctl restart qatlasd` 生效
+- **不要**再到 systemd unit 文件里加 `Environment=KEY=...`（除非紧急 override；CLI flag > env > .env 优先级仍然适用，但读多份配置源易乱）
+
+如果你删了那个 .env / 改名了，下次 restart qatlasd 时 `loadDotEnv` 找不到文件，**不会 fatal**——只会 log 一条 `no .env located; relying on process environment alone`，然后用 systemd unit 里 `Environment=` 段的值跑。
+
+#### 没有 .env 时（v0.17.0a1+ 行为）
+
+如果跑 `service install` 时 **`$QATLAS_DOTENV` 没设、`~/QuantumAtlas/.env` 不存在、`./.env` 也不存在**，命令**不再 fatal**（v0.17.0a0 及更早是 fatal），而是生成一个**不带** `Environment=QATLAS_DOTENV=` 的 unit，并 print：
+
+```text
+No .env auto-detected (tried: /home/you/QuantumAtlas/.env, /pwd/.env).
+The generated unit will NOT set QATLAS_DOTENV — qatlasd will start with whatever
+env the operator inlines into the unit. Inject config via `Environment=KEY=...`
+lines, `EnvironmentFile=`, or rerun with --dotenv-path to pin a specific .env file.
+...
+Installed service qatlasd (mode=system).
+The unit does NOT pin a .env file (none auto-detected, none supplied).
+Configure runtime fields by:
+  - editing the rendered unit's `[Service]` section to add inline `Environment=KEY=VAL` lines, or
+  - adding `EnvironmentFile=/path/to/env` to the unit, or
+  - rerunning `qatlasd service install --dotenv-path /path/to/.env --force` to pin one
+```
+
+适合**不想用 .env 流派**的部署（§3.1.a 的 inline `Environment=` 风格）：先 `service install` 出骨架 unit + start，再手工 `systemctl edit qatlasd` 加 `Environment=NEO4J_URI=...` 等 drop-in。
+
+> 想直接生成 §3.1.a（inline `Environment=` 完整 unit）形式吗？目前 `service install` 还**没有** `--inline-env` 选项，需要 install 后手工 `systemctl edit`。tracked as future enhancement.
 
 ---
 
