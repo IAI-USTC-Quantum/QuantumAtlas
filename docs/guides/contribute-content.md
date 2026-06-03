@@ -11,30 +11,36 @@
 
 ## 0. 配置加载约定
 
-服务端与所有 `qatlas` 客户端命令都通过 [pydantic-settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/) 从仓库根目录的 `.env` 自动读取配置（见 `atlas/server/config.py`）。
+**Server 用 `.env` + process env**（Go `qatlasd` 走 godotenv non-override），**client 用 YAML**（Python `qatlas` 自 v0.16.0 起改用 `~/.config/qatlas/config.yaml`，用 `qatlas config init/set/get` 管）。两边**不共享**同一份配置文件。
 
-- 项目自有字段统一加 `QATLAS_` 前缀（如 `QATLAS_SERVER_URL`、`QATLAS_WIKI_DIR`、`QATLAS_USER_HEADER`）；旧名（`PUBLIC_BASE_URL`、`WIKI_DIR`、`USER_HEADER` 等）作 alias 兼容。
-- 第三方 / SDK 标准名（`NEO4J_*`、`OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`MINERU_*`）**不加**前缀。
-- 已有的 OS 环境变量优先级高于 `.env`。
-- 临时关闭 `.env` 加载：`QATLAS_SKIP_DOTENV=1`（alias: `QUANTUMATLAS_SKIP_DOTENV`）。
+- 项目自有字段统一加 `QATLAS_` 前缀（如 `QATLAS_SERVER_URL`、`QATLAS_WIKI_DIR`、`QATLAS_USER_HEADER`）；旧名（`PUBLIC_BASE_URL`、`WIKI_DIR`、`USER_HEADER` 等）作 alias 兼容到 v0.17.0。
+- 第三方 / SDK 标准名（`NEO4J_*`、`OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`MINERU_*`、`GITHUB_CLIENT_*`）**不加**前缀。
+- 已有的 OS 环境变量优先级**高于**任何配置文件（client YAML 或 server `.env` 都遵守）。
+- 临时关闭 client 配置文件加载：`QATLAS_SKIP_DOTENV=1`（alias: `QUANTUMATLAS_SKIP_DOTENV`）。
 
-**客户端 `.env` 只需要写自己用到的几项**，不需要写服务端字段：
+**贡献者通常只需要配 client**（不跑 server）：
 
-```env
-# 用于 qatlas 命令默认指向哪台服务器（也可以每次用 --base-url 显式传）
-QATLAS_SERVER_URL=https://quantum-atlas.ai
+```bash
+# 首次安装：写一份默认 yaml 到 ~/.config/qatlas/config.yaml
+qatlas config init
+
+# 改 server URL（也可每次 --base-url 显式传）
+qatlas config set QATLAS_SERVER_URL https://quantum-atlas.ai
+
+# 改 PAT（写操作需要；浏览器登录 server 后到 /pat 创建）
+qatlas config set QATLAS_TOKEN qat_xxxxx
 
 # 远端是自签 HTTPS（开发环境 Caddy `tls internal`）时打开；等价于 CLI 的 --insecure
-# QATLAS_INSECURE=1
+qatlas config set QATLAS_INSECURE 1
 
 # 仅在使用 qatlas mineru 本地解析时需要
-MINERU_API_TOKEN=mn_xxxxx
+qatlas config set MINERU_API_TOKEN mn_xxxxx
 # 其余 MINERU_* 字段都有合理默认值，按需覆盖
 ```
 
-不需要在客户端写 `QATLAS_SERVER_HOST` / `QATLAS_SERVER_PORT` / `NEO4J_*` / `QATLAS_RAW_DIR` / `QATLAS_DATA_DIR` 这些纯服务端字段——它们在客户端 .env 里出现也无害，但毫无意义。`QATLAS_WIKI_DIR` 在 client 上也有用，指向本地 clone 的 wiki 仓库。
+完整字段映射 + YAML schema 见 [client config reference](../reference/cli-qatlas.md#qatlas-config) 与 [env-vars.md §Client](../reference/env-vars.md#client-qatlas-配置文件解析)。
 
-服务端的 `.env` 见 [deployment.md](../deployment/operations.md) 的「推荐的单机生产目录」段。
+**服务端的 `.env`**（含 `NEO4J_*` / `QATLAS_S3_*` / `GITHUB_CLIENT_*` / `QATLAS_SYSTEM_PAT` 等）见 [server-config.md](../deployment/server-config.md) 与 [operations.md](../deployment/operations.md) 的「推荐的单机生产目录」段。
 
 ---
 

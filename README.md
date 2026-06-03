@@ -171,14 +171,14 @@ qatlas estimator circuit_ir.json --format markdown
 
 ## 协作模型
 
-QuantumAtlas 偏向「研究基础设施」而不是静态资料库。所有配置由 [pydantic-settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/)（Python client）和 godotenv（Go server）自动从仓库根目录的 `.env` 加载；项目自有字段统一用 `QATLAS_` 前缀（旧名作 alias 保留）。多人协作时通常什么都不用写——所有存储路径都有默认：`QATLAS_WIKI_DIR` 默认是兄弟 checkout `../QuantumAtlas-Wiki`；`QATLAS_RAW_DIR` / `QATLAS_DATA_DIR` / `QATLAS_PB_DATA_DIR` 默认走 `${XDG_DATA_HOME:-$HOME/.local/share}/quantum-atlas/{raw,data,pb_data}`，跟 git checkout 完全分离。需要存到挂载盘或 `/var/lib/` 时再显式覆盖。
+QuantumAtlas 偏向「研究基础设施」而不是静态资料库。**配置分两边**：Python client（`qatlas` CLI）自 v0.16.0 起从 `~/.config/qatlas/config.yaml` 读 YAML（用 `qatlas config init/set` 管）；Go server（`qatlasd`）从 `.env` / process env 读（由 godotenv 加载，systemd unit 通常 `Environment=QATLAS_DOTENV=/etc/quantum-atlas/.env`）。项目自有字段统一用 `QATLAS_` 前缀（旧名作 alias 保留到 v0.17.0）。多人协作时通常什么都不用写——所有存储路径都有默认：`QATLAS_WIKI_DIR` 默认是兄弟 checkout `../QuantumAtlas-Wiki`；`QATLAS_RAW_DIR` / `QATLAS_DATA_DIR` / `QATLAS_PB_DATA_DIR` 默认走 `${XDG_DATA_HOME:-$HOME/.local/share}/quantum-atlas/{raw,data,pb_data}`，跟 git checkout 完全分离。需要存到挂载盘或 `/var/lib/` 时再显式覆盖。
 
 内容贡献分两条并列路径：
 
 - **Raw 资产**走 `QATLAS_RAW_DIR`（默认 `$XDG_DATA_HOME/quantum-atlas/raw`），按 YYMM 分片存储（如 `<raw_dir>/pdf/9508/9508027v1.pdf`、`<raw_dir>/pdf/2501/2501.00010v1.pdf`）。三种方式都会落到同一布局：
   1. 服务器侧按 arXiv ID 抓取（`qatlas ingest`）。
   2. 鉴权用户直接上传 PDF / Markdown（`qatlas upload pdf|markdown`，对应 `POST /api/papers/{arxiv_id}/upload-*`）。
-  3. 本地用自己的 `MINERU_API_TOKEN` 跑 MinerU 后推回云端（`qatlas mineru`）。
+  3. 本地用自己的 MinerU token（`qatlas config set MINERU_API_TOKEN ...`）跑 MinerU 后推回云端（`qatlas mineru`）。
 - **Wiki 内容**走独立 Git 仓库（推荐作为应用仓库的兄弟目录 checkout），任何人都可以 clone / commit / PR；服务器侧的 Wiki checkout 只接受 fast-forward 拉取，通过 `POST /api/wiki/sync/pull` 触发，无需 SSH 上服务器。
 
 完整 CLI 选项、鉴权说明（`QATLAS_USER_HEADER` / bearer token）、ff-only 同步语义和推荐协作节奏见 [docs/guides/contribute-content.md](docs/guides/contribute-content.md)。

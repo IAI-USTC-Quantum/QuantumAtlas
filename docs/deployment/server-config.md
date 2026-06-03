@@ -1,6 +1,8 @@
 # qatlasd 服务端环境变量
 
-本文档描述 **`qatlasd` server**（Go binary）当前如何加载 / 解析 / 使用环境变量。client (`qatlas` Python CLI) 的配置机制不同，见 [`qatlas config` reference](../reference/cli-qatlas.md#qatlas-config)。
+本文档描述 **`qatlasd` server**（Go binary）当前如何加载 / 解析 / 使用环境变量。
+
+> Client (`qatlas` Python CLI) **不读 .env** —— 自 v0.16.0 起改用 YAML 配置文件 `~/.config/qatlas/config.yaml`，详见 [`qatlas config` reference](../reference/cli-qatlas.md#qatlas-config)。本页只列 server 字段；client 字段映射见 [env-vars.md §Client](../reference/env-vars.md#client-qatlas-配置文件解析)。
 
 ---
 

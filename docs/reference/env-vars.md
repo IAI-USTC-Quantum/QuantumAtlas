@@ -1,25 +1,35 @@
 # 环境变量参考
 
-QuantumAtlas client 和 server **共享同一份 `.env`**，按字段角色不同各取所需。所有项目自有变量带 `QATLAS_` 前缀；第三方 SDK 标准名（`NEO4J_*` / `MINERU_*` / `OPENAI_*` / `ANTHROPIC_*`）保留原始命名。
+> **Server-only 字段** 见本页 [§Server](#server-存储路径) 起；**client 用 YAML 配置文件**，不是 .env。client 字段映射见 [§Client 配置文件](#client-qatlas-配置文件解析)，子命令见 [`qatlas config` reference](cli-qatlas.md#qatlas-config)。
 
-> 完整模板：[`.env.example`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.env.example)
+QuantumAtlas server（Go `qatlasd` 二进制）通过 `.env` / process env 读配置；自 v0.16.0 起 client（Python `qatlas` CLI）已切换到 `~/.config/qatlas/config.yaml` YAML 格式 —— 两边**不再共享同一份 .env**。
+
+server 端项目自有变量带 `QATLAS_` 前缀；第三方 SDK 标准名（`NEO4J_*` / `GITHUB_CLIENT_*`）保留原始命名。
+
+> 完整 server 模板：[`.env.example`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.env.example)
+> 客户端 YAML schema：见下方 [§Client](#client-qatlas-配置文件解析)
 
 ## 角色矩阵速查
 
-| 变量族 | client | server |
+| 变量族 | client（YAML） | server（.env） |
 |---|---|---|
-| `QATLAS_SERVER_URL` | ✅ 必填 | ✅ |
-| `QATLAS_TOKEN` | ✅ 写操作必填 | — |
-| `QATLAS_INSECURE` | ✅ | — |
-| `QATLAS_WIKI_DIR` | ✅（用本地 wiki 命令时）| ✅ |
-| `MINERU_API_TOKEN` 等 `MINERU_*` | ✅（本地跑 mineru 时）| — |
-| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | ✅（本地跑 extractor 时）| — |
+| `server.url` / `QATLAS_SERVER_URL` | ✅ 必填 | ✅ |
+| `server.token` / `QATLAS_TOKEN` | ✅ 写操作必填 | — |
+| `server.insecure` / `QATLAS_INSECURE` | ✅ | — |
+| `wiki.dir` / `QATLAS_WIKI_DIR` | ✅（用本地 wiki 命令时）| ✅ |
+| `mineru.*` / `MINERU_*` | ✅（本地跑 mineru 时）| — |
+| `extractor.openai_api_key` / `OPENAI_API_KEY` | ✅（本地跑 extractor 时）| — |
+| `extractor.anthropic_api_key` / `ANTHROPIC_API_KEY` | ✅（本地跑 extractor 时）| — |
 | `QATLAS_RAW_DIR` / `DATA_DIR` / `PB_DATA_DIR` | — | ✅ |
 | `QATLAS_SERVER_HOST` / `PORT` / `HTTP_ADDR` | — | ✅ |
 | `NEO4J_*` | — | ✅ |
 | `QATLAS_S3_*` | — | ✅ |
 | `QATLAS_USER_HEADER` | — | ✅ |
 | `GITHUB_CLIENT_ID` / `SECRET` | — | ✅ |
+| `QATLAS_SYSTEM_PAT` / `_SCOPES` | — | ✅ |
+| `QATLAS_EDGE_NAME` | — | ✅ |
+
+> 上面"client (YAML)"列那几个 `QATLAS_*` / `MINERU_*` / `OPENAI_*` env var 名仍然有效（OS env 优先级最高），但**不会再出现在 server 的 `.env.example` 模板里** —— 它们的 canonical 配置入口是 `~/.config/qatlas/config.yaml`。
 
 ## Client + Shared
 
@@ -153,21 +163,21 @@ uuidgen
 
 ## 第三方 SDK 标准名
 
-### MinerU（**纯 client 字段**）
+### MinerU（**纯 client 字段**，YAML 段 `mineru:`）
 
-下面这组变量由 Python `qatlas/config.py` 在贡献者本地跑 `qatlas mineru` 时读取并转发给 MinerU API；Go server (`qatlasd`) **不读这些字段**——v0.9.0 起 server 端 silent 转换 surface 已下线，未来也不会重新启用，markdown 一律走"贡献者本地转好 → `POST /api/papers/{id}/upload-mineru` 推上来"流程。
+下面这组变量由 Python `qatlas/config.py` 在贡献者本地跑 `qatlas mineru` 时读取并转发给 MinerU API；Go server (`qatlasd`) **不读这些字段**。canonical 配置入口是 `~/.config/qatlas/config.yaml` 的 `mineru:` 段；env var 名仍然有效（OS env 优先级高于 YAML）。
 
-| 变量 | 默认 | 作用 |
-|---|---|---|
-| `MINERU_API_TOKEN` | — | **必填**（贡献者本地跑 `qatlas mineru` 时调 MinerU API 的 bearer）|
-| `MINERU_API_BASE_URL` | `https://mineru.net` | 自部署 MinerU 实例时改 |
-| `MINERU_MODEL_VERSION` | `vlm` | `vlm` / `pipeline` |
-| `MINERU_LANGUAGE` | `ch` | 主语言 hint |
-| `MINERU_IS_OCR` | `false` | 强制 OCR |
-| `MINERU_ENABLE_FORMULA` | `true` | 公式识别 |
-| `MINERU_ENABLE_TABLE` | `true` | 表格识别 |
-| `MINERU_POLL_INTERVAL` | `3` | 轮询间隔（秒）|
-| `MINERU_TIMEOUT` | `1800` | 单篇总超时（秒，30 分钟）|
+| YAML key | env var | 默认 | 作用 |
+|---|---|---|---|
+| `mineru.api_token` | `MINERU_API_TOKEN` | — | **必填**（贡献者本地跑 `qatlas mineru` 时调 MinerU API 的 bearer）|
+| `mineru.api_base_url` | `MINERU_API_BASE_URL` | `https://mineru.net` | 自部署 MinerU 实例时改 |
+| `mineru.model_version` | `MINERU_MODEL_VERSION` | `vlm` | `vlm` / `pipeline` |
+| `mineru.language` | `MINERU_LANGUAGE` | `ch` | 主语言 hint |
+| `mineru.is_ocr` | `MINERU_IS_OCR` | `false` | 强制 OCR |
+| `mineru.enable_formula` | `MINERU_ENABLE_FORMULA` | `true` | 公式识别 |
+| `mineru.enable_table` | `MINERU_ENABLE_TABLE` | `true` | 表格识别 |
+| `mineru.poll_interval` | `MINERU_POLL_INTERVAL` | `3` | 轮询间隔（秒）|
+| `mineru.timeout` | `MINERU_TIMEOUT` | `1800` | 单篇总超时（秒，30 分钟）|
 
 > 贡献者本地 `qatlas mineru` 流程会把自己机器上的 PDF 上传给 MinerU
 > （contributor 拿自己的 MinerU 配额走完转换）。服务端**不**对外 serve PDF
@@ -176,14 +186,14 @@ uuidgen
 > 可达性维护 RustFS public endpoint。`QATLAS_S3_PUBLIC_ENDPOINT` 的用途
 > 是给已授权的内部工具签 presigned URL，与公开 MinerU 服务无关。
 
-### LLM（**纯 client 字段**）
+### LLM（**纯 client 字段**，YAML 段 `extractor:`）
 
-| 变量 | 作用 |
-|---|---|
-| `OPENAI_API_KEY` | client 侧 `qatlas extractor` 用 OpenAI 模型抽取算法描述（`qatlas/extractor/llm_interface.py`）；qatlasd server 不读 |
-| `ANTHROPIC_API_KEY` | 同上但用 Anthropic 模型 |
+| YAML key | env var | 作用 |
+|---|---|---|
+| `extractor.openai_api_key` | `OPENAI_API_KEY` | client 侧 `qatlas extractor` 用 OpenAI 模型抽取算法描述（`qatlas/extractor/llm_interface.py`）；qatlasd server 不读 |
+| `extractor.anthropic_api_key` | `ANTHROPIC_API_KEY` | 同上但用 Anthropic 模型 |
 
-> Extractor 是实验性 client 子命令——不跑 `qatlas extractor` 或用 `--no-extract` 时保持未设置即可。
+> Extractor 是实验性 client 子命令——不跑 `qatlas extractor` 或用 `--no-extract` 时保持未设置即可。`OPENAI_API_KEY` / `ANTHROPIC_API_KEY` 沿用 SDK 标准名（不加 `QATLAS_` 前缀），同一份 yaml + 现有 OpenAI / Anthropic SDK 共用。
 
 ## Server (qatlasd) 启动时 .env 解析
 
