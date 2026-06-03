@@ -246,44 +246,144 @@ func Load(dotenvPath string) (*Config, error) {
 	warnDeprecatedAliases()
 
 	// v0.17.0 renamed the XDG sub-namespace from "quantum-atlas" to
-	// "qatlasd" (matches the binary name). If the legacy directory
-	// still exists and the operator HASN'T overridden the data paths
-	// explicitly, warn that they should either migrate or set the
-	// QATLAS_*_DIR env vars to point at the old paths. Otherwise the
-	// server will silently start with an empty pb_data and the
-	// operator will think their OAuth setup vanished.
-	warnLegacyQuantumAtlasDir()
+	// "qatlasd" (matches the binary name). On an upgraded host the
+	// legacy directory may still hold the only copy of pb_data — and
+	// because cfg.PBDataDir now defaults to the NEW path, qatlasd
+	// would otherwise boot against an empty SQLite and look like a
+	// brand-new install (OAuth setup reset, every PAT vanished, etc.).
+	// Refuse to start in that case and tell the operator exactly how
+	// to migrate; see docs/deployment/migration-storage-layout.md.
+	if err := validateLegacyQuantumAtlasDir(cfg); err != nil {
+		return nil, err
+	}
 
 	return cfg, nil
 }
 
-// warnLegacyQuantumAtlasDir emits a one-time slog.Warn when the
-// pre-v0.17.0 XDG layout ($XDG_DATA_HOME/quantum-atlas/) exists but the
-// process is using the new default ($XDG_DATA_HOME/qatlasd/). This is
-// the "you forgot to migrate" diagnostic — see
-// docs/deployment/migration-storage-layout.md.
-func warnLegacyQuantumAtlasDir() {
+// validateLegacyQuantumAtlasDir fails fast when the pre-v0.17.0 XDG
+// layout still exists but the resolved config points at the (empty,
+// missing, or never-touched) new layout. The check is gated on three
+// "this would surprise the operator" conditions, all of which must
+// hold:
+//
+//  1. ~/.local/share/quantum-atlas/pb_data exists and looks like a
+//     real PocketBase data dir (`data.db` present);
+//  2. cfg.PBDataDir is the new XDG default (no explicit env / flag
+//     override pointed it elsewhere);
+//  3. cfg.PBDataDir does NOT contain a data.db of its own (so we
+//     wouldn't be silently overwriting the legacy state, but we also
+//     don't have a populated new dir the operator obviously wants).
+//
+// When all three fire the operator forgot to migrate. Emit the exact
+// commands they need plus a way to opt out.
+//
+// The DataDir and RawDir cases are still warn-only — they're easy to
+// rebuild from the source-of-truth wiki / RustFS, and silently
+// recreating an empty `data/` or `raw/` causes no data loss. PBDataDir
+// is the lone "if you lose it, your users + PATs are gone" case.
+func validateLegacyQuantumAtlasDir(cfg *Config) error {
+	// Documented escape hatch — operators with weird non-standard
+	// setups our heuristic doesn't recognise can opt out instead of
+	// being blocked.
+	if v := strings.TrimSpace(strings.ToLower(os.Getenv("QATLAS_SKIP_LEGACY_DIR_CHECK"))); v == "1" || v == "true" || v == "yes" {
+		return nil
+	}
+
 	base := strings.TrimSpace(os.Getenv("XDG_DATA_HOME"))
 	if base == "" || !filepath.IsAbs(base) {
 		home, err := os.UserHomeDir()
 		if err != nil || home == "" {
-			return
+			return nil
 		}
 		base = filepath.Join(home, ".local", "share")
 	}
-	legacy := filepath.Join(base, "quantum-atlas")
-	info, err := os.Stat(legacy)
-	if err != nil || !info.IsDir() {
+	legacyRoot := filepath.Join(base, "quantum-atlas")
+	legacyPBData := filepath.Join(legacyRoot, "pb_data")
+	currentPBData := filepath.Join(base, "qatlasd", "pb_data")
+
+	// Bail early if the legacy layout was already migrated / never existed.
+	if _, err := os.Stat(filepath.Join(legacyPBData, "data.db")); err != nil {
+		// No populated legacy pb_data — fall through to the soft warn
+		// for the other subdirectories (data/, raw/) and return.
+		warnLegacyAuxiliaryDirs(legacyRoot, base)
+		return nil
+	}
+
+	// If the operator explicitly pointed PBDataDir somewhere
+	// non-default (env var, --pb-data-dir flag, .env file), they
+	// presumably know where their data lives — don't second-guess.
+	if cfg.PBDataDir != currentPBData {
+		return nil
+	}
+
+	// If the new dir is already populated with its own data.db, the
+	// operator must have started a fresh install after the upgrade.
+	// At that point preserving the legacy data is up to them; the
+	// warn is enough.
+	if _, err := os.Stat(filepath.Join(currentPBData, "data.db")); err == nil {
+		slog.Warn(
+			"both pre-v0.17.0 and current XDG pb_data exist; using current. "+
+				"If the current one is empty, stop the server and decide which to keep.",
+			"legacy_pb_data", legacyPBData,
+			"current_pb_data", currentPBData,
+		)
+		warnLegacyAuxiliaryDirs(legacyRoot, base)
+		return nil
+	}
+
+	return fmt.Errorf(
+		"detected pre-v0.17.0 XDG data directory at %s but the new default %s is empty. "+
+			"v0.17.0 renamed the XDG sub-namespace from 'quantum-atlas' to 'qatlasd'. "+
+			"To migrate (recommended):\n"+
+			"    systemctl stop qatlasd  # or however you run it\n"+
+			"    mv %s %s\n"+
+			"    systemctl start qatlasd\n"+
+			"Or keep the legacy paths by setting these env vars before starting qatlasd:\n"+
+			"    QATLAS_PB_DATA_DIR=%s\n"+
+			"    QATLAS_DATA_DIR=%s\n"+
+			"    QATLAS_RAW_DIR=%s\n"+
+			"See docs/deployment/migration-storage-layout.md for details. "+
+			"If this check is wrong for your setup, set QATLAS_SKIP_LEGACY_DIR_CHECK=1 to bypass.",
+		legacyPBData, currentPBData,
+		legacyRoot, filepath.Join(base, "qatlasd"),
+		legacyPBData,
+		filepath.Join(legacyRoot, "data"),
+		filepath.Join(legacyRoot, "raw"),
+	)
+}
+
+// warnLegacyAuxiliaryDirs emits a soft warning for the non-critical
+// XDG subdirectories that still live under the old layout. Data
+// loss is recoverable (raw/ from RustFS, data/ from regenerated
+// state), so this stays warn-only.
+func warnLegacyAuxiliaryDirs(legacyRoot, base string) {
+	for _, sub := range []string{"data", "raw"} {
+		old := filepath.Join(legacyRoot, sub)
+		if info, err := os.Stat(old); err == nil && info.IsDir() {
+			slog.Warn(
+				"pre-v0.17.0 XDG sub-directory still present; new default is empty. "+
+					"Move it or set the matching QATLAS_*_DIR env var to silence this.",
+				"legacy_path", old,
+				"current_path", filepath.Join(base, "qatlasd", sub),
+			)
+		}
+	}
+}
+
+// warnLegacyQuantumAtlasDir kept as a compatibility entrypoint for
+// callers that don't have access to the resolved cfg. Wraps the
+// stricter validate function and downgrades the failure to a slog.Warn
+// so existing tests that only checked log output still pass.
+//
+// New code should call validateLegacyQuantumAtlasDir directly.
+func warnLegacyQuantumAtlasDir() {
+	if v := strings.TrimSpace(strings.ToLower(os.Getenv("QATLAS_SKIP_LEGACY_DIR_CHECK"))); v == "1" || v == "true" || v == "yes" {
 		return
 	}
-	current := filepath.Join(base, "qatlasd")
-	slog.Warn(
-		"detected pre-v0.17.0 XDG data directory; server is using the new path. "+
-			"Run `mv` to migrate or set QATLAS_*_DIR env vars to the old paths. "+
-			"See docs/deployment/migration-storage-layout.md.",
-		"legacy_path", legacy,
-		"current_path", current,
-	)
+	cfg := &Config{PBDataDir: defaultXDGSubdir("pb_data")}
+	if err := validateLegacyQuantumAtlasDir(cfg); err != nil {
+		slog.Warn(err.Error())
+	}
 }
 
 // deprecatedAliases is the canonical map of legacy unprefixed env vars

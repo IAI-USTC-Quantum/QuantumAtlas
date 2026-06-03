@@ -110,3 +110,61 @@ func pbDataLockSkipRequested() bool {
 	}
 	return false
 }
+
+// probePBDataLockAvailable returns true if the pb_data flock is currently
+// unheld (i.e. no serve instance is holding it). Performs a TryLock +
+// immediate Unlock, briefly holding the lock during the probe. Used by
+// mutating subcommands (pat mint, users list, papers sync, ...) as an
+// **advisory** check, NOT a guarantee: there is an irreducible race
+// window between the probe and the subcommand's actual SQLite writes
+// during which a serve instance could start.
+//
+// Returns true (= "ok to proceed without warning") when:
+//   - pbDataDir is empty (caller didn't configure a path; nothing to probe)
+//   - the lock file is acquirable (no serve running)
+//   - the probe itself errored (e.g. permission denied on the lockfile);
+//     better to silently proceed than to flap the operator with an
+//     un-actionable warning about an FS condition
+//
+// Returns false ONLY when TryLock cleanly reports "lock held".
+func probePBDataLockAvailable(pbDataDir string) bool {
+	if pbDataDir == "" {
+		return true
+	}
+	lockPath := filepath.Join(pbDataDir, pbDataLockFilename)
+	fl := flock.New(lockPath)
+	locked, err := fl.TryLock()
+	if err != nil {
+		return true
+	}
+	if !locked {
+		return false
+	}
+	_ = fl.Unlock()
+	return true
+}
+
+// warnIfServeRunning emits a non-fatal advisory warning when a serve
+// instance appears to hold the pb_data lock. Subcommands that touch
+// the SQLite store directly (pat mint/revoke, users list, papers sync,
+// openalex bootstrap, storage prune, ...) should call this from
+// PreRunE so the operator at least knows what's happening when they
+// fire a CLI write at a live server.
+//
+// Honors QATLAS_SKIP_PB_DATA_LOCK=1 (silent — if the operator already
+// disabled the safety net, they don't need a redundant warning).
+func warnIfServeRunning(pbDataDir string) {
+	if pbDataLockSkipRequested() {
+		return
+	}
+	if !probePBDataLockAvailable(pbDataDir) {
+		slog.Warn(
+			"another qatlasd serve appears to be running on this pb_data; "+
+				"this subcommand will write to SQLite directly while the server is running. "+
+				"PocketBase + SQLite (WAL) allows concurrent readers but only one writer at a time; "+
+				"transient busy errors may surface in the server log. Stop the server first "+
+				"for safety-critical operations (schema migrations, bulk imports).",
+			"pb_data_dir", pbDataDir,
+		)
+	}
+}

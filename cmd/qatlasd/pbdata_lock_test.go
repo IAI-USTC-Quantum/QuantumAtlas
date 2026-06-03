@@ -185,3 +185,43 @@ func TestGofrsFlockContractMatchesAssumptions(t *testing.T) {
 		t.Error("second TryLock should report locked=false when first still holds (assumption broken)")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// probePBDataLockAvailable — advisory probe used by mutating subcommands
+// ---------------------------------------------------------------------------
+
+func TestProbePBDataLockAvailable_TrueWhenUnheld(t *testing.T) {
+	dir := t.TempDir()
+	if !probePBDataLockAvailable(dir) {
+		t.Error("expected probe=true on a fresh pb_data with no holder")
+	}
+	// Probe must not leave a held lock behind (otherwise serve would
+	// fail to start after a subcommand ran).
+	lock, err := acquirePBDataLock(dir)
+	if err != nil {
+		t.Fatalf("acquire after probe should succeed: %v", err)
+	}
+	_ = lock.Unlock()
+}
+
+func TestProbePBDataLockAvailable_FalseWhenHeld(t *testing.T) {
+	dir := t.TempDir()
+	holder, err := acquirePBDataLock(dir)
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	defer holder.Unlock()
+
+	if probePBDataLockAvailable(dir) {
+		t.Error("expected probe=false while another holder still owns the lock")
+	}
+}
+
+func TestProbePBDataLockAvailable_TrueOnEmptyDir(t *testing.T) {
+	// Defensive: empty pbDataDir means "caller didn't configure a
+	// path"; the probe should return true so subcommands don't warn
+	// spuriously.
+	if !probePBDataLockAvailable("") {
+		t.Error("probe on empty dir should silently return true (no path to probe)")
+	}
+}

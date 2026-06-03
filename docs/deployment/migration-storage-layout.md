@@ -125,7 +125,7 @@ cd -
 # 5. 启动验证
 ~/.local/bin/qatlasd serve --http=127.0.0.1:4200 &
 sleep 2
-curl -s http://127.0.0.1:4200/health                # {"status":"healthy",...}
+curl -s http://127.0.0.1:4200/api/health                # {"status":"healthy",...}
 curl -s http://127.0.0.1:4200/api/stats | jq .      # total_pages 应非 0
 kill %1
 ```
@@ -156,7 +156,7 @@ kill %1
    systemctl --user daemon-reload && systemctl --user restart qatlas.service
    # 或 system unit：sudo systemctl daemon-reload && sudo systemctl restart qatlas
 
-   curl -sf http://127.0.0.1:4200/health
+   curl -sf http://127.0.0.1:4200/api/health
    journalctl --user -u qatlas -n 50 | grep -E 'loaded \.env|pb_data|listening'
    # 期望看到：
    #   loaded .env path=<APP_HOME>/.env
@@ -200,7 +200,7 @@ pixi run vet                                                # 0 warning
 pixi run test-go                                            # config tests pass
 ~/.local/bin/qatlasd serve --http=127.0.0.1:4200 &
 sleep 2
-curl -s http://127.0.0.1:4200/health
+curl -s http://127.0.0.1:4200/api/health
 curl -s http://127.0.0.1:4200/api/stats | jq .total_pages   # 应 > 0
 curl -s http://127.0.0.1:4200/api/server/info | jq .        # engine: go+pocketbase
 kill %1

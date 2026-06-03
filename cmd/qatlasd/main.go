@@ -157,30 +157,6 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
-	// Stamp the S3 client User-Agent (T10): qatlasd/<version> or
-	// qatlasd/<version>/<edge> when QATLAS_EDGE_NAME is set. This
-	// makes legitimate server writes visually separable from direct
-	// mc/boto3 bucket access in the RustFS audit trail. Must run before
-	// any S3Store is built (initRawStore fires later at OnServe). UA is
-	// a forgeable hint only — the load-bearing forensic key is the
-	// SigV4 accessKey recorded by the RustFS-side audit trail.
-	uaVersion := Version
-	if cfg.EdgeName != "" {
-		uaVersion = Version + "/" + cfg.EdgeName
-	}
-	objstore.SetClientAppInfo("qatlasd", uaVersion)
-
-	// Inject CLI flags from env BEFORE pocketbase.New() — that
-	// constructor eagerly parses os.Args[1:] to materialise its
-	// persistent flags (--dir, --dev, etc.) and snapshots the values
-	// into the BaseApp. Anything we mutate after construction is
-	// ignored by the app instance even though cobra.Execute() does
-	// see it. Bug repro: setting QATLAS_PB_DATA_DIR and running
-	// `qatlasd superuser upsert ...` used to silently write to
-	// ./build/pb_data because the injection happened post-New().
-	injectHTTPFlag(cfg)
-	injectPBDataDirFlag(cfg)
-
 	app := pocketbase.NewWithConfig(pocketbase.Config{
 		// Custom SQLite tuning — see sqlite_tuning.go for the rationale
 		// behind each pragma. Falls back to PB's DefaultDBConnect when
@@ -197,66 +173,70 @@ func main() {
 	// field — operators running `--version` on the CLI see nothing.
 	app.RootCmd.Version = Version
 
+	// Register the GitHub OAuth provider hook now (it fires at
+	// PocketBase Bootstrap, which runs BEFORE cobra parses argv).
+	// This is the timing reason GITHUB_CLIENT_* / *_GITHUB_LOGINS
+	// are env-only — by the time `serve --github-client-id ...`
+	// would land in cfg, the OAuth provider has already been mounted
+	// onto the settings table. Documented in
+	// cmd/qatlasd/serve_flags.go "Known limitation".
 	auth.Register(app, cfg)
 
-	// Load the optional system PAT (QATLAS_SYSTEM_PAT in the env) and
-	// mount it for authGuard. Loaded once at startup so isAuthorized
-	// can do a constant-time compare without re-reading the env on
-	// every request. Logs:
-	//   - feature on  → "system PAT enabled (length=N scopes=[...])"
-	//   - feature off → "system PAT disabled (QATLAS_SYSTEM_PAT unset)"
-	//   - malformed   → fatal: the operator clearly INTENDED to enable
-	//     it (env is set) and we should not silently fall through.
-	if sysPAT, err := pat.LoadSystemPAT(); err != nil {
-		log.Fatalf("system PAT: %v", err)
-	} else if sysPAT != nil {
-		routes.UseSystemPAT(sysPAT)
-		slog.Info("system PAT enabled",
-			"length", sysPAT.Length(),
-			"scopes", sysPAT.Scopes(),
-		)
-	} else {
-		slog.Info("system PAT disabled (QATLAS_SYSTEM_PAT unset)")
-	}
-
 	// Mount the `pat` subcommand group. This MUST come before
-	// app.Start() — cobra binds commands by reference at parse time,
+	// app.Execute() — cobra binds commands by reference at parse time,
 	// and any additions after the root walks os.Args are ignored.
-	app.RootCmd.AddCommand(NewPATCommand(app))
+	patCmd := NewPATCommand(app)
+	attachPBLockProbe(patCmd, cfg)
+	app.RootCmd.AddCommand(patCmd)
 
 	// Mount the `storage` subcommand group (object-store maintenance:
 	// `storage prune` enumerates and deletes noncurrent S3 versions).
 	// Same registration timing constraint as pat above.
+	//
+	// Note: storage touches S3 buckets only, not pb_data SQLite, so we
+	// skip the lock-probe wrapper here.
 	app.RootCmd.AddCommand(NewStorageCommand())
 
 	// Mount the `service` subcommand group (install / uninstall / start /
 	// stop / restart / status — wraps kardianos/service to manage the
 	// systemd unit / launchd plist / Windows SCM entry). Same timing
 	// constraint as pat / storage above.
+	//
+	// Note: service touches systemd / launchd / Windows SCM only, not
+	// pb_data SQLite — no lock-probe wrapper needed.
 	app.RootCmd.AddCommand(NewServiceCommand())
 
 	// Mount the `papers` subcommand group (catalog maintenance:
 	// `papers sync` reconciles Neo4j has_pdf/has_md/image_count from the
 	// object-store buckets — periodic drift repair + disaster rebuild).
 	// Same registration timing constraint as pat / storage above.
-	app.RootCmd.AddCommand(NewPapersCommand())
+	papersCmd := NewPapersCommand()
+	attachPBLockProbe(papersCmd, cfg)
+	app.RootCmd.AddCommand(papersCmd)
 
 	// Mount the `openalex` subcommand group (bootstrap / sync the
 	// OpenAlex works snapshot into the :PaperWork layer). Execution is
 	// operator-driven and decoupled from server boot — see handoff.md.
-	app.RootCmd.AddCommand(NewOpenAlexCommand())
+	openalexCmd := NewOpenAlexCommand()
+	attachPBLockProbe(openalexCmd, cfg)
+	app.RootCmd.AddCommand(openalexCmd)
 
 	// Mount the `users` subcommand group (`users list` enumerates the
 	// PocketBase users collection — needed before `pat mint --user`
 	// because each edge has an independent user store and there's
 	// otherwise no non-browser way to discover which emails are
 	// registered locally).
-	app.RootCmd.AddCommand(NewUsersCommand(app))
+	usersCmd := NewUsersCommand(app)
+	attachPBLockProbe(usersCmd, cfg)
+	app.RootCmd.AddCommand(usersCmd)
 
 	// Mount the `config` subcommand group (`config init` writes a
 	// default .env template; `config path` / `config show` inspect
 	// what qatlasd would load). Same cobra registration timing
 	// constraint as the other subcommand mounts above.
+	//
+	// Note: config touches files only, not pb_data SQLite — no
+	// lock-probe wrapper.
 	app.RootCmd.AddCommand(NewConfigCommand())
 
 	// Install our default PAT-surface rate-limit rules. Done at
@@ -270,182 +250,26 @@ func main() {
 		// Log effective SQLite pragmas + run startup WAL checkpoint.
 		// Done after e.Next so PB has finished opening connections.
 		logSQLitePragmas(context.Background(), app)
-		changed, err := pat.EnsureDefaults(app)
-		if err != nil {
+		if changed, err := pat.EnsureDefaults(app); err != nil {
 			// Non-fatal: starting the server without rate limits is
 			// still better than refusing to start at all. Log loudly
 			// so the operator notices.
 			slog.Warn("pat: failed to install default rate limits", "error", err)
 			return nil
-		}
-		if changed {
+		} else if changed {
 			slog.Info("pat: installed default rate-limit rules", "rules", len(pat.DefaultRateLimitRules))
 		}
 		return nil
 	})
 
-	// Initialize Neo4j client (shared by the papers catalog). When
-	// NEO4J_URI is unset NewClient returns nil and the catalog
-	// degrades to ErrCatalogUnavailable on every read/write — endpoints
-	// surface this as {available: false} rather than 5xx.
-	nc := initNeo4jClient(cfg)
-
-	// Build the Neo4j-backed papers catalog (stats / needs-mineru /
-	// claims / upload write-through). nc may be nil/unconnected — the
-	// catalog degrades gracefully (ErrCatalogUnavailable) in that case.
-	catalog := papers.NewStore(nc)
-	if catalog.Configured() {
-		// Schema bootstrap runs in the background: it is ~16 sequential DDL
-		// round-trips to the (cross-mesh, ~700ms-latency) Neo4j, which can
-		// exceed any startup-blocking budget and would otherwise delay
-		// /api/health. All statements are idempotent (IF NOT EXISTS), so we
-		// retry with a generous per-attempt timeout until every constraint +
-		// index exists. Missing schema degrades correctness (uniqueness) +
-		// performance, so we keep retrying rather than wait for the next boot.
-		go ensureCatalogSchema(catalog)
-	} else {
-		log.Printf("papers: catalog disabled (NEO4J_URI unset); /api/papers stats+queue report available:false")
-	}
-
-	// Wire the raw asset backend. S3Enabled is the documented split
-	// point: when QATLAS_S3_* are all set we route every PDF /
-	// markdown / image through three RustFS buckets (qatlas-pdf /
-	// qatlas-md / qatlas-images) behind an objstore.Router, otherwise
-	// we wrap cfg.RawDir with a single LocalStore (keys keep their
-	// <kind>/ prefix in one dir). The config layer already validated
-	// the all-or-nothing rule, so neither branch can land half-
-	// configured here.
-	rawStore, err := initRawStore(cfg)
-	if err != nil {
-		log.Fatalf("init raw object store: %v", err)
-	}
-	// Reconcile bucket versioning on each per-kind S3 bucket so
-	// accidental overwrites are recoverable via ListObjectVersions.
-	// Idempotent; non-fatal when the IAM user lacks the perm.
-	ensureBucketVersioning(rawStore)
-
-	// Build the casbin enforcer once at startup. The policy table is
-	// static (defined in internal/pat/scopes.go), so a single shared
-	// instance is enough — Enforce() is safe for concurrent reads.
-	// Failing here is fatal: every write endpoint depends on it.
-	enforcer, err := pat.NewEnforcer()
-	if err != nil {
-		log.Fatalf("build PAT scope enforcer: %v", err)
-	}
-
-	// Background janitor: sweep expired MinerU claims every
-	// JanitorInterval. Idempotent and safe to run on both edges.
-	// Stops when the app terminates.
-	janitorCtx, janitorCancel := context.WithCancel(context.Background())
-	if catalog.Configured() {
-		go catalog.RunJanitor(janitorCtx)
-	}
-	app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
-		janitorCancel()
-		return e.Next()
-	})
-
-	// Build the wiki in-memory cache. Walks cfg.WikiDir once at
-	// startup so the first /api/pages request hits warm data; a
-	// background ticker re-walks every 60s when `git rev-parse HEAD`
-	// shows a different commit (covers out-of-band `git pull` /
-	// direct edits). /api/wiki/sync/pull also forces a synchronous
-	// refresh so the response reflects the just-pulled commit.
-	// Always non-nil — initial-load failures degrade to empty
-	// responses, not crashes.
-	wikiCache := wiki.NewCache(cfg.WikiDir, 60*time.Second)
-	log.Printf("wiki: cache initialized (dir=%s)", cfg.WikiDir)
-	app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
-		wikiCache.Stop()
-		return e.Next()
-	})
-
-	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
-		// Acquire the single-process lock on pb_data BEFORE any HTTP
-		// listener starts. Done in OnServe (not in main()) because the
-		// `qatlasd serve` subcommand is the only path that mutates
-		// PocketBase tables — operator subcommands like
-		// `qatlasd pat mint` / `qatlasd users list` also open
-		// pb_data but only need a transient read lock from SQLite's
-		// own machinery, so refusing to coexist with a live `serve`
-		// would just make the ops CLI useless during normal
-		// operation.
-		//
-		// The flock is held for the lifetime of this goroutine
-		// (process lifetime); kernel releases it on exit (graceful,
-		// SIGTERM, kill -9, OOM), so a crashed qatlasd never leaves
-		// a stale lock requiring manual cleanup.
-		if pbDataLockSkipRequested() {
-			slog.Warn("QATLAS_SKIP_PB_DATA_LOCK=1 — pb_data multi-process safety bypassed; corruption risk",
-				"pb_data_dir", cfg.PBDataDir)
-		} else {
-			lock, err := acquirePBDataLock(cfg.PBDataDir)
-			if err != nil {
-				return fmt.Errorf("failed to acquire pb_data lock: %w", err)
-			}
-			// Release on graceful PocketBase shutdown. The kernel
-			// will release it anyway on process exit, but being
-			// explicit lets a re-exec (e.g. in-process upgrade)
-			// hand the lock over cleanly.
-			app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
-				_ = lock.Unlock()
-				return e.Next()
-			})
-		}
-
-		// Capture process start time the first time a serve event
-		// fires. /api/health uses this to report uptime_seconds.
-		serverStarted := time.Now()
-
-		// Optional: force a tcp4-native listener when the operator opts
-		// in via QATLAS_FORCE_TCP4=1. Background:
-		//
-		// On modern Go (1.21+), net.Listen("tcp", "0.0.0.0:4200") returns
-		// a dual-stack v6 socket with IPV6_V6ONLY=0 — visible in
-		// /proc/<pid>/net/tcp6 but absent from /proc/<pid>/net/tcp.
-		// IPv4 clients normally still reach it via IPv4-mapped IPv6.
-		//
-		// On regular Linux cloud VMs this is fine and serves both v4 and
-		// v6 clients out of one socket. **Don't** flip this on by default
-		// for community deployments — you would shut out v6-only callers.
-		//
-		// WSL2 + Windows netsh portproxy is the exception: the v4-only
-		// portproxy rule (mesh-IPv4:4200 -> 127.0.0.1:4200) injects
-		// raw v4 SYNs into the WSL2 NAT layer which then cannot match a
-		// pure v6 socket, even with bindv6only=0. Edge reverse-proxies
-		// going through the mesh see endless 502s while curl from
-		// inside WSL2 to 127.0.0.1:4200 works. The fix is to bind a
-		// tcp4 socket ourselves and inject it into ServeEvent.
-		//
-		// Opt-in for WSL2-on-Windows deployments via QATLAS_FORCE_TCP4=1;
-		// unset for everyone else.
-		if forceTCP4() && se.Listener == nil && se.Server != nil {
-			if l, err := maybeIPv4Listener(se.Server.Addr); err == nil && l != nil {
-				se.Listener = l
-				log.Printf("QATLAS_FORCE_TCP4=1: forced tcp4 listener on %s", se.Server.Addr)
-			} else if err != nil {
-				log.Printf("QATLAS_FORCE_TCP4=1 but listener bind failed: %v (falling back to PocketBase default)", err)
-			}
-		}
-
-		registerRoutes(se, app, cfg, rawStore, catalog, wikiCache, enforcer, serverStarted)
-
-		// Serve the embedded SPA last as the catch-all. apis.Static's
-		// indexFallback=true means any path that doesn't match a real
-		// file falls back to /index.html — exactly the SPA-client-router
-		// behavior the React app needs for /wiki, /graph, /token, etc.
-		se.Router.GET("/{path...}", apis.Static(qweb.MustFS(), true))
-
-		return se.Next()
-	})
-
-	// Mount our wrapped `serve` subcommand (24 qatlasd-specific
-	// flags + env-alias help, on top of PocketBase's own --http /
-	// --dir / --encryptionEnv). The wrapper's RunE pre-step applies
-	// any --foo flags the operator passed onto cfg before falling
-	// through to PocketBase's original serve handler. See
-	// cmd/qatlasd/serve_flags.go for the flag list + the OAuth-flag
-	// limitation explanation.
+	// Mount our wrapped `serve` subcommand: 20 qatlasd-specific flags
+	// (cmd/qatlasd/serve_flags.go) on top of PocketBase's own --http /
+	// --https / --origins / --dir / --encryptionEnv. The wrapper's
+	// RunE pre-step applies any --foo flags the operator passed onto
+	// cfg before any cfg-dependent backend init runs, so the CLI flag
+	// → env → .env → default precedence actually takes effect (vs the
+	// v0.17.0a0 design where most init ran in main() before the flag
+	// values had been read).
 	//
 	// We also mount Superuser ourselves so we can skip pb.Start()
 	// (which would mount its own Serve and clobber the wrapped one).
@@ -455,21 +279,207 @@ func main() {
 	serveFlags := registerServeFlags(serveCmd)
 	originalServeRunE := serveCmd.RunE
 	serveCmd.RunE = func(cmd *cobra.Command, args []string) error {
+		// ── STEP 1: merge CLI flags into cfg ───────────────────────
 		applyServeFlags(cmd, serveFlags, cfg)
-		// Re-stamp the S3 client User-Agent in case --edge-name was
-		// supplied on the command line (cfg.EdgeName is the source
-		// of truth, regardless of where it came from).
+		// Re-run the S3 all-or-nothing invariant in case CLI flags
+		// touched part of the connection quartet.
+		if err := validateServeCfgAfterFlags(cfg); err != nil {
+			return err
+		}
+
+		// ── STEP 2: stamp the S3 client User-Agent. cfg.EdgeName
+		// may have been touched by --edge-name. Must run before any
+		// S3Store is built (initRawStore below).
 		uaVersion := Version
 		if cfg.EdgeName != "" {
 			uaVersion = Version + "/" + cfg.EdgeName
 		}
 		objstore.SetClientAppInfo("qatlasd", uaVersion)
+
+		// ── STEP 3: inject the PocketBase persistent flags
+		// (--http / --dir) NOW, with the final cfg values. Done
+		// post-flag-apply so --pb-data-dir / --http actually
+		// reaches PocketBase. Order matters: PocketBase reads
+		// os.Args in its eagerParseFlags routine which runs at
+		// app.Execute() entry, after this RunE has fired. So
+		// mutating os.Args here is the legal hook.
+		injectHTTPFlag(cfg)
+		injectPBDataDirFlag(cfg)
+
+		// ── STEP 4: load the optional system PAT. --system-pat
+		// mirrored its value into QATLAS_SYSTEM_PAT in
+		// applyServeFlags above, so LoadSystemPAT sees the CLI
+		// value here.
+		if sysPAT, err := pat.LoadSystemPAT(); err != nil {
+			return fmt.Errorf("system PAT: %w", err)
+		} else if sysPAT != nil {
+			routes.UseSystemPAT(sysPAT)
+			slog.Info("system PAT enabled",
+				"length", sysPAT.Length(),
+				"scopes", sysPAT.Scopes(),
+			)
+		} else {
+			slog.Info("system PAT disabled (QATLAS_SYSTEM_PAT unset)")
+		}
+
+		// ── STEP 5: build the cfg-dependent backends. All closures
+		// captured by the OnServe handler below need these to be
+		// in scope.
+		nc := initNeo4jClient(cfg)
+		catalog := papers.NewStore(nc)
+		if catalog.Configured() {
+			// Schema bootstrap runs in the background: it is ~16 sequential DDL
+			// round-trips to the (cross-mesh, ~700ms-latency) Neo4j, which can
+			// exceed any startup-blocking budget and would otherwise delay
+			// /api/health. All statements are idempotent (IF NOT EXISTS), so we
+			// retry with a generous per-attempt timeout until every constraint +
+			// index exists. Missing schema degrades correctness (uniqueness) +
+			// performance, so we keep retrying rather than wait for the next boot.
+			go ensureCatalogSchema(catalog)
+		} else {
+			log.Printf("papers: catalog disabled (NEO4J_URI unset); /api/papers stats+queue report available:false")
+		}
+
+		// Wire the raw asset backend. S3Enabled is the documented split
+		// point: when QATLAS_S3_* are all set we route every PDF /
+		// markdown / image through three RustFS buckets behind an
+		// objstore.Router, otherwise we wrap cfg.RawDir with a single
+		// LocalStore.
+		rawStore, err := initRawStore(cfg)
+		if err != nil {
+			return fmt.Errorf("init raw object store: %w", err)
+		}
+		ensureBucketVersioning(rawStore)
+
+		// Build the casbin enforcer once at startup. Failing here is
+		// fatal: every write endpoint depends on it.
+		enforcer, err := pat.NewEnforcer()
+		if err != nil {
+			return fmt.Errorf("build PAT scope enforcer: %w", err)
+		}
+
+		// Background janitor: sweep expired MinerU claims every
+		// JanitorInterval. Idempotent and safe to run on both edges.
+		janitorCtx, janitorCancel := context.WithCancel(context.Background())
+		if catalog.Configured() {
+			go catalog.RunJanitor(janitorCtx)
+		}
+		app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
+			janitorCancel()
+			return e.Next()
+		})
+
+		// Build the wiki in-memory cache. Walks cfg.WikiDir once at
+		// startup so the first /api/pages request hits warm data.
+		wikiCache := wiki.NewCache(cfg.WikiDir, 60*time.Second)
+		log.Printf("wiki: cache initialized (dir=%s)", cfg.WikiDir)
+		app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
+			wikiCache.Stop()
+			return e.Next()
+		})
+
+		// ── STEP 6: register the HTTP handlers + pb_data lock as
+		// an OnServe hook. PocketBase fires the hook when
+		// `apis.Serve` builds the router (originalServeRunE below).
+		app.OnServe().BindFunc(func(se *core.ServeEvent) error {
+			// Acquire the single-process lock on pb_data BEFORE any HTTP
+			// listener starts. The kernel releases the flock on exit
+			// (graceful, SIGTERM, kill -9, OOM), so a crashed qatlasd
+			// never leaves a stale lock requiring manual cleanup.
+			if pbDataLockSkipRequested() {
+				slog.Warn("QATLAS_SKIP_PB_DATA_LOCK=1 — pb_data multi-process safety bypassed; corruption risk",
+					"pb_data_dir", cfg.PBDataDir)
+			} else {
+				lock, lockErr := acquirePBDataLock(cfg.PBDataDir)
+				if lockErr != nil {
+					return fmt.Errorf("failed to acquire pb_data lock: %w", lockErr)
+				}
+				app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
+					_ = lock.Unlock()
+					return e.Next()
+				})
+			}
+
+			serverStarted := time.Now()
+
+			// Optional: force a tcp4-native listener via
+			// QATLAS_FORCE_TCP4=1 / --force-tcp4 (WSL2 + Windows
+			// netsh portproxy escape hatch).
+			if forceTCP4() && se.Listener == nil && se.Server != nil {
+				if l, lerr := maybeIPv4Listener(se.Server.Addr); lerr == nil && l != nil {
+					se.Listener = l
+					log.Printf("QATLAS_FORCE_TCP4=1: forced tcp4 listener on %s", se.Server.Addr)
+				} else if lerr != nil {
+					log.Printf("QATLAS_FORCE_TCP4=1 but listener bind failed: %v (falling back to PocketBase default)", lerr)
+				}
+			}
+
+			registerRoutes(se, app, cfg, rawStore, catalog, wikiCache, enforcer, serverStarted)
+
+			// Serve the embedded SPA last as the catch-all. apis.Static's
+			// indexFallback=true means any path that doesn't match a real
+			// file falls back to /index.html — exactly the SPA-client-router
+			// behavior the React app needs for /wiki, /graph, /token, etc.
+			se.Router.GET("/{path...}", apis.Static(qweb.MustFS(), true))
+
+			return se.Next()
+		})
+
 		return originalServeRunE(cmd, args)
 	}
 	app.RootCmd.AddCommand(serveCmd)
 
 	if err := app.Execute(); err != nil {
 		log.Fatal(err)
+	}
+}
+
+// validateServeCfgAfterFlags re-runs the bits of config.Load that
+// might be invalidated by CLI flag overrides. Currently just the S3
+// all-or-nothing rule (whose validator we can't import from here
+// without a circular dependency on the cfg-merge logic itself, so we
+// re-implement the same check inline). Cheap; a no-op when no S3
+// flag was passed.
+func validateServeCfgAfterFlags(cfg *config.Config) error {
+	connSet := cfg.S3Endpoint != "" || cfg.S3AccessKeyID != "" || cfg.S3SecretAccessKey != ""
+	bucketSet := cfg.S3BucketPDF != "" || cfg.S3BucketMD != "" || cfg.S3BucketImages != ""
+	if connSet || bucketSet {
+		if cfg.S3Endpoint == "" || cfg.S3AccessKeyID == "" || cfg.S3SecretAccessKey == "" ||
+			cfg.S3BucketPDF == "" || cfg.S3BucketMD == "" || cfg.S3BucketImages == "" {
+			return fmt.Errorf(
+				"after CLI flag overrides, S3 config is half-set: all of " +
+					"--s3-endpoint / --s3-access-key-id / --s3-secret-access-key / " +
+					"--s3-bucket-pdf / --s3-bucket-md / --s3-bucket-images must be set together " +
+					"(or none, to use the LocalStore fallback). Mixing CLI flags with .env " +
+					"fields for the S3 quartet is fine — just make sure every field has a value somewhere.",
+			)
+		}
+	}
+	return nil
+}
+
+// attachPBLockProbe wires an advisory pb_data lock-probe into every
+// node of a cobra subcommand subtree via PersistentPreRun. Mutating
+// subcommands (pat / users / papers / openalex) write directly to the
+// pb_data SQLite store and would race with a concurrently-running
+// serve instance; the probe emits a slog.Warn (NOT a fatal) when a
+// serve appears to hold the lock, so operators at least see a hint in
+// their log when they fire `qatlasd pat mint` at a live edge.
+//
+// PersistentPreRun (vs PreRun) propagates to descendants so this only
+// has to be called once per subcommand group root; cobra runs the
+// nearest-ancestor PersistentPreRun for each invocation.
+//
+// We chain rather than replace any pre-existing PersistentPreRun so
+// that subcommand authors can still install their own without
+// silently losing the probe.
+func attachPBLockProbe(root *cobra.Command, cfg *config.Config) {
+	prev := root.PersistentPreRun
+	root.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+		warnIfServeRunning(cfg.PBDataDir)
+		if prev != nil {
+			prev(cmd, args)
+		}
 	}
 }
 
