@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.16.0 (2026-06-03)
+
+### Feat
+
+- **config**: hide token input when value omitted from `qatlas config set`
+- **docker**: add Dockerfile and docker-compose templates (full-stack + standalone)
+- **client**: migrate user config from .env to YAML at ~/.config/qatlas/config.yaml
+- **qatlasd**: add config init/show/path subcommands and env-alias flag hints
+
+### Fix
+
+- **mineru-client**: keep claim on per-paper fatal so bad PDFs don't poison the queue
+- **mineru**: classify per-paper page/size limits as Fatal, not DailyLimit
+
 ## v0.15.0 (2026-06-03)
 
 ### Fix
