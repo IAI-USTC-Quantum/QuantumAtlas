@@ -117,6 +117,19 @@ func main() {
 		}
 	}
 
+	// Early help short-circuit. Conservative detection: only triggers
+	// on `qatlasd --help`, `qatlasd -h`, or `qatlasd help [...]` — i.e.
+	// help requests aimed at the *root* command. Subcommand help like
+	// `qatlasd pat --help` falls through to the normal flow (no risk
+	// of fataling on broken .env because Load is now best-effort for
+	// the S3 half-set case; see internal/config/config.go::Load).
+	//
+	// The narrow window avoids false positives like
+	// `qatlasd pat mint --name "--help"` where `--help` is a flag value
+	// and would otherwise skip env loading just before cobra tries to
+	// actually execute the command with zero config.
+	helpMode := len(os.Args) >= 2 && (os.Args[1] == "--help" || os.Args[1] == "-h" || os.Args[1] == "help")
+
 	// Early `config` subcommand short-circuit. Same reason as the
 	// --version one above, plus a critical extra: `qatlasd config
 	// show` is the operator's tool for diagnosing a half-configured
@@ -151,10 +164,20 @@ func main() {
 	// resolve relative paths like WIKI_DIR=../QuantumAtlas-Wiki against
 	// the .env directory. Loading it ourselves lets config.Load() use
 	// the .env directory as the anchor for relative paths.
-	dotenvPath := loadDotEnv()
-	cfg, err := config.Load(dotenvPath)
-	if err != nil {
-		log.Fatalf("load config: %v", err)
+	//
+	// Skipped in helpMode: `qatlasd --help` / `-h` / `help` build a
+	// minimal cobra tree with a zero-value cfg just to print help text,
+	// so they don't need (and shouldn't be blocked by) a working .env.
+	var cfg *config.Config
+	if helpMode {
+		cfg = &config.Config{}
+	} else {
+		dotenvPath := loadDotEnv()
+		var err error
+		cfg, err = config.Load(dotenvPath)
+		if err != nil {
+			log.Fatalf("load config: %v", err)
+		}
 	}
 
 	app := pocketbase.NewWithConfig(pocketbase.Config{
@@ -281,8 +304,13 @@ func main() {
 	serveCmd.RunE = func(cmd *cobra.Command, args []string) error {
 		// ── STEP 1: merge CLI flags into cfg ───────────────────────
 		applyServeFlags(cmd, serveFlags, cfg)
-		// Re-run the S3 all-or-nothing invariant in case CLI flags
-		// touched part of the connection quartet.
+		// Enforce the S3 all-or-nothing invariant for the serve
+		// path. config.Load only emits a slog.Warn for half-set S3
+		// so non-serve subcommands (`qatlasd --help`, `pat list`,
+		// etc.) tolerate a broken .env; serve cannot, because the
+		// HTTP handlers would silently fall back to LocalStore.
+		// This is also the first chance to catch a half-set
+		// introduced by CLI flag overrides above.
 		if err := validateServeCfgAfterFlags(cfg); err != nil {
 			return err
 		}
@@ -434,26 +462,14 @@ func main() {
 	}
 }
 
-// validateServeCfgAfterFlags re-runs the bits of config.Load that
-// might be invalidated by CLI flag overrides. Currently just the S3
-// all-or-nothing rule (whose validator we can't import from here
-// without a circular dependency on the cfg-merge logic itself, so we
-// re-implement the same check inline). Cheap; a no-op when no S3
-// flag was passed.
+// validateServeCfgAfterFlags re-runs the serve-time S3 invariants in
+// case CLI flags touched part of the connection quartet after Load
+// (where the half-set check is only a slog.Warn, so the operator can
+// run `qatlasd --help` / `pat list` on a broken .env). Delegates to
+// Config.ValidateForServe so there's one canonical implementation.
 func validateServeCfgAfterFlags(cfg *config.Config) error {
-	connSet := cfg.S3Endpoint != "" || cfg.S3AccessKeyID != "" || cfg.S3SecretAccessKey != ""
-	bucketSet := cfg.S3BucketPDF != "" || cfg.S3BucketMD != "" || cfg.S3BucketImages != ""
-	if connSet || bucketSet {
-		if cfg.S3Endpoint == "" || cfg.S3AccessKeyID == "" || cfg.S3SecretAccessKey == "" ||
-			cfg.S3BucketPDF == "" || cfg.S3BucketMD == "" || cfg.S3BucketImages == "" {
-			return fmt.Errorf(
-				"after CLI flag overrides, S3 config is half-set: all of " +
-					"--s3-endpoint / --s3-access-key-id / --s3-secret-access-key / " +
-					"--s3-bucket-pdf / --s3-bucket-md / --s3-bucket-images must be set together " +
-					"(or none, to use the LocalStore fallback). Mixing CLI flags with .env " +
-					"fields for the S3 quartet is fine — just make sure every field has a value somewhere.",
-			)
-		}
+	if err := cfg.ValidateForServe(); err != nil {
+		return fmt.Errorf("after CLI flag overrides: %w", err)
 	}
 	return nil
 }

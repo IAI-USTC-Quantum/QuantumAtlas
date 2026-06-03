@@ -105,7 +105,7 @@ type Config struct {
 	// it; only `openalex` subcommands need it.
 	//
 	// All three of PDF/MD/Images are required together when S3 is
-	// enabled (validateS3Config). The legacy single QATLAS_S3_BUCKET is
+	// enabled (ValidateForServe). The legacy single QATLAS_S3_BUCKET is
 	// REMOVED in v0.7.0 — Load fails fast if it's still set so a stale
 	// .env can't silently mis-route every object into one bucket.
 	S3BucketPDF      string
@@ -229,13 +229,28 @@ func Load(dotenvPath string) (*Config, error) {
 	cfg.DataDir = expandPath(defaultIfEmpty(cfg.DataDir, defaultXDGSubdir("data")), anchor)
 	cfg.PBDataDir = expandPath(defaultIfEmpty(cfg.PBDataDir, defaultXDGSubdir("pb_data")), anchor)
 
-	// S3 invariant: either all four S3 fields are set, or none are.
-	// A half-configured client would silently fall back to the local
-	// RawDir and quietly corrupt the writer/reader symmetry across
-	// restarts; refuse to boot so the operator sees the misconfig
-	// immediately instead of after the next upload.
-	if err := validateS3Config(cfg); err != nil {
+	// Legacy single-bucket var QATLAS_S3_BUCKET (gone since v0.7.0) is
+	// always a hard fail regardless of subcommand: a stale .env that
+	// still sets it would silently mis-route every object into one
+	// bucket, which is unrecoverable post-hoc — we fail fast even on
+	// `qatlasd --help` so the operator sees the migration error.
+	if err := rejectLegacyS3Bucket(); err != nil {
 		return nil, err
+	}
+
+	// Half-set S3 quartet + per-kind buckets: NOT a hard fail at Load
+	// time. Non-serve subcommands (`qatlasd --help`, `qatlasd pat list`,
+	// `qatlasd users list`, etc.) should tolerate a partially-configured
+	// .env so the operator can actually run `--help` to find out what
+	// went wrong. The strict check is enforced by ValidateForServe(),
+	// which `serve` calls after merging CLI flag overrides; we still
+	// emit a WARN here so the misconfig is visible in every log even
+	// for the soft path.
+	if err := validatePartialS3Config(cfg); err != nil {
+		slog.Warn(
+			"object storage config is incomplete; `qatlasd serve` and S3-backed subcommands will refuse to run until this is fixed",
+			"error", err,
+		)
 	}
 
 	// Emit deprecation warnings for the legacy unprefixed env vars
@@ -296,25 +311,56 @@ func warnDeprecatedAliases() {
 // S3Enabled reports whether the object-storage backend is configured.
 // When false, callers should fall back to local-filesystem I/O under
 // cfg.RawDir; when true, all S3 connection fields plus the three
-// per-kind buckets are guaranteed non-empty by validateS3Config.
+// per-kind buckets are guaranteed non-empty by ValidateForServe.
 func (c *Config) S3Enabled() bool {
 	return c.S3Endpoint != "" && c.S3BucketPDF != "" && c.S3BucketMD != "" &&
 		c.S3BucketImages != "" && c.S3AccessKeyID != "" && c.S3SecretAccessKey != ""
 }
 
-// validateS3Config enforces the all-or-nothing rule for the S3 connection
-// quartet plus the three per-kind buckets, and fails fast when the
-// removed single-bucket var QATLAS_S3_BUCKET is still set (a stale .env
-// would otherwise silently mis-route every object into one bucket).
-func validateS3Config(cfg *Config) error {
-	// Hard fail: the v0.6.0 single-bucket var is gone. Catch it before
-	// the all-or-nothing check so the operator gets a precise message.
+// ValidateForServe enforces the serve-time S3 invariants:
+//
+//   - rejectLegacyS3Bucket (defense-in-depth; Load already runs this so
+//     reaching here with QATLAS_S3_BUCKET still set is unexpected, but
+//     we re-check to keep the method self-contained for tests).
+//   - validatePartialS3Config — the all-or-nothing rule for the
+//     connection quartet plus the three per-kind buckets.
+//
+// `qatlasd serve` MUST call this after `applyServeFlags` has merged any
+// CLI flag overrides into cfg, otherwise a half-configured client would
+// silently fall back to the local RawDir and quietly corrupt the
+// writer/reader symmetry across restarts. Non-serve subcommands
+// (`qatlasd --help`, `qatlasd pat list`, etc.) deliberately skip this
+// strict check so operators can still inspect help / SQLite state on a
+// half-configured host.
+func (c *Config) ValidateForServe() error {
+	if err := rejectLegacyS3Bucket(); err != nil {
+		return err
+	}
+	return validatePartialS3Config(c)
+}
+
+// rejectLegacyS3Bucket returns an error if the v0.6.0 single-bucket var
+// QATLAS_S3_BUCKET is set (it was split into per-kind buckets in
+// v0.7.0). Always-fatal regardless of subcommand because a stale .env
+// would silently mis-route every object into one bucket, which is
+// unrecoverable post-hoc — operators must remove the var before any
+// subcommand runs, not just `serve`.
+func rejectLegacyS3Bucket() error {
 	if v := strings.TrimSpace(os.Getenv("QATLAS_S3_BUCKET")); v != "" {
 		return fmt.Errorf(
 			"QATLAS_S3_BUCKET is no longer supported in v0.7.0 — the single " +
 				"qatlas-raw bucket was split into per-kind buckets; set " +
 				"QATLAS_S3_BUCKET_PDF / _MD / _IMAGES instead and remove QATLAS_S3_BUCKET")
 	}
+	return nil
+}
+
+// validatePartialS3Config returns an error iff the S3 connection
+// quartet + 3 per-kind buckets are HALF-set (not none, not all). The
+// check is symmetric: no single field alone is valid; mixing some-set
+// some-unset is rejected. Returns nil for "all empty" (local-only mode)
+// and "all set" (S3 enabled).
+func validatePartialS3Config(cfg *Config) error {
 	fields := map[string]string{
 		"QATLAS_S3_ENDPOINT":          cfg.S3Endpoint,
 		"QATLAS_S3_BUCKET_PDF":        cfg.S3BucketPDF,

@@ -375,7 +375,10 @@ func TestLoad_S3Enabled_AllFieldsSet(t *testing.T) {
 
 // TestLoad_S3LegacyBucketRejected verifies the v0.6.0 single-bucket var
 // is a hard boot error in v0.7.0 (a stale .env would otherwise silently
-// mis-route every object into one bucket).
+// mis-route every object into one bucket). This check stays in Load()
+// even after the partial-config check was split out into
+// ValidateForServe, because the legacy var corrupts data regardless of
+// which subcommand is running and must fail-fast on every invocation.
 func TestLoad_S3LegacyBucketRejected(t *testing.T) {
 	clearStorageEnv(t)
 	clearS3Env(t)
@@ -389,10 +392,16 @@ func TestLoad_S3LegacyBucketRejected(t *testing.T) {
 	}
 }
 
-func TestLoad_S3PartialConfigRejected(t *testing.T) {
+// TestValidateForServe_S3PartialConfigRejected verifies the half-set
+// S3 invariant. This used to be enforced by Load() but was split into
+// ValidateForServe so non-serve subcommands (`qatlasd --help`,
+// `qatlasd pat list`, etc.) tolerate a half-configured .env without
+// fataling on every invocation.
+func TestValidateForServe_S3PartialConfigRejected(t *testing.T) {
 	// Each of these subtests sets a *strict subset* of the required
-	// fields; Load() must refuse to boot. The check is symmetric — no
-	// single field (endpoint / a bucket / a credential) alone is valid.
+	// fields; Load() must succeed (with a slog.Warn) but ValidateForServe
+	// must refuse. The check is symmetric — no single field
+	// (endpoint / a bucket / a credential) alone is valid.
 	cases := []struct {
 		name string
 		set  map[string]string
@@ -426,9 +435,13 @@ func TestLoad_S3PartialConfigRejected(t *testing.T) {
 			for k, v := range c.set {
 				t.Setenv(k, v)
 			}
-			_, err := Load("")
+			cfg, err := Load("")
+			if err != nil {
+				t.Fatalf("Load returned error %q; expected Load to be best-effort for half-set S3 (only ValidateForServe should reject)", err)
+			}
+			err = cfg.ValidateForServe()
 			if err == nil {
-				t.Fatalf("Load returned nil error; expected partial-config failure")
+				t.Fatalf("ValidateForServe returned nil; expected partial-config failure")
 			}
 			// Sanity: error message lists at least one missing field name
 			// so an operator can fix it from the log line.
@@ -436,6 +449,29 @@ func TestLoad_S3PartialConfigRejected(t *testing.T) {
 				t.Errorf("error %q does not mention any QATLAS_S3_* field name", err.Error())
 			}
 		})
+	}
+}
+
+// TestLoad_S3PartialEmitsWarn verifies that Load is best-effort for the
+// half-set S3 case but still emits a visible slog.Warn so the operator
+// sees the misconfig in every log (not just serve's fatal exit).
+func TestLoad_S3PartialEmitsWarn(t *testing.T) {
+	clearStorageEnv(t)
+	clearS3Env(t)
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("QATLAS_S3_ENDPOINT", "https://x")
+
+	buf := captureSlog(t)
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := buf.String(); !strings.Contains(got, "object storage config is incomplete") {
+		t.Errorf("expected slog.Warn about incomplete object storage config; got %q", got)
+	}
+	if err := cfg.ValidateForServe(); err == nil {
+		t.Errorf("ValidateForServe returned nil after half-set Load; expected error")
 	}
 }
 

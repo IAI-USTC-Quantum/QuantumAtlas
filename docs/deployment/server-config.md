@@ -122,7 +122,7 @@ firstEnvIntDefault(0, "SOME_INT_VAR")               // 同上但 int
 
 | Env | 状态 |
 |---|---|
-| `QATLAS_S3_BUCKET` | v0.6.0 单桶时代名；`validateS3Config` 见到这个 env 立刻 fail-fast，错误文案指引迁移到 per-kind 三字段 |
+| `QATLAS_S3_BUCKET` | v0.6.0 单桶时代名；`rejectLegacyS3Bucket` 见到这个 env 立刻 fail-fast（任何子命令，含 `qatlasd pat list`；唯一例外是 root help：`qatlasd --help` / `-h` / `help` 完全跳过 .env 加载），错误文案指引迁移到 per-kind 三字段 |
 
 ### 2.5 Neo4j 图数据库
 
@@ -470,7 +470,8 @@ Configure runtime fields by:
 | `cmd/qatlasd/main.go::loadDotEnv` | .env 文件查找 + load |
 | `internal/config/config.go::Load` | 从 os.Environ 读出 Config struct |
 | `internal/config/config.go::firstEnv / firstEnvDefault / firstEnvIntDefault` | helper 函数 |
-| `internal/config/config.go::validateS3Config` | S3 all-or-nothing + legacy `_BUCKET` 拒 |
+| `internal/config/config.go::rejectLegacyS3Bucket` | legacy `QATLAS_S3_BUCKET` 拒（在 `Load` 内调用，所有子命令都触发） |
+| `internal/config/config.go::validatePartialS3Config` / `(*Config).ValidateForServe` | S3 quartet + 3 buckets all-or-nothing 校验。`Load` 只 `slog.Warn`（让 `--help` / `pat list` 能跑）；`serve` 在 `validateServeCfgAfterFlags` 调 `ValidateForServe` 转 fatal |
 | `internal/config/config.go::defaultXDGSubdir / defaultWikiDir` | 默认路径 |
 | `internal/pat/system_pat.go::LoadSystemPAT` | 读 `QATLAS_SYSTEM_PAT` / `_SCOPES` |
 | `cmd/qatlasd/service_cmd.go` | `qatlasd service install` 子命令；TTY 模式检测 .env |

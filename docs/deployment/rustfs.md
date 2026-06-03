@@ -38,7 +38,11 @@ raw store: local backend /home/<USER>/.local/share/qatlasd/raw
 
 The split is in `cmd/qatlasd/main.go::initRawStore` and the
 all-or-nothing rule is enforced by
-`internal/config/config.go::validateS3Config`.
+`internal/config/config.go::(*Config).ValidateForServe` (called from
+`cmd/qatlasd/main.go::validateServeCfgAfterFlags` inside the
+`serve` RunE). `config.Load` itself only emits a `slog.Warn` on a
+half-set quartet so non-serve subcommands like `qatlasd --help` /
+`qatlasd pat list` keep working on a partially-configured `.env`.
 
 ## 对象存储不必跟 qatlasd 同机：支持哪些后端？
 
