@@ -115,18 +115,6 @@ func docWikiStats() {}
 // @Router      /api/search [get]
 func docSearchWiki() {}
 
-// lint returns wiki lint issues (placeholder: not yet ported to Go).
-//
-// @Summary     Lint wiki
-// @Tags        Wiki
-// @Produce     json
-// @Success     200 {object} map[string]interface{}
-// @Security    BearerAuth
-// @Failure     401 {object} map[string]string
-// @Failure     403 {object} map[string]string
-// @Router      /api/lint [get]
-func docLint() {}
-
 // wikiSyncStatusOp reports the wiki git HEAD / ahead / behind.
 //
 // @Summary     Wiki sync status

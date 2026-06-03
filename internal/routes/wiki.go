@@ -30,7 +30,7 @@ import (
 // next request).
 //
 // All wiki read endpoints (/api/pages*, /api/stats, /api/search,
-// /api/lint, /api/wiki/sync/status) are gated behind
+// /api/wiki/sync/status) are gated behind
 // scopeGuard("wiki", "read"): the knowledge base is not anonymously
 // browsable — callers need a session token or a PAT carrying wiki:read.
 // /api/wiki/sync/pull additionally mutates server state (runs git +
@@ -235,20 +235,6 @@ func RegisterWiki(se *core.ServeEvent, cfg *config.Config, cache *wiki.Cache, en
 			"query":   q,
 			"total":   len(results),
 			"results": results,
-		})
-	}))
-
-	// /api/lint — placeholder. The full Python lint pass is ~370 LOC
-	// across atlas/wiki/linter.py and isn't on the CLI hot path; we
-	// emit an empty issue list so the frontend renders a "no problems"
-	// pane instead of erroring out. A follow-up commit will port the
-	// real lint rules.
-	se.Router.GET("/api/lint", scopeGuard(enforcer, "wiki", "read", func(re *core.RequestEvent) error {
-		return re.JSON(http.StatusOK, map[string]any{
-			"issues":           []any{},
-			"checked_pages":    0,
-			"linter_available": false,
-			"note":             "Go server: lint rules not yet ported. See atlas/wiki/linter.py for the Python implementation.",
 		})
 	}))
 }

@@ -42,7 +42,7 @@ import (
 // "<resource>:<action>" naming convention so future tooling (rate
 // limits, audit logs) can group by resource easily.
 const (
-	ScopeWikiRead    = "wiki:read"    // GET /api/pages*, /api/stats, /api/search, /api/lint, /api/wiki/sync/status
+	ScopeWikiRead    = "wiki:read"    // GET /api/pages*, /api/stats, /api/search, /api/wiki/sync/status
 	ScopePapersRead  = "papers:read"  // GET /api/papers/{path...} (stats / needs-mineru only in OSS edition)
 	ScopePapersWrite = "papers:write" // upload-pdf / upload-mineru / mineru-claim CRUD (implies papers:read)
 	ScopeGraphRead   = "graph:read"   // GET /api/graph/stats, GET /api/graph/schema, POST /api/graph/query

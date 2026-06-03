@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
-import { Activity, BookOpen, FileText, Search, ShieldCheck } from 'lucide-react'
+import { Activity, BookOpen, FileText, Search } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { MetricGrid } from '@/components/metric-grid'
@@ -67,11 +67,6 @@ function HomePage() {
               }
             >
               <Search className="size-4" /> {t('searchKnowledge')}
-            </Button>
-            <Button variant="outline" className="w-full justify-start" asChild>
-              <a href="/api/lint">
-                <ShieldCheck className="size-4" /> {t('runLint')}
-              </a>
             </Button>
           </div>
         </Panel>
