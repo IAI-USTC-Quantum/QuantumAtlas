@@ -30,7 +30,7 @@ def test_commitizen_uses_pyproject_version_and_v_tags():
         "name": "cz_conventional_commits",
         "tag_format": "v$version",
         "version_scheme": "pep440",
-        "version_provider": "pep621",
+        "version_provider": "uv",
         "update_changelog_on_bump": True,
         "major_version_zero": True,
         "annotated_tag": True,
