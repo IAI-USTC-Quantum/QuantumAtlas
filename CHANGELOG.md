@@ -4,6 +4,34 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.17.0 (2026-06-04)
+
+### BREAKING CHANGE
+
+- cross-origin ?from= values, protocol-relative
+references (//host) and non-http(s) schemes are silently coerced to
+"/" instead of being navigated to. No legitimate caller in-tree
+passes those, but a downstream integration that piggy-backs on the
+search param to bounce out of the SPA will need to handle the bounce
+itself.
+
+### Feat
+
+- **auth**: OAuth 2.0 Device Authorization Grant (RFC 8628) + SPA loopback flow
+- **papers**: re-introduce /api/papers/{id}/markdown[/status] behind QATLAS_ASSET_DOWNLOADS_ENABLED (#8)
+- **service**: tolerate missing .env and announce the pinned dotenv path
+
+### Fix
+
+- **web**: reject cross-origin ?from= destinations on /login and /auth/callback
+- **qatlasd**: make non-serve subcommands tolerate broken .env
+- **client**: use platformdirs for the user config path (cross-platform)
+
+### Refactor
+
+- remove /api/lint placeholder endpoint and SPA Lint button
+- **config**: drop the quantum-atlas/ legacy XDG fail-loud guard
+
 ## v0.17.0a0 (2026-06-03)
 
 ### Feat
