@@ -387,6 +387,157 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/papers/{arxiv_id}/markdown": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the cached MinerU markdown for the given arxiv id.\nOnly registered when QATLAS_ASSET_DOWNLOADS_ENABLED=true on\nthe server (default off). On cache miss the server may\ntransparently trigger a background MinerU conversion (when\nMINERU_API_TOKEN is also configured) and return 202 with\nOperation-Location/Retry-After headers; clients should poll\n/markdown/status until terminal then re-GET.",
+                "produces": [
+                    "text/plain"
+                ],
+                "tags": [
+                    "Papers"
+                ],
+                "summary": "Get paper markdown",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "arXiv identifier (with vN suffix)",
+                        "name": "arxiv_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "markdown bytes (text/markdown)",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "202": {
+                        "description": "conversion started; poll /markdown/status",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "invalid arxiv_id",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "no PDF in raw storage; upload via /upload-pdf first",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "prior conversion failed inside the cooldown window",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "cache-only mode: server-side MinerU not configured",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/papers/{arxiv_id}/markdown/status": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Side-effect-free status resource. Never starts a job and\nnever requires a PDF. Only registered when\nQATLAS_ASSET_DOWNLOADS_ENABLED=true on the server.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Papers"
+                ],
+                "summary": "Get markdown conversion status",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "arXiv identifier (with vN suffix)",
+                        "name": "arxiv_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "status payload (status ∈ cached|queued|running|none|no_pdf|failed|cooldown|unavailable)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/papers/{arxiv_id}/mineru-claim": {
             "post": {
                 "security": [

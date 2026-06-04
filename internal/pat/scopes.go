@@ -43,7 +43,7 @@ import (
 // limits, audit logs) can group by resource easily.
 const (
 	ScopeWikiRead    = "wiki:read"    // GET /api/pages*, /api/stats, /api/search, /api/wiki/sync/status
-	ScopePapersRead  = "papers:read"  // GET /api/papers/{path...} (stats / needs-mineru only in OSS edition)
+	ScopePapersRead  = "papers:read"  // GET /api/papers/{path...} (stats / needs-mineru; also markdown when QATLAS_ASSET_DOWNLOADS_ENABLED=true)
 	ScopePapersWrite = "papers:write" // upload-pdf / upload-mineru / mineru-claim CRUD (implies papers:read)
 	ScopeGraphRead   = "graph:read"   // GET /api/graph/stats, GET /api/graph/schema, POST /api/graph/query
 	ScopeWikiWrite   = "wiki:write"   // POST /api/wiki/sync/pull (server-side git fast-forward; implies wiki:read)
@@ -61,7 +61,7 @@ const (
 // scope picker. Keep these short — they appear next to a checkbox.
 var ScopeDescription = map[string]string{
 	ScopeWikiRead:    "Read wiki pages, stats, search and sync status",
-	ScopePapersRead:  "Read paper catalog (stats, needs-mineru)",
+	ScopePapersRead:  "Read paper catalog (stats, needs-mineru; also markdown download when the server enables asset downloads)",
 	ScopePapersWrite: "Upload paper PDFs and submit MinerU markdown (includes read)",
 	ScopeGraphRead:   "Read the knowledge graph: stats, schema and read-only Cypher",
 	ScopeWikiWrite:   "Trigger server-side wiki git sync (fast-forward pull; includes read)",

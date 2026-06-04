@@ -324,6 +324,27 @@ func clearS3Env(t *testing.T) {
 	}
 }
 
+// clearMinerUEnv unsets every env var that influences MinerU + asset
+// download wiring so each test sees a deterministic baseline.
+func clearMinerUEnv(t *testing.T) {
+	t.Helper()
+	for _, k := range []string{
+		"QATLAS_ASSET_DOWNLOADS_ENABLED",
+		"MINERU_API_TOKEN",
+		"MINERU_API_BASE_URL",
+		"MINERU_MODEL_VERSION",
+		"MINERU_LANGUAGE",
+		"MINERU_IS_OCR",
+		"MINERU_ENABLE_FORMULA",
+		"MINERU_ENABLE_TABLE",
+		"MINERU_POLL_INTERVAL",
+		"MINERU_TIMEOUT",
+		"MINERU_MAX_CONCURRENT_JOBS",
+	} {
+		t.Setenv(k, "")
+	}
+}
+
 func TestLoad_S3Disabled_AllFieldsEmpty(t *testing.T) {
 	clearStorageEnv(t)
 	clearS3Env(t)
@@ -480,7 +501,7 @@ func TestLoad_S3PartialEmitsWarn(t *testing.T) {
 //
 // The aliases still resolve via firstEnv() so existing .env files keep
 // working, but Load() now emits a slog.Warn per legacy var found. This
-// gives operators one minor cycle (v0.16.0 → v0.17.0) to migrate.
+// gives operators one minor cycle (v0.17.0 → v0.18.0) to migrate.
 // ---------------------------------------------------------------------------
 
 // captureSlog redirects the default slog logger to an in-memory buffer
@@ -612,5 +633,104 @@ func TestIsGitHubLoginAllowed_AllowedAndAdminUnion(t *testing.T) {
 		if got := c.IsGitHubLoginAllowed(login); got != want {
 			t.Errorf("IsGitHubLoginAllowed(%q) = %v, want %v", login, got, want)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// QATLAS_ASSET_DOWNLOADS_ENABLED master switch + MinerU* opt-in block
+// (issue #8).
+// ---------------------------------------------------------------------------
+
+func TestLoad_AssetDownloadsDisabledByDefault(t *testing.T) {
+	clearStorageEnv(t)
+	clearS3Env(t)
+	clearMinerUEnv(t)
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.AssetDownloadsEnabled {
+		t.Error("AssetDownloadsEnabled = true; want false (default off)")
+	}
+	if cfg.MinerUEnabled() {
+		t.Error("MinerUEnabled() = true; want false when switch off")
+	}
+}
+
+func TestLoad_AssetDownloadsIgnoresMinerUWhenSwitchOff(t *testing.T) {
+	clearStorageEnv(t)
+	clearS3Env(t)
+	clearMinerUEnv(t)
+	// Switch OFF but MinerU envs set — must be silently ignored so a
+	// stale .env doesn't accidentally re-enable the surface.
+	t.Setenv("QATLAS_ASSET_DOWNLOADS_ENABLED", "false")
+	t.Setenv("MINERU_API_TOKEN", "stale-token")
+	t.Setenv("MINERU_POLL_INTERVAL", "not-a-number") // would error if parsed
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v (malformed MinerU env should be ignored when switch off)", err)
+	}
+	if cfg.AssetDownloadsEnabled {
+		t.Error("switch off but AssetDownloadsEnabled = true")
+	}
+	if cfg.MinerUAPIToken != "" {
+		t.Errorf("MinerUAPIToken = %q; want empty when switch off", cfg.MinerUAPIToken)
+	}
+}
+
+func TestLoad_AssetDownloadsEnabledLoadsMinerU(t *testing.T) {
+	clearStorageEnv(t)
+	clearS3Env(t)
+	clearMinerUEnv(t)
+	t.Setenv("QATLAS_ASSET_DOWNLOADS_ENABLED", "true")
+	t.Setenv("MINERU_API_TOKEN", "tok-abc")
+	t.Setenv("MINERU_MAX_CONCURRENT_JOBS", "8")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.AssetDownloadsEnabled {
+		t.Error("AssetDownloadsEnabled = false; want true")
+	}
+	if !cfg.MinerUEnabled() {
+		t.Error("MinerUEnabled() = false; want true with token + switch on")
+	}
+	if cfg.MinerUMaxConcurrentJobs != 8 {
+		t.Errorf("MinerUMaxConcurrentJobs = %d; want 8", cfg.MinerUMaxConcurrentJobs)
+	}
+	if cfg.MinerUAPIBaseURL != "https://mineru.net" {
+		t.Errorf("MinerUAPIBaseURL = %q; want default https://mineru.net", cfg.MinerUAPIBaseURL)
+	}
+}
+
+func TestLoad_AssetDownloadsEnabledRejectsMalformedMinerU(t *testing.T) {
+	clearStorageEnv(t)
+	clearS3Env(t)
+	clearMinerUEnv(t)
+	t.Setenv("QATLAS_ASSET_DOWNLOADS_ENABLED", "true")
+	t.Setenv("MINERU_POLL_INTERVAL", "not-a-number")
+
+	if _, err := Load(""); err == nil {
+		t.Error("Load with malformed MINERU_POLL_INTERVAL succeeded; want error")
+	}
+}
+
+func TestLoad_AssetDownloadsEnabledNoTokenCacheOnlyMode(t *testing.T) {
+	clearStorageEnv(t)
+	clearS3Env(t)
+	clearMinerUEnv(t)
+	t.Setenv("QATLAS_ASSET_DOWNLOADS_ENABLED", "true")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.AssetDownloadsEnabled {
+		t.Error("AssetDownloadsEnabled = false; want true")
+	}
+	if cfg.MinerUEnabled() {
+		t.Error("MinerUEnabled() = true with no token; want false (cache-only mode)")
 	}
 }

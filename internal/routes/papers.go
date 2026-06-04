@@ -44,14 +44,22 @@ import (
 // Session-token callers bypass via the ScopeMaster short-circuit in
 // pat.Allows.
 //
-// Compliance note (v0.9.0): the OSS server only serves collection
-// metadata outbound. Endpoints that streamed PDF / markdown / image
-// bytes (/share/*, GET /api/papers/{id}/{markdown,resources}, the whole
-// /api/shares family) were removed — the OSS deployment holds papers
+// Compliance note: by default the server only serves collection
+// metadata outbound. Endpoints that streamed PDF / image bytes
+// (/share/*, GET /api/papers/{id}/resources, the whole /api/shares
+// family) were removed in v0.9.0 — the default deployment holds papers
 // for internal use but does not redistribute them. Contributors fetch
 // PDFs from arxiv.org themselves (mineru-claim ships the arxiv URL +
 // our reference sha256 so they can verify byte equality) and push
 // MinerU output back via upload-mineru.
+//
+// Markdown distribution is opt-in: when the operator sets
+// QATLAS_ASSET_DOWNLOADS_ENABLED=true, GET /api/papers/{id}/markdown +
+// /markdown/status are registered and gated by papers:read. The public
+// instance (quantum-atlas.ai) keeps the switch off; self-hosters in a
+// controlled audience can flip it on and accept the resulting
+// derivative-work distribution obligation. See package docs and
+// docs/about/license-and-attribution.md.
 //
 // Routing: we install three catch-all routes (GET / POST / DELETE) and
 // dispatch on the trailing path segment(s) inside the handler. This is
@@ -65,6 +73,7 @@ func RegisterPapers(
 	rawStore objstore.Store,
 	catalog *papers.Store,
 	enforcer *casbin.Enforcer,
+	converter *mineru.Converter,
 ) {
 	se.Router.GET("/api/papers/{path...}", scopeGuard(enforcer, "papers", "read", func(re *core.RequestEvent) error {
 		raw := re.Request.PathValue("path")
@@ -73,6 +82,26 @@ func RegisterPapers(
 		}
 		if raw == "stats" {
 			return paperStatsHandler(re, catalog)
+		}
+		// Asset-download endpoints are only registered when the
+		// operator opted in via QATLAS_ASSET_DOWNLOADS_ENABLED. When
+		// the switch is off the catch-all path below returns 404 so
+		// requests are indistinguishable from "no such handler" — the
+		// public deployment posture remains "server does not
+		// redistribute markdown bytes".
+		if cfg.AssetDownloadsEnabled {
+			arxiv, action := splitPapersPath(raw)
+			// splitPapersPath splits on the LAST slash, so
+			// ".../markdown/status" arrives as arxiv="…/markdown",
+			// action="status". markdownHandler 用 action=="markdown"
+			// 兜住 plain /markdown 路由。
+			switch {
+			case action == "markdown":
+				return markdownHandler(re, cfg, rawStore, converter, arxiv)
+			case action == "status" && strings.HasSuffix(arxiv, "/markdown"):
+				realArxiv := strings.TrimSuffix(arxiv, "/markdown")
+				return markdownStatusHandler(re, cfg, rawStore, converter, realArxiv)
+			}
 		}
 		return re.JSON(http.StatusNotFound, map[string]string{
 			"detail": fmt.Sprintf("no GET handler for /api/papers/%s", raw),

@@ -253,6 +253,115 @@ paths:
       summary: Get wiki page
       tags:
       - Wiki
+  /api/papers/{arxiv_id}/markdown:
+    get:
+      description: |-
+        Returns the cached MinerU markdown for the given arxiv id.
+        Only registered when QATLAS_ASSET_DOWNLOADS_ENABLED=true on
+        the server (default off). On cache miss the server may
+        transparently trigger a background MinerU conversion (when
+        MINERU_API_TOKEN is also configured) and return 202 with
+        Operation-Location/Retry-After headers; clients should poll
+        /markdown/status until terminal then re-GET.
+      parameters:
+      - description: arXiv identifier (with vN suffix)
+        in: path
+        name: arxiv_id
+        required: true
+        type: string
+      produces:
+      - text/plain
+      responses:
+        "200":
+          description: markdown bytes (text/markdown)
+          schema:
+            type: string
+        "202":
+          description: conversion started; poll /markdown/status
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: invalid arxiv_id
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: no PDF in raw storage; upload via /upload-pdf first
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: prior conversion failed inside the cooldown window
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: 'cache-only mode: server-side MinerU not configured'
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get paper markdown
+      tags:
+      - Papers
+  /api/papers/{arxiv_id}/markdown/status:
+    get:
+      description: |-
+        Side-effect-free status resource. Never starts a job and
+        never requires a PDF. Only registered when
+        QATLAS_ASSET_DOWNLOADS_ENABLED=true on the server.
+      parameters:
+      - description: arXiv identifier (with vN suffix)
+        in: path
+        name: arxiv_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: status payload (status ∈ cached|queued|running|none|no_pdf|failed|cooldown|unavailable)
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get markdown conversion status
+      tags:
+      - Papers
   /api/papers/{arxiv_id}/mineru-claim:
     post:
       parameters:

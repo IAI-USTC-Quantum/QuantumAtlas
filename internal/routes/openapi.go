@@ -176,10 +176,52 @@ func docPaperStats() {}
 // @Router      /api/papers/needs-mineru [get]
 func docNeedsMineru() {}
 
-// paperResources / paperMarkdown / paperMarkdownStatus stanzas were
-// removed in v0.9.0 — the OSS server no longer serves PDF / markdown /
-// image bytes outbound. See the RegisterPapers doc comment for the
-// compliance rationale.
+// paperResources stanzas were removed in v0.9.0 — the server no longer
+// serves PDF or image bytes outbound. paperMarkdown / paperMarkdownStatus
+// are conditional on QATLAS_ASSET_DOWNLOADS_ENABLED=true (default off).
+// See the RegisterPapers doc comment for the compliance rationale.
+
+// paperMarkdown serves the cached markdown bytes for a paper.
+//
+// @Summary     Get paper markdown
+// @Description Returns the cached MinerU markdown for the given arxiv id.
+// @Description Only registered when QATLAS_ASSET_DOWNLOADS_ENABLED=true on
+// @Description the server (default off). On cache miss the server may
+// @Description transparently trigger a background MinerU conversion (when
+// @Description MINERU_API_TOKEN is also configured) and return 202 with
+// @Description Operation-Location/Retry-After headers; clients should poll
+// @Description /markdown/status until terminal then re-GET.
+// @Tags        Papers
+// @Produce     plain
+// @Security    BearerAuth
+// @Param       arxiv_id path string true "arXiv identifier (with vN suffix)"
+// @Success     200 {string} string "markdown bytes (text/markdown)"
+// @Success     202 {object} map[string]interface{} "conversion started; poll /markdown/status"
+// @Failure     400 {object} map[string]string "invalid arxiv_id"
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Failure     404 {object} map[string]interface{} "no PDF in raw storage; upload via /upload-pdf first"
+// @Failure     502 {object} map[string]interface{} "prior conversion failed inside the cooldown window"
+// @Failure     503 {object} map[string]interface{} "cache-only mode: server-side MinerU not configured"
+// @Router      /api/papers/{arxiv_id}/markdown [get]
+func docPaperMarkdown() {}
+
+// paperMarkdownStatus reports current markdown / conversion state.
+//
+// @Summary     Get markdown conversion status
+// @Description Side-effect-free status resource. Never starts a job and
+// @Description never requires a PDF. Only registered when
+// @Description QATLAS_ASSET_DOWNLOADS_ENABLED=true on the server.
+// @Tags        Papers
+// @Produce     json
+// @Security    BearerAuth
+// @Param       arxiv_id path string true "arXiv identifier (with vN suffix)"
+// @Success     200 {object} map[string]interface{} "status payload (status ∈ cached|queued|running|none|no_pdf|failed|cooldown|unavailable)"
+// @Failure     400 {object} map[string]string
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Router      /api/papers/{arxiv_id}/markdown/status [get]
+func docPaperMarkdownStatus() {}
 
 // uploadPDF stores a paper PDF.
 //

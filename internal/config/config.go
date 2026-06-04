@@ -10,11 +10,13 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Config holds the resolved runtime configuration for the Go server.
@@ -134,6 +136,48 @@ type Config struct {
 	// the sink's wiring (bucket name, sink keys, listen addr, webhook
 	// token) lives in this config. See docs/deployment/rustfs.md.
 	EdgeName string
+
+	// AssetDownloadsEnabled is the master switch for the opt-in
+	// derivative-asset serving + server-side MinerU surface (issue #8).
+	// When false (default) the /api/papers/{id}/markdown and
+	// /markdown/status endpoints are NOT registered and the entire
+	// MinerU* block below is ignored — even garbage values are tolerated
+	// silently so existing .env files aren't penalised for stale
+	// settings.
+	//
+	// When true the operator opts into:
+	//   - serving cached markdown bytes (papers:read scope)
+	//   - when MinerUAPIToken is also set, transparently triggering a
+	//     MinerU conversion on cache miss
+	//
+	// The public instance (quantum-atlas.ai) keeps this false so its
+	// "server does not redistribute PDF / markdown bytes" posture is
+	// preserved. Self-hosters in a controlled audience can flip it on
+	// and accept the resulting distribution obligation — see
+	// docs/about/license-and-attribution.md.
+	AssetDownloadsEnabled bool
+
+	// Server-side MinerU configuration. Only parsed (and only validated)
+	// when AssetDownloadsEnabled=true. When the switch is off these
+	// fields are zero values regardless of env content.
+	MinerUAPIToken         string
+	MinerUAPIBaseURL       string
+	MinerUModelVersion     string
+	MinerULanguage         string
+	MinerUIsOCR            bool
+	MinerUEnableFormula    bool
+	MinerUEnableTable      bool
+	MinerUPollInterval     time.Duration
+	MinerUTimeout          time.Duration
+	MinerUMaxConcurrentJobs int
+}
+
+// MinerUEnabled reports whether the server should drive MinerU itself
+// on cache miss. True iff the master switch is on AND a MinerU API
+// token is configured. When false the markdown endpoints (when
+// registered) serve cached bytes only and return 503 on cache miss.
+func (c *Config) MinerUEnabled() bool {
+	return c.AssetDownloadsEnabled && c.MinerUAPIToken != ""
 }
 
 // Load resolves the configuration from process environment.
@@ -188,6 +232,17 @@ func Load(dotenvPath string) (*Config, error) {
 		S3AccessKeyID:            firstEnv("QATLAS_S3_ACCESS_KEY_ID"),
 		S3SecretAccessKey:        firstEnv("QATLAS_S3_SECRET_ACCESS_KEY"),
 		EdgeName:                 firstEnv("QATLAS_EDGE_NAME"),
+		AssetDownloadsEnabled:    parseBoolEnv("QATLAS_ASSET_DOWNLOADS_ENABLED", false),
+	}
+
+	// MinerU* fields are only populated when the master switch is on.
+	// When the switch is off we intentionally swallow even malformed
+	// MinerU env values so a stale .env can't make a non-MinerU
+	// deployment fail to start.
+	if cfg.AssetDownloadsEnabled {
+		if err := loadMinerUConfig(cfg); err != nil {
+			return nil, err
+		}
 	}
 
 	// HTTP bind: assemble from QATLAS_SERVER_HOST + _PORT if QATLAS_HTTP_ADDR
@@ -257,11 +312,9 @@ func Load(dotenvPath string) (*Config, error) {
 	// (WIKI_DIR / RAW_DIR / SERVER_HOST / ...). Functionally they still
 	// resolve via firstEnv() above so existing .env files keep working;
 	// the warning gives operators one minor cycle to migrate before the
-	// alias is removed in v0.17.0.
+	// alias is removed in v0.18.0.
 	warnDeprecatedAliases()
 
-	// v0.17.0 renamed the XDG sub-namespace from "quantum-atlas" to
-	// "qatlasd" (matches the binary name). On an upgraded host the
 	return cfg, nil
 }
 
@@ -302,7 +355,7 @@ func warnDeprecatedAliases() {
 	sort.Strings(oldNames)
 	for _, old := range oldNames {
 		if v := strings.TrimSpace(os.Getenv(old)); v != "" {
-			slog.Warn("env var without QATLAS_ prefix is deprecated, will be removed in v0.17.0",
+			slog.Warn("env var without QATLAS_ prefix is deprecated, will be removed in v0.18.0",
 				"deprecated", old, "use_instead", aliases[old])
 		}
 	}
@@ -423,6 +476,84 @@ func firstEnvIntDefault(def int, names ...string) int {
 		return def
 	}
 	return v
+}
+
+// parseBoolEnv reads a single env var and parses it as a bool with
+// strconv.ParseBool semantics (accepting 1/t/T/TRUE/true/True and
+// 0/f/F/FALSE/false/False). Unset / empty / unparseable → def. Used
+// for opt-in switches like QATLAS_FORCE_TCP4 and
+// QATLAS_ASSET_DOWNLOADS_ENABLED.
+func parseBoolEnv(name string, def bool) bool {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return def
+	}
+	v, err := strconv.ParseBool(raw)
+	if err != nil {
+		return def
+	}
+	return v
+}
+
+// loadMinerUConfig populates the MinerU* fields when the asset-downloads
+// master switch is on. Strict-parse: malformed numeric values cause
+// Load() to fail rather than silently fall back to defaults — when the
+// switch is off this function is never called (per the contract in
+// Config.AssetDownloadsEnabled), so a stale .env can never trip it.
+//
+// Defaults match issue #8: vlm model, ch language, table+formula on,
+// OCR off, 3s poll, 1800s timeout, concurrency=4. MINERU_API_TOKEN
+// itself is allowed to be empty — that enables "cache-only" mode where
+// /markdown returns 503 on cache miss.
+func loadMinerUConfig(cfg *Config) error {
+	cfg.MinerUAPIToken = firstEnv("MINERU_API_TOKEN")
+	cfg.MinerUAPIBaseURL = firstEnvDefault("https://mineru.net", "MINERU_API_BASE_URL")
+	cfg.MinerUModelVersion = firstEnvDefault("vlm", "MINERU_MODEL_VERSION")
+	cfg.MinerULanguage = firstEnvDefault("ch", "MINERU_LANGUAGE")
+	cfg.MinerUIsOCR = parseBoolEnv("MINERU_IS_OCR", false)
+	cfg.MinerUEnableFormula = parseBoolEnv("MINERU_ENABLE_FORMULA", true)
+	cfg.MinerUEnableTable = parseBoolEnv("MINERU_ENABLE_TABLE", true)
+
+	pollSeconds, err := parseFloatEnvSeconds("MINERU_POLL_INTERVAL", 3.0)
+	if err != nil {
+		return err
+	}
+	cfg.MinerUPollInterval = pollSeconds
+
+	timeoutSeconds, err := parseFloatEnvSeconds("MINERU_TIMEOUT", 1800.0)
+	if err != nil {
+		return err
+	}
+	cfg.MinerUTimeout = timeoutSeconds
+
+	maxConc := firstEnvIntDefault(4, "MINERU_MAX_CONCURRENT_JOBS")
+	if maxConc < 1 {
+		return fmt.Errorf("MINERU_MAX_CONCURRENT_JOBS must be ≥ 1, got %d", maxConc)
+	}
+	cfg.MinerUMaxConcurrentJobs = maxConc
+
+	if _, err := url.Parse(cfg.MinerUAPIBaseURL); err != nil {
+		return fmt.Errorf("MINERU_API_BASE_URL is not a valid URL: %w", err)
+	}
+	return nil
+}
+
+// parseFloatEnvSeconds reads an env var as a float "seconds" value and
+// returns it as a time.Duration. Unset / empty falls back to def.
+// Malformed values are a hard error so misconfigurations are loud.
+func parseFloatEnvSeconds(name string, def float64) (time.Duration, error) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return time.Duration(def * float64(time.Second)), nil
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a float (seconds), got %q: %w", name, raw, err)
+	}
+	if v <= 0 {
+		return 0, fmt.Errorf("%s must be > 0 seconds, got %v", name, v)
+	}
+	return time.Duration(v * float64(time.Second)), nil
 }
 
 // expandPath resolves ~ and converts relative paths to absolute.

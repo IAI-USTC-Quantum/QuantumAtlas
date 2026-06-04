@@ -27,6 +27,7 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/auth"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/healthz"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineru"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/neo4j"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/papers"
@@ -386,6 +387,43 @@ func main() {
 			return fmt.Errorf("build PAT scope enforcer: %w", err)
 		}
 
+		// Build the MinerU converter (always non-nil; behaves as a
+		// no-op when QATLAS_ASSET_DOWNLOADS_ENABLED is false). When
+		// the operator opts in we emit ONE info line so deploy logs
+		// make it obvious which markdown surface is live. Never logs
+		// the API token.
+		mineruConverter := mineru.NewConverter(
+			mineru.ConverterConfig{
+				AssetDownloadsEnabled:   cfg.AssetDownloadsEnabled,
+				MinerUAPIToken:          cfg.MinerUAPIToken,
+				MinerUAPIBaseURL:        cfg.MinerUAPIBaseURL,
+				MinerUModelVersion:      cfg.MinerUModelVersion,
+				MinerULanguage:          cfg.MinerULanguage,
+				MinerUIsOCR:             cfg.MinerUIsOCR,
+				MinerUEnableFormula:     cfg.MinerUEnableFormula,
+				MinerUEnableTable:       cfg.MinerUEnableTable,
+				MinerUPollInterval:      cfg.MinerUPollInterval,
+				MinerUTimeout:           cfg.MinerUTimeout,
+				MinerUMaxConcurrentJobs: cfg.MinerUMaxConcurrentJobs,
+				S3PublicEndpoint:        cfg.S3PublicEndpoint,
+			},
+			rawStore, catalog,
+			mineru.NewClient(cfg.MinerUAPIToken, cfg.MinerUAPIBaseURL, nil),
+			slog.Default(),
+		)
+		if cfg.AssetDownloadsEnabled {
+			serverSide := "disabled"
+			if mineruConverter.Enabled() {
+				serverSide = "enabled"
+			}
+			slog.Info("asset_downloads enabled",
+				"endpoints", "[markdown,markdown_status]",
+				"server_side_mineru", serverSide,
+				"max_concurrent", mineruConverter.MaxConcurrentJobs(),
+				"timeout_s", int(mineruConverter.Timeout().Seconds()),
+			)
+		}
+
 		// Background janitor: sweep expired MinerU claims every
 		// JanitorInterval. Idempotent and safe to run on both edges.
 		janitorCtx, janitorCancel := context.WithCancel(context.Background())
@@ -442,7 +480,7 @@ func main() {
 				}
 			}
 
-			registerRoutes(se, app, cfg, rawStore, catalog, wikiCache, enforcer, serverStarted)
+			registerRoutes(se, app, cfg, rawStore, catalog, wikiCache, enforcer, mineruConverter, serverStarted)
 
 			// Serve the embedded SPA last as the catch-all. apis.Static's
 			// indexFallback=true means any path that doesn't match a real
@@ -636,7 +674,7 @@ func ensureBucketVersioning(rawStore objstore.Store) {
 // registerRoutes wires the QuantumAtlas /api/* surface. Most endpoints are
 // implemented under internal/routes/ and pulled in by their respective
 // Register* helpers as we migrate each module in subsequent phases.
-func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawStore objstore.Store, catalog *papers.Store, wikiCache *wiki.Cache, enforcer *casbin.Enforcer, started time.Time) {
+func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawStore objstore.Store, catalog *papers.Store, wikiCache *wiki.Cache, enforcer *casbin.Enforcer, mineruConverter *mineru.Converter, started time.Time) {
 	probes := healthz.Probes{
 		Cfg:      cfg,
 		RawStore: rawStore,
@@ -786,14 +824,23 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 
 	// Papers (stats, needs-mineru, mineru-claim, uploads) — see
 	// internal/routes/papers.go. v0.9.0 dropped the byte-serving
-	// endpoints (markdown / resources / shares); the OSS server only
-	// exposes catalog metadata + the contribution flow now.
-	routes.RegisterPapers(se, cfg, rawStore, catalog, enforcer)
+	// endpoints (markdown / resources / shares); the server only
+	// exposes catalog metadata + the contribution flow by default.
+	// /markdown + /markdown/status come back when the operator opts
+	// in via QATLAS_ASSET_DOWNLOADS_ENABLED=true.
+	routes.RegisterPapers(se, cfg, rawStore, catalog, enforcer, mineruConverter)
 
 	// Personal Access Tokens — see internal/routes/pat.go.
 	// /api/pat is session-token-only (PAT auth refused by sessionGuard);
 	// no enforcer needed because there's no scope-gated endpoint here.
 	routes.RegisterPAT(se, app)
+
+	// OAuth 2.0 Device Authorization Grant (RFC 8628) — see
+	// internal/routes/oauthdevice.go. Lets `qatlas auth login --device`
+	// mint a PAT without a local browser (poll-based flow). /code
+	// and /token are anonymous; /lookup, /approve, /deny require a
+	// browser session (sessionGuard, same as /api/pat).
+	routes.RegisterOAuthDevice(se, app)
 }
 
 // injectHTTPFlag mutates os.Args to add --http=<addr> when the user invokes

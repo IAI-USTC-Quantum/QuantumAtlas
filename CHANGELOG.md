@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **web**: inject dev system PAT into vite /api proxy
 - **serve**: add 20 qatlasd-specific CLI flags with [env: QATLAS_FOO=] tags
 - **server**: refuse to coexist with another qatlasd on the same pb_data
+- **papers**: re-introduce GET /api/papers/{id}/markdown + /markdown/status behind QATLAS_ASSET_DOWNLOADS_ENABLED master switch (default off); when also configured with MINERU_API_TOKEN the server transparently triggers MinerU on cache miss, otherwise it serves cached markdown only and returns 503 on miss
 
 ### Fix
 
@@ -91,7 +92,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Refactor
 
-- drop shares + server-side mineru + outbound asset endpoints (OSS-only)
+- drop shares + server-side mineru + outbound asset endpoints
 
 ## v0.14.1 (2026-06-02)
 
