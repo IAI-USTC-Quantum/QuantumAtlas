@@ -188,7 +188,7 @@ func docNeedsMineru() {}
 // @Description Only registered when QATLAS_ASSET_DOWNLOADS_ENABLED=true on
 // @Description the server (default off). On cache miss the server may
 // @Description transparently trigger a background MinerU conversion (when
-// @Description MINERU_API_TOKEN is also configured) and return 202 with
+// @Description MINERU_API_TOKENS is also configured) and return 202 with
 // @Description Operation-Location/Retry-After headers; clients should poll
 // @Description /markdown/status until terminal then re-GET.
 // @Tags        Papers

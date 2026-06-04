@@ -4,7 +4,7 @@
 //  1. Result-archive parsing primitives (ExtractResult, etc.) used by
 //     the contributor upload pipeline in internal/routes/papers.go —
 //     contributors run `qatlas mineru` locally with their own
-//     MINERU_API_TOKEN, then POST the resulting zip to
+//     MINERU_API_TOKENS, then POST the resulting zip to
 //     /api/papers/{id}/upload-mineru.
 //  2. An HTTP wrapper (Client) plus a background Converter that the
 //     server can use to *itself* drive MinerU on cache miss, gated by

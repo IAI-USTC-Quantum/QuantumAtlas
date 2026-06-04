@@ -88,7 +88,7 @@ X-Attribution: OpenAlex (CC0), Crossref (CC0), arXiv
 
 - 上述 `/markdown` 系列端点注册，受 `papers:read` 保护
 - server 启用 on-demand server-side conversion：客户端 GET `/markdown`，server
-  从 `qatlas-pdf` 桶找到 PDF → 用部署方配置的 `MINERU_API_TOKEN` 跑 MinerU
+  从 `qatlas-pdf` 桶找到 PDF → 用部署方配置的 `MINERU_API_TOKENS` 跑 MinerU
   → markdown 写回 `qatlas-md` 桶 → 后续请求直接缓存命中
 - 部署方对**对外受众范围**与**适用法域 ToS**自负责任
 

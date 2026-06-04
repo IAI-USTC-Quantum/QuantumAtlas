@@ -391,11 +391,11 @@ func main() {
 		// no-op when QATLAS_ASSET_DOWNLOADS_ENABLED is false). When
 		// the operator opts in we emit ONE info line so deploy logs
 		// make it obvious which markdown surface is live. Never logs
-		// the API token.
+		// the API tokens themselves — only the COUNT.
 		mineruConverter := mineru.NewConverter(
 			mineru.ConverterConfig{
 				AssetDownloadsEnabled:   cfg.AssetDownloadsEnabled,
-				MinerUAPIToken:          cfg.MinerUAPIToken,
+				MinerUAPITokens:         cfg.MinerUAPITokens,
 				MinerUAPIBaseURL:        cfg.MinerUAPIBaseURL,
 				MinerUModelVersion:      cfg.MinerUModelVersion,
 				MinerULanguage:          cfg.MinerULanguage,
@@ -408,7 +408,6 @@ func main() {
 				S3PublicEndpoint:        cfg.S3PublicEndpoint,
 			},
 			rawStore, catalog,
-			mineru.NewClient(cfg.MinerUAPIToken, cfg.MinerUAPIBaseURL, nil),
 			slog.Default(),
 		)
 		if cfg.AssetDownloadsEnabled {
@@ -419,6 +418,7 @@ func main() {
 			slog.Info("asset_downloads enabled",
 				"endpoints", "[markdown,markdown_status]",
 				"server_side_mineru", serverSide,
+				"mineru_keys", mineruConverter.KeyRingSize(),
 				"max_concurrent", mineruConverter.MaxConcurrentJobs(),
 				"timeout_s", int(mineruConverter.Timeout().Seconds()),
 			)

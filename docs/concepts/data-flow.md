@@ -84,7 +84,7 @@ flowchart TB
 === "3. 用户本地跑 MinerU 推回"
 
     ```bash
-    # 配 MINERU_API_TOKEN 后
+    # 配 MINERU_API_TOKENS 后
     qatlas mineru 2501.00010v1 --push-pdf
     # 或队列模式，处理 server 列表里所有待解析的
     qatlas mineru --batch-size 20

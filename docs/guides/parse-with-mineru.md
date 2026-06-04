@@ -64,8 +64,8 @@ qatlas auth login -H quantum-atlas.ai
 # 2. MinerU JWT——mineru.net 注册 / OpenXLab 登录 → API 管理后台复制 token。
 #    无 value 触发隐藏粘贴框，避免 JWT 进 shell history / ps aux / scrollback。
 qatlas config set mineru_api_token
-# CI 友好：echo "$MINERU_API_TOKEN" | qatlas config set mineru_api_token
-# 想一行搞定（注意暴露 history）：qatlas config set mineru_api_token eyJ0eXBlIjoi...
+# CI 友好：echo "$MINERU_API_TOKENS" | qatlas config set mineru_api_token
+# 想一行搞定（注意暴露 history）：qatlas config set mineru_api_tokens eyJ0eXBlIjoi...
 
 # 3. 挂着持续贡献。第一次 Ctrl-C 会等当前 batch 完事再优雅退出并释放未完成的 claim；
 #    第二次直接 abort。
@@ -305,14 +305,14 @@ server 维护 `<data_dir>/mineru-claims/*.json`：
 
 ## 常见问题
 
-!!! failure "MINERU_API_TOKEN must be set"
+!!! failure "MINERU_API_TOKENS must be set"
     client 端 yaml 没配 `mineru_api_token:`。用 `qatlas config set mineru_api_token`
     无 value 触发隐藏粘贴框（JWT 不进 shell history / ps aux），从
     mineru.net 拿你的 JWT 粘进去即可：
 
     ```bash
     qatlas config set mineru_api_token
-    # CI / 脚本：echo "$MINERU_API_TOKEN" | qatlas config set mineru_api_token
+    # CI / 脚本：echo "$MINERU_API_TOKENS" | qatlas config set mineru_api_token
     # 老式直接编辑 yaml：echo 'mineru_api_token: eyJ...' >> "$(qatlas config path)"
     ```
 

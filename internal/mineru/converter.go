@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"mime"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -56,15 +57,15 @@ type Converter struct {
 	cfg     ConverterConfig
 	store   objstore.Store
 	catalog *papers.Store
-	client  *Client
+	keyRing *KeyRing
 	logger  *slog.Logger
 
 	// now/dailyResetAt are indirection hooks so tests can fast-forward
 	// "tomorrow 00:01" without sleeping.
-	now           func() time.Time
-	dailyResetAt  func(time.Time) time.Time
+	now          func() time.Time
+	dailyResetAt func(time.Time) time.Time
 
-	enabled    bool   // false when switch off OR token missing OR public endpoint missing
+	enabled     bool   // false when switch off OR no tokens OR public endpoint missing
 	disabledMsg string // non-empty when !enabled, for handler error responses
 
 	sem chan struct{}
@@ -80,15 +81,21 @@ type Converter struct {
 // mineru (existing) → … and makes the converter trivially testable.
 type ConverterConfig struct {
 	AssetDownloadsEnabled bool
-	MinerUAPIToken        string
-	MinerUAPIBaseURL      string
-	MinerUModelVersion    string
-	MinerULanguage        string
-	MinerUIsOCR           bool
-	MinerUEnableFormula   bool
-	MinerUEnableTable     bool
-	MinerUPollInterval    time.Duration
-	MinerUTimeout         time.Duration
+	// MinerUAPITokens is the pool of API tokens to rotate through.
+	// At least one non-empty entry enables server-side conversion;
+	// when more than one is configured the converter automatically
+	// fails over to the next key when the current one reports
+	// daily-limit exhaustion, so 3× tokens ≈ 3× daily quota with no
+	// operator intervention.
+	MinerUAPITokens         []string
+	MinerUAPIBaseURL        string
+	MinerUModelVersion      string
+	MinerULanguage          string
+	MinerUIsOCR             bool
+	MinerUEnableFormula     bool
+	MinerUEnableTable       bool
+	MinerUPollInterval      time.Duration
+	MinerUTimeout           time.Duration
 	MinerUMaxConcurrentJobs int
 
 	// S3PublicEndpoint is the (publicly reachable) RustFS endpoint
@@ -176,10 +183,10 @@ const FailureCooldown = 60 * time.Second
 // converter will actually drive MinerU.
 //
 // When the switch is on but the deployment can't drive MinerU end-to-
-// end (token missing or S3 public endpoint missing), a single WARN is
+// end (no tokens or S3 public endpoint missing), a single WARN is
 // logged at construction time and Enabled() returns false. Callers
 // (the markdown handler) translate that into 503 on cache miss.
-func NewConverter(cfg ConverterConfig, store objstore.Store, catalog *papers.Store, client *Client, logger *slog.Logger) *Converter {
+func NewConverter(cfg ConverterConfig, store objstore.Store, catalog *papers.Store, logger *slog.Logger) *Converter {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -191,21 +198,21 @@ func NewConverter(cfg ConverterConfig, store objstore.Store, catalog *papers.Sto
 		cfg:          cfg,
 		store:        store,
 		catalog:      catalog,
-		client:       client,
 		logger:       logger,
 		now:          time.Now,
 		dailyResetAt: nextLocalDailyReset,
 		sem:          make(chan struct{}, maxConc),
 		jobs:         map[string]*Job{},
 	}
+	c.keyRing = NewKeyRing(cfg.MinerUAPITokens, cfg.MinerUAPIBaseURL, c.now)
 
 	switch {
 	case !cfg.AssetDownloadsEnabled:
 		c.enabled = false
 		c.disabledMsg = "asset downloads disabled (QATLAS_ASSET_DOWNLOADS_ENABLED=false)"
-	case cfg.MinerUAPIToken == "":
+	case c.keyRing.Size() == 0:
 		c.enabled = false
-		c.disabledMsg = "MinerU not configured (MINERU_API_TOKEN unset); cache-only mode"
+		c.disabledMsg = "MinerU not configured (MINERU_API_TOKENS unset); cache-only mode"
 	case cfg.S3PublicEndpoint == "":
 		c.enabled = false
 		c.disabledMsg = "QATLAS_S3_PUBLIC_ENDPOINT not set; MinerU cannot reach internal RustFS — cache-only mode"
@@ -216,6 +223,11 @@ func NewConverter(cfg ConverterConfig, store objstore.Store, catalog *papers.Sto
 
 	return c
 }
+
+// KeyRingSize returns how many MinerU API tokens are loaded into the
+// rotation pool — for inclusion in the startup log so operators can
+// see at a glance how many keys are being managed.
+func (c *Converter) KeyRingSize() int { return c.keyRing.Size() }
 
 // Enabled reports whether the converter will actually drive MinerU on
 // cache miss. False in any of: switch off, token unset, S3 public
@@ -369,9 +381,12 @@ func (c *Converter) run(canonical string) {
 	)
 }
 
-// runOnce is one full conversion attempt. Returns a typed *Error on
-// MinerU failures so c.classifyFailure can route into the correct
-// counter + cooldown bucket.
+// runOnce is one full conversion attempt. Loops across the KeyRing on
+// daily-limit errors so a single exhausted key does not stop the
+// whole conversion — only when EVERY key reports daily-limit does the
+// paper-level cooldown kick in. Returns a typed *Error on MinerU
+// failures so c.classifyFailure can route into the correct counter +
+// cooldown bucket.
 func (c *Converter) runOnce(ctx context.Context, canonical string) error {
 	pdfKey := paperassets.AssetKey("pdf", canonical)
 	if _, exists, err := c.store.Stat(ctx, pdfKey); err != nil {
@@ -388,38 +403,71 @@ func (c *Converter) runOnce(ctx context.Context, canonical string) error {
 		return &Error{Msg: "object store cannot presign PDF (LocalStore?); cannot drive MinerU", Kind: ErrFatal}
 	}
 
-	taskID, err := c.client.SubmitURLTask(ctx, pdfURL, SubmitOptions{
-		ModelVersion:  c.cfg.MinerUModelVersion,
-		Language:      c.cfg.MinerULanguage,
-		EnableFormula: c.cfg.MinerUEnableFormula,
-		EnableTable:   c.cfg.MinerUEnableTable,
-		IsOCR:         c.cfg.MinerUIsOCR,
-		DataID:        canonical,
-	})
-	if err != nil {
-		return err
-	}
+	// Try every key in the ring until one succeeds or all return
+	// daily-limit. A single key failure other than daily-limit
+	// (transport hiccup, bad PDF, …) propagates out immediately
+	// because it's not a key-pool problem.
+	for {
+		client, slot, ok := c.keyRing.Acquire()
+		if !ok {
+			// All keys exhausted. Surface a clear, operator-aimed message
+			// so the API caller knows it's a service-wide quota issue,
+			// not a problem with their specific paper.
+			recovery := c.keyRing.SoonestRecovery()
+			msg := "server quota exhausted: all " +
+				strconv.Itoa(c.keyRing.Size()) +
+				" MinerU API keys have reached today's daily limit"
+			if !recovery.IsZero() {
+				msg += " — service resumes at " + recovery.Local().Format(time.RFC3339)
+			}
+			return &Error{Msg: msg, Kind: ErrDailyLimit}
+		}
 
-	zipURL, err := c.pollUntilDone(ctx, taskID)
-	if err != nil {
-		return err
-	}
+		taskID, err := client.SubmitURLTask(ctx, pdfURL, SubmitOptions{
+			ModelVersion:  c.cfg.MinerUModelVersion,
+			Language:      c.cfg.MinerULanguage,
+			EnableFormula: c.cfg.MinerUEnableFormula,
+			EnableTable:   c.cfg.MinerUEnableTable,
+			IsOCR:         c.cfg.MinerUIsOCR,
+			DataID:        canonical,
+		})
+		if err != nil {
+			if errors.Is(err, ErrDailyLimit) {
+				c.keyRing.MarkDailyLimit(slot, c.dailyResetAt(c.now()))
+				c.logger.Warn("mineru: key exhausted, rotating", "slot", slot, "remaining", c.keyRing.AvailableSlots())
+				continue
+			}
+			return err
+		}
 
-	result, err := c.client.FetchResult(ctx, zipURL)
-	if err != nil {
-		return err
-	}
+		zipURL, err := c.pollUntilDone(ctx, client, taskID)
+		if err != nil {
+			if errors.Is(err, ErrDailyLimit) {
+				c.keyRing.MarkDailyLimit(slot, c.dailyResetAt(c.now()))
+				c.logger.Warn("mineru: key exhausted during poll, rotating", "slot", slot, "remaining", c.keyRing.AvailableSlots())
+				continue
+			}
+			return err
+		}
 
-	return c.writeResult(ctx, canonical, result)
+		result, err := client.FetchResult(ctx, zipURL)
+		if err != nil {
+			return err
+		}
+
+		return c.writeResult(ctx, canonical, result)
+	}
 }
 
 // pollUntilDone polls MinerU at cfg.MinerUPollInterval until the task
 // transitions to done or failed, or the per-job context expires.
-func (c *Converter) pollUntilDone(ctx context.Context, taskID string) (string, error) {
+// Uses the supplied client so the caller controls which token / which
+// key-ring slot the polling traffic charges against.
+func (c *Converter) pollUntilDone(ctx context.Context, client *Client, taskID string) (string, error) {
 	tick := time.NewTicker(c.cfg.MinerUPollInterval)
 	defer tick.Stop()
 	for {
-		state, err := c.client.GetTask(ctx, taskID)
+		state, err := client.GetTask(ctx, taskID)
 		if err != nil {
 			return "", err
 		}

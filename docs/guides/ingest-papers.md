@@ -3,14 +3,14 @@
 让 server 直接从 arXiv 抓 PDF + 元数据，并可选立刻调 MinerU 解析为 Markdown。
 
 !!! info "MinerU 是当前唯一受支持的解析器"
-    早期版本曾包含一个本地 PDF 解析器作为离线选项，但因第三方 license 约束已从开源版本移除。所有摄入流程现在统一走 MinerU 远程 API（**需要服务端配置 `MINERU_API_TOKEN`**），或者跳过 server 解析 + 手动 `qatlas upload mineru` 推上去。
+    早期版本曾包含一个本地 PDF 解析器作为离线选项，但因第三方 license 约束已从开源版本移除。所有摄入流程现在统一走 MinerU 远程 API（**需要服务端配置 `MINERU_API_TOKENS`**），或者跳过 server 解析 + 手动 `qatlas upload mineru` 推上去。
 
 ## 前置条件
 
 - 已装 client：`uv tool install quantum-atlas`
 - 已配 `QATLAS_SERVER_URL`
 - 已配 `QATLAS_TOKEN`，PAT 带 **`papers:write`** scope（[怎么拿 PAT](manage-credentials.md#mint-pat)）
-- 目标 server 端 `.env` 已配 `MINERU_API_TOKEN`（解析这一步要用）
+- 目标 server 端 `.env` 已配 `MINERU_API_TOKENS`（解析这一步要用）
 
 ## 最小用例
 
@@ -58,7 +58,7 @@ qatlas ingest 2501.00010
     qatlas ingest 2501.00010
     ```
 
-    省略 `--parser` 等同于 `--parser mineru`。MinerU 是服务化的高质量解析（支持公式、表格、OCR），结果接近排印 Markdown 质量。**server 端必须配 `MINERU_API_TOKEN`** —— 没配的话 server 会回 503 / 400 并提示。这种情况下改用[本地 MinerU 模式](parse-with-mineru.md)。
+    省略 `--parser` 等同于 `--parser mineru`。MinerU 是服务化的高质量解析（支持公式、表格、OCR），结果接近排印 Markdown 质量。**server 端必须配 `MINERU_API_TOKENS`** —— 没配的话 server 会回 503 / 400 并提示。这种情况下改用[本地 MinerU 模式](parse-with-mineru.md)。
 
 ## 续跑已存在的任务
 
@@ -86,7 +86,7 @@ qatlas ingest status <task_id>
     `--timeout` 默认 600s 不够。大论文 + MinerU 通常 5–15 分钟。加 `--timeout 1800` 或 `--no-poll` 让任务后台跑、之后 `status` 查。
 
 !!! failure "503 MinerU not configured on server"
-    Server 没配 `MINERU_API_TOKEN`。请改走[本地 MinerU 模式](parse-with-mineru.md)（自己出 MinerU 配额，解析完再用 `qatlas upload mineru` 推回），或者联系 server 管理员补 token。
+    Server 没配 `MINERU_API_TOKENS`。请改走[本地 MinerU 模式](parse-with-mineru.md)（自己出 MinerU 配额，解析完再用 `qatlas upload mineru` 推回），或者联系 server 管理员补 token。
 
 ## 下一步
 

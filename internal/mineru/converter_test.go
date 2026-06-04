@@ -186,11 +186,14 @@ func writeEnvelope(w http.ResponseWriter, code, msg string, data map[string]any)
 	_ = json.NewEncoder(w).Encode(body)
 }
 
-func makeConverter(t *testing.T, store objstore.Store, stubURL string) *Converter {
+func makeConverter(t *testing.T, store objstore.Store, stubURL string, tokens ...string) *Converter {
 	t.Helper()
+	if len(tokens) == 0 {
+		tokens = []string{"test-token"}
+	}
 	cfg := ConverterConfig{
 		AssetDownloadsEnabled:   true,
-		MinerUAPIToken:          "test-token",
+		MinerUAPITokens:         tokens,
 		MinerUAPIBaseURL:        stubURL,
 		MinerUModelVersion:      "vlm",
 		MinerULanguage:          "en",
@@ -202,12 +205,12 @@ func makeConverter(t *testing.T, store objstore.Store, stubURL string) *Converte
 		MinerUMaxConcurrentJobs: 2,
 		S3PublicEndpoint:        "http://public.invalid",
 	}
-	return NewConverter(cfg, store, nil, NewClient("test-token", stubURL, nil), nil)
+	return NewConverter(cfg, store, nil, nil)
 }
 
 func TestConverter_DisabledWhenSwitchOff(t *testing.T) {
 	store := newFakeStore()
-	c := NewConverter(ConverterConfig{AssetDownloadsEnabled: false}, store, nil, nil, nil)
+	c := NewConverter(ConverterConfig{AssetDownloadsEnabled: false}, store, nil, nil)
 	if c.Enabled() {
 		t.Fatal("converter should be disabled when switch is off")
 	}
@@ -221,12 +224,12 @@ func TestConverter_DisabledWhenTokenMissing(t *testing.T) {
 	c := NewConverter(ConverterConfig{
 		AssetDownloadsEnabled: true,
 		S3PublicEndpoint:      "http://public.invalid",
-	}, store, nil, nil, nil)
+	}, store, nil, nil)
 	if c.Enabled() {
 		t.Fatal("converter should be disabled when token missing")
 	}
-	if !strings.Contains(c.DisabledReason(), "MINERU_API_TOKEN") {
-		t.Fatalf("DisabledReason = %q, want hint about MINERU_API_TOKEN", c.DisabledReason())
+	if !strings.Contains(c.DisabledReason(), "MINERU_API_TOKENS") {
+		t.Fatalf("DisabledReason = %q, want hint about MINERU_API_TOKENS", c.DisabledReason())
 	}
 }
 
@@ -234,8 +237,8 @@ func TestConverter_DisabledWhenPublicEndpointMissing(t *testing.T) {
 	store := newFakeStore()
 	c := NewConverter(ConverterConfig{
 		AssetDownloadsEnabled: true,
-		MinerUAPIToken:        "tok",
-	}, store, nil, nil, nil)
+		MinerUAPITokens:       []string{"tok"},
+	}, store, nil, nil)
 	if c.Enabled() {
 		t.Fatal("converter should be disabled when public endpoint missing")
 	}
@@ -414,4 +417,189 @@ func waitForJobState(c *Converter, canonical string, want JobState, timeout time
 		time.Sleep(5 * time.Millisecond)
 	}
 	return false
+}
+
+// ============================================================================
+// Multi-key fail-over tests (issue #8 follow-up)
+// ============================================================================
+
+// minerUStub but tracks which token authorized each request so we can
+// assert key rotation actually used a different token.
+type tokenAwareStub struct {
+	t           *testing.T
+	server      *httptest.Server
+	submissions atomic64
+
+	// keyState maps token → daily-limit behavior:
+	//   "quota" → SubmitURLTask returns daily-limit (-60018)
+	//   ""      → normal happy path
+	keyStateMu sync.Mutex
+	keyState   map[string]string
+
+	// tokensSeen records every Authorization Bearer ever seen.
+	tokensSeenMu sync.Mutex
+	tokensSeen   []string
+
+	zipBody []byte
+}
+
+func newTokenAwareStub(t *testing.T) *tokenAwareStub {
+	t.Helper()
+	stub := &tokenAwareStub{t: t, keyState: map[string]string{}}
+	stub.zipBody = buildResultZip(t, "out", "# Hello\n", nil)
+	stub.server = httptest.NewServer(http.HandlerFunc(stub.handle))
+	return stub
+}
+
+func (s *tokenAwareStub) close() { s.server.Close() }
+func (s *tokenAwareStub) url() string { return s.server.URL }
+
+func (s *tokenAwareStub) markQuotaExhausted(token string) {
+	s.keyStateMu.Lock(); defer s.keyStateMu.Unlock()
+	s.keyState[token] = "quota"
+}
+
+func (s *tokenAwareStub) seen() []string {
+	s.tokensSeenMu.Lock(); defer s.tokensSeenMu.Unlock()
+	out := make([]string, len(s.tokensSeen))
+	copy(out, s.tokensSeen)
+	return out
+}
+
+func (s *tokenAwareStub) handle(w http.ResponseWriter, r *http.Request) {
+	auth := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	s.tokensSeenMu.Lock(); s.tokensSeen = append(s.tokensSeen, auth); s.tokensSeenMu.Unlock()
+
+	s.keyStateMu.Lock()
+	state := s.keyState[auth]
+	s.keyStateMu.Unlock()
+
+	switch {
+	case r.URL.Path == "/api/v4/extract/task" && r.Method == http.MethodPost:
+		s.submissions.inc()
+		if state == "quota" {
+			// MinerU daily-limit code -60018 — matches errors.go::dailyLimitErrorCodes
+			writeEnvelope(w, "-60018", "每日解析任务数量已达上限", nil)
+			return
+		}
+		writeEnvelope(w, "0", "", map[string]any{"task_id": "tsk-1"})
+	case strings.HasPrefix(r.URL.Path, "/api/v4/extract/task/") && r.Method == http.MethodGet:
+		writeEnvelope(w, "0", "", map[string]any{
+			"state": "done", "full_zip_url": s.server.URL + "/result",
+		})
+	case r.URL.Path == "/result":
+		_, _ = w.Write(s.zipBody)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func TestConverter_FailsOverToNextKey(t *testing.T) {
+	store := newFakeStore()
+	store.put("pdf/2401/2401.12345v1.pdf", []byte("%PDF-fake"))
+
+	stub := newTokenAwareStub(t)
+	defer stub.close()
+	stub.markQuotaExhausted("tok-a") // first key exhausted, second should win
+
+	c := makeConverter(t, store, stub.url(), "tok-a", "tok-b")
+	c.Ensure(context.Background(), "2401.12345v1")
+	if !waitForJobState(c, "2401.12345v1", JobStateDone, 2*time.Second) {
+		final, _ := c.Lookup("2401.12345v1")
+		t.Fatalf("job did not reach Done with fail-over; final = %+v", final)
+	}
+
+	seen := stub.seen()
+	if len(seen) < 2 {
+		t.Fatalf("expected ≥2 stub hits (one per key), got %d: %v", len(seen), seen)
+	}
+	// First Submit should have been on tok-a (exhausted), second on tok-b (success).
+	if seen[0] != "tok-a" {
+		t.Errorf("first submit used %q, want tok-a", seen[0])
+	}
+	if seen[1] != "tok-b" {
+		t.Errorf("after fail-over submit used %q, want tok-b", seen[1])
+	}
+	// Counters: exactly one Submitted from MinerU's perspective (the tok-b
+	// retry); the tok-a 'daily-limit' was a key-pool rotation, not a paper-
+	// level failure.
+	snap := c.Snapshot()
+	if snap.Succeeded != 1 {
+		t.Errorf("Succeeded = %d, want 1", snap.Succeeded)
+	}
+	if snap.FailedDailyLimit != 0 {
+		t.Errorf("FailedDailyLimit = %d; the paper succeeded after rotation so paper-level daily-limit shouldn't count", snap.FailedDailyLimit)
+	}
+}
+
+func TestConverter_AllKeysExhaustedReturnsDailyLimit(t *testing.T) {
+	store := newFakeStore()
+	store.put("pdf/2401/2401.12345v1.pdf", []byte("%PDF-fake"))
+
+	stub := newTokenAwareStub(t)
+	defer stub.close()
+	stub.markQuotaExhausted("tok-a")
+	stub.markQuotaExhausted("tok-b")
+
+	c := makeConverter(t, store, stub.url(), "tok-a", "tok-b")
+	c.Ensure(context.Background(), "2401.12345v1")
+	if !waitForJobState(c, "2401.12345v1", JobStateFailed, 2*time.Second) {
+		t.Fatal("job did not fail when all keys exhausted")
+	}
+	job, _ := c.Lookup("2401.12345v1")
+	if !errors.Is(job.ErrKind, ErrDailyLimit) {
+		t.Errorf("ErrKind = %v, want ErrDailyLimit", job.ErrKind)
+	}
+	if job.Err == nil || !strings.Contains(job.Err.Error(), "all 2 MinerU API keys") {
+		t.Errorf("Err = %v, want message naming the exhausted key count", job.Err)
+	}
+	// Cooldown should be at next 00:01 (well beyond a normal 60s failure window).
+	if delta := time.Until(job.CooldownUntil); delta < 2*FailureCooldown {
+		t.Errorf("daily-limit cooldown should be far in the future, got %v", delta)
+	}
+}
+
+func TestKeyRing_AcquireRoundRobin(t *testing.T) {
+	now := time.Now
+	ring := NewKeyRing([]string{"a", "b", "c"}, "http://stub", now)
+	if got := ring.Size(); got != 3 {
+		t.Fatalf("Size = %d, want 3", got)
+	}
+
+	// Three Acquires in a row should hit each slot once (round-robin).
+	seen := map[int]bool{}
+	for i := 0; i < 3; i++ {
+		_, slot, ok := ring.Acquire()
+		if !ok {
+			t.Fatalf("Acquire %d returned !ok", i)
+		}
+		if seen[slot] {
+			t.Errorf("slot %d acquired twice in 3 calls — round-robin broken", slot)
+		}
+		seen[slot] = true
+	}
+}
+
+func TestKeyRing_AllInCooldownReturnsNotOK(t *testing.T) {
+	now := func() time.Time { return time.Date(2026, 6, 4, 14, 0, 0, 0, time.UTC) }
+	ring := NewKeyRing([]string{"a", "b"}, "http://stub", now)
+	future := now().Add(24 * time.Hour)
+	ring.MarkDailyLimit(0, future)
+	ring.MarkDailyLimit(1, future)
+	if _, _, ok := ring.Acquire(); ok {
+		t.Error("Acquire returned ok=true with all keys in cooldown")
+	}
+	if got := ring.SoonestRecovery(); !got.Equal(future) {
+		t.Errorf("SoonestRecovery = %v, want %v", got, future)
+	}
+	if got := ring.AvailableSlots(); got != 0 {
+		t.Errorf("AvailableSlots = %d, want 0", got)
+	}
+}
+
+func TestKeyRing_TrimsEmptyTokens(t *testing.T) {
+	ring := NewKeyRing([]string{"", "a", "", "b", ""}, "http://stub", nil)
+	if got := ring.Size(); got != 2 {
+		t.Errorf("Size = %d, want 2 (empty strings should be dropped)", got)
+	}
 }

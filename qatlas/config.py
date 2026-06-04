@@ -77,7 +77,9 @@ _DEFAULT_CONFIG_YAML = """\
 # raw_dir: ./raw        # asset cache root
 
 # ── MinerU API (qatlas mineru) ─────────────────────────────────────
-# mineru_api_token:         # JWT from https://mineru.net
+# mineru_api_tokens:        # List of JWTs from https://mineru.net
+#   - jwt-1                 # client rotates across them when one hits
+#   - jwt-2                 # the daily quota
 # mineru_api_base_url: https://mineru.net
 # mineru_model_version: vlm
 # mineru_language: ch
@@ -144,7 +146,13 @@ class ServerConfig(BaseSettings):
     data_dir: str = Field(default="data")
 
     # ── MinerU (third-party SDK; client-only) ────────────────────
-    mineru_api_token: Optional[str] = Field(default=None)
+    # Pool of MinerU API tokens. Configure ≥1 to enable MinerU calls;
+    # client (today) uses the first valid one and surfaces a deprecation
+    # log when extras are present — full client-side rotation tracks
+    # the server-side feature and is on the roadmap. Set via YAML:
+    #   mineru_api_tokens: [jwt-1, jwt-2]
+    # Or env (server processes only): MINERU_API_TOKENS=jwt-1,jwt-2
+    mineru_api_tokens: list[str] = Field(default_factory=list)
     mineru_api_base_url: str = Field(default="https://mineru.net")
     mineru_model_version: str = Field(default="vlm")
     mineru_language: str = Field(default="ch")
@@ -153,6 +161,19 @@ class ServerConfig(BaseSettings):
     mineru_enable_table: bool = Field(default=True)
     mineru_poll_interval: float = Field(default=3.0)
     mineru_timeout: int = Field(default=1800)
+
+    @property
+    def mineru_api_token(self) -> Optional[str]:
+        """Convenience accessor: the first configured MinerU API token,
+        or ``None`` when the pool is empty. Existing client code that
+        needs a single token to pass into the per-paper MinerU client
+        keeps working through this shim while full client-side
+        rotation is built out separately.
+        """
+        for tok in self.mineru_api_tokens:
+            if tok:
+                return tok
+        return None
 
     # ── LLM extractor (third-party SDK; client-only) ─────────────
     openai_api_key: Optional[str] = Field(default=None)
@@ -177,7 +198,7 @@ class ServerConfig(BaseSettings):
             return value.strip().lower() in {"1", "true", "yes", "on", "y", "t"}
         return value
 
-    @field_validator("server_url", "token", "user_header", "mineru_api_token",
+    @field_validator("server_url", "token", "user_header",
                      "openai_api_key", "anthropic_api_key", mode="before")
     @classmethod
     def _empty_string_to_none(cls, value: Any) -> Any:
@@ -187,6 +208,21 @@ class ServerConfig(BaseSettings):
         """
         if value == "":
             return None
+        return value
+
+    @field_validator("mineru_api_tokens", mode="before")
+    @classmethod
+    def _coerce_mineru_tokens(cls, value: Any) -> Any:
+        """Accept either a YAML list or a single string (for legacy
+        single-token configs and CSV env values). Empty / whitespace
+        entries are dropped so ``[]`` always means "no tokens".
+        """
+        if value is None or value == "":
+            return []
+        if isinstance(value, str):
+            value = [v.strip() for v in value.split(",")]
+        if isinstance(value, list):
+            return [str(v).strip() for v in value if str(v).strip()]
         return value
 
     # ─── pydantic-settings source chain ───────────────────────────

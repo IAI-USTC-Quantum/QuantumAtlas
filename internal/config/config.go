@@ -147,7 +147,7 @@ type Config struct {
 	//
 	// When true the operator opts into:
 	//   - serving cached markdown bytes (papers:read scope)
-	//   - when MinerUAPIToken is also set, transparently triggering a
+	//   - when MinerUAPITokens contains at least one entry, transparently triggering a
 	//     MinerU conversion on cache miss
 	//
 	// The public instance (quantum-atlas.ai) keeps this false so its
@@ -160,24 +160,29 @@ type Config struct {
 	// Server-side MinerU configuration. Only parsed (and only validated)
 	// when AssetDownloadsEnabled=true. When the switch is off these
 	// fields are zero values regardless of env content.
-	MinerUAPIToken         string
-	MinerUAPIBaseURL       string
-	MinerUModelVersion     string
-	MinerULanguage         string
-	MinerUIsOCR            bool
-	MinerUEnableFormula    bool
-	MinerUEnableTable      bool
-	MinerUPollInterval     time.Duration
-	MinerUTimeout          time.Duration
+	//
+	// MinerUAPITokens is a pool — supply multiple tokens (CSV in env)
+	// and the converter automatically fails over from one to the next
+	// when a key reports daily-limit. Empty pool ⇒ cache-only mode.
+	MinerUAPITokens         []string
+	MinerUAPIBaseURL        string
+	MinerUModelVersion      string
+	MinerULanguage          string
+	MinerUIsOCR             bool
+	MinerUEnableFormula     bool
+	MinerUEnableTable       bool
+	MinerUPollInterval      time.Duration
+	MinerUTimeout           time.Duration
 	MinerUMaxConcurrentJobs int
 }
 
 // MinerUEnabled reports whether the server should drive MinerU itself
-// on cache miss. True iff the master switch is on AND a MinerU API
-// token is configured. When false the markdown endpoints (when
-// registered) serve cached bytes only and return 503 on cache miss.
+// on cache miss. True iff the master switch is on AND at least one
+// MinerU API token is configured. When false the markdown endpoints
+// (when registered) serve cached bytes only and return 503 on cache
+// miss.
 func (c *Config) MinerUEnabled() bool {
-	return c.AssetDownloadsEnabled && c.MinerUAPIToken != ""
+	return c.AssetDownloadsEnabled && len(c.MinerUAPITokens) > 0
 }
 
 // Load resolves the configuration from process environment.
@@ -502,11 +507,11 @@ func parseBoolEnv(name string, def bool) bool {
 // Config.AssetDownloadsEnabled), so a stale .env can never trip it.
 //
 // Defaults match issue #8: vlm model, ch language, table+formula on,
-// OCR off, 3s poll, 1800s timeout, concurrency=4. MINERU_API_TOKEN
+// OCR off, 3s poll, 1800s timeout, concurrency=4. MINERU_API_TOKENS
 // itself is allowed to be empty — that enables "cache-only" mode where
 // /markdown returns 503 on cache miss.
 func loadMinerUConfig(cfg *Config) error {
-	cfg.MinerUAPIToken = firstEnv("MINERU_API_TOKEN")
+	cfg.MinerUAPITokens = parseTokenList(firstEnv("MINERU_API_TOKENS"))
 	cfg.MinerUAPIBaseURL = firstEnvDefault("https://mineru.net", "MINERU_API_BASE_URL")
 	cfg.MinerUModelVersion = firstEnvDefault("vlm", "MINERU_MODEL_VERSION")
 	cfg.MinerULanguage = firstEnvDefault("ch", "MINERU_LANGUAGE")
@@ -554,6 +559,28 @@ func parseFloatEnvSeconds(name string, def float64) (time.Duration, error) {
 		return 0, fmt.Errorf("%s must be > 0 seconds, got %v", name, v)
 	}
 	return time.Duration(v * float64(time.Second)), nil
+}
+
+// parseTokenList splits a CSV-style env value into trimmed, non-empty
+// tokens. Used for MINERU_API_TOKENS where the operator supplies a
+// pool ("tok-a,tok-b,tok-c") and the converter rotates through them.
+// Returns nil for empty input so the caller can simply check len()==0.
+func parseTokenList(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if t := strings.TrimSpace(p); t != "" {
+			out = append(out, t)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // expandPath resolves ~ and converts relative paths to absolute.

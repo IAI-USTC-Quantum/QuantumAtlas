@@ -394,7 +394,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns the cached MinerU markdown for the given arxiv id.\nOnly registered when QATLAS_ASSET_DOWNLOADS_ENABLED=true on\nthe server (default off). On cache miss the server may\ntransparently trigger a background MinerU conversion (when\nMINERU_API_TOKEN is also configured) and return 202 with\nOperation-Location/Retry-After headers; clients should poll\n/markdown/status until terminal then re-GET.",
+                "description": "Returns the cached MinerU markdown for the given arxiv id.\nOnly registered when QATLAS_ASSET_DOWNLOADS_ENABLED=true on\nthe server (default off). On cache miss the server may\ntransparently trigger a background MinerU conversion (when\nMINERU_API_TOKENS is also configured) and return 202 with\nOperation-Location/Retry-After headers; clients should poll\n/markdown/status until terminal then re-GET.",
                 "produces": [
                     "text/plain"
                 ],

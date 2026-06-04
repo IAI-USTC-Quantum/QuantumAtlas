@@ -1078,8 +1078,17 @@ def _seconds_until_next_daily_run() -> float:
 def cmd_mineru(args: argparse.Namespace) -> int:
     config = ServerConfig.from_env()
     if not config.mineru_api_token:
-        _print_err("MINERU_API_TOKEN must be set in your local .env to run MinerU client-side.")
+        _print_err(
+            "mineru_api_tokens must be set in your config.yaml "
+            "(or MINERU_API_TOKENS env) to run MinerU client-side."
+        )
         return 1
+    if len(config.mineru_api_tokens) > 1:
+        _print_err(
+            f"Note: {len(config.mineru_api_tokens)} mineru_api_tokens configured; "
+            "client uses the first one for now (server-side rotation is shipped "
+            "separately). Future versions will rotate keys client-side too."
+        )
 
     base_url = base_url_from_args(args)
     verify = request_verify(args)

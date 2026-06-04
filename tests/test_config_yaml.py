@@ -180,9 +180,26 @@ class TestYamlReadsBackThroughServerConfig:
 
     def test_nested_mineru_field(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         yaml_path = self._isolate_xdg(tmp_path, monkeypatch)
-        config_yaml.write_yaml_atomic(yaml_path, {"mineru_api_token": "jwt-xyz"})
+        config_yaml.write_yaml_atomic(yaml_path, {"mineru_api_tokens": ["jwt-xyz"]})
         cfg = ServerConfig.from_env()
+        assert cfg.mineru_api_tokens == ["jwt-xyz"]
+        # convenience accessor for the single-token shim
         assert cfg.mineru_api_token == "jwt-xyz"
+
+    def test_mineru_tokens_csv_string_coerced(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        # YAML scalar string with CSV is a common user shape — the
+        # field validator should split it into a list.
+        yaml_path = self._isolate_xdg(tmp_path, monkeypatch)
+        config_yaml.write_yaml_atomic(yaml_path, {"mineru_api_tokens": "jwt-a, jwt-b ,jwt-c"})
+        cfg = ServerConfig.from_env()
+        assert cfg.mineru_api_tokens == ["jwt-a", "jwt-b", "jwt-c"]
+        assert cfg.mineru_api_token == "jwt-a"
+
+    def test_mineru_tokens_empty_default(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._isolate_xdg(tmp_path, monkeypatch)
+        cfg = ServerConfig.from_env()
+        assert cfg.mineru_api_tokens == []
+        assert cfg.mineru_api_token is None
 
     def test_unknown_yaml_key_silently_ignored(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         yaml_path = self._isolate_xdg(tmp_path, monkeypatch)

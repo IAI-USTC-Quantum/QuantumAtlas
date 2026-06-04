@@ -330,7 +330,7 @@ func clearMinerUEnv(t *testing.T) {
 	t.Helper()
 	for _, k := range []string{
 		"QATLAS_ASSET_DOWNLOADS_ENABLED",
-		"MINERU_API_TOKEN",
+		"MINERU_API_TOKENS",
 		"MINERU_API_BASE_URL",
 		"MINERU_MODEL_VERSION",
 		"MINERU_LANGUAGE",
@@ -664,7 +664,7 @@ func TestLoad_AssetDownloadsIgnoresMinerUWhenSwitchOff(t *testing.T) {
 	// Switch OFF but MinerU envs set — must be silently ignored so a
 	// stale .env doesn't accidentally re-enable the surface.
 	t.Setenv("QATLAS_ASSET_DOWNLOADS_ENABLED", "false")
-	t.Setenv("MINERU_API_TOKEN", "stale-token")
+	t.Setenv("MINERU_API_TOKENS", "stale-token")
 	t.Setenv("MINERU_POLL_INTERVAL", "not-a-number") // would error if parsed
 
 	cfg, err := Load("")
@@ -674,8 +674,8 @@ func TestLoad_AssetDownloadsIgnoresMinerUWhenSwitchOff(t *testing.T) {
 	if cfg.AssetDownloadsEnabled {
 		t.Error("switch off but AssetDownloadsEnabled = true")
 	}
-	if cfg.MinerUAPIToken != "" {
-		t.Errorf("MinerUAPIToken = %q; want empty when switch off", cfg.MinerUAPIToken)
+	if len(cfg.MinerUAPITokens) != 0 {
+		t.Errorf("MinerUAPITokens = %v; want empty when switch off", cfg.MinerUAPITokens)
 	}
 }
 
@@ -684,7 +684,7 @@ func TestLoad_AssetDownloadsEnabledLoadsMinerU(t *testing.T) {
 	clearS3Env(t)
 	clearMinerUEnv(t)
 	t.Setenv("QATLAS_ASSET_DOWNLOADS_ENABLED", "true")
-	t.Setenv("MINERU_API_TOKEN", "tok-abc")
+	t.Setenv("MINERU_API_TOKENS", "tok-abc")
 	t.Setenv("MINERU_MAX_CONCURRENT_JOBS", "8")
 
 	cfg, err := Load("")

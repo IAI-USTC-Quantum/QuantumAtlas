@@ -49,7 +49,7 @@ qatlas config <subcommand>
 | Subcommand | 含义 |
 |---|---|
 | `path` | 打印 yaml 文件路径（无论是否存在） |
-| `set <key> <value>` | 写一个 key=value。`key` 用 **snake_case** YAML 字段名（如 `server_url` / `token` / `mineru_api_token`），不再用 env-var 大写形式。文件不存在时自动建（0600 perms）。敏感字段（含 `token` / `secret` / `key` / `password`）echo 时遮罩 |
+| `set <key> <value>` | 写一个 key=value。`key` 用 **snake_case** YAML 字段名（如 `server_url` / `token` / `mineru_api_tokens`），不再用 env-var 大写形式。文件不存在时自动建（0600 perms）。敏感字段（含 `token` / `secret` / `key` / `password`）echo 时遮罩 |
 | `unset <key>` | 删除一个 key |
 | `get <key>` | 打印 key 在 yaml + Field default overlay 后的真值。无值时 exit 1，适合 shell 插值 |
 | `show [--unmask]` | dump 所有字段（snake_case key: value 形式）；敏感值遮罩，`--unmask` 完整打印 |
@@ -79,7 +79,7 @@ uv tool install --prerelease=allow quantum-atlas
 qatlas --help                                       # 任意命令都触发 yaml 自动创建
 qatlas config set server_url https://quantum-atlas.ai
 qatlas config set token qat_xxxxxxxx                # 从 https://quantum-atlas.ai/pat 拿
-qatlas config set mineru_api_token eyJ0eXBlI...     # 若要跑 qatlas mineru
+qatlas config set mineru_api_tokens '[jwt-a, jwt-b]'  # 若要跑 qatlas mineru（CSV / 列表均可）
 
 # 看 yaml 路径
 qatlas config path
@@ -96,7 +96,7 @@ qatlas wiki list --type source
 qatlas mineru --batch-size 3
 ```
 
-> v0.16 / 更早升级到 v0.17.0：删了 `qatlas config init` 子命令、删了 `.env` → yaml 自动迁移。如果你之前在用 `~/.config/qatlas/.env`，**手工**把内容搬到 `~/.config/qatlas/config.yaml`（字段名从 `QATLAS_SERVER_URL` 改成 `server_url`、`MINERU_API_TOKEN` 改成 `mineru_api_token`，去掉 `QATLAS_` 前缀小写化），原 .env 删掉。
+> v0.16 / 更早升级到 v0.17.0：删了 `qatlas config init` 子命令、删了 `.env` → yaml 自动迁移。如果你之前在用 `~/.config/qatlas/.env`，**手工**把内容搬到 `~/.config/qatlas/config.yaml`（字段名从 `QATLAS_SERVER_URL` 改成 `server_url`、`MINERU_API_TOKEN` 改成 `mineru_api_tokens`（列表形式），去掉 `QATLAS_` 前缀小写化），原 .env 删掉。
 
 详细：[管理凭证](../guides/manage-credentials.md)、[入门](../getting-started.md)。
 
@@ -175,7 +175,7 @@ qatlas upload mineru <arxiv_id> --zip <path> [--source <tool>] [--overwrite]
 
 ### `qatlas mineru`
 
-本地跑 MinerU 解析 server 上的 PDF，推回完整 MinerU bundle。需要 `papers:write` scope + 本地 `MINERU_API_TOKEN`。
+本地跑 MinerU 解析 server 上的 PDF，推回完整 MinerU bundle。需要 `papers:write` scope + 本地 `mineru_api_tokens` 至少一条。
 
 ```
 qatlas mineru [arxiv_id] [options...]
@@ -339,7 +339,7 @@ LLM 辅助从 paper markdown 抽取算法描述。需要 `OPENAI_API_KEY` / `ANT
 | `QATLAS_TOKEN` | 同上 | 默认 bearer token |
 | `QATLAS_INSECURE` | 同上 | 默认跳过 TLS 校验 |
 | `QATLAS_WIKI_DIR` | `wiki` 子命令 | 本地 Wiki git checkout 路径 |
-| `MINERU_API_TOKEN` 等 `MINERU_*` | `mineru` 命令 | 本地 MinerU 调用配置 |
+| `MINERU_API_TOKENS` 等 `MINERU_*` | `mineru` 命令 | 本地 MinerU 调用配置（CSV 多 token 池）|
 | `XDG_CONFIG_HOME` | `auth` 命令 | hosts.yml 父目录 |
 
 完整列表：[环境变量参考](env-vars.md)。

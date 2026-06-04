@@ -61,16 +61,28 @@ func markdownHandler(re *core.RequestEvent, cfg *config.Config, store objstore.S
 			})
 		}
 		status := http.StatusBadGateway
+		detail := "conversion failed: " + errString(job.Err)
 		if errors.Is(job.ErrKind, mineru.ErrDailyLimit) {
 			status = http.StatusServiceUnavailable
+			// errString already carries the converter-built quota
+			// message ("server quota exhausted: all N MinerU API keys
+			// ... — service resumes at <ISO time>"). Make sure the
+			// "server quota exhausted" framing wins over the generic
+			// "conversion failed" prefix so the client renders the
+			// quota story, not a per-paper failure.
+			detail = errString(job.Err)
+			if detail == "" {
+				detail = "server quota exhausted: every configured MinerU API key has hit today's daily limit; service will resume automatically at the next midnight reset"
+			}
 		}
 		body := map[string]any{
-			"detail":   "conversion failed: " + errString(job.Err),
+			"detail":   detail,
 			"arxiv_id": canonical,
 			"kind":     jobKindLabel(job.ErrKind),
 		}
 		if !job.CooldownUntil.IsZero() {
 			body["retry_after"] = job.CooldownUntil.Unix()
+			body["retry_after_iso"] = job.CooldownUntil.UTC().Format(time.RFC3339)
 			re.Response.Header().Set("Retry-After", strconv.Itoa(int(time.Until(job.CooldownUntil).Seconds())+1))
 		}
 		return re.JSON(status, body)
@@ -132,6 +144,7 @@ func markdownStatusHandler(re *core.RequestEvent, cfg *config.Config, store objs
 			if !job.CooldownUntil.IsZero() && time.Now().Before(job.CooldownUntil) {
 				body["state"] = "cooldown"
 				body["retry_after"] = job.CooldownUntil.Unix()
+				body["retry_after_iso"] = job.CooldownUntil.UTC().Format(time.RFC3339)
 			} else {
 				body["state"] = "failed"
 			}
