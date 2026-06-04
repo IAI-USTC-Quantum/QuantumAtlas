@@ -754,13 +754,17 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	se.Router.BindFunc(func(re *core.RequestEvent) error {
 		if re.Request.Method == "GET" && re.Request.URL.Path == "/api/health" {
 			result := healthz.RunPB(re.Request.Context(), probes)
+			// Inject converter counters when asset downloads are enabled.
+			if cfg.AssetDownloadsEnabled {
+				result.Data.MinerU = mineruConverter.Snapshot()
+			}
 			// Anonymous callers get a sanitised payload: just
 			// status / version / uptime / per-check status. Strips
-			// bucket names, mesh endpoints, wiki commit info, and
-			// other deployment-topology fingerprints. Authenticated
-			// callers (system PAT or session JWT) see the full
-			// detail useful for dashboards. See healthz package doc
-			// § "Privacy tiers" for the full rationale.
+			// bucket names, mesh endpoints, wiki commit info, MinerU
+			// counters, and other deployment-topology fingerprints.
+			// Authenticated callers (system PAT or session JWT) see
+			// the full detail useful for dashboards. See healthz
+			// package doc § "Privacy tiers" for the full rationale.
 			if !routes.IsCallerAuthenticated(re) {
 				result = result.Sanitise()
 			}

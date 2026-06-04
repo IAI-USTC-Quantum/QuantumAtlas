@@ -104,6 +104,10 @@ type Result struct {
 	UptimeSeconds int64            `json:"uptime_seconds"`
 	Time          string           `json:"time"`
 	Checks        map[string]Check `json:"checks"`
+	// MinerU is the converter's counter snapshot. Only populated when
+	// QATLAS_ASSET_DOWNLOADS_ENABLED=true; omitted otherwise and
+	// stripped by Sanitise for anonymous callers.
+	MinerU any `json:"mineru,omitempty"`
 }
 
 // PBResult wraps Result into PocketBase's standard /api/health envelope
@@ -158,6 +162,8 @@ func (r Result) Sanitise() Result {
 		UptimeSeconds: r.UptimeSeconds,
 		Time:          r.Time,
 		Checks:        make(map[string]Check, len(r.Checks)),
+		// MinerU intentionally dropped: contains counter values that
+		// expose operational detail (submission counts, failure rates).
 	}
 	for name, c := range r.Checks {
 		out.Checks[name] = Check{

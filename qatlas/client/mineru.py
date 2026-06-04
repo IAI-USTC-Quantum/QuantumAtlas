@@ -88,6 +88,7 @@ from qatlas.parser.mineru_client import (
     MinerUFatalError,
     MinerURetryableError,
 )
+from qatlas.parser.keyring import AllKeysExhausted, KeyRing
 from qatlas.config import ServerConfig
 
 
@@ -322,6 +323,7 @@ def _run_mineru_to_zip(
     config: ServerConfig,
     pdf_url: str,
     no_cache: bool,
+    key_ring: Optional["KeyRing"] = None,
 ) -> Optional[Path]:
     """Submit pdf_url to MinerU, poll until done, download the entire result zip.
 
@@ -332,20 +334,43 @@ def _run_mineru_to_zip(
     Previously this helper extracted only ``full.md`` (via
     ``download_markdown_from_zip``) — that silently dropped images. The new
     flow preserves the whole bundle.
+
+    When *key_ring* is provided, acquires a client from the pool (with
+    automatic fail-over on daily-limit). When None, falls back to a
+    single-client from ``config.mineru_api_token``.
     """
-    client = MinerUClient(
-        config.mineru_api_token,
-        base_url=config.mineru_api_base_url,
-    )
-    mineru_task_id = client.submit_url_task(
-        url=pdf_url,
-        model_version=config.mineru_model_version,
-        language=config.mineru_language,
-        enable_formula=config.mineru_enable_formula,
-        enable_table=config.mineru_enable_table,
-        is_ocr=config.mineru_is_ocr,
-        no_cache=no_cache,
-    )
+    if key_ring is not None:
+        from qatlas.parser.keyring import AllKeysExhausted
+        try:
+            client, slot = key_ring.acquire()
+        except AllKeysExhausted as exc:
+            _print_err(f"[daily-limit] {exc}")
+            return None
+    else:
+        client = MinerUClient(
+            config.mineru_api_token,
+            base_url=config.mineru_api_base_url,
+        )
+        slot = -1
+
+    try:
+        mineru_task_id = client.submit_url_task(
+            url=pdf_url,
+            model_version=config.mineru_model_version,
+            language=config.mineru_language,
+            enable_formula=config.mineru_enable_formula,
+            enable_table=config.mineru_enable_table,
+            is_ocr=config.mineru_is_ocr,
+            no_cache=no_cache,
+        )
+    except MinerUDailyLimitError as exc:
+        if key_ring is not None and slot >= 0:
+            key_ring.mark_daily_limit(slot)
+            _print_err(f"[daily-limit] Key slot {slot} exhausted, rotating...")
+            return _run_mineru_to_zip(config=config, pdf_url=pdf_url, no_cache=no_cache, key_ring=key_ring)
+        _print_err(f"[daily-limit] {exc}")
+        return None
+
     _print_err(f"MinerU task id: {mineru_task_id}")
 
     poll_interval = max(float(config.mineru_poll_interval), 1.0)
@@ -432,6 +457,7 @@ def _process_one(
     arxiv_id: str,
     verify: bool,
     headers: dict[str, str],
+    key_ring: Optional[KeyRing] = None,
 ) -> int:
     """Process exactly one arxiv_id. Returns 0 on success/skip, 1 on hard error."""
     _print_err(f"--- {arxiv_id} ---")
@@ -513,6 +539,7 @@ def _process_one(
             config=config,
             pdf_url=pdf_url,
             no_cache=args.no_cache,
+            key_ring=key_ring,
         )
         if zip_path is None:
             _release_claim(
@@ -589,6 +616,7 @@ def _drain_queue_once(
     config: ServerConfig,
     verify: bool,
     headers: dict[str, str],
+    key_ring: Optional[KeyRing] = None,
 ) -> "_BatchOutcome":
     """Run one queue-drain pass via the MinerU batch API.
 
@@ -644,12 +672,26 @@ def _drain_queue_once(
             daily_limit_hit=False,
         )
 
-    # Phase 2: submit the batch. Daily-limit at this point is the cleanest
-    # signal we get — release every claim and tell the caller to back off.
-    mineru = MinerUClient(
-        config.mineru_api_token,
-        base_url=config.mineru_api_base_url,
-    )
+    # Phase 2: submit the batch. Use key_ring if available for automatic
+    # fail-over on daily-limit, otherwise single-token fallback.
+    if key_ring is not None:
+        try:
+            mineru, slot = key_ring.acquire()
+        except AllKeysExhausted as exc:
+            _print_err(f"[daily-limit] {exc}. Releasing all claims; will back off until tomorrow.")
+            _release_all(args, base_url, jobs, verify, headers)
+            _cleanup_workdirs(jobs)
+            return _BatchOutcome(
+                processed=len(jobs) + prep_failures,
+                failures=len(jobs) + prep_failures,
+                daily_limit_hit=True,
+            )
+    else:
+        mineru = MinerUClient(
+            config.mineru_api_token,
+            base_url=config.mineru_api_base_url,
+        )
+        slot = -1
     batch_id: str
     try:
         batch_id = mineru.submit_url_batch(
@@ -662,8 +704,18 @@ def _drain_queue_once(
             no_cache=args.no_cache,
         )
     except MinerUDailyLimitError as exc:
+        if key_ring is not None and slot >= 0:
+            key_ring.mark_daily_limit(slot)
+            remaining = key_ring.available_slots()
+            _print_err(
+                f"[daily-limit] Key slot {slot} exhausted ({exc}); "
+                f"{remaining} key(s) remaining. Rotating..."
+            )
+            if remaining > 0:
+                # Retry with the next key — recursive but bounded by pool size.
+                return _drain_queue_once(args, base_url, config, verify, headers, key_ring)
         _print_err(
-            f"[daily-limit] MinerU rejected batch submission ({exc}). "
+            f"[daily-limit] All keys exhausted ({exc}). "
             "Releasing all claims; will back off until tomorrow."
         )
         _release_all(args, base_url, jobs, verify, headers)
@@ -1083,12 +1135,13 @@ def cmd_mineru(args: argparse.Namespace) -> int:
             "(or MINERU_API_TOKENS env) to run MinerU client-side."
         )
         return 1
-    if len(config.mineru_api_tokens) > 1:
-        _print_err(
-            f"Note: {len(config.mineru_api_tokens)} mineru_api_tokens configured; "
-            "client uses the first one for now (server-side rotation is shipped "
-            "separately). Future versions will rotate keys client-side too."
-        )
+
+    # Build the key ring — mirrors Go server's mineru.NewKeyRing.
+    key_ring = KeyRing(
+        config.mineru_api_tokens,
+        base_url=config.mineru_api_base_url,
+    )
+    _print_err(f"MinerU key ring: {key_ring.size} key(s) loaded")
 
     base_url = base_url_from_args(args)
     verify = request_verify(args)
@@ -1098,7 +1151,7 @@ def cmd_mineru(args: argparse.Namespace) -> int:
     # paper, one task — no batching, no quota bookkeeping beyond what the
     # single SubmitURLTask path naturally surfaces.
     if args.arxiv_id:
-        return _process_one(args, base_url, config, args.arxiv_id, verify, headers)
+        return _process_one(args, base_url, config, args.arxiv_id, verify, headers, key_ring=key_ring)
 
     if args.watch:
         _install_signal_handlers()
@@ -1110,7 +1163,7 @@ def cmd_mineru(args: argparse.Namespace) -> int:
         )
         consecutive_empty = 0
         while not _SHUTDOWN_REQUESTED:
-            outcome = _drain_queue_once(args, base_url, config, verify, headers)
+            outcome = _drain_queue_once(args, base_url, config, verify, headers, key_ring=key_ring)
             if outcome.daily_limit_hit:
                 # Quota burnt — no point hammering MinerU until reset.
                 sleep_s = _seconds_until_next_daily_run()
@@ -1138,7 +1191,7 @@ def cmd_mineru(args: argparse.Namespace) -> int:
         return 0
 
     # Default queue mode: one batch pass, then exit.
-    outcome = _drain_queue_once(args, base_url, config, verify, headers)
+    outcome = _drain_queue_once(args, base_url, config, verify, headers, key_ring=key_ring)
     if outcome.daily_limit_hit:
         _print_err(
             f"[daily-limit] MinerU quota exhausted; exiting {EXIT_DAILY_LIMIT} "
