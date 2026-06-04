@@ -1073,7 +1073,7 @@ wheels = [
 
 [[package]]
 name = "quantum-atlas"
-version = "0.18.1a0"
+version = "0.18.1"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
