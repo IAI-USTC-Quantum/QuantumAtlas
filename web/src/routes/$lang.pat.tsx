@@ -1,11 +1,19 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Clipboard, KeyRound, Plus, Shield, Trash2 } from 'lucide-react'
+import {
+  Clipboard,
+  KeyRound,
+  Plus,
+  Send,
+  Shield,
+  Terminal,
+  Trash2,
+} from 'lucide-react'
 import { toast } from 'sonner'
 
-import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -31,8 +39,41 @@ import { Panel } from '@/components/panel'
 import { StatusBlock } from '@/components/status-block'
 import { pb } from '@/lib/pb'
 
+// PATSearch carries the optional CLI-loopback hand-off parameters. The
+// qatlas client's `auth login` (loopback flow) bounces the user to
+// /<lang>/pat with these set so the SPA can:
+//   1. show a "CLI requesting a token" consent banner,
+//   2. pre-fill the create-token dialog with the suggested name,
+//      scopes and expiry,
+//   3. POST the freshly-minted plaintext back to the local
+//      127.0.0.1:<port> server the CLI spun up.
+//
+// All five fields are optional; missing any (or supplying an
+// untrustworthy cli_callback) collapses the UI back to the normal
+// "create a token, show it once" UX.
+type PATSearch = {
+  cli_callback?: string
+  cli_state?: string
+  cli_name?: string
+  cli_scopes?: string
+  cli_expires_days?: string
+}
+
 export const Route = createFileRoute('/$lang/pat')({
   component: PATPage,
+  validateSearch: (search: Record<string, unknown>): PATSearch => ({
+    cli_callback:
+      typeof search.cli_callback === 'string' ? search.cli_callback : undefined,
+    cli_state:
+      typeof search.cli_state === 'string' ? search.cli_state : undefined,
+    cli_name: typeof search.cli_name === 'string' ? search.cli_name : undefined,
+    cli_scopes:
+      typeof search.cli_scopes === 'string' ? search.cli_scopes : undefined,
+    cli_expires_days:
+      typeof search.cli_expires_days === 'string'
+        ? search.cli_expires_days
+        : undefined,
+  }),
 })
 
 type PATSummary = {
@@ -115,8 +156,16 @@ function PATPage() {
   const { t } = useTranslation('pat')
   const { t: tc } = useTranslation('common')
   const qc = useQueryClient()
+  const search = Route.useSearch()
   const list = useQuery({ queryKey: ['pat-list'], queryFn: listPATs })
   const scopes = useQuery({ queryKey: ['pat-scopes'], queryFn: fetchScopes })
+
+  // Parse + sanity-check the CLI hand-off params exactly once per
+  // mount. parseCLIRequest is intentionally strict: only a loopback
+  // http://127.0.0.1:<port> URL is accepted, so a malicious link like
+  // `/pat?cli_callback=https://attacker.example/` cannot trick the
+  // user's browser into POSTing their plaintext PAT off-host.
+  const cliRequest = useMemo(() => parseCLIRequest(search), [search])
 
   const [creating, setCreating] = useState(false)
   const [name, setName] = useState('')
@@ -124,6 +173,31 @@ function PATPage() {
   const [expiresDays, setExpiresDays] = useState<number>(90)
   const [selectedScopes, setSelectedScopes] = useState<Set<string>>(new Set())
   const [issued, setIssued] = useState<PATCreateResponse | null>(null)
+  const [cliDelivered, setCLIDelivered] = useState(false)
+  const [forceReveal, setForceReveal] = useState(false)
+  const cliPrefilledRef = useRef(false)
+  // When the CLI flow is active we deliver the plaintext to the
+  // local loopback via form-POST navigation and SHOULD NOT auto-pop
+  // the reveal dialog: the tab is about to navigate away anyway, and
+  // flashing the secret in the SPA is unnecessary attack surface.
+  // The dialog stays available as a manual fallback (see the
+  // "delivered" banner's "didn't pick up?" link).
+  const revealOpen = !!issued && (!cliRequest || forceReveal)
+
+  // When the user lands here via the CLI flow, auto-open the create
+  // dialog with all suggested values pre-filled. The ref guard makes
+  // this idempotent — if the user dismisses the dialog we won't
+  // re-open it on every re-render.
+  useEffect(() => {
+    if (!cliRequest) return
+    if (cliPrefilledRef.current) return
+    cliPrefilledRef.current = true
+    setName(cliRequest.suggestedName)
+    setDescription(cliRequest.description ?? '')
+    setExpiresDays(cliRequest.expiresInDays ?? 90)
+    setSelectedScopes(new Set(cliRequest.scopes))
+    setCreating(true)
+  }, [cliRequest])
 
   const createMutation = useMutation({
     mutationFn: createPAT,
@@ -135,6 +209,16 @@ function PATPage() {
       setExpiresDays(90)
       setSelectedScopes(new Set())
       void qc.invalidateQueries({ queryKey: ['pat-list'] })
+      // If the user reached this page through the CLI loopback flow,
+      // hand the plaintext back to the local 127.0.0.1:<port> server
+      // via a form-POST navigation (see deliverToCLI's comment for
+      // why form-POST rather than fetch). The current tab navigates
+      // to the CLI's success page; the issued-token reveal dialog
+      // serves only as a fallback escape hatch (see below).
+      if (cliRequest) {
+        setCLIDelivered(true)
+        deliverToCLI(cliRequest, data)
+      }
     },
   })
 
@@ -182,6 +266,53 @@ function PATPage() {
         title={t('title')}
         copy={t('subtitle')}
       />
+
+      {cliRequest && !cliDelivered && (
+        <Alert>
+          <Terminal className="size-4" />
+          <AlertTitle>{t('cliBanner.title')}</AlertTitle>
+          <AlertDescription>
+            {t('cliBanner.body', {
+              callback: cliRequest.callback,
+              name: cliRequest.suggestedName,
+              scopes:
+                cliRequest.scopes.length > 0
+                  ? cliRequest.scopes.join(', ')
+                  : t('cliBanner.noScopes'),
+              days: cliRequest.expiresInDays,
+            })}
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {cliRequest && cliDelivered && (
+        <Alert>
+          <Send className="size-4" />
+          <AlertTitle>{t('cliBanner.deliveredTitle')}</AlertTitle>
+          <AlertDescription>
+            {t('cliBanner.deliveredBody', { callback: cliRequest.callback })}
+            {issued && (
+              <Button
+                type="button"
+                variant="link"
+                className="h-auto px-0 pl-2 align-baseline"
+                onClick={() => setForceReveal(true)}
+              >
+                {t('cliBanner.fallbackReveal')}
+              </Button>
+            )}
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {search.cli_callback && !cliRequest && (
+        <Alert variant="destructive">
+          <AlertTitle>{t('cliBanner.invalidTitle')}</AlertTitle>
+          <AlertDescription>
+            {t('cliBanner.invalidBody', { callback: search.cli_callback })}
+          </AlertDescription>
+        </Alert>
+      )}
 
       <Panel
         title={t('yourTokens')}
@@ -386,7 +517,14 @@ function PATPage() {
       </Dialog>
 
       {/* Issued-token reveal dialog */}
-      <Dialog open={!!issued} onOpenChange={(open) => !open && setIssued(null)}>
+      <Dialog
+        open={revealOpen}
+        onOpenChange={(open) => {
+          if (open) return
+          setIssued(null)
+          setForceReveal(false)
+        }}
+      >
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>{t('issued.title')}</DialogTitle>
@@ -460,4 +598,100 @@ function describeExpiry(
   if (days >= 90) return t('expiry.months', { count: Math.round(days / 30) })
   if (days >= 30) return t('expiry.month', { count: Math.round(days / 30) })
   return t('expiry.days', { count: days })
+}
+
+type CLIRequest = {
+  callback: string
+  state: string
+  suggestedName: string
+  description?: string
+  scopes: string[]
+  expiresInDays: number
+}
+
+// parseCLIRequest is the *only* place we decide a CLI hand-off is
+// trustworthy. The constraints:
+//
+//   - cli_callback parses as a URL
+//   - scheme is exactly 'http:' (NOT 'https:': real loopback servers
+//     don't have a cert; an https URL implies a remote attacker)
+//   - hostname is exactly '127.0.0.1' (NOT 'localhost'; resolvers
+//     differ across OSes and 'localhost' could leak via /etc/hosts)
+//   - port is present (no empty port = default-80 attack)
+//   - cli_state is non-empty (so we have something to round-trip
+//     and the local server can pin its expected value)
+//
+// Anything missing or mis-shaped → return null and the page falls
+// back to the normal "create-a-token, show it once" UX.
+function parseCLIRequest(search: PATSearch): CLIRequest | null {
+  if (!search.cli_callback || !search.cli_state) return null
+  let url: URL
+  try {
+    url = new URL(search.cli_callback)
+  } catch {
+    return null
+  }
+  if (url.protocol !== 'http:') return null
+  if (url.hostname !== '127.0.0.1') return null
+  if (!url.port) return null
+  const scopes = (search.cli_scopes ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+  const daysRaw = Number(search.cli_expires_days ?? '90')
+  const expiresInDays =
+    Number.isFinite(daysRaw) && daysRaw >= 1 && daysRaw <= 365
+      ? Math.floor(daysRaw)
+      : 90
+  return {
+    callback: url.toString(),
+    state: search.cli_state,
+    suggestedName: search.cli_name ?? 'qatlas-cli',
+    scopes,
+    expiresInDays,
+  }
+}
+
+// deliverToCLI hands the freshly-minted plaintext PAT back to the
+// local 127.0.0.1:<port> server the qatlas client spun up.
+//
+// Why form-POST navigation (not fetch())?
+//
+//   - Top-level form navigations are exempt from CORS — they were
+//     allowed cross-origin before CORS existed and that has not
+//     changed. fetch() with mode:"no-cors" returns an opaque response
+//     so the SPA can't tell if the delivery actually succeeded; the
+//     user just sees the SPA sitting on /pat with no clear feedback.
+//   - Form POST navigates the current tab to the loopback URL. The
+//     local Python server returns a full HTML success page, so the
+//     user sees a real "✓ logged in, you can close this tab" page
+//     and not a SPA-side "I tried" toast.
+//   - Token plaintext lives in the request body (not the URL), so it
+//     never enters browser history / referer headers / server logs
+//     that index URLs. (gh auth login -w uses GET; we use POST
+//     precisely to avoid this.)
+function deliverToCLI(req: CLIRequest, data: PATCreateResponse): void {
+  const form = document.createElement('form')
+  form.method = 'POST'
+  form.action = req.callback
+  form.target = '_self'
+  form.enctype = 'application/x-www-form-urlencoded'
+  form.style.display = 'none'
+  const fields: Record<string, string> = {
+    state: req.state,
+    token: data.plaintext,
+    name: data.name,
+    prefix: data.prefix,
+    scopes: data.scopes.join(','),
+    expires_at: data.expires_at,
+  }
+  for (const [key, value] of Object.entries(fields)) {
+    const input = document.createElement('input')
+    input.type = 'hidden'
+    input.name = key
+    input.value = value
+    form.appendChild(input)
+  }
+  document.body.appendChild(form)
+  form.submit()
 }

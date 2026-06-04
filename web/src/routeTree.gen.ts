@@ -11,11 +11,13 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as PatRouteImport } from './routes/pat'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as DeviceRouteImport } from './routes/device'
 import { Route as LangRouteImport } from './routes/$lang'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as LangIndexRouteImport } from './routes/$lang.index'
 import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
 import { Route as LangPatRouteImport } from './routes/$lang.pat'
+import { Route as LangDeviceRouteImport } from './routes/$lang.device'
 import { Route as LangWikiIndexRouteImport } from './routes/$lang.wiki.index'
 import { Route as LangGraphIndexRouteImport } from './routes/$lang.graph.index'
 import { Route as LangWikiSearchRouteImport } from './routes/$lang.wiki.search'
@@ -30,6 +32,11 @@ const PatRoute = PatRouteImport.update({
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DeviceRoute = DeviceRouteImport.update({
+  id: '/device',
+  path: '/device',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LangRoute = LangRouteImport.update({
@@ -55,6 +62,11 @@ const AuthCallbackRoute = AuthCallbackRouteImport.update({
 const LangPatRoute = LangPatRouteImport.update({
   id: '/pat',
   path: '/pat',
+  getParentRoute: () => LangRoute,
+} as any)
+const LangDeviceRoute = LangDeviceRouteImport.update({
+  id: '/device',
+  path: '/device',
   getParentRoute: () => LangRoute,
 } as any)
 const LangWikiIndexRoute = LangWikiIndexRouteImport.update({
@@ -86,8 +98,10 @@ const LangGraphNodeSplatRoute = LangGraphNodeSplatRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/$lang': typeof LangRouteWithChildren
+  '/device': typeof DeviceRoute
   '/login': typeof LoginRoute
   '/pat': typeof PatRoute
+  '/$lang/device': typeof LangDeviceRoute
   '/$lang/pat': typeof LangPatRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/$lang/': typeof LangIndexRoute
@@ -99,8 +113,10 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/device': typeof DeviceRoute
   '/login': typeof LoginRoute
   '/pat': typeof PatRoute
+  '/$lang/device': typeof LangDeviceRoute
   '/$lang/pat': typeof LangPatRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/$lang': typeof LangIndexRoute
@@ -114,8 +130,10 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/$lang': typeof LangRouteWithChildren
+  '/device': typeof DeviceRoute
   '/login': typeof LoginRoute
   '/pat': typeof PatRoute
+  '/$lang/device': typeof LangDeviceRoute
   '/$lang/pat': typeof LangPatRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/$lang/': typeof LangIndexRoute
@@ -130,8 +148,10 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/$lang'
+    | '/device'
     | '/login'
     | '/pat'
+    | '/$lang/device'
     | '/$lang/pat'
     | '/auth/callback'
     | '/$lang/'
@@ -143,8 +163,10 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/device'
     | '/login'
     | '/pat'
+    | '/$lang/device'
     | '/$lang/pat'
     | '/auth/callback'
     | '/$lang'
@@ -157,8 +179,10 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/$lang'
+    | '/device'
     | '/login'
     | '/pat'
+    | '/$lang/device'
     | '/$lang/pat'
     | '/auth/callback'
     | '/$lang/'
@@ -172,6 +196,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   LangRoute: typeof LangRouteWithChildren
+  DeviceRoute: typeof DeviceRoute
   LoginRoute: typeof LoginRoute
   PatRoute: typeof PatRoute
   AuthCallbackRoute: typeof AuthCallbackRoute
@@ -191,6 +216,13 @@ declare module '@tanstack/react-router' {
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/device': {
+      id: '/device'
+      path: '/device'
+      fullPath: '/device'
+      preLoaderRoute: typeof DeviceRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/$lang': {
@@ -226,6 +258,13 @@ declare module '@tanstack/react-router' {
       path: '/pat'
       fullPath: '/$lang/pat'
       preLoaderRoute: typeof LangPatRouteImport
+      parentRoute: typeof LangRoute
+    }
+    '/$lang/device': {
+      id: '/$lang/device'
+      path: '/device'
+      fullPath: '/$lang/device'
+      preLoaderRoute: typeof LangDeviceRouteImport
       parentRoute: typeof LangRoute
     }
     '/$lang/wiki/': {
@@ -267,6 +306,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface LangRouteChildren {
+  LangDeviceRoute: typeof LangDeviceRoute
   LangPatRoute: typeof LangPatRoute
   LangIndexRoute: typeof LangIndexRoute
   LangWikiSearchRoute: typeof LangWikiSearchRoute
@@ -277,6 +317,7 @@ interface LangRouteChildren {
 }
 
 const LangRouteChildren: LangRouteChildren = {
+  LangDeviceRoute: LangDeviceRoute,
   LangPatRoute: LangPatRoute,
   LangIndexRoute: LangIndexRoute,
   LangWikiSearchRoute: LangWikiSearchRoute,
@@ -291,6 +332,7 @@ const LangRouteWithChildren = LangRoute._addFileChildren(LangRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   LangRoute: LangRouteWithChildren,
+  DeviceRoute: DeviceRoute,
   LoginRoute: LoginRoute,
   PatRoute: PatRoute,
   AuthCallbackRoute: AuthCallbackRoute,

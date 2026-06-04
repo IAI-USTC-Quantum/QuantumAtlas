@@ -17,7 +17,14 @@ import { DEFAULT_LANG, isLang, type Lang } from '@/i18n'
 // localStorage > navigator > DEFAULT_LANG fallback chain.
 export const Route = createFileRoute('/pat')({
   beforeLoad: () => {
-    throw redirect({ to: '/$lang/pat', params: { lang: detectLang() } })
+    throw redirect({
+      to: '/$lang/pat',
+      params: { lang: detectLang() },
+      // Forward search params (e.g. cli_callback / cli_state from the
+      // qatlas CLI loopback flow). Without this they're dropped on the
+      // language redirect and the SPA never sees the CLI hand-off.
+      search: (prev) => prev,
+    })
   },
 })
 

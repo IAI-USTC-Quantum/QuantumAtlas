@@ -24,7 +24,12 @@ from __future__ import annotations
 
 import io
 import os
+import socket
 import stat
+import threading
+import time
+import urllib.parse
+import urllib.request
 
 import pytest
 import yaml
@@ -311,3 +316,493 @@ def test_on_disk_schema_is_documented_shape(capsys):
     assert set(entry.keys()) == {"token", "added_at"}
     # No surprise nested secrets / token_hash / etc.
     assert entry["token"] == "qat_SchemaCheck"
+
+
+# ---------------------------------------------------------------------------
+# Headless detection
+# ---------------------------------------------------------------------------
+
+
+def _ns(**fields):
+    """Tiny argparse.Namespace constructor for the _should_use_device tests."""
+    import argparse
+
+    defaults = {"device": False, "no_browser": False}
+    defaults.update(fields)
+    return argparse.Namespace(**defaults)
+
+
+def test_should_use_device_explicit_flag(monkeypatch):
+    monkeypatch.delenv("SSH_TTY", raising=False)
+    monkeypatch.delenv("SSH_CONNECTION", raising=False)
+    monkeypatch.delenv("QATLAS_AUTH_NO_BROWSER", raising=False)
+    monkeypatch.setenv("DISPLAY", ":0")
+    assert auth._should_use_device(_ns(device=True)) is True
+    assert auth._should_use_device(_ns(no_browser=True)) is True
+
+
+def test_should_use_device_env_override(monkeypatch):
+    monkeypatch.setenv("QATLAS_AUTH_NO_BROWSER", "1")
+    monkeypatch.delenv("SSH_TTY", raising=False)
+    monkeypatch.delenv("SSH_CONNECTION", raising=False)
+    monkeypatch.setenv("DISPLAY", ":0")
+    assert auth._should_use_device(_ns()) is True
+
+
+def test_should_use_device_ssh_session(monkeypatch):
+    monkeypatch.delenv("QATLAS_AUTH_NO_BROWSER", raising=False)
+    monkeypatch.setenv("SSH_TTY", "/dev/pts/3")
+    monkeypatch.setenv("DISPLAY", ":0")  # SSH wins even with X forwarded
+    assert auth._should_use_device(_ns()) is True
+
+
+def test_should_use_device_linux_no_display(monkeypatch):
+    """On Linux with no DISPLAY / WAYLAND_DISPLAY we have no GUI to
+    open, so device flow is the right default. Skip if not on Linux —
+    the branch is guarded by sys.platform and isn't reachable
+    elsewhere.
+    """
+    import sys
+
+    if not sys.platform.startswith("linux"):
+        pytest.skip("Linux-only branch")
+    monkeypatch.delenv("QATLAS_AUTH_NO_BROWSER", raising=False)
+    monkeypatch.delenv("SSH_TTY", raising=False)
+    monkeypatch.delenv("SSH_CONNECTION", raising=False)
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    assert auth._should_use_device(_ns()) is True
+
+
+def test_should_use_device_linux_with_display_uses_loopback(monkeypatch):
+    monkeypatch.delenv("QATLAS_AUTH_NO_BROWSER", raising=False)
+    monkeypatch.delenv("SSH_TTY", raising=False)
+    monkeypatch.delenv("SSH_CONNECTION", raising=False)
+    monkeypatch.setenv("DISPLAY", ":0")
+    assert auth._should_use_device(_ns()) is False
+
+
+# ---------------------------------------------------------------------------
+# _parse_scopes
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("", []),
+        ("papers:write", ["papers:write"]),
+        ("papers:write,wiki:read", ["papers:write", "wiki:read"]),
+        ("  papers:write , , wiki:read  ", ["papers:write", "wiki:read"]),
+        ("papers:write,papers:write", ["papers:write"]),  # dedupe
+    ],
+)
+def test_parse_scopes(raw, expected):
+    assert auth._parse_scopes(raw) == expected
+
+
+# ---------------------------------------------------------------------------
+# Loopback flow — exercise the embedded HTTPServer with a real browser-
+# style POST from a background thread.
+# ---------------------------------------------------------------------------
+
+
+def _post_back(callback_url: str, *, state: str, token: str, name: str,
+               scopes: str, prefix: str = "qat_TestPr", expires_at: str = "2099-01-01") -> int:
+    """Simulate the SPA's form-POST navigation back to the loopback."""
+    body = urllib.parse.urlencode(
+        {
+            "state": state,
+            "token": token,
+            "name": name,
+            "scopes": scopes,
+            "prefix": prefix,
+            "expires_at": expires_at,
+        }
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        callback_url,
+        data=body,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        return resp.status
+
+
+def test_loopback_login_happy_path(monkeypatch):
+    """End-to-end: start the embedded server, simulate the browser
+    POST, assert the returned payload round-trips intact.
+    """
+    # webbrowser.open() must NOT actually pop a browser in CI.
+    monkeypatch.setattr(auth.webbrowser, "open", lambda *_, **__: True)
+
+    captured: dict[str, str] = {}
+
+    def driver() -> None:
+        # Wait until the server has bound. We don't know the port in
+        # advance, so we poll the captured callback URL.
+        for _ in range(200):
+            if "callback" in captured:
+                break
+            time.sleep(0.01)
+        callback_url = captured["callback"]
+        state = captured["state"]
+        _post_back(
+            callback_url,
+            state=state,
+            token="qat_LoopbackXYZ",
+            name="qatlas-cli-test-2026-06-01",
+            scopes="papers:write,wiki:read",
+        )
+
+    # Patch token_urlsafe so we can reach in and grab the state via
+    # captured["state"] before the browser POST goes out.
+    real_token_urlsafe = auth.secrets.token_urlsafe
+
+    def capturing_token(n=32):
+        s = real_token_urlsafe(n)
+        captured["state"] = s
+        return s
+
+    monkeypatch.setattr(auth.secrets, "token_urlsafe", capturing_token)
+
+    # Same trick for the callback URL — _loopback_login prints it
+    # to stderr, but it's easier to monkeypatch print() than parse
+    # stderr. We grab it from inside webbrowser.open instead, which
+    # is always called with the consent URL containing cli_callback.
+    def grab(url, *_, **__):
+        parsed = urllib.parse.urlparse(url)
+        qs = urllib.parse.parse_qs(parsed.query)
+        captured["callback"] = qs["cli_callback"][0]
+        return True
+
+    monkeypatch.setattr(auth.webbrowser, "open", grab)
+
+    t = threading.Thread(target=driver, daemon=True)
+    t.start()
+
+    received = auth._loopback_login(
+        base_url="https://quantum-atlas.ai",
+        verify=True,
+        suggested_name="qatlas-cli-test-2026-06-01",
+        scopes=["papers:write", "wiki:read"],
+        expires_days=90,
+        port=0,
+        timeout=10.0,
+    )
+    t.join(timeout=5)
+
+    assert received["token"] == "qat_LoopbackXYZ"
+    assert received["name"] == "qatlas-cli-test-2026-06-01"
+    assert received["scopes"] == "papers:write,wiki:read"
+    assert received["prefix"] == "qat_TestPr"
+    assert received["expires_at"] == "2099-01-01"
+
+
+def test_loopback_login_state_mismatch_is_rejected(monkeypatch):
+    """A POST with the wrong ``state`` must NOT return a token. The
+    handler should answer 400, the embedded server should keep
+    listening (handle_request returns after one request — we use the
+    fact that the wrong-state POST sets the event but populates
+    `proto_errors`, raising _LoopbackProtocolError).
+    """
+    captured: dict[str, str] = {}
+
+    def grab(url, *_, **__):
+        parsed = urllib.parse.urlparse(url)
+        qs = urllib.parse.parse_qs(parsed.query)
+        captured["callback"] = qs["cli_callback"][0]
+        return True
+
+    monkeypatch.setattr(auth.webbrowser, "open", grab)
+
+    def driver() -> None:
+        for _ in range(200):
+            if "callback" in captured:
+                break
+            time.sleep(0.01)
+        try:
+            _post_back(
+                captured["callback"],
+                state="WRONG_STATE_VALUE",
+                token="qat_AttackerToken",
+                name="evil",
+                scopes="",
+            )
+        except urllib.error.HTTPError:
+            # 400 expected; absorb so the thread doesn't print.
+            pass
+
+    threading.Thread(target=driver, daemon=True).start()
+    with pytest.raises(auth._LoopbackProtocolError):
+        auth._loopback_login(
+            base_url="https://quantum-atlas.ai",
+            verify=True,
+            suggested_name="x",
+            scopes=[],
+            expires_days=90,
+            port=0,
+            timeout=10.0,
+        )
+
+
+def test_loopback_login_bad_token_prefix_is_rejected(monkeypatch):
+    """A POST with a state-valid but qat_-less token must be rejected
+    so a buggy SPA can't accidentally write a session JWT into hosts.yml
+    via the loopback path.
+    """
+    captured: dict[str, str] = {}
+
+    def grab(url, *_, **__):
+        parsed = urllib.parse.urlparse(url)
+        qs = urllib.parse.parse_qs(parsed.query)
+        captured["callback"] = qs["cli_callback"][0]
+        captured["state"] = qs["cli_state"][0]
+        return True
+
+    monkeypatch.setattr(auth.webbrowser, "open", grab)
+
+    def driver() -> None:
+        for _ in range(200):
+            if "callback" in captured:
+                break
+            time.sleep(0.01)
+        try:
+            _post_back(
+                captured["callback"],
+                state=captured["state"],
+                token="eyJabc.def.ghi",
+                name="x",
+                scopes="",
+            )
+        except urllib.error.HTTPError:
+            pass
+
+    threading.Thread(target=driver, daemon=True).start()
+    with pytest.raises(auth._LoopbackProtocolError):
+        auth._loopback_login(
+            base_url="https://quantum-atlas.ai",
+            verify=True,
+            suggested_name="x",
+            scopes=[],
+            expires_days=90,
+            port=0,
+            timeout=10.0,
+        )
+
+
+def test_loopback_login_timeout(monkeypatch):
+    """No browser POST → _LoopbackTimeout after the deadline."""
+    monkeypatch.setattr(auth.webbrowser, "open", lambda *_, **__: True)
+    with pytest.raises(auth._LoopbackTimeout):
+        auth._loopback_login(
+            base_url="https://quantum-atlas.ai",
+            verify=True,
+            suggested_name="x",
+            scopes=[],
+            expires_days=90,
+            port=0,
+            timeout=0.5,
+        )
+
+
+def test_loopback_login_bind_error_raises(monkeypatch):
+    """If the requested port is already taken, surface
+    _LoopbackBindError so the caller can fall back to --device.
+    """
+    # Hold a socket on 127.0.0.1 and try to bind the same port.
+    holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    holder.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+    holder.bind(("127.0.0.1", 0))
+    holder.listen(1)
+    port = holder.getsockname()[1]
+    try:
+        with pytest.raises(auth._LoopbackBindError):
+            auth._loopback_login(
+                base_url="https://quantum-atlas.ai",
+                verify=True,
+                suggested_name="x",
+                scopes=[],
+                expires_days=90,
+                port=port,
+                timeout=1.0,
+            )
+    finally:
+        holder.close()
+
+
+# ---------------------------------------------------------------------------
+# Device flow — mock the HTTP poll loop.
+# ---------------------------------------------------------------------------
+
+
+class _FakeResponse:
+    """Minimal ``requests.Response`` shim for the poll loop."""
+
+    def __init__(self, *, status_code: int, payload):
+        self.status_code = status_code
+        self._payload = payload
+        self.text = "" if isinstance(payload, dict) else str(payload)
+
+    def json(self):
+        if isinstance(self._payload, Exception):
+            raise self._payload
+        return self._payload
+
+
+def test_device_login_happy_path(monkeypatch):
+    """pending → pending → approved/200 with token payload."""
+    monkeypatch.setattr(auth.webbrowser, "open", lambda *_, **__: True)
+    monkeypatch.setattr(auth.time, "sleep", lambda _s: None)  # no real wait
+
+    calls = {"count": 0}
+
+    def fake_post(url, **_):
+        calls["count"] += 1
+        if url.endswith("/api/oauth/device/code"):
+            return _FakeResponse(
+                status_code=200,
+                payload={
+                    "device_code": "DEV-XYZ",
+                    "user_code": "WDJB-MJHT",
+                    "verification_uri": "https://quantum-atlas.ai/device",
+                    "verification_uri_complete": "https://quantum-atlas.ai/device?user_code=WDJB-MJHT",
+                    "interval": 1,
+                    "expires_in": 600,
+                },
+            )
+        # /token
+        if calls["count"] < 4:
+            return _FakeResponse(status_code=400, payload={"error": "authorization_pending"})
+        return _FakeResponse(
+            status_code=200,
+            payload={
+                "token": "qat_DeviceFlowResult",
+                "name": "qatlas-cli-test",
+                "prefix": "qat_Devic",
+                "scopes": ["papers:write"],
+                "expires_at": "2099-01-01",
+            },
+        )
+
+    monkeypatch.setattr(auth.requests, "post", fake_post)
+    received = auth._device_login(
+        base_url="https://quantum-atlas.ai",
+        verify=True,
+        suggested_name="qatlas-cli-test",
+        scopes=["papers:write"],
+        expires_days=90,
+        timeout=10.0,
+    )
+    assert received["token"] == "qat_DeviceFlowResult"
+    assert received["scopes"] == ["papers:write"]
+
+
+def test_device_login_slow_down_bumps_interval(monkeypatch):
+    """slow_down response must NOT raise; it should keep polling at a
+    larger interval. We verify by tracking how many times time.sleep
+    was called and whether sleep duration grew.
+    """
+    monkeypatch.setattr(auth.webbrowser, "open", lambda *_, **__: True)
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(auth.time, "sleep", lambda s: sleeps.append(s))
+
+    state = {"polls": 0}
+
+    def fake_post(url, **_):
+        if url.endswith("/api/oauth/device/code"):
+            return _FakeResponse(
+                status_code=200,
+                payload={
+                    "device_code": "DEV",
+                    "user_code": "AB-CD",
+                    "verification_uri": "x",
+                    "verification_uri_complete": "x",
+                    "interval": 1,
+                    "expires_in": 600,
+                },
+            )
+        state["polls"] += 1
+        if state["polls"] == 1:
+            return _FakeResponse(status_code=400, payload={"error": "slow_down"})
+        if state["polls"] == 2:
+            return _FakeResponse(status_code=400, payload={"error": "slow_down"})
+        return _FakeResponse(
+            status_code=200,
+            payload={"token": "qat_Q", "name": "n", "prefix": "qat_Q", "scopes": [], "expires_at": ""},
+        )
+
+    monkeypatch.setattr(auth.requests, "post", fake_post)
+    auth._device_login(
+        base_url="https://x",
+        verify=True,
+        suggested_name="x",
+        scopes=[],
+        expires_days=90,
+        timeout=30.0,
+    )
+    # 3 polls → 3 sleeps; sleep[1] > sleep[0] after the first
+    # slow_down, sleep[2] > sleep[1] after the second.
+    assert len(sleeps) >= 3
+    assert sleeps[1] > sleeps[0]
+    assert sleeps[2] > sleeps[1]
+
+
+@pytest.mark.parametrize(
+    "kind,match",
+    [
+        ("access_denied", "denied"),
+        ("expired_token", "expired"),
+        ("invalid_grant", "rejected"),
+    ],
+)
+def test_device_login_terminal_errors(monkeypatch, kind, match):
+    monkeypatch.setattr(auth.webbrowser, "open", lambda *_, **__: True)
+    monkeypatch.setattr(auth.time, "sleep", lambda _s: None)
+
+    def fake_post(url, **_):
+        if url.endswith("/api/oauth/device/code"):
+            return _FakeResponse(
+                status_code=200,
+                payload={
+                    "device_code": "DEV",
+                    "user_code": "AB-CD",
+                    "verification_uri": "x",
+                    "verification_uri_complete": "x",
+                    "interval": 1,
+                    "expires_in": 600,
+                },
+            )
+        return _FakeResponse(status_code=400, payload={"error": kind})
+
+    monkeypatch.setattr(auth.requests, "post", fake_post)
+    with pytest.raises(auth._DeviceFlowError, match=match):
+        auth._device_login(
+            base_url="https://x",
+            verify=True,
+            suggested_name="x",
+            scopes=[],
+            expires_days=90,
+            timeout=10.0,
+        )
+
+
+def test_device_login_init_http_error(monkeypatch):
+    """/code returning non-200 → DeviceFlowError surfacing the status."""
+    monkeypatch.setattr(auth.webbrowser, "open", lambda *_, **__: True)
+
+    def fake_post(*_a, **_k):
+        return _FakeResponse(status_code=500, payload={"detail": "boom"})
+
+    monkeypatch.setattr(auth.requests, "post", fake_post)
+    with pytest.raises(auth._DeviceFlowError, match="500"):
+        auth._device_login(
+            base_url="https://x",
+            verify=True,
+            suggested_name="x",
+            scopes=[],
+            expires_days=90,
+            timeout=10.0,
+        )

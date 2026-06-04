@@ -148,6 +148,56 @@
       "use": "Use as Authorization: Bearer {{prefix}}… · expires {{expiresAt}}",
       "closeHint": "I've copied it — close"
     },
+    "cliBanner": {
+      "title": "qatlas CLI requesting a token",
+      "body": "The qatlas client on this machine ({{callback}}) asked you to mint a Personal Access Token named \"{{name}}\" with scopes {{scopes}}, expiring in {{days}} days. Approve below to send it back to the CLI.",
+      "noScopes": "(none — the token will be rejected by every write endpoint)",
+      "deliveredTitle": "Token sent to the CLI",
+      "deliveredBody": "We POSTed the plaintext token to {{callback}}; this tab should navigate to the CLI's success page shortly.",
+      "fallbackReveal": "Local CLI didn't pick this up? Show plaintext",
+      "invalidTitle": "Untrusted CLI callback",
+      "invalidBody": "Ignored cli_callback={{callback}} because it isn't an http://127.0.0.1:<port> loopback URL. Mint a token below if you intended to come here directly."
+    },
+    "device": {
+      "eyebrow": "Authorization",
+      "title": "Authorize a device",
+      "subtitle": "A qatlas CLI on another device asked you to authorize it. Enter the short code it printed, review the token it's requesting, then approve or deny.",
+      "enterCode": "Enter device code",
+      "codeLabel": "Code (e.g. WDJB-MJHT)",
+      "lookup": "Continue",
+      "confirm": "Confirm authorization",
+      "tokenName": "Token name",
+      "tokenDescription": "Description",
+      "tokenScopes": "Scopes",
+      "tokenExpires": "Expires",
+      "expiresIn": "in {{count}} days",
+      "consent": "Approving will mint a Personal Access Token under your account and hand it back to the requesting CLI. Only do this if you started the request yourself.",
+      "approve": "Approve",
+      "deny": "Deny",
+      "approvedTitle": "Approved — return to your CLI",
+      "approvedBody": "The CLI's next poll will receive the token. You can safely close this tab.",
+      "deniedTitle": "Denied",
+      "deniedBody": "The CLI will exit with an access_denied error. No token was issued.",
+      "tryAnother": "Look up a different code",
+      "status": {
+        "approved": {
+          "title": "Already approved",
+          "body": "This code was already approved — the CLI should have picked up the token."
+        },
+        "consumed": {
+          "title": "Already used",
+          "body": "This code was already approved and the CLI has already collected its token."
+        },
+        "denied": {
+          "title": "Already denied",
+          "body": "This code was already denied; no token will be issued for it."
+        },
+        "expired": {
+          "title": "Expired",
+          "body": "This code has expired. Re-run `qatlas auth login --device` to start over."
+        }
+      }
+    },
     "copied": "Copied"
   },
   "login": {

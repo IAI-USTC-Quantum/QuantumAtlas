@@ -148,6 +148,56 @@
       "use": "在请求头中使用 Authorization: Bearer {{prefix}}… · 过期 {{expiresAt}}",
       "closeHint": "我已复制 — 关闭"
     },
+    "cliBanner": {
+      "title": "qatlas CLI 请求一个令牌",
+      "body": "本机的 qatlas 客户端（{{callback}}）希望签发一个名为「{{name}}」的 PAT，作用域 {{scopes}}，{{days}} 天后过期。点下方批准即可送回 CLI。",
+      "noScopes": "（空 — 所有写接口都会拒绝该令牌）",
+      "deliveredTitle": "令牌已送回 CLI",
+      "deliveredBody": "已将明文 POST 到 {{callback}}；当前标签页应该会立即跳转到 CLI 的成功页。",
+      "fallbackReveal": "本机 CLI 没接到？查看明文",
+      "invalidTitle": "不可信的 CLI 回调",
+      "invalidBody": "已忽略 cli_callback={{callback}}，因为它不是 http://127.0.0.1:<port> 形式的回环 URL。如果你只是想手动新建令牌，在下方操作即可。"
+    },
+    "device": {
+      "eyebrow": "授权",
+      "title": "授权一台设备",
+      "subtitle": "另一台设备上的 qatlas CLI 请你批准它。把它打印的短码填进去，确认要签发的令牌信息，然后批准或拒绝。",
+      "enterCode": "输入设备码",
+      "codeLabel": "短码（如 WDJB-MJHT）",
+      "lookup": "继续",
+      "confirm": "确认授权",
+      "tokenName": "令牌名称",
+      "tokenDescription": "描述",
+      "tokenScopes": "作用域",
+      "tokenExpires": "过期",
+      "expiresIn": "{{count}} 天后",
+      "consent": "批准后将在你账户下签发一个个人访问令牌并送回发起请求的 CLI。仅在你确认是自己发起的请求时才操作。",
+      "approve": "批准",
+      "deny": "拒绝",
+      "approvedTitle": "已批准 — 回到你的 CLI",
+      "approvedBody": "CLI 的下一次轮询会拿到该令牌。可以关闭此标签页。",
+      "deniedTitle": "已拒绝",
+      "deniedBody": "CLI 会以 access_denied 错误退出，本次不会签发任何令牌。",
+      "tryAnother": "换一个短码",
+      "status": {
+        "approved": {
+          "title": "已经批准过",
+          "body": "此短码已经批准过 — CLI 应当已取到令牌。"
+        },
+        "consumed": {
+          "title": "已经领取",
+          "body": "此短码已经批准过且 CLI 已经取走令牌。"
+        },
+        "denied": {
+          "title": "已经拒绝",
+          "body": "此短码已经被拒绝；不会为它签发令牌。"
+        },
+        "expired": {
+          "title": "已过期",
+          "body": "此短码已过期。重新运行 `qatlas auth login --device` 再来一遍。"
+        }
+      }
+    },
     "copied": "已复制"
   },
   "login": {

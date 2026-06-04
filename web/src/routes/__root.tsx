@@ -21,6 +21,13 @@ function RootLayout() {
   const auth = useAuth()
   const navigate = useNavigate()
   const pathname = useRouterState({ select: (state) => state.location.pathname })
+  // `href` captures pathname + search + hash so that gated routes like
+  // `/<lang>/pat?cli_callback=…&cli_state=…` (the qatlas CLI's
+  // loopback-callback hand-off) survive the redirect through /login
+  // and the GitHub OAuth round trip. Without this the search part is
+  // dropped when we send the user to the login screen, breaking the
+  // CLI flow silently.
+  const href = useRouterState({ select: (state) => state.location.href })
   const onAnonRoute = ANON_ROUTES.has(pathname)
 
   useEffect(() => {
@@ -32,10 +39,10 @@ function RootLayout() {
     if (!auth.isAuthed && !onAnonRoute) {
       navigate({
         to: '/login',
-        search: { from: pathname === '/' ? undefined : pathname },
+        search: { from: href === '/' ? undefined : href },
       })
     }
-  }, [auth.isChecking, auth.isAuthed, onAnonRoute, navigate, pathname])
+  }, [auth.isChecking, auth.isAuthed, onAnonRoute, navigate, href])
 
   if (auth.isChecking) {
     return (
