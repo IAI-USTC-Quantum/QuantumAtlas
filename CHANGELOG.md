@@ -18,6 +18,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## v0.18.0 (2026-06-04)
 
+### BREAKING CHANGE
+
+- **mineru**: `MINERU_API_TOKEN` (singular) renamed to `MINERU_API_TOKENS`
+  (plural, CSV list — `tok-a,tok-b,tok-c`) so the server can rotate
+  through multiple keys when one hits today's daily limit. The singular
+  name is still accepted for one minor cycle (Load emits a slog.Warn and
+  promotes it to a single-element list); it will be removed in v0.19.0.
+
 ### Feat
 
 - **mineru**: multi-key token pool with automatic daily-limit fail-over

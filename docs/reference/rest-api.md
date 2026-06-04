@@ -65,12 +65,20 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
 | `POST` | `/api/papers/{arxiv_id}/upload-mineru` | `papers:write` | 上传 MinerU 结果 zip（含 markdown + images）|
 | `POST` | `/api/papers/{arxiv_id}/mineru-claim` | `papers:write` | 申请 MinerU 处理 claim |
 | `DELETE` | `/api/papers/{arxiv_id}/mineru-claim/{claim_id}` | `papers:write` | 释放 claim |
+| `GET` | `/api/papers/{arxiv_id}/markdown` | `papers:read` | **仅当 `QATLAS_ASSET_DOWNLOADS_ENABLED=true`** 注册。返回缓存的 MinerU markdown；缓存未命中时按需触发后台转换（若 `MINERU_API_TOKENS` 已配），返 202 + `Operation-Location` / `Retry-After` 让客户端轮询 `/markdown/status` |
+| `GET` | `/api/papers/{arxiv_id}/markdown/status` | `papers:read` | **仅当 `QATLAS_ASSET_DOWNLOADS_ENABLED=true`** 注册。零副作用状态查询（不会触发新转换、不要求 PDF 存在）。状态 ∈ `cached \| queued \| running \| none \| no_pdf \| failed \| cooldown \| unavailable` |
 
 > `papers:write` 隐式含 `papers:read`。
 >
 > **本服务不通过 API 对外分发 PDF / markdown 字节**：服务端持有这些原文供
 > MinerU 流水线和上游 wiki 生成使用，但**没有**对外的 download / share /
 > redirect 端点。需要原文请到论文原始来源（arXiv）拉取。
+>
+> ⚠️ `/markdown[/status]` 例外：这两个端点**只在部署方显式开启
+> `QATLAS_ASSET_DOWNLOADS_ENABLED=true` 时才注册**（默认 OFF；开关 OFF 时
+> 是 404 而非 403）。开启等于自愿承担对外重分发 markdown 字节的合规义务，
+> 见 [License & Attribution · 资产下载开关](../about/license-and-attribution.md#资产下载开关-self-hosted)。
+> 公共 `quantum-atlas.ai` 部署默认 OFF。
 
 ### Wiki
 
@@ -107,6 +115,20 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
 | `POST` | `/api/pat` | session only | 创建 PAT，返回明文（一次）|
 | `GET` | `/api/pat` | session only | 列当前用户的 PAT（无明文）|
 | `DELETE` | `/api/pat/{id}` | session only | 撤销 |
+
+### OAuth Device Flow（`qatlas auth login --device` 后端）
+
+RFC 8628 device authorization grant。CLI 没有浏览器 / session，所以由用户在浏览器里登录 + 输 user_code 授权，CLI 轮询拿 minted PAT。前两个端点匿名（CLI 调），后三个 **session-only**（PAT auth 被拒，理由同 `/api/pat`：泄露的 PAT 不应能自我繁殖）。
+
+| Method | Path | 鉴权 | 用途 |
+|---|---|---|---|
+| `POST` | `/api/oauth/device/code` | 匿名 | RFC 8628 §3.1，CLI 启动 flow。body：`{name, description?, expires_in_days, scopes[]}`（要 mint 的 PAT 规格）。返回 `{device_code, user_code, verification_uri, verification_uri_complete, expires_in, interval}` |
+| `POST` | `/api/oauth/device/token` | 匿名 | RFC 8628 §3.4 + §3.5。CLI 用 `device_code` 按 `interval` 轮询。成功返回 minted PAT plaintext（一次性）；待批 / 太快 / 过期 / 拒绝 / 无效全部返 **HTTP 400** + `{error}` ∈ `authorization_pending \| slow_down \| expired_token \| access_denied \| invalid_grant` |
+| `GET` | `/api/oauth/device/code?user_code=` | session only | SPA 的 `/<lang>/device` 用 `user_code` 查待批请求的明细（要 mint 的 PAT 规格），给用户预览 |
+| `POST` | `/api/oauth/device/approve` | session only | body `{user_code}`，批准。下一次 `/token` 轮询会 mint PAT 并绑定到当前 session 用户 |
+| `POST` | `/api/oauth/device/deny` | session only | body `{user_code}`，拒绝。下一次 `/token` 轮询返回 `access_denied` |
+
+> 完整 device-flow 概念背景见 [概念 · 鉴权 · OAuth Device Flow](../concepts/auth-model.md)；schema 详见 `/swagger/index.html`。
 
 ## 端点详解：选粹
 

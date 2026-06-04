@@ -1,7 +1,6 @@
 package mineru
 
 import (
-	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -10,7 +9,6 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -501,33 +499,13 @@ func (c *Converter) pollUntilDone(ctx context.Context, client *Client, taskID st
 func (c *Converter) writeResult(ctx context.Context, canonical string, result Result) error {
 	// --- Images zip ---
 	if len(result.Images) > 0 {
-		var zipBuf bytes.Buffer
-		zw := zip.NewWriter(&zipBuf)
-		for rel, data := range result.Images {
-			name := strings.TrimPrefix(rel, "images/")
-			if name == "" || strings.Contains(name, "..") {
-				continue
-			}
-			// STORE (no compression) — images are already compressed.
-			header := &zip.FileHeader{
-				Name:   name,
-				Method: zip.Store,
-			}
-			header.SetModTime(c.now())
-			w, err := zw.CreateHeader(header)
-			if err != nil {
-				return fmt.Errorf("zip create %s: %w", name, err)
-			}
-			if _, err := w.Write(data); err != nil {
-				return fmt.Errorf("zip write %s: %w", name, err)
-			}
-		}
-		if err := zw.Close(); err != nil {
-			return fmt.Errorf("zip close: %w", err)
+		zipBytes, err := BuildImagesZip(result.Images)
+		if err != nil {
+			return fmt.Errorf("build images zip: %w", err)
 		}
 
 		imgKey := paperassets.AssetKey("images", canonical)
-		_, err := c.store.PutWithOptions(ctx, imgKey, bytes.NewReader(zipBuf.Bytes()), int64(zipBuf.Len()), objstore.PutOptions{
+		_, err = c.store.PutWithOptions(ctx, imgKey, bytes.NewReader(zipBytes), int64(len(zipBytes)), objstore.PutOptions{
 			ContentType: "application/zip",
 			IfNoneMatch: "*",
 		})

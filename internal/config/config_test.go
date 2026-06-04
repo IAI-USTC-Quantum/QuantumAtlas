@@ -501,7 +501,7 @@ func TestLoad_S3PartialEmitsWarn(t *testing.T) {
 //
 // The aliases still resolve via firstEnv() so existing .env files keep
 // working, but Load() now emits a slog.Warn per legacy var found. This
-// gives operators one minor cycle (v0.17.0 → v0.18.0) to migrate.
+// gives operators one minor cycle to migrate before removal in v0.19.0.
 // ---------------------------------------------------------------------------
 
 // captureSlog redirects the default slog logger to an in-memory buffer

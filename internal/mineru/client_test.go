@@ -322,3 +322,112 @@ func TestGetBatchEmptyID(t *testing.T) {
 		t.Fatal("expected error for empty batch id")
 	}
 }
+
+// TestBuildImagesZip_Deterministic guards the upload-mineru idempotency
+// contract: re-uploading the same MinerU result must produce the same
+// sha256, otherwise the second upload hits 409 (different content) instead
+// of 200 (unchanged). Two failure modes used to break this:
+//
+//  1. Go map iteration is randomized per-map, so a naive `for rel, data
+//     := range result.Images` wrote entries in a different order each
+//     call → different zip central directory → different sha256.
+//  2. The server-side converter set zip mtime to time.Now(), injecting
+//     wall-clock into the byte stream.
+//
+// BuildImagesZip fixes both. This test builds the zip from two distinct
+// map literals with the same content (forcing different random seeds)
+// many times in a row and asserts every result is byte-identical.
+func TestBuildImagesZip_Deterministic(t *testing.T) {
+	want := map[string][]byte{
+		"a.jpg": []byte("alpha-bytes"),
+		"b.png": []byte("bravo-bytes-xx"),
+		"c.gif": []byte("charlie"),
+		"d.jpg": []byte("delta-payload-of-some-length"),
+		"e.png": []byte("echo"),
+	}
+
+	first, err := BuildImagesZip(want)
+	if err != nil {
+		t.Fatalf("BuildImagesZip first: %v", err)
+	}
+
+	// 32 attempts; with 5 entries, the probability that randomized map
+	// iteration happens to land on the sorted order every time is
+	// (1/120)**32, well under any test-flake threshold. Each iteration
+	// rebuilds the input map from a fresh literal so Go gives it a new
+	// per-map random seed.
+	for i := 0; i < 32; i++ {
+		again := map[string][]byte{
+			"e.png": []byte("echo"),
+			"c.gif": []byte("charlie"),
+			"a.jpg": []byte("alpha-bytes"),
+			"d.jpg": []byte("delta-payload-of-some-length"),
+			"b.png": []byte("bravo-bytes-xx"),
+		}
+		got, err := BuildImagesZip(again)
+		if err != nil {
+			t.Fatalf("BuildImagesZip rebuild %d: %v", i, err)
+		}
+		if !bytes.Equal(first, got) {
+			t.Fatalf("zip bytes differ on rebuild %d — map-iteration randomness leaks into output", i)
+		}
+	}
+}
+
+// TestBuildImagesZip_StripsImagesPrefix asserts that the "images/" prefix
+// MinerU emits is stripped before writing the entry name, so the stored
+// zip layout stays flat ("a.jpg", not "images/a.jpg") regardless of how
+// the upstream key was spelled.
+func TestBuildImagesZip_StripsImagesPrefix(t *testing.T) {
+	data, err := BuildImagesZip(map[string][]byte{
+		"images/a.jpg": []byte("a"),
+		"b.png":        []byte("b"),
+	})
+	if err != nil {
+		t.Fatalf("BuildImagesZip: %v", err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatalf("NewReader: %v", err)
+	}
+	gotNames := make([]string, 0, len(zr.File))
+	for _, f := range zr.File {
+		gotNames = append(gotNames, f.Name)
+	}
+	// Entries are sorted by canonical (post-strip) name.
+	wantNames := []string{"a.jpg", "b.png"}
+	if len(gotNames) != len(wantNames) {
+		t.Fatalf("entry count = %d, want %d (names=%v)", len(gotNames), len(wantNames), gotNames)
+	}
+	for i, n := range wantNames {
+		if gotNames[i] != n {
+			t.Errorf("entry %d = %q, want %q", i, gotNames[i], n)
+		}
+	}
+}
+
+// TestBuildImagesZip_DropsTraversal asserts that "../" entries are
+// silently dropped — matches the prior inline-loop behavior at both
+// callers (routes/papers.go and mineru/converter.go).
+func TestBuildImagesZip_DropsTraversal(t *testing.T) {
+	data, err := BuildImagesZip(map[string][]byte{
+		"a.jpg":           []byte("a"),
+		"../etc/passwd":   []byte("nope"),
+		"images/..":       []byte("nope"),
+		"images/../b.jpg": []byte("nope"),
+	})
+	if err != nil {
+		t.Fatalf("BuildImagesZip: %v", err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatalf("NewReader: %v", err)
+	}
+	if len(zr.File) != 1 || zr.File[0].Name != "a.jpg" {
+		names := make([]string, 0, len(zr.File))
+		for _, f := range zr.File {
+			names = append(names, f.Name)
+		}
+		t.Fatalf("expected only [a.jpg], got %v", names)
+	}
+}

@@ -1,8 +1,6 @@
 package routes
 
 import (
-	"archive/zip"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -724,43 +722,28 @@ func uploadMinerUHandler(re *core.RequestEvent, cfg *config.Config, store objsto
 	// Images first, markdown last (see top-of-function comment for
 	// rationale). Build a single zip archive from the extracted images
 	// and write it as one object at images/<shard>/<arxiv_id>.zip.
-	// Using zip.Store (no compression) — images are already JPEG/PNG
-	// compressed; re-deflating wastes CPU for ~0 savings.
+	// Build is delegated to mineru.BuildImagesZip so the byte stream is
+	// **deterministic** (sorted entries, zero mtime) — re-uploading the
+	// same MinerU result must hit the unchanged path, not 409.
 	imgZipKey := paperassets.AssetKey("images", canonical)
 	imgZipUnchanged := false
 	imageCount := 0
-	if len(result.Images) > 0 {
-		var imgZipBuf bytes.Buffer
-		zw := zip.NewWriter(&imgZipBuf)
-		for rel, data := range result.Images {
-			name := strings.TrimPrefix(rel, "images/")
-			if name == "" || strings.Contains(name, "..") {
-				continue
-			}
-			header := &zip.FileHeader{
-				Name:   name,
-				Method: zip.Store,
-			}
-			w, err := zw.CreateHeader(header)
-			if err != nil {
-				return re.JSON(http.StatusInternalServerError, map[string]string{
-					"detail": fmt.Sprintf("build images zip: create %s: %s", name, err.Error()),
-				})
-			}
-			if _, err := w.Write(data); err != nil {
-				return re.JSON(http.StatusInternalServerError, map[string]string{
-					"detail": fmt.Sprintf("build images zip: write %s: %s", name, err.Error()),
-				})
-			}
-			imageCount++
+	for rel := range result.Images {
+		name := strings.TrimPrefix(rel, "images/")
+		if name == "" || strings.Contains(name, "..") {
+			continue
 		}
-		if err := zw.Close(); err != nil {
+		imageCount++
+	}
+	if imageCount > 0 {
+		imgZipBytes, err := mineru.BuildImagesZip(result.Images)
+		if err != nil {
 			return re.JSON(http.StatusInternalServerError, map[string]string{
-				"detail": "build images zip: close: " + err.Error(),
+				"detail": "build images zip: " + err.Error(),
 			})
 		}
 
-		imgBody := newInMemoryBodyFromBytes(imgZipBuf.Bytes())
+		imgBody := newInMemoryBodyFromBytes(imgZipBytes)
 		imgOutcome, err := uploadOne(ctx, store, imgZipKey, imgBody, "application/zip", overwrite, "images-zip")
 		_ = imgBody.Close()
 		if err != nil {

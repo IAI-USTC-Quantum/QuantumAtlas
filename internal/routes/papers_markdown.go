@@ -83,7 +83,16 @@ func markdownHandler(re *core.RequestEvent, cfg *config.Config, store objstore.S
 		if !job.CooldownUntil.IsZero() {
 			body["retry_after"] = job.CooldownUntil.Unix()
 			body["retry_after_iso"] = job.CooldownUntil.UTC().Format(time.RFC3339)
-			re.Response.Header().Set("Retry-After", strconv.Itoa(int(time.Until(job.CooldownUntil).Seconds())+1))
+			// Round up to the next whole second, then floor to 1 — int(...)
+			// truncates toward zero so without the floor a CooldownUntil
+			// already in the past (e.g. the row was re-read just after
+			// expiry) would emit a negative Retry-After value, which is
+			// not valid per RFC 7231 §7.1.3.
+			secs := int(time.Until(job.CooldownUntil).Seconds()) + 1
+			if secs < 1 {
+				secs = 1
+			}
+			re.Response.Header().Set("Retry-After", strconv.Itoa(secs))
 		}
 		return re.JSON(status, body)
 	}

@@ -1,5 +1,82 @@
 basePath: /
 definitions:
+  routes.oauthDeviceCodeRequest:
+    properties:
+      description:
+        type: string
+      expires_in_days:
+        type: integer
+      name:
+        type: string
+      scopes:
+        items:
+          type: string
+        type: array
+    type: object
+  routes.oauthDeviceCodeResponse:
+    properties:
+      device_code:
+        type: string
+      expires_in:
+        type: integer
+      interval:
+        type: integer
+      user_code:
+        type: string
+      verification_uri:
+        type: string
+      verification_uri_complete:
+        type: string
+    type: object
+  routes.oauthDeviceLookupResponse:
+    properties:
+      description:
+        type: string
+      expires_in_days:
+        type: integer
+      name:
+        type: string
+      scopes:
+        items:
+          type: string
+        type: array
+      status:
+        type: string
+      user_code:
+        type: string
+    type: object
+  routes.oauthDeviceTokenError:
+    properties:
+      error:
+        type: string
+    type: object
+  routes.oauthDeviceTokenRequest:
+    properties:
+      device_code:
+        type: string
+    type: object
+  routes.oauthDeviceTokenResponse:
+    properties:
+      expires_at:
+        type: string
+      name:
+        type: string
+      pat_id:
+        type: string
+      plaintext:
+        type: string
+      prefix:
+        type: string
+      scopes:
+        items:
+          type: string
+        type: array
+    type: object
+  routes.oauthDeviceUserCodeBody:
+    properties:
+      user_code:
+        type: string
+    type: object
   routes.patCreateRequest:
     properties:
       description:
@@ -177,6 +254,205 @@ paths:
       summary: Health check
       tags:
       - System
+  /api/oauth/device/approve:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Session-only (PAT auth rejected). Marks the pending request
+        as approved so the next /token poll mints the PAT bound to
+        the approving user.
+      parameters:
+      - description: user_code from /<lang>/device
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/routes.oauthDeviceUserCodeBody'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{\"status\":\"approved\"}'
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Approve a device request
+      tags:
+      - OAuth Device
+  /api/oauth/device/code:
+    get:
+      description: |-
+        Session-only (PAT auth rejected). Returns the PAT spec
+        (name, description, scopes, expires_in_days) tied to a
+        pending user_code so the /<lang>/device page can show the
+        user what they're about to approve.
+      parameters:
+      - description: short user code (with or without dashes)
+        in: query
+        name: user_code
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/routes.oauthDeviceLookupResponse'
+        "400":
+          description: invalid user_code
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Look up pending device request
+      tags:
+      - OAuth Device
+    post:
+      consumes:
+      - application/json
+      description: |-
+        RFC 8628 §3.1. Anonymous (no auth) — the CLI uses this to
+        obtain a device_code (kept secret, polled on /token) and a
+        short user_code that the human enters on the SPA's
+        /<lang>/device page after authenticating.
+      parameters:
+      - description: PAT spec to mint after approval
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/routes.oauthDeviceCodeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/routes.oauthDeviceCodeResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Start device authorization
+      tags:
+      - OAuth Device
+  /api/oauth/device/deny:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Session-only (PAT auth rejected). Marks the pending request
+        as denied so the next /token poll returns "access_denied".
+      parameters:
+      - description: user_code from /<lang>/device
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/routes.oauthDeviceUserCodeBody'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{\"status\":\"denied\"}'
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Deny a device request
+      tags:
+      - OAuth Device
+  /api/oauth/device/token:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        RFC 8628 §3.4 + §3.5. Anonymous. The CLI polls this with
+        device_code at the published interval until the server
+        returns the minted PAT plaintext (success) or an error
+        string ("authorization_pending", "slow_down", "expired_token",
+        "access_denied", "invalid_grant"). HTTP status is always
+        400 on errors per the RFC so the CLI can switch on `error`.
+      parameters:
+      - description: device_code from /code
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/routes.oauthDeviceTokenRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: minted PAT plaintext (returned exactly once)
+          schema:
+            $ref: '#/definitions/routes.oauthDeviceTokenResponse'
+        "400":
+          description: RFC 8628 error string
+          schema:
+            $ref: '#/definitions/routes.oauthDeviceTokenError'
+      summary: Poll for PAT after device approval
+      tags:
+      - OAuth Device
   /api/pages:
     get:
       description: |-

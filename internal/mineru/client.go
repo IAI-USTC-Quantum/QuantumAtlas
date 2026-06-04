@@ -23,6 +23,7 @@ import (
 	"io"
 	"net/http"
 	"path"
+	"sort"
 	"strings"
 	"time"
 )
@@ -379,6 +380,69 @@ func ExtractResult(zipBytes []byte) (Result, error) {
 		return Result{}, &Error{Msg: "result zip full.md was empty / unreadable"}
 	}
 	return res, nil
+}
+
+// BuildImagesZip serializes a {relname → bytes} image map into a single
+// in-memory zip archive with **byte-deterministic output**:
+//
+//   - entries are written in lexicographic order (Go map iteration is
+//     intentionally randomized per-map, so a naive `for range` produces a
+//     different byte stream on every call);
+//   - entries use zip.Store (no compression — images are already JPEG/PNG
+//     compressed; re-deflating wastes CPU for ~0 savings);
+//   - entries leave Modified at its zero value so the archive does not
+//     embed wall-clock time (zip stores this as the 1980-01-01 DOS epoch).
+//
+// Both the contributor `POST /upload-mineru` handler and the server-side
+// converter call this so that re-uploading the same MinerU result produces
+// the **same sha256** — without this guarantee, idempotency breaks and a
+// second upload of identical content returns 409.
+//
+// "images/" path prefixes and ".." traversal entries are stripped/rejected
+// silently to match prior behavior — both callers used to do this inline.
+func BuildImagesZip(images map[string][]byte) ([]byte, error) {
+	keys := make([]string, 0, len(images))
+	for rel := range images {
+		name := strings.TrimPrefix(rel, "images/")
+		if name == "" || strings.Contains(name, "..") {
+			continue
+		}
+		keys = append(keys, name)
+	}
+	sort.Strings(keys)
+
+	// Build a "canonical name → original key" reverse lookup so we can
+	// pull bytes back out of the input map after sorting. Two distinct
+	// keys that normalize to the same canonical name would collide — the
+	// last one wins (matches map-iteration "last write wins" semantics).
+	canonicalToOriginal := make(map[string]string, len(keys))
+	for rel := range images {
+		name := strings.TrimPrefix(rel, "images/")
+		if name == "" || strings.Contains(name, "..") {
+			continue
+		}
+		canonicalToOriginal[name] = rel
+	}
+
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for _, name := range keys {
+		header := &zip.FileHeader{
+			Name:   name,
+			Method: zip.Store,
+		}
+		w, err := zw.CreateHeader(header)
+		if err != nil {
+			return nil, fmt.Errorf("zip create %s: %w", name, err)
+		}
+		if _, err := w.Write(images[canonicalToOriginal[name]]); err != nil {
+			return nil, fmt.Errorf("zip write %s: %w", name, err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		return nil, fmt.Errorf("zip close: %w", err)
+	}
+	return buf.Bytes(), nil
 }
 
 // IsImageEntry reports whether a zip entry path sits under an "images/"

@@ -317,7 +317,7 @@ func Load(dotenvPath string) (*Config, error) {
 	// (WIKI_DIR / RAW_DIR / SERVER_HOST / ...). Functionally they still
 	// resolve via firstEnv() above so existing .env files keep working;
 	// the warning gives operators one minor cycle to migrate before the
-	// alias is removed in v0.18.0.
+	// alias is removed in v0.19.0.
 	warnDeprecatedAliases()
 
 	return cfg, nil
@@ -360,7 +360,7 @@ func warnDeprecatedAliases() {
 	sort.Strings(oldNames)
 	for _, old := range oldNames {
 		if v := strings.TrimSpace(os.Getenv(old)); v != "" {
-			slog.Warn("env var without QATLAS_ prefix is deprecated, will be removed in v0.18.0",
+			slog.Warn("env var without QATLAS_ prefix is deprecated, will be removed in v0.19.0",
 				"deprecated", old, "use_instead", aliases[old])
 		}
 	}
@@ -510,8 +510,21 @@ func parseBoolEnv(name string, def bool) bool {
 // OCR off, 3s poll, 1800s timeout, concurrency=4. MINERU_API_TOKENS
 // itself is allowed to be empty — that enables "cache-only" mode where
 // /markdown returns 503 on cache miss.
+//
+// Compat with v0.17.x: the singular MINERU_API_TOKEN (no S) is promoted
+// to the plural-list form with a loud slog.Warn so operators who didn't
+// rename on the v0.18.0 multi-key rollout don't end up in cache-only
+// mode without noticing.
 func loadMinerUConfig(cfg *Config) error {
-	cfg.MinerUAPITokens = parseTokenList(firstEnv("MINERU_API_TOKENS"))
+	tokensEnv := firstEnv("MINERU_API_TOKENS")
+	if tokensEnv == "" {
+		if singular := strings.TrimSpace(os.Getenv("MINERU_API_TOKEN")); singular != "" {
+			slog.Warn("MINERU_API_TOKEN (singular) is deprecated as of v0.18.0, will be removed in v0.19.0; rename to MINERU_API_TOKENS (plural; CSV list)",
+				"deprecated", "MINERU_API_TOKEN", "use_instead", "MINERU_API_TOKENS")
+			tokensEnv = singular
+		}
+	}
+	cfg.MinerUAPITokens = parseTokenList(tokensEnv)
 	cfg.MinerUAPIBaseURL = firstEnvDefault("https://mineru.net", "MINERU_API_BASE_URL")
 	cfg.MinerUModelVersion = firstEnvDefault("vlm", "MINERU_MODEL_VERSION")
 	cfg.MinerULanguage = firstEnvDefault("ch", "MINERU_LANGUAGE")

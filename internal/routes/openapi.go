@@ -389,3 +389,99 @@ func docDeletePAT() {}
 // @Success     200 {object} map[string]interface{}
 // @Router      /api/pat/scopes [get]
 func docPATScopes() {}
+
+// --- OAuth Device Flow -------------------------------------------------------
+//
+// RFC 8628 device authorization grant used by `qatlas auth login --device`.
+// Two of the five endpoints are anonymous (the CLI has no session); the
+// other three require a browser session — PATs are explicitly rejected for
+// the same reason RegisterPAT rejects them, so a leaked PAT cannot mint
+// or approve further PATs.
+
+// oauthDeviceCode starts a device-flow authorization request.
+//
+// @Summary     Start device authorization
+// @Description RFC 8628 §3.1. Anonymous (no auth) — the CLI uses this to
+// @Description obtain a device_code (kept secret, polled on /token) and a
+// @Description short user_code that the human enters on the SPA's
+// @Description /<lang>/device page after authenticating.
+// @Tags        OAuth Device
+// @Accept      json
+// @Produce     json
+// @Param       body body oauthDeviceCodeRequest true "PAT spec to mint after approval"
+// @Success     200 {object} oauthDeviceCodeResponse
+// @Failure     400 {object} map[string]string
+// @Router      /api/oauth/device/code [post]
+func docOAuthDeviceCode() {}
+
+// oauthDeviceToken polls for the minted PAT after approval.
+//
+// @Summary     Poll for PAT after device approval
+// @Description RFC 8628 §3.4 + §3.5. Anonymous. The CLI polls this with
+// @Description device_code at the published interval until the server
+// @Description returns the minted PAT plaintext (success) or an error
+// @Description string ("authorization_pending", "slow_down", "expired_token",
+// @Description "access_denied", "invalid_grant"). HTTP status is always
+// @Description 400 on errors per the RFC so the CLI can switch on `error`.
+// @Tags        OAuth Device
+// @Accept      json
+// @Produce     json
+// @Param       body body oauthDeviceTokenRequest true "device_code from /code"
+// @Success     200 {object} oauthDeviceTokenResponse "minted PAT plaintext (returned exactly once)"
+// @Failure     400 {object} oauthDeviceTokenError "RFC 8628 error string"
+// @Router      /api/oauth/device/token [post]
+func docOAuthDeviceToken() {}
+
+// oauthDeviceLookup resolves a user_code so the SPA can render the
+// approval page.
+//
+// @Summary     Look up pending device request
+// @Description Session-only (PAT auth rejected). Returns the PAT spec
+// @Description (name, description, scopes, expires_in_days) tied to a
+// @Description pending user_code so the /<lang>/device page can show the
+// @Description user what they're about to approve.
+// @Tags        OAuth Device
+// @Produce     json
+// @Security    BearerAuth
+// @Param       user_code query string true "short user code (with or without dashes)"
+// @Success     200 {object} oauthDeviceLookupResponse
+// @Failure     400 {object} map[string]string "invalid user_code"
+// @Failure     401 {object} map[string]string
+// @Failure     404 {object} map[string]string "not found"
+// @Router      /api/oauth/device/code [get]
+func docOAuthDeviceLookup() {}
+
+// oauthDeviceApprove approves a pending device request.
+//
+// @Summary     Approve a device request
+// @Description Session-only (PAT auth rejected). Marks the pending request
+// @Description as approved so the next /token poll mints the PAT bound to
+// @Description the approving user.
+// @Tags        OAuth Device
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body body oauthDeviceUserCodeBody true "user_code from /<lang>/device"
+// @Success     200 {object} map[string]string "{\"status\":\"approved\"}"
+// @Failure     400 {object} map[string]string
+// @Failure     401 {object} map[string]string
+// @Failure     404 {object} map[string]string
+// @Router      /api/oauth/device/approve [post]
+func docOAuthDeviceApprove() {}
+
+// oauthDeviceDeny denies a pending device request.
+//
+// @Summary     Deny a device request
+// @Description Session-only (PAT auth rejected). Marks the pending request
+// @Description as denied so the next /token poll returns "access_denied".
+// @Tags        OAuth Device
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body body oauthDeviceUserCodeBody true "user_code from /<lang>/device"
+// @Success     200 {object} map[string]string "{\"status\":\"denied\"}"
+// @Failure     400 {object} map[string]string
+// @Failure     401 {object} map[string]string
+// @Failure     404 {object} map[string]string
+// @Router      /api/oauth/device/deny [post]
+func docOAuthDeviceDeny() {}

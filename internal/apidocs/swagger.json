@@ -169,6 +169,286 @@
                 }
             }
         },
+        "/api/oauth/device/approve": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Session-only (PAT auth rejected). Marks the pending request\nas approved so the next /token poll mints the PAT bound to\nthe approving user.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "OAuth Device"
+                ],
+                "summary": "Approve a device request",
+                "parameters": [
+                    {
+                        "description": "user_code from /\u003clang\u003e/device",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/routes.oauthDeviceUserCodeBody"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{\\\"status\\\":\\\"approved\\\"}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/oauth/device/code": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Session-only (PAT auth rejected). Returns the PAT spec\n(name, description, scopes, expires_in_days) tied to a\npending user_code so the /\u003clang\u003e/device page can show the\nuser what they're about to approve.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "OAuth Device"
+                ],
+                "summary": "Look up pending device request",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "short user code (with or without dashes)",
+                        "name": "user_code",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/routes.oauthDeviceLookupResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid user_code",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "RFC 8628 §3.1. Anonymous (no auth) — the CLI uses this to\nobtain a device_code (kept secret, polled on /token) and a\nshort user_code that the human enters on the SPA's\n/\u003clang\u003e/device page after authenticating.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "OAuth Device"
+                ],
+                "summary": "Start device authorization",
+                "parameters": [
+                    {
+                        "description": "PAT spec to mint after approval",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/routes.oauthDeviceCodeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/routes.oauthDeviceCodeResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/oauth/device/deny": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Session-only (PAT auth rejected). Marks the pending request\nas denied so the next /token poll returns \"access_denied\".",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "OAuth Device"
+                ],
+                "summary": "Deny a device request",
+                "parameters": [
+                    {
+                        "description": "user_code from /\u003clang\u003e/device",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/routes.oauthDeviceUserCodeBody"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{\\\"status\\\":\\\"denied\\\"}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/oauth/device/token": {
+            "post": {
+                "description": "RFC 8628 §3.4 + §3.5. Anonymous. The CLI polls this with\ndevice_code at the published interval until the server\nreturns the minted PAT plaintext (success) or an error\nstring (\"authorization_pending\", \"slow_down\", \"expired_token\",\n\"access_denied\", \"invalid_grant\"). HTTP status is always\n400 on errors per the RFC so the CLI can switch on `error`.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "OAuth Device"
+                ],
+                "summary": "Poll for PAT after device approval",
+                "parameters": [
+                    {
+                        "description": "device_code from /code",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/routes.oauthDeviceTokenRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "minted PAT plaintext (returned exactly once)",
+                        "schema": {
+                            "$ref": "#/definitions/routes.oauthDeviceTokenResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "RFC 8628 error string",
+                        "schema": {
+                            "$ref": "#/definitions/routes.oauthDeviceTokenError"
+                        }
+                    }
+                }
+            }
+        },
         "/api/pages": {
             "get": {
                 "security": [
@@ -1225,6 +1505,125 @@
         }
     },
     "definitions": {
+        "routes.oauthDeviceCodeRequest": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "expires_in_days": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "routes.oauthDeviceCodeResponse": {
+            "type": "object",
+            "properties": {
+                "device_code": {
+                    "type": "string"
+                },
+                "expires_in": {
+                    "type": "integer"
+                },
+                "interval": {
+                    "type": "integer"
+                },
+                "user_code": {
+                    "type": "string"
+                },
+                "verification_uri": {
+                    "type": "string"
+                },
+                "verification_uri_complete": {
+                    "type": "string"
+                }
+            }
+        },
+        "routes.oauthDeviceLookupResponse": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "expires_in_days": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "status": {
+                    "type": "string"
+                },
+                "user_code": {
+                    "type": "string"
+                }
+            }
+        },
+        "routes.oauthDeviceTokenError": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "type": "string"
+                }
+            }
+        },
+        "routes.oauthDeviceTokenRequest": {
+            "type": "object",
+            "properties": {
+                "device_code": {
+                    "type": "string"
+                }
+            }
+        },
+        "routes.oauthDeviceTokenResponse": {
+            "type": "object",
+            "properties": {
+                "expires_at": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "pat_id": {
+                    "type": "string"
+                },
+                "plaintext": {
+                    "type": "string"
+                },
+                "prefix": {
+                    "type": "string"
+                },
+                "scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "routes.oauthDeviceUserCodeBody": {
+            "type": "object",
+            "properties": {
+                "user_code": {
+                    "type": "string"
+                }
+            }
+        },
         "routes.patCreateRequest": {
             "type": "object",
             "properties": {
