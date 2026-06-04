@@ -124,7 +124,7 @@ func AssetKey(kind, arxivID string) string {
 	case "json":
 		return dir + "/" + key + ".json"
 	case "images":
-		return dir + "/" + key
+		return dir + "/" + key + ".zip"
 	default:
 		return ""
 	}

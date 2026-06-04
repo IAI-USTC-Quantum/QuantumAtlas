@@ -56,7 +56,7 @@ def paper_asset_path(paper_assets_root: Path, kind: str, arxiv_id: str) -> Path:
     if kind == "json":
         return directory / f"{key}.json"
     if kind == "images":
-        return directory / key
+        return directory / f"{key}.zip"
     raise ValueError(f"unknown paper asset kind: {kind}")
 
 

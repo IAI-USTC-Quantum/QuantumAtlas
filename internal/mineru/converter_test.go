@@ -294,9 +294,9 @@ func TestConverter_EnsureSubmitsAndWrites(t *testing.T) {
 	if _, ok := store.get("markdown/2401/2401.12345v1.md"); !ok {
 		t.Errorf("markdown not written to store")
 	}
-	// Image too.
-	if _, ok := store.get("images/2401/2401.12345v1/a.png"); !ok {
-		t.Errorf("image not written to store")
+	// Images should be a single zip, not scattered files.
+	if _, ok := store.get("images/2401/2401.12345v1.zip"); !ok {
+		t.Errorf("images zip not written to store")
 	}
 	snap := c.Snapshot()
 	if snap.Submitted != 1 || snap.Succeeded != 1 {

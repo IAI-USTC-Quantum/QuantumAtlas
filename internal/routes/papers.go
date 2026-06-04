@@ -1,15 +1,15 @@
 package routes
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
-	"mime"
 	"net/http"
-	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -722,58 +722,61 @@ func uploadMinerUHandler(re *core.RequestEvent, cfg *config.Config, store objsto
 	}
 
 	// Images first, markdown last (see top-of-function comment for
-	// rationale). Collect a per-image report for the response body and
-	// for the slog completion line.
-	imagesBase := paperassets.AssetKey("images", canonical)
-	type imageOutcome struct {
-		Key       string `json:"key"`
-		Sha256    string `json:"sha256"`
-		Bytes     int64  `json:"bytes"`
-		Unchanged bool   `json:"unchanged"`
-	}
-	imageReport := make([]imageOutcome, 0, len(result.Images))
-	for rel, data := range result.Images {
-		// rel is e.g. "images/abc.jpg"; strip the leading "images/"
-		// so we don't double the prefix under imagesBase (which
-		// already contains the "images/<shard>/<stem>" path).
-		name := strings.TrimPrefix(rel, "images/")
-		if name == "" || strings.Contains(name, "..") {
-			// Defensive: skip suspicious paths rather than fail the
-			// whole upload — these would never come from a real
-			// MinerU run.
-			continue
+	// rationale). Build a single zip archive from the extracted images
+	// and write it as one object at images/<shard>/<arxiv_id>.zip.
+	// Using zip.Store (no compression) — images are already JPEG/PNG
+	// compressed; re-deflating wastes CPU for ~0 savings.
+	imgZipKey := paperassets.AssetKey("images", canonical)
+	imgZipUnchanged := false
+	imageCount := 0
+	if len(result.Images) > 0 {
+		var imgZipBuf bytes.Buffer
+		zw := zip.NewWriter(&imgZipBuf)
+		for rel, data := range result.Images {
+			name := strings.TrimPrefix(rel, "images/")
+			if name == "" || strings.Contains(name, "..") {
+				continue
+			}
+			header := &zip.FileHeader{
+				Name:   name,
+				Method: zip.Store,
+			}
+			w, err := zw.CreateHeader(header)
+			if err != nil {
+				return re.JSON(http.StatusInternalServerError, map[string]string{
+					"detail": fmt.Sprintf("build images zip: create %s: %s", name, err.Error()),
+				})
+			}
+			if _, err := w.Write(data); err != nil {
+				return re.JSON(http.StatusInternalServerError, map[string]string{
+					"detail": fmt.Sprintf("build images zip: write %s: %s", name, err.Error()),
+				})
+			}
+			imageCount++
 		}
-		imgKey := imagesBase + "/" + name
-		ct := mime.TypeByExtension(path.Ext(name))
-		if ct == "" {
-			ct = "application/octet-stream"
+		if err := zw.Close(); err != nil {
+			return re.JSON(http.StatusInternalServerError, map[string]string{
+				"detail": "build images zip: close: " + err.Error(),
+			})
 		}
-		imgBody := newInMemoryBodyFromBytes(data)
-		outcome, err := uploadOne(ctx, store, imgKey, imgBody, ct, overwrite, "image")
-		imgSha := imgBody.Sha256()
-		imgSize := imgBody.Size()
+
+		imgBody := newInMemoryBodyFromBytes(imgZipBuf.Bytes())
+		imgOutcome, err := uploadOne(ctx, store, imgZipKey, imgBody, "application/zip", overwrite, "images-zip")
 		_ = imgBody.Close()
 		if err != nil {
 			return re.JSON(http.StatusInternalServerError, map[string]string{
-				"detail": fmt.Sprintf("upload image %s: %s", name, err.Error()),
+				"detail": "upload images zip: " + err.Error(),
 			})
 		}
-		if outcome.kind == outcomeConflict {
-			body := map[string]any{
-				"detail":          fmt.Sprintf("image %s already exists at %s with different content; pass overwrite=true to replace", name, imgKey),
-				"existing_path":   imgKey,
-				"new_sha256":      imgSha,
-				"existing_sha256": outcome.existingShaJSON(),
-				"failed_image":    name,
-			}
-			return re.JSON(http.StatusConflict, body)
+		if imgOutcome.kind == outcomeConflict {
+			return re.JSON(http.StatusConflict, map[string]any{
+				"detail":          "images zip already exists at " + imgZipKey + " with different content; pass overwrite=true to replace",
+				"existing_path":   imgZipKey,
+				"new_sha256":      imgBody.Sha256(),
+				"existing_sha256": imgOutcome.existingShaJSON(),
+			})
 		}
-		imageReport = append(imageReport, imageOutcome{
-			Key:       imgKey,
-			Sha256:    imgSha,
-			Bytes:     imgSize,
-			Unchanged: outcome.kind == outcomeUnchanged,
-		})
+		imgZipUnchanged = imgOutcome.kind == outcomeUnchanged
 	}
 
 	mdKey := paperassets.AssetKey("markdown", canonical)
@@ -810,7 +813,9 @@ func uploadMinerUHandler(re *core.RequestEvent, cfg *config.Config, store objsto
 		"md_sha256", mdSha,
 		"md_unchanged", mdOutcome.kind == outcomeUnchanged,
 		"md_key", mdKey,
-		"image_count", len(imageReport),
+		"image_count", imageCount,
+		"images_zip_key", imgZipKey,
+		"images_zip_unchanged", imgZipUnchanged,
 	)
 
 	catalogDeferred := false
@@ -822,19 +827,20 @@ func uploadMinerUHandler(re *core.RequestEvent, cfg *config.Config, store objsto
 	}
 
 	resp := map[string]any{
-		"arxiv_id":           canonical,
-		"key":                paperassets.StorageKey(canonical),
-		"markdown_path":      mdKey,
-		"markdown_bytes":     mdSize,
-		"markdown_sha256":    mdSha,
-		"markdown_unchanged": mdOutcome.kind == outcomeUnchanged,
-		"image_count":        len(imageReport),
-		"images":             imageReport,
-		"zip_bytes":          zipSize,
-		"zip_sha256":         zipSha,
-		"source":             nil,
-		"uploaded_by":        nil,
-		"overwritten":        overwrite,
+		"arxiv_id":              canonical,
+		"key":                   paperassets.StorageKey(canonical),
+		"markdown_path":         mdKey,
+		"markdown_bytes":        mdSize,
+		"markdown_sha256":       mdSha,
+		"markdown_unchanged":    mdOutcome.kind == outcomeUnchanged,
+		"image_count":           imageCount,
+		"images_zip_path":       imgZipKey,
+		"images_zip_unchanged":  imgZipUnchanged,
+		"zip_bytes":             zipSize,
+		"zip_sha256":            zipSha,
+		"source":                nil,
+		"uploaded_by":           nil,
+		"overwritten":           overwrite,
 	}
 	if source != "" {
 		resp["source"] = source
@@ -846,19 +852,7 @@ func uploadMinerUHandler(re *core.RequestEvent, cfg *config.Config, store objsto
 		re.Response.Header().Set("X-Catalog-Sync", "deferred")
 	}
 
-	// Status code reflects "did anything new land?":
-	//   - 200 OK   → every part (md + every image) was already present
-	//                with matching sha256, zero writes
-	//   - 201 Created → at least one new object was stored
-	allUnchanged := mdOutcome.kind == outcomeUnchanged
-	if allUnchanged {
-		for _, img := range imageReport {
-			if !img.Unchanged {
-				allUnchanged = false
-				break
-			}
-		}
-	}
+	allUnchanged := mdOutcome.kind == outcomeUnchanged && imgZipUnchanged
 	if allUnchanged {
 		re.Response.WriteHeader(http.StatusOK)
 	} else {

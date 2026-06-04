@@ -1,16 +1,14 @@
 package mineru
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
-	"mime"
-	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -488,32 +486,57 @@ func (c *Converter) pollUntilDone(ctx context.Context, client *Client, taskID st
 	}
 }
 
-// writeResult writes images first, then markdown, mirroring the
-// upload-mineru contributor handler's ordering — readers see markdown
-// only after every referenced image is durable. Uses IfNoneMatch:"*"
-// so a concurrent edge that wrote markdown first wins (we observe 412
-// and treat that as success).
+// writeResult writes images (as a single zip) first, then markdown,
+// mirroring the upload-mineru contributor handler's ordering — readers
+// see markdown only after the referenced image archive is durable.
+// Uses IfNoneMatch:"*" so a concurrent edge that wrote first wins (we
+// observe 412 and treat that as success).
+//
+// The zip stores images flat (no directory prefix) using STORE
+// compression (images are already compressed; re-deflating wastes CPU
+// for ~0 savings). File names inside the zip match what MinerU emits
+// (typically "images/<sha256>.jpg"); we strip the leading "images/"
+// before writing the entry so the zip internal layout is flat — same
+// convention the contributor upload path uses.
 func (c *Converter) writeResult(ctx context.Context, canonical string, result Result) error {
-	imagesBase := paperassets.AssetKey("images", canonical)
-	for rel, data := range result.Images {
-		name := strings.TrimPrefix(rel, "images/")
-		if name == "" || strings.Contains(name, "..") {
-			continue
+	// --- Images zip ---
+	if len(result.Images) > 0 {
+		var zipBuf bytes.Buffer
+		zw := zip.NewWriter(&zipBuf)
+		for rel, data := range result.Images {
+			name := strings.TrimPrefix(rel, "images/")
+			if name == "" || strings.Contains(name, "..") {
+				continue
+			}
+			// STORE (no compression) — images are already compressed.
+			header := &zip.FileHeader{
+				Name:   name,
+				Method: zip.Store,
+			}
+			header.SetModTime(c.now())
+			w, err := zw.CreateHeader(header)
+			if err != nil {
+				return fmt.Errorf("zip create %s: %w", name, err)
+			}
+			if _, err := w.Write(data); err != nil {
+				return fmt.Errorf("zip write %s: %w", name, err)
+			}
 		}
-		imgKey := imagesBase + "/" + name
-		ct := mime.TypeByExtension(path.Ext(name))
-		if ct == "" {
-			ct = "application/octet-stream"
+		if err := zw.Close(); err != nil {
+			return fmt.Errorf("zip close: %w", err)
 		}
-		_, err := c.store.PutWithOptions(ctx, imgKey, bytes.NewReader(data), int64(len(data)), objstore.PutOptions{
-			ContentType: ct,
+
+		imgKey := paperassets.AssetKey("images", canonical)
+		_, err := c.store.PutWithOptions(ctx, imgKey, bytes.NewReader(zipBuf.Bytes()), int64(zipBuf.Len()), objstore.PutOptions{
+			ContentType: "application/zip",
 			IfNoneMatch: "*",
 		})
 		if err != nil && !errors.Is(err, objstore.ErrPreconditionFailed) {
-			return fmt.Errorf("put image %s: %w", name, err)
+			return fmt.Errorf("put images zip: %w", err)
 		}
 	}
 
+	// --- Markdown ---
 	mdKey := paperassets.AssetKey("markdown", canonical)
 	mdSize := int64(len(result.Markdown))
 	_, err := c.store.PutWithOptions(ctx, mdKey, bytes.NewReader(result.Markdown), mdSize, objstore.PutOptions{
@@ -524,9 +547,7 @@ func (c *Converter) writeResult(ctx context.Context, canonical string, result Re
 		return fmt.Errorf("put markdown: %w", err)
 	}
 
-	// Catalog write-through is best-effort: a Neo4j outage shouldn't
-	// turn a successful S3 write into a 502 to the caller. Matches the
-	// upload-mineru handler's tolerance.
+	// Catalog write-through is best-effort.
 	if c.catalog != nil {
 		sum := sha256.Sum256(result.Markdown)
 		mdSha := hex.EncodeToString(sum[:])
@@ -606,7 +627,3 @@ func kindLabel(kind error) string {
 		return "unknown"
 	}
 }
-
-// drainReader is a small helper for tests that want to discard a
-// response body cleanly.
-func drainReader(r io.Reader) { _, _ = io.Copy(io.Discard, r) }

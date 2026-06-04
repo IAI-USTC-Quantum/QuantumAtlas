@@ -30,7 +30,7 @@ func TestAssetKey_MatchesAssetPathStripped(t *testing.T) {
 		{"new style pdf", "2401.00001v1", "pdf", "pdf/2401/2401.00001v1.pdf"},
 		{"new style markdown", "2401.00001v1", "markdown", "markdown/2401/2401.00001v1.md"},
 		{"new style json", "2401.00001v1", "json", "json/2401/2401.00001v1.json"},
-		{"new style images dir", "2401.00001v1", "images", "images/2401/2401.00001v1"},
+		{"new style images zip", "2401.00001v1", "images", "images/2401/2401.00001v1.zip"},
 		{"old style pdf drops category", "quant-ph/9508027v1", "pdf", "pdf/9508/9508027v1.pdf"},
 		{"unknown kind returns empty", "2401.00001v1", "garbage", ""},
 	}
