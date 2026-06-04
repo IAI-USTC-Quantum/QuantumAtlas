@@ -14,14 +14,20 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { loginWithGitHub, useAuth } from '@/lib/auth'
+import { safeRedirect } from '@/lib/safe-redirect'
 
 type LoginSearch = { from?: string }
 
 export const Route = createFileRoute('/login')({
   component: LoginPage,
-  validateSearch: (search: Record<string, unknown>): LoginSearch => ({
-    from: typeof search.from === 'string' ? search.from : undefined,
-  }),
+  validateSearch: (search: Record<string, unknown>): LoginSearch => {
+    // Same-origin gate at the search-validation layer too, so we never
+    // even round-trip a hostile `?from=` through the component (defence
+    // in depth — the component also calls safeRedirect before
+    // window.location.assign).
+    if (typeof search.from !== 'string') return {}
+    return { from: safeRedirect(search.from, '/') === '/' ? undefined : search.from }
+  },
 })
 
 function LoginPage() {
@@ -34,8 +40,20 @@ function LoginPage() {
 
   useEffect(() => {
     if (auth.isAuthed) {
-      const dest = search.from && search.from !== '/login' ? search.from : '/'
-      navigate({ to: dest })
+      // safeRedirect collapses anything cross-origin / malformed to "/"
+      // so a hostile ?from=//evil.com cannot phishing-jump after login.
+      const dest = safeRedirect(search.from)
+      // `dest` may carry search params (e.g. /<lang>/pat?cli_callback=…
+      // when the qatlas CLI's loopback flow bounces the user through
+      // a fresh sign-in). TanStack Router's `navigate({to})` only
+      // accepts route ids — passing a raw URL with `?…` would either
+      // fail typing or strip the search part. Fall back to a hard
+      // navigation in that case so the SPA reloads with the full URL.
+      if (dest.includes('?') || dest.includes('#')) {
+        window.location.assign(dest)
+      } else {
+        navigate({ to: dest })
+      }
     }
   }, [auth.isAuthed, navigate, search.from])
 

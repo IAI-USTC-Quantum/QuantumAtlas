@@ -12,6 +12,7 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { completeOAuth2Login } from '@/lib/auth'
+import { safeRedirect } from '@/lib/safe-redirect'
 
 type CallbackSearch = {
   code?: string
@@ -58,8 +59,19 @@ function AuthCallbackPage() {
 
     completeOAuth2Login(search.code, search.state)
       .then(({ from }) => {
-        const dest = from && from !== '/login' ? from : '/'
-        navigate({ to: dest, replace: true })
+        // safeRedirect collapses anything cross-origin / malformed to "/"
+        // so the post-login bounce never lands on an attacker host even
+        // if `from` was tampered with in the state store.
+        const dest = safeRedirect(from)
+        // `dest` may carry search params after the CLI loopback flow —
+        // see login.tsx for the same fallback. window.location.replace
+        // is the safe path for URLs with `?…` / `#…`; the normal
+        // TanStack navigate call covers static route ids.
+        if (dest.includes('?') || dest.includes('#')) {
+          window.location.replace(dest)
+        } else {
+          navigate({ to: dest, replace: true })
+        }
       })
       .catch((e: unknown) => {
         const message = e instanceof Error ? e.message : String(e)
