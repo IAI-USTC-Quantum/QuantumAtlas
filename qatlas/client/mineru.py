@@ -1,7 +1,7 @@
 """``qatlas mineru`` — run MinerU parsing locally and push the result to the server.
 
-The OSS edition is arxiv-only: the server hands back an arxiv.org versioned URL
-(stable bytes — arxiv never mutates a published version) and we feed that URL
+The contributor flow is arxiv-only: the server hands back an arxiv.org versioned
+URL (stable bytes — arxiv never mutates a published version) and we feed that URL
 to MinerU. The server **never** redistributes PDFs back to clients.
 
 Modes::

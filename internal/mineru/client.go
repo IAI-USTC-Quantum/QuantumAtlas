@@ -1,13 +1,17 @@
 // Package mineru is a Go client for MinerU's document-extraction API
-// (https://mineru.net). It provides helpers used by the server to
-// process MinerU result archives produced by contributors who run
-// `qatlas mineru` locally with their own MINERU_API_TOKEN.
+// (https://mineru.net). It provides two complementary surfaces:
 //
-// The OSS server no longer drives MinerU submission itself — historical
-// "silent server-side submission" was removed in v0.9.0 along with the
-// byte-serving markdown endpoint. This package now exposes only the
-// result-archive parsing primitives (ExtractResult, etc.) used by the
-// contributor upload pipeline in internal/routes/papers.go.
+//  1. Result-archive parsing primitives (ExtractResult, etc.) used by
+//     the contributor upload pipeline in internal/routes/papers.go —
+//     contributors run `qatlas mineru` locally with their own
+//     MINERU_API_TOKEN, then POST the resulting zip to
+//     /api/papers/{id}/upload-mineru.
+//  2. An HTTP wrapper (Client) plus a background Converter that the
+//     server can use to *itself* drive MinerU on cache miss, gated by
+//     the opt-in QATLAS_ASSET_DOWNLOADS_ENABLED master switch.
+//     Default-off; public deployments (e.g. quantum-atlas.ai) leave it
+//     off and stay in "server does not redistribute PDF / markdown
+//     bytes" mode.
 package mineru
 
 import (

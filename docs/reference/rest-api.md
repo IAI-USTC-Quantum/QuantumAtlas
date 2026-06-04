@@ -80,7 +80,6 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
 | `GET` | `/api/pages/{page_id}` | `wiki:read` | 取单页（frontmatter + content）|
 | `GET` | `/api/stats` | `wiki:read` | Wiki 统计（含 `entries`=词条数、`sources`=源文献数、`by_category`、`by_status`）|
 | `GET` | `/api/search?q=&limit=` | `wiki:read` | 全文搜索。**默认排除 source**；显式传 `?include_sources=true` 才纳入 |
-| `GET` | `/api/lint` | `wiki:read` | Wiki lint 报告（**当前是占位**，返回空 issues）|
 | `GET` | `/api/wiki/sync/status` | `wiki:read` | Wiki git 状态 |
 | `POST` | `/api/wiki/sync/pull` | `wiki:write` | 触发服务端 Wiki git fast-forward pull（`git fetch --prune` + `git pull --ff-only`），随后同步刷新内存缓存 |
 

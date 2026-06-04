@@ -132,34 +132,24 @@ jobs:
 
   # --------------------------------------------------------------------
   # 3. binary-build — matrix over (OS, arch). Each runner is native to
-  #    its target so we build with CGO_ENABLED=1 against that target's
-  #    own libc / libduckdb / sqlite — no cross-toolchain juggling.
+  #    its target so we don't juggle cross-toolchains. CGO_ENABLED=0
+  #    so the output is a pure-Go binary with no libc / libstdc++
+  #    runtime dependency on linux.
   #
   #    Linux targets run INSIDE a manylinux_2_28 container (AlmaLinux 8
   #    / glibc 2.28 / gcc-toolset-12) via the job-level `container:`
   #    key, so every step (checkout, node, go build) executes inside it.
   #
-  #    Why manylinux_2_28?
-  #      - bare ubuntu-latest (24.04) links against CXXABI_1.3.13+,
-  #        which breaks on slightly older glibc-2.28-era distros that
-  #        still cap at CXXABI ≤ 1.3.12.
-  #      - full `-extldflags=-static` removes the CXXABI dep but
-  #        SIGSEGVs at runtime: DuckDB `INSTALL httpfs` calls dlopen(),
-  #        broken in a fully-static binary (glibc ld machinery absent).
-  #      - manylinux_2_28 + `-static-libstdc++ -static-libgcc` gives
-  #        the best of both worlds: libstdc++/libgcc are baked into the
-  #        binary (zero CXXABI runtime dep), libc stays dynamic (dlopen
-  #        works), and glibc ≥ 2.28 covers every current mainstream
-  #        Linux distro (Ubuntu 20.04+, Debian 11+, RHEL/Rocky 8+, etc).
-  #
-  #    Why _2_28, not the older manylinux2014 (CentOS 7 / glibc 2.17)?
+  #    Why manylinux_2_28 when the binary itself is static?
   #    GitHub Actions runs every step's JavaScript action (checkout,
   #    setup-node, setup-go …) via `docker exec <container> node20`.
-  #    Node 20 requires glibc ≥ 2.28; CentOS 7 only has 2.17 → crash.
-  #    manylinux_2_28 (glibc 2.28) is the minimum that satisfies Node.
+  #    Node 20 requires glibc ≥ 2.28; older containers (CentOS 7 /
+  #    glibc 2.17) would crash. manylinux_2_28 (glibc 2.28) is the
+  #    minimum that satisfies Node — it doesn't affect the produced
+  #    binary, which is CGO-free and runs on any modern Linux kernel
+  #    regardless of the host's glibc version.
   #
-  #    darwin-arm64 stays on macos-latest (no container). macOS binaries
-  #    link /usr/lib/libc++.dylib, uniformly available.
+  #    darwin-arm64 stays on macos-latest (no container).
   #
   #    Free runner availability (public repos):
   #      - ubuntu-latest        linux/amd64 → manylinux_2_28_x86_64
@@ -217,22 +207,17 @@ jobs:
 
       - name: Build qatlasd
         env:
-          CGO_ENABLED: "1"
+          CGO_ENABLED: "0"
         run: |
           set -euo pipefail
           mkdir -p dist/bin
           OUT="dist/bin/qatlasd-${{ matrix.target }}"
 
+          # Pure-Go build (CGO_ENABLED=0). The SQLite driver in use is
+          # modernc.org/sqlite (pure Go); no other dep needs cgo. The
+          # resulting linux binaries are statically linked and have no
+          # libc / libstdc++ runtime dependency.
           LDFLAGS="-s -w -X main.Version=${{ needs.prep.outputs.version }}"
-          case "${{ matrix.target }}" in
-            linux-*)
-              # Static-link libstdc++ and libgcc so the binary has zero
-              # CXXABI runtime dependency. libc stays dynamic (glibc
-              # ≥ 2.28 floor from manylinux_2_28) so dlopen() — needed
-              # by DuckDB's `INSTALL httpfs` — keeps working.
-              LDFLAGS="$LDFLAGS -extldflags '-static-libstdc++ -static-libgcc'"
-              ;;
-          esac
 
           go build -trimpath -buildvcs=false -ldflags "$LDFLAGS" -o "$OUT" ./cmd/qatlasd
 
@@ -240,9 +225,9 @@ jobs:
           file "$OUT" || true
           case "${{ matrix.target }}" in
             linux-*)
+              # Pure-Go ⇒ `ldd` typically reports "not a dynamic
+              # executable" and objdump finds no GLIBC/CXXABI deps.
               ldd "$OUT" 2>&1 | head -10 || true
-              # With -static-libstdc++, CXXABI entries should be absent
-              # (all resolved statically). Only GLIBC entries remain.
               objdump -T "$OUT" 2>/dev/null | grep -oE 'GLIBC_[0-9]+\.[0-9]+(\.[0-9]+)?' | sort -V -u | tail -5 || true
               objdump -T "$OUT" 2>/dev/null | grep -oE 'CXXABI_[0-9]+\.[0-9]+(\.[0-9]+)?' | sort -V -u | tail -5 || true
               ;;

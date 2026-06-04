@@ -181,7 +181,7 @@ qatlas mineru 2501.00010v1 --no-push
 
 ## 2. 鉴权与审计
 
-服务器使用 PocketBase 内嵌的 GitHub OAuth 流程做浏览器登录，并通过 `authGuard`（`internal/routes/auth.go`）门禁写操作。读口（wiki / pages / stats / search / graph / lint）保持公开（因为 wiki 仓库本身就是公开的）。
+服务器使用 PocketBase 内嵌的 GitHub OAuth 流程做浏览器登录，并通过 `authGuard`（`internal/routes/auth.go`）门禁写操作。读口（wiki / pages / stats / search / graph）保持公开（因为 wiki 仓库本身就是公开的）。
 
 `authGuard` 接受**三种**凭据，按到达顺序检查：
 

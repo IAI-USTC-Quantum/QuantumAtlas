@@ -535,7 +535,7 @@ caddy-security / oauth2-proxy 这类身份代理；反代只承担 SNI 选路 + 
 | `/api/health` | open | 直接 reverse_proxy；监控可读（返回 `{code, message, data:{status, version, uptime_seconds, checks{rawstore, neo4j, wiki}}}`） |
 | `/install-qatlasd.sh` | open | 直接 reverse_proxy；公开的 `curl \| sh` 安装脚本 |
 | `/{path...}`、`/_/`、`/auth-with-oauth2` 等 SPA + PocketBase 内置 | open / 自管 | 直接 reverse_proxy；OAuth 由 server 自己处理 |
-| `/api/wiki/...`、`/api/pages`、`/api/search`、`/api/stats`、`/api/graph/*`、`/api/lint` | server 内 `authGuard + scope:read` | 直接 reverse_proxy |
+| `/api/wiki/...`、`/api/pages`、`/api/search`、`/api/stats`、`/api/graph/*` | server 内 `authGuard + scope:read` | 直接 reverse_proxy |
 | `/api/papers/...`、`/api/pat/...` | server 内的 `authGuard` / `scopeGuard` / `sessionGuard` | 直接 reverse_proxy；**不要**剥 `Authorization` header（server 要拿来鉴权） |
 | `raw.your-domain.tld/*`（启用 S3/RustFS 时） | RustFS 自管（presigned URL） | 反代到 RustFS `:9000` |
 

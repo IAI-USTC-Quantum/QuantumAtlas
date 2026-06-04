@@ -60,21 +60,23 @@ def test_release_workflow_publishes_python_and_go_artifacts():
 
     # Go binaries are cross-compiled via the matrix over (OS, arch).
     # Each matrix entry runs on its native runner; linux targets build
-    # INSIDE a manylinux_2_28 container (AlmaLinux 8 / glibc 2.28) with
-    # -static-libstdc++ so the binary has no CXXABI runtime dep while
-    # keeping libc dynamic (dlopen works for DuckDB httpfs).
+    # INSIDE a manylinux_2_28 container (AlmaLinux 8 / glibc 2.28) which
+    # is required for Node 20's glibc floor used by GitHub Actions
+    # JavaScript actions, not because the binary itself links against
+    # glibc — CGO_ENABLED=0 produces a pure-Go static binary.
     assert "- target: linux-amd64" in release_workflow
     assert "- target: linux-arm64" in release_workflow
     assert "- target: darwin-arm64" in release_workflow
     assert "qatlasd-${{ matrix.target }}" in release_workflow
     assert "manylinux_2_28_x86_64" in release_workflow
     assert "manylinux_2_28_aarch64" in release_workflow
-    # -static-libstdc++ bakes libstdc++ into the binary (no CXXABI dep);
-    # -static-libgcc does the same for libgcc_s. libc stays dynamic so
-    # dlopen works. Verify both are present and the old full-static hack
-    # (`-extldflags=-static` or `-extldflags -static`) is NOT.
-    assert "static-libstdc++" in release_workflow
-    assert "static-libgcc" in release_workflow
+    # Pure-Go binary: no cgo, no -extldflags juggling, no DuckDB. The
+    # SQLite driver is modernc.org/sqlite (pure Go). Drift-guard the
+    # CGO_ENABLED=0 + absence of the old -extldflags hacks.
+    assert 'CGO_ENABLED: "0"' in release_workflow
+    assert "static-libstdc++" not in release_workflow
+    assert "static-libgcc" not in release_workflow
+    assert "-extldflags" not in release_workflow
     assert "-X main.Version=${{ needs.prep.outputs.version }}" in release_workflow
 
     # PyPI uses Trusted Publishing (no token, OIDC via environment + id-token)

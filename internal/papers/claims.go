@@ -23,9 +23,10 @@ const (
 //
 // Contract changed in v0.9.0: PDFURL is now always the canonical
 // arxiv.org versioned URL (https://arxiv.org/pdf/<id>v<n>), never a
-// presigned link to our RustFS bucket — the OSS server no longer
-// serves PDF bytes outbound. Contributors fetch the PDF from arxiv
-// themselves and verify it matches our catalog via PDFSha256 (the
+// presigned link to our RustFS bucket — the contributor MinerU path
+// does not depend on the server handing back PDF bytes. Contributors
+// fetch the PDF from arxiv themselves and verify it matches our
+// catalog via PDFSha256 (the
 // sha256 of the canonical PDF currently stored in RustFS, populated
 // from object metadata when available). On upload-mineru the server
 // re-checks the contributor's reported sha256 against this same
