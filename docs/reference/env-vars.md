@@ -18,13 +18,14 @@ server 端项目自有变量带 `QATLAS_` 前缀；第三方 SDK 标准名（`NE
 | `token` (client only) | ✅ 写操作必填 | — |
 | `insecure` (client only) | ✅ | — |
 | `wiki_dir` / `QATLAS_WIKI_DIR` | ✅（本地 wiki 命令）| ✅ |
-| `mineru_*` / `MINERU_*` | ✅（本地跑 mineru）| — |
+| `mineru_*` / `MINERU_*` | ✅（本地跑 mineru）| ✅ 仅 self-hosted + 启用资产下载开关时 |
 | `openai_api_key` / `anthropic_api_key` | ✅（本地跑 extractor）| — |
 | `QATLAS_RAW_DIR` / `DATA_DIR` / `PB_DATA_DIR` | — | ✅ |
 | `QATLAS_HTTP_ADDR` / `QATLAS_FORCE_TCP4` | — | ✅ |
 | `NEO4J_*` | — | ✅ |
 | `QATLAS_S3_*` | — | ✅ |
 | `QATLAS_USER_HEADER` | — | ✅ |
+| `QATLAS_ASSET_DOWNLOADS_ENABLED` | — | ✅ self-hosted 可选 |
 | `GITHUB_CLIENT_ID` / `SECRET` | — | ✅（只能走 env，无 CLI flag） |
 | `QATLAS_SYSTEM_PAT` / `_SCOPES` | — | ✅ |
 | `QATLAS_EDGE_NAME` | — | ✅ |
@@ -87,6 +88,42 @@ server 端项目自有变量带 `QATLAS_` 前缀；第三方 SDK 标准名（`NE
 | `QATLAS_ADMIN_GITHUB_LOGINS` | 否 | 逗号分隔 GitHub username 白名单（未来 admin 自动提权用，当前 handler 未实现）|
 
 OAuth callback URL 必须填成 `https://<your-server>/api/oauth2-redirect`。
+
+## Server: 资产下载开关 (self-hosted 可选)
+
+QuantumAtlas qatlasd **默认不**通过 API 对外 serve PDF / Markdown 字节。
+Self-hosted 部署在受控范围（私有团队、内部站点）可以启用对内下载——
+**quantum-atlas.ai 等公开实例保持默认（关闭）**。
+
+| 变量 | 默认 | 含义 |
+|---|---|---|
+| `QATLAS_ASSET_DOWNLOADS_ENABLED` | `false` | 启用后：(1) 注册 `GET /api/papers/{id}/markdown` + `markdown/status` 端点（受 `papers:read` 保护）；(2) server 读下面的 server-side MinerU 字段；(3) `/markdown` 缓存未命中时按需触发 MinerU 转换（server 把 PDF 通过 presign URL 提供给配置的 MinerU 后端）。`false`（默认）时上述端点未注册（404），server 不读 MinerU 字段 |
+
+启用前请阅 [License & Attribution · 资产下载开关](../about/license-and-attribution.md#资产下载开关-self-hosted)
+——arxiv 论文版权归原作者，对外二次分发由部署方自负责任。
+Contributor 流程（`qatlas mineru` → `POST /api/papers/{id}/upload-mineru`）
+与本开关**无关**，开关 OFF 时也照常工作。
+
+### Server-side MinerU（仅当 `QATLAS_ASSET_DOWNLOADS_ENABLED=true` 时生效）
+
+启用资产下载开关后，server 在 `GET /api/papers/{id}/markdown` 缓存未命中时会
+用下面这组**服务端**配置（独立于 contributor 端 `qatlas mineru` 的 YAML 配置）
+透明触发 MinerU 转换：
+
+| 变量 | 默认 | 作用 |
+|---|---|---|
+| `MINERU_API_TOKEN` | — | **必填**（否则 server-side conversion `Enabled() == false`，`/markdown` 缓存未命中时返回 503）|
+| `MINERU_API_BASE_URL` | `https://mineru.net` | 自部署 MinerU 实例时改 |
+| `MINERU_MODEL_VERSION` | `vlm` | `vlm` / `pipeline` |
+| `MINERU_LANGUAGE` | `ch` | 主语言 hint |
+| `MINERU_IS_OCR` | `false` | 强制 OCR |
+| `MINERU_ENABLE_FORMULA` | `true` | 公式识别 |
+| `MINERU_ENABLE_TABLE` | `true` | 表格识别 |
+| `MINERU_POLL_INTERVAL` | `3.0` | 单 task 轮询间隔（秒）|
+| `MINERU_TIMEOUT` | `1800` | 单篇总超时（秒，30 分钟）|
+
+开关 `false` 时**这组字段全部被忽略**——server 不实例化 MinerU client，
+也不会因为漏配而 fail-loud。
 
 ## Server: Neo4j
 
@@ -155,9 +192,18 @@ uuidgen
 
 ## 第三方 SDK 标准名
 
-### MinerU（client-only — 仅 `qatlas mineru` 子命令读）
+### MinerU（contributor client — `qatlas mineru` 子命令读）
 
-这组字段由 Python client (`qatlas/extractor/llm_interface.py` / `qatlas/client/mineru.py`) 在用户本地跑 `qatlas mineru` 时读取并转发给 MinerU API；Go server (`qatlasd`) **不读这些字段**。**v0.17.0+ 只能放 `~/.config/qatlas/config.yaml`**，不再支持 env / `MINERU_*` env var。
+这组字段由 Python client (`qatlas/extractor/llm_interface.py` / `qatlas/client/mineru.py`) 在
+contributor 本地跑 `qatlas mineru` 时读取并转发给 MinerU API；走的是
+contributor 自己的 MinerU 配额。**v0.17.0+ 只能放 `~/.config/qatlas/config.yaml`**，
+不再支持 env / `MINERU_*` env var。
+
+> server-side（qatlasd）启用资产下载开关后**也**会读 MinerU 字段，但走
+> [独立的环境变量](#server-side-mineru仅当-qatlas_asset_downloads_enabledtrue-时生效)
+> 而**不**读 contributor 的 YAML。两条路径互不影响：contributor 用自己的
+> token 在自己机器上跑、把成品 upload 给 server；启用资产下载开关后 server
+> 用部署方配置的 token 代客户端跑。
 
 | YAML key | 默认 | 作用 |
 |---|---|---|
@@ -172,11 +218,14 @@ uuidgen
 | `mineru_timeout` | `1800` | 单篇总超时（秒，30 分钟）|
 
 > 用户本地 `qatlas mineru` 流程把自己机器上的 PDF 上传给 MinerU
-> （contributor 拿自己的 MinerU 配额走完转换）。服务端**不**对外 serve PDF
-> 字节，也**不**有以服务端身份代客户做 MinerU 转换的 endpoint——下游
-> 拓扑里没有"MinerU 主动拉服务端 PDF"的链路，因此也无需为 MinerU 公网
-> 可达性维护 RustFS public endpoint。`QATLAS_S3_PUBLIC_ENDPOINT` 的用途
-> 是给已授权的内部工具签 presigned URL，与公开 MinerU 服务无关。
+> （contributor 拿自己的 MinerU 配额走完转换）。**默认部署的 qatlasd 不**
+> 对外 serve PDF 字节，也**不**以服务端身份代客户做 MinerU 转换——
+> contributor 流程是 server 获取 markdown 的唯一路径。
+> Self-hosted 部署若启用 `QATLAS_ASSET_DOWNLOADS_ENABLED`，则 server
+> 会**额外**用自己配置的 `MINERU_API_TOKEN` 在 `GET /markdown` 缓存未命中时
+> 透明触发转换；公开实例（quantum-atlas.ai）保持默认（关闭）。
+> `QATLAS_S3_PUBLIC_ENDPOINT` 的用途是给已授权的内部工具签 presigned
+> URL，与公开 MinerU 服务无关。
 
 ### LLM（client-only — 仅 `qatlas extractor` 子命令读）
 

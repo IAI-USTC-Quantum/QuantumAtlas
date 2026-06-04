@@ -55,23 +55,26 @@
 
     **1. 装 client（同上）**
 
-    **2. 拿一个 PAT**：浏览器打开 `https://<your-server>/pat` → 用 GitHub 登录 → 创建 PAT，**勾上 `papers:write`**（外加按需 `wiki:read` / `graph:read` 等） → 复制以 `qat_` 开头的明文。
-
-    !!! warning "PAT 明文只会显示一次"
-        复制后立即存好。丢了就只能 revoke + 重建。
-
-    **3. 把 PAT 存到本地：**
+    **2. 登录：**
 
     ```bash
-    # 推荐：交互式存到 ~/.config/qatlas/hosts.yml
     qatlas auth login -H <your-server>
-    # 然后粘贴 PAT 明文
+    # 自动开浏览器到 https://<your-server>/pat?cli_callback=...
+    # 浏览器侧用 GitHub 登录 → 在弹出的"qatlas CLI 请求 token"对话框里
+    # 勾上需要的 scopes（papers:write 等）→ Approve
+    # token 自动通过本地回调写进 ~/.config/qatlas/hosts.yml
+
+    # SSH 远端 / 没 DISPLAY 的机器自动走 device-code，或显式：
+    # qatlas auth login --device -H <your-server>
 
     # 验证
     qatlas auth status
     ```
 
-    **4. 上传第一篇论文：**
+    !!! tip "想自己手 mint PAT？"
+        浏览器直接打开 `https://<your-server>/pat` 也行；按 New token 填名字 / scopes / 过期，复制以 `qat_` 开头的明文，然后 `qatlas auth login -H <host> --token qat_xxx` 存进 hosts.yml。CI 路径同理（`--with-token` 从 stdin 读）。
+
+    **3. 上传第一篇论文：**
 
     ```bash
     # 上传 PDF + 元数据 JSON

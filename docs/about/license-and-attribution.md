@@ -7,22 +7,30 @@
 
 | 数据类别 | 来源 | 我们持有 / 分发？ | 用户拿到什么 |
 |---|---|---|---|
-| **论文 PDF 字节** | arxiv.org（作者保留版权） | ❌ **从不分发字节** | OSS 公开 server **无 PDF 下载 API**；从 [arxiv.org](https://arxiv.org/) 自行下载 |
+| **论文 PDF 字节** | arxiv.org（作者保留版权） | ⚠️ **默认不分发** | qatlasd **默认无 PDF 下载 API**（`QATLAS_ASSET_DOWNLOADS_ENABLED=false`）；从 [arxiv.org](https://arxiv.org/) 自行下载。Self-hosted 部署可在受控范围内启用对内下载，详见下文「资产下载开关」 |
 | **论文 metadata**（标题 / 作者 / DOI / 引用 / 发表日期 等） | OpenAlex（CC0）+ Crossref（CC0） | ✅ 镜像 + Neo4j MERGE | 公开 API 返回，CC0 transitively 公开 |
-| **MinerU 解析后的 Markdown 全文** | 由我们用自己的 MinerU quota 从 PDF 转换 | ✅ 缓存在 `qatlas-md` 桶 | OSS 公开 server **不提供字节级下载 API**——markdown 仅供 server 内部检索 / 渲染元数据 |
+| **MinerU 解析后的 Markdown 全文** | 由部署方用自己的 MinerU quota 从 PDF 转换 | ✅ 缓存在 `qatlas-md` 桶 | 同上开关控制：默认仅供 server 内部检索；启用后可对持 `papers:read` 的客户端 serve markdown 字节 |
 | **Wiki 知识页面**（概念 / 算法 / paper 笔记） | 团队 + 贡献者撰写 | ✅ 在独立 [QuantumAtlas-Wiki repo](https://github.com/IAI-USTC-Quantum/QuantumAtlas-Wiki) | require login（同上） |
 
 **核心合规设计**：
 
 ```
-不分发 PDF 字节 + metadata 来自 CC0 上游 + Markdown 全文不通过 API 外发
-  → 论文 license 风险天然规避，无需 per-paper license 过滤
+默认不分发 PDF 字节 + metadata 来自 CC0 上游 + Markdown 默认不通过 API 外发
+  → 论文 license 风险在 quantum-atlas.ai 这类公开实例上天然规避
+  → self-hosted 部署若开启资产下载开关，由部署方自行承担分发义务
 ```
 
-这意味着我们**不需要**在 ingest 时检查每篇论文的 license（许多 arxiv 论文是
-"作者保留版权 + 授予 arxiv 永久非排他分发权"，license 字段在 OpenAlex 里**不**
-统一记录）。靠"不持字节 + 全文不外发"两条规则在源头规避，比 per-paper license
+这意味着 [quantum-atlas.ai](https://quantum-atlas.ai) 这类公开实例**不需要**在
+ingest 时检查每篇论文的 license（许多 arxiv 论文是"作者保留版权 + 授予 arxiv
+永久非排他分发权"，license 字段在 OpenAlex 里**不**统一记录）。靠"默认不持
+字节面向公网 + 默认不外发全文"两条规则在源头规避，比 per-paper license
 匹配可靠得多。
+
+> **Self-hosters 注意**：若你把 `QATLAS_ASSET_DOWNLOADS_ENABLED` 设为
+> `true`（见 [资产下载开关](#资产下载开关-self-hosted)），server 会开始通过
+> HTTP API 对外 serve PDF / Markdown 字节，原生的"源头规避"就**不再适用**——
+> 此时部署方需要自己评估对外受众范围、上游 ToS 与适用法域的合规要求。
+> 我们维护的公开实例（quantum-atlas.ai）保持默认关闭。
 
 ## 上游数据源 license 汇总
 
@@ -34,8 +42,8 @@
 | **OpenAlex** | [CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/) | ✅ | ❌（强烈推荐但不强制） | 创作者放弃所有权利，可任意使用。OpenAlex 仍**请求**显示归属，我们照做 |
 | **Crossref metadata** | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) | ✅ | ❌ | 2017 起 Crossref 全部 metadata 转 CC0 |
 | **arXiv metadata**（via OAI-PMH） | [arXiv ToU](https://arxiv.org/help/license) | ✅（read access） | ✅ "Source: arXiv" | 元数据可读、可镜像；归属到 arxiv.org |
-| **arXiv 论文全文（PDF）** | **作者保留版权** | ❌ 不可随意再分发 | — | 我们**不**镜像 PDF 字节；用户从 arxiv 自己下 |
-| **MinerU 解析输出** | 衍生作品 — 受**原 PDF 版权**约束 | ⚠️ 仅 fair-use / 研究教育 | — | 公开 server 无字节下载 API；不对外公开 |
+| **arXiv 论文全文（PDF）** | **作者保留版权** | ❌ 不可随意再分发 | — | 公开实例**不**镜像 PDF 字节；用户从 arxiv 自己下。Self-hosted + 开关启用后，由部署方承担分发义务 |
+| **MinerU 解析输出** | 衍生作品 — 受**原 PDF 版权**约束 | ⚠️ 仅 fair-use / 研究教育 | — | 同上：公开实例无字节下载 API；self-hosted 自负责任 |
 | **Semantic Scholar Open Research Corpus** | [ODC-BY 1.0](https://opendatacommons.org/licenses/by/1-0/) | ✅ | ✅ "Data provided by Semantic Scholar" | 当前未使用，预留 |
 | **ORCID public profile** | CC0 | ✅ | ❌ | 当前未使用，预留 |
 
@@ -62,8 +70,30 @@ X-Attribution: OpenAlex (CC0), Crossref (CC0), arXiv
 如果你**复用**从 QuantumAtlas API 拿到的内容：
 
 - **Metadata（CC0）**：随便用，**仍请**归属到 OpenAlex（公益项目，归属能帮它们拿持续资助）
-- **PDF**：公开 server 不提供 PDF 下载——请自行到 [arxiv.org](https://arxiv.org/) 拉，按原作者声明使用
+- **PDF**：公开实例不提供 PDF 下载——请自行到 [arxiv.org](https://arxiv.org/) 拉，按原作者声明使用
 - **Wiki 内容**：Apache-2.0（与 [QuantumAtlas-Wiki repo](https://github.com/IAI-USTC-Quantum/QuantumAtlas-Wiki) LICENSE 一致），归属到本项目即可
+
+## 资产下载开关 (self-hosted)
+
+`QATLAS_ASSET_DOWNLOADS_ENABLED` 是 qatlasd 上的**单一 master 开关**，
+默认 `false`。开关 OFF 时（quantum-atlas.ai 等公开实例的默认状态）：
+
+- `GET /api/papers/{id}/markdown` / `markdown/status` 端点**不注册**；客户端拿到 404
+- server 不读 `MINERU_*` 字段；不会代客户端做 server-side MinerU 转换
+- Contributor 仍可走 `qatlas mineru`（拿自己的 MinerU quota 在本地跑），通过
+  `POST /api/papers/{id}/upload-mineru` 把成品 markdown 推到 server——这条
+  路径**与开关无关**
+
+开关 ON 时：
+
+- 上述 `/markdown` 系列端点注册，受 `papers:read` 保护
+- server 启用 on-demand server-side conversion：客户端 GET `/markdown`，server
+  从 `qatlas-pdf` 桶找到 PDF → 用部署方配置的 `MINERU_API_TOKEN` 跑 MinerU
+  → markdown 写回 `qatlas-md` 桶 → 后续请求直接缓存命中
+- 部署方对**对外受众范围**与**适用法域 ToS**自负责任
+
+详细 env 字段见 [Env Vars 参考 · 资产下载开关](../reference/env-vars.md#server-资产下载开关-self-hosted-可选)。
+实施进度跟踪：[#8](https://github.com/IAI-USTC-Quantum/QuantumAtlas/issues/8)。
 
 ## 撤稿 / 删除请求
 

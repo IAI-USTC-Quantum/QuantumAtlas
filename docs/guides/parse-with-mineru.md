@@ -1,8 +1,16 @@
 # 用 MinerU 解析 PDF（贡献你的额度）
 
-QuantumAtlas 只暴露**一条** MinerU 路径——**贡献者本地解析**（`qatlas mineru`）。
-合规清理后，server 端**不**提供"匿名读 markdown / server 用自身配额静默转换"
-的端点，也**不**通过 API 对外分发 PDF / markdown 字节。
+QuantumAtlas 默认只暴露**一条** MinerU 路径——**贡献者本地解析**（`qatlas mineru`）。
+公开实例（quantum-atlas.ai）上 server 端**不**提供"读 markdown / server 用自身配额
+静默转换"的端点，也**不**通过 API 对外分发 PDF / markdown 字节。
+
+> **Self-hosted 部署**可以通过 `QATLAS_ASSET_DOWNLOADS_ENABLED=true`
+> 在受控范围内**额外**开启 server-side on-demand conversion，详见
+> [License & Attribution · 资产下载开关](../about/license-and-attribution.md#资产下载开关-self-hosted)
+> 与 [env-vars · Server-side MinerU](../reference/env-vars.md#server-side-mineru仅当-qatlas_asset_downloads_enabledtrue-时生效)。
+> 那条路径不替代本页讲的贡献者流程——两者并行：开关 ON 时 server 会用
+> **自己的** MinerU token 在 `GET /markdown` 缓存未命中时透明跑一次；贡献者
+> 仍可继续用自己的配额走 `qatlas mineru` → `upload-mineru` 主动暖缓存。
 
 !!! tip "为什么这算贡献"
     MinerU 给每个注册账号送 **5000 篇 / 天** 的免费解析额度。绝大多数个人用户每天用不

@@ -16,7 +16,71 @@ QuantumAtlas 用 **PocketBase session token (JWT)** 和 **Personal Access Token 
 
 ## 创建 PAT { #mint-pat }
 
-=== "浏览器（推荐）"
+=== "CLI（推荐 — 不用手动复制粘贴）"
+
+    自 v0.18 起 `qatlas auth login` 走完整 OAuth 流程，不再让你手粘 token：
+
+    ```bash
+    qatlas auth login -H quantum-atlas.ai
+    # 1) CLI 开 127.0.0.1:<auto> 临时 HTTP 服务监听
+    # 2) 自动打开浏览器到 https://<host>/pat?cli_callback=...&cli_state=...
+    # 3) 浏览器侧若没登录会先走 GitHub OAuth；登录后弹"qatlas CLI 在
+    #    本机请求一个 PAT"对话框，scopes / 过期天数 / token 名都已
+    #    根据 CLI 传过来的参数预填，点 Approve
+    # 4) SPA 调 /api/pat 拿到明文，再以 form POST 把 {state, token,
+    #    name, prefix, scopes, expires_at} 提交回 CLI 的 127.0.0.1:<port>
+    # 5) CLI 常数时间比对 state，把 token 写进 hosts.yml，结束
+    ```
+
+    打印示例：
+
+    ```text
+    ✓ Logged in to quantum-atlas.ai
+      Token:   qat_abcd********
+      Name:    qatlas-cli-laptop-2026-06-03
+      Scopes:  papers:write
+      Expires: 2026-09-01
+    ```
+
+    flag（全部可选）：
+
+    | Flag | 默认 | 作用 |
+    |---|---|---|
+    | `--device` / `--no-browser` | 关 | 强制走 device-code 流程（headless / SSH 远端用） |
+    | `--scopes papers:write,wiki:read` | 空 | 预填 scope；浏览器仍可改 |
+    | `--expires-days N` | `90` | 预填过期天数 (1–365) |
+    | `--token-name NAME` | `qatlas-cli-<host>-<YYYY-MM-DD>` | 预填 token 名 |
+    | `--port N` | `0`（auto） | 钉死本地回调端口（loopback 用） |
+    | `--timeout N` | `300`（loopback）/ `600`（device） | 等浏览器多久 |
+    | `--insecure` | 关 | 信任自签证书（如 Alibaba 边缘） |
+    | `--token VALUE` / `--with-token` | — | CI 路径，跳过 OAuth 直接存现成 PAT |
+
+    headless 自动判定：`--device` / `--no-browser` / `QATLAS_AUTH_NO_BROWSER=1` / 有 `SSH_TTY` / Linux 无 `DISPLAY` 任一命中即走 device-code，其它情况默认 loopback；loopback 起不来（端口被占 / `webbrowser.open` 失败）自动降级到 device。
+
+=== "device-code 流程（headless / SSH 远端）"
+
+    ```bash
+    qatlas auth login --device -H quantum-atlas.ai
+    ```
+
+    输出：
+
+    ```text
+    To finish logging in, open this URL in a browser:
+      https://quantum-atlas.ai/device
+    and enter the code:  WDJB-MJHT
+    (or open the deep link: https://quantum-atlas.ai/device?user_code=WDJB-MJHT)
+
+    Waiting for approval (up to 600s, polling every 5s)…
+    ```
+
+    在**任何能开浏览器的设备**（手机、自己工位、隔壁同事的电脑都行）打开那个 URL，输入 8 位 user_code，按 Approve。CLI 这边轮询 `/api/oauth/device/token` 拿到 token 后自动写 hosts.yml。
+
+    用户 code 在 10 分钟内未 approve 会过期；过期了重跑命令即可。
+
+=== "浏览器（独立创建 / 给别的工具用）"
+
+    跟 `qatlas auth login` 走的是同一个 `/pat` 页面，区别只是不带 CLI 参数：
 
     1. 打开 `https://<server>/pat`
     2. 用 GitHub 登录（首次会问 OAuth 授权）
@@ -49,14 +113,7 @@ QuantumAtlas 用 **PocketBase session token (JWT)** 和 **Personal Access Token 
 
 === "本地长期（推荐）"
 
-    存到 `~/.config/qatlas/hosts.yml`：
-
-    ```bash
-    qatlas auth login -H atlas.example.com
-    # 粘贴 qat_xxx 明文（getpass 隐藏输入）
-    ```
-
-    文件权限自动设 0600。之后所有 `qatlas` 命令针对该 host 自动用这个 PAT。
+    `qatlas auth login` 完成后自动落 `~/.config/qatlas/hosts.yml`（mode 0600）。之后所有 `qatlas` 命令针对该 host 自动用这个 PAT。
 
     **支持多 host**：
 
@@ -72,7 +129,7 @@ QuantumAtlas 用 **PocketBase session token (JWT)** 和 **Personal Access Token 
     #   ...
     ```
 
-=== "yaml 配置（推荐 — 一次配长用）"
+=== "yaml 配置（一次配长用）"
 
     把 token 写进 `~/.config/qatlas/config.yaml`（Linux 路径；mac / win 用 `qatlas config path` 查实际）：
 
@@ -161,11 +218,12 @@ v0.17.0+：精简到两层（yaml > hosts.yml > 匿名）。不再支持 `--toke
 到期前一周收到提醒？批量轮换：
 
 ```bash
-# 旧 PAT 还能用 7d，先建新的
-qatlas auth status   # 看现在哪些 host 用了 token
-# 浏览器创建新 PAT，scope 不变
-qatlas auth login -H quantum-atlas.ai
-# 粘新 PAT —— 直接覆盖 hosts.yml 里的旧条目
+# 旧 PAT 还能用 7d，先看现在哪些 host 用了 token
+qatlas auth status
+
+# 跑 login —— 自动开浏览器走 OAuth + Approve，生成的新 PAT 直接覆盖
+# hosts.yml 里同 host 的旧条目；scope / 过期天数想改就在浏览器对话框里改
+qatlas auth login -H quantum-atlas.ai --scopes papers:write --expires-days 90
 
 # 验证新 PAT
 qatlas wiki list --limit 1   # 应该正常返回

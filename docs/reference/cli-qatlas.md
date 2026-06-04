@@ -209,15 +209,21 @@ qatlas mineru [arxiv_id] [options...]
 管理本地存储的 PAT。
 
 ```
-qatlas auth login [-H <host>] [--token <plaintext>] [--with-token]
+qatlas auth login [-H <host>]
+                  [--device | --no-browser]
+                  [--scopes papers:write,wiki:read]
+                  [--expires-days N]
+                  [--token-name NAME]
+                  [--port N] [--timeout SEC] [--insecure]
+                  [--token <plaintext> | --with-token]
 qatlas auth logout [-H <host>]
 qatlas auth status [-H <host>]
-qatlas auth token [-H <host>]
+qatlas auth token  [-H <host>]
 ```
 
 | 子命令 | 行为 |
 |---|---|
-| `login` | 交互式（或 `--token` / `--with-token < file`）存 PAT 到 `~/.config/qatlas/hosts.yml` |
+| `login` | 默认走 OAuth：起本地 loopback HTTP server，开浏览器到 `/pat?cli_callback=...` 让用户授权（headless / SSH 自动降级到 device-code）；`--token` / `--with-token` 是 CI 旁路，直接存现成 PAT |
 | `logout` | 删该 host 的本地条目（不调 server）|
 | `status` | 列已登录的 host + 脱敏 token 预览 |
 | `token` | 把指定 host 的明文 token 打到 stdout（用于 shell 替换：`curl -H "Authorization: Bearer $(qatlas auth token)"`）|
@@ -225,8 +231,17 @@ qatlas auth token [-H <host>]
 | Flag | 默认 | 含义 |
 |---|---|---|
 | `-H` / `--host` | `$QATLAS_SERVER_URL` 或交互式询问 | 操作哪个 host |
-| `-t` / `--token` | — | 给 `login` 用：非交互直接传 PAT 明文 |
-| `--with-token` | false | 给 `login` 用：从 stdin 读 PAT |
+| `--device` / `--no-browser` | off | 强制走 RFC 8628 device-code 流程；`--no-browser` 是 `gh` 兼容别名 |
+| `--scopes a,b` | 空 | 预填到浏览器对话框的 scope 列表（用户仍可改）|
+| `--expires-days N` | `90` | 预填到对话框的过期天数 (1–365) |
+| `--token-name NAME` | `qatlas-cli-<host>-<YYYY-MM-DD>` | 预填到对话框的 token 名 |
+| `--port N` | `0` | loopback 监听端口；`0` = 系统分配 |
+| `--timeout SEC` | `300`（loopback）/ `600`（device）| 等浏览器多久 |
+| `--insecure` | off | 信任自签证书（IP 入口 / 阿里云边缘 `https://47.102.36.175`）|
+| `-t` / `--token VALUE` | — | CI 旁路：跳过 OAuth，直接把这个 PAT 存进 hosts.yml |
+| `--with-token` | off | CI 旁路：从 stdin 读 PAT（`cat token | qatlas auth login -H ... --with-token`）|
+
+headless 自动判定优先级：`--device` / `--no-browser` > `QATLAS_AUTH_NO_BROWSER=1` env > `SSH_TTY` / `SSH_CONNECTION` > Linux 无 `DISPLAY` / `WAYLAND_DISPLAY`，任一命中走 device flow。loopback 自身 bind 失败也会自动降级 device。
 
 文件 layout 是 YAML，0600 权限，详见 [管理凭据](../guides/manage-credentials.md)。
 
