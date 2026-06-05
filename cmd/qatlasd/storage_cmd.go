@@ -93,6 +93,7 @@ are no-ops on the LocalStore dev backend — there is no version concept
 to prune when assets live as plain files.`,
 	}
 	root.AddCommand(newStoragePruneCmd())
+	root.AddCommand(newStorageMigrateLayoutCmd())
 	return root
 }
 
