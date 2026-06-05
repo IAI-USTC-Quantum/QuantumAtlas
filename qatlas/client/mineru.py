@@ -103,8 +103,9 @@ _ARXIV_PDF_HOSTS = frozenset({"arxiv.org", "export.arxiv.org"})
 #   - any host ending in ".quantum-atlas.ai" — flexibility for other
 #     edges that may pick a different subdomain
 #   - direct IP+port (e.g. "47.102.36.175:9000" on Alibaba) — handled
-#     dynamically below via the QATLAS_SERVER_URL host since the same
-#     box hosts both API and RustFS public endpoint
+#     dynamically below by matching the configured client server_url
+#     (config.yaml) host since the same box hosts both API and RustFS
+#     public endpoint
 _S3_PUBLIC_HOST_SUFFIXES = (".quantum-atlas.ai",)
 _S3_PUBLIC_HOSTS = frozenset({"raw.quantum-atlas.ai"})
 
@@ -137,9 +138,10 @@ def _is_acceptable_pdf_url(url: str, server_url: str) -> bool:
 
       - arxiv.org / export.arxiv.org           (legacy / fallback)
       - raw.* or .quantum-atlas.ai subdomain   (RackNerd-style edge)
-      - the same host:port as QATLAS_SERVER_URL (Alibaba-style edge
-        that shares one IP/cert with the API and the public RustFS
-        endpoint, e.g. https://47.102.36.175:9000)
+      - the same host:port as the configured client `server_url`
+        (config.yaml; Alibaba-style edge that shares one IP/cert
+        with the API and the public RustFS endpoint, e.g.
+        https://47.102.36.175:9000)
 
     Everything else is treated as a misconfigured / hostile server
     response and the claim is released without firing the URL at
@@ -160,10 +162,10 @@ def _is_acceptable_pdf_url(url: str, server_url: str) -> bool:
     for suffix in _S3_PUBLIC_HOST_SUFFIXES:
         if host.endswith(suffix):
             return True
-    # Same host:port as the configured QATLAS_SERVER_URL — covers
-    # IP-based edges (Alibaba) where API and RustFS public endpoint
-    # share an IP + port (different ports also OK since edge can pin
-    # the public endpoint to e.g. :9000).
+    # Same host:port as the configured client `server_url`
+    # (config.yaml) — covers IP-based edges (Alibaba) where API and
+    # RustFS public endpoint share an IP + port (different ports also
+    # OK since edge can pin the public endpoint to e.g. :9000).
     try:
         srv = urlparse(server_url)
     except ValueError:
