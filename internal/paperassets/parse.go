@@ -214,6 +214,24 @@ func MustParse(input string) ParsedArxivID {
 	return p
 }
 
+// DefaultOldStyleCategory is the category assumed for bare old-style
+// (pre-Apr 2007) arXiv ids when the upstream catalog hasn't preserved
+// the subject prefix. Production was bootstrapped from a `cat:quant-ph`
+// OpenAlex query, so 100% of the pre-2007 corpus we hold is genuinely
+// quant-ph — we encode that operational fact here.
+//
+// Implications:
+//   - AssetKeyFor on a bare old-style id emits the NEW per-category
+//     layout under this default (`pdf/<yymm>/quant-ph/<stem>.pdf`).
+//   - LegacyAssetKeyFor on a bare old-style id emits the original BARE
+//     layout (`pdf/<yymm>/<stem>.pdf`) so dual-read still tolerates
+//     any object that pre-dates the `qatlasd storage migrate-layout`
+//     run (and any future debug uploads).
+//   - If a non-quant-ph paper ever gets a bare id, the resolver MUST
+//     pre-canonicalize it ("hep-th/0207065") before calling AssetKey.
+//     Issue #10 tracks verifying the assumption against the live bucket.
+const DefaultOldStyleCategory = "quant-ph"
+
 // AssetKeyFor returns the canonical forward-slash object key for an
 // asset of kind "pdf" | "markdown" | "json" | "images" given a parsed
 // arXiv id.
@@ -224,13 +242,13 @@ func MustParse(input string) ParsedArxivID {
 //	                     e.g. "pdf/2501/2501.00010v1.pdf"
 //	old-style canonical: <kind>/<yymm>/<category>/<stem>.<ext>
 //	                     e.g. "pdf/9508/quant-ph/9508027v1.pdf"
-//	old-style bare:      <kind>/<yymm>/<stem>.<ext>     [LEGACY]
-//	                     e.g. "pdf/9508/9508027v1.pdf"
+//	old-style bare:      <kind>/<yymm>/<DefaultOldStyleCategory>/<stem>.<ext>
+//	                     e.g. "pdf/9508/quant-ph/9508027v1.pdf"
 //
-// IsBare inputs return the LEGACY layout because the category is
-// unknown — that's the only thing we can address. Callers that need
-// the new layout should disambiguate bare ids upstream (Neo4j lookup)
-// and call again with the resolved canonical form.
+// Bare old-style ids resolve to the DefaultOldStyleCategory layout
+// because the historical bootstrap was quant-ph-only — see the
+// DefaultOldStyleCategory doc above. Dual-read via LegacyAssetKeyFor
+// still covers pre-migration bare-layout objects.
 //
 // Returns "" for unrecognized kinds.
 func AssetKeyFor(kind string, p ParsedArxivID) string {
@@ -238,21 +256,25 @@ func AssetKeyFor(kind string, p ParsedArxivID) string {
 	if ext == "" || !p.IsValid() {
 		return ""
 	}
-	if p.IsOldStyle && !p.IsBare {
-		return kind + "/" + p.YYMM + "/" + p.Category + "/" + p.Stem + ext
+	if p.IsOldStyle {
+		cat := p.Category
+		if p.IsBare {
+			cat = DefaultOldStyleCategory
+		}
+		return kind + "/" + p.YYMM + "/" + cat + "/" + p.Stem + ext
 	}
 	return kind + "/" + p.YYMM + "/" + p.Stem + ext
 }
 
-// LegacyAssetKeyFor returns the pre-A1 object key (no category
+// LegacyAssetKeyFor returns the pre-A1 BARE object key (no category
 // subdirectory) for old-style ids. Used by dual-read fallback to look
-// up objects that haven't been migrated to the new layout yet.
+// up objects that haven't been migrated to the new per-category layout
+// yet, plus any future debug upload that lands in bare layout.
 //
 // Returns "" for new-style ids (there is no legacy variant — the
-// new-style layout never changed) and for bare ids (which are already
-// the legacy form). Also returns "" for unrecognized kinds.
+// new-style layout never changed) and for unrecognized kinds.
 func LegacyAssetKeyFor(kind string, p ParsedArxivID) string {
-	if !p.IsOldStyle || p.IsBare {
+	if !p.IsOldStyle {
 		return ""
 	}
 	ext := assetExt(kind)

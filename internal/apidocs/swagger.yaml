@@ -30,12 +30,22 @@ definitions:
     type: object
   routes.oauthDeviceLookupResponse:
     properties:
+      available_scopes:
+        items:
+          type: string
+        type: array
       description:
         type: string
       expires_in_days:
         type: integer
+      max_expiry_days:
+        type: integer
       name:
         type: string
+      scope_descriptions:
+        additionalProperties:
+          type: string
+        type: object
       scopes:
         items:
           type: string
@@ -529,115 +539,6 @@ paths:
       summary: Get wiki page
       tags:
       - Wiki
-  /api/papers/{arxiv_id}/markdown:
-    get:
-      description: |-
-        Returns the cached MinerU markdown for the given arxiv id.
-        Only registered when QATLAS_ASSET_DOWNLOADS_ENABLED=true on
-        the server (default off). On cache miss the server may
-        transparently trigger a background MinerU conversion (when
-        MINERU_API_TOKENS is also configured) and return 202 with
-        Operation-Location/Retry-After headers; clients should poll
-        /markdown/status until terminal then re-GET.
-      parameters:
-      - description: arXiv identifier (with vN suffix)
-        in: path
-        name: arxiv_id
-        required: true
-        type: string
-      produces:
-      - text/plain
-      responses:
-        "200":
-          description: markdown bytes (text/markdown)
-          schema:
-            type: string
-        "202":
-          description: conversion started; poll /markdown/status
-          schema:
-            additionalProperties: true
-            type: object
-        "400":
-          description: invalid arxiv_id
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "401":
-          description: Unauthorized
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "403":
-          description: Forbidden
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "404":
-          description: no PDF in raw storage; upload via /upload-pdf first
-          schema:
-            additionalProperties: true
-            type: object
-        "502":
-          description: prior conversion failed inside the cooldown window
-          schema:
-            additionalProperties: true
-            type: object
-        "503":
-          description: 'cache-only mode: server-side MinerU not configured'
-          schema:
-            additionalProperties: true
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Get paper markdown
-      tags:
-      - Papers
-  /api/papers/{arxiv_id}/markdown/status:
-    get:
-      description: |-
-        Side-effect-free status resource. Never starts a job and
-        never requires a PDF. Only registered when
-        QATLAS_ASSET_DOWNLOADS_ENABLED=true on the server.
-      parameters:
-      - description: arXiv identifier (with vN suffix)
-        in: path
-        name: arxiv_id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: status payload (status ∈ cached|queued|running|none|no_pdf|failed|cooldown|unavailable)
-          schema:
-            additionalProperties: true
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "401":
-          description: Unauthorized
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "403":
-          description: Forbidden
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Get markdown conversion status
-      tags:
-      - Papers
   /api/papers/{arxiv_id}/mineru-claim:
     post:
       parameters:
@@ -849,6 +750,249 @@ paths:
       security:
       - BearerAuth: []
       summary: Upload paper PDF
+      tags:
+      - Papers
+  /api/papers/{id_or_doi}/markdown:
+    get:
+      description: |-
+        Returns the cached MinerU markdown for the given arxiv id
+        (or DOI — the id_or_doi path component is auto-detected
+        against the IANA prefix `10.<registrant>/...`). Only
+        registered when QATLAS_PAPER_ACCESS_ENABLED=true on the
+        server (default off).
+
+        Long-running operation semantics: on cache miss the
+        server may transparently fetch the PDF from arxiv.org
+        (silent_fetch) and trigger a MinerU conversion. The
+        first call returns 202 with `Operation-Location:
+        /api/papers/{id}/markdown/status` and `Retry-After: 5`;
+        clients poll the status endpoint until state=cached then
+        re-GET this resource for the bytes.
+      parameters:
+      - description: arXiv canonical id with vN suffix, or a DOI (e.g. 10.1103/PhysRevLett.103.150502)
+        in: path
+        name: id_or_doi
+        required: true
+        type: string
+      produces:
+      - text/plain
+      responses:
+        "200":
+          description: markdown bytes (text/markdown)
+          schema:
+            type: string
+        "202":
+          description: long-running operation started; poll status_url
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: invalid arxiv_id or DOI
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: DOI not in OpenAlex / not on arxiv; or paper unknown and silent
+            fetch unavailable
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: prior conversion failed inside the cooldown window, or OpenAlex
+            upstream error
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: cache-only mode (no MinerU keys), or DOI resolution unavailable
+            (QATLAS_OPENALEX_MAILTO unset)
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get paper markdown
+      tags:
+      - Papers
+  /api/papers/{id_or_doi}/markdown/status:
+    get:
+      description: |-
+        Side-effect-free poll surface. Never starts a job and
+        never triggers a fetch. Only registered when
+        QATLAS_PAPER_ACCESS_ENABLED=true on the server.
+
+        Response shape always carries the agent-decision triple
+        `state / pdf_ready / md_ready` plus an optional `phase`
+        (fetching_pdf | converting_md | ready | error_fetching |
+        error_converting) and `fetch` / `convert` sub-objects
+        with bytes_received / mineru_task_id / polled_count so a
+        polling client can show precise progress.
+      parameters:
+      - description: arXiv canonical id or DOI
+        in: path
+        name: id_or_doi
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: status payload (state ∈ cached|queued|running|none|failed|cooldown|unavailable)
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: paper unknown and silent fetch unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get markdown conversion status
+      tags:
+      - Papers
+  /api/papers/{id_or_doi}/pdf:
+    get:
+      description: |-
+        Returns the cached PDF (application/pdf) for the given
+        arxiv id or DOI. Only registered when
+        QATLAS_PAPER_ACCESS_ENABLED=true on the server.
+
+        Long-running operation semantics mirror /markdown: cache
+        miss returns 202 with Operation-Location pointing at
+        /pdf/status. The fetch path uses a separate semaphore
+        from MinerU conversion (QATLAS_ARXIV_FETCH_CONCURRENT)
+        and a polite-pool rate limiter (QATLAS_ARXIV_FETCH_RPS).
+      parameters:
+      - description: arXiv canonical id with vN suffix, or a DOI
+        in: path
+        name: id_or_doi
+        required: true
+        type: string
+      produces:
+      - application/pdf
+      responses:
+        "200":
+          description: PDF bytes (application/pdf)
+          schema:
+            type: string
+        "202":
+          description: silent fetch started; poll status_url
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: invalid arxiv_id or DOI
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: arxiv 404 or DOI not on arxiv
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: arxiv upstream error / OpenAlex upstream error
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: silent fetch disabled (no fetcher), DOI resolution unavailable
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get paper PDF
+      tags:
+      - Papers
+  /api/papers/{id_or_doi}/pdf/status:
+    get:
+      description: |-
+        Side-effect-free poll surface for /pdf. Same shape as
+        /markdown/status but states are restricted to the
+        fetch-only flow — no convert phase. Only registered when
+        QATLAS_PAPER_ACCESS_ENABLED=true.
+      parameters:
+      - description: arXiv canonical id or DOI
+        in: path
+        name: id_or_doi
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: status payload (state ∈ cached|queued|running|none|failed|unavailable)
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get PDF fetch status
       tags:
       - Papers
   /api/papers/needs-mineru:

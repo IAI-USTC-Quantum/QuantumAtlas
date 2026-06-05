@@ -110,7 +110,7 @@ func TestRegisterServeFlags_AppendsEnvTagToHelp(t *testing.T) {
 	out := buf.String()
 	// Spot-check a representative sample of each section.
 	for _, mustContain := range []string{
-		"[env: QATLAS_SERVER_URL=]",
+		"[env: QATLAS_PUBLIC_URL=]",
 		"[env: NEO4J_URI=]",
 		"[env: QATLAS_S3_ENDPOINT=]",
 		"[env: QATLAS_SYSTEM_PAT=]",

@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -30,7 +31,7 @@ import (
 //   503  converter disabled / cache-only mode and no cached bytes
 //
 // Auth: gated by scopeGuard("papers", "read") at the route layer.
-// Routing: only invoked when cfg.AssetDownloadsEnabled is true.
+// Routing: only invoked when cfg.PaperAccessEnabled is true.
 func markdownHandler(re *core.RequestEvent, cfg *config.Config, store objstore.Store, converter *mineru.Converter, arxivID string) error {
 	canonical, ok := paperassets.ValidateUploadID(arxivID)
 	if !ok {
@@ -40,6 +41,8 @@ func markdownHandler(re *core.RequestEvent, cfg *config.Config, store objstore.S
 	}
 
 	ctx := re.Request.Context()
+	resolution := resolutionFromContext(ctx)
+	applyResolutionHeaders(re.Response, resolution)
 	job := converter.Ensure(ctx, canonical)
 
 	switch job.State {
@@ -48,11 +51,14 @@ func markdownHandler(re *core.RequestEvent, cfg *config.Config, store objstore.S
 	case mineru.JobStateQueued, mineru.JobStateRunning:
 		re.Response.Header().Set("Operation-Location", fmt.Sprintf("/api/papers/%s/markdown/status", canonical))
 		re.Response.Header().Set("Retry-After", "5")
-		return re.JSON(http.StatusAccepted, map[string]any{
-			"detail":   "conversion in progress",
-			"arxiv_id": canonical,
-			"state":    string(job.State),
-		})
+		body := snapshotBody(canonical, job)
+		body["detail"] = "conversion in progress"
+		body["operation"] = map[string]any{
+			"status_url":          "/api/papers/" + canonical + "/markdown/status",
+			"next_poll_after_iso": time.Now().Add(5 * time.Second).UTC().Format(time.RFC3339),
+		}
+		embedResolutionInBody(body, resolution)
+		return re.JSON(http.StatusAccepted, body)
 	case mineru.JobStateFailed:
 		if !converter.Enabled() {
 			return re.JSON(http.StatusServiceUnavailable, map[string]string{
@@ -64,12 +70,6 @@ func markdownHandler(re *core.RequestEvent, cfg *config.Config, store objstore.S
 		detail := "conversion failed: " + errString(job.Err)
 		if errors.Is(job.ErrKind, mineru.ErrDailyLimit) {
 			status = http.StatusServiceUnavailable
-			// errString already carries the converter-built quota
-			// message ("server quota exhausted: all N MinerU API keys
-			// ... — service resumes at <ISO time>"). Make sure the
-			// "server quota exhausted" framing wins over the generic
-			// "conversion failed" prefix so the client renders the
-			// quota story, not a per-paper failure.
 			detail = errString(job.Err)
 			if detail == "" {
 				detail = "server quota exhausted: every configured MinerU API key has hit today's daily limit; service will resume automatically at the next midnight reset"
@@ -83,17 +83,13 @@ func markdownHandler(re *core.RequestEvent, cfg *config.Config, store objstore.S
 		if !job.CooldownUntil.IsZero() {
 			body["retry_after"] = job.CooldownUntil.Unix()
 			body["retry_after_iso"] = job.CooldownUntil.UTC().Format(time.RFC3339)
-			// Round up to the next whole second, then floor to 1 — int(...)
-			// truncates toward zero so without the floor a CooldownUntil
-			// already in the past (e.g. the row was re-read just after
-			// expiry) would emit a negative Retry-After value, which is
-			// not valid per RFC 7231 §7.1.3.
 			secs := int(time.Until(job.CooldownUntil).Seconds()) + 1
 			if secs < 1 {
 				secs = 1
 			}
 			re.Response.Header().Set("Retry-After", strconv.Itoa(secs))
 		}
+		embedResolutionInBody(body, resolution)
 		return re.JSON(status, body)
 	}
 	return re.JSON(http.StatusInternalServerError, map[string]string{
@@ -108,14 +104,23 @@ func markdownHandler(re *core.RequestEvent, cfg *config.Config, store objstore.S
 // submission. The browser / qatlas client polls this after receiving a
 // 202 from markdownHandler.
 //
+// Response shape (200 in all cases except 400/404):
+//
+//   - state: cached | queued | running | none | failed | cooldown | unavailable | not_in_arxiv
+//   - phase: ready | fetching_pdf | converting_md | error_fetching | error_converting (omitted when meaningless)
+//   - pdf_ready / md_ready (bool): the agent-decision triple — derived
+//     from object-store probes plus the in-flight Phase
+//   - fetch: {bytes_received, bytes_total, attempts, sha256, ...} when
+//     a silent arxiv fetch is in flight or recently completed
+//   - convert: {mineru_task_id, stage, polled_count, ...} when MinerU
+//     is in flight or recently completed
+//
 // Response codes:
 //
-//   200  status payload {state, ...}
+//   200  status payload
 //   400  malformed arxiv id
-//   404  no record of this paper (never submitted, no PDF, …) per
-//        rubber-duck recommendation in issue #8
-//
-// Possible state strings: cached, queued, running, none, failed, cooldown, unavailable.
+//   404  paper unknown — no record AND silent fetch unavailable
+//        (router didn't know it, store didn't have a PDF, fetcher disabled)
 func markdownStatusHandler(re *core.RequestEvent, cfg *config.Config, store objstore.Store, converter *mineru.Converter, arxivID string) error {
 	canonical, ok := paperassets.ValidateUploadID(arxivID)
 	if !ok {
@@ -125,56 +130,59 @@ func markdownStatusHandler(re *core.RequestEvent, cfg *config.Config, store objs
 	}
 
 	ctx := re.Request.Context()
+	resolution := resolutionFromContext(ctx)
+	applyResolutionHeaders(re.Response, resolution)
+	pdfReady, mdReady := probeAssetReadiness(ctx, store, canonical)
 
 	// 1) Cache hit — even if we have no in-flight job for this id.
-	mdKey := paperassets.AssetKey("markdown", canonical)
-	if _, exists, err := store.Stat(ctx, mdKey); err == nil && exists {
-		return re.JSON(http.StatusOK, map[string]any{
+	//    Dual-read tolerates pre-A1 bare-stem objects that haven't been
+	//    moved to the new per-category layout yet.
+	if mdReady {
+		body := map[string]any{
 			"arxiv_id":     canonical,
 			"state":        "cached",
+			"phase":        string(mineru.PhaseReady),
+			"pdf_ready":    pdfReady,
+			"md_ready":     true,
 			"markdown_url": "/api/papers/" + canonical + "/markdown",
-		})
+		}
+		embedResolutionInBody(body, resolution)
+		return re.JSON(http.StatusOK, body)
 	}
 
 	// 2) In-flight / recently-failed job?
 	if job, ok := converter.Lookup(canonical); ok {
-		body := map[string]any{
-			"arxiv_id": canonical,
-		}
-		switch job.State {
-		case mineru.JobStateQueued:
-			body["state"] = "queued"
-		case mineru.JobStateRunning:
-			body["state"] = "running"
-			if !job.StartedAt.IsZero() {
-				body["started_at"] = job.StartedAt.UTC().Format(time.RFC3339)
-			}
-		case mineru.JobStateFailed:
-			if !job.CooldownUntil.IsZero() && time.Now().Before(job.CooldownUntil) {
-				body["state"] = "cooldown"
-				body["retry_after"] = job.CooldownUntil.Unix()
-				body["retry_after_iso"] = job.CooldownUntil.UTC().Format(time.RFC3339)
-			} else {
-				body["state"] = "failed"
-			}
-			body["kind"] = jobKindLabel(job.ErrKind)
-			if job.Err != nil {
-				body["detail"] = job.Err.Error()
-			}
-		case mineru.JobStateDone:
-			// Stat above said no cache; converter says done — race or
-			// stale state. Report as cached optimistically.
+		body := snapshotBody(canonical, job)
+		body["pdf_ready"] = pdfReady || job.Phase == mineru.PhaseConvertingMD || job.State == mineru.JobStateDone
+		body["md_ready"] = false
+		// For Done state, double-check stat says no md (race with delete?)
+		if job.State == mineru.JobStateDone && !mdReady {
 			body["state"] = "cached"
+			body["phase"] = string(mineru.PhaseReady)
 			body["markdown_url"] = "/api/papers/" + canonical + "/markdown"
 		}
+		embedResolutionInBody(body, resolution)
 		return re.JSON(http.StatusOK, body)
 	}
 
 	// 3) No cache, no job — does the PDF even exist?
-	pdfKey := paperassets.AssetKey("pdf", canonical)
-	if _, exists, err := store.Stat(ctx, pdfKey); err == nil && !exists {
+	if !pdfReady {
+		// Silent-fetch capable? Hint to the agent that hitting GET
+		// /markdown will trigger a fetch+convert pipeline.
+		if converter.Enabled() {
+			body := map[string]any{
+				"arxiv_id":  canonical,
+				"state":     "none",
+				"phase":     "",
+				"pdf_ready": false,
+				"md_ready":  false,
+				"detail":    "no PDF in store, no job in flight; GET /api/papers/{id}/markdown will trigger a silent fetch + convert",
+			}
+			embedResolutionInBody(body, resolution)
+			return re.JSON(http.StatusOK, body)
+		}
 		return re.JSON(http.StatusNotFound, map[string]string{
-			"detail":   "paper unknown: no PDF in catalog",
+			"detail":   "paper unknown: no PDF in catalog and silent fetch unavailable",
 			"arxiv_id": canonical,
 		})
 	}
@@ -186,23 +194,153 @@ func markdownStatusHandler(re *core.RequestEvent, cfg *config.Config, store objs
 		state = "unavailable"
 	}
 	body := map[string]any{
-		"arxiv_id": canonical,
-		"state":    state,
+		"arxiv_id":  canonical,
+		"state":     state,
+		"phase":     "",
+		"pdf_ready": true,
+		"md_ready":  false,
 	}
 	if !converter.Enabled() {
 		body["detail"] = converter.DisabledReason()
 	}
+	embedResolutionInBody(body, resolution)
 	return re.JSON(http.StatusOK, body)
+}
+
+// probeAssetReadiness reports whether PDF + markdown are present in
+// the store right now. Read-only, no writes. Cheap enough to call from
+// status endpoints — the underlying LocateAssetByID does two HEADs at
+// most when dual-read fallback fires.
+func probeAssetReadiness(ctx context.Context, store objstore.Store, canonical string) (pdfReady, mdReady bool) {
+	if _, _, exists, err := paperassets.LocateAssetByID(ctx, store, "pdf", canonical); err == nil && exists {
+		pdfReady = true
+	}
+	if _, _, exists, err := paperassets.LocateAssetByID(ctx, store, "markdown", canonical); err == nil && exists {
+		mdReady = true
+	}
+	return pdfReady, mdReady
+}
+
+// snapshotBody renders a Job snapshot into the JSON shape the
+// markdown/status (and /pdf/status) endpoints emit. Includes phase,
+// fetch sub-state, convert sub-state, and error metadata. Callers
+// post-decorate with pdf_ready / md_ready and (via embedResolutionInBody)
+// the requested_id / defaults_applied fields when applicable.
+func snapshotBody(canonical string, job *mineru.Job) map[string]any {
+	body := map[string]any{
+		"arxiv_id": canonical,
+		"state":    string(job.State),
+	}
+	if job.Phase != mineru.PhaseNone {
+		body["phase"] = string(job.Phase)
+	}
+	if !job.SubmittedAt.IsZero() {
+		body["submitted_at"] = job.SubmittedAt.UTC().Format(time.RFC3339)
+	}
+	if !job.StartedAt.IsZero() {
+		body["started_at"] = job.StartedAt.UTC().Format(time.RFC3339)
+	}
+	if job.Fetch != nil {
+		fetch := map[string]any{
+			"attempts": job.Fetch.Attempts,
+		}
+		if !job.Fetch.StartedAt.IsZero() {
+			fetch["started_at"] = job.Fetch.StartedAt.UTC().Format(time.RFC3339)
+		}
+		if !job.Fetch.CompletedAt.IsZero() {
+			fetch["completed_at"] = job.Fetch.CompletedAt.UTC().Format(time.RFC3339)
+		}
+		if job.Fetch.BytesReceived > 0 {
+			fetch["bytes_received"] = job.Fetch.BytesReceived
+		}
+		if job.Fetch.BytesTotal > 0 {
+			fetch["bytes_total"] = job.Fetch.BytesTotal
+		}
+		if job.Fetch.Sha256 != "" {
+			fetch["sha256"] = job.Fetch.Sha256
+		}
+		body["fetch"] = fetch
+	}
+	if job.Convert != nil {
+		convert := map[string]any{
+			"polled_count": job.Convert.PolledCount,
+		}
+		if job.Convert.MinerUTaskID != "" {
+			convert["mineru_task_id"] = job.Convert.MinerUTaskID
+		}
+		if job.Convert.Stage != "" {
+			convert["stage"] = job.Convert.Stage
+		}
+		if !job.Convert.StartedAt.IsZero() {
+			convert["started_at"] = job.Convert.StartedAt.UTC().Format(time.RFC3339)
+		}
+		if !job.Convert.CompletedAt.IsZero() {
+			convert["completed_at"] = job.Convert.CompletedAt.UTC().Format(time.RFC3339)
+		}
+		body["convert"] = convert
+	}
+	if job.Queue != nil {
+		queue := map[string]any{
+			"running_count":  job.Queue.RunningCount,
+			"max_concurrent": job.Queue.MaxConcurrent,
+			"eta_basis":      job.Queue.EtaBasis,
+		}
+		// Position / AheadOfMe only meaningful while queued; running
+		// jobs always have position 0 — omit so the agent doesn't
+		// render "you are at position 0".
+		if job.Queue.Position > 0 {
+			queue["position"] = job.Queue.Position
+			queue["ahead_of_me"] = job.Queue.AheadOfMe
+		}
+		if job.Queue.EtaSeconds > 0 {
+			queue["eta_seconds"] = job.Queue.EtaSeconds
+		}
+		if job.Queue.AvgDuration > 0 {
+			queue["avg_duration_seconds"] = int64(job.Queue.AvgDuration.Seconds())
+		}
+		body["queue"] = queue
+	}
+	switch job.State {
+	case mineru.JobStateFailed:
+		if !job.CooldownUntil.IsZero() && time.Now().Before(job.CooldownUntil) {
+			body["state"] = "cooldown"
+			body["retry_after"] = job.CooldownUntil.Unix()
+			body["retry_after_iso"] = job.CooldownUntil.UTC().Format(time.RFC3339)
+		}
+		body["kind"] = jobKindLabel(job.ErrKind)
+		if job.Err != nil {
+			body["detail"] = job.Err.Error()
+		}
+	case mineru.JobStateDone:
+		body["markdown_url"] = "/api/papers/" + canonical + "/markdown"
+	}
+	return body
 }
 
 // streamMarkdown copies the cached markdown bytes from object store to
 // the response body. Sets Content-Type and Content-Length when the
 // backend reports them.
+//
+// Uses LocateAsset for dual-read fallback so pre-A1 bare-stem objects
+// are still served while the storage migration is in flight.
 func streamMarkdown(re *core.RequestEvent, store objstore.Store, canonical string) error {
-	mdKey := paperassets.AssetKey("markdown", canonical)
-	rc, info, err := store.Get(re.Request.Context(), mdKey)
+	ctx := re.Request.Context()
+	mdKey, _, exists, err := paperassets.LocateAssetByID(ctx, store, "markdown", canonical)
+	if err != nil {
+		return re.JSON(http.StatusInternalServerError, map[string]string{
+			"detail": "locate markdown: " + err.Error(),
+		})
+	}
+	if !exists {
+		return re.JSON(http.StatusNotFound, map[string]string{
+			"detail":   "markdown not found",
+			"arxiv_id": canonical,
+		})
+	}
+	rc, info, err := store.Get(ctx, mdKey)
 	if err != nil {
 		if errors.Is(err, objstore.ErrNotFound) {
+			// Raced with a delete between Locate and Get — treat as miss.
 			return re.JSON(http.StatusNotFound, map[string]string{
 				"detail":   "markdown not found",
 				"arxiv_id": canonical,

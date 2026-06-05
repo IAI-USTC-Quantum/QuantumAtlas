@@ -7,7 +7,7 @@
 
 | 数据类别 | 来源 | 我们持有 / 分发？ | 用户拿到什么 |
 |---|---|---|---|
-| **论文 PDF 字节** | arxiv.org（作者保留版权） | ⚠️ **默认不分发** | qatlasd **默认无 PDF 下载 API**（`QATLAS_ASSET_DOWNLOADS_ENABLED=false`）；从 [arxiv.org](https://arxiv.org/) 自行下载。Self-hosted 部署可在受控范围内启用对内下载，详见下文「资产下载开关」 |
+| **论文 PDF 字节** | arxiv.org（作者保留版权） | ⚠️ **默认不分发** | qatlasd **默认无 PDF 下载 API**（`QATLAS_PAPER_ACCESS_ENABLED=false`）；从 [arxiv.org](https://arxiv.org/) 自行下载。Self-hosted 部署可在受控范围内启用对内下载，详见下文「论文访问开关」 |
 | **论文 metadata**（标题 / 作者 / DOI / 引用 / 发表日期 等） | OpenAlex（CC0）+ Crossref（CC0） | ✅ 镜像 + Neo4j MERGE | 公开 API 返回，CC0 transitively 公开 |
 | **MinerU 解析后的 Markdown 全文** | 由部署方用自己的 MinerU quota 从 PDF 转换 | ✅ 缓存在 `qatlas-md` 桶 | 同上开关控制：默认仅供 server 内部检索；启用后可对持 `papers:read` 的客户端 serve markdown 字节 |
 | **Wiki 知识页面**（概念 / 算法 / paper 笔记） | 团队 + 贡献者撰写 | ✅ 在独立 [QuantumAtlas-Wiki repo](https://github.com/IAI-USTC-Quantum/QuantumAtlas-Wiki) | require login（同上） |
@@ -17,7 +17,7 @@
 ```
 默认不分发 PDF 字节 + metadata 来自 CC0 上游 + Markdown 默认不通过 API 外发
   → 论文 license 风险在 quantum-atlas.ai 这类公开实例上天然规避
-  → self-hosted 部署若开启资产下载开关，由部署方自行承担分发义务
+  → self-hosted 部署若开启论文访问开关，由部署方自行承担分发义务
 ```
 
 这意味着 [quantum-atlas.ai](https://quantum-atlas.ai) 这类公开实例**不需要**在
@@ -26,8 +26,8 @@ ingest 时检查每篇论文的 license（许多 arxiv 论文是"作者保留版
 字节面向公网 + 默认不外发全文"两条规则在源头规避，比 per-paper license
 匹配可靠得多。
 
-> **Self-hosters 注意**：若你把 `QATLAS_ASSET_DOWNLOADS_ENABLED` 设为
-> `true`（见 [资产下载开关](#资产下载开关-self-hosted)），server 会开始通过
+> **Self-hosters 注意**：若你把 `QATLAS_PAPER_ACCESS_ENABLED` 设为
+> `true`（见 [论文访问开关](#论文访问开关-self-hosted)），server 会开始通过
 > HTTP API 对外 serve PDF / Markdown 字节，原生的"源头规避"就**不再适用**——
 > 此时部署方需要自己评估对外受众范围、上游 ToS 与适用法域的合规要求。
 > 我们维护的公开实例（quantum-atlas.ai）保持默认关闭。
@@ -73,26 +73,44 @@ X-Attribution: OpenAlex (CC0), Crossref (CC0), arXiv
 - **PDF**：公开实例不提供 PDF 下载——请自行到 [arxiv.org](https://arxiv.org/) 拉，按原作者声明使用
 - **Wiki 内容**：Apache-2.0（与 [QuantumAtlas-Wiki repo](https://github.com/IAI-USTC-Quantum/QuantumAtlas-Wiki) LICENSE 一致），归属到本项目即可
 
-## 资产下载开关 (self-hosted)
+## 论文访问开关 (self-hosted)
 
-`QATLAS_ASSET_DOWNLOADS_ENABLED` 是 qatlasd 上的**单一 master 开关**，
+`QATLAS_PAPER_ACCESS_ENABLED` 是 qatlasd 上的**单一 master 开关**，
 默认 `false`。开关 OFF 时（quantum-atlas.ai 等公开实例的默认状态）：
 
-- `GET /api/papers/{id}/markdown` / `markdown/status` 端点**不注册**；客户端拿到 404
-- server 不读 `MINERU_*` 字段；不会代客户端做 server-side MinerU 转换
+- 下述 `/markdown` / `/pdf` 全部端点**不注册**；客户端拿到 404
+- server 不读 `MINERU_*` / `QATLAS_OPENALEX_MAILTO` / `QATLAS_ARXIV_FETCH_*` 字段；不会代客户端做 server-side 转换或 fetch
 - Contributor 仍可走 `qatlas mineru`（拿自己的 MinerU quota 在本地跑），通过
   `POST /api/papers/{id}/upload-mineru` 把成品 markdown 推到 server——这条
   路径**与开关无关**
 
-开关 ON 时：
+开关 ON 时，server 同时启用以下四件事，**一体不可拆**：
 
-- 上述 `/markdown` 系列端点注册，受 `papers:read` 保护
-- server 启用 on-demand server-side conversion：客户端 GET `/markdown`，server
-  从 `qatlas-pdf` 桶找到 PDF → 用部署方配置的 `MINERU_API_TOKENS` 跑 MinerU
-  → markdown 写回 `qatlas-md` 桶 → 后续请求直接缓存命中
-- 部署方对**对外受众范围**与**适用法域 ToS**自负责任
+1. **Markdown 对外 serve + on-demand convert**
+   `GET /api/papers/{id_or_doi}/markdown` 注册，受 `papers:read` 保护；缓存未
+   命中时 server 用部署方配置的 `MINERU_API_TOKENS` 跑 MinerU，markdown 写回
+   `qatlas-md` 桶后 serve 字节。
+2. **PDF 对外 serve + silent fetch**
+   `GET /api/papers/{id_or_doi}/pdf` 注册，受 `papers:read` 保护；缓存未命中
+   时 server 用 `QATLAS_OPENALEX_MAILTO`（polite-pool）+ `QATLAS_ARXIV_FETCH_RPS`
+   速率限制从 arxiv.org 拉 PDF，写入 `qatlas-pdf` 桶后 serve 字节。**这意味着
+   部署方对外重分发了 arxiv PDF 的二进制副本**——arxiv 的 ToS 没禁止
+   redistribution，但**版权归原作者**，部署方应自行评估对外受众范围与法域限制。
+3. **DOI 寻址**
+   path 头部匹配 `^10\.\d{4,9}/` 自动经 OpenAlex 反查 → canonical arxiv id →
+   走同一套 handler；缺 `QATLAS_OPENALEX_MAILTO` 时 DOI 路径返回 503。
+4. **状态端点**
+   `…/markdown/status` 与 `…/pdf/status` 提供 side-effect-free 进度查询；
+   两端点同样只在开关 ON 时注册。
 
-详细 env 字段见 [Env Vars 参考 · 资产下载开关](../reference/env-vars.md#server-资产下载开关-self-hosted-可选)。
+开关 ON 后，部署方对**对外受众范围**与**适用法域 ToS** 自负责任。我们建议：
+
+- 反代层放鉴权前置（caddy-security GitHub OAuth、企业 SSO 等），不要裸开
+  到匿名互联网；
+- 部署在受控范围（私有团队、内部站点、教育机构 IP allowlist）；
+- 公开实例（互联网开放）维持开关默认 OFF。
+
+详细 env 字段见 [Env Vars 参考 · 论文访问开关](../reference/env-vars.md#server-论文访问开关-self-hosted-可选)。
 实施进度跟踪：[#8](https://github.com/IAI-USTC-Quantum/QuantumAtlas/issues/8)。
 
 ## 撤稿 / 删除请求

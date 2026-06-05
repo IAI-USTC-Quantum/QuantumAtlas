@@ -43,9 +43,11 @@ func TestAssetKey_MatchesAssetPathStripped(t *testing.T) {
 		{"cs.AI old style", "cs.AI/0101001v1", "pdf", "pdf/0101/cs.AI/0101001v1.pdf"},
 		{"physics.atom-ph old style", "physics.atom-ph/0001001v2", "pdf", "pdf/0001/physics.atom-ph/0001001v2.pdf"},
 		{"cond-mat.stat-mech old style", "cond-mat.stat-mech/9912001v1", "pdf", "pdf/9912/cond-mat.stat-mech/9912001v1.pdf"},
-		// Bare old-style retains the legacy layout (category unknown,
-		// can't disambiguate at this layer).
-		{"old style bare retains legacy layout", "9508027v1", "pdf", "pdf/9508/9508027v1.pdf"},
+		// Bare old-style routes to DefaultOldStyleCategory ("quant-ph")
+		// — production bootstrapped from cat:quant-ph so this matches
+		// the historical corpus. Dual-read via LegacyAssetKeyFor still
+		// covers pre-migration bare-layout objects.
+		{"old style bare defaults to quant-ph", "9508027v1", "pdf", "pdf/9508/quant-ph/9508027v1.pdf"},
 		{"unknown kind returns empty", "2401.00001v1", "garbage", ""},
 	}
 	for _, c := range cases {

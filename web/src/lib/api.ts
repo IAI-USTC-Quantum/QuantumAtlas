@@ -71,6 +71,94 @@ export async function getJson<T>(url: string): Promise<T> {
   return response.json() as Promise<T>
 }
 
+export async function postJson<T>(url: string, body: unknown): Promise<T> {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { ...authHeaders(), 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) {
+    // Try to surface the server-side detail (qatlasd returns
+    // {"detail": "..."} on 4xx/5xx). Fall back to bare status text.
+    let detail = ''
+    try {
+      const j = (await response.json()) as { detail?: string }
+      detail = j.detail ?? ''
+    } catch {
+      // not JSON; ignore
+    }
+    throw new Error(detail ? `${response.status}: ${detail}` : `${response.status} ${response.statusText}`)
+  }
+  return response.json() as Promise<T>
+}
+
+// --- RAG semantic search -------------------------------------------------
+//
+// Posts to /api/rag/search; qatlasd reverse-proxies to the configured
+// sidecar. Returns chunk-level hits with section path + snippet.
+//
+// The route is only registered when the operator sets both
+// QATLAS_PAPER_ACCESS_ENABLED=true and QATLAS_RAG_SIDECAR_URL; otherwise
+// the endpoint 404s. The SPA discovers availability by polling
+// /api/rag/healthz (see useRagHealth) and only renders the semantic
+// toggle when the probe returns 200.
+
+export type RagSearchRequest = {
+  query: string
+  top_k?: number
+  rerank?: boolean
+  rerank_pool?: number
+  use_sparse?: boolean
+  filters?: Record<string, string>
+}
+
+export type RagSearchHit = {
+  arxiv_id: string
+  canonical: string
+  yymm: string
+  version: number
+  title?: string | null
+  authors?: string[] | null
+  categories?: string[] | null
+  section_path: string[]
+  chunk_index: number
+  snippet: string
+  score: number
+  md_object_key: string
+  char_start: number
+  char_end: number
+  image_refs: string[]
+}
+
+export type RagSearchPayload = {
+  query: string
+  took_s: number
+  reranked: boolean
+  results: RagSearchHit[]
+}
+
+export type RagHealthPayload = {
+  status: 'ok' | 'degraded' | 'down'
+}
+
+export async function ragSearch(body: RagSearchRequest): Promise<RagSearchPayload> {
+  return postJson<RagSearchPayload>('/api/rag/search', body)
+}
+
+// Anonymous probe — does not include auth headers so it works regardless
+// of session state. Returns null when the endpoint is not registered (404
+// because either QATLAS_PAPER_ACCESS_ENABLED is off or
+// QATLAS_RAG_SIDECAR_URL is unset on the server).
+export async function ragHealth(): Promise<RagHealthPayload | null> {
+  try {
+    const r = await fetch('/api/rag/healthz')
+    if (!r.ok) return null
+    return (await r.json()) as RagHealthPayload
+  } catch {
+    return null
+  }
+}
+
 export function statValue(stats: Stats | null | undefined, group: keyof Stats, key: string) {
   const value = stats?.[group]
   if (!value || typeof value !== 'object') return 0

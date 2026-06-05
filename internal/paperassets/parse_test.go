@@ -275,24 +275,23 @@ func TestParse_CategoryAmbiguity(t *testing.T) {
 	}
 }
 
-// TestAssetKeyFor_LegacyForBare locks in the back-compat invariant:
-// bare ids render to the LEGACY layout (no category) because the
-// category is unknown — that's the only thing we can address. After
-// migration completes the bucket no longer has any objects at the
-// legacy path, so bare reads will naturally start 404'ing and force
-// upstream callers to disambiguate.
-func TestAssetKeyFor_LegacyForBare(t *testing.T) {
+// TestAssetKeyFor_BareDefaultsToQuantPh locks in the post-migration
+// behavior: bare old-style ids render to the per-category layout under
+// DefaultOldStyleCategory ("quant-ph"). Dual-read via
+// LegacyAssetKeyFor still returns the bare layout so pre-migration
+// bytes remain reachable.
+func TestAssetKeyFor_BareDefaultsToQuantPh(t *testing.T) {
 	t.Parallel()
 	p := MustParse("9508027v1")
 	got := AssetKeyFor("pdf", p)
-	want := "pdf/9508/9508027v1.pdf"
+	want := "pdf/9508/quant-ph/9508027v1.pdf"
 	if got != want {
 		t.Errorf("AssetKeyFor(pdf, bare) = %q, want %q", got, want)
 	}
-	// And LegacyAssetKeyFor returns empty (bare IS the legacy form,
-	// no further fallback exists).
-	if got := LegacyAssetKeyFor("pdf", p); got != "" {
-		t.Errorf("LegacyAssetKeyFor(pdf, bare) = %q, want empty", got)
+	// LegacyAssetKeyFor returns the bare layout (the actual location of
+	// pre-migration objects) so dual-read still tolerates them.
+	if got := LegacyAssetKeyFor("pdf", p); got != "pdf/9508/9508027v1.pdf" {
+		t.Errorf("LegacyAssetKeyFor(pdf, bare) = %q, want %q", got, "pdf/9508/9508027v1.pdf")
 	}
 }
 

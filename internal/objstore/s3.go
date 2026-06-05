@@ -355,6 +355,51 @@ func (s *S3Store) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
+// ServerSideCopy issues an S3 CopyObject to clone srcKey to dstKey
+// inside the same bucket. The blob never transits the client, which
+// matters for the layout migration: 28k objects × avg 1 MiB would be
+// ~30 GiB of useless round-trips otherwise.
+//
+// User metadata + content-type are preserved by the backend by
+// default (CopySrcOptions sets no metadata-replace directive). The
+// destination write is unconditional — callers that need IfNoneMatch
+// must Stat first.
+//
+// Returns ErrCopyUnsupported when the backend's CopyObject reports
+// "not implemented" so callers can transparently fall back to
+// Get + Put. RustFS implements CopyObject; this code path is here
+// for defence-in-depth.
+func (s *S3Store) ServerSideCopy(ctx context.Context, srcKey, dstKey string) (int64, error) {
+	if err := validateKey(srcKey); err != nil {
+		return 0, fmt.Errorf("src key: %w", err)
+	}
+	if err := validateKey(dstKey); err != nil {
+		return 0, fmt.Errorf("dst key: %w", err)
+	}
+	src := minio.CopySrcOptions{Bucket: s.bucket, Object: srcKey}
+	dst := minio.CopyDestOptions{Bucket: s.bucket, Object: dstKey}
+	info, err := s.client.CopyObject(ctx, dst, src)
+	if err != nil {
+		if isErrNotImplemented(err) {
+			return 0, ErrCopyUnsupported
+		}
+		return 0, fmt.Errorf("objstore: copy %s -> %s: %w", srcKey, dstKey, err)
+	}
+	return info.Size, nil
+}
+
+// isErrNotImplemented inspects an error returned by minio-go for the
+// "501 Not Implemented" wire code that S3-compatible backends use to
+// signal "I don't support this API yet". Defensive — RustFS does
+// implement CopyObject, but cheap to check.
+func isErrNotImplemented(err error) bool {
+	var resp minio.ErrorResponse
+	if errors.As(err, &resp) {
+		return resp.Code == "NotImplemented" || resp.StatusCode == 501
+	}
+	return false
+}
+
 // ListPrefix issues a recursive ListObjectsV2. We deliberately don't
 // expose pagination tokens — keep the interface uniform with the local
 // backend's eager walk. limit caps the result set client-side; passing

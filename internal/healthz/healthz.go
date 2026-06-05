@@ -105,7 +105,7 @@ type Result struct {
 	Time          string           `json:"time"`
 	Checks        map[string]Check `json:"checks"`
 	// MinerU is the converter's counter snapshot. Only populated when
-	// QATLAS_ASSET_DOWNLOADS_ENABLED=true; omitted otherwise and
+	// QATLAS_PAPER_ACCESS_ENABLED=true; omitted otherwise and
 	// stripped by Sanitise for anonymous callers.
 	MinerU any `json:"mineru,omitempty"`
 }

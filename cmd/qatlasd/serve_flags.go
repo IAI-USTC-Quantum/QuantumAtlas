@@ -81,7 +81,7 @@ type serveFlagSpec struct {
 // precedence holds end-to-end).
 type qatlasdServeFlags struct {
 	// Server URL / identity
-	serverURL  string
+	publicURL  string
 	userHeader string
 	edgeName   string
 	forceTCP4  bool
@@ -124,7 +124,7 @@ type qatlasdServeFlags struct {
 func serveFlagSpecs(f *qatlasdServeFlags) []serveFlagSpec {
 	return []serveFlagSpec{
 		// Server URL / identity
-		{"server-url", "QATLAS_SERVER_URL", "Canonical public URL of this server (used for OAuth callbacks and share links)", "string", &f.serverURL},
+		{"public-url", "QATLAS_PUBLIC_URL", "Canonical public URL of this server (used to construct absolute OAuth callbacks and share links; named to distinguish from the client-side QATLAS_SERVER_URL which means 'server I talk to')", "string", &f.publicURL},
 		{"user-header", "QATLAS_USER_HEADER", "Audit user header name injected by the reverse proxy (e.g. X-Token-Subject)", "string", &f.userHeader},
 		{"edge-name", "QATLAS_EDGE_NAME", "Edge identifier folded into the S3 client User-Agent for audit logs", "string", &f.edgeName},
 		{"force-tcp4", "QATLAS_FORCE_TCP4", "Force a tcp4-only listener (WSL2 + Windows portproxy escape hatch)", "bool", &f.forceTCP4},
@@ -213,8 +213,8 @@ func applyServeFlags(cmd *cobra.Command, f *qatlasdServeFlags, cfg *config.Confi
 	}
 
 	// Server URL / identity
-	if set("server-url") {
-		cfg.PublicBaseURL = f.serverURL
+	if set("public-url") {
+		cfg.PublicURL = f.publicURL
 	}
 	if set("user-header") {
 		cfg.UserHeader = f.userHeader

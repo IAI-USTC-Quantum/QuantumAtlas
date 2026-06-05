@@ -177,51 +177,112 @@ func docPaperStats() {}
 func docNeedsMineru() {}
 
 // paperResources stanzas were removed in v0.9.0 — the server no longer
-// serves PDF or image bytes outbound. paperMarkdown / paperMarkdownStatus
-// are conditional on QATLAS_ASSET_DOWNLOADS_ENABLED=true (default off).
-// See the RegisterPapers doc comment for the compliance rationale.
+// serves PDF or image bytes outbound by default. paperMarkdown /
+// paperMarkdownStatus / paperPDF / paperPDFStatus are conditional on
+// QATLAS_PAPER_ACCESS_ENABLED=true (default off). See the
+// RegisterPapers doc comment for the compliance rationale.
 
 // paperMarkdown serves the cached markdown bytes for a paper.
 //
 // @Summary     Get paper markdown
-// @Description Returns the cached MinerU markdown for the given arxiv id.
-// @Description Only registered when QATLAS_ASSET_DOWNLOADS_ENABLED=true on
-// @Description the server (default off). On cache miss the server may
-// @Description transparently trigger a background MinerU conversion (when
-// @Description MINERU_API_TOKENS is also configured) and return 202 with
-// @Description Operation-Location/Retry-After headers; clients should poll
-// @Description /markdown/status until terminal then re-GET.
+// @Description Returns the cached MinerU markdown for the given arxiv id
+// @Description (or DOI — the id_or_doi path component is auto-detected
+// @Description against the IANA prefix `10.<registrant>/...`). Only
+// @Description registered when QATLAS_PAPER_ACCESS_ENABLED=true on the
+// @Description server (default off).
+// @Description
+// @Description Long-running operation semantics: on cache miss the
+// @Description server may transparently fetch the PDF from arxiv.org
+// @Description (silent_fetch) and trigger a MinerU conversion. The
+// @Description first call returns 202 with `Operation-Location:
+// @Description /api/papers/{id}/markdown/status` and `Retry-After: 5`;
+// @Description clients poll the status endpoint until state=cached then
+// @Description re-GET this resource for the bytes.
 // @Tags        Papers
 // @Produce     plain
 // @Security    BearerAuth
-// @Param       arxiv_id path string true "arXiv identifier (with vN suffix)"
+// @Param       id_or_doi path string true "arXiv canonical id with vN suffix, or a DOI (e.g. 10.1103/PhysRevLett.103.150502)"
 // @Success     200 {string} string "markdown bytes (text/markdown)"
-// @Success     202 {object} map[string]interface{} "conversion started; poll /markdown/status"
-// @Failure     400 {object} map[string]string "invalid arxiv_id"
+// @Success     202 {object} map[string]interface{} "long-running operation started; poll status_url"
+// @Failure     400 {object} map[string]string "invalid arxiv_id or DOI"
 // @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string
-// @Failure     404 {object} map[string]interface{} "no PDF in raw storage; upload via /upload-pdf first"
-// @Failure     502 {object} map[string]interface{} "prior conversion failed inside the cooldown window"
-// @Failure     503 {object} map[string]interface{} "cache-only mode: server-side MinerU not configured"
-// @Router      /api/papers/{arxiv_id}/markdown [get]
+// @Failure     404 {object} map[string]interface{} "DOI not in OpenAlex / not on arxiv; or paper unknown and silent fetch unavailable"
+// @Failure     502 {object} map[string]interface{} "prior conversion failed inside the cooldown window, or OpenAlex upstream error"
+// @Failure     503 {object} map[string]interface{} "cache-only mode (no MinerU keys), or DOI resolution unavailable (QATLAS_OPENALEX_MAILTO unset)"
+// @Router      /api/papers/{id_or_doi}/markdown [get]
 func docPaperMarkdown() {}
 
 // paperMarkdownStatus reports current markdown / conversion state.
 //
 // @Summary     Get markdown conversion status
-// @Description Side-effect-free status resource. Never starts a job and
-// @Description never requires a PDF. Only registered when
-// @Description QATLAS_ASSET_DOWNLOADS_ENABLED=true on the server.
+// @Description Side-effect-free poll surface. Never starts a job and
+// @Description never triggers a fetch. Only registered when
+// @Description QATLAS_PAPER_ACCESS_ENABLED=true on the server.
+// @Description
+// @Description Response shape always carries the agent-decision triple
+// @Description `state / pdf_ready / md_ready` plus an optional `phase`
+// @Description (fetching_pdf | converting_md | ready | error_fetching |
+// @Description error_converting) and `fetch` / `convert` sub-objects
+// @Description with bytes_received / mineru_task_id / polled_count so a
+// @Description polling client can show precise progress.
 // @Tags        Papers
 // @Produce     json
 // @Security    BearerAuth
-// @Param       arxiv_id path string true "arXiv identifier (with vN suffix)"
-// @Success     200 {object} map[string]interface{} "status payload (status ∈ cached|queued|running|none|no_pdf|failed|cooldown|unavailable)"
+// @Param       id_or_doi path string true "arXiv canonical id or DOI"
+// @Success     200 {object} map[string]interface{} "status payload (state ∈ cached|queued|running|none|failed|cooldown|unavailable)"
 // @Failure     400 {object} map[string]string
 // @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string
-// @Router      /api/papers/{arxiv_id}/markdown/status [get]
+// @Failure     404 {object} map[string]string "paper unknown and silent fetch unavailable"
+// @Router      /api/papers/{id_or_doi}/markdown/status [get]
 func docPaperMarkdownStatus() {}
+
+// paperPDF serves the cached PDF bytes for a paper, with silent
+// fetch from arxiv.org on cache miss.
+//
+// @Summary     Get paper PDF
+// @Description Returns the cached PDF (application/pdf) for the given
+// @Description arxiv id or DOI. Only registered when
+// @Description QATLAS_PAPER_ACCESS_ENABLED=true on the server.
+// @Description
+// @Description Long-running operation semantics mirror /markdown: cache
+// @Description miss returns 202 with Operation-Location pointing at
+// @Description /pdf/status. The fetch path uses a separate semaphore
+// @Description from MinerU conversion (QATLAS_ARXIV_FETCH_CONCURRENT)
+// @Description and a polite-pool rate limiter (QATLAS_ARXIV_FETCH_RPS).
+// @Tags        Papers
+// @Produce     application/pdf
+// @Security    BearerAuth
+// @Param       id_or_doi path string true "arXiv canonical id with vN suffix, or a DOI"
+// @Success     200 {string} string "PDF bytes (application/pdf)"
+// @Success     202 {object} map[string]interface{} "silent fetch started; poll status_url"
+// @Failure     400 {object} map[string]string "invalid arxiv_id or DOI"
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Failure     404 {object} map[string]interface{} "arxiv 404 or DOI not on arxiv"
+// @Failure     502 {object} map[string]interface{} "arxiv upstream error / OpenAlex upstream error"
+// @Failure     503 {object} map[string]interface{} "silent fetch disabled (no fetcher), DOI resolution unavailable"
+// @Router      /api/papers/{id_or_doi}/pdf [get]
+func docPaperPDF() {}
+
+// paperPDFStatus reports current PDF / fetch state.
+//
+// @Summary     Get PDF fetch status
+// @Description Side-effect-free poll surface for /pdf. Same shape as
+// @Description /markdown/status but states are restricted to the
+// @Description fetch-only flow — no convert phase. Only registered when
+// @Description QATLAS_PAPER_ACCESS_ENABLED=true.
+// @Tags        Papers
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id_or_doi path string true "arXiv canonical id or DOI"
+// @Success     200 {object} map[string]interface{} "status payload (state ∈ cached|queued|running|none|failed|unavailable)"
+// @Failure     400 {object} map[string]string
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Router      /api/papers/{id_or_doi}/pdf/status [get]
+func docPaperPDFStatus() {}
 
 // uploadPDF stores a paper PDF.
 //

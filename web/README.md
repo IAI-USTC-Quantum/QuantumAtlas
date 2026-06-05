@@ -115,6 +115,7 @@ authoritative descriptions):
 | `VITE_DEV_API_TARGET` | URL vite reverse-proxies `/api`, `/_`, `/share` to. **Required** for any UI that hits the server. Self-signed certs are accepted. |
 | `VITE_DEV_FAKE_AUTH` | When `1`, the SPA's PocketBase login gate returns a stub authed state so you go straight into protected views without OAuth. Read endpoints work through the proxy; write endpoints still 401. Stripped from production builds via `import.meta.env.DEV` dead-code elimination. |
 | `VITE_DEV_ALLOWED_HOSTS` | Comma-separated extra `Host` headers vite accepts. Needed when a reverse proxy fronts the dev server on a non-loopback hostname/IP — vite 5+ rejects unknown Hosts by default. |
+| `VITE_DEV_RAG_SIDECAR` | Optional. When set, vite carves `/api/rag/*` off the main `VITE_DEV_API_TARGET` proxy and reverse-proxies it to this URL instead (with `^/api/rag` rewritten to `''` because the sidecar's own paths are `/healthz` and `/search`). Use this when the remote qatlasd you're hitting doesn't have `QATLAS_RAG_SIDECAR_URL` set — without this knob the SPA's `useRagHealth()` probe sees the SPA's HTML catch-all and hides the semantic-search toggle. |
 
 WebSocket / HMR is automatic — vite's own ws endpoints are not under
 `/api`, so they bypass the proxy.

@@ -8,7 +8,7 @@
 //     /api/papers/{id}/upload-mineru.
 //  2. An HTTP wrapper (Client) plus a background Converter that the
 //     server can use to *itself* drive MinerU on cache miss, gated by
-//     the opt-in QATLAS_ASSET_DOWNLOADS_ENABLED master switch.
+//     the opt-in QATLAS_PAPER_ACCESS_ENABLED master switch.
 //     Default-off; public deployments (e.g. quantum-atlas.ai) leave it
 //     off and stay in "server does not redistribute PDF / markdown
 //     bytes" mode.

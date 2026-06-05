@@ -660,157 +660,6 @@
                 }
             }
         },
-        "/api/papers/{arxiv_id}/markdown": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Returns the cached MinerU markdown for the given arxiv id.\nOnly registered when QATLAS_ASSET_DOWNLOADS_ENABLED=true on\nthe server (default off). On cache miss the server may\ntransparently trigger a background MinerU conversion (when\nMINERU_API_TOKENS is also configured) and return 202 with\nOperation-Location/Retry-After headers; clients should poll\n/markdown/status until terminal then re-GET.",
-                "produces": [
-                    "text/plain"
-                ],
-                "tags": [
-                    "Papers"
-                ],
-                "summary": "Get paper markdown",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "arXiv identifier (with vN suffix)",
-                        "name": "arxiv_id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "markdown bytes (text/markdown)",
-                        "schema": {
-                            "type": "string"
-                        }
-                    },
-                    "202": {
-                        "description": "conversion started; poll /markdown/status",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "invalid arxiv_id",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "404": {
-                        "description": "no PDF in raw storage; upload via /upload-pdf first",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "502": {
-                        "description": "prior conversion failed inside the cooldown window",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "503": {
-                        "description": "cache-only mode: server-side MinerU not configured",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
-        "/api/papers/{arxiv_id}/markdown/status": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Side-effect-free status resource. Never starts a job and\nnever requires a PDF. Only registered when\nQATLAS_ASSET_DOWNLOADS_ENABLED=true on the server.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Papers"
-                ],
-                "summary": "Get markdown conversion status",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "arXiv identifier (with vN suffix)",
-                        "name": "arxiv_id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "status payload (status ∈ cached|queued|running|none|no_pdf|failed|cooldown|unavailable)",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
         "/api/papers/{arxiv_id}/mineru-claim": {
             "post": {
                 "security": [
@@ -1115,6 +964,317 @@
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/papers/{id_or_doi}/markdown": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the cached MinerU markdown for the given arxiv id\n(or DOI — the id_or_doi path component is auto-detected\nagainst the IANA prefix `10.\u003cregistrant\u003e/...`). Only\nregistered when QATLAS_PAPER_ACCESS_ENABLED=true on the\nserver (default off).\n\nLong-running operation semantics: on cache miss the\nserver may transparently fetch the PDF from arxiv.org\n(silent_fetch) and trigger a MinerU conversion. The\nfirst call returns 202 with `Operation-Location:\n/api/papers/{id}/markdown/status` and `Retry-After: 5`;\nclients poll the status endpoint until state=cached then\nre-GET this resource for the bytes.",
+                "produces": [
+                    "text/plain"
+                ],
+                "tags": [
+                    "Papers"
+                ],
+                "summary": "Get paper markdown",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "arXiv canonical id with vN suffix, or a DOI (e.g. 10.1103/PhysRevLett.103.150502)",
+                        "name": "id_or_doi",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "markdown bytes (text/markdown)",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "202": {
+                        "description": "long-running operation started; poll status_url",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "invalid arxiv_id or DOI",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "DOI not in OpenAlex / not on arxiv; or paper unknown and silent fetch unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "prior conversion failed inside the cooldown window, or OpenAlex upstream error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "cache-only mode (no MinerU keys), or DOI resolution unavailable (QATLAS_OPENALEX_MAILTO unset)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/papers/{id_or_doi}/markdown/status": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Side-effect-free poll surface. Never starts a job and\nnever triggers a fetch. Only registered when\nQATLAS_PAPER_ACCESS_ENABLED=true on the server.\n\nResponse shape always carries the agent-decision triple\n`state / pdf_ready / md_ready` plus an optional `phase`\n(fetching_pdf | converting_md | ready | error_fetching |\nerror_converting) and `fetch` / `convert` sub-objects\nwith bytes_received / mineru_task_id / polled_count so a\npolling client can show precise progress.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Papers"
+                ],
+                "summary": "Get markdown conversion status",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "arXiv canonical id or DOI",
+                        "name": "id_or_doi",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "status payload (state ∈ cached|queued|running|none|failed|cooldown|unavailable)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "paper unknown and silent fetch unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/papers/{id_or_doi}/pdf": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the cached PDF (application/pdf) for the given\narxiv id or DOI. Only registered when\nQATLAS_PAPER_ACCESS_ENABLED=true on the server.\n\nLong-running operation semantics mirror /markdown: cache\nmiss returns 202 with Operation-Location pointing at\n/pdf/status. The fetch path uses a separate semaphore\nfrom MinerU conversion (QATLAS_ARXIV_FETCH_CONCURRENT)\nand a polite-pool rate limiter (QATLAS_ARXIV_FETCH_RPS).",
+                "produces": [
+                    "application/pdf"
+                ],
+                "tags": [
+                    "Papers"
+                ],
+                "summary": "Get paper PDF",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "arXiv canonical id with vN suffix, or a DOI",
+                        "name": "id_or_doi",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "PDF bytes (application/pdf)",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "202": {
+                        "description": "silent fetch started; poll status_url",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "invalid arxiv_id or DOI",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "arxiv 404 or DOI not on arxiv",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "arxiv upstream error / OpenAlex upstream error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "silent fetch disabled (no fetcher), DOI resolution unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/papers/{id_or_doi}/pdf/status": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Side-effect-free poll surface for /pdf. Same shape as\n/markdown/status but states are restricted to the\nfetch-only flow — no convert phase. Only registered when\nQATLAS_PAPER_ACCESS_ENABLED=true.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Papers"
+                ],
+                "summary": "Get PDF fetch status",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "arXiv canonical id or DOI",
+                        "name": "id_or_doi",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "status payload (state ∈ cached|queued|running|none|failed|unavailable)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
                         }
                     }
                 }
@@ -1551,14 +1711,29 @@
         "routes.oauthDeviceLookupResponse": {
             "type": "object",
             "properties": {
+                "available_scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "description": {
                     "type": "string"
                 },
                 "expires_in_days": {
                     "type": "integer"
                 },
+                "max_expiry_days": {
+                    "type": "integer"
+                },
                 "name": {
                     "type": "string"
+                },
+                "scope_descriptions": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
                 },
                 "scopes": {
                     "type": "array",

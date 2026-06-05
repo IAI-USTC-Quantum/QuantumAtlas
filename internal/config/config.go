@@ -46,9 +46,11 @@ type Config struct {
 	Neo4jPassword string
 	Neo4jDatabase string
 
-	// Public base URL: server's own canonical https origin. Required
-	// for OAuth callback construction and OpenAlex sync links.
-	PublicBaseURL string
+	// Public URL: server's own canonical https origin (scheme+host[+port])
+	// as users see it from outside any reverse proxy. Required for
+	// constructing absolute redirect URLs (OAuth callbacks, OpenAlex
+	// sync links) since the proxy may rewrite Host headers.
+	PublicURL string
 
 	// Audit header injected by the upstream reverse proxy.
 	UserHeader string
@@ -137,8 +139,8 @@ type Config struct {
 	// token) lives in this config. See docs/deployment/rustfs.md.
 	EdgeName string
 
-	// AssetDownloadsEnabled is the master switch for the opt-in
-	// derivative-asset serving + server-side MinerU surface (issue #8).
+	// PaperAccessEnabled is the master switch for the opt-in
+	// paper-access serving + server-side MinerU surface (issue #8).
 	// When false (default) the /api/papers/{id}/markdown and
 	// /markdown/status endpoints are NOT registered and the entire
 	// MinerU* block below is ignored — even garbage values are tolerated
@@ -155,10 +157,10 @@ type Config struct {
 	// preserved. Self-hosters in a controlled audience can flip it on
 	// and accept the resulting distribution obligation — see
 	// docs/about/license-and-attribution.md.
-	AssetDownloadsEnabled bool
+	PaperAccessEnabled bool
 
 	// Server-side MinerU configuration. Only parsed (and only validated)
-	// when AssetDownloadsEnabled=true. When the switch is off these
+	// when PaperAccessEnabled=true. When the switch is off these
 	// fields are zero values regardless of env content.
 	//
 	// MinerUAPITokens is a pool — supply multiple tokens (CSV in env)
@@ -174,6 +176,48 @@ type Config struct {
 	MinerUPollInterval      time.Duration
 	MinerUTimeout           time.Duration
 	MinerUMaxConcurrentJobs int
+
+	// RAGSidecarURL — when non-empty AND PaperAccessEnabled=true,
+	// /api/rag/* is registered as a reverse-proxy to the named sidecar
+	// (a separate process running on the same host that handles vector
+	// search, reranking, and snippet assembly). When empty the routes
+	// are not registered.
+	//
+	// Gated by PaperAccessEnabled because RAG hits return
+	// chunk_text snippets — the same derivative-work bytes that
+	// /api/papers/{id}/markdown serves. Operators who keep the master
+	// switch OFF stay out of the redistribution posture entirely;
+	// operators who flip it ON to host markdown can additionally point
+	// QATLAS_RAG_SIDECAR_URL at a configured sidecar to add semantic
+	// search.
+	RAGSidecarURL string
+
+	// OpenAlexMailto is the contact email folded into the polite-pool
+	// User-Agent for OpenAlex API calls and outbound arxiv.org PDF
+	// fetches. Required when PaperAccessEnabled=true AND any
+	// derivative-access endpoint that may resolve DOIs or fetch PDFs
+	// from arxiv is exercised; the DOI route returns 503 when this is
+	// empty so misconfigured deployments fail loudly instead of
+	// silently degrading. Format: any RFC 5322 address; we don't
+	// validate strictly because OpenAlex accepts anything that looks
+	// like an email — only the existence check matters.
+	OpenAlexMailto string
+
+	// ArxivFetchConcurrent caps the number of in-flight server-side
+	// arxiv.org PDF fetches independently from MinerU job concurrency
+	// (fetches are I/O bound; MinerU jobs are API+GPU bound). Default
+	// 2 — enough to make progress without ever looking impolite to
+	// arxiv. Only consulted when PaperAccessEnabled=true; ignored
+	// otherwise.
+	ArxivFetchConcurrent int
+
+	// ArxivFetchRPS bounds the per-process rate of arxiv.org GET
+	// requests (token bucket). arxiv asks robots to space requests
+	// "every 3 seconds"; we default to 0.33 req/s with burst 2 which
+	// satisfies that for any single edge. Operators with multiple
+	// edges sharing a public NAT should set this LOWER to stay polite
+	// in aggregate. Only consulted when PaperAccessEnabled=true.
+	ArxivFetchRPS float64
 }
 
 // MinerUEnabled reports whether the server should drive MinerU itself
@@ -182,7 +226,7 @@ type Config struct {
 // (when registered) serve cached bytes only and return 503 on cache
 // miss.
 func (c *Config) MinerUEnabled() bool {
-	return c.AssetDownloadsEnabled && len(c.MinerUAPITokens) > 0
+	return c.PaperAccessEnabled && len(c.MinerUAPITokens) > 0
 }
 
 // Load resolves the configuration from process environment.
@@ -224,7 +268,7 @@ func Load(dotenvPath string) (*Config, error) {
 		Neo4jUser:                firstEnv("NEO4J_USERNAME", "NEO4J_USER"),
 		Neo4jPassword:            firstEnv("NEO4J_PASSWORD"),
 		Neo4jDatabase:            firstEnv("NEO4J_DATABASE"),
-		PublicBaseURL:            firstEnv("QATLAS_SERVER_URL", "PUBLIC_BASE_URL"),
+		PublicURL:                firstEnv("QATLAS_PUBLIC_URL"),
 		UserHeader:               firstEnv("QATLAS_USER_HEADER", "USER_HEADER"),
 		GitHubClientID:           firstEnv("GITHUB_CLIENT_ID"),
 		GitHubClientSecret:       firstEnv("GITHUB_CLIENT_SECRET"),
@@ -237,14 +281,18 @@ func Load(dotenvPath string) (*Config, error) {
 		S3AccessKeyID:            firstEnv("QATLAS_S3_ACCESS_KEY_ID"),
 		S3SecretAccessKey:        firstEnv("QATLAS_S3_SECRET_ACCESS_KEY"),
 		EdgeName:                 firstEnv("QATLAS_EDGE_NAME"),
-		AssetDownloadsEnabled:    parseBoolEnv("QATLAS_ASSET_DOWNLOADS_ENABLED", false),
+		PaperAccessEnabled:    parseBoolEnv("QATLAS_PAPER_ACCESS_ENABLED", false),
+		RAGSidecarURL:            firstEnv("QATLAS_RAG_SIDECAR_URL"),
+		OpenAlexMailto:           firstEnv("QATLAS_OPENALEX_MAILTO"),
+		ArxivFetchConcurrent:     firstEnvIntDefault(2, "QATLAS_ARXIV_FETCH_CONCURRENT"),
+		ArxivFetchRPS:            firstEnvFloatDefault(0.33, "QATLAS_ARXIV_FETCH_RPS"),
 	}
 
 	// MinerU* fields are only populated when the master switch is on.
 	// When the switch is off we intentionally swallow even malformed
 	// MinerU env values so a stale .env can't make a non-MinerU
 	// deployment fail to start.
-	if cfg.AssetDownloadsEnabled {
+	if cfg.PaperAccessEnabled {
 		if err := loadMinerUConfig(cfg); err != nil {
 			return nil, err
 		}
@@ -343,7 +391,6 @@ func deprecatedAliases() map[string]string {
 		"PB_DATA_DIR":     "QATLAS_PB_DATA_DIR",
 		"SERVER_HOST":     "QATLAS_SERVER_HOST",
 		"SERVER_PORT":     "QATLAS_SERVER_PORT",
-		"PUBLIC_BASE_URL": "QATLAS_SERVER_URL",
 		"USER_HEADER":     "QATLAS_USER_HEADER",
 	}
 }
@@ -483,11 +530,27 @@ func firstEnvIntDefault(def int, names ...string) int {
 	return v
 }
 
+// firstEnvFloatDefault parses the first non-empty env value as a float64,
+// falling back to def when unset or unparseable. Used for rate-limit knobs
+// like QATLAS_ARXIV_FETCH_RPS where fractional values are meaningful (0.33
+// req/s ≈ once every 3 seconds, matching arxiv's published guidance).
+func firstEnvFloatDefault(def float64, names ...string) float64 {
+	raw := firstEnv(names...)
+	if raw == "" {
+		return def
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return def
+	}
+	return v
+}
+
 // parseBoolEnv reads a single env var and parses it as a bool with
 // strconv.ParseBool semantics (accepting 1/t/T/TRUE/true/True and
 // 0/f/F/FALSE/false/False). Unset / empty / unparseable → def. Used
 // for opt-in switches like QATLAS_FORCE_TCP4 and
-// QATLAS_ASSET_DOWNLOADS_ENABLED.
+// QATLAS_PAPER_ACCESS_ENABLED.
 func parseBoolEnv(name string, def bool) bool {
 	raw := strings.TrimSpace(os.Getenv(name))
 	if raw == "" {
@@ -500,11 +563,11 @@ func parseBoolEnv(name string, def bool) bool {
 	return v
 }
 
-// loadMinerUConfig populates the MinerU* fields when the asset-downloads
+// loadMinerUConfig populates the MinerU* fields when the paper-access
 // master switch is on. Strict-parse: malformed numeric values cause
 // Load() to fail rather than silently fall back to defaults — when the
 // switch is off this function is never called (per the contract in
-// Config.AssetDownloadsEnabled), so a stale .env can never trip it.
+// Config.PaperAccessEnabled), so a stale .env can never trip it.
 //
 // Defaults match issue #8: vlm model, ch language, table+formula on,
 // OCR off, 3s poll, 1800s timeout, concurrency=4. MINERU_API_TOKENS

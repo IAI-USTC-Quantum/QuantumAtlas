@@ -198,6 +198,13 @@ var ErrPreconditionFailed = errors.New("objstore: precondition failed")
 // rejection (ErrPreconditionFailed) with "backend doesn't speak this".
 var ErrPreconditionUnsupported = errors.New("objstore: precondition unsupported by backend")
 
+// ErrCopyUnsupported is returned by S3Store.ServerSideCopy when the
+// backend reports the CopyObject API is not implemented. Callers
+// should fall back to a streaming Get + Put. Distinct sentinel so
+// real CopyObject failures (perm denied, network) aren't swallowed
+// silently by the fallback path.
+var ErrCopyUnsupported = errors.New("objstore: server-side copy not supported by backend")
+
 // IsNotFound reports whether err is or wraps ErrNotFound. Wraps
 // errors.Is for callsite readability.
 func IsNotFound(err error) bool {

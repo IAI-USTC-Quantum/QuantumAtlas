@@ -162,7 +162,7 @@ func clearQATLASEnv(t *testing.T) {
 
 func TestConfigShow_RedactsSecretValues(t *testing.T) {
 	clearQATLASEnv(t)
-	t.Setenv("QATLAS_SERVER_URL", "https://test.example.com")
+	t.Setenv("QATLAS_PUBLIC_URL", "https://test.example.com")
 	t.Setenv("QATLAS_S3_ACCESS_KEY_ID", "AKIA-EXAMPLE-NEVER-REAL")
 	t.Setenv("QATLAS_S3_SECRET_ACCESS_KEY", "SECRET-EXAMPLE-NEVER-REAL")
 	t.Setenv("NEO4J_PASSWORD", "supersecret")
@@ -179,8 +179,8 @@ func TestConfigShow_RedactsSecretValues(t *testing.T) {
 
 	got := buf.String()
 	// Plaintext fields stay visible.
-	if !strings.Contains(got, "QATLAS_SERVER_URL=https://test.example.com") {
-		t.Errorf("expected QATLAS_SERVER_URL plaintext; got:\n%s", got)
+	if !strings.Contains(got, "QATLAS_PUBLIC_URL=https://test.example.com") {
+		t.Errorf("expected QATLAS_PUBLIC_URL plaintext; got:\n%s", got)
 	}
 	// Secret fields must be redacted.
 	for _, secretName := range []string{"QATLAS_S3_ACCESS_KEY_ID", "QATLAS_S3_SECRET_ACCESS_KEY", "NEO4J_PASSWORD", "GITHUB_CLIENT_SECRET"} {
@@ -215,7 +215,7 @@ func TestConfigShow_NoRedactShowsPlaintext(t *testing.T) {
 
 func TestConfigShow_SortsAlphabeticallyAndSkipsEmpty(t *testing.T) {
 	clearQATLASEnv(t)
-	t.Setenv("QATLAS_SERVER_URL", "https://b.example")
+	t.Setenv("QATLAS_PUBLIC_URL", "https://b.example")
 	t.Setenv("NEO4J_URI", "bolt://a.example:7687")
 	t.Setenv("QATLAS_EDGE_NAME", "us-east")
 	t.Setenv("MINERU_API_TOKEN", "")
@@ -235,7 +235,7 @@ func TestConfigShow_SortsAlphabeticallyAndSkipsEmpty(t *testing.T) {
 		"MINERU_API_BASE_URL=https://mineru.example",
 		"NEO4J_URI=bolt://a.example:7687",
 		"QATLAS_EDGE_NAME=us-east",
-		"QATLAS_SERVER_URL=https://b.example",
+		"QATLAS_PUBLIC_URL=https://b.example",
 	}
 	if len(lines) != len(wantOrder) {
 		t.Fatalf("got %d lines, want %d:\n%s", len(lines), len(wantOrder), buf.String())
@@ -249,7 +249,7 @@ func TestConfigShow_SortsAlphabeticallyAndSkipsEmpty(t *testing.T) {
 
 func TestConfigShow_FilterOnlyQuantumAtlasVars(t *testing.T) {
 	clearQATLASEnv(t)
-	t.Setenv("QATLAS_SERVER_URL", "https://only.example")
+	t.Setenv("QATLAS_PUBLIC_URL", "https://only.example")
 	// Random unrelated var that must NOT appear (PATH is always set).
 	t.Setenv("UNRELATED_VAR_FOR_TEST", "leak-me-if-broken")
 
@@ -262,8 +262,8 @@ func TestConfigShow_FilterOnlyQuantumAtlasVars(t *testing.T) {
 		t.Fatalf("config show: %v", err)
 	}
 
-	if !strings.Contains(buf.String(), "QATLAS_SERVER_URL=") {
-		t.Errorf("expected QATLAS_SERVER_URL to be listed; got:\n%s", buf.String())
+	if !strings.Contains(buf.String(), "QATLAS_PUBLIC_URL=") {
+		t.Errorf("expected QATLAS_PUBLIC_URL to be listed; got:\n%s", buf.String())
 	}
 	if strings.Contains(buf.String(), "UNRELATED_VAR_FOR_TEST") {
 		t.Errorf("non-QuantumAtlas env vars must not appear in show; got:\n%s", buf.String())
@@ -337,7 +337,7 @@ func TestIsSecretName_KnownClasses(t *testing.T) {
 		"GITHUB_CLIENT_SECRET":        true,
 		"MINERU_API_TOKEN":            true,
 		"QATLAS_SYSTEM_PAT":           false, // intentional: name doesn't hint secret
-		"QATLAS_SERVER_URL":           false,
+		"QATLAS_PUBLIC_URL":           false,
 		"NEO4J_URI":                   false,
 		"NEO4J_USERNAME":              false,
 		"QATLAS_EDGE_NAME":            false,

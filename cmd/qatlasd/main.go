@@ -24,12 +24,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/arxiv"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/auth"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/healthz"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineru"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/neo4j"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/openalex"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/papers"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/pat"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/routes"
@@ -387,14 +389,45 @@ func main() {
 			return fmt.Errorf("build PAT scope enforcer: %w", err)
 		}
 
+		// Build the arxiv fetcher and OpenAlex resolver up front when
+		// paper-access is on. Both are nil-safe pass-through: a nil
+		// fetcher disables silent fetch (Ensure surfaces ErrFatal "no
+		// PDF in store"); a nil/disabled resolver routes DOI lookups
+		// to a 503. We always build the resolver value (even when
+		// mailto is missing, Enabled() reports false) so the routes
+		// can stay wired uniformly.
+		var arxivFetcher *arxiv.Fetcher
+		var doiResolver *openalex.Resolver
+		if cfg.PaperAccessEnabled {
+			contact := strings.TrimSpace(cfg.OpenAlexMailto)
+			ua := arxiv.BuildUserAgent(Version, contact)
+			fetcher, fetchErr := arxiv.New(arxiv.Config{
+				UserAgent: ua,
+				RPS:       int(cfg.ArxivFetchRPS), // rate.Limiter takes float internally; int rounding is fine for our scales
+			})
+			if fetchErr != nil {
+				slog.Warn("arxiv fetcher disabled — invalid config; silent fetch will return ErrFatal on cache miss",
+					"error", fetchErr,
+				)
+			} else {
+				arxivFetcher = fetcher
+			}
+			doiResolver = openalex.New(openalex.Config{
+				Mailto: contact,
+			})
+			if !doiResolver.Enabled() {
+				slog.Warn("OpenAlex DOI resolver disabled: QATLAS_OPENALEX_MAILTO is unset; DOI paths will return 503")
+			}
+		}
+
 		// Build the MinerU converter (always non-nil; behaves as a
-		// no-op when QATLAS_ASSET_DOWNLOADS_ENABLED is false). When
+		// no-op when QATLAS_PAPER_ACCESS_ENABLED is false). When
 		// the operator opts in we emit ONE info line so deploy logs
 		// make it obvious which markdown surface is live. Never logs
 		// the API tokens themselves — only the COUNT.
 		mineruConverter := mineru.NewConverter(
 			mineru.ConverterConfig{
-				AssetDownloadsEnabled:   cfg.AssetDownloadsEnabled,
+				PaperAccessEnabled:   cfg.PaperAccessEnabled,
 				MinerUAPITokens:         cfg.MinerUAPITokens,
 				MinerUAPIBaseURL:        cfg.MinerUAPIBaseURL,
 				MinerUModelVersion:      cfg.MinerUModelVersion,
@@ -406,20 +439,34 @@ func main() {
 				MinerUTimeout:           cfg.MinerUTimeout,
 				MinerUMaxConcurrentJobs: cfg.MinerUMaxConcurrentJobs,
 				S3PublicEndpoint:        cfg.S3PublicEndpoint,
+				Fetcher:                 arxivFetcher,
+				ArxivFetchConcurrent:    cfg.ArxivFetchConcurrent,
 			},
 			rawStore, catalog,
 			slog.Default(),
 		)
-		if cfg.AssetDownloadsEnabled {
+		if cfg.PaperAccessEnabled {
 			serverSide := "disabled"
 			if mineruConverter.Enabled() {
 				serverSide = "enabled"
 			}
-			slog.Info("asset_downloads enabled",
-				"endpoints", "[markdown,markdown_status]",
+			silentFetch := "disabled"
+			if arxivFetcher != nil {
+				silentFetch = "enabled"
+			}
+			doiState := "disabled"
+			if doiResolver != nil && doiResolver.Enabled() {
+				doiState = "enabled"
+			}
+			slog.Info("paper_access enabled",
+				"endpoints", "[markdown,markdown_status,pdf,pdf_status]",
 				"server_side_mineru", serverSide,
+				"silent_fetch", silentFetch,
+				"doi_resolver", doiState,
 				"mineru_keys", mineruConverter.KeyRingSize(),
 				"max_concurrent", mineruConverter.MaxConcurrentJobs(),
+				"arxiv_fetch_concurrent", cfg.ArxivFetchConcurrent,
+				"arxiv_fetch_rps", cfg.ArxivFetchRPS,
 				"timeout_s", int(mineruConverter.Timeout().Seconds()),
 			)
 		}
@@ -480,7 +527,7 @@ func main() {
 				}
 			}
 
-			registerRoutes(se, app, cfg, rawStore, catalog, wikiCache, enforcer, mineruConverter, serverStarted)
+			registerRoutes(se, app, cfg, rawStore, catalog, wikiCache, enforcer, mineruConverter, doiResolver, arxivFetcher, serverStarted)
 
 			// Serve the embedded SPA last as the catch-all. apis.Static's
 			// indexFallback=true means any path that doesn't match a real
@@ -674,7 +721,7 @@ func ensureBucketVersioning(rawStore objstore.Store) {
 // registerRoutes wires the QuantumAtlas /api/* surface. Most endpoints are
 // implemented under internal/routes/ and pulled in by their respective
 // Register* helpers as we migrate each module in subsequent phases.
-func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawStore objstore.Store, catalog *papers.Store, wikiCache *wiki.Cache, enforcer *casbin.Enforcer, mineruConverter *mineru.Converter, started time.Time) {
+func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawStore objstore.Store, catalog *papers.Store, wikiCache *wiki.Cache, enforcer *casbin.Enforcer, mineruConverter *mineru.Converter, doiResolver *openalex.Resolver, arxivFetcher *arxiv.Fetcher, started time.Time) {
 	probes := healthz.Probes{
 		Cfg:      cfg,
 		RawStore: rawStore,
@@ -755,7 +802,7 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 		if re.Request.Method == "GET" && re.Request.URL.Path == "/api/health" {
 			result := healthz.RunPB(re.Request.Context(), probes)
 			// Inject converter counters when asset downloads are enabled.
-			if cfg.AssetDownloadsEnabled {
+			if cfg.PaperAccessEnabled {
 				result.Data.MinerU = mineruConverter.Snapshot()
 			}
 			// Anonymous callers get a sanitised payload: just
@@ -831,8 +878,8 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// endpoints (markdown / resources / shares); the server only
 	// exposes catalog metadata + the contribution flow by default.
 	// /markdown + /markdown/status come back when the operator opts
-	// in via QATLAS_ASSET_DOWNLOADS_ENABLED=true.
-	routes.RegisterPapers(se, cfg, rawStore, catalog, enforcer, mineruConverter)
+	// in via QATLAS_PAPER_ACCESS_ENABLED=true.
+	routes.RegisterPapers(se, cfg, rawStore, catalog, enforcer, mineruConverter, doiResolver, arxivFetcher)
 
 	// Personal Access Tokens — see internal/routes/pat.go.
 	// /api/pat is session-token-only (PAT auth refused by sessionGuard);
@@ -845,6 +892,12 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// and /token are anonymous; /lookup, /approve, /deny require a
 	// browser session (sessionGuard, same as /api/pat).
 	routes.RegisterOAuthDevice(se, app)
+
+	// RAG (vector search) reverse_proxy to a sidecar — registered iff
+	// QATLAS_PAPER_ACCESS_ENABLED=true AND QATLAS_RAG_SIDECAR_URL is
+	// set. Same posture as /api/papers/{id}/markdown: serves derivative
+	// paper content, so we gate behind the operator's opt-in.
+	routes.RegisterRAG(se, cfg, enforcer)
 }
 
 // injectHTTPFlag mutates os.Args to add --http=<addr> when the user invokes

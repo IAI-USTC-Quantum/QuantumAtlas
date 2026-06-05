@@ -8,13 +8,16 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/arxiv"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineru"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/openalex"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperassets"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/papers"
 
@@ -52,7 +55,7 @@ import (
 // MinerU output back via upload-mineru.
 //
 // Markdown distribution is opt-in: when the operator sets
-// QATLAS_ASSET_DOWNLOADS_ENABLED=true, GET /api/papers/{id}/markdown +
+// QATLAS_PAPER_ACCESS_ENABLED=true, GET /api/papers/{id}/markdown +
 // /markdown/status are registered and gated by papers:read. The public
 // instance (quantum-atlas.ai) keeps the switch off; self-hosters in a
 // controlled audience can flip it on and accept the resulting
@@ -72,6 +75,8 @@ func RegisterPapers(
 	catalog *papers.Store,
 	enforcer *casbin.Enforcer,
 	converter *mineru.Converter,
+	doiResolver *openalex.Resolver,
+	arxivFetcher *arxiv.Fetcher,
 ) {
 	se.Router.GET("/api/papers/{path...}", scopeGuard(enforcer, "papers", "read", func(re *core.RequestEvent) error {
 		raw := re.Request.PathValue("path")
@@ -82,23 +87,66 @@ func RegisterPapers(
 			return paperStatsHandler(re, catalog)
 		}
 		// Asset-download endpoints are only registered when the
-		// operator opted in via QATLAS_ASSET_DOWNLOADS_ENABLED. When
+		// operator opted in via QATLAS_PAPER_ACCESS_ENABLED. When
 		// the switch is off the catch-all path below returns 404 so
 		// requests are indistinguishable from "no such handler" — the
 		// public deployment posture remains "server does not
 		// redistribute markdown bytes".
-		if cfg.AssetDownloadsEnabled {
-			arxiv, action := splitPapersPath(raw)
+		if cfg.PaperAccessEnabled {
+			arxivPart, action := splitPapersPath(raw)
+			requestedID := arxivPart
+			bareIDPostDOI := arxivPart
+
+			// DOI-first dispatch: if the path component before the
+			// action is a DOI (matches the IANA prefix shape
+			// `10.<registrant>/<suffix>`), resolve it to a canonical
+			// arxiv id via OpenAlex before falling through to the
+			// regular handlers. Resolver failures map to HTTP error
+			// responses (503 not configured, 400 invalid, 404 not
+			// found, 502 upstream) so the caller can branch cleanly.
+			if isDOICandidate(arxivPart) {
+				canonical, err := resolveDOIToCanonical(re.Request.Context(), doiResolver, arxivPart)
+				if err != nil {
+					return doiErrorResponse(re, arxivPart, err)
+				}
+				bareIDPostDOI = canonical
+				arxivPart = canonical
+			}
+
+			// Latest-version inference: if the (post-DOI) id has no
+			// explicit `vN`, resolve via arxiv.org `/abs/<id>` HTML
+			// scrape (og:url meta tag carries the canonical latest
+			// version). Applies to BOTH DOI-derived bare ids and
+			// direct-bare arxiv inputs from the caller.
+			if parsed, perr := paperassets.Parse(arxivPart); perr == nil && parsed.IsValid() && parsed.Version == "" {
+				versioned, err := resolveBareToVersioned(re.Request.Context(), arxivFetcher, arxivPart)
+				if err != nil {
+					return doiVersionErrorResponse(re, requestedID, arxivPart, err)
+				}
+				arxivPart = versioned
+			}
+
+			// Stash the resolution chain on the request context so
+			// snapshotBody / streamMarkdown / streamPDF can surface
+			// it back to the caller via X-QAtlas-* headers + JSON
+			// body fields. See resolution.go for the contract.
+			res := computeResolution(requestedID, bareIDPostDOI, arxivPart)
+			re.Request = re.Request.WithContext(withResolution(re.Request.Context(), res))
+
 			// splitPapersPath splits on the LAST slash, so
 			// ".../markdown/status" arrives as arxiv="…/markdown",
-			// action="status". markdownHandler 用 action=="markdown"
-			// 兜住 plain /markdown 路由。
+			// action="status".
 			switch {
 			case action == "markdown":
-				return markdownHandler(re, cfg, rawStore, converter, arxiv)
-			case action == "status" && strings.HasSuffix(arxiv, "/markdown"):
-				realArxiv := strings.TrimSuffix(arxiv, "/markdown")
+				return markdownHandler(re, cfg, rawStore, converter, arxivPart)
+			case action == "pdf":
+				return pdfHandler(re, cfg, rawStore, converter, arxivPart)
+			case action == "status" && strings.HasSuffix(arxivPart, "/markdown"):
+				realArxiv := strings.TrimSuffix(arxivPart, "/markdown")
 				return markdownStatusHandler(re, cfg, rawStore, converter, realArxiv)
+			case action == "status" && strings.HasSuffix(arxivPart, "/pdf"):
+				realArxiv := strings.TrimSuffix(arxivPart, "/pdf")
+				return pdfStatusHandler(re, cfg, rawStore, converter, realArxiv)
 			}
 		}
 		return re.JSON(http.StatusNotFound, map[string]string{
@@ -164,6 +212,120 @@ func splitMineruClaimRelease(raw string) (arxivID, claimID string, ok bool) {
 	claimID = parts[len(parts)-1]
 	arxivID = strings.Join(parts[:len(parts)-2], "/")
 	return arxivID, claimID, true
+}
+
+// doiPrefixRE recognizes the IANA DOI prefix shape `10.<registrant>/`
+// at the head of a string. The registrant is 4-9 digits per current
+// IANA assignments; we don't enforce a max length on the suffix
+// because DOIs in the wild are arbitrary (the openalex resolver
+// applies its own 256-char cap during normalization).
+var doiPrefixRE = regexp.MustCompile(`^10\.\d{4,9}/`)
+
+// isDOICandidate reports whether s looks like a DOI worth handing off
+// to the OpenAlex resolver. We use a permissive prefix check here so
+// the resolver itself gets to decide what's truly valid (with its
+// stricter normalizeDOI rules: max length, no control chars, etc.).
+func isDOICandidate(s string) bool {
+	return doiPrefixRE.MatchString(s)
+}
+
+// resolveDOIToCanonical wraps Resolver.ResolveDOI with the additional
+// safety: when no resolver is configured at all (cfg/main.go didn't
+// build one), treat that as not-configured rather than panic.
+func resolveDOIToCanonical(ctx context.Context, resolver *openalex.Resolver, doi string) (string, error) {
+	if resolver == nil {
+		return "", openalex.ErrNotConfigured
+	}
+	return resolver.ResolveDOI(ctx, doi)
+}
+
+// doiErrorResponse maps an openalex resolver error onto an HTTP
+// response with the standard error-body shape used by the other
+// handlers.
+func doiErrorResponse(re *core.RequestEvent, doi string, err error) error {
+	switch {
+	case errors.Is(err, openalex.ErrNotConfigured):
+		return re.JSON(http.StatusServiceUnavailable, map[string]any{
+			"detail": "DOI resolution unavailable: QATLAS_OPENALEX_MAILTO is not configured on the server",
+			"doi":    doi,
+		})
+	case errors.Is(err, openalex.ErrInvalidDOI):
+		return re.JSON(http.StatusBadRequest, map[string]any{
+			"detail": "invalid DOI: " + err.Error(),
+			"doi":    doi,
+		})
+	case errors.Is(err, openalex.ErrDOINotFound):
+		return re.JSON(http.StatusNotFound, map[string]any{
+			"detail": "DOI not found in OpenAlex, or the resolved work has no arxiv presence",
+			"doi":    doi,
+		})
+	case errors.Is(err, openalex.ErrUpstream):
+		return re.JSON(http.StatusBadGateway, map[string]any{
+			"detail": "OpenAlex upstream error: " + err.Error(),
+			"doi":    doi,
+		})
+	default:
+		return re.JSON(http.StatusInternalServerError, map[string]any{
+			"detail": "DOI resolution failed: " + err.Error(),
+			"doi":    doi,
+		})
+	}
+}
+
+// resolveBareToVersioned takes the bare canonical arxiv id returned
+// by the OpenAlex resolver and produces an id with an explicit
+// version suffix. If the resolver returned an already-versioned id
+// (it shouldn't, but defensive), it's returned as-is. Calls
+// arxivFetcher.ResolveLatestVersion when a version probe is needed.
+func resolveBareToVersioned(ctx context.Context, fetcher *arxiv.Fetcher, canonical string) (string, error) {
+	parsed, perr := paperassets.Parse(canonical)
+	if perr != nil {
+		return "", fmt.Errorf("parse canonical %q: %w", canonical, perr)
+	}
+	if parsed.Version != "" {
+		return canonical, nil
+	}
+	if fetcher == nil {
+		return "", fmt.Errorf("arxiv fetcher not configured; cannot resolve latest version for %q", canonical)
+	}
+	versioned, err := fetcher.ResolveLatestVersion(ctx, parsed)
+	if err != nil {
+		return "", err
+	}
+	return versioned.Canonical, nil
+}
+
+// doiVersionErrorResponse maps a "DOI resolved but vN lookup failed"
+// error onto an HTTP response. Keeps it visually distinct from
+// doiErrorResponse so the caller can tell whether the failure was at
+// OpenAlex (DOI → canonical) or arxiv.org (canonical → vN).
+func doiVersionErrorResponse(re *core.RequestEvent, doi, canonical string, err error) error {
+	switch {
+	case errors.Is(err, arxiv.ErrNotFound):
+		return re.JSON(http.StatusNotFound, map[string]any{
+			"detail":    "DOI resolved to arxiv id " + canonical + " but arxiv abs page returned 404 (paper retracted or never indexed)",
+			"doi":       doi,
+			"canonical": canonical,
+		})
+	case errors.Is(err, arxiv.ErrRateLimited):
+		return re.JSON(http.StatusServiceUnavailable, map[string]any{
+			"detail":    "arxiv version-resolution rate-limited; retry shortly",
+			"doi":       doi,
+			"canonical": canonical,
+		})
+	case errors.Is(err, arxiv.ErrUpstream):
+		return re.JSON(http.StatusBadGateway, map[string]any{
+			"detail":    "arxiv version-resolution upstream error: " + err.Error(),
+			"doi":       doi,
+			"canonical": canonical,
+		})
+	default:
+		return re.JSON(http.StatusInternalServerError, map[string]any{
+			"detail":    "resolve latest version for " + canonical + " failed: " + err.Error(),
+			"doi":       doi,
+			"canonical": canonical,
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -357,16 +519,16 @@ const claimPDFTTL = 24 * time.Hour
 // fall through to arxiv; tests with httptest are fine because they
 // stub the MinerU side, not the URL fetch itself.
 func claimPDFURL(ctx context.Context, store objstore.Store, canonical string) string {
-	pdfKey := paperassets.AssetKey("pdf", canonical)
-	// Quick existence check so we don't presign for a missing object.
-	// PresignGet itself doesn't validate the key exists at S3 — it just
-	// signs the URL, which would 403 on use; we'd rather fail-fast at
-	// claim time with the catalog's claim_failure path than hand back a
-	// URL that breaks 10 seconds later inside MinerU.
-	if _, exists, err := store.Stat(ctx, pdfKey); err == nil && !exists {
-		// Try the candidate-stem fallback (e.g. PDF stored under a
-		// non-canonical key) so we still presign when the resolver
-		// finds the bytes elsewhere.
+	// LocateAsset probes the post-A1 layout first and falls back to
+	// the legacy bare-stem layout for old-style canonical ids — that's
+	// the same dual-read pattern used by markdown serve and converter
+	// startup. The candidate-stem resolver (ResolveAssetsViaStore) is
+	// kept as a last-resort fallback for non-canonical key shapes that
+	// pre-date even the bare-stem layout (e.g. early SafeKey'd dev
+	// stores); production has never written those, but the resolver
+	// stays free since it only fires when both modern layouts miss.
+	pdfKey, _, exists, err := paperassets.LocateAssetByID(ctx, store, "pdf", canonical)
+	if err == nil && !exists {
 		if resolved := paperassets.ResolveAssetsViaStore(ctx, store, canonical); resolved.PDFPath != "" {
 			pdfKey = resolved.PDFPath
 		}
@@ -384,18 +546,17 @@ func claimPDFURL(ctx context.Context, store objstore.Store, canonical string) st
 // metadata) — callers MUST treat empty as "verification unavailable"
 // rather than "verification failed".
 func lookupStoredPDFSha256(ctx context.Context, store objstore.Store, canonical string) string {
-	pdfKey := paperassets.AssetKey("pdf", canonical)
-	info, exists, err := store.Stat(ctx, pdfKey)
+	pdfKey, info, exists, err := paperassets.LocateAssetByID(ctx, store, "pdf", canonical)
 	if err != nil || !exists {
-		// Try the candidate-stem resolver as fallback so we still
-		// surface the hash when the PDF lives under a non-canonical
-		// key (e.g. a categoryless old-style id variant).
+		// Try the candidate-stem resolver as last-resort fallback for
+		// non-canonical key shapes that pre-date both modern layouts.
 		if resolved := paperassets.ResolveAssetsViaStore(ctx, store, canonical); resolved.PDFPath != "" {
 			if alt, ok, err := store.Stat(ctx, resolved.PDFPath); err == nil && ok {
 				info = alt
 			}
 		}
 	}
+	_ = pdfKey // only consumed indirectly via info
 	if info.Metadata == nil {
 		return ""
 	}

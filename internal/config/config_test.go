@@ -329,7 +329,7 @@ func clearS3Env(t *testing.T) {
 func clearMinerUEnv(t *testing.T) {
 	t.Helper()
 	for _, k := range []string{
-		"QATLAS_ASSET_DOWNLOADS_ENABLED",
+		"QATLAS_PAPER_ACCESS_ENABLED",
 		"MINERU_API_TOKENS",
 		"MINERU_API_BASE_URL",
 		"MINERU_MODEL_VERSION",
@@ -524,7 +524,6 @@ func TestLoad_DeprecatedAliasesEmitWarn(t *testing.T) {
 
 	legacy := t.TempDir()
 	t.Setenv("WIKI_DIR", filepath.Join(legacy, "wiki"))
-	t.Setenv("PUBLIC_BASE_URL", "https://example.test")
 	t.Setenv("SERVER_HOST", "0.0.0.0")
 
 	buf := captureSlog(t)
@@ -534,7 +533,7 @@ func TestLoad_DeprecatedAliasesEmitWarn(t *testing.T) {
 	}
 
 	out := buf.String()
-	for _, expected := range []string{"WIKI_DIR", "PUBLIC_BASE_URL", "SERVER_HOST"} {
+	for _, expected := range []string{"WIKI_DIR", "SERVER_HOST"} {
 		if !strings.Contains(out, expected) {
 			t.Errorf("expected slog output to mention %q for deprecated alias; got:\n%s", expected, out)
 		}
@@ -581,7 +580,7 @@ func TestDeprecatedAliasesMapCoversAllReaders(t *testing.T) {
 	expected := []string{
 		"WIKI_DIR", "RAW_DIR", "DATA_DIR", "PB_DATA_DIR",
 		"SERVER_HOST", "SERVER_PORT",
-		"PUBLIC_BASE_URL", "USER_HEADER",
+		"USER_HEADER",
 	}
 	got := deprecatedAliases()
 	for _, name := range expected {
@@ -637,11 +636,11 @@ func TestIsGitHubLoginAllowed_AllowedAndAdminUnion(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// QATLAS_ASSET_DOWNLOADS_ENABLED master switch + MinerU* opt-in block
+// QATLAS_PAPER_ACCESS_ENABLED master switch + MinerU* opt-in block
 // (issue #8).
 // ---------------------------------------------------------------------------
 
-func TestLoad_AssetDownloadsDisabledByDefault(t *testing.T) {
+func TestLoad_PaperAccessDisabledByDefault(t *testing.T) {
 	clearStorageEnv(t)
 	clearS3Env(t)
 	clearMinerUEnv(t)
@@ -649,21 +648,21 @@ func TestLoad_AssetDownloadsDisabledByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.AssetDownloadsEnabled {
-		t.Error("AssetDownloadsEnabled = true; want false (default off)")
+	if cfg.PaperAccessEnabled {
+		t.Error("PaperAccessEnabled = true; want false (default off)")
 	}
 	if cfg.MinerUEnabled() {
 		t.Error("MinerUEnabled() = true; want false when switch off")
 	}
 }
 
-func TestLoad_AssetDownloadsIgnoresMinerUWhenSwitchOff(t *testing.T) {
+func TestLoad_PaperAccessIgnoresMinerUWhenSwitchOff(t *testing.T) {
 	clearStorageEnv(t)
 	clearS3Env(t)
 	clearMinerUEnv(t)
 	// Switch OFF but MinerU envs set — must be silently ignored so a
 	// stale .env doesn't accidentally re-enable the surface.
-	t.Setenv("QATLAS_ASSET_DOWNLOADS_ENABLED", "false")
+	t.Setenv("QATLAS_PAPER_ACCESS_ENABLED", "false")
 	t.Setenv("MINERU_API_TOKENS", "stale-token")
 	t.Setenv("MINERU_POLL_INTERVAL", "not-a-number") // would error if parsed
 
@@ -671,19 +670,19 @@ func TestLoad_AssetDownloadsIgnoresMinerUWhenSwitchOff(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v (malformed MinerU env should be ignored when switch off)", err)
 	}
-	if cfg.AssetDownloadsEnabled {
-		t.Error("switch off but AssetDownloadsEnabled = true")
+	if cfg.PaperAccessEnabled {
+		t.Error("switch off but PaperAccessEnabled = true")
 	}
 	if len(cfg.MinerUAPITokens) != 0 {
 		t.Errorf("MinerUAPITokens = %v; want empty when switch off", cfg.MinerUAPITokens)
 	}
 }
 
-func TestLoad_AssetDownloadsEnabledLoadsMinerU(t *testing.T) {
+func TestLoad_PaperAccessEnabledLoadsMinerU(t *testing.T) {
 	clearStorageEnv(t)
 	clearS3Env(t)
 	clearMinerUEnv(t)
-	t.Setenv("QATLAS_ASSET_DOWNLOADS_ENABLED", "true")
+	t.Setenv("QATLAS_PAPER_ACCESS_ENABLED", "true")
 	t.Setenv("MINERU_API_TOKENS", "tok-abc")
 	t.Setenv("MINERU_MAX_CONCURRENT_JOBS", "8")
 
@@ -691,8 +690,8 @@ func TestLoad_AssetDownloadsEnabledLoadsMinerU(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !cfg.AssetDownloadsEnabled {
-		t.Error("AssetDownloadsEnabled = false; want true")
+	if !cfg.PaperAccessEnabled {
+		t.Error("PaperAccessEnabled = false; want true")
 	}
 	if !cfg.MinerUEnabled() {
 		t.Error("MinerUEnabled() = false; want true with token + switch on")
@@ -705,11 +704,11 @@ func TestLoad_AssetDownloadsEnabledLoadsMinerU(t *testing.T) {
 	}
 }
 
-func TestLoad_AssetDownloadsEnabledRejectsMalformedMinerU(t *testing.T) {
+func TestLoad_PaperAccessEnabledRejectsMalformedMinerU(t *testing.T) {
 	clearStorageEnv(t)
 	clearS3Env(t)
 	clearMinerUEnv(t)
-	t.Setenv("QATLAS_ASSET_DOWNLOADS_ENABLED", "true")
+	t.Setenv("QATLAS_PAPER_ACCESS_ENABLED", "true")
 	t.Setenv("MINERU_POLL_INTERVAL", "not-a-number")
 
 	if _, err := Load(""); err == nil {
@@ -717,18 +716,18 @@ func TestLoad_AssetDownloadsEnabledRejectsMalformedMinerU(t *testing.T) {
 	}
 }
 
-func TestLoad_AssetDownloadsEnabledNoTokenCacheOnlyMode(t *testing.T) {
+func TestLoad_PaperAccessEnabledNoTokenCacheOnlyMode(t *testing.T) {
 	clearStorageEnv(t)
 	clearS3Env(t)
 	clearMinerUEnv(t)
-	t.Setenv("QATLAS_ASSET_DOWNLOADS_ENABLED", "true")
+	t.Setenv("QATLAS_PAPER_ACCESS_ENABLED", "true")
 
 	cfg, err := Load("")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !cfg.AssetDownloadsEnabled {
-		t.Error("AssetDownloadsEnabled = false; want true")
+	if !cfg.PaperAccessEnabled {
+		t.Error("PaperAccessEnabled = false; want true")
 	}
 	if cfg.MinerUEnabled() {
 		t.Error("MinerUEnabled() = true with no token; want false (cache-only mode)")
