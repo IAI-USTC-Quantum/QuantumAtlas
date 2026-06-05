@@ -29,22 +29,26 @@ COMMANDS: Mapping[str, Command] = {
         "qatlas.client.config",
         "Manage the user-level config file (~/.config/qatlas/config.yaml)",
     ),
-    "ingest": Command("qatlas.client.__main__", "Submit paper ingest tasks over HTTP"),
-    "upload": Command(
-        "qatlas.client.upload",
-        "Upload contributed PDF or MinerU result zip (markdown + images) to the server",
+    "auth": Command(
+        "qatlas.client.auth",
+        "Manage saved PATs / session tokens per host (login, status, token, logout)",
     ),
     "paper": Command(
         "qatlas.client.paper",
         "Fetch paper PDF / markdown from the server (silent fetch + LRO polling for cache misses)",
     ),
+    "contrib": Command(
+        "qatlas.client.contrib",
+        "Contributor workflows: upload PDFs (contrib pdf) or run local MinerU and push (contrib mineru)",
+    ),
+    "ingest": Command("qatlas.client.__main__", "Submit paper ingest tasks over HTTP"),
+    "upload": Command(
+        "qatlas.client.upload",
+        "[deprecated, use `qatlas contrib pdf`] Upload contributed PDF to the server",
+    ),
     "mineru": Command(
         "qatlas.client.mineru",
-        "Run MinerU locally with your own token and push the result to the server",
-    ),
-    "auth": Command(
-        "qatlas.client.auth",
-        "Manage saved PATs / session tokens per host (login, status, token, logout)",
+        "[deprecated, use `qatlas contrib mineru`] Run MinerU locally and push the result to the server",
     ),
     "parser": Command("qatlas.parser.__main__", "Fetch and parse arXiv papers", False),
     "wiki": Command("qatlas.wiki.__main__", "Browse, lint, and search wiki pages", False),
@@ -99,9 +103,9 @@ Aliases:
 
 Examples:
   qatlas ingest quant-ph/9508027 --stop-after parse
-  qatlas upload pdf quant-ph/9508027v1 --pdf paper.pdf
-  qatlas upload mineru 2501.00010v1 --zip mineru-result.zip --source mineru
-  qatlas mineru quant-ph/9508027v1 --push-pdf
+  qatlas contrib pdf quant-ph/9508027v1 --pdf paper.pdf
+  qatlas contrib mineru 2501.00010v1
+  qatlas contrib mineru --watch
   qatlas designer <kg_algorithm_id> -o circuit_ir.json
   qatlas codegen circuit_ir.json --backend qiskit -o output.py
   qatlas validator circuit_ir.json --compare-with qft

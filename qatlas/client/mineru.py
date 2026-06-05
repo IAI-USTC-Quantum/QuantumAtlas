@@ -1212,9 +1212,9 @@ def _sleep_interruptible(seconds: float) -> None:
         time.sleep(min(1.0, end - time.monotonic()))
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(prog: str = "qatlas mineru") -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="qatlas mineru",
+        prog=prog,
         description=(
             "Run MinerU parsing locally with your own MINERU_API_TOKEN against "
             "PDFs that already live in the QuantumAtlas server's RAW_DIR. "
@@ -1306,8 +1306,15 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
+def main(argv: list[str] | None = None, *, prog: str | None = None) -> int:
+    """Run the local MinerU client.
+
+    ``prog`` controls the program name in --help output; defaults to
+    ``qatlas mineru`` to keep the legacy entry point's text stable. The
+    new ``qatlas contrib mineru`` dispatcher passes ``prog="qatlas
+    contrib mineru"`` so help shows the canonical name.
+    """
+    parser = build_parser(prog=prog or "qatlas mineru")
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
     # --max is a deprecated alias for --batch-size. If only --max was
     # given, propagate. If both were given, --batch-size wins (the
@@ -1321,6 +1328,19 @@ def main(argv: list[str] | None = None) -> int:
     return run_with_request_errors(args.func, args)
 
 
+def _legacy_main() -> int:
+    """``qatlas mineru`` entry point (deprecated alias for `qatlas
+    contrib mineru`). Same behaviour, just emits a one-line deprecation
+    warning to stderr first so contributors notice and migrate."""
+    print(
+        "⚠️  `qatlas mineru` is deprecated since v0.19.0; use "
+        "`qatlas contrib mineru` instead. This entry point will be "
+        "removed in a future release.",
+        file=sys.stderr,
+    )
+    return main()
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(_legacy_main())
 

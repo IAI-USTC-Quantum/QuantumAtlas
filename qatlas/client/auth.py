@@ -347,10 +347,14 @@ def _store_manual_token(host: str, token: str) -> int:
 
 
 def _persist_login(host: str, received: dict[str, Any]) -> int:
-    """Persist a token obtained via the loopback or device flow and
-    print a gh-style success summary to stderr.
+    """Persist a token obtained via the device flow and print a
+    gh-style success summary to stderr.
     """
-    token = str(received.get("token") or "").strip()
+    # Server side fields: `plaintext` (the qat_… secret), `name`,
+    # `prefix`, `scopes`, `expires_at`. We accept `token` too in case
+    # a future server (or a manual injection path) uses that name —
+    # plaintext takes precedence.
+    token = str(received.get("plaintext") or received.get("token") or "").strip()
     if not token:
         print("Error: server returned an empty token; aborting.", file=sys.stderr)
         return 1

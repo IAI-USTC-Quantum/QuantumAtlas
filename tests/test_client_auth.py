@@ -378,7 +378,7 @@ def test_device_login_happy_path(monkeypatch):
         return _FakeResponse(
             status_code=200,
             payload={
-                "token": "qat_DeviceFlowResult",
+                "plaintext": "qat_DeviceFlowResult",
                 "name": "qatlas-cli-test",
                 "prefix": "qat_Devic",
                 "scopes": ["papers:write"],
@@ -395,7 +395,7 @@ def test_device_login_happy_path(monkeypatch):
         expires_days=90,
         timeout=10.0,
     )
-    assert received["token"] == "qat_DeviceFlowResult"
+    assert received["plaintext"] == "qat_DeviceFlowResult"
     assert received["scopes"] == ["papers:write"]
 
 
@@ -431,7 +431,7 @@ def test_device_login_slow_down_bumps_interval(monkeypatch):
             return _FakeResponse(status_code=400, payload={"error": "slow_down"})
         return _FakeResponse(
             status_code=200,
-            payload={"token": "qat_Q", "name": "n", "prefix": "qat_Q", "scopes": [], "expires_at": ""},
+            payload={"plaintext": "qat_Q", "name": "n", "prefix": "qat_Q", "scopes": [], "expires_at": ""},
         )
 
     monkeypatch.setattr(auth.requests, "post", fake_post)
@@ -533,7 +533,7 @@ def test_device_login_open_browser_default_true(monkeypatch):
             )
         return _FakeResponse(
             status_code=200,
-            payload={"token": "qat_X", "name": "n", "prefix": "qat_X", "scopes": [], "expires_at": ""},
+            payload={"plaintext": "qat_X", "name": "n", "prefix": "qat_X", "scopes": [], "expires_at": ""},
         )
 
     monkeypatch.setattr(auth.requests, "post", fake_post)
@@ -576,7 +576,7 @@ def test_device_login_open_browser_false_skips_webbrowser(monkeypatch):
             )
         return _FakeResponse(
             status_code=200,
-            payload={"token": "qat_X", "name": "n", "prefix": "qat_X", "scopes": [], "expires_at": ""},
+            payload={"plaintext": "qat_X", "name": "n", "prefix": "qat_X", "scopes": [], "expires_at": ""},
         )
 
     monkeypatch.setattr(auth.requests, "post", fake_post)
@@ -619,7 +619,7 @@ def test_device_login_passes_empty_scopes_by_default(monkeypatch):
             )
         return _FakeResponse(
             status_code=200,
-            payload={"token": "qat_X", "name": "n", "prefix": "qat_X", "scopes": [], "expires_at": ""},
+            payload={"plaintext": "qat_X", "name": "n", "prefix": "qat_X", "scopes": [], "expires_at": ""},
         )
 
     monkeypatch.setattr(auth.requests, "post", fake_post)

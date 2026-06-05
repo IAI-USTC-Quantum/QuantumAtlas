@@ -232,16 +232,34 @@ def _print_top_help() -> None:
     print(
         """qatlas upload — push contributed assets to the server
 
+⚠️  DEPRECATED in v0.19.0 — use `qatlas contrib pdf` instead.
+The `qatlas upload` entry point will be removed in a future release.
+
 Usage:
   qatlas upload pdf ARXIV_ID --pdf path.pdf [--overwrite]
-  qatlas upload mineru ARXIV_ID --zip path.zip [--source mineru] [--overwrite]
+      → equivalent to `qatlas contrib pdf ARXIV_ID --pdf path.pdf`
 
 The arXiv ID must include a version suffix (e.g. quant-ph/9508027v1 or 2501.00010v1).
-Use "qatlas upload <pdf|mineru> --help" for full options.
+Use "qatlas upload pdf --help" for full options.
 
-Note: `qatlas upload markdown` was removed in v0.8.0 — use `qatlas upload mineru`
-with the raw MinerU result zip instead, so server-side extraction places both
-the markdown and its referenced images into their respective buckets."""
+Notes:
+  * `qatlas upload markdown` was removed in v0.8.0 — use `qatlas contrib mineru`
+    to run MinerU locally (which uploads markdown + images automatically).
+  * `qatlas upload mineru` (the direct-zip upload subcommand) was removed in
+    v0.19.0 — all MinerU pushes must now go through `qatlas contrib mineru`
+    so the same path always handles claim/lease/upload as one unit."""
+    )
+
+
+def _emit_deprecation_warning(new_cmd: str) -> None:
+    """Tell the user the entry point moved, but don't abort. We emit
+    to stderr so scripts that pipe stdout to a file (e.g. `qatlas upload
+    pdf … | jq ...`) still see the warning interactively.
+    """
+    print(
+        f"⚠️  `qatlas upload` is deprecated since v0.19.0; use `{new_cmd}` instead. "
+        "This entry point will be removed in a future release.",
+        file=sys.stderr,
     )
 
 
@@ -252,15 +270,25 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     subcommand = argv.pop(0)
     if subcommand == "pdf":
+        _emit_deprecation_warning("qatlas contrib pdf")
         parser = build_pdf_parser()
     elif subcommand == "mineru":
-        parser = build_mineru_parser()
+        print(
+            "ERROR: `qatlas upload mineru` was removed in v0.19.0.\n"
+            "The direct-zip upload path was a parallel surface to the contributor\n"
+            "MinerU runner and led to inconsistent claim/lease state. All MinerU\n"
+            "uploads now go through:\n"
+            "    qatlas contrib mineru [ARXIV_ID]\n"
+            "    qatlas contrib mineru --watch\n"
+            "which handles claim, MinerU run, and upload as one unit.",
+            file=sys.stderr,
+        )
+        return 2
     elif subcommand == "markdown":
         print(
             "ERROR: `qatlas upload markdown` was removed in v0.8.0 (breaking change).\n"
-            "Use `qatlas upload mineru ARXIV_ID --zip path.zip` to push the full\n"
-            "MinerU result bundle (markdown + images). See CHANGELOG for the\n"
-            "upgrade path.",
+            "Use `qatlas contrib mineru [ARXIV_ID]` to run MinerU locally — it uploads\n"
+            "the markdown and images automatically.",
             file=sys.stderr,
         )
         return 2
