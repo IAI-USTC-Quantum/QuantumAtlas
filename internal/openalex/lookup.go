@@ -114,6 +114,16 @@ type Config struct {
 // Resolver resolves DOIs to canonical arxiv ids via OpenAlex. Safe for
 // concurrent use; concurrent requests for the same DOI are coalesced
 // via singleflight to a single upstream call.
+//
+// Cache is PER-PROCESS (in-memory LRU). Two qatlasd processes (e.g.
+// active-active on RackNerd + Alibaba) each maintain independent
+// caches, so the same DOI resolved on both edges incurs two OpenAlex
+// hits within the TTL. Acceptable for current scale (~2 edges, low
+// DOI QPS, polite-pool 10 req/s budget per IP); cross-edge cache
+// sharing (Redis or local Neo4j index) is tracked in issue #13 (the
+// MinerU dedupe issue covers shared-state infrastructure that the
+// DOI cache would naturally share) — independent of issue #11 which
+// is about replacing OpenAlex itself with a local index.
 type Resolver struct {
 	cfg     Config
 	enabled bool

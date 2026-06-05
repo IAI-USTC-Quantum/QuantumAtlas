@@ -34,6 +34,10 @@ COMMANDS: Mapping[str, Command] = {
         "qatlas.client.upload",
         "Upload contributed PDF or MinerU result zip (markdown + images) to the server",
     ),
+    "paper": Command(
+        "qatlas.client.paper",
+        "Fetch paper PDF / markdown from the server (silent fetch + LRO polling for cache misses)",
+    ),
     "mineru": Command(
         "qatlas.client.mineru",
         "Run MinerU locally with your own token and push the result to the server",

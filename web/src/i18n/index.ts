@@ -37,7 +37,7 @@ void i18n
     fallbackLng: DEFAULT_LANG,
     supportedLngs: [...SUPPORTED_LANGS],
     defaultNS: 'common',
-    ns: ['common', 'home', 'wiki', 'graph', 'token', 'pat', 'login', 'auth'],
+    ns: ['common', 'home', 'wiki', 'papers', 'graph', 'token', 'pat', 'login', 'auth'],
     interpolation: { escapeValue: false },
     detection: {
       order: ['path', 'localStorage', 'navigator'],

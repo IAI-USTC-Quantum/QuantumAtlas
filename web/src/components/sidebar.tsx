@@ -2,6 +2,7 @@ import { Link, useRouterState } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 import {
   BookOpen,
+  FileSearch,
   Home,
   Key,
   Search,
@@ -13,7 +14,13 @@ import { useLang } from '@/hooks/use-lang'
 import { cn } from '@/lib/utils'
 
 type NavLink = {
-  to: '/$lang' | '/$lang/wiki' | '/$lang/wiki/search' | '/$lang/graph' | '/$lang/pat'
+  to:
+    | '/$lang'
+    | '/$lang/wiki'
+    | '/$lang/wiki/search'
+    | '/$lang/papers/search'
+    | '/$lang/graph'
+    | '/$lang/pat'
   labelKey: string
   icon: LucideIcon
   /**
@@ -30,6 +37,7 @@ const links: NavLink[] = [
   { to: '/$lang', labelKey: 'nav.home', icon: Home },
   { to: '/$lang/wiki', labelKey: 'nav.wiki', icon: BookOpen, matchPrefix: '/wiki' },
   { to: '/$lang/wiki/search', labelKey: 'nav.search', icon: Search },
+  { to: '/$lang/papers/search', labelKey: 'nav.papers', icon: FileSearch, matchPrefix: '/papers' },
   { to: '/$lang/pat', labelKey: 'nav.pat', icon: Key },
 ]
 

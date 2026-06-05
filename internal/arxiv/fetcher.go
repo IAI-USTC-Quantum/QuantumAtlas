@@ -105,6 +105,10 @@ type Result struct {
 type Config struct {
 	// BaseURL is the arxiv PDF prefix; default DefaultBaseURL.
 	BaseURL string
+	// AbsBaseURL is the arxiv abstract-page prefix used by
+	// ResolveLatestVersion. Default `https://arxiv.org/abs/`. Tests
+	// inject a stub server URL here so they don't hit production.
+	AbsBaseURL string
 	// UserAgent identifies our traffic. SHOULD include a mailto so
 	// arxiv ops can reach the deployer if our traffic misbehaves; the
 	// converter constructor builds this from QATLAS_OPENALEX_MAILTO

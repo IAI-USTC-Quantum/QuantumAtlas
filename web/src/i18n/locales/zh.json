@@ -3,7 +3,10 @@
     "brand": "QuantumAtlas",
     "brandTagline": "知识工作台",
     "language": "语言",
-    "languageNames": { "zh": "中文", "en": "English" },
+    "languageNames": {
+      "zh": "中文",
+      "en": "English"
+    },
     "theme": {
       "toggle": "切换主题",
       "light": "浅色",
@@ -14,6 +17,7 @@
       "home": "首页",
       "wiki": "百科",
       "search": "搜索",
+      "papers": "文章搜索",
       "graph": "图谱",
       "pat": "访问令牌"
     },
@@ -36,7 +40,9 @@
       "hide": "隐藏",
       "revoke": "撤销"
     },
-    "search": { "placeholder": "搜索页面、原语、算法" },
+    "search": {
+      "placeholder": "搜索页面、原语、算法"
+    },
     "topbar": {
       "docsLink": "API 文档",
       "userMenu": {
@@ -92,7 +98,39 @@
     "searchInputPlaceholder": "例如：quantum Fourier transform",
     "popularTopics": "热门主题",
     "resultsFor": "「{{query}}」的搜索结果",
-    "detailMeta": { "draft": "草稿" }
+    "detailMeta": {
+      "draft": "草稿"
+    }
+  },
+  "papers": {
+    "eyebrow": "文章搜索",
+    "title": "RAG 语义检索",
+    "subtitle": "用自然语言提问，对 8.9 万篇论文的 320 万 chunk 做 hybrid（dense + sparse）检索并重排，直接返回最相关的片段。",
+    "inputPlaceholder": "例如：量子相位估计的复杂度上界是什么？",
+    "searchButton": "搜索",
+    "topKLabel": "返回数",
+    "rerankLabel": "重排",
+    "rerankHint": "Cross-encoder 重排（耗时增加，但 top-k 质量更高）",
+    "useSparseLabel": "Sparse",
+    "useSparseHint": "在 dense 检索基础上加 BM25 稀疏召回（hybrid）",
+    "popularQueries": "示例查询",
+    "queryExamples": [
+      "surface code 的距离 d 如何影响逻辑错误率",
+      "量子相位估计的复杂度上界",
+      "VQE 在化学体系上的收敛性瓶颈",
+      "fault-tolerant magic state distillation"
+    ],
+    "resultsHeader": "{{count}} 条结果 · 耗时 {{took}}s{{reranked, select, true{ · 已重排} other{}}}",
+    "noResults": "没有匹配片段。尝试换一种问法，或减少筛选条件。",
+    "ragScore": "得分",
+    "chunkLabel": "chunk",
+    "charRange": "字符 {{start}}-{{end}}",
+    "sourceLabel": "源文件",
+    "viewSource": "查看 wiki 页",
+    "unavailableTitle": "RAG 暂不可用",
+    "unavailableBody": "服务端未配置 RAG sidecar，或 sidecar 当前不健康。本地开发请见 web/.env.development.example 里的 VITE_DEV_RAG_SIDECAR；线上部署请见 .env.example 里的 QATLAS_RAG_SIDECAR_URL。",
+    "degradedTitle": "RAG 降级中",
+    "degradedBody": "向量库或重排服务部分不可用，结果可能不准确。"
   },
   "graph": {
     "eyebrow": "图谱",
@@ -125,7 +163,8 @@
       "description": "描述（可选）",
       "descriptionPlaceholder": "例如：GitHub Actions 使用",
       "expires": "过期时间（必填，最长 {{max}} 天）",
-      "scopes": "Scope（默认拒绝 — 显式勾选允许的操作）"
+      "expiresMax": "最长 {{max}} 天",
+      "scopes": "Scope（默认全选 — 取消勾选不允许的操作）"
     },
     "expiry": {
       "year": "{{count}} 年（上限）",
@@ -147,16 +186,6 @@
       "copyExport": "复制 export 命令",
       "use": "在请求头中使用 Authorization: Bearer {{prefix}}… · 过期 {{expiresAt}}",
       "closeHint": "我已复制 — 关闭"
-    },
-    "cliBanner": {
-      "title": "qatlas CLI 请求一个令牌",
-      "body": "本机的 qatlas 客户端（{{callback}}）希望签发一个名为「{{name}}」的 PAT，作用域 {{scopes}}，{{days}} 天后过期。点下方批准即可送回 CLI。",
-      "noScopes": "（空 — 所有写接口都会拒绝该令牌）",
-      "deliveredTitle": "令牌已送回 CLI",
-      "deliveredBody": "已将明文 POST 到 {{callback}}；当前标签页应该会立即跳转到 CLI 的成功页。",
-      "fallbackReveal": "本机 CLI 没接到？查看明文",
-      "invalidTitle": "不可信的 CLI 回调",
-      "invalidBody": "已忽略 cli_callback={{callback}}，因为它不是 http://127.0.0.1:<port> 形式的回环 URL。如果你只是想手动新建令牌，在下方操作即可。"
     },
     "device": {
       "eyebrow": "授权",

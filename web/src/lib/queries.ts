@@ -7,6 +7,7 @@ import {
   type PageDetail,
   type PageListPayload,
   type PaperStats,
+  type RagSearchRequest,
   type SearchPayload,
   type Stats,
 } from './api'
@@ -50,18 +51,25 @@ export function useSearch(query: string) {
 }
 
 // Semantic search against /api/rag/search; only meaningful when
-// useRagHealth() reports the route is available.
-export function useRagSearch(query: string, opts?: { topK?: number; rerank?: boolean }) {
+// useRagSearch runs a vector search against the operator-deployed RAG
+// sidecar via the qatlasd reverse-proxy. Pass `null` to keep the hook
+// idle (e.g. while the user is still typing or RAG isn't available).
+// Caller fully controls top_k / rerank / use_sparse / filters so the
+// page UI can expose them without growing the hook signature each time.
+export function useRagSearch(req: RagSearchRequest | null) {
   return useQuery({
-    queryKey: ['rag-search', query, opts?.topK ?? 8, opts?.rerank ?? true],
-    queryFn: () =>
-      ragSearch({
-        query,
-        top_k: opts?.topK ?? 8,
-        rerank: opts?.rerank ?? true,
-      }),
-    enabled: Boolean(query),
-    retry: false, // 404 / 502 from missing sidecar shouldn't auto-retry
+    queryKey: [
+      'rag-search',
+      req?.query ?? '',
+      req?.top_k ?? 8,
+      req?.rerank ?? true,
+      req?.use_sparse ?? true,
+      req?.rerank_pool ?? null,
+      JSON.stringify(req?.filters ?? null),
+    ],
+    queryFn: () => ragSearch(req as RagSearchRequest),
+    enabled: req !== null && Boolean(req.query),
+    retry: false,
   })
 }
 

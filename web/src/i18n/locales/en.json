@@ -3,7 +3,10 @@
     "brand": "QuantumAtlas",
     "brandTagline": "Knowledge workbench",
     "language": "Language",
-    "languageNames": { "zh": "中文", "en": "English" },
+    "languageNames": {
+      "zh": "中文",
+      "en": "English"
+    },
     "theme": {
       "toggle": "Toggle theme",
       "light": "Light",
@@ -14,6 +17,7 @@
       "home": "Home",
       "wiki": "Wiki",
       "search": "Search",
+      "papers": "Paper Search",
       "graph": "Graph",
       "pat": "PATs"
     },
@@ -36,7 +40,9 @@
       "hide": "Hide",
       "revoke": "Revoke"
     },
-    "search": { "placeholder": "Search pages, primitives, algorithms" },
+    "search": {
+      "placeholder": "Search pages, primitives, algorithms"
+    },
     "topbar": {
       "docsLink": "API docs",
       "userMenu": {
@@ -92,7 +98,39 @@
     "searchInputPlaceholder": "e.g. quantum Fourier transform",
     "popularTopics": "Popular topics",
     "resultsFor": "Results for \"{{query}}\"",
-    "detailMeta": { "draft": "draft" }
+    "detailMeta": {
+      "draft": "draft"
+    }
+  },
+  "papers": {
+    "eyebrow": "Paper search",
+    "title": "RAG semantic search",
+    "subtitle": "Ask in natural language; retrieves the most relevant chunks across ~89k papers / 3.2M chunks via hybrid (dense + sparse) search and reranks them.",
+    "inputPlaceholder": "e.g. What is the complexity bound for quantum phase estimation?",
+    "searchButton": "Search",
+    "topKLabel": "Top-k",
+    "rerankLabel": "Rerank",
+    "rerankHint": "Cross-encoder rerank (slower but better top-k quality)",
+    "useSparseLabel": "Sparse",
+    "useSparseHint": "Add BM25 sparse recall on top of dense retrieval (hybrid)",
+    "popularQueries": "Example queries",
+    "queryExamples": [
+      "How does the surface code distance d affect logical error rate",
+      "Complexity bound for quantum phase estimation",
+      "Convergence bottlenecks of VQE on chemistry systems",
+      "fault-tolerant magic state distillation"
+    ],
+    "resultsHeader": "{{count}} results · took {{took}}s{{reranked, select, true{ · reranked} other{}}}",
+    "noResults": "No matching chunks. Try rephrasing or relaxing filters.",
+    "ragScore": "score",
+    "chunkLabel": "chunk",
+    "charRange": "chars {{start}}-{{end}}",
+    "sourceLabel": "Source",
+    "viewSource": "View wiki page",
+    "unavailableTitle": "RAG unavailable",
+    "unavailableBody": "The server has no RAG sidecar configured, or the sidecar is unhealthy. For local dev see VITE_DEV_RAG_SIDECAR in web/.env.development.example; for production see QATLAS_RAG_SIDECAR_URL in .env.example.",
+    "degradedTitle": "RAG degraded",
+    "degradedBody": "The vector store or reranker is partially unavailable; results may be inaccurate."
   },
   "graph": {
     "eyebrow": "Graph",
@@ -125,7 +163,8 @@
       "description": "Description (optional)",
       "descriptionPlaceholder": "e.g. used by GitHub Actions",
       "expires": "Expires in (required, max {{max}} days)",
-      "scopes": "Scopes (default deny — explicitly check what this token may do)"
+      "expiresMax": "max {{max}} days",
+      "scopes": "Scopes (defaults to all — uncheck what this token should not be allowed to do)"
     },
     "expiry": {
       "year": "{{count}} year (max)",
@@ -147,16 +186,6 @@
       "copyExport": "Copy export",
       "use": "Use as Authorization: Bearer {{prefix}}… · expires {{expiresAt}}",
       "closeHint": "I've copied it — close"
-    },
-    "cliBanner": {
-      "title": "qatlas CLI requesting a token",
-      "body": "The qatlas client on this machine ({{callback}}) asked you to mint a Personal Access Token named \"{{name}}\" with scopes {{scopes}}, expiring in {{days}} days. Approve below to send it back to the CLI.",
-      "noScopes": "(none — the token will be rejected by every write endpoint)",
-      "deliveredTitle": "Token sent to the CLI",
-      "deliveredBody": "We POSTed the plaintext token to {{callback}}; this tab should navigate to the CLI's success page shortly.",
-      "fallbackReveal": "Local CLI didn't pick this up? Show plaintext",
-      "invalidTitle": "Untrusted CLI callback",
-      "invalidBody": "Ignored cli_callback={{callback}} because it isn't an http://127.0.0.1:<port> loopback URL. Mint a token below if you intended to come here directly."
     },
     "device": {
       "eyebrow": "Authorization",

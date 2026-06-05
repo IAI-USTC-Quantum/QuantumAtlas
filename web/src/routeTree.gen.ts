@@ -21,6 +21,7 @@ import { Route as LangDeviceRouteImport } from './routes/$lang.device'
 import { Route as LangWikiIndexRouteImport } from './routes/$lang.wiki.index'
 import { Route as LangGraphIndexRouteImport } from './routes/$lang.graph.index'
 import { Route as LangWikiSearchRouteImport } from './routes/$lang.wiki.search'
+import { Route as LangPapersSearchRouteImport } from './routes/$lang.papers.search'
 import { Route as LangWikiPageSplatRouteImport } from './routes/$lang.wiki.page.$'
 import { Route as LangGraphNodeSplatRouteImport } from './routes/$lang.graph.node.$'
 
@@ -84,6 +85,11 @@ const LangWikiSearchRoute = LangWikiSearchRouteImport.update({
   path: '/wiki/search',
   getParentRoute: () => LangRoute,
 } as any)
+const LangPapersSearchRoute = LangPapersSearchRouteImport.update({
+  id: '/papers/search',
+  path: '/papers/search',
+  getParentRoute: () => LangRoute,
+} as any)
 const LangWikiPageSplatRoute = LangWikiPageSplatRouteImport.update({
   id: '/wiki/page/$',
   path: '/wiki/page/$',
@@ -105,6 +111,7 @@ export interface FileRoutesByFullPath {
   '/$lang/pat': typeof LangPatRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/$lang/': typeof LangIndexRoute
+  '/$lang/papers/search': typeof LangPapersSearchRoute
   '/$lang/wiki/search': typeof LangWikiSearchRoute
   '/$lang/graph/': typeof LangGraphIndexRoute
   '/$lang/wiki/': typeof LangWikiIndexRoute
@@ -120,6 +127,7 @@ export interface FileRoutesByTo {
   '/$lang/pat': typeof LangPatRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/$lang': typeof LangIndexRoute
+  '/$lang/papers/search': typeof LangPapersSearchRoute
   '/$lang/wiki/search': typeof LangWikiSearchRoute
   '/$lang/graph': typeof LangGraphIndexRoute
   '/$lang/wiki': typeof LangWikiIndexRoute
@@ -137,6 +145,7 @@ export interface FileRoutesById {
   '/$lang/pat': typeof LangPatRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/$lang/': typeof LangIndexRoute
+  '/$lang/papers/search': typeof LangPapersSearchRoute
   '/$lang/wiki/search': typeof LangWikiSearchRoute
   '/$lang/graph/': typeof LangGraphIndexRoute
   '/$lang/wiki/': typeof LangWikiIndexRoute
@@ -155,6 +164,7 @@ export interface FileRouteTypes {
     | '/$lang/pat'
     | '/auth/callback'
     | '/$lang/'
+    | '/$lang/papers/search'
     | '/$lang/wiki/search'
     | '/$lang/graph/'
     | '/$lang/wiki/'
@@ -170,6 +180,7 @@ export interface FileRouteTypes {
     | '/$lang/pat'
     | '/auth/callback'
     | '/$lang'
+    | '/$lang/papers/search'
     | '/$lang/wiki/search'
     | '/$lang/graph'
     | '/$lang/wiki'
@@ -186,6 +197,7 @@ export interface FileRouteTypes {
     | '/$lang/pat'
     | '/auth/callback'
     | '/$lang/'
+    | '/$lang/papers/search'
     | '/$lang/wiki/search'
     | '/$lang/graph/'
     | '/$lang/wiki/'
@@ -288,6 +300,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LangWikiSearchRouteImport
       parentRoute: typeof LangRoute
     }
+    '/$lang/papers/search': {
+      id: '/$lang/papers/search'
+      path: '/papers/search'
+      fullPath: '/$lang/papers/search'
+      preLoaderRoute: typeof LangPapersSearchRouteImport
+      parentRoute: typeof LangRoute
+    }
     '/$lang/wiki/page/$': {
       id: '/$lang/wiki/page/$'
       path: '/wiki/page/$'
@@ -309,6 +328,7 @@ interface LangRouteChildren {
   LangDeviceRoute: typeof LangDeviceRoute
   LangPatRoute: typeof LangPatRoute
   LangIndexRoute: typeof LangIndexRoute
+  LangPapersSearchRoute: typeof LangPapersSearchRoute
   LangWikiSearchRoute: typeof LangWikiSearchRoute
   LangGraphIndexRoute: typeof LangGraphIndexRoute
   LangWikiIndexRoute: typeof LangWikiIndexRoute
@@ -320,6 +340,7 @@ const LangRouteChildren: LangRouteChildren = {
   LangDeviceRoute: LangDeviceRoute,
   LangPatRoute: LangPatRoute,
   LangIndexRoute: LangIndexRoute,
+  LangPapersSearchRoute: LangPapersSearchRoute,
   LangWikiSearchRoute: LangWikiSearchRoute,
   LangGraphIndexRoute: LangGraphIndexRoute,
   LangWikiIndexRoute: LangWikiIndexRoute,
