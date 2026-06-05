@@ -288,15 +288,91 @@ def test_do_get_no_wait_short_circuits_with_initial_body(monkeypatch, capsys):
     assert '"state": "queued"' in out
 
 
-def test_do_get_terminal_4xx_renders_server_detail(monkeypatch, capsys):
+def test_do_get_terminal_4xx_renders_full_server_body(monkeypatch, capsys):
+    """4xx errors surface every server-echoed field, not just `detail`."""
     args = _args()
     resp_404 = _resp(
         404,
-        json_body={"detail": "DOI not found in OpenAlex", "doi": "10.bad/doi"},
+        json_body={
+            "detail": "DOI not found in OpenAlex",
+            "doi": "10.bad/doi",
+            "kind": "fatal",
+            "requested_id": "10.bad/doi",
+        },
+        headers={
+            "X-QAtlas-Requested-Id": "10.bad/doi",
+        },
     )
     with patch.object(cli.requests, "get", side_effect=[resp_404]):
         rc = cli._do_get(args, "markdown")
     assert rc == 1
     err = capsys.readouterr().err
-    assert "404" in err
+    # HTTP banner
+    assert "HTTP 404" in err
+    # detail
     assert "DOI not found in OpenAlex" in err
+    # echoed doi field
+    assert "10.bad/doi" in err
+    # echoed kind so agent knows fatal vs retryable
+    assert '"kind"' in err and "fatal" in err
+
+
+def test_do_get_cooldown_body_dumped_in_terminal_poll(monkeypatch, capsys):
+    """When polling sees state=cooldown, dump the JSON so retry_after_iso
+    and kind are both visible (not just `detail`)."""
+    args = _args(quiet_progress=True)
+    monkeypatch.setattr(cli.time, "sleep", lambda _: None)
+    monkeypatch.setattr(
+        cli.time,
+        "monotonic",
+        lambda counter=iter(range(0, 1000)): next(counter) * 1.0,
+    )
+    initial_202 = _resp(
+        202,
+        json_body={"state": "queued", "operation": {"status_url": "/api/papers/x/markdown/status"}},
+    )
+    poll_cooldown = _resp(
+        200,
+        json_body={
+            "state": "cooldown",
+            "phase": "error_converting",
+            "kind": "daily_limit",
+            "detail": "server quota exhausted",
+            "retry_after_iso": "2026-06-06T00:01:00+08:00",
+            "retry_after": 1717603260,
+        },
+    )
+    with patch.object(cli.requests, "get", side_effect=[initial_202, poll_cooldown]):
+        rc = cli._do_get(args, "markdown")
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "terminal state (cooldown)" in err
+    assert "daily_limit" in err
+    assert "2026-06-06T00:01:00+08:00" in err
+    assert "server quota exhausted" in err
+
+
+def test_do_get_failure_still_prints_defaults_note(monkeypatch, capsys):
+    """Defaults headers on a failure response must still surface."""
+    args = _args()
+    resp_502 = _resp(
+        502,
+        json_body={
+            "detail": "OpenAlex upstream error",
+            "doi": "10.x/y",
+            "canonical": "0811.3171v3",
+        },
+        headers={
+            "X-QAtlas-Requested-Id": "10.x/y",
+            "X-QAtlas-Resolved-Id": "0811.3171v3",
+            "X-QAtlas-Defaults-Applied": "doi_resolved_via_openalex (DOI → arxiv id 0811.3171)",
+        },
+    )
+    with patch.object(cli.requests, "get", side_effect=[resp_502]):
+        rc = cli._do_get(args, "markdown")
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "Note (server applied defaults)" in err
+    assert "10.x/y → 0811.3171v3" in err
+    assert "HTTP 502" in err
+    assert "OpenAlex upstream error" in err
