@@ -1,0 +1,10 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+
+# project artifacts
+*.db
+*.db-journal
+manifest.db
+qdrant_storage/
+.env

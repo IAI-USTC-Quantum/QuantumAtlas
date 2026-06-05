@@ -1,0 +1,27 @@
+# qatlas-rag embed-worker — runs on Ag-Workstation (WSL2 Ubuntu).
+# Reaches mesh peers via 10.144.18.88:8801.
+#
+# Install:
+#   1) symlink to /etc/systemd/system/qatlas-rag-embed.service
+#   2) edit User= / Group= / WorkingDirectory= / EnvironmentFile= to taste
+#   3) systemctl daemon-reload && systemctl enable --now qatlas-rag-embed
+
+[Unit]
+Description=qatlas-rag embedding worker (bge-m3 + reranker on local GPU)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=REPLACE_ME_LINUX_USER
+WorkingDirectory=REPLACE_ME_PROJECT_DIR
+EnvironmentFile=REPLACE_ME_PROJECT_DIR/.env
+# uv path on this host (snap, pixi, or system-installed).
+ExecStart=/snap/bin/uv run --extra embed uvicorn qatlas_rag.embed.worker:app --host 0.0.0.0 --port 8801
+Restart=on-failure
+RestartSec=5
+# Block ctrl+c signal storm from leaking through to torch CUDA finalizers.
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

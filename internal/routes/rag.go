@@ -6,6 +6,9 @@
 // server here owns auth (session cookie or PAT carrying papers:read)
 // and content-policy gating; everything else is forwarded transparently.
 //
+// Sidecar implementation lives in ./rag/qatlas_rag/sidecar/ — see
+// ./rag/README.md and docs/deployment/rag.md for how to stand one up.
+//
 // Two routes are exposed when the feature is enabled:
 //
 //	POST /api/rag/search    — gated by authGuard + scopeGuard("papers", "read")

@@ -31,21 +31,74 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
+    "pytest-asyncio>=0.24",
     "black>=24.0.0",
     "isort>=5.13.0",
     "mypy>=1.7.0",
     "ruff>=0.8.0",
 ]
+# --- qatlas_rag extras (see ./rag/README.md) -----------------------------
+# Three role-scoped extras for the RAG sidecar/embed-worker/ingester
+# pipeline. None of these are pulled in by `pip install quantum-atlas`
+# — the base client stays light.
+#
+# Edge sidecar (FastAPI proxy in front of Qdrant). No torch.
+sidecar = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "qdrant-client>=1.12,<1.14",
+    "httpx[socks]>=0.27",
+]
+# Embed worker: bge-m3 + reranker on GPU. Pins below verified on
+# RTX 5080 / sm_120 Blackwell, Python 3.12.13 (see
+# rag/scripts/spike/phase1_gpu_smoke.py). Loosen the `==` pins only
+# after re-running the spike with the new combo.
+embed = [
+    "torch==2.11.0+cu128",
+    "transformers==4.57.6",
+    "FlagEmbedding==1.4.0",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+]
+# Ingester: S3 listing + chunking + Qdrant upsert. qdrant-client must
+# stay within 1 minor of the server (1.12.4) — see qdrant_remote.py:282
+# compatibility check.
+ingest = [
+    "boto3>=1.35",
+    "mistune>=3.0",
+    "sqlalchemy>=2.0",
+    "qdrant-client>=1.12,<1.14",
+    "tqdm>=4.66",
+    "httpx[socks]>=0.27",
+]
 
 [project.scripts]
 qatlas = "qatlas.cli:main"
+qatlas-rag = "qatlas_rag.cli:main"
 
 [build-system]
 requires = ["hatchling>=1.24"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["qatlas"]
+packages = ["qatlas", "rag/qatlas_rag"]
+
+# Map source path to package name so `import qatlas_rag` resolves to
+# the rag/ subdirectory without exposing `rag` as a namespace.
+[tool.hatch.build.targets.wheel.sources]
+"rag/qatlas_rag" = "qatlas_rag"
+
+# --- PyTorch cu128 wheel (sm_120 / Blackwell) ---
+# torch>=2.7 + CUDA 12.8 is the first combo that supports sm_120
+# (RTX 5080). Scoped only to `torch` so other deps still resolve from
+# PyPI normally. Only consumed when installing the `embed` extra.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
 
 [tool.commitizen]
 name = "cz_conventional_commits"
@@ -58,10 +111,11 @@ annotated_tag = true
 
 # Pytest
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "rag/tests"]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+asyncio_mode = "auto"
 addopts = ["-v", "--tb=short", "--strict-markers"]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",

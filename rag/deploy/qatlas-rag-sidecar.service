@@ -1,0 +1,25 @@
+# qatlas-rag sidecar — runs on each edge (RackNerd / Alibaba) behind qatlasd.
+#
+# Listen on 127.0.0.1 only; qatlasd reverse-proxies /api/rag/* here.
+# `Wants=qatlasd.service` rather than `Requires=` so a sidecar misconfig
+# never wedges qatlasd's restart cycle.
+
+[Unit]
+Description=qatlas-rag sidecar (edge)
+After=network.target
+Wants=qatlasd.service
+
+[Service]
+Type=simple
+User=qatlas
+Group=qatlas
+WorkingDirectory=/opt/qatlas-rag
+EnvironmentFile=/etc/qatlas-rag.env
+ExecStart=/usr/local/bin/uv run --extra sidecar uvicorn qatlas_rag.sidecar.app:app \
+    --host 127.0.0.1 --port 8802
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target
