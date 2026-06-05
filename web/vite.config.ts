@@ -68,6 +68,15 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           secure: false,
         },
+        // Swagger UI lives at /swagger/ on qatlasd. Without this, vite's
+        // SPA fallback returns index.html, then TanStack Router has no
+        // matching route and bounces to /{lang}, which looks like "the
+        // page jumped back".
+        '/swagger': {
+          target: proxyTarget,
+          changeOrigin: true,
+          secure: false,
+        },
       }
     : undefined
 
