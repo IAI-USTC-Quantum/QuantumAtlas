@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.19.0 (2026-06-05)
+
+### Feat
+
+- **rag**: import qatlas_rag (embed worker + sidecar + ingester) into monorepo
+
+### Refactor
+
+- **spa**: topbar docs button → RTD CLI reference (was /swagger/)
+
 ## v0.19.0a1 (2026-06-05)
 
 ### Fix
