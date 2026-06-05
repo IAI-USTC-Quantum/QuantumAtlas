@@ -69,8 +69,8 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
 | `GET` | `/api/papers/{id_or_doi}/markdown/status` | `papers:read` | **PAPER_ACCESS** · side-effect-free 进度查询；body 含 `state` / `phase` / `pdf_ready` / `md_ready` / `fetch.*` / `convert.*` |
 | `GET` | `/api/papers/{id_or_doi}/pdf` | `papers:read` | **PAPER_ACCESS** · 返回缓存的 PDF 字节；未命中走 LRO 流程：202 → 后台 silent fetch PDF → poll 后 GET 200。**不**触发 MinerU |
 | `GET` | `/api/papers/{id_or_doi}/pdf/status` | `papers:read` | **PAPER_ACCESS** · `/pdf` 的 side-effect-free 进度查询；状态机比 markdown 少 convert 阶段 |
-| `POST` | `/api/rag/search` | `papers:read` | **PAPER_ACCESS** · 仅当 `QATLAS_RAG_SIDECAR_URL` 已设。reverse_proxy 到部署方运行的 sidecar，body 形如 `{"query":"...", "top_k":8, "rerank":true}`；返回 chunk 级 hit（含 `arxiv_id`、`section_path`、`snippet`、`score`）|
-| `GET` | `/api/rag/healthz` | 匿名 | **PAPER_ACCESS** · 同上注册条件。返回 `{"status":"ok"\|"degraded"\|"down"}`；SPA 用它决定是否在 `/wiki/search` 显示"语义"toggle |
+| `POST` | `/api/rag/search` | `papers:read` | **PAPER_ACCESS** · 仅当 `QATLAS_RAG_QDRANT_URL` + `QATLAS_RAG_EMBED_URL` 都已设。qatlasd 直接 gRPC 查 Qdrant + 调 GPU embed worker，body 形如 `{"query":"...","top_k":8,"rerank":true,"use_sparse":true}`；返回 chunk 级 hit（含 `arxiv_id`、`section_path`、`snippet`、`score`）|
+| `GET` | `/api/rag/healthz` | 匿名 | **PAPER_ACCESS** · 同上注册条件。返回 `{"status":"ok"\|"degraded"\|"down"}`；SPA 用它决定是否在 `/papers/search` 显示搜索框 |
 
 > `papers:write` 隐式含 `papers:read`。
 >

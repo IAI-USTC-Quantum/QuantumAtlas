@@ -12,15 +12,6 @@ import { TanStackRouterVite } from '@tanstack/router-plugin/vite'
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const proxyTarget = env.VITE_DEV_API_TARGET
-  // dev-only opt-in: 把 /api/rag/* 单独反代到本机 sidecar（绕开
-  // VITE_DEV_API_TARGET 指向的远端 qatlasd）。两种典型场景：
-  //   1. 远端 qatlasd 没设 QATLAS_RAG_SIDECAR_URL — /api/rag/* 404 →
-  //      SPA 看不到 "语义" toggle；
-  //   2. 想在 dev 时改 sidecar 行为 / 看真 query trace，本地起 sidecar
-  //      直接调，不来回打远端。
-  // sidecar 自己监听 /healthz 和 /search（不是 /api/rag/healthz），
-  // 所以 rewrite ^/api/rag → ''。
-  const ragSidecarTarget = env.VITE_DEV_RAG_SIDECAR
   // dev-only: a server-side system PAT (QATLAS_SYSTEM_PAT on the target
   // qatlasd) so the proxied /api/* reads carry a real bearer. Without
   // it every read endpoint 401s now that the backend locks reads behind
@@ -35,19 +26,6 @@ export default defineConfig(({ mode }) => {
     : ['localhost', '127.0.0.1']
   const proxy = proxyTarget
     ? {
-        // RAG 反代必须放在 /api 之前 —— vite proxy 用 declaration 顺序
-        // 首匹配，/api 会先吃掉 /api/rag/*。仅在 VITE_DEV_RAG_SIDECAR
-        // 配置时挂载。
-        ...(ragSidecarTarget
-          ? {
-              '/api/rag': {
-                target: ragSidecarTarget,
-                changeOrigin: true,
-                secure: false,
-                rewrite: (path: string) => path.replace(/^\/api\/rag/, ''),
-              },
-            }
-          : {}),
         '/api': {
           target: proxyTarget,
           changeOrigin: true,

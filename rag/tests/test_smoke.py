@@ -21,6 +21,9 @@ def test_config_imports_without_env() -> None:
     from qatlas_rag import config
 
     s = config.Settings()
-    assert s.qdrant_collection == "qatlas_papers_v1"
     assert s.embed_model == "BAAI/bge-m3"
-    assert s.s3_md_bucket == "qatlas-md"
+    assert s.reranker_model == "BAAI/bge-reranker-v2-m3"
+    # token default is None — bearer is mandatory when set, so absence
+    # means embed worker accepts any caller (only useful on a locked-
+    # down host).
+    assert s.embed_token is None

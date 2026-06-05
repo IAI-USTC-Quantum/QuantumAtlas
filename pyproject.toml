@@ -37,21 +37,13 @@ dev = [
     "mypy>=1.7.0",
     "ruff>=0.8.0",
 ]
-# --- qatlas_rag extras (see ./rag/README.md) -----------------------------
-# Three role-scoped extras for the RAG sidecar/embed-worker/ingester
-# pipeline. None of these are pulled in by `pip install quantum-atlas`
-# — the base client stays light.
+# --- qatlas_rag embed worker -------------------------------------------
+# Since v0.20.0 the only Python role left is the GPU embed worker:
+# qatlasd (Go) is now itself the Qdrant client + caller of /embed /rerank
+# (was Python sidecar + ingester before). See ./rag/README.md.
 #
-# Edge sidecar (FastAPI proxy in front of Qdrant). No torch.
-sidecar = [
-    "fastapi>=0.115",
-    "uvicorn[standard]>=0.32",
-    "qdrant-client>=1.12,<1.14",
-    "httpx[socks]>=0.27",
-]
-# Embed worker: bge-m3 + reranker on GPU. Pins below verified on
-# RTX 5080 / sm_120 Blackwell, Python 3.12.13 (see
-# rag/scripts/spike/phase1_gpu_smoke.py). Loosen the `==` pins only
+# Pins below verified on RTX 5080 / sm_120 Blackwell, Python 3.12.13
+# (see rag/scripts/spike/phase1_gpu_smoke.py). Loosen the `==` pins only
 # after re-running the spike with the new combo.
 embed = [
     "torch==2.11.0+cu128",
@@ -59,17 +51,7 @@ embed = [
     "FlagEmbedding==1.4.0",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
-]
-# Ingester: S3 listing + chunking + Qdrant upsert. qdrant-client must
-# stay within 1 minor of the server (1.12.4) — see qdrant_remote.py:282
-# compatibility check.
-ingest = [
-    "boto3>=1.35",
-    "mistune>=3.0",
-    "sqlalchemy>=2.0",
-    "qdrant-client>=1.12,<1.14",
-    "tqdm>=4.66",
-    "httpx[socks]>=0.27",
+    "pydantic-settings>=2.6",
 ]
 
 [project.scripts]

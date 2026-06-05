@@ -893,10 +893,12 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// browser session (sessionGuard, same as /api/pat).
 	routes.RegisterOAuthDevice(se, app)
 
-	// RAG (vector search) reverse_proxy to a sidecar — registered iff
-	// QATLAS_PAPER_ACCESS_ENABLED=true AND QATLAS_RAG_SIDECAR_URL is
+	// RAG (vector search) — qatlasd is itself the Qdrant client + caller
+	// of the GPU embed worker. Registered iff QATLAS_PAPER_ACCESS_ENABLED
+	// is on AND both QATLAS_RAG_QDRANT_URL and QATLAS_RAG_EMBED_URL are
 	// set. Same posture as /api/papers/{id}/markdown: serves derivative
-	// paper content, so we gate behind the operator's opt-in.
+	// paper content (chunk-text snippets), so we gate behind the
+	// operator's opt-in. See internal/routes/rag.go.
 	routes.RegisterRAG(se, cfg, enforcer)
 }
 

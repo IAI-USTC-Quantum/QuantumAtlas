@@ -1,72 +1,52 @@
-# qatlas_rag — RAG pipeline (sidecar + embed worker + ingester)
+# qatlas_rag — embed worker (Python, GPU-only)
 
-> Python 子项目，与 Go 服务端 (`qatlasd`)、PocketBase、SPA (`web/`) 共享同一个仓库与 `pyproject.toml`。**不是独立 uv 项目**——所有 deps 通过主 `pyproject.toml` 的可选 extras 装。
+> v0.20.0 起，**只剩 embed worker 一个 Python 角色**。Qdrant 查询 + 写入两路都已经收编进 Go server (`qatlasd`)，前端不变。这个目录现在只装 bge-m3 + bge-reranker-v2-m3 给 5080 跑。
 
-Go 端 (`internal/routes/rag.go`) 把 `/api/rag/*` reverse-proxy 给本目录跑出来的 sidecar。Sidecar 自己再查 Qdrant + 调 embed worker。整套架构示意：
-
-```
-浏览器 → qatlasd /api/rag/*  (PaperAccessEnabled + RAGSidecarURL 双闸)
-              │
-              ▼
-   sidecar  ./qatlas_rag/sidecar/app.py   (FastAPI, edge-local 127.0.0.1:8802)
-              │ Qdrant gRPC          │ embed/rerank HTTP
-              ▼                       ▼
-   Qdrant (1810 WSL docker)    embed worker (GPU, ./qatlas_rag/embed/worker.py)
-   见 deploy/qdrant-compose.example.yaml      bge-m3 + bge-reranker-v2-m3 fp16
-```
-
-## 三个角色 = 三个 extras
-
-| Role | 跑在哪 | 装什么 | 是什么 |
-|---|---|---|---|
-| **sidecar** | 每个边缘节点（RackNerd / Alibaba / 本机 dev） | `uv sync --extra sidecar` | `qatlas_rag.sidecar.app:app` — FastAPI 反向代理 in front of Qdrant，无 torch |
-| **embed** | GPU 主机（典型：RTX 5080 / sm_120 Blackwell） | `uv sync --extra embed` | `qatlas_rag.embed.worker:app` — `/embed` 和 `/rerank` 端点；bge-m3 + reranker fp16 |
-| **ingest** | 任意能访问 RustFS + Qdrant + embed worker 的机器 | `uv sync --extra ingest` | `qatlas-rag ingest …` 一次性命令；listdiff RustFS → chunk → embed → upsert Qdrant |
-
-PyTorch wheel 走 `download.pytorch.org/whl/cu128`（sm_120 / Blackwell 必须 torch>=2.7）；主 `pyproject.toml` 的 `[tool.uv.sources]` 已经把 `torch` scope 到这条 index，只有装 `embed` extra 时才拉。
-
-## 目录
+## 架构
 
 ```
-rag/
-├── README.md                ← 你正在看
-├── .env.example             ← 三个 role 共用的环境变量模板（QATLAS_RAG_*）
-├── .gitignore               ← 只忽略 rag/ 私货（manifest.db, qdrant_storage/, .env）
-├── qatlas_rag/              ← Python 包；主 pyproject 通过 hatch sources 映射到顶层
-│   ├── cli.py               ← `qatlas-rag` 入口
-│   ├── config.py            ← pydantic-settings（QATLAS_RAG_*）
-│   ├── embed/worker.py      ← FastAPI on 5080
-│   ├── ingest/              ← chunker / parser / s3 / qdrant_store / manifest / runner / embed_client
-│   └── sidecar/app.py       ← FastAPI on edge
-├── tests/                   ← pytest，主仓库 testpaths 已经加 "rag/tests"
-├── scripts/spike/           ← 一次性验证脚本（phase1 GPU smoke / phase2.5 e2e / full_build）
-├── docs/spike-report.md     ← Phase 2.5 dense vs hybrid 结果
-└── deploy/                  ← rag-自有的部署文件
-    ├── qatlas-rag-embed.service       ← systemd user unit，5080 worker
-    ├── qatlas-rag-sidecar.service     ← systemd user unit，边缘 sidecar
-    └── portproxy-qdrant-1810.{ps1,v2.ps1}   ← Windows 端 portproxy 给 WSL2 Qdrant
+浏览器 → /api/rag/search → qatlasd ─ HTTP ─→ embed worker (这里)
+                              │                 │ bge-m3
+                              │                 │ bge-reranker-v2-m3
+                              │                 ▼
+                              │              GPU (5080)
+                              │
+                              └─ gRPC ─→ Qdrant 1810 docker
 ```
 
-Qdrant 的 docker compose 放在 **`deploy/qdrant-compose.example.yaml`**（顶层 deploy/，跟 neo4j / rustfs 的 compose 平级），不在本子目录。
+qatlasd 自己当 Qdrant client + 自己调 embed worker，所有检索策略（hybrid 权重、rerank pool、score normalize、snippet 截取）用 Go 在 `internal/routes/rag.go` 实现。本目录跟检索策略**完全无关**。
 
-## 验证：GPU smoke（任何 phase 之前必跑）
+## 跑起来
 
 ```bash
-uv sync --extra embed
-uv run python -m rag.scripts.spike.phase1_gpu_smoke
+cd QuantumAtlas
+uv sync --extra embed                    # 拉 torch+cu128 + FlagEmbedding (~2 GB)
+uv run python -m rag.scripts.spike.phase1_gpu_smoke    # GPU smoke; 必须先过
+uv run uvicorn qatlas_rag.embed.worker:app --host 0.0.0.0 --port 8801
 ```
 
-通过 = bge-m3 + reranker fp16 都能 resident，VRAM peak ~2.7 GB，embed 32×~800tok ~0.9s，rerank 50 pairs ~1s。
+生产用 systemd user unit 模板：[`deploy/qatlas-rag-embed.service`](./deploy/qatlas-rag-embed.service)。把 `WorkingDirectory` / `ExecStart` 改成你 clone 的绝对路径就能跑。
 
-## 部署文档
+## API
 
-- 端到端架构 + Alibaba/RackNerd 上线流程 → **[`docs/deployment/rag.md`](../docs/deployment/rag.md)**
-- Qdrant docker 部署 → `deploy/qdrant-compose.example.yaml` 顶部注释
-- 边缘 server 加挂 sidecar → `qatlas_rag.sidecar.app:app` + `QATLAS_RAG_SIDECAR_URL` env（Go 端读）
-- 服务端反代实现 → `internal/routes/rag.go`（Go 测试 `internal/routes/rag_test.go`）
+| Method | Path | Body | 备注 |
+|---|---|---|---|
+| `GET` | `/healthz` | — | 无 token；coarse status 防 leak topology |
+| `POST` | `/embed?lane=query\|build` | `{"texts": [...], "return_sparse": bool}` | bearer 认证 |
+| `POST` | `/rerank?lane=query\|build` | `{"query": "...", "passages": [...]}` | bearer 认证 |
 
-## 协作
+两个 lane（query / build）共享同一张 GPU 但 query 优先级高，避免 ingester 跑批时 query 被阻塞。详见 `qatlas_rag/embed/worker.py` 顶部注释。
 
-Python 测试 `uv run pytest rag/tests/`；主 `pytest` 也会自动 discover（`testpaths = ["tests", "rag/tests"]`）。
+## 配置
 
-新增 dep 改主 `pyproject.toml` 对应 extras 段（`sidecar` / `embed` / `ingest`），跑 `uv lock --extra sidecar --extra embed --extra ingest` 更新 lockfile，commit `pyproject.toml` + `uv.lock`。
+环境变量统一前缀 `QATLAS_RAG_`，见 [`.env.example`](./.env.example)：
+
+| Var | 默认 | 说明 |
+|---|---|---|
+| `QATLAS_RAG_EMBED_TOKEN` | (空) | 调用 `/embed` / `/rerank` 必带的 bearer |
+| `QATLAS_RAG_EMBED_MODEL` | `BAAI/bge-m3` | dense embedding model |
+| `QATLAS_RAG_RERANKER_MODEL` | `BAAI/bge-reranker-v2-m3` | cross-encoder reranker |
+
+## 部署端到端
+
+整套（Qdrant + embed worker + qatlasd 启用 RAG）部署见 [`docs/deployment/rag.md`](../docs/deployment/rag.md)。

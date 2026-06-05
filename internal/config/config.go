@@ -177,20 +177,42 @@ type Config struct {
 	MinerUTimeout           time.Duration
 	MinerUMaxConcurrentJobs int
 
-	// RAGSidecarURL — when non-empty AND PaperAccessEnabled=true,
-	// /api/rag/* is registered as a reverse-proxy to the named sidecar
-	// (a separate process running on the same host that handles vector
-	// search, reranking, and snippet assembly). When empty the routes
-	// are not registered.
+	// --- RAG (semantic search over indexed papers) -----------------
 	//
-	// Gated by PaperAccessEnabled because RAG hits return
-	// chunk_text snippets — the same derivative-work bytes that
-	// /api/papers/{id}/markdown serves. Operators who keep the master
-	// switch OFF stay out of the redistribution posture entirely;
-	// operators who flip it ON to host markdown can additionally point
-	// QATLAS_RAG_SIDECAR_URL at a configured sidecar to add semantic
-	// search.
-	RAGSidecarURL string
+	// In v0.20.0 the query path moved into qatlasd itself: the Go
+	// handler in internal/routes/rag.go calls Qdrant directly (via
+	// github.com/qdrant/go-client) and the embed worker over HTTP, so
+	// there's no Python sidecar anymore. /api/rag/* is registered
+	// iff PaperAccessEnabled is true AND BOTH RAGQdrantURL and
+	// RAGEmbedURL are non-empty.
+	//
+	// Gated by PaperAccessEnabled because RAG hits return chunk-text
+	// snippets — the same derivative-work bytes that
+	// /api/papers/{id}/markdown serves.
+
+	// RAGQdrantURL — Qdrant gRPC endpoint (e.g. "10.144.18.10:6334").
+	// Accepts either bare host:port or "[http|https]://host:port"; the
+	// scheme is stripped because the qdrant-go-client takes host/port
+	// separately. TLS is auto-enabled when the URL is https://.
+	RAGQdrantURL string
+
+	// RAGQdrantAPIKey — optional Qdrant API key. Read-only key is
+	// sufficient for the query path; the build/upsert path lives in
+	// the ingester (separate process / scope).
+	RAGQdrantAPIKey string
+
+	// RAGQdrantCollection — collection name to query. Default
+	// "qatlas_papers_v1".
+	RAGQdrantCollection string
+
+	// RAGEmbedURL — embed worker base URL (e.g.
+	// "http://10.144.18.88:8801"). qatlasd calls /embed and /rerank
+	// here.
+	RAGEmbedURL string
+
+	// RAGEmbedToken — bearer the embed worker requires on /embed and
+	// /rerank. /healthz is anonymous so we can probe it cheaply.
+	RAGEmbedToken string
 
 	// OpenAlexMailto is the contact email folded into the polite-pool
 	// User-Agent for OpenAlex API calls and outbound arxiv.org PDF
@@ -282,7 +304,11 @@ func Load(dotenvPath string) (*Config, error) {
 		S3SecretAccessKey:        firstEnv("QATLAS_S3_SECRET_ACCESS_KEY"),
 		EdgeName:                 firstEnv("QATLAS_EDGE_NAME"),
 		PaperAccessEnabled:    parseBoolEnv("QATLAS_PAPER_ACCESS_ENABLED", false),
-		RAGSidecarURL:            firstEnv("QATLAS_RAG_SIDECAR_URL"),
+		RAGQdrantURL:             firstEnv("QATLAS_RAG_QDRANT_URL"),
+		RAGQdrantAPIKey:          firstEnv("QATLAS_RAG_QDRANT_API_KEY"),
+		RAGQdrantCollection:      firstEnvDefault("qatlas_papers_v1", "QATLAS_RAG_QDRANT_COLLECTION"),
+		RAGEmbedURL:              firstEnv("QATLAS_RAG_EMBED_URL"),
+		RAGEmbedToken:            firstEnv("QATLAS_RAG_EMBED_TOKEN"),
 		OpenAlexMailto:           firstEnv("QATLAS_OPENALEX_MAILTO"),
 		ArxivFetchConcurrent:     firstEnvIntDefault(2, "QATLAS_ARXIV_FETCH_CONCURRENT"),
 		ArxivFetchRPS:            firstEnvFloatDefault(0.33, "QATLAS_ARXIV_FETCH_RPS"),
