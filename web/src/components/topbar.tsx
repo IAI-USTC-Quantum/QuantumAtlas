@@ -99,7 +99,11 @@ export function Topbar() {
           asChild
           className="hidden text-xs text-muted-foreground sm:inline-flex"
         >
-          <a href="/swagger/" target="_blank" rel="noreferrer">
+          <a
+            href={`https://quantum-atlas.readthedocs.io/${lang === 'zh' ? 'zh-cn' : 'en'}/latest/reference/cli-qatlas/`}
+            target="_blank"
+            rel="noreferrer"
+          >
             {t('topbar.docsLink')}
             <ExternalLink className="size-3.5" />
           </a>

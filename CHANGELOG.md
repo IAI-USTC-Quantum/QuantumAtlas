@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.19.0a1 (2026-06-05)
+
+### Fix
+
+- **web-dev**: proxy /swagger to qatlasd so dev hits real Swagger UI
+- **spa**: topbar API docs link → /swagger/ (was /api/docs 404)
+
+### Refactor
+
+- **client**: rename contributor surface to `qatlas contrib {pdf,mineru}` + fix device-flow token field mismatch
+
 ## v0.19.0a0 (2026-06-05)
 
 ### Feat

@@ -44,7 +44,7 @@
       "placeholder": "搜索页面、原语、算法"
     },
     "topbar": {
-      "docsLink": "API 文档",
+      "docsLink": "CLI 文档",
       "userMenu": {
         "openLabel": "用户菜单",
         "patLink": "管理 PAT",

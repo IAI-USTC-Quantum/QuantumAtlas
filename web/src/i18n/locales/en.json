@@ -44,7 +44,7 @@
       "placeholder": "Search pages, primitives, algorithms"
     },
     "topbar": {
-      "docsLink": "API docs",
+      "docsLink": "CLI docs",
       "userMenu": {
         "openLabel": "User menu",
         "patLink": "Manage PATs",
