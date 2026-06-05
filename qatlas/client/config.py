@@ -95,11 +95,27 @@ def cmd_set(args: argparse.Namespace) -> int:
     field = _resolve_field(args.key)
 
     value = args.value
+    if value is not None and _is_sensitive(args.key):
+        # Argv form for sensitive keys is a footgun — the secret ends
+        # up in shell history / `ps` / CI runner log. Mirror what we
+        # do on `auth login` (no argv form for tokens), and steer the
+        # user to stdin or the TTY prompt. The argv form stays open
+        # for non-sensitive keys like `server_url` / `insecure` so
+        # ordinary set-and-commit workflows are unchanged.
+        _print_err(
+            f"refusing to take {args.key} on the command line "
+            "(would leak into shell history / `ps` / CI logs).\n"
+            f"Use one of:\n"
+            f"  - prompt:  qatlas config set {args.key}        (hidden input on TTY)\n"
+            f"  - stdin:   echo $SECRET | qatlas config set {args.key}"
+        )
+        return 2
+
     if value is None:
         # No value on the command line: prompt interactively. For sensitive
         # keys (TOKEN / SECRET / KEY / PASSWORD) hide the typed value with
         # getpass so it doesn't end up in scrollback. For piped stdin (CI /
-        # scripts) read one line: `echo $TOKEN | qatlas config set token`.
+        # scripts) read one line: `echo $TOKEN | qatlas config set mineru_api_token`.
         if not sys.stdin.isatty():
             value = sys.stdin.readline().rstrip("\n\r")
         elif _is_sensitive(args.key):
@@ -219,9 +235,12 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="?",
         default=None,
         help=(
-            "Value. Omit to prompt interactively (hidden for sensitive "
-            "keys like *token / *key / *secret / *password). Reads stdin "
-            "if not a tty: `echo $TOKEN | qatlas config set token`."
+            "Value to set. Omit for an interactive prompt (hidden when "
+            "the key looks sensitive — *token / *key / *secret / "
+            "*password). Reads stdin when not a tty: "
+            "`echo $JWT | qatlas config set mineru_api_token`. "
+            "Sensitive keys reject the argv form (use stdin / prompt) "
+            "so the secret never leaks into shell history / `ps`."
         ),
     )
     sp.set_defaults(func=cmd_set)

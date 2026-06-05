@@ -384,7 +384,7 @@ qatlasd`，都不需要 sudo。
 `WIKI_DIR` / `RAW_DIR` / `DATA_DIR` / `PB_DATA_DIR`）：
 
 ```env
-QATLAS_SERVER_URL=https://your-domain.tld
+QATLAS_PUBLIC_URL=https://your-domain.tld
 QATLAS_SERVER_HOST=0.0.0.0
 QATLAS_SERVER_PORT=4200
 
@@ -463,7 +463,7 @@ bash scripts/rustfs_bootstrap.sh
 
 ```env
 # 一切都跑默认时，server 侧 .env 只需要这点：
-QATLAS_SERVER_URL=https://atlas.example.com
+QATLAS_PUBLIC_URL=https://atlas.example.com
 QATLAS_SERVER_HOST=127.0.0.1
 QATLAS_SERVER_PORT=4200
 NEO4J_URI=bolt://127.0.0.1:7687
@@ -475,7 +475,7 @@ NEO4J_URI=bolt://127.0.0.1:7687
 # QATLAS_PB_DATA_DIR=/var/lib/quantum-atlas/pb_data
 ```
 
-> 旧名（`WIKI_DIR` / `RAW_DIR` / `DATA_DIR` / `PB_DATA_DIR` / `SERVER_HOST` / `SERVER_PORT` / `PUBLIC_BASE_URL` / `USER_HEADER`）仍作 alias 保留，新部署推荐用 `QATLAS_*` 前缀。`NEO4J_*` / `OPENAI_*` / `ANTHROPIC_*` / `MINERU_*` 等第三方 SDK 标准名保持原样。
+> 旧名（`WIKI_DIR` / `RAW_DIR` / `DATA_DIR` / `PB_DATA_DIR` / `SERVER_HOST` / `SERVER_PORT` / `USER_HEADER`）仍作 alias 保留，新部署推荐用 `QATLAS_*` 前缀。`NEO4J_*` / `OPENAI_*` / `ANTHROPIC_*` / `MINERU_*` 等第三方 SDK 标准名保持原样。v0.19.0 起 `QATLAS_SERVER_URL` 已重命名为 `QATLAS_PUBLIC_URL`（旧名 `QATLAS_SERVER_URL` / `PUBLIC_BASE_URL` 在服务端**不再读**——名字改成 `QATLAS_PUBLIC_URL` 是为了准确反映"我对外公布的 canonical URL"语义；client 完全不读 env，跟这一项无关）。
 
 建议：
 
@@ -486,7 +486,7 @@ NEO4J_URI=bolt://127.0.0.1:7687
 - 内容生产、LLM 生成、人工编辑和审阅走 `QuantumAtlas-Wiki` 的普通 Git 流程；QuantumAtlas server 不提供 push API，也不通过 Web UI 直接写 Wiki 页面。
 - 若 `/api/wiki/sync/status` 提示 Wiki checkout 不在 `main` 或 `master`，应检查部署分支是否符合预期。
 - Neo4j 仅对后端服务暴露，不直接开放到公网。
-- 公开访问统一走 `QATLAS_SERVER_URL`。
+- 公开访问统一走 `QATLAS_PUBLIC_URL`。
 
 ## 核心环境变量
 
@@ -497,7 +497,7 @@ NEO4J_URI=bolt://127.0.0.1:7687
 
 | 变量 | 何时需要 | 备注 |
 |---|---|---|
-| `QATLAS_SERVER_URL` | 必填 | 对外唯一根地址；CLI 默认、OAuth callback、外部解析器都基于它 |
+| `QATLAS_PUBLIC_URL` | 必填 | server 自报的对外 canonical URL；用于构造 OAuth 回调、外链等需要绝对 URL 的地方（反代场景必备——server bind 在 localhost，必须显式告诉它"我对外是谁"）。v0.19.0 改名（旧名 `QATLAS_SERVER_URL`），跟 client 侧的 `server_url:` YAML 字段（"我要联系的 server"）在概念上独立 |
 | `QATLAS_SERVER_HOST` / `QATLAS_SERVER_PORT` | 默认 `127.0.0.1:4200` | 直接面向公网通常改 `0.0.0.0:<port>`，反代场景保留 `127.0.0.1` |
 | `NEO4J_URI` / `NEO4J_USER` / `NEO4J_PASSWORD` | 启用图谱时必填 | 不连图库可留空 |
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | 启用 GitHub OAuth 登录时必填 | 启动时由 `internal/auth/oauth.go` 注入 users collection |
@@ -602,5 +602,5 @@ raw.your-domain.tld {
   bearer 鉴权（PAT 或 session token），剥掉会全部 4xx。
 - `/api/*` 中的写口 server 已经强制鉴权；反代上不要再叠 ACL，避免双重
   401 / 403 给 debug 添麻烦。
-- 如果启用了 MinerU 并需要它回拉 PDF，`QATLAS_SERVER_URL` 必须能从
+- 如果启用了 MinerU 并需要它回拉 PDF，`QATLAS_PUBLIC_URL` 必须能从
   MinerU 所在环境访问到。

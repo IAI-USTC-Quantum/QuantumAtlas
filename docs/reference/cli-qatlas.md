@@ -78,8 +78,8 @@ qatlas config <subcommand>
 uv tool install --prerelease=allow quantum-atlas
 qatlas --help                                       # 任意命令都触发 yaml 自动创建
 qatlas config set server_url https://quantum-atlas.ai
-qatlas config set token qat_xxxxxxxx                # 从 https://quantum-atlas.ai/pat 拿
-qatlas config set mineru_api_tokens '[jwt-a, jwt-b]'  # 若要跑 qatlas mineru（CSV / 列表均可）
+qatlas auth login -s quantum-atlas.ai               # OAuth device-code flow → 自动写 hosts.yml
+echo '[jwt-a, jwt-b]' | qatlas config set mineru_api_tokens  # 若要跑 qatlas mineru（CSV / 列表均可；sensitive key 从 stdin 读）
 
 # 看 yaml 路径
 qatlas config path
@@ -88,7 +88,7 @@ qatlas config path
 # 看效果
 qatlas config show
 # server_url: https://quantum-atlas.ai
-# token: qat_…xxxx (12 chars)
+# (token 不在 config.yaml；通过 `qatlas auth status` 查 hosts.yml)
 # ...
 
 # 之后任何 qatlas 子命令直接跑
@@ -173,6 +173,83 @@ qatlas upload mineru <arxiv_id> --zip <path> [--source <tool>] [--overwrite]
 
 ---
 
+### `qatlas paper`
+
+读 server 端缓存的 PDF / Markdown 字节。需要 `papers:read` scope。**仅对开启
+`QATLAS_PAPER_ACCESS_ENABLED=true` 的 self-hosted 实例可用**——公开
+`quantum-atlas.ai` 默认关，调用会被路由 404。
+
+```
+qatlas paper get markdown ID_OR_DOI [--output FILE | --no-wait]
+qatlas paper get pdf      ID_OR_DOI [--output FILE | --no-wait]
+qatlas paper status       ID_OR_DOI [--kind markdown|pdf]
+```
+
+#### ID 形态（server 自动归一）
+
+| 输入 | server 推断 |
+|---|---|
+| 完整 `0811.3171v3` / `quant-ph/9508027v2` | 不动 |
+| 无版本 `0811.3171` / `quant-ph/9508027` | 自动加 latest `vN`（fetch `/abs/<id>` HTML `og:url`）|
+| bare old-style `9508027` / `9508027v2` | 自动加 `category=quant-ph`（生产 bootstrap 假设；详见 [arxiv-ids §3.1](arxiv-ids.md)）|
+| DOI `10.1103/PhysRevLett.103.150502` | OpenAlex 反查 → arxiv id |
+
+每应用一次默认值，CLI 在 stderr 打一行 `Note (server applied defaults): ...`，
+来自 `X-QAtlas-Defaults-Applied` 响应头。`--quiet-notes` 抑制。
+
+#### 长任务（LRO）行为
+
+cache miss 时 server 返 202 + `Operation-Location` 启动后台 silent fetch /
+MinerU convert。CLI **自动 poll** `/{markdown|pdf}/status`，每轮打一行紧凑
+进度到 stderr：
+
+```
+... waiting: queued converting_md fetch=4503234B convert.running polls=7 queue=#3(2ahead,4/4slot) eta=240s
+```
+
+`--quiet-progress` 抑制；`--no-wait` 完全跳过 poll 直接吐 202 JSON 退出 0
+（适合脚本异步编排）。
+
+#### 错误展示
+
+任何 4xx / 5xx 或 body-level 终态（`state=failed` / `cooldown` / `unavailable`），
+CLI 把 server JSON body 整段 pretty-print 到 stderr——包括 `detail` / `kind`
+（fatal | retryable | daily_limit）/ `phase` / `retry_after_iso` / `arxiv_id` |
+`doi` | `canonical` / 以及 echoed `requested_id` / `resolved_id` /
+`defaults_applied`。这样 agent 一次就拿到判断要不要重试、什么时候重试、原始
+ID 解析到了哪一步所有信息。
+
+#### Flag
+
+| Flag | 子命令 | 默认 | 含义 |
+|---|---|---|---|
+| `<id_or_doi>` | 全部 | 必填 | arxiv id 或 DOI（见上表）|
+| `--output / -o FILE` | get | stdout | 字节写到 FILE；`-` 或省略 = stdout |
+| `--no-wait` | get | false | cache miss 时不 poll，直接吐 202 JSON 退出 0 |
+| `--max-wait N` | get | 1800 | poll 总时长上限（秒）；超时退出 1 |
+| `--quiet-progress` | get | false | 不打 `... waiting` 行 |
+| `--quiet-notes` | get / status | false | 不打 `Note (server applied defaults)` 行 |
+| `--kind markdown\|pdf` | status | markdown | 状态端点的两种 |
+
+#### 退出码
+
+| 码 | 含义 |
+|---|---|
+| 0 | 字节成功 stream 完 / `--no-wait` 收到 202 / `status` 拿到 JSON |
+| 1 | terminal failure（404 / 5xx / `state=failed` / `cooldown` / 超时）|
+| 2 | flag 解析错误 |
+
+#### 调用链
+
+- `get` 命中缓存：`GET /api/papers/{id_or_doi}/{kind}` → 200 + 字节
+- `get` 未命中：同上 → 202 → 周期 `GET .../status` → `cached` → 重发 `GET .../{kind}` → 200 + 字节
+- `status`：单次 `GET .../{kind}/status`
+
+详细 LRO 协议、Phase 字段语义、agent 决策三元组见
+[REST API · 长任务（LRO）](rest-api.md#长任务lroapipapersid_or_doimarkdownpdf)。
+
+---
+
 ### `qatlas mineru`
 
 本地跑 MinerU 解析 server 上的 PDF，推回完整 MinerU bundle。需要 `papers:write` scope + 本地 `mineru_api_tokens` 至少一条。
@@ -209,39 +286,39 @@ qatlas mineru [arxiv_id] [options...]
 管理本地存储的 PAT。
 
 ```
-qatlas auth login [-H <host>]
-                  [--device | --no-browser]
-                  [--scopes papers:write,wiki:read]
+qatlas auth login [-s | --server-url <URL>]
+                  [--no-browser]
+                  [--scopes a,b,c]
                   [--expires-days N]
                   [--token-name NAME]
-                  [--port N] [--timeout SEC] [--insecure]
-                  [--token <plaintext> | --with-token]
-qatlas auth logout [-H <host>]
-qatlas auth status [-H <host>]
-qatlas auth token  [-H <host>]
+                  [--timeout SEC] [--insecure]
+                  [--with-token]
+qatlas auth logout [-s | --server-url <URL>]
+qatlas auth status [-s | --server-url <URL>]
+qatlas auth token  [-s | --server-url <URL>]
 ```
 
 | 子命令 | 行为 |
 |---|---|
-| `login` | 默认走 OAuth：起本地 loopback HTTP server，开浏览器到 `/pat?cli_callback=...` 让用户授权（headless / SSH 自动降级到 device-code）；`--token` / `--with-token` 是 CI 旁路，直接存现成 PAT |
+| `login` | 走 RFC 8628 device-code 流程：POST `/api/oauth/device/code` 拿 user_code + verification 深链 → 自动开浏览器（除非 `--no-browser`） → 用户在 `/<lang>/device` 表单里编辑 name/scopes/expiry 然后 Approve → CLI 轮询 `/api/oauth/device/token` 拿到 PAT 明文写 hosts.yml。`--with-token` 是 CI 旁路 |
 | `logout` | 删该 host 的本地条目（不调 server）|
 | `status` | 列已登录的 host + 脱敏 token 预览 |
-| `token` | 把指定 host 的明文 token 打到 stdout（用于 shell 替换：`curl -H "Authorization: Bearer $(qatlas auth token)"`）|
+| `token` | 把指定 host 的明文 token 打到 stdout（shell 替换：`curl -H "Authorization: Bearer $(qatlas auth token)"`）|
 
 | Flag | 默认 | 含义 |
 |---|---|---|
-| `-H` / `--host` | `$QATLAS_SERVER_URL` 或交互式询问 | 操作哪个 host |
-| `--device` / `--no-browser` | off | 强制走 RFC 8628 device-code 流程；`--no-browser` 是 `gh` 兼容别名 |
-| `--scopes a,b` | 空 | 预填到浏览器对话框的 scope 列表（用户仍可改）|
-| `--expires-days N` | `90` | 预填到对话框的过期天数 (1–365) |
-| `--token-name NAME` | `qatlas-cli-<host>-<YYYY-MM-DD>` | 预填到对话框的 token 名 |
-| `--port N` | `0` | loopback 监听端口；`0` = 系统分配 |
-| `--timeout SEC` | `300`（loopback）/ `600`（device）| 等浏览器多久 |
+| `-s` / `--server-url` | `server_url:` from config.yaml, else interactive prompt | 操作哪个 server；接受裸 hostname (`quantum-atlas.ai`) 或完整 URL (`https://quantum-atlas.ai:4200`)，自动 normalize 成 hosts.yml key |
+| `--no-browser` | off | 不调 `webbrowser.open` —— 只打印 URL，自己复制到任意有浏览器的设备打开 |
+| `--scopes a,b` | 空 | **预填**到浏览器表单的 scope；空 = 浏览器默认全勾（用户可改）|
+| `--expires-days N` | `90` | 预填到表单的过期天数 (1–365)；浏览器可改 |
+| `--token-name NAME` | `qatlas-cli-<host>-<YYYY-MM-DD>` | 预填到表单的 token 名；浏览器可改 |
+| `--timeout SEC` | `600` | CLI 等浏览器 approve 的秒数 |
 | `--insecure` | off | 信任自签证书（IP 入口 / 阿里云边缘 `https://47.102.36.175`）|
-| `-t` / `--token VALUE` | — | CI 旁路：跳过 OAuth，直接把这个 PAT 存进 hosts.yml |
-| `--with-token` | off | CI 旁路：从 stdin 读 PAT（`cat token | qatlas auth login -H ... --with-token`）|
+| `--with-token` | off | CI 旁路：从 stdin 读 PAT（`cat token \| qatlas auth login -s ... --with-token`），跳过 OAuth 直接存进 hosts.yml；secret 不进 argv / shell history。跟 `gh auth login --with-token` 同款设计——故意不暴露 argv 形式 |
 
-headless 自动判定优先级：`--device` / `--no-browser` > `QATLAS_AUTH_NO_BROWSER=1` env > `SSH_TTY` / `SSH_CONNECTION` > Linux 无 `DISPLAY` / `WAYLAND_DISPLAY`，任一命中走 device flow。loopback 自身 bind 失败也会自动降级 device。
+注意：所有非 CI 旁路的 flag 都只是**预填**，最终 token 的 name / scopes / expiry 以浏览器里点 Approve 时表单上的值为准——这设计就是为了让用户不必每次都精确记得自己想要哪几条 scope，先 `qatlas auth login` 跑起来再在浏览器里挑。
+
+> v0.19.0 删了 `qatlas config set token` 路径——config.yaml 的 `token:` 字段会静默盖 hosts.yml 里所有 per-host token，是 footgun。所有 PAT 现在都通过 `qatlas auth login`（OAuth）或 `qatlas auth login --with-token`（CI stdin）走 hosts.yml。
 
 文件 layout 是 YAML，0600 权限，详见 [管理凭据](../guides/manage-credentials.md)。
 
@@ -333,13 +410,12 @@ LLM 辅助从 paper markdown 抽取算法描述。需要 `OPENAI_API_KEY` / `ANT
 
 ## 环境变量影响
 
+> v0.17.0+：**client 端不读任何 OS env**。所有 client 配置必须经 `~/.config/qatlas/config.yaml` 或 `~/.config/qatlas/hosts.yml` 持久化。
+
 | 变量 | 谁读 | 作用 |
 |---|---|---|
-| `QATLAS_SERVER_URL` | 所有调 server 的命令 | 默认 server URL |
-| `QATLAS_TOKEN` | 同上 | 默认 bearer token |
-| `QATLAS_INSECURE` | 同上 | 默认跳过 TLS 校验 |
-| `QATLAS_WIKI_DIR` | `wiki` 子命令 | 本地 Wiki git checkout 路径 |
-| `MINERU_API_TOKENS` 等 `MINERU_*` | `mineru` 命令 | 本地 MinerU 调用配置（CSV 多 token 池）|
-| `XDG_CONFIG_HOME` | `auth` 命令 | hosts.yml 父目录 |
+| `XDG_CONFIG_HOME` | 所有 `qatlas` 命令 | config.yaml + hosts.yml 父目录（默认 `~/.config`）|
+| `XDG_DATA_HOME` | 服务端 qatlasd | 默认 raw/data/pb_data 父目录 |
+| `QATLAS_*` env | **server 端 qatlasd**，参见 [qatlasd CLI](cli-qatlasd.md) + [env vars](env-vars.md) | client 不读 |
 
 完整列表：[环境变量参考](env-vars.md)。

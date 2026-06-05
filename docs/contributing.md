@@ -356,7 +356,7 @@ catalog 里却永远有几千篇 PDF 在 `/api/papers/needs-mineru` 队列里等
 
 ```bash
 # 1. PAT —— 浏览器登录 quantum-atlas.ai 后访问 /pat，勾 papers:write
-qatlas auth login -H quantum-atlas.ai
+qatlas auth login -s quantum-atlas.ai
 
 # 2. MinerU JWT —— mineru.net 注册 → API 管理后台复制（eyJ... 开头）
 #    无 value 触发隐藏粘贴框，JWT 不进 shell history / ps aux。

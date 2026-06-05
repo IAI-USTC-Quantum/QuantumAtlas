@@ -399,13 +399,23 @@ func oauthDeviceTokenHandler(app core.App) func(re *core.RequestEvent) error {
 // oauthDeviceLookupResponse is what /<lang>/device renders to show
 // the user what they're approving. Plaintext device code is never
 // returned (we don't even have it on disk).
+//
+// `Scopes`, `Name` and `ExpiresInDays` are the CLI-seeded defaults
+// (echoed back so the SPA can pre-fill the form). `AvailableScopes` +
+// `ScopeDescriptions` carry the full vocabulary the user is allowed
+// to choose from — the SPA renders a checkbox per entry. The user
+// can edit name / scopes / expiry in the browser and the eventual
+// /approve POST sends back the edited values to override the row.
 type oauthDeviceLookupResponse struct {
-	UserCode      string   `json:"user_code"`
-	Name          string   `json:"name"`
-	Description   string   `json:"description,omitempty"`
-	Scopes        []string `json:"scopes"`
-	ExpiresInDays int      `json:"expires_in_days"`
-	Status        string   `json:"status"`
+	UserCode          string            `json:"user_code"`
+	Name              string            `json:"name"`
+	Description       string            `json:"description,omitempty"`
+	Scopes            []string          `json:"scopes"`
+	ExpiresInDays     int               `json:"expires_in_days"`
+	Status            string            `json:"status"`
+	AvailableScopes   []string          `json:"available_scopes"`
+	ScopeDescriptions map[string]string `json:"scope_descriptions"`
+	MaxExpiryDays     int               `json:"max_expiry_days"`
 }
 
 func oauthDeviceLookupHandler(app core.App) func(re *core.RequestEvent) error {
@@ -440,18 +450,41 @@ func oauthDeviceLookupHandler(app core.App) func(re *core.RequestEvent) error {
 			scopes = []string{}
 		}
 		return re.JSON(http.StatusOK, oauthDeviceLookupResponse{
-			UserCode:      canonical,
-			Name:          rec.GetString("name"),
-			Description:   rec.GetString("description"),
-			Scopes:        scopes,
-			ExpiresInDays: rec.GetInt("expires_in_days"),
-			Status:        status,
+			UserCode:          canonical,
+			Name:              rec.GetString("name"),
+			Description:       rec.GetString("description"),
+			Scopes:            scopes,
+			ExpiresInDays:     rec.GetInt("expires_in_days"),
+			Status:            status,
+			AvailableScopes:   append([]string(nil), pat.AllScopes...),
+			ScopeDescriptions: copyScopeDescriptions(),
+			MaxExpiryDays:     MaxPATExpiryDays,
 		})
 	}
 }
 
-type oauthDeviceUserCodeBody struct {
-	UserCode string `json:"user_code"`
+// copyScopeDescriptions returns a defensive copy of pat.ScopeDescription
+// so callers cannot mutate the package-level map by accident.
+func copyScopeDescriptions() map[string]string {
+	out := make(map[string]string, len(pat.ScopeDescription))
+	for k, v := range pat.ScopeDescription {
+		out[k] = v
+	}
+	return out
+}
+
+// oauthDeviceApproveRequest accepts an optional override block so the
+// browser-side user can edit the CLI-seeded name / scopes / expiry on
+// the /<lang>/device approval form before clicking Approve. Any
+// non-nil pointer here replaces the corresponding column on the
+// device-code row inside the same conditional UPDATE that flips
+// status pending→approved (i.e. you cannot edit a row that has
+// already been approved by someone else).
+type oauthDeviceApproveRequest struct {
+	UserCode      string    `json:"user_code"`
+	Name          *string   `json:"name,omitempty"`
+	Scopes        *[]string `json:"scopes,omitempty"`
+	ExpiresInDays *int      `json:"expires_in_days,omitempty"`
 }
 
 func oauthDeviceApproveHandler(app core.App) func(re *core.RequestEvent) error {
@@ -460,9 +493,60 @@ func oauthDeviceApproveHandler(app core.App) func(re *core.RequestEvent) error {
 		if user == nil {
 			return re.JSON(http.StatusUnauthorized, map[string]string{"detail": "missing auth"})
 		}
-		canonical, err := oauthDeviceReadUserCodeBody(re)
+		raw, err := io.ReadAll(io.LimitReader(re.Request.Body, 4<<10))
 		if err != nil {
-			return re.JSON(http.StatusBadRequest, map[string]string{"detail": err.Error()})
+			return re.JSON(http.StatusBadRequest, map[string]string{"detail": "read body: " + err.Error()})
+		}
+		var body oauthDeviceApproveRequest
+		if err := json.Unmarshal(raw, &body); err != nil {
+			return re.JSON(http.StatusBadRequest, map[string]string{"detail": "parse body: " + err.Error()})
+		}
+		canonical, err := oauthdevice.NormalizeUserCode(body.UserCode)
+		if err != nil {
+			return re.JSON(http.StatusBadRequest, map[string]string{"detail": "invalid user_code"})
+		}
+
+		// Validate any present overrides BEFORE we touch the DB. This
+		// keeps the conditional UPDATE simple — by the time we run
+		// it, every field we're about to set is already vetted.
+		var (
+			newName      *string
+			newScopesStr *string
+			newDays      *int
+		)
+		if body.Name != nil {
+			trimmed := strings.TrimSpace(*body.Name)
+			if trimmed == "" {
+				return re.JSON(http.StatusBadRequest, map[string]string{"detail": "name cannot be empty"})
+			}
+			if len(trimmed) > 80 {
+				return re.JSON(http.StatusBadRequest, map[string]string{"detail": "name max length is 80"})
+			}
+			newName = &trimmed
+		}
+		if body.Scopes != nil {
+			scopes := *body.Scopes
+			if err := pat.ValidateScopes(scopes); err != nil {
+				return re.JSON(http.StatusBadRequest, map[string]string{"detail": err.Error()})
+			}
+			if scopes == nil {
+				scopes = []string{}
+			}
+			encoded, _ := json.Marshal(scopes)
+			s := string(encoded)
+			newScopesStr = &s
+		}
+		if body.ExpiresInDays != nil {
+			d := *body.ExpiresInDays
+			if d <= 0 {
+				return re.JSON(http.StatusBadRequest, map[string]string{"detail": "expires_in_days must be > 0"})
+			}
+			if d > MaxPATExpiryDays {
+				return re.JSON(http.StatusBadRequest, map[string]string{
+					"detail": "expires_in_days exceeds maximum of " + itoa(MaxPATExpiryDays),
+				})
+			}
+			newDays = &d
 		}
 
 		rec, err := app.FindFirstRecordByFilter(
@@ -481,22 +565,40 @@ func oauthDeviceApproveHandler(app core.App) func(re *core.RequestEvent) error {
 			return re.JSON(http.StatusGone, map[string]string{"detail": "device code expired"})
 		}
 
-		// Atomic conditional UPDATE: only succeed if status is
-		// currently pending. This closes the TOCTOU window between
-		// the find above and the update below — concurrent approves
-		// or a denial that lands first will result in zero rows
-		// affected and a 409 conflict.
-		result, err := app.DB().NewQuery(
-			"UPDATE " + oauthdevice.CollectionName +
-				" SET status = {:to}, approved_user = {:u}, approved_at = {:t}" +
-				" WHERE id = {:id} AND status = {:from}",
-		).Bind(dbx.Params{
+		// Single atomic conditional UPDATE: flip status pending →
+		// approved AND apply any name/scopes/expires overrides in
+		// the same row write. The WHERE status='pending' guard
+		// closes the TOCTOU window — concurrent approves or a
+		// denial that lands first result in zero rows affected and
+		// a 409 conflict.
+		setClauses := []string{
+			"status = {:to}",
+			"approved_user = {:u}",
+			"approved_at = {:t}",
+		}
+		params := dbx.Params{
 			"to":   oauthdevice.StatusApproved,
 			"from": oauthdevice.StatusPending,
 			"u":    user.Id,
 			"t":    now,
 			"id":   rec.Id,
-		}).Execute()
+		}
+		if newName != nil {
+			setClauses = append(setClauses, "name = {:name}")
+			params["name"] = *newName
+		}
+		if newScopesStr != nil {
+			setClauses = append(setClauses, "scopes = {:scopes}")
+			params["scopes"] = *newScopesStr
+		}
+		if newDays != nil {
+			setClauses = append(setClauses, "expires_in_days = {:days}")
+			params["days"] = *newDays
+		}
+		sql := "UPDATE " + oauthdevice.CollectionName +
+			" SET " + strings.Join(setClauses, ", ") +
+			" WHERE id = {:id} AND status = {:from}"
+		result, err := app.DB().NewQuery(sql).Bind(params).Execute()
 		if err != nil {
 			slog.Error("oauthdevice: approve update failed", "id", rec.Id, "error", err)
 			return re.JSON(http.StatusInternalServerError, map[string]string{"detail": "internal server error"})
@@ -505,15 +607,40 @@ func oauthDeviceApproveHandler(app core.App) func(re *core.RequestEvent) error {
 		if affected == 0 {
 			return re.JSON(http.StatusConflict, map[string]string{"detail": "device code is not pending"})
 		}
+
+		// Re-read so the response reflects the final persisted
+		// values (in particular, the scopes / name / expiry that
+		// will be minted on the next /token poll).
+		finalName := rec.GetString("name")
+		if newName != nil {
+			finalName = *newName
+		}
+		finalScopes := decodeScopesField(rec.GetString("scopes"))
+		if newScopesStr != nil {
+			_ = json.Unmarshal([]byte(*newScopesStr), &finalScopes)
+		}
+		if finalScopes == nil {
+			finalScopes = []string{}
+		}
+		finalDays := rec.GetInt("expires_in_days")
+		if newDays != nil {
+			finalDays = *newDays
+		}
+
 		return re.JSON(http.StatusOK, map[string]any{
-			"ok":             true,
-			"status":         oauthdevice.StatusApproved,
-			"user_code":      canonical,
-			"name":           rec.GetString("name"),
-			"scopes":         decodeScopesNonNil(rec.GetString("scopes")),
-			"expires_in_days": rec.GetInt("expires_in_days"),
+			"ok":              true,
+			"status":          oauthdevice.StatusApproved,
+			"user_code":       canonical,
+			"name":            finalName,
+			"scopes":          finalScopes,
+			"expires_in_days": finalDays,
 		})
 	}
+}
+
+// oauthDeviceUserCodeBody parses {"user_code": "..."} for /deny.
+type oauthDeviceUserCodeBody struct {
+	UserCode string `json:"user_code"`
 }
 
 func oauthDeviceDenyHandler(app core.App) func(re *core.RequestEvent) error {
@@ -627,14 +754,6 @@ func oauthDeviceCanonicalOrigin(re *core.RequestEvent) string {
 		host = re.Request.Host
 	}
 	return proto + "://" + host
-}
-
-func decodeScopesNonNil(raw string) []string {
-	out := decodeScopesField(raw)
-	if out == nil {
-		return []string{}
-	}
-	return out
 }
 
 // errRaceLost is a sentinel passed out of the mint transaction when

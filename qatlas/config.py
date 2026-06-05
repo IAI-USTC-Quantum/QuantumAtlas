@@ -136,7 +136,6 @@ class ServerConfig(BaseSettings):
 
     # ── Server endpoint + auth ────────────────────────────────────
     server_url: Optional[str] = Field(default=None)
-    token: Optional[str] = Field(default=None)
     insecure: bool = Field(default=False)
     user_header: Optional[str] = Field(default=None)
 
@@ -198,13 +197,13 @@ class ServerConfig(BaseSettings):
             return value.strip().lower() in {"1", "true", "yes", "on", "y", "t"}
         return value
 
-    @field_validator("server_url", "token", "user_header",
+    @field_validator("server_url", "user_header",
                      "openai_api_key", "anthropic_api_key", mode="before")
     @classmethod
     def _empty_string_to_none(cls, value: Any) -> Any:
         """Treat an empty YAML string as "unset" so unconfigured fields
         are uniformly ``None`` rather than ``""`` (the latter breaks
-        ``if cfg.token:`` checks).
+        ``if cfg.user_header:`` checks).
         """
         if value == "":
             return None

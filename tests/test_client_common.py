@@ -46,72 +46,66 @@ def _ns(**overrides):
     return argparse.Namespace(**base)
 
 
-def _seed_config(server_url=None, token=None, insecure=None):
+def _seed_config(server_url=None, insecure=None):
     """Write a config.yaml under the isolated XDG dir."""
     from qatlas.paths import user_config_yaml_path
 
     data = {}
     if server_url is not None:
         data["server_url"] = server_url
-    if token is not None:
-        data["token"] = token
     if insecure is not None:
         data["insecure"] = insecure
     config_yaml.write_yaml_atomic(user_config_yaml_path(), data)
 
 
-def test_resolve_token_from_yaml():
-    _seed_config(token="qat_from_yaml_token")
-    assert _common.resolve_token(_ns()) == "qat_from_yaml_token"
+def _seed_hosts_yml(host: str, token: str) -> None:
+    """Drop a per-host PAT into the isolated XDG dir's hosts.yml.
+
+    v0.19.0 removed the config.yaml ``token:`` field — hosts.yml is
+    now the only place we read bearer credentials from. Tests that
+    used to seed config.yaml.token now have to go through this.
+    """
+    from qatlas.client import auth
+
+    store = auth._load_store()
+    store.setdefault("hosts", {})[host] = {
+        "token": token,
+        "added_at": "2026-05-28T00:00:00Z",
+    }
+    auth._save_store(store)
 
 
-def test_resolve_token_yaml_trims_whitespace():
-    _seed_config(token="  padded  ")
-    assert _common.resolve_token(_ns()) == "padded"
+def test_resolve_token_from_hosts_yml():
+    _seed_config(server_url="https://quantum-atlas.ai")
+    _seed_hosts_yml("quantum-atlas.ai", "qat_from_hosts_yml")
+    assert _common.resolve_token(_ns()) == "qat_from_hosts_yml"
 
 
-def test_resolve_token_empty_when_yaml_unset():
-    # Fresh isolated XDG, no config.yaml. Should return "" (no
-    # Authorization), not crash, not look at env.
+def test_resolve_token_empty_when_unconfigured():
+    # Fresh isolated XDG, no config.yaml, no hosts.yml. Should
+    # return "" (no Authorization), not crash, not look at env.
     assert _common.resolve_token(_ns()) == ""
 
 
-def test_resolve_token_per_host_store_fallback():
-    """When config.yaml has no token:, fall through to hosts.yml.
+def test_resolve_token_empty_when_host_not_in_hosts_yml():
+    """server_url points somewhere we haven't logged into → no token,
+    not an error. The eventual HTTP request will get a 401 from the
+    server if it needs auth.
+    """
+    _seed_config(server_url="https://other.example.com")
+    _seed_hosts_yml("quantum-atlas.ai", "qat_OnlyForAnotherHost")
+    assert _common.resolve_token(_ns()) == ""
 
-    Mirrors gh CLI precedence: explicit config > stored credentials
-    > anonymous. Used for users who prefer `qatlas auth login`
-    over editing the yaml directly.
+
+def test_resolve_token_normalises_url_to_host_key():
+    """server_url accepts URL form (scheme + port); hosts.yml stores
+    hostname. resolve_token must normalize before lookup so a user who
+    set `server_url: https://quantum-atlas.ai:4200` still finds the
+    PAT they stored via `qatlas auth login -s quantum-atlas.ai:4200`.
     """
     _seed_config(server_url="https://quantum-atlas.ai")
-    from qatlas.client import auth
-
-    store = auth._load_store()
-    store.setdefault("hosts", {})["quantum-atlas.ai"] = {
-        "token": "qat_StoredAbCdEfGhIjKl",
-        "added_at": "2026-05-28T00:00:00Z",
-    }
-    auth._save_store(store)
-
-    assert _common.resolve_token(_ns()) == "qat_StoredAbCdEfGhIjKl"
-
-
-def test_resolve_token_yaml_beats_store():
-    """If both yaml and store have a value, yaml wins. Users editing
-    the canonical config file expect it to take precedence over a
-    stored auth-login token they may have forgotten about."""
-    _seed_config(server_url="https://quantum-atlas.ai", token="qat_yaml_wins")
-
-    from qatlas.client import auth
-
-    store = auth._load_store()
-    store.setdefault("hosts", {})["quantum-atlas.ai"] = {
-        "token": "qat_StoredShouldLose",
-        "added_at": "2026-05-28T00:00:00Z",
-    }
-    auth._save_store(store)
-
-    assert _common.resolve_token(_ns()) == "qat_yaml_wins"
+    _seed_hosts_yml("quantum-atlas.ai", "qat_NormalisedOK")
+    assert _common.resolve_token(_ns()) == "qat_NormalisedOK"
 
 
 def test_auth_headers_no_token():
@@ -121,7 +115,8 @@ def test_auth_headers_no_token():
 
 
 def test_auth_headers_bearer_format():
-    _seed_config(token="abc123")
+    _seed_config(server_url="https://quantum-atlas.ai")
+    _seed_hosts_yml("quantum-atlas.ai", "abc123")
     assert _common.auth_headers(_ns()) == {"Authorization": "Bearer abc123"}
 
 

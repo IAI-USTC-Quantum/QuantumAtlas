@@ -62,9 +62,9 @@ cfg.WikiDir = expandPath(defaultIfEmpty(cfg.WikiDir, defaultWikiDir()), anchor)
 `internal/config/config.go` 用 3 个 helper 读 env，**不引入 viper / envconfig 等第三方 config 库**：
 
 ```go
-firstEnv("QATLAS_SERVER_URL", "PUBLIC_BASE_URL")    // 返回第一个非空，否则 ""
-firstEnvDefault("4200", "QATLAS_SERVER_PORT", ...)  // 同上但带 fallback
-firstEnvIntDefault(0, "SOME_INT_VAR")               // 同上但 int
+firstEnv("QATLAS_PUBLIC_URL")                        // 返回第一个非空，否则 ""
+firstEnvDefault("4200", "QATLAS_SERVER_PORT", ...)   // 同上但带 fallback
+firstEnvIntDefault(0, "SOME_INT_VAR")                // 同上但 int
 ```
 
 支持**多 alias**（老名字保留为后备，新代码用第一个）。
@@ -101,7 +101,7 @@ firstEnvIntDefault(0, "SOME_INT_VAR")               // 同上但 int
 
 | Env | 默认 | 用途 |
 |---|---|---|
-| `QATLAS_SERVER_URL` (alias `PUBLIC_BASE_URL`) | — | server 自报的对外 URL；当前主要用于生成 share URL（v0.9.0 share 端点删除后已基本无用，保留作为客户端反查参考） |
+| `QATLAS_PUBLIC_URL` | — | server 自报的对外 canonical URL（scheme+host[+port]，反代场景下用户看到的形式）。**必填**——用于构造 OAuth 回调、share 链接等需要绝对 URL 的地方。v0.19.0 改名（旧名 `QATLAS_SERVER_URL` / `PUBLIC_BASE_URL` 在服务端不再读，启动时也不再做 deprecation warn——直接 silently ignore）；改名是为了准确反映"我对外公布的 URL"语义。Client 完全不读 env，跟这一项无关。 |
 
 ### 2.4 S3 / RustFS 后端（**all-or-nothing 6 字段**）
 
@@ -154,7 +154,8 @@ firstEnvIntDefault(0, "SOME_INT_VAR")               // 同上但 int
 | `QATLAS_REQUIRE_RELEASE_TAG` | 已删；旧 FastAPI 的 release-tag 启动护栏 |
 | `CLI_TOKEN_*` | 已删；更早的 token 字段族 |
 | `QATLAS_SERVER_DEBUG` | 从未被读过的幽灵字段；v0.16.0 从 `.env.example` 清理 |
-| 无 `QATLAS_` 前缀的 alias（`WIKI_DIR` / `RAW_DIR` / `DATA_DIR` / `PB_DATA_DIR` / `SERVER_HOST` / `SERVER_PORT` / `PUBLIC_BASE_URL` / `USER_HEADER`） | **v0.17.0 移除**——v0.16.0 起 `Load()` 按字段 emit `slog.Warn`（journald 可见），给运维一个 minor 的迁移窗口 |
+| 无 `QATLAS_` 前缀的 alias（`WIKI_DIR` / `RAW_DIR` / `DATA_DIR` / `PB_DATA_DIR` / `SERVER_HOST` / `SERVER_PORT` / `USER_HEADER`） | **v0.17.0 移除**——v0.16.0 起 `Load()` 按字段 emit `slog.Warn`（journald 可见），给运维一个 minor 的迁移窗口 |
+| `QATLAS_SERVER_URL` / `PUBLIC_BASE_URL`（服务端历史名）| **v0.19.0 改名为 `QATLAS_PUBLIC_URL`**——服务端不再读旧名。Client 完全不读 env（v0.17.0 起），跟这一项无关 |
 
 > `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` 仍然有效，但只用于 client 侧 `qatlas extractor` 实验性子命令；qatlasd server 从未读过它们，所以不在 server 启动 env 范围里。
 
@@ -179,7 +180,7 @@ qatlasd serve --help    # 看完整列表
 ```
 
 ```
---server-url string             [env: QATLAS_SERVER_URL=]
+--public-url string             [env: QATLAS_PUBLIC_URL=]
 --user-header string            [env: QATLAS_USER_HEADER=]
 --edge-name string              [env: QATLAS_EDGE_NAME=]
 --force-tcp4                    [env: QATLAS_FORCE_TCP4=]
@@ -527,7 +528,7 @@ qatlasd config show
 # NEO4J_PASSWORD=***
 # QATLAS_S3_ENDPOINT=https://rustfs.example.com
 # QATLAS_S3_SECRET_ACCESS_KEY=***
-# QATLAS_SERVER_URL=https://atlas.example.com
+# QATLAS_PUBLIC_URL=https://atlas.example.com
 ```
 
 **默认脱敏**：name 含 `TOKEN` / `SECRET` / `KEY` / `PASSWORD`（大小写不敏感）的 value 替成 `***`。要看明文（debug 用，仅在私有终端）：

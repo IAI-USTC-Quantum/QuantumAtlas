@@ -409,6 +409,144 @@ func TestAPI_OAuthDevice_ApproveAtomic(t *testing.T) {
 	}
 }
 
+// TestAPI_OAuthDevice_LookupSurfacesScopeVocabulary verifies that GET
+// /api/oauth/device/code includes available_scopes, scope_descriptions
+// and max_expiry_days so the SPA can render a scope picker without
+// hitting a separate endpoint.
+func TestAPI_OAuthDevice_LookupSurfacesScopeVocabulary(t *testing.T) {
+	h := newDeviceHarness(t)
+	dc := h.startFlow("vocab", []string{"papers:write"}, 7)
+	uc := h.userCodeForDevice(dc)
+
+	status, _, body := h.do(http.MethodGet, "/api/oauth/device/code?user_code="+uc,
+		"", rawHeader(h.sessionToken()))
+	if status != http.StatusOK {
+		t.Fatalf("lookup status=%d body=%v", status, body)
+	}
+
+	avail, _ := body["available_scopes"].([]any)
+	if len(avail) == 0 {
+		t.Fatalf("available_scopes missing/empty: %v", body)
+	}
+	have := map[string]bool{}
+	for _, v := range avail {
+		have[asString(v)] = true
+	}
+	for _, want := range pat.AllScopes {
+		if !have[want] {
+			t.Errorf("available_scopes missing %q (got %v)", want, avail)
+		}
+	}
+
+	desc, _ := body["scope_descriptions"].(map[string]any)
+	if asString(desc["papers:write"]) == "" {
+		t.Errorf("scope_descriptions missing papers:write copy: %v", desc)
+	}
+
+	if asInt(body["max_expiry_days"]) != MaxPATExpiryDays {
+		t.Errorf("max_expiry_days=%v want %d", body["max_expiry_days"], MaxPATExpiryDays)
+	}
+
+	// And the CLI-seeded defaults are still echoed back.
+	scopes, _ := body["scopes"].([]any)
+	if len(scopes) != 1 || asString(scopes[0]) != "papers:write" {
+		t.Errorf("default scopes echo=%v want [papers:write]", scopes)
+	}
+}
+
+// TestAPI_OAuthDevice_ApproveAppliesOverrides verifies that the user
+// can edit name / scopes / expires_in_days on the approve form and the
+// /token mint downstream uses the edited values rather than what the
+// CLI seeded.
+func TestAPI_OAuthDevice_ApproveAppliesOverrides(t *testing.T) {
+	h := newDeviceHarness(t)
+	dc := h.startFlow("seed-name", []string{"papers:write"}, 7)
+	uc := h.userCodeForDevice(dc)
+	tok := h.sessionToken()
+
+	overrideBody := `{
+		"user_code":"` + uc + `",
+		"name":"edited-name",
+		"scopes":["wiki:read","papers:read"],
+		"expires_in_days":30
+	}`
+	status, _, body := h.do(http.MethodPost, "/api/oauth/device/approve",
+		overrideBody, rawHeader(tok))
+	if status != http.StatusOK {
+		t.Fatalf("approve status=%d body=%v", status, body)
+	}
+	if asString(body["name"]) != "edited-name" {
+		t.Errorf("approve response name=%q want edited-name", body["name"])
+	}
+	if asInt(body["expires_in_days"]) != 30 {
+		t.Errorf("approve response expires_in_days=%v want 30", body["expires_in_days"])
+	}
+	gotScopes, _ := body["scopes"].([]any)
+	if len(gotScopes) != 2 {
+		t.Fatalf("approve response scopes=%v want 2 entries", gotScopes)
+	}
+	have := map[string]bool{
+		asString(gotScopes[0]): true,
+		asString(gotScopes[1]): true,
+	}
+	if !have["wiki:read"] || !have["papers:read"] {
+		t.Errorf("approve response scopes=%v want [wiki:read papers:read]", gotScopes)
+	}
+
+	// Mint the PAT and confirm it carries the edited values.
+	h.clearPollWindow(dc)
+	tokStatus, _, tokBody := h.do(http.MethodPost, "/api/oauth/device/token",
+		`{"device_code":"`+dc+`"}`, nil)
+	if tokStatus != http.StatusOK {
+		t.Fatalf("token status=%d body=%v", tokStatus, tokBody)
+	}
+	if asString(tokBody["name"]) != "edited-name" {
+		t.Errorf("minted name=%q want edited-name", tokBody["name"])
+	}
+	mintedScopes, _ := tokBody["scopes"].([]any)
+	if len(mintedScopes) != 2 {
+		t.Fatalf("minted scopes=%v want 2 entries", mintedScopes)
+	}
+}
+
+// TestAPI_OAuthDevice_ApproveRejectsBadOverrides verifies that an
+// unknown scope on the approve POST is rejected with 400 (not 500)
+// and the row stays pending so the user can re-submit.
+func TestAPI_OAuthDevice_ApproveRejectsBadOverrides(t *testing.T) {
+	h := newDeviceHarness(t)
+	dc := h.startFlow("bad-override", []string{"papers:write"}, 7)
+	uc := h.userCodeForDevice(dc)
+	tok := h.sessionToken()
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"unknown scope", `{"user_code":"` + uc + `","scopes":["bogus:scope"]}`},
+		{"empty name", `{"user_code":"` + uc + `","name":"   "}`},
+		{"too-long name", `{"user_code":"` + uc + `","name":"` + strings.Repeat("x", 81) + `"}`},
+		{"non-positive expiry", `{"user_code":"` + uc + `","expires_in_days":0}`},
+		{"over-max expiry", `{"user_code":"` + uc + `","expires_in_days":1000}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			status, _, body := h.do(http.MethodPost, "/api/oauth/device/approve",
+				tc.body, rawHeader(tok))
+			if status != http.StatusBadRequest {
+				t.Fatalf("status=%d body=%v want 400", status, body)
+			}
+		})
+	}
+
+	// Row is still pending → a clean approve still works after the
+	// rejected attempts.
+	final, _, finalBody := h.do(http.MethodPost, "/api/oauth/device/approve",
+		`{"user_code":"`+uc+`"}`, rawHeader(tok))
+	if final != http.StatusOK {
+		t.Fatalf("clean approve status=%d body=%v", final, finalBody)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Test helpers private to this file
 // ---------------------------------------------------------------------------

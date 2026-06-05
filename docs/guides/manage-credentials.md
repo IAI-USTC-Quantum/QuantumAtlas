@@ -16,29 +16,38 @@ QuantumAtlas 用 **PocketBase session token (JWT)** 和 **Personal Access Token 
 
 ## 创建 PAT { #mint-pat }
 
-=== "CLI（推荐 — 不用手动复制粘贴）"
+=== "CLI（推荐）"
 
-    自 v0.18 起 `qatlas auth login` 走完整 OAuth 流程，不再让你手粘 token：
+    自 v0.18 起 `qatlas auth login` 走标准 OAuth Device-Code 流程，本机 / SSH 远端体验一致，不用手粘 token：
 
     ```bash
-    qatlas auth login -H quantum-atlas.ai
-    # 1) CLI 开 127.0.0.1:<auto> 临时 HTTP 服务监听
-    # 2) 自动打开浏览器到 https://<host>/pat?cli_callback=...&cli_state=...
-    # 3) 浏览器侧若没登录会先走 GitHub OAuth；登录后弹"qatlas CLI 在
-    #    本机请求一个 PAT"对话框，scopes / 过期天数 / token 名都已
-    #    根据 CLI 传过来的参数预填，点 Approve
-    # 4) SPA 调 /api/pat 拿到明文，再以 form POST 把 {state, token,
-    #    name, prefix, scopes, expires_at} 提交回 CLI 的 127.0.0.1:<port>
-    # 5) CLI 常数时间比对 state，把 token 写进 hosts.yml，结束
+    qatlas auth login -s quantum-atlas.ai
+    # 1) CLI 调 POST /api/oauth/device/code 拿一个 8 位 user_code +
+    #    带 user_code 的深链 https://<host>/<lang>/device?user_code=WDJB-MJHT
+    # 2) CLI 自动打开本机浏览器到那个深链（SSH / headless 用 --no-browser
+    #    就只打印 URL，让你自己复制到任意有浏览器的设备）
+    # 3) 浏览器侧若没登录会先走 GitHub OAuth；登录后看到 Authorize 表单，
+    #    可以在浏览器里编辑 scope（默认全勾）/ 名称 / 过期天数，点 Approve
+    # 4) CLI 每 5s 轮询 POST /api/oauth/device/token，approve 后立刻拿到
+    #    明文 PAT 写进 hosts.yml，结束
     ```
 
     打印示例：
 
     ```text
+    Logging into quantum-atlas.ai via https://quantum-atlas.ai.
+
+    To finish logging in, open this URL in a browser:
+      https://quantum-atlas.ai/device
+    and enter the code:  WDJB-MJHT
+    (or open the deep link: https://quantum-atlas.ai/device?user_code=WDJB-MJHT)
+
+    Waiting for approval (up to 600s, polling every 5s)…
+
     ✓ Logged in to quantum-atlas.ai
       Token:   qat_abcd********
       Name:    qatlas-cli-laptop-2026-06-03
-      Scopes:  papers:write
+      Scopes:  wiki:read, papers:read, papers:write, graph:read, wiki:write
       Expires: 2026-09-01
     ```
 
@@ -46,21 +55,22 @@ QuantumAtlas 用 **PocketBase session token (JWT)** 和 **Personal Access Token 
 
     | Flag | 默认 | 作用 |
     |---|---|---|
-    | `--device` / `--no-browser` | 关 | 强制走 device-code 流程（headless / SSH 远端用） |
-    | `--scopes papers:write,wiki:read` | 空 | 预填 scope；浏览器仍可改 |
-    | `--expires-days N` | `90` | 预填过期天数 (1–365) |
-    | `--token-name NAME` | `qatlas-cli-<host>-<YYYY-MM-DD>` | 预填 token 名 |
-    | `--port N` | `0`（auto） | 钉死本地回调端口（loopback 用） |
-    | `--timeout N` | `300`（loopback）/ `600`（device） | 等浏览器多久 |
+    | `--no-browser` | 关 | 不调 `webbrowser.open`，只打印 URL；headless / SSH 远端用 |
+    | `--scopes a,b,c` | 空 | **预填**到浏览器表单的 scope 列表；空 = 默认全勾，用户可自行取消 |
+    | `--expires-days N` | `90` | 预填的过期天数 (1–365)；浏览器里可改 |
+    | `--token-name NAME` | `qatlas-cli-<host>-<YYYY-MM-DD>` | 预填的 token 名；浏览器里可改 |
+    | `--timeout SEC` | `600` | CLI 等浏览器 approve 的最大秒数 |
     | `--insecure` | 关 | 信任自签证书（如 Alibaba 边缘） |
-    | `--token VALUE` / `--with-token` | — | CI 路径，跳过 OAuth 直接存现成 PAT |
+    | `--with-token` | — | CI 旁路：从 stdin 读 PAT（`cat token \| qatlas auth login -s <host> --with-token`），跳过 OAuth 直接存进 hosts.yml；secret 不进 argv / shell history（跟 `gh auth login --with-token` 同款设计） |
 
-    headless 自动判定：`--device` / `--no-browser` / `QATLAS_AUTH_NO_BROWSER=1` / 有 `SSH_TTY` / Linux 无 `DISPLAY` 任一命中即走 device-code，其它情况默认 loopback；loopback 起不来（端口被占 / `webbrowser.open` 失败）自动降级到 device。
+    所有 CLI 参数都只是**预填**，最终 token 的 name / scopes / expires 以浏览器里点 Approve 时表单上的值为准——浏览器始终是 source of truth。
 
-=== "device-code 流程（headless / SSH 远端）"
+=== "device-code（SSH 远端 / 无 GUI 机器）"
+
+    跟默认流程是同一条命令，只是加 `--no-browser` 让 CLI 别试着开本机浏览器：
 
     ```bash
-    qatlas auth login --device -H quantum-atlas.ai
+    qatlas auth login --no-browser -H quantum-atlas.ai
     ```
 
     输出：
@@ -74,13 +84,13 @@ QuantumAtlas 用 **PocketBase session token (JWT)** 和 **Personal Access Token 
     Waiting for approval (up to 600s, polling every 5s)…
     ```
 
-    在**任何能开浏览器的设备**（手机、自己工位、隔壁同事的电脑都行）打开那个 URL，输入 8 位 user_code，按 Approve。CLI 这边轮询 `/api/oauth/device/token` 拿到 token 后自动写 hosts.yml。
+    在**任何能开浏览器的设备**（手机、自己工位、隔壁同事的电脑都行）打开那个深链，按 Approve。CLI 这边轮询 `/api/oauth/device/token` 拿到 token 后自动写 hosts.yml。
 
     用户 code 在 10 分钟内未 approve 会过期；过期了重跑命令即可。
 
-=== "浏览器（独立创建 / 给别的工具用）"
+=== "浏览器（自助创建 / 给别的工具用）"
 
-    跟 `qatlas auth login` 走的是同一个 `/pat` 页面，区别只是不带 CLI 参数：
+    跟 `qatlas auth login` 走的是同一个 `/pat` 页面，区别只是没人通过 CLI 起 device-code flow：
 
     1. 打开 `https://<server>/pat`
     2. 用 GitHub 登录（首次会问 OAuth 授权）
@@ -88,12 +98,11 @@ QuantumAtlas 用 **PocketBase session token (JWT)** 和 **Personal Access Token 
     4. 填：
         - **Name**：人类可读，例如 `ci-upload-2026`
         - **Expires in days**：1–365
-        - **Scopes**：勾上需要的 —— `papers:write` 给上传，`wiki:read` 给读 wiki，等等
+        - **Scopes**：自 v0.18 起默认全勾，取消不想要的即可
     5. 点 Create
     6. **立即复制以 `qat_` 开头的明文**（不会再显示）
 
-    !!! warning "scope 默认空"
-        什么都不勾的话这个 PAT 调任何写口都 403。**至少勾一个**。
+    需要写进 client hosts.yml 让 CLI 用？`echo qat_xxx | qatlas auth login -s <host> --with-token` 一条命令搞定。
 
 === "server CLI（运维 / 救急）"
 
@@ -118,8 +127,8 @@ QuantumAtlas 用 **PocketBase session token (JWT)** 和 **Personal Access Token 
     **支持多 host**：
 
     ```bash
-    qatlas auth login -H atlas.example.com
-    qatlas auth login -H atlas-edge2.example.com
+    qatlas auth login -s atlas.example.com
+    qatlas auth login -s atlas-edge2.example.com
     qatlas auth status
     # atlas.example.com
     #   ✓ Logged in (stored at ~/.config/qatlas/hosts.yml)
@@ -129,20 +138,9 @@ QuantumAtlas 用 **PocketBase session token (JWT)** 和 **Personal Access Token 
     #   ...
     ```
 
-=== "yaml 配置（一次配长用）"
-
-    把 token 写进 `~/.config/qatlas/config.yaml`（Linux 路径；mac / win 用 `qatlas config path` 查实际）：
-
-    ```bash
-    qatlas config set token qat_xxxxxx
-    qatlas upload pdf 2501.00010v1 --pdf paper.pdf
-    ```
-
-    yaml 优先级高于 hosts.yml；token 持久化（不会因换 shell 丢）。完整子命令见 [CLI reference `qatlas config`](../reference/cli-qatlas.md#qatlas-config)。
-
 === "CI / GitHub Actions"
 
-    repo Settings → Secrets → 加 `QATLAS_TOKEN` = PAT 明文，然后在 step 里用 `qatlas config set` 写进 yaml：
+    repo Settings → Secrets → 加 `QATLAS_TOKEN` = PAT 明文，然后在 step 里用 `qatlas auth login --with-token` 从 stdin 注入 hosts.yml：
 
     ```yaml title=".github/workflows/upload.yml"
     - name: Configure qatlas
@@ -151,30 +149,28 @@ QuantumAtlas 用 **PocketBase session token (JWT)** 和 **Personal Access Token 
       run: |
         uv tool install quantum-atlas
         qatlas config set server_url https://quantum-atlas.ai
-        echo "$QATLAS_TOKEN" | qatlas config set token   # 从 stdin 读，不进 history
+        echo "$QATLAS_TOKEN" | qatlas auth login -s quantum-atlas.ai --with-token   # 从 stdin 读，不进 history
 
     - name: Upload to QuantumAtlas
       run: |
         qatlas upload pdf 2501.00010v1 --pdf paper.pdf --overwrite
     ```
 
-    > v0.17.0 起 client 不再读 `QATLAS_TOKEN` 等 env，必须经 `qatlas config set` 中转。
+    > v0.17.0 起 client 不再读 `QATLAS_TOKEN` 等 env，**必须**经 `qatlas auth login --with-token` 中转到 hosts.yml。v0.19.0 还删了 `qatlas config set token` 路径（config.yaml `token:` 字段会静默盖 hosts.yml 里所有 per-host token，是 footgun）。
 
 ## token 解析优先级 { #precedence }
 
 ```mermaid
 flowchart TD
-    A[qatlas 命令] --> D{config.yaml token: 设了?}
-    D -->|有| H3[用 yaml token]
-    D -->|无| E{~/.config/qatlas/hosts.yml 有此 host?}
-    E -->|有| H4[用 stored token]
+    A[qatlas 命令] --> E{hosts.yml 有匹配 server_url 的条目?}
+    E -->|有| H4[用 hosts.yml 的 stored token]
     E -->|无| H5[匿名请求]
     H5 --> F{是写口?}
     F -->|是| R401[401 Unauthorized]
     F -->|否| OK[正常读]
 ```
 
-v0.17.0+：精简到两层（yaml > hosts.yml > 匿名）。不再支持 `--token` flag、`QATLAS_TOKEN` env。
+v0.19.0+：单层（hosts.yml > 匿名）。不再支持 `--token` flag / `QATLAS_TOKEN` env / config.yaml `token:` 字段。`server_url:` 字段（config.yaml）决定查 hosts.yml 时用哪个 host 当 key。
 
 ## 通用 client flag { #client-flags }
 
@@ -184,7 +180,7 @@ v0.17.0+：精简到两层（yaml > hosts.yml > 匿名）。不再支持 `--toke
 |---|---|---|
 | `--request-timeout 120.0` | 120s | 单 HTTP 请求超时（per-call ergonomic）|
 
-> v0.17.0 删了 `--base-url` / `--token` / `--insecure` — server URL / token / TLS 选项必须写进 `~/.config/qatlas/config.yaml`（`server_url:` / `token:` / `insecure:` 三个字段）。理由：client 是短命令多次调用，每次重复指 server 反而烦；YAML 单入口跟 `gh` / `kubectl` 主流认知一致。
+> v0.17.0 删了 `--base-url` / `--token` / `--insecure` — server URL / TLS 选项必须写进 `~/.config/qatlas/config.yaml`（`server_url:` / `insecure:` 两个字段）。理由：client 是短命令多次调用，每次重复指 server 反而烦；YAML 单入口跟 `gh` / `kubectl` 主流认知一致。token 走 hosts.yml + `qatlas auth login` 单独管理。
 
 ## 查 / 撤销 PAT
 
@@ -223,7 +219,7 @@ qatlas auth status
 
 # 跑 login —— 自动开浏览器走 OAuth + Approve，生成的新 PAT 直接覆盖
 # hosts.yml 里同 host 的旧条目；scope / 过期天数想改就在浏览器对话框里改
-qatlas auth login -H quantum-atlas.ai --scopes papers:write --expires-days 90
+qatlas auth login -s quantum-atlas.ai --scopes papers:write --expires-days 90
 
 # 验证新 PAT
 qatlas wiki list --limit 1   # 应该正常返回
@@ -263,7 +259,7 @@ mode 600，归你。可以手 edit（但用 `qatlas auth login/logout` 更不容
 ## 退出登录
 
 ```bash
-qatlas auth logout -H atlas.example.com
+qatlas auth logout -s atlas.example.com
 # 删 hosts.yml 中此 host 条目（不调 server，只是本地清理）
 ```
 

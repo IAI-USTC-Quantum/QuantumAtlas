@@ -25,14 +25,16 @@ qatlas config path
 # 设 server URL
 qatlas config set server_url https://quantum-atlas.ai
 
-# 设 PAT（写操作需要；浏览器登录 server 后到 /pat 创建）
-qatlas config set token qat_xxxxx
+# 设 PAT（写操作需要；建议跑 `qatlas auth login -s quantum-atlas.ai`
+# 走 OAuth device-code flow，浏览器 Approve 自动写 hosts.yml。
+# 已有明文的话从 stdin 注入：
+#   echo qat_xxxxx | qatlas auth login -s quantum-atlas.ai --with-token)
 
 # 远端是自签 HTTPS（开发环境 Caddy `tls internal`）时打开
 qatlas config set insecure true
 
 # 仅在使用 qatlas mineru 本地解析时需要
-qatlas config set mineru_api_token mn_xxxxx
+echo mn_xxxxx | qatlas config set mineru_api_token   # 从 stdin 读，不进 history
 # 其余 mineru_* 字段都有合理默认值，按需覆盖
 ```
 
@@ -177,6 +179,45 @@ qatlas mineru 2501.00010v1 --no-push
 
 也可以纯手工：用任意解析器在本地生成 MinerU-shape zip，再走 Path B 的 `qatlas upload mineru`（不涉及 claim 机制，但仍要求 PDF 先在 raw 里）。
 
+### Path D：直接读 PDF / Markdown（self-hosted PAPER_ACCESS 部署）
+
+只在部署方启用 `QATLAS_PAPER_ACCESS_ENABLED=true` 的 self-hosted 实例上可用
+（**公开 quantum-atlas.ai 默认不开**）。Agent / 客户端**不需要持有任何资产**，
+直接按 arxiv ID 或 DOI 拉服务器侧缓存：
+
+```bash
+# Markdown（缓存命中即 200 + text/markdown bytes）
+curl -i https://<server>/api/papers/quant-ph/9508027v2/markdown \
+     -H "Authorization: Bearer $QATLAS_TOKEN"
+
+# PDF（缓存命中即 200 + application/pdf bytes）
+curl -i https://<server>/api/papers/quant-ph/9508027v2/pdf \
+     -H "Authorization: Bearer $QATLAS_TOKEN"
+
+# DOI 入口（自动经 OpenAlex 反查 → canonical arxiv id）
+curl -i https://<server>/api/papers/10.1103/PhysRevLett.103.150502/markdown \
+     -H "Authorization: Bearer $QATLAS_TOKEN"
+```
+
+缓存未命中时这两类端点都走 **Long-Running Operation** 协议：
+
+1. 服务器立即返回 `202 Accepted` + `Operation-Location: …/status` + `Retry-After: 5`。
+2. 后台异步执行（PDF 不在 → silent fetch from arxiv.org → 写桶 → markdown 端点会
+   再串 MinerU convert → 写桶）。
+3. 客户端 poll 对应 `/markdown/status` 或 `/pdf/status`（side-effect-free，永远 200），
+   看 `state` / `pdf_ready` / `md_ready` / `phase` / `fetch.bytes_received` /
+   `convert.stage` 等字段做决策。
+4. `state == cached` 后再 GET 资源拿字节。
+
+N 个并发请求同一篇论文被 server-side 自动 dedupe 成 1 次 fetch + 1 次 convert；
+所有调用方看到同一份 Job snapshot。完整 LRO 状态表、各 phase 字段含义、
+agent 决策三元组（state / pdf_ready / md_ready）见
+[REST API · 长任务](../reference/rest-api.md#长任务lroapipapersid_or_doimarkdownpdf)。
+
+**鉴权**：`papers:read` scope（与现有 `/api/papers/stats` 同）。**没有匿名入口**——
+对外受众范围由 PAT / session token 控制，部署方对 markdown / PDF 字节的对外
+分发后果自负，详见 [License & Attribution · 论文访问开关](../about/license-and-attribution.md#论文访问开关-self-hosted)。
+
 ---
 
 ## 2. 鉴权与审计
@@ -198,7 +239,7 @@ qatlas mineru 2501.00010v1 --no-push
 | Scope | 覆盖端点 | 说明 |
 |---|---|---|
 | `papers:write` | `POST /api/papers/.../upload-pdf` / `upload-mineru` / `mineru-claim`，`DELETE .../mineru-claim/{id}` | 上传 PDF / MinerU 结果包、跑 MinerU 任务 |
-| `papers:read` | `GET /api/papers/...` 各只读 endpoint（stats / needs-mineru 等） | 读取 paper catalog 元数据 |
+| `papers:read` | `GET /api/papers/...` 各只读 endpoint（stats / needs-mineru）；以及 PAPER_ACCESS 启用后的 `GET …/markdown[/status]` / `GET …/pdf[/status]` | 读取 paper catalog 元数据；可触发 server 端 silent fetch + MinerU convert（需要部署方知情）|
 | `wiki:read` / `wiki:write` | `/api/wiki/*` | wiki 内容只读 / 同步 |
 | `graph:read` | `/api/graph/*` | Neo4j 查询 |
 
@@ -219,7 +260,7 @@ scope 的 obj/act 在 `scopeGuard` 抛 403 时会回显在 `detail` 里——CLI
 
 1. 浏览器登录后打开 `https://<server>/pat`；
 2. "New token" → 填名字（如 `nightly-ci`）+ 可选 description + 必选过期天数（默认 90 天）+ 勾选需要的 scope；
-3. 服务器返回的明文**只显示一次**——立即拷到 GH Actions secret / systemd `EnvironmentFile`（server 用）或 `qatlas config set token` 写入 client yaml；
+3. 服务器返回的明文**只显示一次**——立即拷到 GH Actions secret / systemd `EnvironmentFile`（server 用）或 `qatlas auth login --with-token`（从 stdin 读，写 client hosts.yml）；
 4. 之后这条 PAT 在列表里只显示前缀（`qat_xxxxxxxx…`）、scope 标签和 last-used 时间戳，需要换号就 Revoke 再创建一条。
 
 **B. 服务端 shell（运维 / CI 自动化）**
@@ -256,18 +297,19 @@ PAT 的实现说明：每条 PAT 在 SQLite `pat_tokens` 集合里只存 bcrypt 
 
 ```bash
 # 一次性配置：
-qatlas auth login -H quantum-atlas.ai
-# Paste your PAT plaintext: <paste qat_... here, hidden input>
+qatlas auth login -s quantum-atlas.ai
+# 浏览器自动打开走 OAuth，Approve 后 token 自动写进 hosts.yml
+# 已有明文则：echo qat_... | qatlas auth login -s quantum-atlas.ai --with-token
 
 qatlas auth status       # 查看已登录的所有 host
 qatlas auth token        # 打印当前 host 的 token，方便 pipe 给 curl
-qatlas auth logout -H quantum-atlas.ai   # 撤销本地凭证
+qatlas auth logout -s quantum-atlas.ai   # 撤销本地凭证
 
 # 之后所有 qatlas 子命令直接用：
 qatlas upload pdf quant-ph/9508027v1 --pdf paper.pdf
 ```
 
-token 解析优先级（v0.17.0+ 精简）：`~/.config/qatlas/config.yaml` 的 `token:` 字段 > `~/.config/qatlas/hosts.yml` 里匹配当前 host 的条目 > 无凭证。`gh CLI` 风格的 `--token` flag 和 `QATLAS_TOKEN` env 在 v0.17.0 已删除（client 只读 yaml；server 仍支持 env，详见 server-config.md）。
+token 解析优先级（v0.19.0+ 精简）：`~/.config/qatlas/hosts.yml` 里匹配当前 host 的条目 > 无凭证。`gh CLI` 风格的 `--token` flag 和 `QATLAS_TOKEN` env 在 v0.17.0 已删除；config.yaml 的 `token:` 字段在 v0.19.0 移除（会静默盖住所有 per-host token，是 footgun）。client 只读 hosts.yml；server 端有独立的 `QATLAS_SYSTEM_PAT` env 给运维 break-glass 用，详见 server-config.md。
 
 **直接 curl 方式**（绕开 client，调底层 API）：
 

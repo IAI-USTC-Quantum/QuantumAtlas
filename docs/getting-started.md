@@ -58,21 +58,29 @@
     **2. 登录：**
 
     ```bash
-    qatlas auth login -H <your-server>
-    # 自动开浏览器到 https://<your-server>/pat?cli_callback=...
-    # 浏览器侧用 GitHub 登录 → 在弹出的"qatlas CLI 请求 token"对话框里
-    # 勾上需要的 scopes（papers:write 等）→ Approve
-    # token 自动通过本地回调写进 ~/.config/qatlas/hosts.yml
+    qatlas auth login -s <your-server>
+    # 1) CLI 跟 server 要一个 8 位 user_code + 深链
+    # 2) 自动开本机浏览器到 https://<your-server>/device?user_code=WDJB-MJHT
+    # 3) 用 GitHub 登录后看到 Approve 表单，默认全勾所有 scope，可改名字 /
+    #    过期天数 / 取消不想要的 scope → 点 Approve
+    # 4) CLI 轮询拿到 token 写进 ~/.config/qatlas/hosts.yml
 
-    # SSH 远端 / 没 DISPLAY 的机器自动走 device-code，或显式：
-    # qatlas auth login --device -H <your-server>
+    # SSH 远端 / 没 DISPLAY 的机器加 --no-browser，只打印 URL，
+    # 自己复制到任意有浏览器的设备（手机、自己工位…）打开即可
+    # qatlas auth login --no-browser -s <your-server>
 
     # 验证
     qatlas auth status
     ```
 
-    !!! tip "想自己手 mint PAT？"
-        浏览器直接打开 `https://<your-server>/pat` 也行；按 New token 填名字 / scopes / 过期，复制以 `qat_` 开头的明文，然后 `qatlas auth login -H <host> --token qat_xxx` 存进 hosts.yml。CI 路径同理（`--with-token` 从 stdin 读）。
+    !!! tip "已经手上有 PAT 明文了？"
+        浏览器自助打开 `https://<your-server>/pat` 创建一个，复制以 `qat_` 开头的明文，然后用 `--with-token` 从 stdin 写进 hosts.yml：
+
+        ```bash
+        echo qat_xxxxxxxxxxx | qatlas auth login -s <host> --with-token
+        ```
+
+        （从 stdin 读而不是 argv 是为了 secret 不进 shell history / `ps` / CI runner log——跟 `gh auth login --with-token` 同款设计。）
 
     **3. 上传第一篇论文：**
 
@@ -81,7 +89,7 @@
     qatlas upload pdf 2501.00010v1 --pdf paper.pdf
 
     # 用本地 MinerU 配额解析后推回云端（先把 token 写进 yaml）
-    qatlas config set mineru_api_token <your-jwt-from-mineru.net>
+    echo <your-jwt-from-mineru.net> | qatlas config set mineru_api_token
     qatlas mineru 2501.00010v1 --push-pdf
     ```
 
@@ -108,7 +116,7 @@
     **2. 准备 .env：** 参照 [env vars 参考](reference/env-vars.md)，最小配置：
 
     ```bash
-    QATLAS_SERVER_URL=https://your-domain.tld
+    QATLAS_PUBLIC_URL=https://your-domain.tld
     NEO4J_URI=bolt://localhost:7687
     NEO4J_USER=neo4j
     NEO4J_PASSWORD=<set-this>

@@ -45,6 +45,18 @@ def _run(argv: list[str]) -> int:
     return cfg_cmd.main(argv)
 
 
+def _run_with_stdin(argv: list[str], stdin_text: str, monkeypatch: pytest.MonkeyPatch) -> int:
+    """Invoke `qatlas config ...` piping ``stdin_text`` into stdin.
+
+    Used for `set <sensitive-key>` calls — v0.19.0 rejects the argv
+    form for sensitive keys (token / secret / key / password) so the
+    secret never enters shell history / `ps` / CI runner log.
+    """
+    import io
+    monkeypatch.setattr("sys.stdin", io.StringIO(stdin_text))
+    return cfg_cmd.main(argv)
+
+
 # ---------------------------------------------------------------------------
 # path
 # ---------------------------------------------------------------------------
@@ -95,12 +107,14 @@ class TestSet:
         assert "server_url: https://x.example.com" in content
         assert "QATLAS_SERVER_URL" not in content
 
-    def test_set_preserves_existing_keys(self, isolated_env: Path) -> None:
+    def test_set_preserves_existing_keys(
+        self, isolated_env: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         _run(["set", "server_url", "https://x"])
-        _run(["set", "token", "qat_existing_token"])
+        _run_with_stdin(["set", "openai_api_key"], "sk-existing_token\n", monkeypatch)
         content = _yaml_path(isolated_env).read_text()
         assert "server_url: https://x" in content
-        assert "token: qat_existing_token" in content
+        assert "openai_api_key: sk-existing_token" in content
 
     def test_set_bool_coerced(self, isolated_env: Path, capsys: pytest.CaptureFixture) -> None:
         _run(["set", "insecure", "true"])
@@ -119,14 +133,30 @@ class TestSet:
         assert ServerConfig.from_env().mineru_timeout == 300
 
     def test_set_sensitive_value_masked_in_output(
-        self, isolated_env: Path, capsys: pytest.CaptureFixture
+        self, isolated_env: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture,
     ) -> None:
-        rc = _run(["set", "token", "qat_VeryLongSensitiveValue1234"])
+        rc = _run_with_stdin(["set", "openai_api_key"],
+                             "sk-VeryLongSensitiveValue1234\n", monkeypatch)
         assert rc == 0
         out = capsys.readouterr().out
-        assert "qat_VeryLongSensitiveValue1234" not in out
-        assert "qat_" in out  # head visible
+        assert "sk-VeryLongSensitiveValue1234" not in out
+        assert "sk-" in out  # head visible
         assert "1234" in out  # tail visible
+
+    def test_set_sensitive_value_rejected_on_argv(
+        self, isolated_env: Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        """Sensitive keys must NOT accept the value on argv — the
+        secret would leak into shell history / `ps` / CI runner log.
+        Steer the user to stdin or the TTY prompt instead.
+        """
+        rc = _run(["set", "openai_api_key", "sk-LeakedOnArgv"])
+        assert rc == 2
+        err = capsys.readouterr().err
+        assert "refusing" in err
+        assert "stdin" in err or "echo" in err
 
     def test_set_rejects_unknown_field(
         self, isolated_env: Path, capsys: pytest.CaptureFixture
@@ -165,8 +195,8 @@ class TestUnset:
     def test_unset_missing_key_returns_1(
         self, isolated_env: Path, capsys: pytest.CaptureFixture
     ) -> None:
-        _run(["set", "token", "qat_existing"])
-        rc = _run(["unset", "server_url"])
+        _run(["set", "server_url", "https://existing"])
+        rc = _run(["unset", "insecure"])
         assert rc == 1
         err = capsys.readouterr().err
         assert "not set" in err
@@ -200,8 +230,8 @@ class TestGet:
     def test_get_exits_1_when_value_is_none(
         self, isolated_env: Path, capsys: pytest.CaptureFixture
     ) -> None:
-        # token has no default; an unset value reports exit 1.
-        rc = _run(["get", "token"])
+        # server_url has no default; an unset value reports exit 1.
+        rc = _run(["get", "server_url"])
         assert rc == 1
 
     def test_get_unknown_key_exits_1(
@@ -229,26 +259,32 @@ class TestGet:
 
 class TestShow:
     def test_show_dumps_all_fields(
-        self, isolated_env: Path, capsys: pytest.CaptureFixture
+        self, isolated_env: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture,
     ) -> None:
         _run(["set", "server_url", "https://x.example.com"])
-        _run(["set", "token", "qat_abcdefghijklmnopqrstuv"])
+        _run_with_stdin(["set", "openai_api_key"],
+                        "sk-abcdefghijklmnopqrstuv\n", monkeypatch)
         capsys.readouterr()  # discard set output
         _run(["show"])
         out = capsys.readouterr().out
         assert "server_url: https://x.example.com" in out
-        # Token masked by default.
-        assert "qat_abcdefghijklmnopqrstuv" not in out
-        assert "token:" in out
+        # Sensitive value masked by default.
+        assert "sk-abcdefghijklmnopqrstuv" not in out
+        assert "openai_api_key" in out
 
     def test_show_unmask_reveals_secrets(
-        self, isolated_env: Path, capsys: pytest.CaptureFixture
+        self, isolated_env: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture,
     ) -> None:
-        _run(["set", "token", "qat_RevealMeFully123"])
+        _run_with_stdin(["set", "openai_api_key"],
+                        "sk-RevealMeFully123\n", monkeypatch)
         capsys.readouterr()
         _run(["show", "--unmask"])
         out = capsys.readouterr().out
-        assert "qat_RevealMeFully123" in out
+        assert "sk-RevealMeFully123" in out
 
     def test_show_indicates_when_file_missing(
         self, isolated_env: Path, capsys: pytest.CaptureFixture

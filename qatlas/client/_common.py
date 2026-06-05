@@ -76,17 +76,16 @@ def request_verify(args: argparse.Namespace) -> bool:
 
 
 def resolve_token(args: argparse.Namespace) -> str:
-    """Resolve the bearer credential from config.yaml, with per-host
-    ``hosts.yml`` fallback.
+    """Resolve the bearer credential from ``~/.config/qatlas/hosts.yml``.
 
-    Precedence:
-      1. ``config.yaml`` ``token:`` field
-      2. ``~/.config/qatlas/hosts.yml`` entry for ``server_url`` (populated by
-         ``qatlas auth login``)
-      3. ``""`` — no Authorization header sent
+    The store is populated by ``qatlas auth login`` (browser OAuth /
+    ``--with-token`` from stdin). ``server_url:`` in config.yaml /
+    ``--server-url`` CLI flag picks WHICH host's token to use.
 
     ``args`` kept for signature back-compat (used to honour
-    ``--token`` CLI flag, removed in v0.17.0).
+    ``--token`` CLI flag, removed in v0.17.0; config.yaml ``token:``
+    field removed in v0.19.0 — it silently shadowed all per-host
+    tokens in hosts.yml).
 
     An empty return value means no Authorization header will be set;
     the server then either serves open reads or replies 401 for write
@@ -94,10 +93,6 @@ def resolve_token(args: argparse.Namespace) -> str:
     (top-level redirect to ``/<lang>/pat``, defined in
     ``web/src/routes/pat.tsx``) regardless of language.
     """
-    cfg = _client_config()
-    if cfg.token:
-        return cfg.token.strip()
-    # Per-host fallback (``qatlas auth login``).
     try:
         from qatlas.client.auth import get_stored_token  # local import to avoid cycle
 

@@ -45,7 +45,7 @@ qatlasd serve [domain(s)] [flags]
 
 | Flag | 等价 env | 默认 |
 |---|---|---|
-| `--server-url <url>` | `QATLAS_SERVER_URL` | — |
+| `--public-url <url>` | `QATLAS_PUBLIC_URL` | — |
 | `--user-header <name>` | `QATLAS_USER_HEADER` | — |
 | `--edge-name <name>` | `QATLAS_EDGE_NAME` | — |
 | `--force-tcp4` | `QATLAS_FORCE_TCP4` | false |
