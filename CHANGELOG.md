@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.19.0a0 (2026-06-05)
+
+### Feat
+
+- **client,papers,spa**: qatlas paper subcommand + /papers/search RAG UI
+- **papers,rag**: paper-access expansion (PDF/RAG/DOI/resolution) + rename two server env vars
+- **qatlasd**: storage migrate-layout subcommand for pre-A1 old-style PDFs
+- **arxiv,openalex**: server-side PDF fetcher + DOI resolver
+
+### Refactor
+
+- **auth**: OAuth device-code login + drop client-side token shadows
+- **paperassets**: structured ParsedArxivID + per-category storage layout
+
 ## v0.18.2 (2026-06-04)
 
 ### Fix

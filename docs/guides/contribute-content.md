@@ -183,7 +183,29 @@ qatlas mineru 2501.00010v1 --no-push
 
 只在部署方启用 `QATLAS_PAPER_ACCESS_ENABLED=true` 的 self-hosted 实例上可用
 （**公开 quantum-atlas.ai 默认不开**）。Agent / 客户端**不需要持有任何资产**，
-直接按 arxiv ID 或 DOI 拉服务器侧缓存：
+直接按 arxiv ID 或 DOI 拉服务器侧缓存。
+
+**推荐：用 `qatlas paper` 子命令**（自动处理 LRO 轮询、进度行、defaults 提示、
+错误结构化展示）：
+
+```bash
+# Markdown（缓存命中即拿；未命中自动等 silent fetch + MinerU convert）
+qatlas paper get markdown quant-ph/9508027v2 -o paper.md
+
+# PDF（不带 vN → server 自动补 latest；bare old-style → 自动加 quant-ph/）
+qatlas paper get pdf 0811.3171 -o hhl.pdf
+qatlas paper get pdf 9508027   -o shor.pdf
+
+# DOI 入口
+qatlas paper get markdown 10.1103/PhysRevLett.103.150502 -o hhl.md
+
+# 只查不触发（poll 状态用）
+qatlas paper status 0811.3171v3 --kind pdf
+```
+
+详细 flag 与退出码见 [CLI · qatlas paper](../reference/cli-qatlas.md#qatlas-paper)。
+
+**底层：直接 curl** —— agent 不依赖 Python client、或想要更细粒度控制时：
 
 ```bash
 # Markdown（缓存命中即 200 + text/markdown bytes）
@@ -194,7 +216,7 @@ curl -i https://<server>/api/papers/quant-ph/9508027v2/markdown \
 curl -i https://<server>/api/papers/quant-ph/9508027v2/pdf \
      -H "Authorization: Bearer $QATLAS_TOKEN"
 
-# DOI 入口（自动经 OpenAlex 反查 → canonical arxiv id）
+# DOI 入口
 curl -i https://<server>/api/papers/10.1103/PhysRevLett.103.150502/markdown \
      -H "Authorization: Bearer $QATLAS_TOKEN"
 ```
@@ -209,8 +231,9 @@ curl -i https://<server>/api/papers/10.1103/PhysRevLett.103.150502/markdown \
    `convert.stage` 等字段做决策。
 4. `state == cached` 后再 GET 资源拿字节。
 
-N 个并发请求同一篇论文被 server-side 自动 dedupe 成 1 次 fetch + 1 次 convert；
-所有调用方看到同一份 Job snapshot。完整 LRO 状态表、各 phase 字段含义、
+N 个并发请求同一篇论文被**同一 process** 内 server-side 自动 dedupe 成 1 次 fetch + 1 次 convert；
+所有调用方看到同一份 Job snapshot。**跨 edge 不 dedupe**（issue [#13](https://github.com/IAI-USTC-Quantum/QuantumAtlas/issues/13)
+跟踪 active-active 部署的优化）。完整 LRO 状态表、各 phase 字段含义、
 agent 决策三元组（state / pdf_ready / md_ready）见
 [REST API · 长任务](../reference/rest-api.md#长任务lroapipapersid_or_doimarkdownpdf)。
 
