@@ -31,7 +31,21 @@ func TestAssetKey_MatchesAssetPathStripped(t *testing.T) {
 		{"new style markdown", "2401.00001v1", "markdown", "markdown/2401/2401.00001v1.md"},
 		{"new style json", "2401.00001v1", "json", "json/2401/2401.00001v1.json"},
 		{"new style images zip", "2401.00001v1", "images", "images/2401/2401.00001v1.zip"},
-		{"old style pdf drops category", "quant-ph/9508027v1", "pdf", "pdf/9508/9508027v1.pdf"},
+		// A1 layout change: old-style canonical ids now keep the category
+		// as a subdirectory so cross-category 7-digit collisions are
+		// structurally impossible.
+		{"old style pdf preserves category", "quant-ph/9508027v1", "pdf", "pdf/9508/quant-ph/9508027v1.pdf"},
+		{"old style markdown preserves category", "quant-ph/9508027v1", "markdown", "markdown/9508/quant-ph/9508027v1.md"},
+		{"old style hep-th images zip", "hep-th/0207001v3", "images", "images/0207/hep-th/0207001v3.zip"},
+		// Old-style subcategory variants: covers the post-A1 regex
+		// expansion (lower-case hyphenated subcat in addition to the
+		// upper-case 2-letter form).
+		{"cs.AI old style", "cs.AI/0101001v1", "pdf", "pdf/0101/cs.AI/0101001v1.pdf"},
+		{"physics.atom-ph old style", "physics.atom-ph/0001001v2", "pdf", "pdf/0001/physics.atom-ph/0001001v2.pdf"},
+		{"cond-mat.stat-mech old style", "cond-mat.stat-mech/9912001v1", "pdf", "pdf/9912/cond-mat.stat-mech/9912001v1.pdf"},
+		// Bare old-style retains the legacy layout (category unknown,
+		// can't disambiguate at this layer).
+		{"old style bare retains legacy layout", "9508027v1", "pdf", "pdf/9508/9508027v1.pdf"},
 		{"unknown kind returns empty", "2401.00001v1", "garbage", ""},
 	}
 	for _, c := range cases {

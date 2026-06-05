@@ -15,20 +15,24 @@ import (
 )
 
 var (
-	arxivPrefixRE   = regexp.MustCompile(`(?i)^arxiv:\s*`)
-	arxivVersionRE  = regexp.MustCompile(`(?i)v\d+$`)
-	oldStyleIDRE    = regexp.MustCompile(`(?i)^\d{7}(?:v\d+)?$`)
-	shardedKeyRE    = regexp.MustCompile(`^\d{4}`)
+	arxivPrefixRE  = regexp.MustCompile(`(?i)^arxiv:\s*`)
+	arxivVersionRE = regexp.MustCompile(`(?i)v\d+$`)
+	oldStyleIDRE   = regexp.MustCompile(`(?i)^\d{7}(?:v\d+)?$`)
+	shardedKeyRE   = regexp.MustCompile(`^\d{4}`)
+
+	// newStyleArxivRE / oldStyleArxivRE / oldStyleBareRE are kept for
+	// ValidateUploadID's tighter contract (must include version
+	// suffix). For general parsing prefer Parse()/MustParse() from
+	// parse.go — those drive the structured ParsedArxivID model used
+	// by the new per-category storage layout.
 	newStyleArxivRE = regexp.MustCompile(`^\d{4}\.\d{4,6}v\d+$`)
-	oldStyleArxivRE = regexp.MustCompile(`^[a-z][a-z\-]*(?:\.[A-Z]{2})?/\d{7}v\d+$`)
+	oldStyleArxivRE = regexp.MustCompile(
+		`^[a-z][a-z\-]*(?:\.[A-Za-z][A-Za-z\-]*)?/\d{7}v\d+$`)
 	// oldStyleBareRE matches an old-style identifier that already has
-	// the subject prefix stripped — the form the catalog actually
-	// stores ("0207065v3"). Accepted by ValidateUploadID because:
-	//   (a) catalog stores bare form (subject prefix is lost at ingest),
-	//   (b) RustFS object key is bare form too (StorageKey strips),
-	// so refusing to honour mineru-claim for bare form leaves the queue
-	// permanently stuck on every pre-2007 paper. Equivalent semantically
-	// to the prefixed form for our internal routing.
+	// the subject prefix stripped — the form the catalog stored
+	// pre-A1. Still accepted by ValidateUploadID during the deprecation
+	// cycle (an upstream resolver should disambiguate bare → canonical
+	// via Neo4j lookup; once that ships in A3 this can be removed).
 	oldStyleBareRE = regexp.MustCompile(`^\d{7}v\d+$`)
 )
 
@@ -102,32 +106,42 @@ func AssetPath(rawRoot, kind, arxivID string) string {
 // of kind "pdf" | "markdown" | "json" | "images". This is AssetPath
 // without the RawDir prefix — i.e. the key suitable for direct use
 // against the objstore.Store interface (S3 object name OR local path
-// suffix). Returns empty string for unknown kinds.
+// suffix). Returns empty string for unknown kinds OR malformed ids.
 //
-// The exact string layout (with shard) matches the on-disk layout from
-// the Python era so a single bucket / RawDir can be read by either
-// implementation during the transition.
+// Layout (post-A1):
+//
+//	new-style:           <kind>/<yymm>/<stem>.<ext>
+//	old-style canonical: <kind>/<yymm>/<category>/<stem>.<ext>   (NEW)
+//	old-style bare:      <kind>/<yymm>/<stem>.<ext>              (LEGACY, dual-read only)
+//	unrecognized input:  best-effort flat fallback (no shard)
+//
+// Pre-A1 every old-style id rendered to the LEGACY layout (the
+// category was dropped entirely). That was a latent data integrity bug
+// — `0207065` exists as different papers in quant-ph / hep-th / math /
+// gr-qc and they would silent-overwrite in the same bucket key. The
+// new layout preserves category as a subdirectory so cross-category
+// ids never collide.
+//
+// Internally delegates to AssetKeyFor after Parse; the structured API
+// is preferred for new code that already has a ParsedArxivID in hand.
 func AssetKey(kind, arxivID string) string {
-	key := StorageKey(arxivID)
-	shard := Shard(key)
-	var dir string
-	if shard != "" {
-		dir = kind + "/" + shard
-	} else {
-		dir = kind
+	p, err := Parse(arxivID)
+	if err == nil {
+		return AssetKeyFor(kind, p)
 	}
-	switch kind {
-	case "pdf":
-		return dir + "/" + key + ".pdf"
-	case "markdown":
-		return dir + "/" + key + ".md"
-	case "json":
-		return dir + "/" + key + ".json"
-	case "images":
-		return dir + "/" + key + ".zip"
-	default:
+	// Unparseable input: fall back to a flat key so the LocalStore dev
+	// path can still address arbitrary stems used by older tests /
+	// migration probes. Production never hits this branch because
+	// every handler runs the id through Parse/ValidateUploadID first.
+	ext := assetExt(kind)
+	if ext == "" {
 		return ""
 	}
+	key := SafeKey(arxivID)
+	if key == "" {
+		return ""
+	}
+	return kind + "/" + key + ext
 }
 
 // WikiSourcePageID returns the canonical wiki page id for a paper source

@@ -23,7 +23,12 @@ func TestValidateUploadID(t *testing.T) {
 
 		// old-style canonical (subject prefix preserved)
 		{"old-style canonical", "quant-ph/9508027v1", "quant-ph/9508027v1"},
-		{"old-style with subclass", "cond-mat.stat-mech/0001001v1", ""}, // current oldStyleArxivRE doesn't allow dotted subclass like this
+		// A1 regex expansion: dotted subcategories now accept both
+		// upper-case 2-letter (cs.AI) and lower-case hyphenated
+		// (cond-mat.stat-mech, physics.atom-ph) forms.
+		{"old-style with cond-mat subcat", "cond-mat.stat-mech/0001001v1", "cond-mat.stat-mech/0001001v1"},
+		{"old-style with cs.AI subcat", "cs.AI/0001001v1", "cs.AI/0001001v1"},
+		{"old-style with physics.atom-ph subcat", "physics.atom-ph/0001001v1", "physics.atom-ph/0001001v1"},
 		{"old-style hep-th", "hep-th/0207001v3", "hep-th/0207001v3"},
 
 		// old-style bare (catalog form — must accept)
