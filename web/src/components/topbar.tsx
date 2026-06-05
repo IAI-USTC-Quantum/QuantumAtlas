@@ -100,7 +100,7 @@ export function Topbar() {
           className="hidden text-xs text-muted-foreground sm:inline-flex"
         >
           <a
-            href={`https://quantum-atlas.readthedocs.io/${lang === 'zh' ? 'zh-cn' : 'en'}/latest/reference/cli-qatlas/`}
+            href="https://quantum-atlas.readthedocs.io/zh-cn/latest/reference/cli-qatlas/"
             target="_blank"
             rel="noreferrer"
           >
