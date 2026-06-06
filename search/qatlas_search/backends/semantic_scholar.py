@@ -9,9 +9,9 @@ SCHOLAR_API_KEY`` for reliable use.
 
 from __future__ import annotations
 
-from qatlas_agentic_search.backends.base import COST_MEDIUM, Backend
-from qatlas_agentic_search.config import Settings
-from qatlas_agentic_search.models import Paper, SearchQuery
+from qatlas_search.backends.base import COST_MEDIUM, Backend
+from qatlas_search.config import Settings
+from qatlas_search.models import Paper, SearchQuery
 
 _S2_SEARCH = "https://api.semanticscholar.org/graph/v1/paper/search"
 _FIELDS = "title,abstract,year,citationCount,externalIds,authors,venue,url"

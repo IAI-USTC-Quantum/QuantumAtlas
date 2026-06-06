@@ -8,9 +8,9 @@ can score against it.
 
 from __future__ import annotations
 
-from qatlas_agentic_search.backends.base import COST_MEDIUM, Backend
-from qatlas_agentic_search.config import Settings
-from qatlas_agentic_search.models import Paper, SearchQuery
+from qatlas_search.backends.base import COST_MEDIUM, Backend
+from qatlas_search.config import Settings
+from qatlas_search.models import Paper, SearchQuery
 
 _OPENALEX_WORKS = "https://api.openalex.org/works"
 

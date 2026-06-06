@@ -12,10 +12,10 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
-from qatlas_agentic_search.backends.base import Backend
-from qatlas_agentic_search.config import Settings
-from qatlas_agentic_search.models import Paper, SearchQuery
-from qatlas_agentic_search.ranking import rank
+from qatlas_search.backends.base import Backend
+from qatlas_search.config import Settings
+from qatlas_search.models import Paper, SearchQuery
+from qatlas_search.ranking import rank
 
 
 @dataclass

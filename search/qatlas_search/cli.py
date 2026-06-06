@@ -1,17 +1,14 @@
 """``qatlas-search`` — academic-style literature search for QuantumAtlas.
 
-Two modes:
-
-* default (**direct**): run the selected backends concurrently, merge + rank
-  lexically/citation-aware. No LLM, no extra dependency.
-* ``--agent``: let an LLM orchestrate the *enabled* tools (needs the
-  ``agentic-search`` extra). The user's ``--tools`` allow-list still bounds it.
+Runs the selected backends concurrently, then merges + ranks the hits by exact
+term/phrase match + citation count (lexical, no vector store, no LLM). This is
+the infrastructure search tool; the LLM-orchestrated layer lives in the separate
+``agentic-search`` repo, which consumes these backends.
 
 Examples::
 
     qatlas-search "surface code threshold"
     qatlas-search '"quantum supremacy" sampling' --tools arxiv,openalex --json
-    qatlas-search "VQE ansatz" --agent --model openai:gpt-4o
     qatlas-search --list-tools
 """
 
@@ -21,11 +18,11 @@ import argparse
 import json
 import sys
 
-from qatlas_agentic_search import __version__
-from qatlas_agentic_search.backends import all_backends, select_backends
-from qatlas_agentic_search.config import get_settings
-from qatlas_agentic_search.engine import run_direct
-from qatlas_agentic_search.models import Paper, SearchQuery
+from qatlas_search import __version__
+from qatlas_search.backends import all_backends, select_backends
+from qatlas_search.config import get_settings
+from qatlas_search.engine import run_direct
+from qatlas_search.models import Paper, SearchQuery
 
 
 def _list_tools(settings) -> int:
@@ -89,8 +86,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--max-results", type=int, default=None, help="Max results per backend")
     p.add_argument("--top", type=int, default=15, help="How many ranked results to show")
-    p.add_argument("--agent", action="store_true", help="LLM-orchestrated agent mode")
-    p.add_argument("--model", help="Override the agent LLM model (pydantic-ai model string)")
     p.add_argument("--json", action="store_true", help="Emit JSON instead of text")
     p.add_argument("-v", "--verbose", action="store_true", help="Show per-backend counts/errors")
     return p
@@ -99,8 +94,6 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv if argv is not None else sys.argv[1:])
     settings = get_settings()
-    if args.model:
-        settings.llm_model = args.model
     if args.max_results:
         settings.max_results_per_tool = args.max_results
 
@@ -132,36 +125,6 @@ def main(argv: list[str] | None = None) -> int:
             f"# tools: {', '.join(b.name for b in backends)}",
             file=sys.stderr,
         )
-
-    if args.agent:
-        try:
-            from qatlas_agentic_search.agent import run_agent
-
-            narrative, papers = run_agent(query, backends, settings)
-        except ImportError:
-            print(
-                "error: agent mode needs the 'agentic-search' extra:\n"
-                "  uv sync --extra agentic-search   (or: pip install "
-                "'quantum-atlas[agentic-search]')",
-                file=sys.stderr,
-            )
-            return 1
-        if args.json:
-            print(
-                json.dumps(
-                    {
-                        "narrative": narrative,
-                        "results": [_paper_dict(p) for p in papers[: args.top]],
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                )
-            )
-        else:
-            print(narrative)
-            print("\n--- ranked results ---")
-            _print_human(papers, args.top)
-        return 0
 
     outcome = run_direct(query, backends, settings)
     if args.verbose:

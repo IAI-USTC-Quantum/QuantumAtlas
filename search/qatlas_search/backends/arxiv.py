@@ -11,9 +11,9 @@ from __future__ import annotations
 import re
 import xml.etree.ElementTree as ET
 
-from qatlas_agentic_search.backends.base import COST_FAST, Backend
-from qatlas_agentic_search.config import Settings
-from qatlas_agentic_search.models import Paper, SearchQuery
+from qatlas_search.backends.base import COST_FAST, Backend
+from qatlas_search.config import Settings
+from qatlas_search.models import Paper, SearchQuery
 
 _ARXIV_API = "http://export.arxiv.org/api/query"
 _ATOM = "{http://www.w3.org/2005/Atom}"

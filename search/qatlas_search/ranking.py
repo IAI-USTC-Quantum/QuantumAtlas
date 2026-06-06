@@ -22,8 +22,8 @@ from __future__ import annotations
 import math
 from collections import defaultdict
 
-from qatlas_agentic_search.config import Settings
-from qatlas_agentic_search.models import Paper, SearchQuery, _WORD_RE, normalize_title
+from qatlas_search.config import Settings
+from qatlas_search.models import Paper, SearchQuery, _WORD_RE, normalize_title
 
 
 def _tokens(text: str) -> list[str]:

@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import pytest
 
-from qatlas_agentic_search.backends.arxiv import ArxivBackend
-from qatlas_agentic_search.backends.crossref import CrossrefBackend
-from qatlas_agentic_search.backends.internal import InternalBackend
-from qatlas_agentic_search.backends.openalex import OpenAlexBackend, _reconstruct_abstract
-from qatlas_agentic_search.backends.semantic_scholar import SemanticScholarBackend
-from qatlas_agentic_search.config import Settings
-from qatlas_agentic_search.models import SearchQuery
+from qatlas_search.backends.arxiv import ArxivBackend
+from qatlas_search.backends.crossref import CrossrefBackend
+from qatlas_search.backends.internal import InternalBackend
+from qatlas_search.backends.openalex import OpenAlexBackend, _reconstruct_abstract
+from qatlas_search.backends.semantic_scholar import SemanticScholarBackend
+from qatlas_search.config import Settings
+from qatlas_search.models import SearchQuery
 
 _ARXIV_XML = """<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
@@ -146,7 +146,7 @@ def test_internal_unavailable_without_server_or_wikidir(monkeypatch) -> None:
     b = InternalBackend()
     # No token resolvable in a bare test env -> not available.
     monkeypatch.setattr(
-        "qatlas_agentic_search.backends.internal._resolve_server",
+        "qatlas_search.backends.internal._resolve_server",
         lambda settings: (None, None),
     )
     assert b.available(s) is False

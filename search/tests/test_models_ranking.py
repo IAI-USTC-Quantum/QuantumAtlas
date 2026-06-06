@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from qatlas_agentic_search.config import Settings
-from qatlas_agentic_search.models import Paper, SearchQuery, normalize_title
-from qatlas_agentic_search.ranking import lexical_score, merge, rank
+from qatlas_search.config import Settings
+from qatlas_search.models import Paper, SearchQuery, normalize_title
+from qatlas_search.ranking import lexical_score, merge, rank
 
 
 def test_query_parses_quoted_phrases() -> None:

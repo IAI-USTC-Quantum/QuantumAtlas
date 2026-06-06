@@ -13,13 +13,13 @@ the agent is only ever handed tools the user allowed *and* that can actually run
 
 from __future__ import annotations
 
-from qatlas_agentic_search.backends.arxiv import ArxivBackend
-from qatlas_agentic_search.backends.base import Backend
-from qatlas_agentic_search.backends.crossref import CrossrefBackend
-from qatlas_agentic_search.backends.internal import InternalBackend
-from qatlas_agentic_search.backends.openalex import OpenAlexBackend
-from qatlas_agentic_search.backends.semantic_scholar import SemanticScholarBackend
-from qatlas_agentic_search.config import Settings
+from qatlas_search.backends.arxiv import ArxivBackend
+from qatlas_search.backends.base import Backend
+from qatlas_search.backends.crossref import CrossrefBackend
+from qatlas_search.backends.internal import InternalBackend
+from qatlas_search.backends.openalex import OpenAlexBackend
+from qatlas_search.backends.semantic_scholar import SemanticScholarBackend
+from qatlas_search.config import Settings
 
 # Insertion order is the canonical display order.
 _REGISTRY: dict[str, Backend] = {

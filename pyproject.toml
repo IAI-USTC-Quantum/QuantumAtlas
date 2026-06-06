@@ -53,35 +53,24 @@ embed = [
     "uvicorn[standard]>=0.32",
     "pydantic-settings>=2.6",
 ]
-# --- qatlas_agentic_search agent mode ----------------------------------
-# Direct mode (default) needs nothing here — it uses only `requests` (a core
-# dep). This extra is ONLY for `qatlas-search --agent`: the Pydantic-AI agent
-# that orchestrates the search backends as tools. Pydantic-AI is model-agnostic
-# but we ship the OpenAI provider only — its Anthropic provider needs
-# anthropic>=0.61 which conflicts with this repo's `anthropic<0.22` core pin.
-# OpenAI-compatible endpoints (OpenRouter / Groq / local vLLM/Ollama via
-# OPENAI_BASE_URL) cover the cost-balancing use cases.
-agentic-search = [
-    "pydantic-ai-slim[openai]>=1.0,<2",
-]
 
 [project.scripts]
 qatlas = "qatlas.cli:main"
 qatlas-rag = "qatlas_rag.cli:main"
-qatlas-search = "qatlas_agentic_search.cli:main"
+qatlas-search = "qatlas_search.cli:main"
 
 [build-system]
 requires = ["hatchling>=1.24"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["qatlas", "rag/qatlas_rag", "agentic_search/qatlas_agentic_search"]
+packages = ["qatlas", "rag/qatlas_rag", "search/qatlas_search"]
 
 # Map source path to package name so `import qatlas_rag` resolves to
 # the rag/ subdirectory without exposing `rag` as a namespace.
 [tool.hatch.build.targets.wheel.sources]
 "rag/qatlas_rag" = "qatlas_rag"
-"agentic_search/qatlas_agentic_search" = "qatlas_agentic_search"
+"search/qatlas_search" = "qatlas_search"
 
 # --- PyTorch cu128 wheel (sm_120 / Blackwell) ---
 # torch>=2.7 + CUDA 12.8 is the first combo that supports sm_120
@@ -106,7 +95,7 @@ annotated_tag = true
 
 # Pytest
 [tool.pytest.ini_options]
-testpaths = ["tests", "rag/tests", "agentic_search/tests"]
+testpaths = ["tests", "rag/tests", "search/tests"]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]

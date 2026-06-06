@@ -14,8 +14,8 @@ from abc import ABC, abstractmethod
 
 import requests
 
-from qatlas_agentic_search.config import Settings
-from qatlas_agentic_search.models import Paper, SearchQuery
+from qatlas_search.config import Settings
+from qatlas_search.models import Paper, SearchQuery
 
 # Coarse buckets the agent/CLI use to honor a time/cost budget.
 COST_FAST = "fast"  # single cheap HTTP call, no key

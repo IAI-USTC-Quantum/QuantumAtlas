@@ -25,9 +25,9 @@ import re
 
 import requests
 
-from qatlas_agentic_search.backends.base import COST_SLOW, Backend
-from qatlas_agentic_search.config import Settings
-from qatlas_agentic_search.models import Paper, SearchQuery
+from qatlas_search.backends.base import COST_SLOW, Backend
+from qatlas_search.config import Settings
+from qatlas_search.models import Paper, SearchQuery
 
 _PAPER_ARXIV_RE = re.compile(r"paper-arxiv-(.+)$", re.IGNORECASE)
 _FRONT_TITLE_RE = re.compile(r"^title:\s*(.+?)\s*$", re.MULTILINE)

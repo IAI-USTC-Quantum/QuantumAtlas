@@ -1,4 +1,4 @@
-"""Configuration for qatlas-agentic-search.
+"""Configuration for the qatlas search module.
 
 Config split (deliberate — see README):
 
@@ -8,9 +8,9 @@ Config split (deliberate — see README):
   search for free. ``QATLAS_SEARCH_SERVER_URL`` / ``QATLAS_SEARCH_TOKEN`` are
   optional overrides for standalone use.
 * **Everything search-specific** — third-party API keys, contact emails for the
-  OpenAlex/Crossref polite pools, the LLM model for agent mode, default tool
-  selection, and ranking weights — lives under the ``QATLAS_SEARCH_`` env prefix,
-  mirroring how ``qatlas_rag`` uses ``QATLAS_RAG_``.
+  OpenAlex/Crossref polite pools, default tool selection, and ranking weights —
+  lives under the ``QATLAS_SEARCH_`` env prefix, mirroring how ``qatlas_rag``
+  uses ``QATLAS_RAG_``.
 """
 
 from __future__ import annotations
@@ -44,14 +44,6 @@ class Settings(BaseSettings):
     # local wiki checkout for exact title/body matches. Off by default because
     # client users are usually not on the server host.
     wiki_dir: Optional[str] = None
-
-    # --- agent mode (only used with --agent; needs the agentic-search extra) ---
-    # Pydantic-AI model string. Defaults to a cheap OpenAI model; any
-    # OpenAI-compatible endpoint works via OPENAI_BASE_URL (OpenRouter, Groq,
-    # local vLLM/Ollama), which is how cost is balanced. Anthropic via
-    # pydantic-ai needs anthropic>=0.61 (conflicts with this repo's pin), so
-    # only the OpenAI provider is shipped today.
-    llm_model: str = "openai:gpt-4o-mini"
 
     # --- tool selection / budget ---
     # Comma-separated default allow-list. Crossref is off by default (noisier,
