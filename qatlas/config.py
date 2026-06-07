@@ -92,6 +92,21 @@ _DEFAULT_CONFIG_YAML = """\
 # ── LLM extractor (qatlas extractor; experimental) ────────────────
 # openai_api_key:
 # anthropic_api_key:
+
+# ── Academic search (qatlas-search) ───────────────────────────────
+# Search-specific settings live under this `search:` section; server
+# URL + token reuse `qatlas auth login` above.
+# search:
+#   semantic_scholar_api_key:           # optional, raises S2 rate limit
+#   openalex_email: you@example.com     # optional, OpenAlex polite pool
+#   crossref_email: you@example.com     # optional, Crossref polite pool
+#   wiki_dir:                           # optional local wiki checkout (grep)
+#   default_tools: arxiv,openalex,semantic_scholar,internal
+#   max_results_per_tool: 10
+#   request_timeout: 20.0
+#   weight_lexical: 1.0                 # ranking: term/phrase match
+#   weight_citation: 0.6                # ranking: citation count
+#   weight_recency: 0.2                 # ranking: recency
 """
 
 

@@ -21,7 +21,6 @@ class CrossrefBackend(Backend):
     name = "crossref"
     requires_key = False
     cost_tier = COST_MEDIUM
-    default_enabled = False
 
     def search(self, query: SearchQuery, settings: Settings) -> list[Paper]:
         self.last_error = None

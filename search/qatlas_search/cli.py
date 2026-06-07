@@ -34,7 +34,8 @@ def _list_tools(settings) -> int:
     print(
         "\nDefault selection: "
         + ", ".join(settings.default_tool_list())
-        + "\nConfigure keys/emails via QATLAS_SEARCH_* env vars (see README)."
+        + "\nConfigure keys/emails under the 'search:' section of your qatlas "
+        "config.yaml\n(`qatlas config path` to locate it; see README)."
     )
     return 0
 
@@ -94,7 +95,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv if argv is not None else sys.argv[1:])
     settings = get_settings()
-    if args.max_results:
+    if args.max_results is not None:
         settings.max_results_per_tool = args.max_results
 
     if args.list_tools:
@@ -132,6 +133,15 @@ def main(argv: list[str] | None = None) -> int:
             print(f"#   {name}: {count} hits", file=sys.stderr)
         for name, err in outcome.errors.items():
             print(f"#   {name} ERROR: {err}", file=sys.stderr)
+    elif outcome.errors:
+        # Surface partial failure even without -v, so an empty/short result set
+        # is never silently caused by a backend that errored out.
+        failed = ", ".join(sorted(outcome.errors))
+        print(
+            f"# warning: {len(outcome.errors)} backend(s) failed: {failed} "
+            "(use -v for detail)",
+            file=sys.stderr,
+        )
 
     if args.json:
         print(

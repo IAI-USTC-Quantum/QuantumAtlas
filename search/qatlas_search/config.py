@@ -1,35 +1,31 @@
 """Configuration for the qatlas search module.
 
-Config split (deliberate — see README):
+Aligned to the qatlas **client** convention (v0.17.0+): the client is configured
+by a single YAML file at ``~/.config/qatlas/config.yaml`` (run ``qatlas config
+path`` to locate it), not env vars / ``.env``. qatlas-search is a client-side
+tool, so it follows suit:
 
-* **Server URL + bearer token** are *not* defined here. The internal backend
-  reuses the existing ``qatlas`` client config (``~/.config/qatlas/config.yaml``
-  + ``hosts.yml``), so a user who already ran ``qatlas auth login`` gets internal
-  search for free. ``QATLAS_SEARCH_SERVER_URL`` / ``QATLAS_SEARCH_TOKEN`` are
-  optional overrides for standalone use.
-* **Everything search-specific** — third-party API keys, contact emails for the
-  OpenAlex/Crossref polite pools, default tool selection, and ranking weights —
-  lives under the ``QATLAS_SEARCH_`` env prefix, mirroring how ``qatlas_rag``
-  uses ``QATLAS_RAG_``.
+* **Search-specific** settings live under a dedicated ``search:`` section of that
+  file (third-party API keys, polite-pool emails, default tool selection,
+  ranking weights). ``qatlas-search`` owns this namespace and does not pollute
+  the top-level client schema (``ServerConfig``).
+* **Server URL + bearer token** for the internal backend are still resolved from
+  the qatlas client auth (``qatlas auth login`` → ``hosts.yml``);
+  ``search.server_url`` / ``search.token`` are optional overrides.
+
+No env vars, no ``.env`` — matching the client. Tests construct ``Settings(...)``
+directly.
 """
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import BaseModel
 
 
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_prefix="QATLAS_SEARCH_",
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore",
-    )
-
-    # --- third-party API keys (all optional; backends self-disable without them
-    #     only when a key is mandatory; arXiv/OpenAlex/Crossref need none) ---
+class Settings(BaseModel):
+    # --- third-party API keys (all optional; arXiv/OpenAlex/Crossref need none) ---
     semantic_scholar_api_key: Optional[str] = None
 
     # Contact emails opt into the OpenAlex / Crossref "polite pool" (faster,
@@ -61,5 +57,37 @@ class Settings(BaseSettings):
         return [t.strip() for t in self.default_tools.split(",") if t.strip()]
 
 
+_FIELDS = set(Settings.model_fields)
+
+
+def _coerce(value: Any) -> Any:
+    """Treat an empty YAML string as unset (uniform None)."""
+    return None if value == "" else value
+
+
 def get_settings() -> Settings:
-    return Settings()
+    """Build :class:`Settings` from the qatlas client ``config.yaml``.
+
+    Reads the ``search:`` section for search-specific fields. A missing file or
+    section just yields built-in defaults — never raises.
+    """
+    data: dict[str, Any] = {}
+    try:
+        import yaml
+
+        from qatlas.paths import user_config_yaml_path
+
+        path = user_config_yaml_path()
+        if path.is_file():
+            raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            if isinstance(raw, dict):
+                section = raw.get("search") or {}
+                if isinstance(section, dict):
+                    for key, value in section.items():
+                        if key in _FIELDS:
+                            coerced = _coerce(value)
+                            if coerced is not None:
+                                data[key] = coerced
+    except Exception:
+        data = {}
+    return Settings(**data)

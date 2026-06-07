@@ -3,8 +3,8 @@
 S2's relevance search is strong for term matching and reports ``citationCount``
 plus cross-source ids (DOI, arXiv). Without a key the public endpoint is heavily
 rate-limited (frequent HTTP 429); we surface that as ``last_error`` and return
-``[]`` rather than blocking the other backends. Set ``QATLAS_SEARCH_SEMANTIC_
-SCHOLAR_API_KEY`` for reliable use.
+``[]`` rather than blocking the other backends. Set
+``search.semantic_scholar_api_key`` in the qatlas config for reliable use.
 """
 
 from __future__ import annotations

@@ -49,6 +49,23 @@ def test_arxiv_build_query_uses_quoted_phrases() -> None:
     assert "all:distillation" in built
 
 
+def test_arxiv_search_url_encodes_unsafe_terms() -> None:
+    """A token with URL-significant chars must be percent-encoded so it cannot
+    terminate the search_query value early; the all:/+AND+ structure stays.
+    """
+    b = ArxivBackend()
+    url = b._search_url(SearchQuery.parse("spin & charge"))
+    assert "&" not in url.split("search_query=", 1)[1]  # no raw & in the query value
+    assert "%26" in url  # the literal ampersand survived as an encoded term
+    # field prefixes and the AND operator are preserved
+    assert "all:" in url
+    assert "+AND+" in url
+
+    phrase_url = b._search_url(SearchQuery.parse('"magic state" distillation'))
+    assert "%22" in phrase_url  # quotes encoded
+    assert "+AND+" in phrase_url
+
+
 def test_openalex_reconstruct_abstract() -> None:
     inverted = {"Surface": [0], "code": [1], "works": [2]}
     assert _reconstruct_abstract(inverted) == "Surface code works"

@@ -54,7 +54,7 @@ qatlas-search "quantum error correction" -v
 | `crossref` | 无¹ | medium | ✓ | 跨学科元数据；默认不在白名单，`--tools` 可开 |
 | `internal` | 复用² | slow | ✓ | QuantumAtlas 内部：graph Cypher（`:PaperWork` 标题精准匹配 + 引用量）+ wiki 全文 + 可选本地 grep |
 
-¹ 填 `QATLAS_SEARCH_OPENALEX_EMAIL` / `QATLAS_SEARCH_CROSSREF_EMAIL` 进 polite pool（更快更稳）。
+¹ 在 config.yaml 的 `search:` 段填 `openalex_email` / `crossref_email` 进 polite pool（更快更稳）。
 ² `internal` 复用 `qatlas` client 的 server URL + token（`qatlas auth login` 即可）；
   缺 token / Neo4j 未配置 / 无 wiki dir 时会优雅降级，不报错。
 
@@ -89,17 +89,28 @@ score = w_lex * lexical(query, title+abstract)   # 标题命中权重高于 abst
 
 ## 配置
 
-server URL + token 复用 `qatlas` client 的 YAML 配置；只有搜索专属项走
-`QATLAS_SEARCH_` 前缀（见仓库根 [.env.example](../.env.example)）：
+跟 `qatlas` client 一致，全部走 YAML：`~/.config/qatlas/config.yaml`
+（`qatlas config path` 定位）。搜索专属项放在专属的 `search:` 段；server URL +
+token 复用 client 的 `qatlas auth login`：
 
-| Var | 默认 | 说明 |
-|---|---|---|
-| `QATLAS_SEARCH_SEMANTIC_SCHOLAR_API_KEY` | (空) | S2 提速 |
-| `QATLAS_SEARCH_OPENALEX_EMAIL` / `_CROSSREF_EMAIL` | (空) | polite pool |
-| `QATLAS_SEARCH_SERVER_URL` / `_TOKEN` | (复用 qatlas) | 内部检索覆盖 |
-| `QATLAS_SEARCH_WIKI_DIR` | (空) | 本地 wiki checkout，开启 grep |
-| `QATLAS_SEARCH_DEFAULT_TOOLS` | `arxiv,openalex,semantic_scholar,internal` | 默认白名单 |
-| `QATLAS_SEARCH_WEIGHT_LEXICAL` / `_CITATION` / `_RECENCY` | 1.0 / 0.6 / 0.2 | 排序权重 |
+```yaml
+# ~/.config/qatlas/config.yaml
+search:
+  semantic_scholar_api_key:                 # 可选，提高 S2 速率上限
+  openalex_email: you@example.com           # 可选，进 OpenAlex polite pool
+  crossref_email: you@example.com           # 可选，进 Crossref polite pool
+  server_url:                               # 可选，覆盖内部检索 server URL
+  token:                                    # 可选，覆盖内部检索 bearer token
+  wiki_dir:                                 # 可选，本地 wiki checkout（开启 grep）
+  default_tools: arxiv,openalex,semantic_scholar,internal
+  max_results_per_tool: 10
+  request_timeout: 20.0
+  weight_lexical: 1.0                        # 排序权重：词语匹配
+  weight_citation: 0.6                       # 排序权重：引用量
+  weight_recency: 0.2                        # 排序权重：时效
+```
+
+所有键都可选，缺省即用内置默认值。
 
 ## 测试
 

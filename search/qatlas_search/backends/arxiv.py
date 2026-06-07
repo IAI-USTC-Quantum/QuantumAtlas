@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 import xml.etree.ElementTree as ET
+from urllib.parse import quote
 
 from qatlas_search.backends.base import COST_FAST, Backend
 from qatlas_search.config import Settings
@@ -39,16 +40,24 @@ class ArxivBackend(Backend):
                 parts.append(f"all:{tok}")
         return "+AND+".join(parts) if parts else f"all:{query.text}"
 
+    def _search_url(self, query: SearchQuery) -> str:
+        """Assemble the request URL, percent-encoding the user-derived terms.
+
+        The arXiv API wants the ``all:`` field prefixes and ``+AND+`` operators
+        kept literal, but a bare token containing a URL-significant character
+        (``&``, ``#``, ``?``) would otherwise terminate the ``search_query``
+        value early and corrupt the request. We keep only ``:`` and ``+`` safe
+        so the field/operator structure survives while every term character is
+        encoded (space → %20, & → %26, " → %22).
+        """
+        return f"{_ARXIV_API}?search_query={quote(self._build_query(query), safe=':+')}"
+
     def search(self, query: SearchQuery, settings: Settings) -> list[Paper]:
         self.last_error = None
-        search_query = self._build_query(query)
         try:
-            # arXiv wants the raw '+AND+' un-escaped, so pass search_query inline
-            # in the URL and let requests append the remaining (safe) params.
-            url = f"{_ARXIV_API}?search_query={search_query}"
             resp = self._get(
                 settings,
-                url,
+                self._search_url(query),
                 params={
                     "start": 0,
                     "max_results": query.max_results,

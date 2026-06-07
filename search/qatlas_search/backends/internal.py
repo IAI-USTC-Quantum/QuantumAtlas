@@ -7,13 +7,13 @@ Three complementary internal lookups, merged:
    internal analogue of "metadata/title exact match + citation count".
 2. **Wiki** (``GET /api/search``): full-text over curated concept + paper-source
    pages (good lexical recall on hand-written summaries).
-3. **Local grep** (optional): if ``QATLAS_SEARCH_WIKI_DIR`` points at a wiki
+3. **Local grep** (optional): if the ``search.wiki_dir`` config points at a wiki
    checkout, grep its Markdown for exact term matches. Off by default because
    client users are usually not on the server host.
 
 Server URL + bearer token are resolved from the existing ``qatlas`` client
-config (so ``qatlas auth login`` is enough), with ``QATLAS_SEARCH_SERVER_URL`` /
-``QATLAS_SEARCH_TOKEN`` overrides. Every sub-lookup degrades gracefully: a
+config (so ``qatlas auth login`` is enough), with ``search.server_url`` /
+``search.token`` overrides. Every sub-lookup degrades gracefully: a
 missing token, an unconfigured Neo4j, or a missing wiki dir just yields fewer
 results, never an exception.
 """
@@ -23,9 +23,7 @@ from __future__ import annotations
 import os
 import re
 
-import requests
-
-from qatlas_search.backends.base import COST_SLOW, Backend
+from qatlas_search.backends.base import COST_SLOW, Backend, request_with_retry
 from qatlas_search.config import Settings
 from qatlas_search.models import Paper, SearchQuery
 
@@ -102,13 +100,16 @@ class InternalBackend(Backend):
         conds = " AND ".join(f"toLower(p.title) CONTAINS '{t}'" for t in tokens)
         # No LIMIT here: the server appends `LIMIT <limit>` from the request
         # body when the query lacks one (see internal/neo4j ExecuteRead).
+        # coalesce(..., -1) in ORDER BY so papers with no citation count sink to
+        # the bottom: Neo4j sorts NULL as greatest, which under DESC would
+        # otherwise float unknown-citation rows to the top.
         return (
             "MATCH (p:PaperWork) "
             f"WHERE p.title IS NOT NULL AND {conds} "
             "RETURN p.title AS title, p.arxiv_id AS arxiv_id, p.doi AS doi, "
             "p.publication_date AS publication_date, "
             "coalesce(p.cited_by_count, p.cited_by_count__derived) AS citations "
-            "ORDER BY citations DESC"
+            "ORDER BY coalesce(p.cited_by_count, p.cited_by_count__derived, -1) DESC"
         )
 
     def _graph_search(
@@ -117,13 +118,13 @@ class InternalBackend(Backend):
         cypher = self._build_cypher(query)
         if not cypher:
             return []
-        resp = requests.post(
+        resp = request_with_retry(
+            "POST",
             f"{base.rstrip('/')}/api/graph/query",
+            settings=settings,
             json={"query": cypher, "limit": query.max_results},
             headers=headers,
-            timeout=settings.request_timeout,
         )
-        resp.raise_for_status()
         data = resp.json()
         if data.get("error"):  # Neo4j not configured / query error: tolerate.
             return []
@@ -157,17 +158,17 @@ class InternalBackend(Backend):
     def _wiki_search(
         self, query: SearchQuery, settings: Settings, base: str, headers: dict
     ) -> list[Paper]:
-        resp = requests.get(
+        resp = request_with_retry(
+            "GET",
             f"{base.rstrip('/')}/api/search",
+            settings=settings,
             params={
                 "q": query.text,
                 "limit": query.max_results,
                 "include_sources": "true",
             },
             headers=headers,
-            timeout=settings.request_timeout,
         )
-        resp.raise_for_status()
         data = resp.json()
         out: list[Paper] = []
         for i, r in enumerate(data.get("results", []) or []):

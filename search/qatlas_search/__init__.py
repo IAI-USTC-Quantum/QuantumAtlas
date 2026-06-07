@@ -22,9 +22,10 @@ Layout
 - ``qatlas_search.engine``    — run the selected backends concurrently + rank.
 - ``qatlas_search.cli``       — ``qatlas-search`` entry point.
 
-Config split (see ``config.py``): server URL + bearer token are reused from the
-existing ``qatlas`` client YAML config; only third-party API keys and ranking
-knobs live under the ``QATLAS_SEARCH_`` env prefix.
+Config (see ``config.py``): all settings come from the qatlas client YAML
+(``~/.config/qatlas/config.yaml``). Server URL + bearer token are reused from
+``qatlas auth login``; search-specific keys/knobs live under its ``search:``
+section.
 """
 
 from __future__ import annotations
