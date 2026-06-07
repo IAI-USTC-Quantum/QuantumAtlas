@@ -1,5 +1,5 @@
-# qatlas-rag embed-worker — runs on Ag-Workstation (WSL2 Ubuntu).
-# Reaches mesh peers via 10.144.18.88:8801.
+# qatlas-rag embed-worker — runs on a GPU host (typical: WSL2 Ubuntu).
+# Other mesh peers reach it over HTTP on port 8801.
 #
 # Install:
 #   1) symlink to /etc/systemd/system/qatlas-rag-embed.service

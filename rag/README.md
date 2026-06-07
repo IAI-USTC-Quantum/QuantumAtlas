@@ -1,6 +1,6 @@
 # qatlas_rag — embed worker (Python, GPU-only)
 
-> v0.20.0 起，**只剩 embed worker 一个 Python 角色**。Qdrant 查询 + 写入两路都已经收编进 Go server (`qatlasd`)，前端不变。这个目录现在只装 bge-m3 + bge-reranker-v2-m3 给 5080 跑。
+> v0.20.0 起，**只剩 embed worker 一个 Python 角色**。Qdrant 查询 + 写入两路都已经收编进 Go server (`qatlasd`)，前端不变。这个目录现在只装 bge-m3 + bge-reranker-v2-m3 在 GPU 上跑。
 
 ## 架构
 
@@ -9,9 +9,9 @@
                               │                 │ bge-m3
                               │                 │ bge-reranker-v2-m3
                               │                 ▼
-                              │              GPU (5080)
+                              │               GPU
                               │
-                              └─ gRPC ─→ Qdrant 1810 docker
+                              └─ gRPC ─→ Qdrant (docker)
 ```
 
 qatlasd 自己当 Qdrant client + 自己调 embed worker，所有检索策略（hybrid 权重、rerank pool、score normalize、snippet 截取）用 Go 在 `internal/routes/rag.go` 实现。本目录跟检索策略**完全无关**。

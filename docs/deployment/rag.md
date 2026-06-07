@@ -15,14 +15,14 @@ RAG (Retrieval-Augmented Generation) 让 `qatlasd` 把 8 万+ arXiv 论文的 ch
 ```bash
 # .env (qatlasd 这边)
 QATLAS_PAPER_ACCESS_ENABLED=true                # 部署方对外承担派生 paper bytes 重分发合规义务
-QATLAS_RAG_QDRANT_URL=10.144.18.10:6334          # gRPC host:port，也可以是 http(s):// scheme
+QATLAS_RAG_QDRANT_URL=qdrant.internal:6334       # gRPC host:port，也可以是 http(s):// scheme
 QATLAS_RAG_QDRANT_API_KEY=<read-only key>        # 可选；公网 Qdrant 必须
 QATLAS_RAG_QDRANT_COLLECTION=qatlas_papers_v1    # 默认值，跟 ingester 对齐
-QATLAS_RAG_EMBED_URL=http://10.144.18.88:8801
+QATLAS_RAG_EMBED_URL=http://embed.internal:8801
 QATLAS_RAG_EMBED_TOKEN=<embed worker bearer>     # 跟 embed worker 的 QATLAS_RAG_EMBED_TOKEN 一致
 ```
 
-任一字段为空，`/api/rag/*` **不注册**（404，跟"无此 handler"不可区分）。公共 `quantum-atlas.ai`（RackNerd）保持 OFF；Alibaba 内部部署可以打开。
+任一字段为空，`/api/rag/*` **不注册**（404，跟"无此 handler"不可区分）。面向公网的实例通常保持 OFF，只在受控的内部部署打开。
 
 ## 起 Qdrant（最简：docker compose）
 
@@ -38,7 +38,7 @@ docker compose -f qdrant-compose.example.yaml up -d
 curl -fsSL -H "api-key: $QDRANT_API_KEY" http://localhost:6333/readyz
 ```
 
-> ⚠️ WSL2 部署 Qdrant 的话需要 Windows host 上加 portproxy 把 `<mesh-ip>:{6333,6334}` 转给 WSL2 内的 docker，否则 mesh 邻居拿不到。模板见 [`rag/deploy/portproxy-qdrant-1810.ps1`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/rag/deploy/portproxy-qdrant-1810.ps1)。WSL2 mirrored 模式确认后这一跳可以省。
+> ⚠️ WSL2 部署 Qdrant 的话需要 Windows host 上加 portproxy 把 `<mesh-ip>:{6333,6334}` 转给 WSL2 内的 docker，否则 mesh 邻居拿不到。模板见 [`rag/deploy/portproxy-qdrant-wsl.ps1`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/rag/deploy/portproxy-qdrant-wsl.ps1)。WSL2 mirrored 模式确认后这一跳可以省。
 
 ## 起 embed worker（GPU）
 
@@ -71,7 +71,7 @@ curl -s http://localhost:8801/healthz
 ```bash
 sudo systemctl restart qatlasd
 journalctl -u qatlasd --since '30 sec ago' | grep 'rag:'
-# 期望: rag: enabled qdrant=10.144.18.10:6334 collection=qatlas_papers_v1 embed=http://10.144.18.88:8801
+# 期望: rag: enabled qdrant=qdrant.internal:6334 collection=qatlas_papers_v1 embed=http://embed.internal:8801
 ```
 
 ## 验证全链路

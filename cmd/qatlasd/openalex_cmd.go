@@ -8,7 +8,7 @@
 // (has_pdf / has_md / image_count) is owned by `papers sync`.
 //
 // EXECUTION IS OPERATOR-DRIVEN AND DECOUPLED FROM THIS SESSION. The
-// 10M-node bootstrap is a long, resource-heavy run against the 1810
+// 10M-node bootstrap is a long, resource-heavy run against the catalog
 // Neo4j; it must be scheduled deliberately, not as a side effect of a
 // deploy. See handoff.md for the full runbook (snapshot sync into
 // qatlas-openalex, then this command). The code is wired + compiles so

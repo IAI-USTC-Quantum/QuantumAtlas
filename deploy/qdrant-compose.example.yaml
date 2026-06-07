@@ -1,13 +1,13 @@
-# Qdrant on 1810 WSL — compose for Phase 2 deployment.
+# Qdrant compose template (typical: WSL2 host on the mesh).
 #
-# Listen on 0.0.0.0 inside the WSL so Windows host can portproxy
-#   10.144.18.10:{6333,6334} → <WSL-IP>:{6333,6334}
-# to expose to the EasyTier mesh. Until WSL2 mirrored networking is
-# confirmed, the portproxy hop is required (see Internal copilot-
-# instructions §"1810 Neo4j 关键约束" for the parallel pattern).
+# Listen on 0.0.0.0 inside the WSL so the Windows host can portproxy
+#   <mesh-ip>:{6333,6334} → <WSL-IP>:{6333,6334}
+# to expose Qdrant to the EasyTier mesh. Until WSL2 mirrored networking is
+# confirmed, the portproxy hop is required (template:
+# rag/deploy/portproxy-qdrant-wsl.ps1).
 #
 # Auth: both API_KEY (rw) and READ_ONLY_API_KEY come from the env file;
-# never inline them here. Read-only key is what the edge sidecar uses;
+# never inline them here. Read-only key is what qatlasd's query path uses;
 # ingester uses the rw key.
 
 services:

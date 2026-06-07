@@ -116,9 +116,9 @@ type Config struct {
 // via singleflight to a single upstream call.
 //
 // Cache is PER-PROCESS (in-memory LRU). Two qatlasd processes (e.g.
-// active-active on RackNerd + Alibaba) each maintain independent
-// caches, so the same DOI resolved on both edges incurs two OpenAlex
-// hits within the TTL. Acceptable for current scale (~2 edges, low
+// active-active edges) each maintain independent caches, so the same
+// DOI resolved on both edges incurs two OpenAlex hits within the TTL.
+// Acceptable for current scale (~2 edges, low
 // DOI QPS, polite-pool 10 req/s budget per IP); cross-edge cache
 // sharing (Redis or local Neo4j index) is tracked in issue #13 (the
 // MinerU dedupe issue covers shared-state infrastructure that the

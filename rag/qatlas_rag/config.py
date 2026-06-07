@@ -18,7 +18,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # --- Embed worker (Ag-Workstation 5080) ---
+    # --- Embed worker (remote GPU host) ---
     embed_token: str | None = None
     embed_model: str = "BAAI/bge-m3"
     reranker_model: str = "BAAI/bge-reranker-v2-m3"

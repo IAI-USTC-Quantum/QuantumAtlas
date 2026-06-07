@@ -98,14 +98,13 @@ _ARXIV_PDF_HOSTS = frozenset({"arxiv.org", "export.arxiv.org"})
 # it signs an S3 presigned URL for our edge's RustFS PDF bucket. Three
 # common deployment shapes:
 #
-#   - "raw.quantum-atlas.ai" — RackNerd-style: dedicated raw.* subdomain
-#     in front of the bucket
+#   - "raw.quantum-atlas.ai" — dedicated raw.* subdomain in front of
+#     the bucket
 #   - any host ending in ".quantum-atlas.ai" — flexibility for other
 #     edges that may pick a different subdomain
-#   - direct IP+port (e.g. "47.102.36.175:9000" on Alibaba) — handled
-#     dynamically below by matching the configured client server_url
-#     (config.yaml) host since the same box hosts both API and RustFS
-#     public endpoint
+#   - direct IP+port — handled dynamically below by matching the
+#     configured client server_url (config.yaml) host, since the same
+#     box hosts both the API and the RustFS public endpoint
 _S3_PUBLIC_HOST_SUFFIXES = (".quantum-atlas.ai",)
 _S3_PUBLIC_HOSTS = frozenset({"raw.quantum-atlas.ai"})
 
@@ -137,11 +136,10 @@ def _is_acceptable_pdf_url(url: str, server_url: str) -> bool:
     OK:
 
       - arxiv.org / export.arxiv.org           (legacy / fallback)
-      - raw.* or .quantum-atlas.ai subdomain   (RackNerd-style edge)
+      - raw.* or .quantum-atlas.ai subdomain   (subdomain-style edge)
       - the same host:port as the configured client `server_url`
-        (config.yaml; Alibaba-style edge that shares one IP/cert
-        with the API and the public RustFS endpoint, e.g.
-        https://47.102.36.175:9000)
+        (config.yaml; IP-based edge that shares one IP/cert with the
+        API and the public RustFS endpoint)
 
     Everything else is treated as a misconfigured / hostile server
     response and the claim is released without firing the URL at
@@ -163,9 +161,9 @@ def _is_acceptable_pdf_url(url: str, server_url: str) -> bool:
         if host.endswith(suffix):
             return True
     # Same host:port as the configured client `server_url`
-    # (config.yaml) — covers IP-based edges (Alibaba) where API and
+    # (config.yaml) — covers IP-based edges where the API and the
     # RustFS public endpoint share an IP + port (different ports also
-    # OK since edge can pin the public endpoint to e.g. :9000).
+    # OK since the edge can pin the public endpoint to e.g. :9000).
     try:
         srv = urlparse(server_url)
     except ValueError:

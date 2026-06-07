@@ -27,7 +27,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$WslIp,
-    [string]$MeshIp = '10.144.18.10',
+    [Parameter(Mandatory)][string]$MeshIp,
     [int[]]$Ports = @(6333, 6334)
 )
 

@@ -487,7 +487,7 @@ class TestIsAcceptablePDFURL:
             ("https://arxiv.org/pdf/2401.0001v1", "https://quantum-atlas.ai", True),
             ("https://export.arxiv.org/pdf/2401.0001v1", "https://quantum-atlas.ai", True),
 
-            # RackNerd-style edge: dedicated raw.* subdomain
+            # IP-based edge: dedicated raw.* subdomain in front of the bucket
             ("https://raw.quantum-atlas.ai/qatlas-pdf/0207/0207065v3.pdf?X-Amz-Signature=ABC",
              "https://quantum-atlas.ai", True),
 
@@ -497,8 +497,8 @@ class TestIsAcceptablePDFURL:
             # Main edge host itself matches (same-host rule)
             ("https://quantum-atlas.ai/qatlas-pdf/x.pdf", "https://quantum-atlas.ai", True),
 
-            # Alibaba-style: IP + port shared between API and S3 public endpoint
-            ("https://47.102.36.175:9000/qatlas-pdf/x.pdf", "https://47.102.36.175", True),
+            # IP+port edge: API and S3 public endpoint share one IP (same-host rule)
+            ("https://203.0.113.10:9000/qatlas-pdf/x.pdf", "https://203.0.113.10", True),
 
             # Rejections
             ("https://evil.example.com/anything", "https://quantum-atlas.ai", False),

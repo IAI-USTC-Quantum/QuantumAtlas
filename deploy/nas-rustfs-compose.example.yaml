@@ -124,7 +124,7 @@ services:
 
     volumes:
       - rustfs_data:/data       # 对象数据 + .notify-events 队列
-      - ./rustfs-logs:/logs     # bind mount,host 路径 /volume1/docker/rustfs-logs/
+      - ./rustfs-logs:/logs     # bind mount（相对 compose 文件目录的 host 路径）
 
 volumes:
   rustfs_data:

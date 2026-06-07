@@ -190,7 +190,7 @@ type Config struct {
 	// snippets — the same derivative-work bytes that
 	// /api/papers/{id}/markdown serves.
 
-	// RAGQdrantURL — Qdrant gRPC endpoint (e.g. "10.144.18.10:6334").
+	// RAGQdrantURL — Qdrant gRPC endpoint (e.g. "qdrant.internal:6334").
 	// Accepts either bare host:port or "[http|https]://host:port"; the
 	// scheme is stripped because the qdrant-go-client takes host/port
 	// separately. TLS is auto-enabled when the URL is https://.
@@ -206,7 +206,7 @@ type Config struct {
 	RAGQdrantCollection string
 
 	// RAGEmbedURL — embed worker base URL (e.g.
-	// "http://10.144.18.88:8801"). qatlasd calls /embed and /rerank
+	// "http://embed.internal:8801"). qatlasd calls /embed and /rerank
 	// here.
 	RAGEmbedURL string
 

@@ -142,9 +142,8 @@ def main() -> int:
             print(f"  - {line}", file=sys.stderr)
         return 3
 
-    print("\nPASS — record these numbers in docs/spike-report.md and pin")
-    print("       the verified torch / FlagEmbedding / transformers versions")
-    print("       to '==' in pyproject.toml.")
+    print("\nPASS — pin the verified torch / FlagEmbedding / transformers")
+    print("       versions to '==' in pyproject.toml.")
     return 0
 
 

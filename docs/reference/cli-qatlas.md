@@ -15,7 +15,7 @@ qatlas [--version] [--help] <subcommand> [args...]
 
 ## 通用 client flag
 
-所有调 server 的子命令（ingest / upload / mineru 等）都接受这个 flag：
+所有调 server 的子命令（ingest / contrib 等）都接受这个 flag：
 
 | Flag | 默认 | 含义 |
 |---|---|---|
@@ -131,12 +131,23 @@ qatlas ingest status <task_id>
 
 ---
 
-### `qatlas upload pdf`
+### `qatlas contrib`
+
+贡献者日常入口（v0.19.0 起的正式命令面）。把"上传 PDF"和"本地跑 MinerU 再推回"两件事归到一个名词下：
+
+```
+qatlas contrib pdf <arxiv_id> --pdf <path> [--overwrite]
+qatlas contrib mineru [<arxiv_id>] [--watch] [...]
+```
+
+> 旧入口 `qatlas upload pdf` 仍可用但**自 v0.19.0 弃用**（跑时打 stderr 警告，未来移除）；`qatlas upload mineru` / `qatlas upload markdown` 已**删除**——所有 MinerU 推送统一走 `qatlas contrib mineru`，由同一条路径处理 claim / lease / upload。
+
+#### `qatlas contrib pdf`
 
 上传本地 PDF。需要 `papers:write` scope。
 
 ```
-qatlas upload pdf <arxiv_id> --pdf <path> [--overwrite]
+qatlas contrib pdf <arxiv_id> --pdf <path> [--overwrite]
 ```
 
 | Flag | 必填 | 默认 | 含义 |
@@ -147,29 +158,31 @@ qatlas upload pdf <arxiv_id> --pdf <path> [--overwrite]
 
 调用：`POST /api/papers/{arxiv_id}/upload-pdf`（multipart），自动加 `?expected_sha256=<hex>`。
 
-详细 how-to：[上传 PDF / Markdown](../guides/upload-assets.md)，详细 API：[Upload API](upload-api.md)。
+详细 how-to：[贡献内容](../guides/contribute-content.md)，详细 API：[Upload API](upload-api.md)。
 
----
+#### `qatlas contrib mineru`
 
-### `qatlas upload mineru`
-
-上传 MinerU 结果 zip（`full.md` + 可选 `images/*`）。server 解包后 markdown 落 `qatlas-md` 桶、每张图落 `qatlas-images/<canonical>/`。需要 `papers:write` scope。
+本地用自己的 `MINERU_API_TOKENS` 跑 MinerU 解析，把结果（markdown + images）推回 server。三种模式：
 
 ```
-qatlas upload mineru <arxiv_id> --zip <path> [--source <tool>] [--overwrite]
+qatlas contrib mineru                               # 队列模式：claim 并处理 server 的 needs-mineru 队列
+qatlas contrib mineru <arxiv_id>                    # 单篇模式
+qatlas contrib mineru --watch [--watch-interval N]  # 守护循环
 ```
 
-| Flag | 必填 | 默认 | 含义 |
-|---|---|---|---|
-| `<arxiv_id>` | ✅ | — | 必含版本 |
-| `--zip <path>` | ✅ | — | 本地 MinerU 结果 zip（保留原样，不要自己解开）|
-| `--source <tool>` | ❌ | — | 解析 pipeline 名（写入审计：mineru-client-v0.8 / manual / ...）|
-| `--overwrite` | ❌ | false | 字节不同时允许覆盖（markdown 和 images 分别走 dedup）|
+| Flag | 默认 | 含义 |
+|---|---|---|
+| `<arxiv_id>` | — | 省略 = 队列模式遍历 server 的未处理列表；给定（必含版本）= 只处理这一篇 |
+| `--batch-size N` | MinerU 单批上限 | 队列模式每批最多几篇 |
+| `--continue-on-error` | off | 队列模式遇到单篇失败继续（批模式下隐式开启）|
+| `--ttl-seconds N` | server 默认 1800（max 7200）| claim 租约时长 |
+| `--no-cache` | off | 让 MinerU 绕过 server 端缓存 |
+| `--overwrite` | off | 覆盖 server 上已有 markdown / images |
+| `--no-push` | off | 跑 MinerU 但不上传，结果 zip 留在临时目录、立即释放 claim |
+| `--watch` | off | 守护模式：每轮排空队列后 sleep `--watch-interval` 再轮询；隐含 `--continue-on-error`，SIGINT/SIGTERM 处理完当前篇干净退出 |
+| `--watch-interval N` | 300 | 守护模式两批之间的轮询间隔（秒）|
 
-调用：`POST /api/papers/{arxiv_id}/upload-mineru`。
-
-!!! warning "v0.8.0 BREAKING"
-    旧的 `qatlas upload markdown` 已**删除**。原命令只接受 `.md` 单文件、会丢图；改成 `upload mineru` 推完整 zip。详见 [Upload API §Breaking change v0.8.0](upload-api.md#breaking-change-v080)。
+需要 `papers:write` scope。详细 how-to：[贡献内容](../guides/contribute-content.md) / [用 MinerU 解析](../guides/parse-with-mineru.md)。
 
 ---
 
@@ -313,7 +326,7 @@ qatlas auth token  [-s | --server-url <URL>]
 | `--expires-days N` | `90` | 预填到表单的过期天数 (1–365)；浏览器可改 |
 | `--token-name NAME` | `qatlas-cli-<host>-<YYYY-MM-DD>` | 预填到表单的 token 名；浏览器可改 |
 | `--timeout SEC` | `600` | CLI 等浏览器 approve 的秒数 |
-| `--insecure` | off | 信任自签证书（IP 入口 / 阿里云边缘 `https://47.102.36.175`）|
+| `--insecure` | off | 信任自签证书（IP 入口 / 用 `tls internal` 的边缘节点）|
 | `--with-token` | off | CI 旁路：从 stdin 读 PAT（`cat token \| qatlas auth login -s ... --with-token`），跳过 OAuth 直接存进 hosts.yml；secret 不进 argv / shell history。跟 `gh auth login --with-token` 同款设计——故意不暴露 argv 形式 |
 
 注意：所有非 CI 旁路的 flag 都只是**预填**，最终 token 的 name / scopes / expiry 以浏览器里点 Approve 时表单上的值为准——这设计就是为了让用户不必每次都精确记得自己想要哪几条 scope，先 `qatlas auth login` 跑起来再在浏览器里挑。

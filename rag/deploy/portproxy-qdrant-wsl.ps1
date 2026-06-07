@@ -1,12 +1,18 @@
-# Run this on the 1810 Windows host as Administrator (PowerShell).
+# Run this on the Windows host (the one running WSL2 + Qdrant) as
+# Administrator (PowerShell).
 # Adds portproxy rules so EasyTier mesh peers can reach Qdrant
 # (running in WSL2 Ubuntu, in non-mirrored networking mode).
 #
+# Pass the mesh IP this host should listen on, e.g.:
+#   .\portproxy-qdrant-wsl.ps1 -MeshIp 10.0.0.10
+#
 # After this:
-#   curl http://10.144.18.10:6333/readyz   from any mesh peer should work.
+#   curl http://<mesh-ip>:6333/readyz   from any mesh peer should work.
 #
 # Re-run after a WSL reboot if the WSL IP changes (the script picks up the
 # current WSL IP automatically).
+
+param([Parameter(Mandatory)][string]$MeshIp)
 
 $ErrorActionPreference = 'Stop'
 
@@ -17,7 +23,7 @@ $wslIp = (wsl.exe -d $wslDistro hostname -I).Trim().Split(' ')[0]
 if (-not $wslIp) { throw "Failed to read WSL IP from distro '$wslDistro'." }
 Write-Host "WSL distro IP detected: $wslIp"
 
-$meshIp = '10.144.18.10'
+$meshIp = $MeshIp
 
 foreach ($port in 6333, 6334) {
     Write-Host "Adding portproxy: $meshIp`:$port -> $wslIp`:$port"

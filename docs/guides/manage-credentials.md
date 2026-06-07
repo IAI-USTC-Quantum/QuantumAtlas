@@ -60,7 +60,7 @@ QuantumAtlas 用 **PocketBase session token (JWT)** 和 **Personal Access Token 
     | `--expires-days N` | `90` | 预填的过期天数 (1–365)；浏览器里可改 |
     | `--token-name NAME` | `qatlas-cli-<host>-<YYYY-MM-DD>` | 预填的 token 名；浏览器里可改 |
     | `--timeout SEC` | `600` | CLI 等浏览器 approve 的最大秒数 |
-    | `--insecure` | 关 | 信任自签证书（如 Alibaba 边缘） |
+    | `--insecure` | 关 | 信任自签证书（如用 `tls internal` 的 IP 入口边缘） |
     | `--with-token` | — | CI 旁路：从 stdin 读 PAT（`cat token \| qatlas auth login -s <host> --with-token`），跳过 OAuth 直接存进 hosts.yml；secret 不进 argv / shell history（跟 `gh auth login --with-token` 同款设计） |
 
     所有 CLI 参数都只是**预填**，最终 token 的 name / scopes / expires 以浏览器里点 Approve 时表单上的值为准——浏览器始终是 source of truth。
