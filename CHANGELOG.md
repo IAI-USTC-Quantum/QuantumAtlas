@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.21.0a0 (2026-06-07)
+
+### BREAKING CHANGE
+
+- the `agentic-search` extra and `qatlas-search --agent` mode are
+removed; the package is renamed qatlas_agentic_search -> qatlas_search.
+
+### Feat
+
+- **search**: add agentic_search academic literature search
+
+### Fix
+
+- **ci,papers**: pytest path filter + 503 for unconfigured PDF fetch
+- **search**: YAML config alignment, HTTP retries, and backend bug fixes
+
+### Refactor
+
+- **search**: demote agentic_search to a pure-infra search module
+
 ## v0.20.0 (2026-06-05)
 
 ### Refactor
