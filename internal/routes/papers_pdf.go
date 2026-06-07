@@ -184,16 +184,22 @@ func streamPDF(re *core.RequestEvent, store objstore.Store, canonical string) er
 // status: not_in_arxiv (ErrNotFound chain) → 404, fetch_disabled
 // (converter disabled / no fetcher) → 503, anything else → 502.
 func failedPDFResponse(re *core.RequestEvent, converter *mineru.Converter, canonical string, job *mineru.Job) error {
-	if !converter.Enabled() || job.Phase == mineru.PhaseErrorFetching && converter.DisabledReason() != "" {
-		// Disabled-mode messages flow through job.Err already, but
-		// hint the status code so the agent gives up vs retries.
+	if !converter.Enabled() || (job.Phase == mineru.PhaseErrorFetching && !converter.FetchEnabled()) {
+		// Two "fetch capability unavailable" cases: converter wholly
+		// disabled, or enabled-but-no-fetcher (token+S3 set, but no
+		// arxiv fetcher). Hint 503 so the agent gives up vs retries,
+		// and distinguishes this from a real 404 "paper gone".
+		detail := converter.DisabledReason()
+		if detail == "" {
+			detail = errString(job.Err)
+		}
 		return re.JSON(http.StatusServiceUnavailable, map[string]any{
 			"arxiv_id":  canonical,
 			"state":     "unavailable",
 			"phase":     string(job.Phase),
 			"pdf_ready": false,
 			"md_ready":  false,
-			"detail":    converter.DisabledReason(),
+			"detail":    detail,
 		})
 	}
 

@@ -50,9 +50,9 @@ import (
 // as a successful write).
 //
 // Dedupe / queue / fetch progress are all PER-PROCESS state — two
-// edges (e.g. RackNerd + Alibaba) running their own qatlasd will
-// each maintain their own c.jobs map, their own avgConvertDuration
-// window, and their own arxiv fetch semaphore. So two simultaneous
+// edges running their own qatlasd will each maintain their own
+// c.jobs map, their own avgConvertDuration window, and their own
+// arxiv fetch semaphore. So two simultaneous
 // /markdown calls for the same paper that happen to land on
 // different edges will trigger TWO MinerU jobs (one each), wasting
 // quota; status responses on each edge see only that edge's queue.
@@ -383,6 +383,13 @@ func (c *Converter) Enabled() bool { return c.enabled }
 // converter is disabled, suitable for the body of a 503 response.
 // Empty when Enabled() == true.
 func (c *Converter) DisabledReason() string { return c.disabledMsg }
+
+// FetchEnabled reports whether an arXiv PDF fetcher is wired in. The
+// converter can be Enabled() (token + S3 public endpoint set) yet still
+// lack a fetcher; in that case a cache-miss /pdf request cannot obtain
+// the bytes, and the handler should answer 503 (server capability gap)
+// rather than 404 (paper gone).
+func (c *Converter) FetchEnabled() bool { return c.cfg.Fetcher != nil }
 
 // MaxConcurrentJobs returns the operator-configured semaphore size,
 // for inclusion in the startup log line and any /metrics surface.

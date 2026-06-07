@@ -4,16 +4,20 @@ on:
   push:
     branches: [main]
     paths:
-      - 'atlas/**'
+      - 'qatlas/**'
+      - 'rag/qatlas_rag/**'
       - 'tests/**'
+      - 'rag/tests/**'
       - 'pyproject.toml'
       - 'uv.lock'
       - '.github/workflows/pytest.yml'
   pull_request:
     branches: [main]
     paths:
-      - 'atlas/**'
+      - 'qatlas/**'
+      - 'rag/qatlas_rag/**'
       - 'tests/**'
+      - 'rag/tests/**'
       - 'pyproject.toml'
       - 'uv.lock'
       - '.github/workflows/pytest.yml'
