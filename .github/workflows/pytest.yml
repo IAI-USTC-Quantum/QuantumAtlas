@@ -6,8 +6,10 @@ on:
     paths:
       - 'qatlas/**'
       - 'rag/qatlas_rag/**'
+      - 'search/qatlas_search/**'
       - 'tests/**'
       - 'rag/tests/**'
+      - 'search/tests/**'
       - 'pyproject.toml'
       - 'uv.lock'
       - '.github/workflows/pytest.yml'
@@ -16,8 +18,10 @@ on:
     paths:
       - 'qatlas/**'
       - 'rag/qatlas_rag/**'
+      - 'search/qatlas_search/**'
       - 'tests/**'
       - 'rag/tests/**'
+      - 'search/tests/**'
       - 'pyproject.toml'
       - 'uv.lock'
       - '.github/workflows/pytest.yml'
