@@ -164,4 +164,4 @@ OpenAlex `referenced_works[]` × W-id → DOI join → ~3.3 亿条 `(:Paper)-[:C
 
 ## 调研原始记录
 
-字段对照实测 + spike 探索（API 抓 1000 篇 arxiv work、Shor 1995 引用子图、RustFS mirror 通路验证、跨洋吞吐测速等）：[`docs/spikes/bulk-data-rustfs-2026-05-29.md`](../spikes/bulk-data-rustfs-2026-05-29.md)
+字段对照实测 + spike 探索（API 抓 1000 篇 arxiv work、Shor 1995 引用子图、RustFS mirror 通路验证、跨洋吞吐测速等）记录在 issue [IAI-USTC-Quantum/QuantumAtlas#16](https://github.com/IAI-USTC-Quantum/QuantumAtlas/issues/16)（OpenAlex → Neo4j 引用图构建尝试）。
