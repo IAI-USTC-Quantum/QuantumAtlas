@@ -38,7 +38,7 @@ QuantumAtlas/
 ```
 
 !!! info "状态目录不在仓库里"
-    `wiki/`、`raw/`、`data/`、`pb_data/` 已**不在**仓库内——它们默认落到 `${XDG_DATA_HOME:-$HOME/.local/share}/quantum-atlas/` 之下，或通过 `.env` 显式覆盖。详见 [存储布局迁移](../deployment/migration-storage-layout.md)。
+    `wiki/`、`raw/`、`data/`、`pb_data/` 已**不在**仓库内——`raw` / `data` / `pb_data` 默认落到 `${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/` 之下，`wiki` 默认是兄弟目录 `../QuantumAtlas-Wiki`，都可通过 `.env` 显式覆盖。详见 [存储布局迁移](../deployment/migration-storage-layout.md)。
 
 ## 这一节的内容
 

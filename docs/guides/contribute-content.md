@@ -46,7 +46,7 @@ echo mn_xxxxx | qatlas config set mineru_api_token   # 从 stdin 读，不进 hi
 
 ## 1. Raw 资产贡献的三条路径
 
-`RAW_DIR` 是论文资产的 canonical store（默认 `${XDG_DATA_HOME:-$HOME/.local/share}/quantum-atlas/raw`，或显式 `QATLAS_RAW_DIR` 覆盖）。文件名遵循 arXiv 规范并按 YYMM 分片：
+`RAW_DIR` 是论文资产的 canonical store（默认 `${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/raw`，或显式 `QATLAS_RAW_DIR` 覆盖）。文件名遵循 arXiv 规范并按 YYMM 分片：
 
 | 风格 | 例子 | 存储路径（相对 `$RAW_DIR`） |
 |---|---|---|
