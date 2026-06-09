@@ -148,14 +148,9 @@ firstEnvIntDefault(0, "SOME_INT_VAR")                // 同上但 int
 
 | 旧名 | 状态 |
 |---|---|
-| `QATLAS_WRITE_TOKEN` | 已删；Phase-A 临时共享密钥，被 PocketBase auth 替代 |
-| `QATLAS_SESSION_SECRET` | 已删 |
-| `QATLAS_POCKETBASE_URL` | 已删；server 自带 PocketBase |
-| `QATLAS_REQUIRE_RELEASE_TAG` | 已删；旧 FastAPI 的 release-tag 启动护栏 |
-| `CLI_TOKEN_*` | 已删；更早的 token 字段族 |
-| `QATLAS_SERVER_DEBUG` | 从未被读过的幽灵字段；v0.16.0 从 `.env.example` 清理 |
-| 无 `QATLAS_` 前缀的 alias（`WIKI_DIR` / `RAW_DIR` / `DATA_DIR` / `PB_DATA_DIR` / `SERVER_HOST` / `SERVER_PORT` / `USER_HEADER`） | **v0.17.0 移除**——v0.16.0 起 `Load()` 按字段 emit `slog.Warn`（journald 可见），给运维一个 minor 的迁移窗口 |
-| `QATLAS_SERVER_URL` / `PUBLIC_BASE_URL`（服务端历史名）| **v0.19.0 改名为 `QATLAS_PUBLIC_URL`**——服务端不再读旧名。Client 完全不读 env（v0.17.0 起），跟这一项无关 |
+| `QATLAS_WRITE_TOKEN` / `QATLAS_SESSION_SECRET` / `QATLAS_POCKETBASE_URL` / `QATLAS_REQUIRE_RELEASE_TAG` / `CLI_TOKEN_*` / `QATLAS_SERVER_DEBUG` | 已删，无效果 |
+| 无 `QATLAS_` 前缀的 alias（`WIKI_DIR` / `RAW_DIR` / `DATA_DIR` / `PB_DATA_DIR` / `SERVER_HOST` / `SERVER_PORT` / `USER_HEADER`） | 已移除，改用 `QATLAS_` 前缀名 |
+| `QATLAS_SERVER_URL` / `PUBLIC_BASE_URL` | 服务端已改名为 `QATLAS_PUBLIC_URL` |
 
 > `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` 仍然有效，但只用于 client 侧 `qatlas extractor` 实验性子命令；qatlasd server 从未读过它们，所以不在 server 启动 env 范围里。
 

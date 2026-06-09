@@ -24,7 +24,7 @@ qatlas wiki list
     页面的 `type` 已统一改写为 `type: concept`，子类靠 `category` 区分
     （`algorithm` / `primitive` / `technique` / `comparison` / …）。`source`（论文）**不再作为
     可浏览条目**，只在词条「参考文献」里被 `[[paper-arxiv-*]]` 引用（列表 / 搜索 API 默认排除）。
-    下表的 `type` 列为历史语义；**新页面一律 `type: concept` + 合适的 `category`**。用 CLI `--type concept` 建的新页面落在 `concepts/`，迁移过的历史页面仍在 `entities/` 等原目录（`type` 已改为 concept）——浏览统一按 `category` 分组，目录只是组织方式。
+    **新页面一律 `type: concept` + 合适的 `category`**（下表 `type` 列仅 `concept` 为现行值，其余为兼容值）；用 CLI `--type concept` 建的页面落在 `concepts/`，浏览按 `category` 分组。
     批量追加内容见 [生成 wiki 内容](generate-wiki-content.md)。
 
 | 类型 | 目录 | 文件名前缀 | 回答什么问题 | 同步到 Neo4j？|
@@ -68,7 +68,7 @@ created_at: 2026-05-29
 ...在这里写内容...
 ```
 
-> CLI 用 `--type concept` 会把文件落到 `wiki/concepts/`。历史页面（迁移前用 `--type entity` 建的）仍留在 `entities/` 等原目录、`type` 已改为 `concept`——两处都能正常浏览，目录只是组织方式，浏览按 `category` 分组。
+> CLI 用 `--type concept` 会把文件落到 `wiki/concepts/`；浏览按 `category` 分组，目录只是组织方式。
 
 ## 四个最小可行示例
 

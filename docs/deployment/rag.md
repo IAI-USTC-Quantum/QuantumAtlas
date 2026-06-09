@@ -8,8 +8,6 @@ RAG (Retrieval-Augmented Generation) 让 `qatlasd` 把 8 万+ arXiv 论文的 ch
 | **embed worker** (Python) | `qatlas_rag.embed.worker:app` | `0.0.0.0:8801` | 一台 GPU 主机（典型：RTX 5080 / sm_120），整个仓库**唯一保留的 Python 进程** |
 | **Qdrant** (Rust) | docker `qdrant/qdrant:v1.12.4` | `:6333`/`:6334` | 任何能跑 docker 的机器（典型：WSL 内） |
 
-> v0.20.0 起去掉了 Python sidecar 这一层 —— 之前 sidecar 做的所有事（hybrid query 构造、Qdrant 调用、rerank 编排、snippet 拼装）都搬进 `qatlasd` 的 Go handler 里了。前端没变化。
-
 ## 两个开关都必须 ON 才会注册 `/api/rag/*`
 
 ```bash

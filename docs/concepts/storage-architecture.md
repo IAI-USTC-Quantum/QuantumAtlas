@@ -28,8 +28,8 @@ QuantumAtlas 处理论文图谱的本质问题是：
 `papers sync` / `wiki sync` 重建；paperindex 漂移，从 bucket LIST 对账。
 
 ??? note "paperindex 这层为什么不是一个独立数据库（PostgreSQL / SQLite）"
-    早期设计想用 PocketBase SQLite 当 metadata 主库。v0.7+ 改成 **lakehouse-lite 模式**——
-    索引也存在 RustFS 桶里（`index/papers.parquet`），qatlasd 进程内嵌 DuckDB 直接查 Parquet。
+    paperindex 不开独立数据库，走 **lakehouse-lite 模式**——索引存在 RustFS 桶里
+    （`index/papers.parquet`），qatlasd 进程内嵌 DuckDB 直接查 Parquet。
 
     不再开独立数据库的理由：
 
@@ -99,9 +99,9 @@ flowchart LR
 完整 upload 写口语义、conditional PUT 实现细节走 [`reference/upload-api.md`](../reference/upload-api.md)。
 
 ??? note "为什么是 arxiv ID 而不是 content-addressed（sha256 寻址）"
-    早期 spike 设想过 `raw/<sha[:2]>/<sha>.pdf` 的 content-addressed 命名（按 SHA256 寻址，
-    天然 dedup、ETag = sha256 对账简单、永远 immutable 下游 cache 可永久缓存、备份只需 rsync
-    一个目录树）。v0.7.0 没采纳，理由：
+    content-addressed 命名（`raw/<sha[:2]>/<sha>.pdf`，按 SHA256 寻址）的诱惑是：天然
+    dedup、ETag = sha256 对账简单、永远 immutable 下游 cache 可永久缓存、备份只需 rsync
+    一个目录树。但这里用 arxiv ID 寻址，理由：
 
     - arxiv 是天然唯一 ID（不可改、不会撞），按 arxiv 寻址比 SHA 寻址更直观（运维肉眼看 key
       能猜出是哪篇 paper）；
@@ -456,67 +456,6 @@ count(target bucket recursive) >= count(source bucket recursive prefix)
 **多边缘部署**：跨节点拓扑（节点列表、IP、共享什么、不共享什么、用户/PAT 影响、presign URL
 同源等）属于运维细节，见内部仓库的多边缘部署文档。
 
-??? note "早期想过的几个设计点（v0.7+ 已决定 / 待 RFC）"
-    留作历史决策追溯：
-
-    - **S3 client 库选型**：~~`minio-go` vs aws-sdk-go-v2~~ —— **已选 minio-go** (v7.2.0)，
-      理由：包小（~3MB vs ~30MB）、跟 RustFS 同血脉、API 简洁
-    - **去重粒度**：sha256 整文件去重 vs DOI 去重 —— 前者实现简单但同篇 paper 的预印本/出版
-      版会算两份；后者更"正确"但 DOI 不一定可拿到。倾向"两个 key 都存，sha256 做物理去重，
-      DOI 做逻辑去重"
-    - **CDN**：边缘节点是否需要 cache raw？短期不做，等流量数据说话
-    - **Neo4j vs 替代**：Neo4j 是当前默认，若 wiki + paper 引用图始终在百万节点以下，可以
-      考虑 Memgraph（资源减半、Cypher 兼容）；详见 `graph-visualization-research.md`，留给
-      单独 RFC
-    - **`refs_raw` 是否进单独 PostgreSQL**：百万级 ref_edges 行 paperindex 能扛，但分析查询
-      可能慢。将来要在 metadata 层跑 join 分析，考虑迁 PG
-
-??? note "早期 worker pipeline 设计（v0.7+ 已收敛为同步路径）"
-    早期设想过 "upload → ingest worker → resolve worker → graph loader worker" 多 worker
-    队列 + DLQ 链路（每步只看上一步的 `status` 字段，崩任一个重启从上次的 status 继续；失败
-    进 dead letter queue 由运维或 LLM 兜底定期重试）：
-
-    ```text
-    1. POST /upload-pdf  →  S3 PUT  →  papers.status = "uploaded"  →  返回 200
-    2. ingest worker     →  MinerU 抽取  →  papers.status = "extracted"
-    3. resolve worker    →  CrossRef/OpenAlex 匹配  →  ref_edges + papers.status = "resolved"
-    4. graph loader      →  Cypher UNWIND MERGE  →  ref_edges.status = "synced"
-    ```
-
-    v0.7+ 起：upload handler **同一个 HTTP 请求里**完成 S3 写入 + Neo4j MERGE，不再有
-    worker queue + DLQ。Neo4j 挂时 fail-open on write（S3 仍写成功，回 `201 +
-    X-Catalog-Sync: deferred`，由 `qatlasd papers sync` 兜底）。OpenAlex 批量灌入走
-    `qatlasd openalex bootstrap` CLI。
-
-    收敛理由：worker 队列对当前吞吐 over-engineered，同步路径 + 周期对账 + fail-open on
-    write 在实际负载下 fewer moving parts、运维面更小。如果未来吞吐涨 10× 再 evaluate
-    重新拆出 worker。
-
-??? note "早期演进路线（P0–P5 阶段表）"
-    | 阶段 | 触发条件 | 工作内容 |
-    |---|---|---|
-    | **P0** | — | RAW_DIR 本地、Neo4j 客户端代码 ready、Neo4j server 未部署 |
-    | **P1** | 决定上 Neo4j | WSL2 apt 装 5.26 LTS、Windows portproxy、server `.env` 填 `NEO4J_*` |
-    | **P2** | 有 paper 进来要测引用图 | 实现 extract worker（MinerU）+ resolve worker（CrossRef/OpenAlex），refs 仅入表不写 Neo4j |
-    | **P3** | ref_edges 表积累几万行 | 实现 graph loader worker + `qatlas graph rebuild` CLI；写第一批 `:CITES` 边 |
-    | **P4** | 节点数破百万 | 切换冷启动到 offline import；部署 cron 备份；接 GDS 跑 PageRank / Louvain |
-    | **P5** | 用户提复杂图查询 | 上 Cytoscape.js 前端；评估是否要 read replica |
-
-    **实际进展**：P1 端到端可达后**没有完全按 P2–P5 节奏走**——v0.7+ 直接走 OpenAlex
-    bootstrap + paperindex Lakehouse 路线（见上一条折叠），跳过了 worker pipeline。表保留
-    作"早期引入 Neo4j 的渐进路线规划"教学材料。
-
-??? note "在线 vs 离线三场景（早期设计想法）"
-    早期想过分三种 ingest 场景打三种打法：
-
-    - **场景 A. 冷启动 / 历史回填 → 离线 batch**：用 `neo4j-admin database import full`
-      （offline tool，target 必须空库）一次性导入，比在线 `MERGE` 快 10–100×。**v0.7+
-      实际没走这条**——OpenAlex bootstrap CLI 直接走 Cypher `UNWIND + MERGE` batch
-      （每批 1000 条），代码简单很多，吞吐对 100w 量级够。
-    - **场景 B. 日常增量** → 上 §2 的同步写路径（upload handler 直接 MERGE）
-    - **场景 C. 关系修复 / 算法跑批（cron）**：周期重新 resolve 之前没匹配上的 reference
-      （OpenAlex 数据每周更新），跑 GDS PageRank / Louvain 把社区标签 / 影响力分数**写回**
-      （属性名带 `__derived` 前缀，标 source 来自计算而非 ingest）。
 
 ---
 

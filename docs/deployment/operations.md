@@ -62,9 +62,9 @@ qatlasd service install \
 连 Go / npm / pixi 都不要，只要 `curl` 或 `wget` + `install`。也可以走 B/C/D
 本地编译，但只在你想钉未发布 commit、或在隔离环境里复现 build 时才需要。
 
-> **为什么 install-qatlasd.sh 不自动起服务**：早期版本里 `curl|sh` 会在 binary
-> 装完后顺手 chain 进 `qatlasd service install`。在 dash（Debian / Ubuntu
-> 的 `/bin/sh`）上这条链不可靠——dash 是流式 parser，会在执行到 `exec </dev/tty`
+> **为什么 install-qatlasd.sh 不自动起服务**：把 `curl|sh` chain 进 `qatlasd
+> service install` 在 dash（Debian / Ubuntu 的 `/bin/sh`）上不可靠——dash 是
+> 流式 parser，会在执行到 `exec </dev/tty`
 > 切换 stdin 之前已经从 pipe 预读了大量未消费字节，切换后这些字节既不能用作
 > 脚本继续解析也不能用作终端输入，要么 hang 要么报 `Syntax error: word
 > unexpected`。bash 因为预读整个脚本不受影响，但我们不能假设目标机有 bash
