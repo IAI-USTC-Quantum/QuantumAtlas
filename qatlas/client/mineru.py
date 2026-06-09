@@ -1,4 +1,4 @@
-"""``qatlas mineru`` — run MinerU parsing locally and push the result to the server.
+"""``qatlas contrib mineru`` — run MinerU parsing locally and push the result to the server.
 
 The contributor flow is arxiv-only: the server hands back an arxiv.org versioned
 URL (stable bytes — arxiv never mutates a published version) and we feed that URL
@@ -6,14 +6,14 @@ to MinerU. The server **never** redistributes PDFs back to clients.
 
 Modes::
 
-    qatlas mineru                       # queue mode: pick up to --max papers
+    qatlas contrib mineru               # queue mode: pick up to --max papers
                                         # that have PDF but no markdown yet,
                                         # claim each, process, upload, release.
 
-    qatlas mineru quant-ph/9508027v1    # single mode: claim and process one
-                                        # specific paper.
+    qatlas contrib mineru quant-ph/9508027v1   # single mode: claim and process
+                                        # one specific paper.
 
-    qatlas mineru --watch               # daemon mode: loop forever, sleeping
+    qatlas contrib mineru --watch       # daemon mode: loop forever, sleeping
                                         # --watch-interval (default 300s)
                                         # between batches. SIGINT / SIGTERM
                                         # gracefully release any in-flight
@@ -21,7 +21,7 @@ Modes::
 
 Concurrency::
 
-    Multiple contributors can run ``qatlas mineru`` in parallel; the server
+    Multiple contributors can run ``qatlas contrib mineru`` in parallel; the server
     issues atomic per-paper claims (default 30-minute lease) so two clients
     never burn MinerU quota on the same paper. If a claim is already held by
     someone else the client silently skips and moves to the next candidate.
@@ -1210,7 +1210,7 @@ def _sleep_interruptible(seconds: float) -> None:
         time.sleep(min(1.0, end - time.monotonic()))
 
 
-def build_parser(prog: str = "qatlas mineru") -> argparse.ArgumentParser:
+def build_parser(prog: str = "qatlas contrib mineru") -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=prog,
         description=(
@@ -1307,12 +1307,11 @@ def build_parser(prog: str = "qatlas mineru") -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None, *, prog: str | None = None) -> int:
     """Run the local MinerU client.
 
-    ``prog`` controls the program name in --help output; defaults to
-    ``qatlas mineru`` to keep the legacy entry point's text stable. The
-    new ``qatlas contrib mineru`` dispatcher passes ``prog="qatlas
-    contrib mineru"`` so help shows the canonical name.
+    ``prog`` controls the program name in --help output and defaults to
+    ``qatlas contrib mineru``. The ``qatlas contrib mineru`` dispatcher
+    passes ``prog`` explicitly so help shows the canonical name.
     """
-    parser = build_parser(prog=prog or "qatlas mineru")
+    parser = build_parser(prog=prog or "qatlas contrib mineru")
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
     # --max is a deprecated alias for --batch-size. If only --max was
     # given, propagate. If both were given, --batch-size wins (the
@@ -1326,19 +1325,6 @@ def main(argv: list[str] | None = None, *, prog: str | None = None) -> int:
     return run_with_request_errors(args.func, args)
 
 
-def _legacy_main() -> int:
-    """``qatlas mineru`` entry point (deprecated alias for `qatlas
-    contrib mineru`). Same behaviour, just emits a one-line deprecation
-    warning to stderr first so contributors notice and migrate."""
-    print(
-        "⚠️  `qatlas mineru` is deprecated since v0.19.0; use "
-        "`qatlas contrib mineru` instead. This entry point will be "
-        "removed in a future release.",
-        file=sys.stderr,
-    )
-    return main()
-
-
 if __name__ == "__main__":
-    raise SystemExit(_legacy_main())
+    raise SystemExit(main())
 

@@ -153,7 +153,7 @@ QuantumAtlas 用 **PocketBase session token (JWT)** 和 **Personal Access Token 
 
     - name: Upload to QuantumAtlas
       run: |
-        qatlas upload pdf 2501.00010v1 --pdf paper.pdf --overwrite
+        qatlas contrib pdf 2501.00010v1 --pdf paper.pdf --overwrite
     ```
 
     > v0.17.0 起 client 不再读 `QATLAS_TOKEN` 等 env，**必须**经 `qatlas auth login --with-token` 中转到 hosts.yml。v0.19.0 还删了 `qatlas config set token` 路径（config.yaml `token:` 字段会静默盖 hosts.yml 里所有 per-host token，是 footgun）。

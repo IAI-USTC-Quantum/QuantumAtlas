@@ -1,9 +1,11 @@
-"""Tests for the `qatlas upload` CLI parser + verification helpers.
+"""Tests for the contributor upload CLI: `qatlas.client.upload` parsers +
+verification helpers, and the `qatlas contrib` dispatcher routing.
 
 The HTTP-bound code paths (cmd_upload_pdf / cmd_upload_mineru) are not
 exercised here because they shell out to a live qatlasd; the goal is to
-lock down argparse behaviour and the small pure helper
-(_emit_verification_header) that both commands share.
+lock down argparse behaviour, the small pure helper
+(_emit_verification_header) both commands share, and the `qatlas contrib`
+dispatch that decides arxiv-runner vs DOI direct-zip upload.
 
 Design contract under test (PR #19 follow-up): the contributor cannot
 override paper metadata — title / authors / linked-arxiv-id are always
@@ -15,12 +17,11 @@ override path and is treated as a regression.
 
 from __future__ import annotations
 
-import io
-import sys
 from typing import Any
 
 import pytest
 
+from qatlas.client import _common, contrib
 from qatlas.client import upload as cli
 
 
@@ -125,7 +126,7 @@ def test_emit_verification_header_silent_when_header_not_set(capsys):
 
 
 # ---------------------------------------------------------------------------
-# main() dispatcher — DOI mineru routing (PR #19 review fix)
+# _looks_like_doi — DOI-shape gate used by the contrib mineru dispatcher
 # ---------------------------------------------------------------------------
 
 
@@ -150,23 +151,28 @@ def test_looks_like_doi_rejects_arxiv_and_garbage():
     assert not cli._looks_like_doi("not-a-doi-at-all")
 
 
-def test_main_kills_arxiv_mineru_with_exit_2(capsys):
-    """The arxiv direct-zip path was killed in v0.19.0 to stop racing
-    `qatlas contrib mineru`'s claim/lease state. Must still error
-    even though we're now allowing the DOI path through main()."""
-    rc = cli.main(["mineru", "2501.00010v1", "--zip", "/dev/null"])
+# ---------------------------------------------------------------------------
+# qatlas contrib mineru — dispatcher routing (arxiv runner vs DOI direct-zip)
+# ---------------------------------------------------------------------------
+
+
+def test_contrib_mineru_kills_arxiv_zip_with_exit_2(capsys):
+    """`qatlas contrib mineru <ARXIV_ID> --zip` is rejected: the arxiv
+    direct-zip path was removed in v0.19.0 (it raced the local runner's
+    claim/lease). The error must still point at the surviving DOI form."""
+    rc = contrib.main(["mineru", "2501.00010v1", "--zip", "/dev/null"])
     err = capsys.readouterr().err
     assert rc == 2
     assert "removed in v0.19.0" in err
     assert "qatlas contrib mineru" in err
-    # Make sure the DOI form is still advertised so a user with a DOI
-    # zip doesn't bounce off the error and give up.
-    assert "DOI form" in err
+    # The DOI form must stay advertised so a contributor with a DOI zip
+    # doesn't bounce off the error and give up.
+    assert "DOI-only" in err
 
 
-def test_main_routes_doi_mineru_through_dispatcher(monkeypatch, tmp_path):
-    """DOI-shaped positional must reach `cmd_upload_mineru`. We
-    intercept run_with_request_errors so we don't need a live server,
+def test_contrib_mineru_routes_doi_zip_to_uploader(monkeypatch, tmp_path):
+    """A DOI-shaped positional with --zip must reach `cmd_upload_mineru`.
+    We intercept run_with_request_errors so we don't need a live server,
     and observe the args that would have been used."""
     captured: dict[str, Any] = {}
 
@@ -175,8 +181,8 @@ def test_main_routes_doi_mineru_through_dispatcher(monkeypatch, tmp_path):
         captured["args"] = args
         return 0
 
-    monkeypatch.setattr(cli, "run_with_request_errors", _capture)
-    rc = cli.main(
+    monkeypatch.setattr(_common, "run_with_request_errors", _capture)
+    rc = contrib.main(
         [
             "mineru",
             "10.1103/PhysRevLett.123.070501",
@@ -196,9 +202,9 @@ def test_main_routes_doi_mineru_through_dispatcher(monkeypatch, tmp_path):
     assert not hasattr(captured["args"], "authors")
 
 
-def test_main_routes_doi_url_prefix_through_dispatcher(monkeypatch, tmp_path):
-    """`https://doi.org/<doi>` form must also reach the dispatcher
-    (the server normalizes; the client just gates on shape)."""
+def test_contrib_mineru_routes_doi_url_prefix_to_uploader(monkeypatch, tmp_path):
+    """`https://doi.org/<doi>` form must also reach the uploader (the
+    server normalizes; the client just gates on shape)."""
     captured: dict[str, Any] = {}
 
     def _capture(func, args):
@@ -206,8 +212,8 @@ def test_main_routes_doi_url_prefix_through_dispatcher(monkeypatch, tmp_path):
         captured["args"] = args
         return 0
 
-    monkeypatch.setattr(cli, "run_with_request_errors", _capture)
-    rc = cli.main(
+    monkeypatch.setattr(_common, "run_with_request_errors", _capture)
+    rc = contrib.main(
         [
             "mineru",
             "https://doi.org/10.1103/PhysRevLett.123.070501",
@@ -224,9 +230,29 @@ def test_main_routes_doi_url_prefix_through_dispatcher(monkeypatch, tmp_path):
     )
 
 
-def test_main_pdf_subcommand_still_dispatches(monkeypatch, tmp_path):
-    """PDF path is unchanged by the metadata-override fix — keep the
-    smoke test so a future refactor doesn't accidentally re-kill it too."""
+def test_contrib_mineru_without_zip_invokes_runner(monkeypatch):
+    """No --zip means the local MinerU runner (claim → run → upload).
+    Stub mineru.main so the test doesn't spawn the daemon, and assert
+    contrib forwarded argv + the canonical prog name through to it."""
+    import qatlas.client.mineru as _mineru
+
+    captured: dict[str, Any] = {}
+
+    def _fake_main(argv, *, prog=None):
+        captured["argv"] = argv
+        captured["prog"] = prog
+        return 0
+
+    monkeypatch.setattr(_mineru, "main", _fake_main)
+    rc = contrib.main(["mineru", "2501.00010v1"])
+    assert rc == 0
+    assert captured["argv"] == ["2501.00010v1"]
+    assert captured["prog"] == "qatlas contrib mineru"
+
+
+def test_contrib_pdf_dispatches_to_uploader(monkeypatch, tmp_path):
+    """PDF path routes through cmd_upload_pdf (wrapped in the request-error
+    handler). Keep the smoke test so a future refactor doesn't re-break it."""
     captured: dict[str, Any] = {}
 
     def _capture(func, args):
@@ -234,28 +260,26 @@ def test_main_pdf_subcommand_still_dispatches(monkeypatch, tmp_path):
         captured["args"] = args
         return 0
 
-    monkeypatch.setattr(cli, "run_with_request_errors", _capture)
-    rc = cli.main(["pdf", "2501.00010v1", "--pdf", str(tmp_path / "fake.pdf")])
+    monkeypatch.setattr(_common, "run_with_request_errors", _capture)
+    rc = contrib.main(["pdf", "2501.00010v1", "--pdf", str(tmp_path / "fake.pdf")])
     assert rc == 0
     assert captured["func"] is cli.cmd_upload_pdf
     assert captured["args"].arxiv_id == "2501.00010v1"
 
 
-def test_main_top_help_mentions_doi_mineru(capsys):
-    """The top-level help must surface `qatlas upload mineru DOI` so
-    contributors discovering the kill-error for arxiv don't conclude
-    the whole subcommand is dead."""
-    rc = cli.main([])
+def test_contrib_top_help_mentions_doi_mineru_zip(capsys):
+    """The top-level contrib help must surface the DOI direct-zip form so
+    contributors discovering the arxiv-zip kill-error know it exists."""
+    rc = contrib.main([])
     out = capsys.readouterr().out
     assert rc == 0
-    assert "upload mineru DOI" in out
+    assert "mineru <DOI> --zip" in out
 
 
-def test_main_top_help_does_not_advertise_title_or_authors(capsys):
-    """Regression guard: the deprecation banner must not advertise the
-    removed --title / --authors flags either, so users can't be tempted
-    to re-add them and silently get ignored."""
-    rc = cli.main([])
+def test_contrib_top_help_does_not_advertise_title_or_authors(capsys):
+    """Regression guard: the help must not advertise the removed
+    --title / --authors flags, so users can't be tempted to re-add them."""
+    rc = contrib.main([])
     out = capsys.readouterr().out
     assert rc == 0
     assert "--title" not in out

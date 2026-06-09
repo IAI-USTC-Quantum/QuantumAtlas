@@ -1,7 +1,7 @@
 # Upload API & sha256-aware idempotency
 
 > Users uploading PDFs / markdown to QuantumAtlas server, via the
-> `qatlas upload …` CLI or direct HTTP calls. Covers the request
+> `qatlas contrib …` CLI or direct HTTP calls. Covers the request
 > shape, response shape, status code contract, sha256 deduplication
 > semantics, conflict handling, and `?expected_sha256=` in-transit
 > guard.
@@ -41,39 +41,32 @@ listings deterministic.
 > version that may have no arXiv preprint. See
 > [Contributing by DOI](#contributing-by-doi) below.
 
-> **v0.8.0 BREAKING CHANGE**: the legacy `POST upload-markdown`
-> endpoint that accepted a bare `.md` file has been removed. Use
-> `upload-mineru` with the **entire MinerU result zip** instead —
-> the server unpacks the zip and writes both the markdown and every
-> referenced image into their respective per-kind buckets, so
-> contributions no longer silently drop figures. See
-> [upgrade notes](#breaking-change-v080) at the bottom for the
-> migration recipe.
-
 ## CLI quick start
 
 ```bash
 # Upload a fresh PDF
-qatlas upload pdf 2501.00010v1 --pdf ./paper.pdf
+qatlas contrib pdf 2501.00010v1 --pdf ./paper.pdf
 
 # Re-upload the same bytes → 200 OK unchanged (no S3 write)
-qatlas upload pdf 2501.00010v1 --pdf ./paper.pdf
+qatlas contrib pdf 2501.00010v1 --pdf ./paper.pdf
 
 # Re-upload DIFFERENT bytes → 409 Conflict (refuses to overwrite)
-qatlas upload pdf 2501.00010v1 --pdf ./paper-v2.pdf
+qatlas contrib pdf 2501.00010v1 --pdf ./paper-v2.pdf
 
 # Force overwrite (old version preserved by bucket versioning,
 # recoverable until the next storage prune)
-qatlas upload pdf 2501.00010v1 --pdf ./paper-v2.pdf --overwrite
+qatlas contrib pdf 2501.00010v1 --pdf ./paper-v2.pdf --overwrite
 
-# Upload a MinerU result bundle for a DOI-only published paper
+# Parse a paper's PDF with your own MinerU quota and push the full
+# bundle (full.md + images/*) back to the server in one shot.
+qatlas contrib mineru 2501.00010v1
+
+# Upload a pre-made MinerU result bundle for a DOI-only published paper
 # (full.md + images/*) — push the raw zip MinerU returned at its
-# `full_zip_url`, the server unzips it. The arxiv direct-zip form
-# was removed in v0.19.0 (use `qatlas contrib mineru` instead);
-# the DOI form below remains the only direct-zip path. Title and
-# authors are auto-fetched from OpenAlex — the contributor never
-# supplies them.
-qatlas upload mineru 10.1103/PhysRevLett.123.070501 \
+# `full_zip_url`; the server unzips it. This direct-zip form is DOI-only
+# (arXiv papers use the runner above). Title and authors are auto-fetched
+# from OpenAlex — the contributor never supplies them.
+qatlas contrib mineru 10.1103/PhysRevLett.123.070501 \
     --zip ./mineru-result.zip \
     --source mineru-client-v0.8 \
     --verify warn
@@ -264,39 +257,7 @@ The 200-odd lines of handler logic are the "UPSERT policy" on top
 of RustFS's "INSERT" primitive — same relationship a typical app
 has with a SQL store. See README.md for the wider design rationale.
 
-## Breaking change v0.8.0
-The pre-v0.8 `POST /api/papers/{arxiv_id}/upload-markdown` endpoint
-took a single `.md` file as the multipart part `markdown`. It is
-**gone** as of v0.8.0 — calling it returns `404 no POST handler`.
-
-Migration:
-
-```diff
-- POST /api/papers/2501.00010v1/upload-markdown
--   multipart "markdown": full.md
-+ POST /api/papers/2501.00010v1/upload-mineru
-+   multipart "mineru_zip": full MinerU result zip (full.md + images/*)
-```
-
-CLI:
-
-```diff
-- qatlas upload markdown 2501.00010v1 --markdown full.md --source mineru
-+ qatlas upload mineru   2501.00010v1 --zip path/to/mineru.zip --source mineru
-```
-
-> **v0.19.0 update**: the arxiv form `qatlas upload mineru <ARXIV_ID>` shown
-> above was itself replaced by `qatlas contrib mineru [<ARXIV_ID>]`, which
-> claims, runs MinerU, and uploads as one unit. The direct-zip form
-> survives only for **DOI** uploads — see the [Contributing by DOI](#contributing-by-doi)
-> section below.
-
-Why the change: the old endpoint only stored the markdown and
-silently dropped every figure in the bundle, leaving detail pages
-with broken image references. `upload-mineru` keeps the bundle
-intact; the server unpacks it so the same parser used for
-server-side silent conversion writes both the markdown and every
-image to their respective buckets.
+## 客户端 / 服务端版本偏移
 
 Client-server version skew: the `X-Qatlas-Server-Version` response
 header (added in v0.8.0) lets the `qatlas` CLI detect when it's
@@ -374,7 +335,7 @@ contributor sees it via the response header / JSON block and can resubmit
 under the correct DOI) or as `doi-not-found`.
 
 ```bash
-qatlas upload pdf 10.1103/PhysRevLett.123.070501 --pdf ./published.pdf
+qatlas contrib pdf 10.1103/PhysRevLett.123.070501 --pdf ./published.pdf
 ```
 
 Direct HTTP — no `title`/`authors` form fields:
@@ -442,17 +403,18 @@ source-PDF cross-check (against the stored DOI PDF).
 
 CLI support for DOI uploads covers **both** `pdf` and `mineru` subcommands:
 
-- `qatlas upload pdf <DOI> --pdf ...` accepts a DOI in the ID slot and
+- `qatlas contrib pdf <DOI> --pdf ...` accepts a DOI in the ID slot and
   exposes `--verify`; the verification status is printed to stderr from
   the `X-QAtlas-Verification` response header.
-- `qatlas upload mineru <DOI> --zip ...` likewise accepts a DOI and the
+- `qatlas contrib mineru <DOI> --zip ...` likewise accepts a DOI and the
   same `--verify` flag. The flag is honoured by the server's DOI path
   and a no-op on the arXiv path (the arxiv catalog is enriched through
   a separate sync pipeline), so the same invocation works for either
   identity.
-- The arXiv-keyed `qatlas contrib mineru` runner (claim queue → MinerU →
-  upload) is still arxiv-only end-to-end: it does not yet pick DOI work
-  out of the queue. Contributors driving MinerU manually against a
-  published PDF should use `qatlas upload mineru <DOI> --zip ...` (or
-  POST the bundle directly to `/api/papers/<DOI>/upload-mineru` with
-  `?verify=` / `?pdf_sha256=` as described above).
+- The arXiv-keyed `qatlas contrib mineru` runner mode (claim queue →
+  MinerU → upload) is arxiv-only end-to-end: it does not pick DOI work
+  out of the queue. For a published PDF, drive MinerU manually and push
+  the result with the DOI direct-zip form above (`qatlas contrib mineru
+  <DOI> --zip ...`), or POST the bundle directly to
+  `/api/papers/<DOI>/upload-mineru` with `?verify=` / `?pdf_sha256=` as
+  described above.

@@ -42,14 +42,6 @@ COMMANDS: Mapping[str, Command] = {
         "Contributor workflows: upload PDFs (contrib pdf) or run local MinerU and push (contrib mineru)",
     ),
     "ingest": Command("qatlas.client.__main__", "Submit paper ingest tasks over HTTP"),
-    "upload": Command(
-        "qatlas.client.upload",
-        "[deprecated, use `qatlas contrib pdf`] Upload contributed PDF to the server",
-    ),
-    "mineru": Command(
-        "qatlas.client.mineru",
-        "[deprecated, use `qatlas contrib mineru`] Run MinerU locally and push the result to the server",
-    ),
     "parser": Command("qatlas.parser.__main__", "Fetch and parse arXiv papers", False),
     "wiki": Command("qatlas.wiki.__main__", "Browse, lint, and search wiki pages", False),
     "designer": Command("qatlas.designer.__main__", "Design circuits from algorithms"),

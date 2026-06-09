@@ -33,7 +33,7 @@ qatlas config set server_url https://quantum-atlas.ai
 # 远端是自签 HTTPS（开发环境 Caddy `tls internal`）时打开
 qatlas config set insecure true
 
-# 仅在使用 qatlas mineru 本地解析时需要
+# 仅在使用 qatlas contrib mineru 本地解析时需要
 echo mn_xxxxx | qatlas config set mineru_api_token   # 从 stdin 读，不进 history
 # 其余 mineru_* 字段都有合理默认值，按需覆盖
 ```
@@ -107,8 +107,8 @@ qatlas ingest continue TASK_ID --stages parse
 适用场景：贡献者本地已有 PDF（或 arXiv 不可达），希望直接把资产推到服务器。
 
 ```bash
-qatlas upload pdf quant-ph/9508027v1 --pdf paper.pdf
-qatlas upload pdf 2501.00010v1     --pdf paper.pdf --overwrite
+qatlas contrib pdf quant-ph/9508027v1 --pdf paper.pdf
+qatlas contrib pdf 2501.00010v1     --pdf paper.pdf --overwrite
 ```
 
 对应端点 `POST /api/papers/{arxiv_id}/upload-pdf` 行为：
@@ -119,45 +119,38 @@ qatlas upload pdf 2501.00010v1     --pdf paper.pdf --overwrite
 - 单文件大小上限：PDF 100 MiB。
 - 论文 metadata（题目 / 作者 / 摘要 / 引用）由服务器从 OpenAlex 上游同步进 Neo4j catalog，不再走 upload 端点（v0.7.0 起）。
 
-上传 MinerU 结果包用：
-
-```bash
-qatlas upload mineru 2501.00010v1 --zip mineru-result.zip --source mineru
-```
+MinerU 结果（markdown + 图片）通过 [Path C](#path-c本地跑-mineru-后把解析结果推回云端) 的 `qatlas contrib mineru` 推送——它跑完 MinerU 后把整包推给 server 的 `upload-mineru` 端点：
 
 对应端点 `POST /api/papers/{arxiv_id}/upload-mineru`：
 
 - 接受完整 MinerU 结果 zip（必含 `full.md`，可选 `images/*`）。
 - server 端解包：`full.md` 写到 `qatlas-md` 桶，每张 `images/<name>` 写到 `qatlas-images/<yymm>/<stem>/`。
 - 单文件上限 200 MiB（zip 整体）。
-- `source` 是可选审计标签（如 `mineru-client-v0.8`、`hand-edited`），不影响存储位置。
-
-!!! info "v0.8.0 BREAKING"
-    旧的 `qatlas upload markdown` 子命令和 `POST upload-markdown` 端点在 v0.8.0 删除（旧路径会丢图）。改用 `upload mineru` 推完整 zip。
+- `source` 是可选审计标签（如 `mineru-client`、`hand-edited`），不影响存储位置。
 
 ### Path C：本地跑 MinerU 后把解析结果推回云端
 
 适用场景：贡献者愿意用**自己的** MinerU 配额（`mineru_api_token` 写在自己电脑的 yaml 里），服务器配置可以完全不带这个 token。
 
-**前置条件**：要处理的 PDF 必须已经在服务器的 `RAW_DIR` 里（通过 Path A 或 Path B 进入）。`qatlas mineru` 不接受用户自带 URL——这是为了保证生成的 markdown 永远对应 raw 中已知的 PDF，不会产生孤儿数据。
+**前置条件**：要处理的 PDF 必须已经在服务器的 `RAW_DIR` 里（通过 Path A 或 Path B 进入）。`qatlas contrib mineru` 不接受用户自带 URL——这是为了保证生成的 markdown 永远对应 raw 中已知的 PDF，不会产生孤儿数据。
 
 ```bash
 # 队列 / batch 模式：从服务器的"需要 MinerU"队列里取至多 --batch-size 个还没人处理的
 # 论文，逐个 claim + 校验后**一次 batch** 提交给 MinerU；每完成一篇立刻 upload +
 # 释放该 claim。默认 batch_size=50（MinerU 单批硬上限）。
-qatlas mineru
-qatlas mineru --batch-size 20
+qatlas contrib mineru
+qatlas contrib mineru --batch-size 20
 
 # 单篇模式：处理指定 arxiv 论文（同样要求服务器已有 PDF）。走单 task API，开销最小。
-qatlas mineru quant-ph/9508027v1
+qatlas contrib mineru quant-ph/9508027v1
 
 # daemon 模式：挂着持续贡献，跑完一批 sleep --watch-interval 再来。
 # 命中 MinerU 每日额度时自动 sleep 到次日 00:01 quota 重置。
-qatlas mineru --watch
-qatlas mineru --watch --watch-interval 600 --batch-size 30
+qatlas contrib mineru --watch
+qatlas contrib mineru --watch --watch-interval 600 --batch-size 30
 
 # 只跑 MinerU 不上传（zip 留在本地临时目录，claim 立刻释放）
-qatlas mineru 2501.00010v1 --no-push
+qatlas contrib mineru 2501.00010v1 --no-push
 ```
 
 **并发模型（claim/lease）**：
@@ -165,10 +158,10 @@ qatlas mineru 2501.00010v1 --no-push
 - 想处理一篇 → `POST /api/papers/{arxiv_id}/mineru-claim` 申请一个短期租约（默认 30 分钟，最长 2 小时，可用 `--ttl-seconds` 调整）。
 - 服务端原子地写 `DATA_DIR/mineru-claims/{key}.json`；如果已有未过期 claim → 409 + 现有租约元数据。
 - 上传成功 → 服务端自动删除 claim。
-- 客户端异常中断 → 用 `DELETE /api/papers/{arxiv_id}/mineru-claim/{claim_id}` 主动释放（`qatlas mineru` 在 except 分支和 SIGINT 处理里都会自动调用）。
+- 客户端异常中断 → 用 `DELETE /api/papers/{arxiv_id}/mineru-claim/{claim_id}` 主动释放（`qatlas contrib mineru` 在 except 分支和 SIGINT 处理里都会自动调用）。
 - 没释放也没事：lease 到期后会被下一个 claim 请求覆盖。
 
-`qatlas mineru` 流程：
+`qatlas contrib mineru` 流程：
 
 1. 从本地 `~/.config/qatlas/config.yaml` 读 `mineru_api_token` 等字段。
 2. 没传 arxiv_id → `GET /api/papers/needs-mineru?limit=<max>` 取队列；传了就只处理那一篇。
@@ -177,7 +170,7 @@ qatlas mineru 2501.00010v1 --no-push
 5. 完成后下载**整个 MinerU 结果 zip** → POST `/api/papers/{arxiv_id}/upload-mineru?source=mineru`。server 解包写两桶（markdown + images），上传成功 = claim 自动释放。
 6. 异常路径（MinerU 失败 / 上传失败 / Ctrl+C）→ DELETE claim 主动释放。
 
-也可以纯手工：用任意解析器在本地生成 MinerU-shape zip，再走 Path B 的 `qatlas upload mineru`（不涉及 claim 机制，但仍要求 PDF 先在 raw 里）。
+目前唯一的 MinerU 推送路径就是 `qatlas contrib mineru`（claim → 解析 → upload 一条龙）；server 端 `upload-mineru` 端点不再有独立的 CLI 直传入口。
 
 ### Path D：直接读 PDF / Markdown（self-hosted PAPER_ACCESS 部署）
 
@@ -329,7 +322,7 @@ qatlas auth token        # 打印当前 host 的 token，方便 pipe 给 curl
 qatlas auth logout -s quantum-atlas.ai   # 撤销本地凭证
 
 # 之后所有 qatlas 子命令直接用：
-qatlas upload pdf quant-ph/9508027v1 --pdf paper.pdf
+qatlas contrib pdf quant-ph/9508027v1 --pdf paper.pdf
 ```
 
 token 解析优先级（v0.19.0+ 精简）：`~/.config/qatlas/hosts.yml` 里匹配当前 host 的条目 > 无凭证。`gh CLI` 风格的 `--token` flag 和 `QATLAS_TOKEN` env 在 v0.17.0 已删除；config.yaml 的 `token:` 字段在 v0.19.0 移除（会静默盖住所有 per-host token，是 footgun）。client 只读 hosts.yml；server 端有独立的 `QATLAS_SYSTEM_PAT` env 给运维 break-glass 用，详见 server-config.md。

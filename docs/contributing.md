@@ -28,7 +28,7 @@
 
     ---
 
-    挂 `qatlas mineru --watch` 把自家 MinerU 账号每天 5000 篇的免费配额导给 catalog，
+    挂 `qatlas contrib mineru --watch` 把自家 MinerU 账号每天 5000 篇的免费配额导给 catalog，
     把待解析队列里的 PDF 转成 markdown。零代码贡献路径。
 
 </div>
@@ -63,7 +63,7 @@
 例子：
 
 ```
-feat(client): support --no-poll for qatlas mineru queue mode
+feat(client): support --no-poll for qatlas contrib mineru queue mode
 fix(routes): preserve metadata sha256 on conditional PUT 412 retry
 docs(deployment): add Caddy template for dual-endpoint RustFS
 chore(deps): bump pocketbase to v0.38.2
@@ -363,7 +363,7 @@ qatlas auth login -s quantum-atlas.ai
 qatlas config set mineru_api_token
 
 # 3. 挂着持续贡献。多人并发不会撞配额（每篇 30 分钟原子 claim）。
-qatlas mineru --watch
+qatlas contrib mineru --watch
 ```
 
 想跨终端 / 跨开关机持续跑（systemd unit、tmux、agent CLI 后台 shell 等方案）见指南里的

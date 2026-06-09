@@ -12,17 +12,17 @@
 
     `qatlas ingest` 让 server 自动抓 PDF + 元数据 + 可选解析。
 
--   :material-upload-network:{ .lg .middle } **[上传 PDF / Markdown](upload-assets.md)**
+-   :material-upload-network:{ .lg .middle } **[上传 PDF](upload-assets.md)**
 
     ---
 
-    `qatlas upload pdf/mineru` 手动推送资产，sha256 dedup、冲突处理、`--overwrite` 语义；mineru 子命令一次提交 markdown + 全部图片（v0.8.0 替换原 `upload markdown`）。
+    `qatlas contrib pdf` 手动推送 PDF，sha256 dedup、冲突处理、`--overwrite` 语义。
 
 -   :material-file-document-edit:{ .lg .middle } **[用 MinerU 解析 PDF](parse-with-mineru.md)**
 
     ---
 
-    `qatlas mineru` 本地跑 MinerU 并推回。单篇 / 队列模式 / 多人并发 claim。
+    `qatlas contrib mineru` 本地跑 MinerU 并推回。单篇 / 队列模式 / 多人并发 claim。
 
 </div>
 

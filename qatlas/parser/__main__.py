@@ -159,14 +159,13 @@ def main():
 
     # Step 2: Parse PDF — only MinerU is supported.
     # Local PDF parsing inside this CLI has been removed; the recommended
-    # flow is to upload the PDF and let MinerU produce the markdown, or use
-    # `qatlas mineru` for the remote API.
+    # flow is to run MinerU locally and push the result with
+    # `qatlas contrib mineru`.
     if args.save_markdown or args.save_json:
         print(
             "\n⚠️  --save-markdown / --save-json are only available via MinerU; "
-            "run `qatlas mineru <arxiv_id>` to parse with your own token, "
-            "or `qatlas upload mineru <arxiv_id> --zip <bundle>.zip` "
-            "to push an already-produced MinerU result bundle.",
+            "run `qatlas contrib mineru <arxiv_id>` to parse with your own token "
+            "and push the markdown + images back to the server.",
             file=sys.stderr,
         )
 

@@ -42,8 +42,8 @@ var (
 const (
 	MaxPDFBytes       = 100 * 1024 * 1024
 	MaxMarkdownBytes  = 25 * 1024 * 1024
-	MaxMineruZipBytes = 200 * 1024 * 1024 // ~200 MB upper bound for `qatlas upload mineru` zip payloads (markdown + images bundle)
-	MaxMetadataBytes = 2 * 1024 * 1024
+	MaxMineruZipBytes = 200 * 1024 * 1024 // ~200 MB upper bound for `qatlas contrib mineru --zip` payloads (markdown + images bundle)
+	MaxMetadataBytes  = 2 * 1024 * 1024
 )
 
 // NormalizeIdentifier strips a leading "arXiv:" prefix and trims

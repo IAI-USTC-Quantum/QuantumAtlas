@@ -34,9 +34,8 @@ QuantumAtlas 以 arXiv ID 为论文的主键。文本侧支持两种 ID 格式 +
 | 入口 | 是否要求 `vN` |
 |---|---|
 | `qatlas ingest <id>` | 可不带；server 取 arXiv 当前最新版 |
-| `qatlas upload pdf <id>` | **必填**；对象寻址按 `<id>v<n>` 命名 |
-| `qatlas upload mineru <id>` | **必填** |
-| `qatlas mineru <id>` | **必填** |
+| `qatlas contrib pdf <id>` | **必填**；对象寻址按 `<id>v<n>` 命名 |
+| `qatlas contrib mineru <id>` | **必填** |
 | `GET /api/papers/{id}/markdown` / `/pdf` | 可不带；server 取 catalog 内最新版（多版本时在响应里显式标）|
 | Wiki paper page `paper-arxiv-<id>v<n>` | **必填**（不同版本是不同页）|
 
@@ -117,7 +116,7 @@ dual-read 命中由 `paperassets.LegacyLayoutReads()` 计数，运维可观测 m
 | `json` | `json/<yymm>/<stem>.json` | `json/<yymm>/<category>/<stem>.json` | arXiv 元数据（题目 / 作者 / abstract） |
 | `images` | `images/<yymm>/<stem>.zip` | `images/<yymm>/<category>/<stem>.zip` | MinerU 解析出的图片 zip |
 
-`qatlas upload pdf --pdf` 把 PDF 字节落到 `pdf/`。论文元数据（题目 / 作者 /
+`qatlas contrib pdf --pdf` 把 PDF 字节落到 `pdf/`。论文元数据（题目 / 作者 /
 摘要 / 引用）走 OpenAlex 上游同步进 Neo4j catalog，不再通过 upload 端点写
 `json/`（v0.7.0 起；该前缀仅保留兼容历史对象的读路径）。
 
@@ -147,7 +146,7 @@ dual-read 命中由 `paperassets.LegacyLayoutReads()` 计数，运维可观测 m
 
 !!! failure "upload 时漏掉 `v1`"
     ```
-    qatlas upload pdf 2501.00010 --pdf paper.pdf
+    qatlas contrib pdf 2501.00010 --pdf paper.pdf
     ```
     server 返回 400 `arxiv_id must include version suffix`。改成 `2501.00010v1`。
 

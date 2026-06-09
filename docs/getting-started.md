@@ -86,11 +86,11 @@
 
     ```bash
     # 上传 PDF + 元数据 JSON
-    qatlas upload pdf 2501.00010v1 --pdf paper.pdf
+    qatlas contrib pdf 2501.00010v1 --pdf paper.pdf
 
     # 用本地 MinerU 配额解析后推回云端（先把 token 写进 yaml）
     echo <your-jwt-from-mineru.net> | qatlas config set mineru_api_token
-    qatlas mineru 2501.00010v1 --push-pdf
+    qatlas contrib mineru 2501.00010v1 --push-pdf
     ```
 
     **下一步：**
@@ -225,7 +225,7 @@
     server_url: https://quantum-atlas.ai
     # insecure: true              # 仅当远端用自签证书
     # token: qat_xxxxxxxx         # 需要写操作时
-    # mineru_api_token: jwt_...   # 仅当本地跑 qatlas mineru
+    # mineru_api_token: jwt_...   # 仅当本地跑 qatlas contrib mineru
     ```
 
     或用 `qatlas config set` 维护：`qatlas config set server_url https://quantum-atlas.ai`。

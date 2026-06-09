@@ -1,4 +1,4 @@
-"""Tests for the `qatlas mineru` CLI batch / daily-limit handling.
+"""Tests for the `qatlas contrib mineru` CLI batch / daily-limit handling.
 
 These focus on the new (v0.15.0) queue-drain flow that submits a single
 MinerU batch per pass and back-offs cleanly when the daily quota is

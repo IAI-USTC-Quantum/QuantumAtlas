@@ -133,14 +133,14 @@ def main(
     # Step 2: Obtain parsed paper text
     # Local PDF parsing was removed from the open-source build. The supported
     # flow is to fetch parsed markdown produced by MinerU; if no markdown is
-    # available, fail loudly so the operator runs `qatlas mineru` first.
+    # available, fail loudly so the operator runs `qatlas contrib mineru` first.
     click.echo("📄 Loading parsed markdown...")
     try:
         markdown_path = pdf_path.with_suffix(".md")
         if not markdown_path.exists():
             click.echo(
                 f"Error: parsed markdown not found at {markdown_path}. "
-                "Run `qatlas mineru <arxiv_id>` to generate it (the open-source "
+                "Run `qatlas contrib mineru <arxiv_id>` to generate it (the open-source "
                 "build no longer ships a local PDF parser).",
                 err=True,
             )

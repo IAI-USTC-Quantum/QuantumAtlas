@@ -122,7 +122,7 @@ flowchart TD
     ```bash
     # 从 secret 拿到 PAT 后，echo 进 qatlas auth login --with-token（从 stdin 读，不进 history / ps）
     echo "$QATLAS_TOKEN_FROM_SECRET" | qatlas auth login -s quantum-atlas.ai --with-token
-    qatlas upload pdf ...
+    qatlas contrib pdf ...
     ```
 
     v0.17.0 起 client 不再读 `QATLAS_TOKEN` env、不再支持 `--token` flag——

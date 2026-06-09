@@ -3,7 +3,7 @@
 让 server 直接从 arXiv 抓 PDF + 元数据，并可选立刻调 MinerU 解析为 Markdown。
 
 !!! info "MinerU 是当前唯一受支持的解析器"
-    早期版本曾包含一个本地 PDF 解析器作为离线选项，但因第三方 license 约束已从开源版本移除。所有摄入流程现在统一走 MinerU 远程 API（**需要服务端配置 `MINERU_API_TOKENS`**），或者跳过 server 解析 + 手动 `qatlas upload mineru` 推上去。
+    早期版本曾包含一个本地 PDF 解析器作为离线选项，但因第三方 license 约束已从开源版本移除。所有摄入流程现在统一走 MinerU 远程 API（**需要服务端配置 `MINERU_API_TOKENS`**），或者由贡献者本地跑 `qatlas contrib mineru`（用自己的 MinerU 配额解析后推回）。
 
 ## 前置条件
 
@@ -86,7 +86,7 @@ qatlas ingest status <task_id>
     `--timeout` 默认 600s 不够。大论文 + MinerU 通常 5–15 分钟。加 `--timeout 1800` 或 `--no-poll` 让任务后台跑、之后 `status` 查。
 
 !!! failure "503 MinerU not configured on server"
-    Server 没配 `MINERU_API_TOKENS`。请改走[本地 MinerU 模式](parse-with-mineru.md)（自己出 MinerU 配额，解析完再用 `qatlas upload mineru` 推回），或者联系 server 管理员补 token。
+    Server 没配 `MINERU_API_TOKENS`。请改走[本地 MinerU 模式](parse-with-mineru.md)（自己出 MinerU 配额，解析完用 `qatlas contrib mineru` 推回），或者联系 server 管理员补 token。
 
 ## 下一步
 

@@ -64,17 +64,17 @@
 
 ## 客户端使用
 
-??? question "为什么 `qatlas upload pdf` 要求带版本（v1）？"
+??? question "为什么 `qatlas contrib pdf` 要求带版本（v1）？"
 
     arXiv 同一篇 paper 有多个版本（v1 / v2 / ...），内容可能不同。server 端按 `<id>v<n>` 寻址对象——不带版本不知道是哪一版。**这是有意的强约束**。
 
 ??? question "MinerU 解析超时 / 失败怎么办？"
 
-    `qatlas mineru` 默认超时 30 分钟。大论文（>50 页含很多图表）需要更长：
+    `qatlas contrib mineru` 默认超时 30 分钟。大论文（>50 页含很多图表）需要更长：
 
     ```bash
     export MINERU_TIMEOUT=3600
-    qatlas mineru 2501.00010v1
+    qatlas contrib mineru 2501.00010v1
     ```
 
     如果 MinerU API 本身返回失败（quota 满 / 限流 / 服务挂了），看 `qatlas-pdf` 桶里那个 PDF 是不是格式有问题——某些 scanned-only PDF 需要 `MINERU_IS_OCR=true`。
@@ -89,7 +89,7 @@
     qatlas ingest 2501.00010 --parser mineru --force-fetch --force-parse
     ```
 
-    或 `qatlas upload pdf <id> --pdf new.pdf --overwrite` —— **旧版本会保留在 S3 versioning 里**（可恢复）。
+    或 `qatlas contrib pdf <id> --pdf new.pdf --overwrite` —— **旧版本会保留在 S3 versioning 里**（可恢复）。
 
 ## 鉴权
 

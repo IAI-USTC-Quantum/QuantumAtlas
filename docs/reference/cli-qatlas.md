@@ -79,7 +79,7 @@ uv tool install --prerelease=allow quantum-atlas
 qatlas --help                                       # 任意命令都触发 yaml 自动创建
 qatlas config set server_url https://quantum-atlas.ai
 qatlas auth login -s quantum-atlas.ai               # OAuth device-code flow → 自动写 hosts.yml
-echo '[jwt-a, jwt-b]' | qatlas config set mineru_api_tokens  # 若要跑 qatlas mineru（CSV / 列表均可；sensitive key 从 stdin 读）
+echo '[jwt-a, jwt-b]' | qatlas config set mineru_api_tokens  # 若要跑 qatlas contrib mineru（CSV / 列表均可；sensitive key 从 stdin 读）
 
 # 看 yaml 路径
 qatlas config path
@@ -93,7 +93,7 @@ qatlas config show
 
 # 之后任何 qatlas 子命令直接跑
 qatlas wiki list --type source
-qatlas mineru --batch-size 3
+qatlas contrib mineru --batch-size 3
 ```
 
 > v0.16 / 更早升级到 v0.17.0：删了 `qatlas config init` 子命令、删了 `.env` → yaml 自动迁移。如果你之前在用 `~/.config/qatlas/.env`，**手工**把内容搬到 `~/.config/qatlas/config.yaml`（字段名从 `QATLAS_SERVER_URL` 改成 `server_url`、`MINERU_API_TOKEN` 改成 `mineru_api_tokens`（列表形式），去掉 `QATLAS_` 前缀小写化），原 .env 删掉。
@@ -139,8 +139,6 @@ qatlas ingest status <task_id>
 qatlas contrib pdf <arxiv_id> --pdf <path> [--overwrite]
 qatlas contrib mineru [<arxiv_id>] [--watch] [...]
 ```
-
-> 旧入口 `qatlas upload pdf` 仍可用但**自 v0.19.0 弃用**（跑时打 stderr 警告，未来移除）；`qatlas upload mineru` / `qatlas upload markdown` 已**删除**——所有 MinerU 推送统一走 `qatlas contrib mineru`，由同一条路径处理 claim / lease / upload。
 
 #### `qatlas contrib pdf`
 
@@ -263,12 +261,12 @@ ID 解析到了哪一步所有信息。
 
 ---
 
-### `qatlas mineru`
+### `qatlas contrib mineru`
 
 本地跑 MinerU 解析 server 上的 PDF，推回完整 MinerU bundle。需要 `papers:write` scope + 本地 `mineru_api_tokens` 至少一条。
 
 ```
-qatlas mineru [arxiv_id] [options...]
+qatlas contrib mineru [arxiv_id] [options...]
 ```
 
 | Flag | 必填 | 默认 | 含义 |

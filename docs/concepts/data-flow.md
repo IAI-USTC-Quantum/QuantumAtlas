@@ -35,10 +35,10 @@ flowchart TB
 
     ARX -->|qatlas ingest| PDF
     ARX -->|qatlas ingest| META
-    OTH -->|qatlas upload pdf| PDF
-    OTH -->|qatlas upload pdf| META
+    OTH -->|qatlas contrib pdf| PDF
+    OTH -->|qatlas contrib pdf| META
 
-    PDF -->|qatlas ingest --parser mineru<br/>或<br/>qatlas mineru| MD
+    PDF -->|qatlas ingest --parser mineru<br/>或<br/>qatlas contrib mineru| MD
 
     MD -->|人工 + LLM 整理| SRCPG
     SRCPG -->|人工沉淀概念 / 算法| ENTPG
@@ -75,19 +75,18 @@ flowchart TB
 === "2. 用户直接上传"
 
     ```bash
-    qatlas upload pdf 2501.00010v1 --pdf paper.pdf
-    qatlas upload mineru 2501.00010v1 --zip mineru-result.zip --source mineru
+    qatlas contrib pdf 2501.00010v1 --pdf paper.pdf
     ```
 
-    适合：手里已经有 PDF（公司内部论文、扫描件、preprint 私下流传版本）、或在别处跑过 MinerU 留下了完整结果 zip。**需要 `papers:write` scope**。
+    适合：手里已经有 PDF（公司内部论文、扫描件、preprint 私下流传版本）。**需要 `papers:write` scope**。
 
 === "3. 用户本地跑 MinerU 推回"
 
     ```bash
     # 配 MINERU_API_TOKENS 后
-    qatlas mineru 2501.00010v1 --push-pdf
+    qatlas contrib mineru 2501.00010v1 --push-pdf
     # 或队列模式，处理 server 列表里所有待解析的
-    qatlas mineru --batch-size 20
+    qatlas contrib mineru --batch-size 20
     ```
 
     本地用自己的 MinerU 配额跑解析。**server 颁发 30 分钟原子 claim**——多个贡献者并发跑不会撞重。需要 `papers:write` scope。

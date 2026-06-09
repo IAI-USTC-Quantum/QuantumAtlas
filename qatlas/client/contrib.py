@@ -1,27 +1,28 @@
 """``qatlas contrib`` — contributor-side workflows (upload + local MinerU).
 
-This is a thin dispatcher over the two existing modules:
+This is a thin dispatcher over the two upload backends:
 
-* ``qatlas contrib pdf …``      → ``qatlas.client.upload`` (PDF subcommand)
-* ``qatlas contrib mineru …``   → ``qatlas.client.mineru`` (local MinerU runner)
+* ``qatlas contrib pdf …``    → ``qatlas.client.upload`` (PDF upload, by
+  arXiv ID or DOI)
+* ``qatlas contrib mineru``   → ``qatlas.client.mineru`` (local MinerU
+  runner: claim → run → upload; queue / single / watch modes)
+* ``qatlas contrib mineru <DOI> --zip …`` → ``qatlas.client.upload``
+  (direct upload of a pre-made MinerU result zip; DOI-only — arXiv papers
+  go through the runner so claim/lease/upload stay one unit)
 
-It groups what contributors actually do day-to-day under a single resource-
-ish noun (`contrib`), so the top-level help reads less like "what CLI
-verbs exist" and more like "what kind of person are you". Power-user
-verbs (`config`, `auth`, `wiki`, `designer`, etc.) stay top-level.
-
-The old `qatlas upload pdf` / `qatlas mineru` entries are preserved with
-a deprecation warning that points here; they will be removed in a future
-release once contributors have migrated.
+`qatlas contrib pdf` / `qatlas contrib mineru` are the only contributor
+entry points for upload + local-MinerU workflows. It groups what
+contributors actually do day-to-day under a single resource-ish noun
+(`contrib`); power-user verbs (`config`, `auth`, `wiki`, `designer`, etc.)
+stay top-level.
 
 Why a dispatcher (not a flat copy of every subcommand)?
 
-* ``cmd_upload_pdf`` and the MinerU daemon main are non-trivial; we don't
-  want two copies that can drift. The dispatcher forwards argv straight
-  through to the existing argparse parsers.
+* ``cmd_upload_pdf`` / ``cmd_upload_mineru`` and the MinerU daemon main are
+  non-trivial; we don't want two copies that can drift. The dispatcher
+  forwards argv straight through to the existing argparse parsers.
 * Future batch flags (``--list`` for PDFs, queue tweaks for MinerU) are
-  declared HERE and stay confined to the new surface — the legacy entry
-  points keep their narrow, stable contracts.
+  declared HERE and stay confined to the contributor surface.
 """
 
 from __future__ import annotations
@@ -36,12 +37,14 @@ def _print_top_help() -> None:
         """qatlas contrib — contributor workflows
 
 Usage:
-  qatlas contrib pdf <ARXIV_ID> --pdf <path> [--overwrite]
+  qatlas contrib pdf <ARXIV_ID|DOI> --pdf <path> [--overwrite] [--verify warn|strict]
   qatlas contrib pdf --list <path>                    (planned — not implemented yet)
 
   qatlas contrib mineru                               # queue mode: claim and process
-  qatlas contrib mineru <ARXIV_ID>                    # single mode
+  qatlas contrib mineru <ARXIV_ID>                    # single mode: claim, run, upload
   qatlas contrib mineru --watch [--watch-interval N]  # daemon loop
+  qatlas contrib mineru <DOI> --zip <path> [--verify warn|strict]
+                                                      # upload a pre-made MinerU zip (DOI-only)
 
 Common subcommand options pass through to the underlying module
 (`qatlas.client.upload` / `qatlas.client.mineru`).  Use
@@ -55,7 +58,7 @@ full per-subcommand argument set.
 def _cmd_pdf(argv: list[str]) -> int:
     # Lazy import so `qatlas contrib --help` doesn't pay for the upload
     # module's HTTP / SDK imports.
-    from qatlas.client import upload
+    from qatlas.client import _common, upload
 
     if argv and argv[0] == "--list":
         # Placeholder for the planned batch path. We intentionally
@@ -70,22 +73,52 @@ def _cmd_pdf(argv: list[str]) -> int:
         )
         return 2
 
-    # Forward as `qatlas upload pdf ...` would have: build the same
-    # argparse parser and dispatch to cmd_upload_pdf.
+    # Build the same argparse parser the PDF uploader uses and dispatch
+    # to cmd_upload_pdf, wrapping the call so request / value errors
+    # surface as friendly CLI exit codes instead of tracebacks.
     parser = upload.build_pdf_parser()
     parser.prog = "qatlas contrib pdf"
     args = parser.parse_args(argv)
-    return upload.cmd_upload_pdf(args)
+    return _common.run_with_request_errors(args.func, args)
 
 
 def _cmd_mineru(argv: list[str]) -> int:
-    # Reuse the MinerU daemon's main() argparse + dispatch end-to-end.
-    # `mineru.main` accepts an argv list (used by tests) so we don't
-    # need to re-declare any flags here.
+    # A `--zip` bundle means "I already have a MinerU result zip; upload it
+    # directly" — distinct from the local-runner flow (claim → run MinerU →
+    # upload). Direct-zip upload is DOI-only: arXiv papers must go through
+    # the runner so claim/lease/upload stay one unit (the arxiv direct-zip
+    # path was removed in v0.19.0). Sniff argv for --zip *before* importing
+    # either backend so `qatlas contrib mineru --help` (no --zip) stays cheap.
+    if any(a == "--zip" or a.startswith("--zip=") for a in argv):
+        from qatlas.client import _common, upload
+
+        parser = upload.build_mineru_parser()
+        parser.prog = "qatlas contrib mineru"
+        args = parser.parse_args(argv)
+        if not upload._looks_like_doi(args.arxiv_id):
+            print(
+                "ERROR: `qatlas contrib mineru <ARXIV_ID> --zip` is not "
+                "supported.\n"
+                "The arxiv direct-zip path was removed in v0.19.0 because it "
+                "raced the\n"
+                "claim/lease state of the local MinerU runner. For an arXiv "
+                "paper run:\n"
+                "    qatlas contrib mineru <ARXIV_ID>\n"
+                "    qatlas contrib mineru --watch\n"
+                "which claims, runs MinerU, and uploads as one unit.\n\n"
+                "The --zip direct-upload form is DOI-only — DOIs aren't in the "
+                "needs-mineru\nqueue, so direct-zip is the only contributor "
+                "path for DOI papers.",
+                file=sys.stderr,
+            )
+            return 2
+        return _common.run_with_request_errors(args.func, args)
+
+    # No --zip: hand off to the local MinerU runner (queue / single / watch).
+    # `mineru.main` accepts an argv list (used by tests) and a prog override
+    # so --help shows "qatlas contrib mineru" in its usage line.
     from qatlas.client import mineru as _mineru
 
-    # Patch prog name on the underlying parser so --help shows
-    # "qatlas contrib mineru" rather than "qatlas mineru".
     return _mineru.main(argv, prog="qatlas contrib mineru")
 
 

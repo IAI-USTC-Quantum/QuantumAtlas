@@ -7,7 +7,7 @@ Ingestion Pipeline:
 1. Fetch: Download paper from arXiv (reuse ArxivFetcher)
 2. Parse: Convert PDF to Markdown via MinerU (caller-driven; the
    ingester's ``_parse_pdf`` hook now raises ``NotImplementedError``
-   on purpose — see `qatlas mineru` for the supported flow)
+   on purpose — see `qatlas contrib mineru` for the supported flow)
 3. Extract: Use LLM to extract structured info (reuse AlgorithmExtractor)
 4. Create Wiki Pages: Generate wiki pages from extracted info
 5. Sync: Push to Neo4j (if enabled)
@@ -62,7 +62,7 @@ class WikiIngester:
 
     The ingester orchestrates the flow from raw sources to wiki pages,
     reusing existing components (ArxivFetcher, AlgorithmExtractor). PDF
-    → Markdown conversion goes through the `qatlas mineru` CLI; the
+    → Markdown conversion goes through the `qatlas contrib mineru` CLI; the
     ingester's `_parse_pdf` hook raises NotImplementedError when called
     directly so misconfigured pipelines fail loudly.
 
@@ -227,15 +227,14 @@ class WikiIngester:
         """Local PDF parsing has been removed from the open-source build.
 
         The previous implementation used a third-party local PDF library; the
-        only supported path now is to run ``qatlas mineru`` (which uploads
-        the MinerU result zip for you when ``--push-pdf`` is set) or upload
-        an existing MinerU result bundle with ``qatlas upload mineru``.
+        only supported path now is to run ``qatlas contrib mineru`` (which
+        parses the PDF with your own MinerU quota and uploads the result
+        when ``--push-pdf`` is set).
         """
         raise NotImplementedError(
             "Local PDF parsing has been removed. "
-            "Run `qatlas mineru <arxiv_id> --push-pdf` to parse and upload in one shot, "
-            "or `qatlas upload mineru <arxiv_id>v<n> --zip <bundle>.zip` "
-            "to push an already-produced MinerU result bundle."
+            "Run `qatlas contrib mineru <arxiv_id> --push-pdf` to parse the PDF "
+            "with your own MinerU quota and upload the result in one shot."
         )
 
     def _extract_algorithm(self, arxiv_id: str, llm_provider: str = "openai") -> Any:

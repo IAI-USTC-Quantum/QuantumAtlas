@@ -429,7 +429,7 @@ class MinerUClient:
     def download_full_zip(self, full_zip_url: str, output_path: str | Path) -> Path:
         """Download MinerU's result zip verbatim to output_path and return it.
 
-        This is what `qatlas mineru` uses (since v0.8.0) — the entire zip is
+        This is what `qatlas contrib mineru` uses (since v0.8.0) — the entire zip is
         pushed to the server's `upload-mineru` endpoint, which unpacks both
         the markdown and every image into their respective per-kind buckets.
 

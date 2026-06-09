@@ -76,7 +76,7 @@ _DEFAULT_CONFIG_YAML = """\
 # wiki_dir: ./wiki      # local checkout of QuantumAtlas-Wiki
 # raw_dir: ./raw        # asset cache root
 
-# ── MinerU API (qatlas mineru) ─────────────────────────────────────
+# ── MinerU API (qatlas contrib mineru) ─────────────────────────────
 # mineru_api_tokens:        # List of JWTs from https://mineru.net
 #   - jwt-1                 # client rotates across them when one hits
 #   - jwt-2                 # the daily quota

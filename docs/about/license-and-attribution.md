@@ -80,7 +80,7 @@ X-Attribution: OpenAlex (CC0), Crossref (CC0), arXiv
 
 - 下述 `/markdown` / `/pdf` 全部端点**不注册**；客户端拿到 404
 - server 不读 `MINERU_*` / `QATLAS_OPENALEX_MAILTO` / `QATLAS_ARXIV_FETCH_*` 字段；不会代客户端做 server-side 转换或 fetch
-- Contributor 仍可走 `qatlas mineru`（拿自己的 MinerU quota 在本地跑），通过
+- Contributor 仍可走 `qatlas contrib mineru`（拿自己的 MinerU quota 在本地跑），通过
   `POST /api/papers/{id}/upload-mineru` 把成品 markdown 推到 server——这条
   路径**与开关无关**
 
