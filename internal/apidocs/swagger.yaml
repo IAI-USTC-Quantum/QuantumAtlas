@@ -639,14 +639,12 @@ paths:
     post:
       consumes:
       - multipart/form-data
-      description: Accepts the entire MinerU result zip exactly as returned by `full_zip_url`.
-        Server extracts `full.md` plus every `images/*` entry and stores them to the
-        markdown and images object buckets respectively. Images are written before
-        the markdown so any reader that observes the markdown also observes all referenced
-        images. Replaces the v0.7.x `upload-markdown` endpoint (which only accepted
-        a single .md file and silently dropped images).
+      description: |-
+        Accepts the entire MinerU result zip exactly as returned by `full_zip_url`. Server extracts `full.md` plus every `images/*` entry and stores them to the markdown and images object buckets respectively. Images are written before the markdown so any reader that observes the markdown also observes all referenced images. Replaces the v0.7.x `upload-markdown` endpoint (which only accepted a single .md file and silently dropped images).
+
+        The {arxiv_id} slot also accepts a DOI (`10.<registrant>/<suffix>`) to contribute the converted *published* version. DOI bundles are stored under the `markdown/doi/...` + `images/doi/...` namespace and verified against OpenAlex metadata via the `title`/`authors` form fields (see upload-pdf; `verify=strict` rejects mismatches). The result is reported in `X-QAtlas-Verification`.
       parameters:
-      - description: arXiv identifier (must include version suffix vN)
+      - description: arXiv identifier (with vN) OR DOI (10.x/...)
         in: path
         name: arxiv_id
         required: true
@@ -659,6 +657,15 @@ paths:
         in: query
         name: expected_sha256
         type: string
+      - description: sha256 of the source PDF that was converted (cross-checked against
+          stored PDF)
+        in: query
+        name: pdf_sha256
+        type: string
+      - description: 'DOI only: ''strict'' rejects metadata mismatch (default warn)'
+        in: query
+        name: verify
+        type: string
       - description: short label of the contributor's MinerU run (truncated to 64
           chars)
         in: query
@@ -669,6 +676,14 @@ paths:
         name: mineru_zip
         required: true
         type: file
+      - description: 'DOI only: expected paper title to verify against OpenAlex'
+        in: formData
+        name: title
+        type: string
+      - description: 'DOI only: expected authors (semicolon-separated) to verify'
+        in: formData
+        name: authors
+        type: string
       produces:
       - application/json
       responses:
@@ -694,7 +709,7 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: Upload paper MinerU bundle
+      summary: Upload paper MinerU bundle (arXiv id or DOI)
       tags:
       - Papers
   /api/papers/{arxiv_id}/upload-pdf:
@@ -705,8 +720,17 @@ paths:
         Content-addressed upload with sha256 idempotency. 200 when
         bytes are unchanged, 201 when written, 409 on a content
         conflict without overwrite=true.
+
+        The {arxiv_id} slot also accepts a DOI (`10.<registrant>/<suffix>`)
+        for contributing a *published* version that may have no arXiv
+        preprint. DOI uploads are stored under a disjoint `pdf/doi/...`
+        namespace and cross-checked against the DOI's OpenAlex metadata:
+        pass `title` and/or `authors` (semicolon-separated) form fields
+        to verify. The outcome is reported in `X-QAtlas-Verification` and
+        the JSON `verification` block; `verify=strict` rejects a mismatch
+        or unknown DOI with 409.
       parameters:
-      - description: arXiv identifier
+      - description: arXiv identifier (with vN) OR DOI (10.x/...)
         in: path
         name: arxiv_id
         required: true
@@ -719,11 +743,23 @@ paths:
         in: query
         name: expected_sha256
         type: string
+      - description: 'DOI only: ''strict'' rejects metadata mismatch (default warn)'
+        in: query
+        name: verify
+        type: string
       - description: PDF file
         in: formData
         name: pdf
         required: true
         type: file
+      - description: 'DOI only: expected paper title to verify against OpenAlex'
+        in: formData
+        name: title
+        type: string
+      - description: 'DOI only: expected authors (semicolon-separated) to verify'
+        in: formData
+        name: authors
+        type: string
       produces:
       - application/json
       responses:
@@ -749,7 +785,7 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: Upload paper PDF
+      summary: Upload paper PDF (arXiv id or DOI)
       tags:
       - Papers
   /api/papers/{id_or_doi}/markdown:

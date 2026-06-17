@@ -286,18 +286,30 @@ func docPaperPDFStatus() {}
 
 // uploadPDF stores a paper PDF.
 //
-// @Summary     Upload paper PDF
+// @Summary     Upload paper PDF (arXiv id or DOI)
 // @Description Content-addressed upload with sha256 idempotency. 200 when
 // @Description bytes are unchanged, 201 when written, 409 on a content
 // @Description conflict without overwrite=true.
+// @Description
+// @Description The {arxiv_id} slot also accepts a DOI (`10.<registrant>/<suffix>`)
+// @Description for contributing a *published* version that may have no arXiv
+// @Description preprint. DOI uploads are stored under a disjoint `pdf/doi/...`
+// @Description namespace and cross-checked against the DOI's OpenAlex metadata:
+// @Description pass `title` and/or `authors` (semicolon-separated) form fields
+// @Description to verify. The outcome is reported in `X-QAtlas-Verification` and
+// @Description the JSON `verification` block; `verify=strict` rejects a mismatch
+// @Description or unknown DOI with 409.
 // @Tags        Papers
 // @Accept      mpfd
 // @Produce     json
 // @Security    BearerAuth
-// @Param       arxiv_id        path     string true  "arXiv identifier"
+// @Param       arxiv_id        path     string true  "arXiv identifier (with vN) OR DOI (10.x/...)"
 // @Param       overwrite       query    bool   false "overwrite on content conflict"
 // @Param       expected_sha256 query    string false "client-computed PDF sha256 (in-transit guard)"
+// @Param       verify          query    string false "DOI only: 'strict' rejects metadata mismatch (default warn)"
 // @Param       pdf             formData file   true  "PDF file"
+// @Param       title           formData string false "DOI only: expected paper title to verify against OpenAlex"
+// @Param       authors         formData string false "DOI only: expected authors (semicolon-separated) to verify"
 // @Success     201 {object} map[string]interface{} "created"
 // @Success     200 {object} map[string]interface{} "unchanged"
 // @Failure     400 {object} map[string]interface{}
@@ -307,17 +319,23 @@ func docUploadPDF() {}
 
 // uploadMineRU stores a MinerU result zip (markdown + images bundle) for a paper.
 //
-// @Summary     Upload paper MinerU bundle
+// @Summary     Upload paper MinerU bundle (arXiv id or DOI)
 // @Description Accepts the entire MinerU result zip exactly as returned by `full_zip_url`. Server extracts `full.md` plus every `images/*` entry and stores them to the markdown and images object buckets respectively. Images are written before the markdown so any reader that observes the markdown also observes all referenced images. Replaces the v0.7.x `upload-markdown` endpoint (which only accepted a single .md file and silently dropped images).
+// @Description
+// @Description The {arxiv_id} slot also accepts a DOI (`10.<registrant>/<suffix>`) to contribute the converted *published* version. DOI bundles are stored under the `markdown/doi/...` + `images/doi/...` namespace and verified against OpenAlex metadata via the `title`/`authors` form fields (see upload-pdf; `verify=strict` rejects mismatches). The result is reported in `X-QAtlas-Verification`.
 // @Tags        Papers
 // @Accept      mpfd
 // @Produce     json
 // @Security    BearerAuth
-// @Param       arxiv_id        path     string true  "arXiv identifier (must include version suffix vN)"
+// @Param       arxiv_id        path     string true  "arXiv identifier (with vN) OR DOI (10.x/...)"
 // @Param       overwrite       query    bool   false "overwrite on content conflict"
 // @Param       expected_sha256 query    string false "client-computed zip sha256 (in-transit integrity check)"
+// @Param       pdf_sha256      query    string false "sha256 of the source PDF that was converted (cross-checked against stored PDF)"
+// @Param       verify          query    string false "DOI only: 'strict' rejects metadata mismatch (default warn)"
 // @Param       source          query    string false "short label of the contributor's MinerU run (truncated to 64 chars)"
 // @Param       mineru_zip      formData file   true  "MinerU result zip (must contain full.md; optional images/*)"
+// @Param       title           formData string false "DOI only: expected paper title to verify against OpenAlex"
+// @Param       authors         formData string false "DOI only: expected authors (semicolon-separated) to verify"
 // @Success     201 {object} map[string]interface{}
 // @Success     200 {object} map[string]interface{}
 // @Failure     400 {object} map[string]interface{}

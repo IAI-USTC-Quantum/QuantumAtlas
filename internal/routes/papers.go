@@ -159,8 +159,14 @@ func RegisterPapers(
 		arxiv, action := splitPapersPath(raw)
 		switch action {
 		case "upload-pdf":
+			if isDOICandidate(arxiv) {
+				return uploadPDFByDOIHandler(re, cfg, rawStore, catalog, doiResolver, arxiv)
+			}
 			return uploadPDFHandler(re, cfg, rawStore, catalog, arxiv)
 		case "upload-mineru":
+			if isDOICandidate(arxiv) {
+				return uploadMinerUByDOIHandler(re, cfg, rawStore, catalog, doiResolver, arxiv)
+			}
 			return uploadMinerUHandler(re, cfg, rawStore, catalog, arxiv)
 		case "mineru-claim":
 			ttl, _ := strconv.Atoi(re.Request.URL.Query().Get("ttl_seconds"))

@@ -92,6 +92,17 @@ def cmd_upload_pdf(args: argparse.Namespace) -> int:
     params: dict[str, str] = {"expected_sha256": pdf_sha}
     if args.overwrite:
         params["overwrite"] = "true"
+    if getattr(args, "verify", None) == "strict":
+        params["verify"] = "strict"
+
+    # DOI verification fields (multipart form fields, not files). Sent
+    # only when supplied; the server ignores them on the arXiv path and
+    # cross-checks them against OpenAlex metadata on the DOI path.
+    data: dict[str, str] = {}
+    if getattr(args, "title", None):
+        data["title"] = args.title
+    if getattr(args, "authors", None):
+        data["authors"] = args.authors
 
     base_url = base_url_from_args(args)
     url = f"{base_url}/api/papers/{args.arxiv_id}/upload-pdf"
@@ -100,6 +111,7 @@ def cmd_upload_pdf(args: argparse.Namespace) -> int:
         response = requests.post(
             url,
             files=files,
+            data=data or None,
             params=params,
             headers={**auth_headers(args), **client_version_headers()},
             timeout=args.request_timeout,
@@ -112,6 +124,9 @@ def cmd_upload_pdf(args: argparse.Namespace) -> int:
 
     if not response.ok:
         return _http_error_exit(response)
+    verification = response.headers.get("X-QAtlas-Verification")
+    if verification:
+        print(f"DOI metadata verification: {verification}", file=sys.stderr)
     print_json(response.json())
     return 0
 
@@ -168,10 +183,13 @@ def cmd_upload_mineru(args: argparse.Namespace) -> int:
 def _add_arxiv_arg(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "arxiv_id",
+        metavar="ID",
         help=(
-            "arXiv ID with explicit version suffix, e.g. 'quant-ph/9508027v1' or "
-            "'2501.00010v1'. The version is required so the stored filename "
-            "matches RAW_DIR layout."
+            "arXiv ID with explicit version suffix (e.g. 'quant-ph/9508027v1' or "
+            "'2501.00010v1'), OR a DOI (e.g. '10.1103/PhysRevLett.123.070501') to "
+            "contribute a published version. The arXiv version is required so the "
+            "stored filename matches RAW_DIR layout; DOIs are stored under a "
+            "separate 'doi/' namespace."
         ),
     )
 
@@ -179,7 +197,7 @@ def _add_arxiv_arg(parser: argparse.ArgumentParser) -> None:
 def build_pdf_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="qatlas upload pdf",
-        description="Upload a paper PDF to the server.",
+        description="Upload a paper PDF to the server (by arXiv ID or DOI).",
     )
     _add_arxiv_arg(parser)
     parser.add_argument("--pdf", required=True, help="Path to the local PDF file")
@@ -187,6 +205,29 @@ def build_pdf_parser() -> argparse.ArgumentParser:
         "--overwrite",
         action="store_true",
         help="Replace existing PDF if present on the server",
+    )
+    parser.add_argument(
+        "--title",
+        help=(
+            "DOI uploads only: expected paper title. The server verifies it "
+            "against the DOI's OpenAlex metadata and records the outcome."
+        ),
+    )
+    parser.add_argument(
+        "--authors",
+        help=(
+            "DOI uploads only: expected authors, semicolon-separated "
+            "(e.g. 'Harrow; Hassidim; Lloyd'). Verified against OpenAlex."
+        ),
+    )
+    parser.add_argument(
+        "--verify",
+        choices=["warn", "strict"],
+        default="warn",
+        help=(
+            "DOI uploads only: 'warn' (default) records a metadata mismatch but "
+            "still uploads; 'strict' rejects a mismatch / unknown DOI with 409."
+        ),
     )
     add_common_http_args(parser)
     parser.set_defaults(func=cmd_upload_pdf)
