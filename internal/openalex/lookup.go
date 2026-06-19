@@ -39,23 +39,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperassets"
 	"golang.org/x/sync/singleflight"
 )
-
-// doiURLPrefixes are the scheme/host prefixes contributors commonly paste
-// in front of a bare DOI. Mirrors paperassets.doiURLPrefixes — kept in
-// sync manually until paperassets exports the list (tracked separately
-// by the paperassets-owner agent). When that happens, switch this
-// assignment to paperassets.DOIURLPrefixes.
-var doiURLPrefixes = []string{
-	"https://doi.org/",
-	"http://doi.org/",
-	"https://dx.doi.org/",
-	"http://dx.doi.org/",
-	"doi.org/",
-	"dx.doi.org/",
-	"doi:",
-}
 
 // Defaults conservatively chosen so a misconfigured deployment can't
 // hammer OpenAlex. The 5-minute TTL is a compromise between freshness
@@ -66,7 +52,11 @@ const (
 	DefaultPositiveTTL  = 5 * time.Minute
 	DefaultNegativeTTL  = 1 * time.Minute
 	DefaultMaxCacheSize = 1024
-	DefaultMaxDOILen    = 256
+	// DefaultMaxDOILen mirrors paperassets.MaxDOILen so the two
+	// layers can't drift; the alias keeps the openalex-facing API
+	// (resolver Config.MaxDOILen) stable while the source of truth
+	// lives in paperassets.
+	DefaultMaxDOILen = paperassets.MaxDOILen
 )
 
 // Errors returned by ResolveDOI. errors.Is-compatible so callers can
@@ -230,8 +220,16 @@ func (r *Resolver) ResolveDOI(ctx context.Context, doi string) (string, error) {
 	// Singleflight: collapse concurrent ResolveDOI(same-doi) calls to
 	// one upstream lookup. The shared result is then cached so the
 	// next 5 minutes of identical requests are free.
+	//
+	// Detach from the caller's context (same rationale as LookupMetadata):
+	// if caller A cancels mid-flight (browser navigation, request
+	// timeout) and other waiters B, C, … are still alive on the same
+	// singleflight slot, A's cancellation must not propagate into B/C's
+	// returned error. The HTTP timeout still bounds the outbound call
+	// via cfg.HTTPTimeout.
+	detachedCtx := context.WithoutCancel(ctx)
 	result, err, _ := r.sf.Do(norm, func() (any, error) {
-		canonical, lookupErr := r.lookup(ctx, norm)
+		canonical, lookupErr := r.lookup(detachedCtx, norm)
 		// Cache both positive and negative answers (the negative-cache
 		// case is the most important — protects against flood of
 		// unknown-DOI hits).
@@ -340,9 +338,10 @@ func normalizeDOI(in string, maxLen int) (string, error) {
 		return "", fmt.Errorf("%w: exceeds %d chars", ErrInvalidDOI, maxLen)
 	}
 	v = strings.ToLower(v)
-	// Strip common URL prefixes contributors paste. Keep in sync with
-	// paperassets.doiURLPrefixes so both layers accept the same inputs.
-	for _, prefix := range doiURLPrefixes {
+	// Strip common URL prefixes contributors paste. Sources the canonical
+	// list from paperassets so both layers (validation + URL building +
+	// router dispatch) accept the same inputs.
+	for _, prefix := range paperassets.DOIURLPrefixes {
 		if strings.HasPrefix(v, prefix) {
 			v = strings.TrimPrefix(v, prefix)
 			break

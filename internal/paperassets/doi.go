@@ -40,11 +40,11 @@ var doiShapeRE = regexp.MustCompile(`^10\.\d{4,9}/\S+$`)
 // normalize to "10.x/y".
 //
 // This is the canonical DOI URL prefix list for the whole codebase.
-// The other two known sites that hard-code a subset of these prefixes —
-// internal/openalex/lookup.go (normalizeDOI) and internal/openalex/parse.go
-// (shortDOI) — should import this list rather than maintaining their
-// own copies. As of the PR #19 follow-up they still carry their own
-// inline slices; unifying them is deferred to a separate change.
+// All other call sites that need to detect or strip a DOI URL prefix
+// (internal/openalex/lookup.go, internal/openalex/parse.go,
+// internal/routes/papers.go) import this slice — there are no other
+// inline copies. If you add a new prefix (e.g. "hdl:"), add it here
+// and every consumer picks it up automatically.
 var DOIURLPrefixes = []string{
 	"https://doi.org/",
 	"http://doi.org/",

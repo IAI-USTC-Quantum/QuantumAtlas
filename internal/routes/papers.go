@@ -288,6 +288,10 @@ func isDOICandidate(s string) bool {
 // arxiv ids are case-sensitive and NormalizeDOI lower-cases, so
 // passing an arxiv id through NormalizeDOI would corrupt it. Non-DOI
 // input is returned unchanged.
+//
+// The DOI URL prefix set is sourced from paperassets.DOIURLPrefixes
+// (the single source of truth — see paperassets/doi.go). Don't inline
+// a copy here.
 func normalizeIDForDispatch(s string) string {
 	if s == "" {
 		return s
@@ -301,7 +305,7 @@ func normalizeIDForDispatch(s string) string {
 	// Check for a DOI URL prefix (https://doi.org/, doi:, etc.) —
 	// if found, normalize to extract the bare DOI.
 	lower := strings.ToLower(s)
-	for _, p := range []string{"https://doi.org/", "http://doi.org/", "https://dx.doi.org/", "http://dx.doi.org/", "doi.org/", "dx.doi.org/", "doi:"} {
+	for _, p := range paperassets.DOIURLPrefixes {
 		if strings.HasPrefix(lower, p) {
 			return paperassets.NormalizeDOI(s)
 		}

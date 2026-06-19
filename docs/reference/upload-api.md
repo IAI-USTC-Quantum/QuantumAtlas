@@ -323,6 +323,17 @@ the suffix become `__`. In the Neo4j catalog the contribution is a
 `identifier_scheme = 'doi'`, `source = 'doi-upload'`, and the asset
 pointers + verification fields below.
 
+> **Resolution precedence**: when OpenAlex links a DOI to an arXiv
+> preprint, `GET /api/papers/<doi>/...` resolves the DOI to the
+> canonical arXiv id and serves the arXiv-keyed assets — even if a
+> separate DOI-only contribution exists for the same DOI. The DOI-only
+> contribution is still stored and is reachable directly via the
+> client/CLI; only the **public read path** prefers arXiv when both are
+> available, so contributors who explicitly want the published version
+> back should request it under the arxiv id once the linkage is
+> established. The local DOI-only catalog node only owns the read path
+> when OpenAlex returns `ErrDOINotFound` (no arxiv presence).
+
 ### Metadata verification (title + authors)
 
 Because nothing binds raw PDF bytes to a DOI, the server cross-checks
@@ -403,15 +414,20 @@ source-PDF cross-check (against the stored DOI PDF).
 
 ### Client coverage
 
-CLI support for DOI uploads is **PDF-only** today:
+CLI support for DOI uploads covers **both** `pdf` and `mineru` subcommands:
 
-- `qatlas contrib pdf <DOI> --pdf ...` (and the deprecated `qatlas upload
-  pdf`) accept a DOI in the ID slot and expose `--title` / `--authors` /
-  `--verify`; the verification status is printed to stderr.
-- `upload-mineru` by DOI is **HTTP-only** for now. The `qatlas contrib
-  mineru` runner is keyed on arXiv ids end-to-end (claim queue → MinerU →
-  upload) and does not yet drive DOI contributions. To contribute a
-  converted published PDF, POST the MinerU zip to
-  `/api/papers/<DOI>/upload-mineru` directly (e.g. via `curl`), passing
+- `qatlas upload pdf <DOI> --pdf ...` accepts a DOI in the ID slot and
+  exposes `--title` / `--authors` / `--verify`; the verification status
+  is printed to stderr from the `X-QAtlas-Verification` response header.
+- `qatlas upload mineru <DOI> --zip ...` likewise accepts a DOI and the
+  same `--title` / `--authors` / `--verify` flags. The flags are honoured
+  by the server's DOI path and silently ignored on the arXiv path (which
+  does not cross-check upstream metadata), so the same invocation works
+  for either identity.
+- The arXiv-keyed `qatlas contrib mineru` runner (claim queue → MinerU →
+  upload) is still arxiv-only end-to-end: it does not yet pick DOI work
+  out of the queue. Contributors driving MinerU manually against a
+  published PDF should use `qatlas upload mineru <DOI> --zip ...` (or
+  POST the bundle directly to `/api/papers/<DOI>/upload-mineru` with
   `title` / `authors` form fields and `?verify=` / `?pdf_sha256=` as
-  described above.
+  described above).

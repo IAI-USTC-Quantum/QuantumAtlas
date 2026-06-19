@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperassets"
 )
 
 // fakeListStore is a minimal objstore.Store stub that only implements
@@ -96,27 +97,37 @@ func TestListImageCountsDOIDisambiguation(t *testing.T) {
 	// alone ("10.1103"), so two sibling DOIs under the same publisher
 	// would collide into one counter. They should now be keyed by the
 	// synthetic "doi:<doi>" string, one counter per DOI.
+	//
+	// Fixtures are built via paperassets.DOIAssetKey so the test stays
+	// locked to the *real* storage layout. The PR #19 first cut built
+	// directory-shaped fake keys ("images/doi/<reg>/<suffix>/fig1.png")
+	// that happened to make this assertion pass while the live single-zip
+	// layout ("images/doi/<reg>/<suffix>.zip") produced phantom nodes;
+	// using DOIAssetKey keeps the fixtures honest going forward.
+	doiA := "10.1103/physrevlett.123.070501"
+	doiB := "10.1103/nature.12345"
 	store := &fakeListStore{infos: []objstore.ObjectInfo{
-		{Key: "images/doi/10.1103/physrevlett.123.070501/fig1.png"},
-		{Key: "images/doi/10.1103/physrevlett.123.070501/fig2.png"},
-		{Key: "images/doi/10.1103/nature.12345/fig1.png"},
-		// arXiv image for comparison (keyed by yymm, as the legacy code does)
+		{Key: paperassets.DOIAssetKey("images", doiA)},
+		{Key: paperassets.DOIAssetKey("images", doiB)},
+		// arXiv image for comparison — legacy multi-file directory
+		// layout (3+1 parts) is the only shape the existing arxiv
+		// branch still recognises.
 		{Key: "images/2401/2401.12345v1/fig1.png"},
 	}}
 	counts, total, err := listImageCounts(context.Background(), store)
 	if err != nil {
 		t.Fatalf("listImageCounts: %v", err)
 	}
-	if total != 4 {
-		t.Errorf("total = %d, want 4", total)
+	if total != 3 {
+		t.Errorf("total = %d, want 3", total)
 	}
-	doiA := DOINodeKey("10.1103/physrevlett.123.070501")
-	doiB := DOINodeKey("10.1103/nature.12345")
-	if counts[doiA] != 2 {
-		t.Errorf("counts[%q] = %d, want 2 (was colliding with DOI B before the fix)", doiA, counts[doiA])
+	wantA := DOINodeKey(doiA)
+	wantB := DOINodeKey(doiB)
+	if counts[wantA] != 1 {
+		t.Errorf("counts[%q] = %d, want 1 (was colliding with DOI B before the fix)", wantA, counts[wantA])
 	}
-	if counts[doiB] != 1 {
-		t.Errorf("counts[%q] = %d, want 1 (should be distinct from DOI A)", doiB, counts[doiB])
+	if counts[wantB] != 1 {
+		t.Errorf("counts[%q] = %d, want 1 (should be distinct from DOI A)", wantB, counts[wantB])
 	}
 	// arXiv images are keyed by the stem (parts[2] in the
 	// "images/<yymm>/<stem>/<file>" layout). This is the legacy
@@ -128,6 +139,52 @@ func TestListImageCountsDOIDisambiguation(t *testing.T) {
 	// pre-fix behaviour causing sibling-DOI collisions).
 	if _, ok := counts["10.1103"]; ok {
 		t.Errorf("counts has bare-registrant key %q — sibling-DOI collision regression", "10.1103")
+	}
+	// Guard: no phantom key with the storage extension baked in
+	// (that was the listImageCounts bug fixed alongside this test —
+	// DOI single-zip storage put ".zip" into parts[3], which then
+	// leaked into the synthetic node key).
+	for k := range counts {
+		if strings.HasSuffix(k, ".zip") {
+			t.Errorf("counts has phantom extension-bearing key %q — listImageCounts must strip path.Ext on DOI suffix", k)
+		}
+	}
+}
+
+// TestListImageCountsDOIRealLayoutPhantomNodeRegression locks in the
+// fix for the phantom-:PaperWork-node bug: DOI image storage is a
+// SINGLE zip per DOI ("images/doi/<reg>/<suffix>.zip", emitted by
+// paperassets.DOIAssetKey), but the original PR #19 listImageCounts
+// passed parts[3] verbatim into the synthetic node key, producing
+// "doi:<reg>/<suffix>.zip" — a string that never matches any
+// :PaperWork node UpsertMDByDOI ever wrote, so mergeImageBatch would
+// MERGE-create a brand-new phantom node every sync run. The synthetic
+// node key MUST be DOINodeKey(<reg>/<suffix>) without the extension.
+func TestListImageCountsDOIRealLayoutPhantomNodeRegression(t *testing.T) {
+	doi := "10.1103/physrevlett.123.070501"
+	// DOIAssetKey is the source of truth for what the upload handler
+	// writes; depend on it directly so a future change to the storage
+	// layout breaks this test together with the handler.
+	realKey := paperassets.DOIAssetKey("images", doi)
+	if realKey == "" || !strings.HasSuffix(realKey, ".zip") {
+		t.Fatalf("test pre-condition: DOIAssetKey(images,%q) = %q; expected single-zip layout", doi, realKey)
+	}
+	store := &fakeListStore{infos: []objstore.ObjectInfo{{Key: realKey}}}
+	counts, total, err := listImageCounts(context.Background(), store)
+	if err != nil {
+		t.Fatalf("listImageCounts: %v", err)
+	}
+	if total != 1 {
+		t.Fatalf("total = %d, want 1", total)
+	}
+	want := DOINodeKey(doi)
+	if counts[want] != 1 {
+		t.Errorf("counts[%q] = %d, want 1 (phantom-node bug regressed: sync would not update real DOI node)", want, counts[want])
+	}
+	for k := range counts {
+		if k != want {
+			t.Errorf("counts has unexpected key %q (only %q should appear)", k, want)
+		}
 	}
 }
 

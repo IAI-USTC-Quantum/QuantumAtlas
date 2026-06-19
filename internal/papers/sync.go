@@ -124,6 +124,18 @@ func listKindPaths(ctx context.Context, store objstore.Store, kind string) (map[
 //   DOI images by the registrant ("10.1103") alone, which collided
 //   every DOI under the same publisher into one counter — the
 //   counts for sibling DOIs summed instead of staying per-paper.
+//
+// DOI image storage is a SINGLE zip per DOI (paperassets.DOIAssetKey
+// emits "images/doi/<reg>/<suffix>.zip") — not a per-file directory.
+// We therefore (a) strip the .zip / .<ext> suffix when reassembling the
+// node key so the synthetic id matches DOINodeKey(<reg>/<suffix>)
+// instead of leaking a phantom "doi:<reg>/<suffix>.zip" node, and
+// (b) report a count of 1 zip per DOI. The "true" image_count (number
+// of images inside the zip) is set authoritatively by UpsertMDByDOI
+// from the parsed bundle; mergeImageBatch's DOI cypher uses
+// coalesce(p.image_count, r.image_count) so this 1-per-zip presence
+// signal never clobbers a real count.
+//
 // Returns (counts, total, err). A non-nil err means the listing was
 // incomplete (S3 paginate failed, ctx canceled, etc.) — callers MUST
 // propagate it instead of silently treating an empty result as "zero
@@ -142,9 +154,19 @@ func listImageCounts(ctx context.Context, store objstore.Store) (map[string]int,
 	total := 0
 	for _, info := range infos {
 		parts := strings.Split(info.Key, "/")
-		// DOI keys: images/doi/<registrant>/<suffix>/<file...>
+		// DOI keys are 4 segments for the single-zip layout
+		// (images/doi/<registrant>/<suffix>.zip) or 5+ for the
+		// legacy per-file directory layout (images/doi/<reg>/<suffix>/<file>).
+		// In both cases the synthetic node key is built from
+		// segments [2] (registrant) and [3] (suffix), with any
+		// trailing extension stripped so the key round-trips back
+		// to DOINodeKey(<reg>/<suffix>) — never "doi:<reg>/<suffix>.zip".
 		if len(parts) >= 4 && parts[0] == "images" && parts[1] == "doi" {
-			doiKey := parts[2] + "/" + parts[3] // registrant/suffix
+			suffix := strings.TrimSuffix(parts[3], path.Ext(parts[3]))
+			if suffix == "" {
+				continue
+			}
+			doiKey := parts[2] + "/" + suffix
 			counts[DOINodeKey(doiKey)]++
 			total++
 			continue
@@ -308,7 +330,7 @@ func (s *Store) mergeImageBatch(ctx context.Context, counts map[string]int, batc
 		ON CREATE SET p.source = 'doi-upload',
 		              p.identifier_scheme = 'doi',
 		              p.has_json = false
-		SET p.image_count = r.image_count,
+		SET p.image_count = coalesce(p.image_count, r.image_count),
 		    p.last_assets_change_at = datetime()`
 
 	arxivCypher := `

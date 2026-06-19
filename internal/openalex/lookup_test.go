@@ -267,6 +267,74 @@ func TestResolveDOI_Singleflight(t *testing.T) {
 	}
 }
 
+// TestResolveDOI_CancellationDoesNotPoisonWaiters guards the
+// PR-#19-followup fix that detaches the singleflight worker's context
+// from the caller's. Before the fix, when caller A canceled mid-flight
+// (browser navigation, request timeout) all coalesced waiters B, C, …
+// for the same DOI received context.Canceled even though their own
+// contexts were still alive. The detach (context.WithoutCancel in
+// ResolveDOI mirroring LookupMetadata) means the inner round-trip is
+// bounded only by the HTTP client timeout, never by a single caller's
+// lifecycle.
+func TestResolveDOI_CancellationDoesNotPoisonWaiters(t *testing.T) {
+	t.Parallel()
+	var hits atomic.Int64
+	gate := make(chan struct{})
+	srv := stubOpenAlex(t, func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		<-gate // hold the handler until both callers are in singleflight
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(stubBody))
+	})
+	defer srv.Close()
+
+	r := New(Config{Mailto: "ops@example.com", BaseURL: srv.URL + "/works/doi:"})
+
+	// Caller A starts first and cancels its context before the upstream
+	// responds. Caller B uses a fresh, non-cancelled context but is
+	// already coalesced into A's singleflight slot.
+	ctxA, cancelA := context.WithCancel(context.Background())
+	errA := make(chan error, 1)
+	go func() {
+		_, e := r.ResolveDOI(ctxA, "10.1103/poison-check")
+		errA <- e
+	}()
+	// Let A enter singleflight (its goroutine made the call).
+	time.Sleep(20 * time.Millisecond)
+
+	errB := make(chan error, 1)
+	resB := make(chan string, 1)
+	go func() {
+		got, e := r.ResolveDOI(context.Background(), "10.1103/poison-check")
+		resB <- got
+		errB <- e
+	}()
+	// Let B coalesce, then cancel A while the upstream is still gated.
+	time.Sleep(20 * time.Millisecond)
+	cancelA()
+	close(gate)
+
+	// B must still receive a successful answer — its context was never
+	// canceled. The pre-fix behaviour returned context.Canceled here.
+	select {
+	case e := <-errB:
+		if e != nil {
+			t.Fatalf("caller B got %v; want nil — singleflight worker must not inherit caller A's cancellation", e)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("caller B never returned")
+	}
+	if got := <-resB; got != "0811.3171" {
+		t.Errorf("caller B got %q; want %q", got, "0811.3171")
+	}
+	// Drain A's result (either nil from cache hit on the in-flight
+	// result, or context.Canceled — both are acceptable for A itself).
+	<-errA
+	if got := hits.Load(); got != 1 {
+		t.Errorf("upstream hits: got %d, want 1 (single round-trip)", got)
+	}
+}
+
 // TestResolveDOI_LRUEviction: cache stays within MaxCacheSize bound.
 func TestResolveDOI_LRUEviction(t *testing.T) {
 	t.Parallel()
