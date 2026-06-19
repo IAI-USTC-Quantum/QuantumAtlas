@@ -113,9 +113,10 @@ func shortID(openalexURL string) string {
 	return openalexURL
 }
 
-// shortDOI strips the doi.org URL prefix, leaving the bare DOI.
+// shortDOI strips the doi.org URL prefix, leaving the bare DOI. Uses
+// paperassets.NormalizeDOI to keep the same prefix set as the rest of
+// the DOI handling layer (including dx.doi.org variants and the
+// "doi:" scheme).
 func shortDOI(doiURL string) string {
-	s := strings.TrimPrefix(doiURL, "https://doi.org/")
-	s = strings.TrimPrefix(s, "http://doi.org/")
-	return s
+	return paperassets.NormalizeDOI(doiURL)
 }
