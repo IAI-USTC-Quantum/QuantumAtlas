@@ -93,7 +93,10 @@ func (s *Store) SyncFromStore(ctx context.Context, store objstore.Store, opts Sy
 }
 
 // listKindPaths returns stem→bucket-relative-path for a pdf/markdown
-// kind by listing the bucket prefix.
+// kind by listing the bucket prefix. DOI-keyed assets are keyed by the
+// synthetic "doi:<doi>" string (matching the :PaperWork primary key from
+// UpsertPDFByDOI/UpsertMDByDOI) so the MERGE in mergeAssetBatch lands
+// on the existing node instead of creating an arxiv-fallback phantom.
 func listKindPaths(ctx context.Context, store objstore.Store, kind string) (map[string]string, error) {
 	infos, err := store.ListPrefix(ctx, kind+"/", 0)
 	if err != nil {
@@ -101,16 +104,26 @@ func listKindPaths(ctx context.Context, store objstore.Store, kind string) (map[
 	}
 	out := make(map[string]string, len(infos))
 	for _, info := range infos {
-		stem, ok := stemFromKey(info.Key, kind)
+		stem, isDOI, ok := stemFromKey(info.Key, kind)
 		if !ok {
 			continue
 		}
-		out[stem] = bucketRelKey(info.Key)
+		key := stem
+		if isDOI {
+			key = DOINodeKey(stem)
+		}
+		out[key] = bucketRelKey(info.Key)
 	}
 	return out, nil
 }
 
 // listImageCounts returns stem→count of image objects under images/.
+// arXiv images: keyed by the bare arxiv stem (e.g. "2401.12345v1").
+// DOI images:   keyed by "doi:<doi>" so they MERGE into the
+//   existing :PaperWork node from UpsertMDByDOI. We previously keyed
+//   DOI images by the registrant ("10.1103") alone, which collided
+//   every DOI under the same publisher into one counter — the
+//   counts for sibling DOIs summed instead of staying per-paper.
 // Returns (counts, total, err). A non-nil err means the listing was
 // incomplete (S3 paginate failed, ctx canceled, etc.) — callers MUST
 // propagate it instead of silently treating an empty result as "zero
@@ -129,7 +142,14 @@ func listImageCounts(ctx context.Context, store objstore.Store) (map[string]int,
 	total := 0
 	for _, info := range infos {
 		parts := strings.Split(info.Key, "/")
-		// images/<yymm>/<stem>/<file...>
+		// DOI keys: images/doi/<registrant>/<suffix>/<file...>
+		if len(parts) >= 4 && parts[0] == "images" && parts[1] == "doi" {
+			doiKey := parts[2] + "/" + parts[3] // registrant/suffix
+			counts[DOINodeKey(doiKey)]++
+			total++
+			continue
+		}
+		// arXiv keys: images/<yymm>/<stem>/<file...>
 		if len(parts) < 4 || parts[0] != "images" {
 			continue
 		}
@@ -141,32 +161,38 @@ func listImageCounts(ctx context.Context, store objstore.Store) (map[string]int,
 
 // stemFromKey extracts the arxiv stem from a "<kind>/<yymm>/<stem>.<ext>"
 // key, or the DOI stem from a "<kind>/doi/<registrant>/<suffix>.<ext>" key.
-// Returns ok=false for keys that don't match either shape.
-func stemFromKey(key, kind string) (string, bool) {
+// isDOI is true for DOI-keyed assets so the caller can route them to a
+// DOI-aware MERGE (DOINodeKey) instead of the arxiv fallback. Returns
+// ok=false for keys that don't match either shape.
+func stemFromKey(key, kind string) (stem string, isDOI bool, ok bool) {
 	parts := strings.Split(key, "/")
 	// DOI keys: <kind>/doi/<registrant>/<suffix>.<ext>
 	if len(parts) == 4 && parts[1] == "doi" && parts[0] == kind {
 		ext := path.Ext(parts[3])
-		stem := parts[2] + "/" + strings.TrimSuffix(parts[3], ext)
-		if stem == "" {
-			return "", false
+		s := parts[2] + "/" + strings.TrimSuffix(parts[3], ext)
+		if s == "" {
+			return "", false, false
 		}
-		return stem, true
+		return s, true, true
 	}
 	// arXiv keys: <kind>/<yymm>/<stem>.<ext>
 	if len(parts) != 3 || parts[0] != kind {
-		return "", false
+		return "", false, false
 	}
 	base := parts[2]
-	stem := strings.TrimSuffix(base, path.Ext(base))
-	if stem == "" {
-		return "", false
+	s := strings.TrimSuffix(base, path.Ext(base))
+	if s == "" {
+		return "", false, false
 	}
-	return stem, true
+	return s, false, true
 }
 
 // mergeAssetBatch MERGEs has_pdf/has_md=true for a set of stems in
-// UNWIND batches. Returns the number of rows touched.
+// UNWIND batches. DOI-keyed assets (key starts with "doi:") go through
+// a separate DOI-aware MERGE that lands on the existing :PaperWork node
+// from UpsertPDFByDOI/UpsertMDByDOI; the arxiv-fallback path would
+// create a phantom arxiv_id='<doi>' node with the wrong source.
+// Returns the number of rows touched.
 func (s *Store) mergeAssetBatch(ctx context.Context, kind string, paths map[string]string, batch int) (int, error) {
 	if len(paths) == 0 {
 		return 0, nil
@@ -177,17 +203,38 @@ func (s *Store) mergeAssetBatch(ctx context.Context, kind string, paths map[stri
 		flag = "has_md"
 		pathField = "md_path"
 	}
-	items := make([]map[string]any, 0, len(paths))
-	for stem, p := range paths {
-		id := deriveIDs(stem)
-		items = append(items, map[string]any{
-			"arxiv_id":  id.ArxivID,
-			"canonical": id.Canonical,
-			"yymm":      id.YYMM,
-			"path":      p,
-		})
+
+	// Split DOI vs arxiv-keyed assets. DOI keys arrive with the
+	// "doi:<doi>" prefix from listKindPaths; arxiv keys are bare stems.
+	var doiItems, arxivItems []map[string]any
+	for key, p := range paths {
+		if strings.HasPrefix(key, "doi:") {
+			doiItems = append(doiItems, map[string]any{
+				"node_key": key,
+				"path":     p,
+			})
+		} else {
+			id := deriveIDs(key)
+			arxivItems = append(arxivItems, map[string]any{
+				"arxiv_id":  id.ArxivID,
+				"canonical": id.Canonical,
+				"yymm":      id.YYMM,
+				"path":      p,
+			})
+		}
 	}
-	cypher := fmt.Sprintf(`
+
+	doiCypher := fmt.Sprintf(`
+		UNWIND $rows AS r
+		MERGE (p:PaperWork {arxiv_id: r.node_key})
+		ON CREATE SET p.source = 'doi-upload',
+		              p.identifier_scheme = 'doi',
+		              p.has_json = false
+		SET p.%s = true,
+		    p.%s = r.path,
+		    p.last_assets_change_at = datetime()`, flag, pathField)
+
+	arxivCypher := fmt.Sprintf(`
 		UNWIND $rows AS r
 		MERGE (p:PaperWork {arxiv_id: r.arxiv_id})
 		ON CREATE SET p.source = 'arxiv-fallback',
@@ -201,37 +248,70 @@ func (s *Store) mergeAssetBatch(ctx context.Context, kind string, paths map[stri
 		    p.last_assets_change_at = datetime()`, flag, pathField)
 
 	touched := 0
-	for i := 0; i < len(items); i += batch {
-		end := i + batch
-		if end > len(items) {
-			end = len(items)
+	for _, group := range []struct {
+		cypher string
+		rows   []map[string]any
+		label  string
+	}{
+		{doiCypher, doiItems, "doi " + kind},
+		{arxivCypher, arxivItems, kind},
+	} {
+		if len(group.rows) == 0 {
+			continue
 		}
-		chunk := items[i:end]
-		if _, err := s.nc.ExecuteWrite(ctx, cypher, map[string]any{"rows": chunk}); err != nil {
-			return touched, fmt.Errorf("papers sync: merge %s batch: %w", kind, err)
+		for i := 0; i < len(group.rows); i += batch {
+			end := i + batch
+			if end > len(group.rows) {
+				end = len(group.rows)
+			}
+			chunk := group.rows[i:end]
+			if _, err := s.nc.ExecuteWrite(ctx, group.cypher, map[string]any{"rows": chunk}); err != nil {
+				return touched, fmt.Errorf("papers sync: merge %s batch: %w", group.label, err)
+			}
+			touched += len(chunk)
 		}
-		touched += len(chunk)
 	}
 	return touched, nil
 }
 
-// mergeImageBatch MERGEs image_count for a set of stems.
+// mergeImageBatch MERGEs image_count for a set of stems. DOI-keyed
+// counts (key starts with "doi:") go through a separate DOI-aware
+// MERGE that lands on the existing :PaperWork node from
+// UpsertMDByDOI; the arxiv-fallback path would create a phantom
+// arxiv_id='<doi>' node with the wrong source.
 func (s *Store) mergeImageBatch(ctx context.Context, counts map[string]int, batch int) (int, error) {
 	if len(counts) == 0 {
 		return 0, nil
 	}
-	items := make([]map[string]any, 0, len(counts))
-	for stem, c := range counts {
-		id := deriveIDs(stem)
-		items = append(items, map[string]any{
-			"arxiv_id":    id.ArxivID,
-			"canonical":   id.Canonical,
-			"yymm":        id.YYMM,
-			"image_count": int64(c),
-			"images_path": "images/" + id.YYMM + "/" + id.StorageKey + "/",
-		})
+	var doiItems, arxivItems []map[string]any
+	for key, c := range counts {
+		if strings.HasPrefix(key, "doi:") {
+			doiItems = append(doiItems, map[string]any{
+				"node_key":    key,
+				"image_count": int64(c),
+			})
+		} else {
+			id := deriveIDs(key)
+			arxivItems = append(arxivItems, map[string]any{
+				"arxiv_id":    id.ArxivID,
+				"canonical":   id.Canonical,
+				"yymm":        id.YYMM,
+				"image_count": int64(c),
+				"images_path": "images/" + id.YYMM + "/" + id.StorageKey + "/",
+			})
+		}
 	}
-	cypher := `
+
+	doiCypher := `
+		UNWIND $rows AS r
+		MERGE (p:PaperWork {arxiv_id: r.node_key})
+		ON CREATE SET p.source = 'doi-upload',
+		              p.identifier_scheme = 'doi',
+		              p.has_json = false
+		SET p.image_count = r.image_count,
+		    p.last_assets_change_at = datetime()`
+
+	arxivCypher := `
 		UNWIND $rows AS r
 		MERGE (p:PaperWork {arxiv_id: r.arxiv_id})
 		ON CREATE SET p.source = 'arxiv-fallback',
@@ -243,17 +323,30 @@ func (s *Store) mergeImageBatch(ctx context.Context, counts map[string]int, batc
 		    p.image_count = r.image_count,
 		    p.images_path_prefix = r.images_path,
 		    p.last_assets_change_at = datetime()`
+
 	touched := 0
-	for i := 0; i < len(items); i += batch {
-		end := i + batch
-		if end > len(items) {
-			end = len(items)
+	for _, group := range []struct {
+		cypher string
+		rows   []map[string]any
+		label  string
+	}{
+		{doiCypher, doiItems, "doi images"},
+		{arxivCypher, arxivItems, "images"},
+	} {
+		if len(group.rows) == 0 {
+			continue
 		}
-		chunk := items[i:end]
-		if _, err := s.nc.ExecuteWrite(ctx, cypher, map[string]any{"rows": chunk}); err != nil {
-			return touched, fmt.Errorf("papers sync: merge images batch: %w", err)
+		for i := 0; i < len(group.rows); i += batch {
+			end := i + batch
+			if end > len(group.rows) {
+				end = len(group.rows)
+			}
+			chunk := group.rows[i:end]
+			if _, err := s.nc.ExecuteWrite(ctx, group.cypher, map[string]any{"rows": chunk}); err != nil {
+				return touched, fmt.Errorf("papers sync: merge %s batch: %w", group.label, err)
+			}
+			touched += len(chunk)
 		}
-		touched += len(chunk)
 	}
 	return touched, nil
 }

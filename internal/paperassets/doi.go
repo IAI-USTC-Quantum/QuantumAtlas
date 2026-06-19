@@ -34,11 +34,18 @@ const MaxDOILen = 256
 // ValidateDOI layers on the length + control-char checks.
 var doiShapeRE = regexp.MustCompile(`^10\.\d{4,9}/\S+$`)
 
-// doiURLPrefixes are the scheme/host prefixes contributors commonly paste
+// DOIURLPrefixes are the scheme/host prefixes contributors commonly paste
 // in front of a bare DOI. Stripped (longest-first within each form) by
 // NormalizeDOI so "https://doi.org/10.x/y" and "doi:10.x/y" both
 // normalize to "10.x/y".
-var doiURLPrefixes = []string{
+//
+// This is the canonical DOI URL prefix list for the whole codebase.
+// The other two known sites that hard-code a subset of these prefixes —
+// internal/openalex/lookup.go (normalizeDOI) and internal/openalex/parse.go
+// (shortDOI) — should import this list rather than maintaining their
+// own copies. As of the PR #19 follow-up they still carry their own
+// inline slices; unifying them is deferred to a separate change.
+var DOIURLPrefixes = []string{
 	"https://doi.org/",
 	"http://doi.org/",
 	"https://dx.doi.org/",
@@ -54,7 +61,7 @@ var doiURLPrefixes = []string{
 // segments. The result is not guaranteed valid; pair with ValidateDOI.
 func NormalizeDOI(v string) string {
 	v = strings.ToLower(strings.TrimSpace(v))
-	for _, p := range doiURLPrefixes {
+	for _, p := range DOIURLPrefixes {
 		if strings.HasPrefix(v, p) {
 			v = strings.TrimPrefix(v, p)
 			break
