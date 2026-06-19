@@ -243,11 +243,17 @@ func (s *Store) mergeAssetBatch(ctx context.Context, kind string, paths map[stri
 
 	// Split DOI vs arxiv-keyed assets. DOI keys arrive with the
 	// "doi:<doi>" prefix from listKindPaths; arxiv keys are bare stems.
+	// We also carry the bare DOI (node_key minus "doi:" prefix) so the
+	// MERGE can SET p.doi — without it, a sync that recreates the node
+	// from the bucket (catalog DB lost / restored from old backup) would
+	// leave p.doi unset, and LookupDOI (which matches on p.doi, not on
+	// the synthetic arxiv_id key) would never find the recovered node.
 	var doiItems, arxivItems []map[string]any
 	for key, p := range paths {
 		if strings.HasPrefix(key, "doi:") {
 			doiItems = append(doiItems, map[string]any{
 				"node_key": key,
+				"doi":      strings.TrimPrefix(key, "doi:"),
 				"path":     p,
 			})
 		} else {
@@ -267,7 +273,8 @@ func (s *Store) mergeAssetBatch(ctx context.Context, kind string, paths map[stri
 		ON CREATE SET p.source = 'doi-upload',
 		              p.identifier_scheme = 'doi',
 		              p.has_json = false
-		SET p.%s = true,
+		SET p.doi = r.doi,
+		    p.%s = true,
 		    p.%s = r.path,
 		    p.last_assets_change_at = datetime()`, flag, pathField)
 
@@ -320,11 +327,15 @@ func (s *Store) mergeImageBatch(ctx context.Context, counts map[string]int, batc
 	if len(counts) == 0 {
 		return 0, nil
 	}
+	// See mergeAssetBatch for why doiItems carry the bare DOI alongside
+	// the synthetic node_key: without SET p.doi here, an image-only sync
+	// against a fresh node would leave LookupDOI unable to find it.
 	var doiItems, arxivItems []map[string]any
 	for key, c := range counts {
 		if strings.HasPrefix(key, "doi:") {
 			doiItems = append(doiItems, map[string]any{
 				"node_key":    key,
+				"doi":         strings.TrimPrefix(key, "doi:"),
 				"image_count": int64(c),
 			})
 		} else {
@@ -345,7 +356,8 @@ func (s *Store) mergeImageBatch(ctx context.Context, counts map[string]int, batc
 		ON CREATE SET p.source = 'doi-upload',
 		              p.identifier_scheme = 'doi',
 		              p.has_json = false
-		SET p.image_count = coalesce(p.image_count, r.image_count),
+		SET p.doi = r.doi,
+		    p.image_count = coalesce(p.image_count, r.image_count),
 		    p.last_assets_change_at = datetime()`
 
 	arxivCypher := `

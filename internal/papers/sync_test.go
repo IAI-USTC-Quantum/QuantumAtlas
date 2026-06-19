@@ -346,3 +346,46 @@ func TestListKindPathsNestedSlashDOIRouting(t *testing.T) {
 		}
 	}
 }
+
+// TestMergeAssetBatchSetsDOIOnDOINodes guards the PR #19 review-5 fix:
+// the doiCypher in mergeAssetBatch must SET p.doi when (re)creating a
+// :PaperWork node from the bucket. Without it, a sync that rebuilds
+// the catalog from object storage (e.g. after a Neo4j restore from an
+// older backup) leaves the new node with only the synthetic arxiv_id
+// key — but LookupDOI matches on p.doi, so the recovered node is
+// invisible to GET /api/papers/<doi>/{pdf,markdown}, and the dispatcher
+// falls through to OpenAlex (or 404) even though the bytes are local.
+//
+// Static-string regression: we can't run the Cypher without a live
+// Neo4j, but we can guard against accidental removal of the SET clause.
+func TestMergeAssetBatchSetsDOIOnDOINodes(t *testing.T) {
+	fn := readAndExtract(t, "sync.go", "mergeAssetBatch")
+	if fn == "" {
+		t.Fatal("mergeAssetBatch source not found in sync.go")
+	}
+	if !strings.Contains(fn, `"doi":`) {
+		t.Errorf("mergeAssetBatch doiItems must carry a \"doi\" key derived from the node_key; " +
+			"otherwise the doiCypher cannot SET p.doi on the merged node")
+	}
+	if !strings.Contains(fn, "p.doi = r.doi") {
+		t.Errorf("mergeAssetBatch doiCypher must SET p.doi = r.doi so sync-recreated DOI nodes are " +
+			"findable by LookupDOI (which matches on p.doi, not on the synthetic arxiv_id key)")
+	}
+}
+
+// TestMergeImageBatchSetsDOIOnDOINodes mirrors the asset-batch guard for
+// the image-count batch: the doiCypher there ALSO MERGEs on the synthetic
+// "doi:<doi>" key and must SET p.doi when creating the node, so an
+// image-only sync against a fresh DOI node doesn't leave it unfindable.
+func TestMergeImageBatchSetsDOIOnDOINodes(t *testing.T) {
+	fn := readAndExtract(t, "sync.go", "mergeImageBatch")
+	if fn == "" {
+		t.Fatal("mergeImageBatch source not found in sync.go")
+	}
+	if !strings.Contains(fn, `"doi":`) {
+		t.Errorf("mergeImageBatch doiItems must carry a \"doi\" key derived from the node_key")
+	}
+	if !strings.Contains(fn, "p.doi = r.doi") {
+		t.Errorf("mergeImageBatch doiCypher must SET p.doi = r.doi for the same LookupDOI reason as mergeAssetBatch")
+	}
+}

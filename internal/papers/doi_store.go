@@ -58,9 +58,19 @@ func DOINodeKey(doi string) string { return "doi:" + doi }
 
 // LookupDOI returns the catalog node's primary key (the synthetic
 // "doi:<doi>" string) when a DOI contribution has been recorded
-// against the given DOI. Returns ("", false) for a missing node or
-// when Neo4j is unreachable (ErrCatalogUnavailable surfaces to the
-// caller; treat as "unknown" not "not found").
+// against the given DOI. The three return modes are:
+//
+//   - (key, true, nil)  — DOI node found locally; caller dispatches
+//     to the DOI handlers using `doi`.
+//   - ("", false, nil)  — genuine miss (no row, or the catalog has
+//     never been configured so ensure(ctx) short-circuits); caller
+//     may fall through to OpenAlex resolution.
+//   - ("", false, err) — Neo4j query-time error (driver dropped a
+//     connection, cluster failover mid-read, etc.). Caller MUST
+//     return 503 — folding this into "not found" would have the
+//     dispatcher serve a stale 404 (or worse, an arxiv twin) when
+//     the local DOI bytes are in fact present, breaking the
+//     DOI-canonical invariant.
 //
 // Used by the GET /api/papers/<id>/{pdf,markdown} read path: when
 // the caller supplies a DOI, this is consulted FIRST — before any
@@ -72,23 +82,26 @@ func DOINodeKey(doi string) string { return "doi:" + doi }
 // The synthetic key matches the "<kind>/doi/<reg>/<suffix>" bucket
 // layout used by UpsertPDFByDOI, so callers can hand it straight to
 // the DOI handlers.
-func (s *Store) LookupDOI(ctx context.Context, doi string) (string, bool) {
+func (s *Store) LookupDOI(ctx context.Context, doi string) (string, bool, error) {
 	if !s.ensure(ctx) {
-		return "", false
+		return "", false, nil
 	}
 	norm, ok := paperassets.ValidateDOI(doi)
 	if !ok {
-		return "", false
+		return "", false, nil
 	}
 	rows, err := s.nc.ExecuteReadParams(ctx, `
 		MATCH (p:PaperWork {doi: $doi})
 		WHERE p.identifier_scheme = 'doi'
 		RETURN p.arxiv_id AS arxiv_id
 		LIMIT 1`, map[string]any{"doi": norm})
-	if err != nil || len(rows) == 0 {
-		return "", false
+	if err != nil {
+		return "", false, fmt.Errorf("papers: lookup doi %s: %w", norm, err)
 	}
-	return asString(rows[0]["arxiv_id"]), true
+	if len(rows) == 0 {
+		return "", false, nil
+	}
+	return asString(rows[0]["arxiv_id"]), true, nil
 }
 
 // LookupArxivToDOI is the reverse direction of LookupDOI: given a bare
@@ -102,17 +115,24 @@ func (s *Store) LookupDOI(ctx context.Context, doi string) (string, bool) {
 // `doi_arxiv_id` as the version-stripped form returned by
 // openalex.ExtractArxivID, so a versioned input would never match.
 //
-// Returns ("", false) for: no matching DOI node, catalog unreachable,
-// or empty input. Cannot distinguish "no twin" from "catalog down" —
-// the GET dispatcher checks Store.Available separately when it needs
-// to surface a 503 instead of falling through to the arxiv handler.
-func (s *Store) LookupArxivToDOI(ctx context.Context, bareArxivID string) (string, bool) {
+// Three return modes, mirroring LookupDOI:
+//
+//   - (doi, true, nil)  — a DOI twin exists; caller dispatches to
+//     the DOI handlers.
+//   - ("", false, nil)  — no twin, empty input, or catalog never
+//     configured; caller falls through to the arxiv handlers.
+//   - ("", false, err) — Neo4j query-time error. The arxiv path is
+//     designed to be independent of the catalog (Neo4j outage MUST
+//     NOT gate arxiv access), so the dispatcher logs-and-falls-
+//     through here; the error is returned only so callers can
+//     observe / log it instead of silently dropping the signal.
+func (s *Store) LookupArxivToDOI(ctx context.Context, bareArxivID string) (string, bool, error) {
 	if !s.ensure(ctx) {
-		return "", false
+		return "", false, nil
 	}
 	bareArxivID = paperassets.StripVersion(bareArxivID)
 	if bareArxivID == "" {
-		return "", false
+		return "", false, nil
 	}
 	rows, err := s.nc.ExecuteReadParams(ctx, `
 		MATCH (p:PaperWork)
@@ -120,10 +140,13 @@ func (s *Store) LookupArxivToDOI(ctx context.Context, bareArxivID string) (strin
 		  AND p.doi_arxiv_id = $arxiv_id
 		RETURN p.doi AS doi
 		LIMIT 1`, map[string]any{"arxiv_id": bareArxivID})
-	if err != nil || len(rows) == 0 {
-		return "", false
+	if err != nil {
+		return "", false, fmt.Errorf("papers: lookup arxiv-to-doi %s: %w", bareArxivID, err)
 	}
-	return asString(rows[0]["doi"]), true
+	if len(rows) == 0 {
+		return "", false, nil
+	}
+	return asString(rows[0]["doi"]), true, nil
 }
 
 // UpsertPDFByDOI is the DOI-indexed analogue of UpsertPDF: records a PDF

@@ -156,28 +156,28 @@ func RegisterPapers(
 					// namespace when a contribution exists. Skips
 					// OpenAlex entirely (one fewer round-trip and one
 					// fewer failure mode).
-					if catalog.Available(ctx) {
-						if _, ok := catalog.LookupDOI(ctx, doi); ok {
-							applyDOICanonicalHeaders(re, requestedID, doi, "")
-							return dispatchGETDOIHandlers(re, cfg, rawStore, converter, doi, action, statusKind, raw)
-						}
-						// LookupDOI false + Available true could still
-						// be a Neo4j drop between probes — re-check so
-						// we don't show a stale 404. The OpenAlex
-						// fallback below is the real path if Available
-						// stays true.
-						if !catalog.Available(ctx) {
-							return re.JSON(http.StatusServiceUnavailable, map[string]any{
-								"detail": "catalog unavailable (Neo4j unreachable); retry shortly",
-								"doi":    doi,
-							})
-						}
+					//
+					// Three-state lookup (PR #19 review-5): genuine
+					// miss → fall through to OpenAlex; query-time
+					// error → 503 (treating it as a miss would serve
+					// a stale 404 when the local DOI bytes are in
+					// fact present, breaking DOI-canonical).
+					_, hit, err := catalog.LookupDOI(ctx, doi)
+					if err != nil {
+						return re.JSON(http.StatusServiceUnavailable, map[string]any{
+							"detail": "catalog unavailable (Neo4j unreachable); retry shortly",
+							"doi":    doi,
+						})
 					}
-					// catalog.Available was false: don't 503 here yet —
-					// OpenAlex may still resolve an arxiv twin we can
-					// serve as a best-effort fallback. The
-					// ErrDOINotFound branch below re-probes for the
-					// definitive 404-vs-503 split.
+					if hit {
+						applyDOICanonicalHeaders(re, requestedID, doi, "")
+						return dispatchGETDOIHandlers(re, cfg, rawStore, converter, doi, action, statusKind, raw)
+					}
+					// Genuine miss (or catalog unconfigured): don't
+					// 503 here — OpenAlex may still resolve an arxiv
+					// twin we can serve as a best-effort fallback.
+					// The ErrDOINotFound branch below re-probes the
+					// local catalog for the definitive 404 / 503.
 				}
 				canonical, err := resolveDOIToCanonical(ctx, doiResolver, doi)
 				if err != nil {
@@ -195,18 +195,30 @@ func RegisterPapers(
 						// Without force_arxiv we may STILL have a local
 						// DOI node (e.g. catalog was momentarily down
 						// during the fast-path check above). Re-probe.
-						if catalog.Available(ctx) {
-							if _, ok := catalog.LookupDOI(ctx, doi); ok {
-								applyDOICanonicalHeaders(re, requestedID, doi, "")
-								return dispatchGETDOIHandlers(re, cfg, rawStore, converter, doi, action, statusKind, raw)
-							}
-							return re.JSON(http.StatusNotFound, map[string]any{
-								"detail": "DOI not found in OpenAlex and no local DOI contribution exists",
+						_, hit, lerr := catalog.LookupDOI(ctx, doi)
+						if lerr != nil {
+							return re.JSON(http.StatusServiceUnavailable, map[string]any{
+								"detail": "catalog unavailable (Neo4j unreachable); retry shortly",
 								"doi":    doi,
 							})
 						}
-						return re.JSON(http.StatusServiceUnavailable, map[string]any{
-							"detail": "catalog unavailable (Neo4j unreachable); retry shortly",
+						if hit {
+							applyDOICanonicalHeaders(re, requestedID, doi, "")
+							return dispatchGETDOIHandlers(re, cfg, rawStore, converter, doi, action, statusKind, raw)
+						}
+						// Catalog reachable + no local DOI node + no
+						// OpenAlex arxiv twin → genuine 404. If the
+						// catalog has never been configured (ensure
+						// short-circuits, no err), Available() will
+						// be false and 503 is the more honest answer.
+						if !catalog.Available(ctx) {
+							return re.JSON(http.StatusServiceUnavailable, map[string]any{
+								"detail": "catalog unavailable (Neo4j unreachable); retry shortly",
+								"doi":    doi,
+							})
+						}
+						return re.JSON(http.StatusNotFound, map[string]any{
+							"detail": "DOI not found in OpenAlex and no local DOI contribution exists",
 							"doi":    doi,
 						})
 					}
@@ -223,15 +235,19 @@ func RegisterPapers(
 				// Reverse lookup needs the BARE arxiv id (DOI nodes
 				// store doi_arxiv_id as the version-stripped form
 				// returned by openalex.ExtractArxivID).
-				if catalog.Available(ctx) {
-					if doi, ok := catalog.LookupArxivToDOI(ctx, paperassets.StripVersion(arxivPart)); ok {
-						applyDOICanonicalHeaders(re, requestedID, doi, arxivPart)
-						return dispatchGETDOIHandlers(re, cfg, rawStore, converter, doi, action, statusKind, raw)
-					}
+				//
+				// Query-time error here is intentionally NOT a 503:
+				// the arxiv path is designed to be independent of the
+				// catalog (Neo4j outage MUST NOT gate arxiv access),
+				// so we fall through to the arxiv handlers — same
+				// behaviour as a clean "no twin" result.
+				doi, hit, _ := catalog.LookupArxivToDOI(ctx, paperassets.StripVersion(arxivPart))
+				if hit {
+					applyDOICanonicalHeaders(re, requestedID, doi, arxivPart)
+					return dispatchGETDOIHandlers(re, cfg, rawStore, converter, doi, action, statusKind, raw)
 				}
-				// catalog down or no DOI twin: fall through to arxiv
-				// handlers. The arxiv path is independent of the
-				// catalog, so a Neo4j outage doesn't gate it.
+				// catalog down / lookup error / no DOI twin: fall
+				// through to arxiv handlers.
 			}
 
 			// Latest-version inference: if the (post-DOI) id has no
