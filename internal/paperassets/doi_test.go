@@ -83,3 +83,47 @@ func TestDOIKeyNamespaceDisjointFromArxiv(t *testing.T) {
 		t.Fatalf("DOI key %q collides with arxiv key %q", doiKey, arxivKey)
 	}
 }
+
+// TestDOIURLPrefixesExported guards the PR #19 follow-up: the DOI URL
+// prefix list is the canonical list for the whole codebase and must be
+// importable (capitalized) from other packages, not just used
+// internally. The other two sites that hard-code a subset —
+// internal/openalex/lookup.go (normalizeDOI) and internal/openalex/parse.go
+// (shortDOI) — are expected to import this; removing the export would
+// force them to fork yet another inline slice.
+func TestDOIURLPrefixesExported(t *testing.T) {
+	if DOIURLPrefixes == nil {
+		t.Fatal("DOIURLPrefixes is nil; expected exported canonical DOI URL prefix list")
+	}
+	want := []string{
+		"https://doi.org/",
+		"http://doi.org/",
+		"https://dx.doi.org/",
+		"http://dx.doi.org/",
+		"doi.org/",
+		"dx.doi.org/",
+		"doi:",
+	}
+	if len(DOIURLPrefixes) != len(want) {
+		t.Errorf("DOIURLPrefixes has %d entries, want %d: %v", len(DOIURLPrefixes), len(want), DOIURLPrefixes)
+	}
+	for i, p := range want {
+		if i >= len(DOIURLPrefixes) || DOIURLPrefixes[i] != p {
+			t.Errorf("DOIURLPrefixes[%d] = %q, want %q (canonical list must be stable for import sites)",
+				i, safeAt(DOIURLPrefixes, i), p)
+		}
+	}
+	// Sanity: NormalizeDOI must consume the same exported list
+	// (i.e. the internal use was updated alongside the export).
+	norm := NormalizeDOI("https://doi.org/10.1103/PhysRevLett.123")
+	if norm != "10.1103/physrevlett.123" {
+		t.Errorf("NormalizeDOI after DOIURLPrefixes export: got %q, want canonical form", norm)
+	}
+}
+
+func safeAt(s []string, i int) string {
+	if i < len(s) {
+		return s[i]
+	}
+	return "<out-of-range>"
+}
