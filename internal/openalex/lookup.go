@@ -42,6 +42,21 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
+// doiURLPrefixes are the scheme/host prefixes contributors commonly paste
+// in front of a bare DOI. Mirrors paperassets.doiURLPrefixes — kept in
+// sync manually until paperassets exports the list (tracked separately
+// by the paperassets-owner agent). When that happens, switch this
+// assignment to paperassets.DOIURLPrefixes.
+var doiURLPrefixes = []string{
+	"https://doi.org/",
+	"http://doi.org/",
+	"https://dx.doi.org/",
+	"http://dx.doi.org/",
+	"doi.org/",
+	"dx.doi.org/",
+	"doi:",
+}
+
 // Defaults conservatively chosen so a misconfigured deployment can't
 // hammer OpenAlex. The 5-minute TTL is a compromise between freshness
 // (DOI → arxiv mappings rarely change) and quota friendliness.
@@ -327,15 +342,7 @@ func normalizeDOI(in string, maxLen int) (string, error) {
 	v = strings.ToLower(v)
 	// Strip common URL prefixes contributors paste. Keep in sync with
 	// paperassets.doiURLPrefixes so both layers accept the same inputs.
-	for _, prefix := range []string{
-		"https://doi.org/",
-		"http://doi.org/",
-		"https://dx.doi.org/",
-		"http://dx.doi.org/",
-		"doi.org/",
-		"dx.doi.org/",
-		"doi:",
-	} {
+	for _, prefix := range doiURLPrefixes {
 		if strings.HasPrefix(v, prefix) {
 			v = strings.TrimPrefix(v, prefix)
 			break
