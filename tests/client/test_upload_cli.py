@@ -1,16 +1,20 @@
-"""Tests for the `qatlas upload` CLI parser + DOI-verify helpers.
+"""Tests for the `qatlas upload` CLI parser + verification helpers.
 
 The HTTP-bound code paths (cmd_upload_pdf / cmd_upload_mineru) are not
-exercised here because they shell out to a live qatlasd; the goal is
-to lock down argparse behaviour and the small pure helpers
-(_doi_verify_form_data / _emit_verification_header) that both commands
-share, so the DOI verify flags stop being a silent no-op on the mineru
-subcommand.
+exercised here because they shell out to a live qatlasd; the goal is to
+lock down argparse behaviour and the small pure helper
+(_emit_verification_header) that both commands share.
+
+Design contract under test (PR #19 follow-up): the contributor cannot
+override paper metadata — title / authors / linked-arxiv-id are always
+fetched from OpenAlex server-side. The CLI exposes ONLY ``--verify`` to
+choose strict/warn policy when OpenAlex cannot resolve the DOI. Any
+attempt to add ``--title`` / ``--authors`` flags would resurrect the
+override path and is treated as a regression.
 """
 
 from __future__ import annotations
 
-import argparse
 import io
 import sys
 from typing import Any
@@ -21,42 +25,26 @@ from qatlas.client import upload as cli
 
 
 # ---------------------------------------------------------------------------
-# build_mineru_parser — DOI verify args
+# build_mineru_parser — verify args
 # ---------------------------------------------------------------------------
 
 
-def test_mineru_parser_accepts_doi_verify_args():
-    """Regression for PR #19 review fix: the mineru subcommand must accept
-    --title / --authors / --verify the same way `upload pdf` does, so the
-    contributor's flags don't become a silent no-op."""
+def test_mineru_parser_accepts_verify_flag():
+    """The mineru subcommand must accept --verify to pick strict/warn
+    policy. The contributor cannot supply title/authors; OpenAlex is
+    the sole metadata source."""
     parser = cli.build_mineru_parser()
-    ns = parser.parse_args(
-        [
-            "10.1103/foo",
-            "--zip",
-            "r.zip",
-            "--title",
-            "Quantum advantage with shallow circuits",
-            "--authors",
-            "Bravyi; Gosset; König",
-            "--verify",
-            "strict",
-        ]
-    )
+    ns = parser.parse_args(["10.1103/foo", "--zip", "r.zip", "--verify", "strict"])
     assert ns.arxiv_id == "10.1103/foo"
     assert ns.zip == "r.zip"
-    assert ns.title == "Quantum advantage with shallow circuits"
-    assert ns.authors == "Bravyi; Gosset; König"
     assert ns.verify == "strict"
 
 
 def test_mineru_parser_defaults_verify_to_warn():
-    """--verify defaults to 'warn' to match the PDF parser, so omitting
-    the flag on the mineru subcommand preserves the old behaviour."""
+    """--verify defaults to 'warn' so a contributor who omits the flag
+    sees the same lenient behaviour as before — strict is opt-in."""
     parser = cli.build_mineru_parser()
     ns = parser.parse_args(["2501.00010v1", "--zip", "r.zip"])
-    assert ns.title is None
-    assert ns.authors is None
     assert ns.verify == "warn"
 
 
@@ -68,78 +56,43 @@ def test_mineru_parser_rejects_unknown_verify_value():
         parser.parse_args(["2501.00010v1", "--zip", "r.zip", "--verify", "lax"])
 
 
+def test_mineru_parser_does_not_expose_title_or_authors():
+    """Regression guard: --title / --authors were a metadata-override
+    surface that the design rejected. They must NOT be re-added."""
+    parser = cli.build_mineru_parser()
+    options = {opt for action in parser._actions for opt in action.option_strings}
+    assert "--title" not in options, "contributor must not override paper title"
+    assert "--authors" not in options, "contributor must not override paper authors"
+
+
 def test_mineru_parser_help_mentions_doi():
-    """The docstring + description must mention DOI support so users
-    discovering the flag through --help see the OpenAlex cross-check."""
+    """The description must mention DOI support so users discovering
+    --verify through --help see what it controls."""
     parser = cli.build_mineru_parser()
     assert "DOI" in parser.description
     for action in parser._actions:
-        if "--title" in (action.option_strings or []):
-            assert "DOI" in (action.help or "")
-        if "--authors" in (action.option_strings or []):
-            assert "DOI" in (action.help or "")
         if "--verify" in (action.option_strings or []):
             assert "DOI" in (action.help or "")
 
 
 # ---------------------------------------------------------------------------
-# build_pdf_parser — unchanged shape (smoke)
+# build_pdf_parser — verify-only shape
 # ---------------------------------------------------------------------------
 
 
-def test_pdf_parser_still_accepts_doi_verify_args():
-    """Sanity: the PDF parser keeps its pre-existing DOI flag surface."""
+def test_pdf_parser_accepts_verify_flag():
+    """Sanity: the PDF parser keeps --verify (the only DOI-policy lever)."""
     parser = cli.build_pdf_parser()
-    ns = parser.parse_args(
-        [
-            "10.1103/foo",
-            "--pdf",
-            "p.pdf",
-            "--title",
-            "X",
-            "--authors",
-            "A;B",
-            "--verify",
-            "strict",
-        ]
-    )
-    assert ns.title == "X"
-    assert ns.authors == "A;B"
+    ns = parser.parse_args(["10.1103/foo", "--pdf", "p.pdf", "--verify", "strict"])
     assert ns.verify == "strict"
 
 
-# ---------------------------------------------------------------------------
-# _doi_verify_form_data
-# ---------------------------------------------------------------------------
-
-
-def _ns(**overrides: Any) -> argparse.Namespace:
-    """Build a minimal Namespace matching the DOI-verify attr names."""
-    base: dict[str, Any] = {
-        "title": None,
-        "authors": None,
-    }
-    base.update(overrides)
-    return argparse.Namespace(**base)
-
-
-def test_doi_verify_form_data_empty_when_nothing_supplied():
-    """No title, no authors → empty dict, which the callers pass through
-    as `data or None` to skip the multipart body on arXiv uploads."""
-    assert cli._doi_verify_form_data(_ns()) == {}
-
-
-def test_doi_verify_form_data_title_only():
-    assert cli._doi_verify_form_data(_ns(title="T")) == {"title": "T"}
-
-
-def test_doi_verify_form_data_authors_only():
-    assert cli._doi_verify_form_data(_ns(authors="A;B")) == {"authors": "A;B"}
-
-
-def test_doi_verify_form_data_both():
-    out = cli._doi_verify_form_data(_ns(title="T", authors="A;B"))
-    assert out == {"title": "T", "authors": "A;B"}
+def test_pdf_parser_does_not_expose_title_or_authors():
+    """Same regression guard as the mineru parser — no override surface."""
+    parser = cli.build_pdf_parser()
+    options = {opt for action in parser._actions for opt in action.option_strings}
+    assert "--title" not in options, "contributor must not override paper title"
+    assert "--authors" not in options, "contributor must not override paper authors"
 
 
 # ---------------------------------------------------------------------------
@@ -155,11 +108,9 @@ class _FakeResp:
 
 
 def test_emit_verification_header_prints_to_stderr(capsys):
-    cli._emit_verification_header(
-        _FakeResp({"X-QAtlas-Verification": "matched"})
-    )
+    cli._emit_verification_header(_FakeResp({"X-QAtlas-Verification": "verified"}))
     err = capsys.readouterr().err
-    assert "DOI metadata verification: matched" in err
+    assert "DOI metadata verification: verified" in err
 
 
 def test_emit_verification_header_silent_when_absent(capsys):
@@ -225,21 +176,12 @@ def test_main_routes_doi_mineru_through_dispatcher(monkeypatch, tmp_path):
         return 0
 
     monkeypatch.setattr(cli, "run_with_request_errors", _capture)
-    # We need a real zip file because cmd_upload_mineru would otherwise
-    # short-circuit on missing-file before we could observe — but since
-    # run_with_request_errors is intercepted, the zip is never actually
-    # opened. argparse.parse_args itself doesn't validate file
-    # existence either, so any path string is fine here.
     rc = cli.main(
         [
             "mineru",
             "10.1103/PhysRevLett.123.070501",
             "--zip",
             str(tmp_path / "fake.zip"),
-            "--title",
-            "Quantum advantage with shallow circuits",
-            "--authors",
-            "Bravyi; Gosset; König",
             "--verify",
             "strict",
         ]
@@ -247,9 +189,11 @@ def test_main_routes_doi_mineru_through_dispatcher(monkeypatch, tmp_path):
     assert rc == 0
     assert captured["func"] is cli.cmd_upload_mineru
     assert captured["args"].arxiv_id == "10.1103/PhysRevLett.123.070501"
-    assert captured["args"].title == "Quantum advantage with shallow circuits"
-    assert captured["args"].authors == "Bravyi; Gosset; König"
     assert captured["args"].verify == "strict"
+    # The contributor never supplies title/authors; argparse must not
+    # have those attributes at all.
+    assert not hasattr(captured["args"], "title")
+    assert not hasattr(captured["args"], "authors")
 
 
 def test_main_routes_doi_url_prefix_through_dispatcher(monkeypatch, tmp_path):
@@ -275,12 +219,14 @@ def test_main_routes_doi_url_prefix_through_dispatcher(monkeypatch, tmp_path):
     assert captured["func"] is cli.cmd_upload_mineru
     # The client passes the raw value through; URL normalization
     # happens server-side via paperassets.NormalizeDOI.
-    assert captured["args"].arxiv_id == "https://doi.org/10.1103/PhysRevLett.123.070501"
+    assert (
+        captured["args"].arxiv_id == "https://doi.org/10.1103/PhysRevLett.123.070501"
+    )
 
 
 def test_main_pdf_subcommand_still_dispatches(monkeypatch, tmp_path):
-    """PDF path is unchanged by the DOI mineru fix — keep the smoke
-    test so a future refactor doesn't accidentally re-kill it too."""
+    """PDF path is unchanged by the metadata-override fix — keep the
+    smoke test so a future refactor doesn't accidentally re-kill it too."""
     captured: dict[str, Any] = {}
 
     def _capture(func, args):
@@ -289,14 +235,7 @@ def test_main_pdf_subcommand_still_dispatches(monkeypatch, tmp_path):
         return 0
 
     monkeypatch.setattr(cli, "run_with_request_errors", _capture)
-    rc = cli.main(
-        [
-            "pdf",
-            "2501.00010v1",
-            "--pdf",
-            str(tmp_path / "fake.pdf"),
-        ]
-    )
+    rc = cli.main(["pdf", "2501.00010v1", "--pdf", str(tmp_path / "fake.pdf")])
     assert rc == 0
     assert captured["func"] is cli.cmd_upload_pdf
     assert captured["args"].arxiv_id == "2501.00010v1"
@@ -310,4 +249,14 @@ def test_main_top_help_mentions_doi_mineru(capsys):
     out = capsys.readouterr().out
     assert rc == 0
     assert "upload mineru DOI" in out
-    assert "OpenAlex" in out
+
+
+def test_main_top_help_does_not_advertise_title_or_authors(capsys):
+    """Regression guard: the deprecation banner must not advertise the
+    removed --title / --authors flags either, so users can't be tempted
+    to re-add them and silently get ignored."""
+    rc = cli.main([])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "--title" not in out
+    assert "--authors" not in out

@@ -814,7 +814,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Accepts the entire MinerU result zip exactly as returned by `full_zip_url`. Server extracts `full.md` plus every `images/*` entry and stores them to the markdown and images object buckets respectively. Images are written before the markdown so any reader that observes the markdown also observes all referenced images. Replaces the v0.7.x `upload-markdown` endpoint (which only accepted a single .md file and silently dropped images).\n\nThe {arxiv_id} slot also accepts a DOI (`10.\u003cregistrant\u003e/\u003csuffix\u003e`) to contribute the converted *published* version. DOI bundles are stored under the `markdown/doi/...` + `images/doi/...` namespace and verified against OpenAlex metadata via the `title`/`authors` form fields (see upload-pdf; `verify=strict` rejects mismatches). The result is reported in `X-QAtlas-Verification`.",
+                "description": "Accepts the entire MinerU result zip exactly as returned by `full_zip_url`. Server extracts `full.md` plus every `images/*` entry and stores them to the markdown and images object buckets respectively. Images are written before the markdown so any reader that observes the markdown also observes all referenced images. Replaces the v0.7.x `upload-markdown` endpoint (which only accepted a single .md file and silently dropped images).\n\nThe {arxiv_id} slot also accepts a DOI (`10.\u003cregistrant\u003e/\u003csuffix\u003e`) to contribute the converted *published* version. DOI bundles are stored under the `markdown/doi/...` + `images/doi/...` namespace; the server resolves canonical metadata (title, authors, linked arxiv id) from OpenAlex on the contributor's behalf — there is no `title` / `authors` form field. `verify=strict` rejects when OpenAlex cannot resolve the DOI (see upload-pdf). The result is reported in `X-QAtlas-Verification`.",
                 "consumes": [
                     "multipart/form-data"
                 ],
@@ -853,7 +853,7 @@
                     },
                     {
                         "type": "string",
-                        "description": "DOI only: 'strict' rejects metadata mismatch (default warn)",
+                        "description": "DOI only: 'strict' rejects when OpenAlex cannot resolve the DOI (default warn)",
                         "name": "verify",
                         "in": "query"
                     },
@@ -869,18 +869,6 @@
                         "name": "mineru_zip",
                         "in": "formData",
                         "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "DOI only: expected paper title to verify against OpenAlex",
-                        "name": "title",
-                        "in": "formData"
-                    },
-                    {
-                        "type": "string",
-                        "description": "DOI only: expected authors (semicolon-separated) to verify",
-                        "name": "authors",
-                        "in": "formData"
                     }
                 ],
                 "responses": {
@@ -922,7 +910,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Content-addressed upload with sha256 idempotency. 200 when\nbytes are unchanged, 201 when written, 409 on a content\nconflict without overwrite=true.\n\nThe {arxiv_id} slot also accepts a DOI (`10.\u003cregistrant\u003e/\u003csuffix\u003e`)\nfor contributing a *published* version that may have no arXiv\npreprint. DOI uploads are stored under a disjoint `pdf/doi/...`\nnamespace and cross-checked against the DOI's OpenAlex metadata:\npass `title` and/or `authors` (semicolon-separated) form fields\nto verify. The outcome is reported in `X-QAtlas-Verification` and\nthe JSON `verification` block; `verify=strict` rejects a mismatch\nor unknown DOI with 409.",
+                "description": "Content-addressed upload with sha256 idempotency. 200 when\nbytes are unchanged, 201 when written, 409 on a content\nconflict without overwrite=true.\n\nThe {arxiv_id} slot also accepts a DOI (`10.\u003cregistrant\u003e/\u003csuffix\u003e`)\nfor contributing a *published* version that may have no arXiv\npreprint. DOI uploads are stored under a disjoint `pdf/doi/...`\nnamespace and the server resolves the DOI's title / authors /\nlinked arxiv id from OpenAlex — the contributor cannot supply\nthat metadata. The result is reported in `X-QAtlas-Verification`\nand the JSON `verification` block; `verify=strict` rejects a\ndoi-not-found with 409 (or metadata-unavailable / unconfigured\nwith 503).",
                 "consumes": [
                     "multipart/form-data"
                 ],
@@ -955,7 +943,7 @@
                     },
                     {
                         "type": "string",
-                        "description": "DOI only: 'strict' rejects metadata mismatch (default warn)",
+                        "description": "DOI only: 'strict' rejects when OpenAlex cannot resolve the DOI (default warn)",
                         "name": "verify",
                         "in": "query"
                     },
@@ -965,18 +953,6 @@
                         "name": "pdf",
                         "in": "formData",
                         "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "DOI only: expected paper title to verify against OpenAlex",
-                        "name": "title",
-                        "in": "formData"
-                    },
-                    {
-                        "type": "string",
-                        "description": "DOI only: expected authors (semicolon-separated) to verify",
-                        "name": "authors",
-                        "in": "formData"
                     }
                 ],
                 "responses": {

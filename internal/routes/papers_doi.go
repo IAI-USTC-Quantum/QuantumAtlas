@@ -10,11 +10,21 @@ package routes
 // "doi:<doi>" node.
 //
 // Verification (the contributor's safety net against a typo'd DOI):
-// when the caller supplies a `title` and/or `authors` form field we
-// resolve the DOI's OpenAlex metadata and cross-check. The outcome is
-// always recorded (记账); whether a mismatch BLOCKS the upload depends on
-// `?verify=` (default `warn` — record + header but accept; `strict` —
-// reject mismatch / unknown-DOI with 409).
+// the server resolves the DOI against OpenAlex and records the canonical
+// title / authors / linked arxiv id on the catalog node. Title and
+// author values are NEVER taken from the contributor — the only metadata
+// the contributor can override is the DOI itself, and a typo'd DOI is
+// caught by OpenAlex returning either a different paper's metadata or
+// ErrDOINotFound.
+//
+// `?verify=` controls server policy when OpenAlex cannot confirm the
+// DOI:
+//
+//   - `warn` (default) — store the bytes, record the failure status
+//     (`doi-not-found` / `metadata-unavailable` / `unconfigured`),
+//     and proceed.
+//   - `strict` — reject. `doi-not-found` ⇒ 409 (contributor-correctable);
+//     `metadata-unavailable` / `unconfigured` ⇒ 503 (server-side).
 
 import (
 	"context"
@@ -23,7 +33,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -106,21 +115,22 @@ func uploadPDFByDOIHandler(
 		})
 	}
 
-	// DOI metadata verification.
+	// DOI metadata enrichment.
 	//
-	// Timing is mode-dependent so we never pay an OpenAlex round-trip
-	// for a pointless upload:
-	//   - strict verifies BEFORE the write so a mismatch blocks storage;
-	//   - warn verifies AFTER the write, and only when bytes actually
+	// Title / authors / linked arxiv id are NEVER user-supplied — we
+	// always resolve them from OpenAlex so the catalog stores the
+	// canonical record. Timing is mode-dependent so we never pay an
+	// OpenAlex round-trip for a pointless upload:
+	//   - strict resolves BEFORE the write so a doi-not-found /
+	//     metadata-unavailable blocks storage;
+	//   - warn resolves AFTER the write, and only when bytes actually
 	//     changed, so a no-op re-upload (sha matches) skips OpenAlex
-	//     entirely — the catalog already holds the prior verification.
-	expectedTitle := strings.TrimSpace(re.Request.FormValue("title"))
-	expectedAuthors := parseAuthorsForm(re.Request.FormValue("authors"))
+	//     entirely — the catalog already holds the prior metadata.
 	var verification papers.DOIVerification
 	if strict {
-		verification = verifyDOIMetadata(ctx, resolver, doi, expectedTitle, expectedAuthors)
+		verification = verifyDOIMetadata(ctx, resolver, doi)
 		if rejErr := strictReject(verification.Status); rejErr != nil {
-			return re.JSON(rejErr.Status, doiVerificationRejectBody(rejErr, doi, verification, expectedTitle, expectedAuthors))
+			return re.JSON(rejErr.Status, doiVerificationRejectBody(rejErr, doi, verification))
 		}
 	}
 
@@ -170,10 +180,10 @@ func uploadPDFByDOIHandler(
 		return jsonBody(re, resp)
 	}
 
-	// outcomeWritten — record verification. warn computes it now (post-
+	// outcomeWritten — record metadata. warn computes it now (post-
 	// write); strict already has it from the pre-write blocking check.
 	if !strict {
-		verification = verifyDOIMetadata(ctx, resolver, doi, expectedTitle, expectedAuthors)
+		verification = verifyDOIMetadata(ctx, resolver, doi)
 	}
 
 	catalogDeferred := false
@@ -302,16 +312,16 @@ func uploadMinerUByDOIHandler(
 	zipBytes = nil
 	_ = zipStaged.Close()
 
-	// DOI metadata verification. strict verifies BEFORE the writes so a
-	// mismatch blocks storage; warn verifies AFTER, and only when the
-	// bundle actually changed, so a no-op re-upload skips OpenAlex.
-	expectedTitle := strings.TrimSpace(re.Request.FormValue("title"))
-	expectedAuthors := parseAuthorsForm(re.Request.FormValue("authors"))
+	// DOI metadata enrichment. Title / authors / linked arxiv id come
+	// from OpenAlex — never from the contributor. strict resolves
+	// BEFORE the writes so a doi-not-found / metadata-unavailable
+	// blocks storage; warn resolves AFTER, and only when the bundle
+	// actually changed, so a no-op re-upload skips OpenAlex.
 	var verification papers.DOIVerification
 	if strict {
-		verification = verifyDOIMetadata(ctx, resolver, doi, expectedTitle, expectedAuthors)
+		verification = verifyDOIMetadata(ctx, resolver, doi)
 		if rejErr := strictReject(verification.Status); rejErr != nil {
-			return re.JSON(rejErr.Status, doiVerificationRejectBody(rejErr, doi, verification, expectedTitle, expectedAuthors))
+			return re.JSON(rejErr.Status, doiVerificationRejectBody(rejErr, doi, verification))
 		}
 	}
 
@@ -420,10 +430,10 @@ func uploadMinerUByDOIHandler(
 		return jsonBody(re, resp)
 	}
 
-	// Something was written — record verification. warn computes it now
+	// Something was written — record metadata. warn computes it now
 	// (post-write); strict already has it from the pre-write check.
 	if !strict {
-		verification = verifyDOIMetadata(ctx, resolver, doi, expectedTitle, expectedAuthors)
+		verification = verifyDOIMetadata(ctx, resolver, doi)
 	}
 
 	catalogDeferred := false
@@ -481,21 +491,22 @@ func uploadMinerUByDOIHandler(
 // Verification helpers
 // ---------------------------------------------------------------------------
 
-// verifyDOIMetadata resolves the DOI's OpenAlex metadata and cross-checks
-// the caller-supplied title/authors against it. It never errors — every
-// failure mode is encoded as a verification Status (so the outcome is
-// always recordable). Caller decides whether a given status blocks under
-// strict mode (see strictReject).
-func verifyDOIMetadata(ctx context.Context, resolver *openalex.Resolver, doi, expectedTitle string, expectedAuthors []string) papers.DOIVerification {
+// verifyDOIMetadata resolves the DOI's OpenAlex metadata and returns it for
+// catalog enrichment. Title / authors / linked arxiv id are NEVER taken from
+// the contributor — they always come from OpenAlex, so a contributor cannot
+// override the recorded metadata. The function never errors: every failure
+// mode is encoded as a Status (so the outcome is always recordable). Caller
+// decides whether a given status blocks under strict mode (see strictReject).
+//
+// Statuses returned:
+//   - VerifyVerified       — OpenAlex returned a record; Title/Authors/ArxivID
+//     populated.
+//   - VerifyDOINotFound    — OpenAlex confirmed the DOI does not exist.
+//   - VerifyUnavailable    — OpenAlex was unreachable / errored.
+//   - VerifyUnconfigured   — server has no OpenAlex mailto, lookups disabled.
+func verifyDOIMetadata(ctx context.Context, resolver *openalex.Resolver, doi string) papers.DOIVerification {
 	if resolver == nil || !resolver.Enabled() {
 		return papers.DOIVerification{Status: papers.VerifyUnconfigured}
-	}
-	// Nothing to cross-check — skip the OpenAlex round-trip entirely.
-	// Returning VerifyRecorded without fetching also keeps the recorded
-	// `Title`/`Authors` empty, which is the honest signal: we never
-	// populated them, so the catalog must not pretend we did.
-	if expectedTitle == "" && len(expectedAuthors) == 0 {
-		return papers.DOIVerification{Status: papers.VerifyRecorded}
 	}
 	meta, err := resolver.LookupMetadata(ctx, doi)
 	if err != nil {
@@ -504,23 +515,20 @@ func verifyDOIMetadata(ctx context.Context, resolver *openalex.Resolver, doi, ex
 		}
 		return papers.DOIVerification{Status: papers.VerifyUnavailable}
 	}
-	v := papers.DOIVerification{Title: meta.Title, Authors: meta.Authors, ArxivID: meta.ArxivID}
-	titleOK := expectedTitle == "" || titlesMatch(expectedTitle, meta.Title)
-	authorsOK := len(expectedAuthors) == 0 || authorsMatch(expectedAuthors, meta.Authors)
-	if titleOK && authorsOK {
-		v.Status = papers.VerifyVerified
-	} else {
-		v.Status = papers.VerifyMismatch
+	return papers.DOIVerification{
+		Status:  papers.VerifyVerified,
+		Title:   meta.Title,
+		Authors: meta.Authors,
+		ArxivID: meta.ArxivID,
 	}
-	return v
 }
 
 // strictReject returns the uploadError to emit when the verification
 // status warrants blocking under strict mode, or nil to proceed.
 //
-//   - mismatch / doi-not-found → 409 (contributor-correctable)
+//   - doi-not-found → 409 (contributor-correctable: typo'd DOI)
 //   - metadata-unavailable / unconfigured → 503 (server-side, can't verify)
-//   - anything else (verified / recorded) → proceed
+//   - verified → proceed
 //
 // The strict-mode gate lives at the call site: this function is only
 // called when `strict` is true (the upload's `?verify=strict` flag).
@@ -528,8 +536,6 @@ func verifyDOIMetadata(ctx context.Context, resolver *openalex.Resolver, doi, ex
 // and makes "did we mean to reject this?" grep-able.
 func strictReject(status string) *uploadError {
 	switch status {
-	case papers.VerifyMismatch:
-		return &uploadError{Status: http.StatusConflict, Detail: "DOI metadata mismatch — uploaded paper's title/authors do not match the DOI's OpenAlex record"}
 	case papers.VerifyDOINotFound:
 		return &uploadError{Status: http.StatusConflict, Detail: "DOI not found in OpenAlex — cannot verify the contribution under verify=strict"}
 	case papers.VerifyUnavailable, papers.VerifyUnconfigured:
@@ -560,19 +566,14 @@ func verificationBody(v papers.DOIVerification) map[string]any {
 }
 
 // doiVerificationRejectBody builds the 409/503 body for a strict-mode
-// rejection, surfacing both the expected (caller) and found (OpenAlex)
-// title/authors so the contributor can see the discrepancy.
-func doiVerificationRejectBody(rej *uploadError, doi string, v papers.DOIVerification, expectedTitle string, expectedAuthors []string) map[string]any {
+// rejection. We expose the DOI and the resolution status; there is no
+// "expected" anything to surface because the contributor never supplies
+// metadata — the check is purely "does OpenAlex resolve this DOI?".
+func doiVerificationRejectBody(rej *uploadError, doi string, v papers.DOIVerification) map[string]any {
 	body := map[string]any{
 		"detail":              rej.Detail,
 		"doi":                 doi,
 		"verification_status": v.Status,
-	}
-	if expectedTitle != "" {
-		body["expected_title"] = expectedTitle
-	}
-	if len(expectedAuthors) > 0 {
-		body["expected_authors"] = expectedAuthors
 	}
 	if v.Title != "" {
 		body["found_title"] = v.Title
@@ -581,157 +582,6 @@ func doiVerificationRejectBody(rej *uploadError, doi string, v papers.DOIVerific
 		body["found_authors"] = v.Authors
 	}
 	return body
-}
-
-// parseAuthorsForm splits a semicolon- or newline-separated authors field
-// into trimmed names. Semicolon (not comma) is the separator because
-// author names frequently contain commas ("Lloyd, Seth").
-func parseAuthorsForm(raw string) []string {
-	if strings.TrimSpace(raw) == "" {
-		return nil
-	}
-	parts := strings.FieldsFunc(raw, func(r rune) bool { return r == ';' || r == '\n' || r == '\r' })
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if p = strings.TrimSpace(p); p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
-}
-
-var matchStripRE = regexp.MustCompile(`[^a-z0-9\s]+`)
-
-// Matching floors. These bound how lax titlesMatch / authorsMatch may be
-// so that `?verify=strict` cannot be bypassed by a contributor passing a
-// 1-token title or a single-letter author. Both warn and strict use the
-// same matcher — "verified" must mean the same thing in both modes.
-//
-//   - titles: a substring (sub/super-title tolerance) is only accepted
-//     when the shorter side has at least minMatchTitleTokens whitespace
-//     tokens AND minMatchTitleChars normalized characters. Exact
-//     normalized equality always matches regardless of length.
-//   - authors: the surname token derived from an expected author must
-//     have at least minSurnameLen normalized characters AND must equal
-//     the LAST whitespace token of at least one actual author's
-//     splitname. Middle initials ("W") and other middle tokens never
-//     satisfy the match.
-const (
-	minMatchTitleTokens = 5
-	minMatchTitleChars  = 20
-	minSurnameLen       = 2
-)
-
-// normalizeForMatch lower-cases, strips punctuation, and collapses
-// whitespace so two differently-formatted strings compare cleanly.
-func normalizeForMatch(s string) string {
-	s = strings.ToLower(s)
-	s = matchStripRE.ReplaceAllString(s, " ")
-	return strings.Join(strings.Fields(s), " ")
-}
-
-// titlesMatch reports whether two titles are equivalent after
-// normalization. Equality always matches; substring (subtitle / series-
-// suffix tolerance) only matches when the shorter side clears the
-// minMatchTitleTokens + minMatchTitleChars floors, so a contributor
-// cannot pass `?verify=strict` with a 1-token "Quantum" prefix that
-// would match almost any OpenAlex record.
-func titlesMatch(expected, actual string) bool {
-	e := normalizeForMatch(expected)
-	a := normalizeForMatch(actual)
-	if e == "" || a == "" {
-		return false
-	}
-	if e == a {
-		return true
-	}
-	short, long := e, a
-	if len(short) > len(long) {
-		short, long = long, short
-	}
-	if !strings.Contains(long, short) {
-		return false
-	}
-	// Substring containment beyond exact equality: enforce both a token-
-	// count and a character-count floor on the shorter side. The shorter
-	// side is the one the OTHER side has to "contain" — capping it caps
-	// the leniency.
-	if len(strings.Fields(short)) < minMatchTitleTokens {
-		return false
-	}
-	if len(short) < minMatchTitleChars {
-		return false
-	}
-	return true
-}
-
-// authorsMatch reports whether every expected author has a surname match
-// among the actual authors, with strict anchoring so a single-letter
-// middle initial cannot accidentally satisfy the match.
-//
-// For each expected entry we derive a surname token (≥ minSurnameLen
-// chars after normalization). It must equal the LAST whitespace token
-// of at least one actual author's splitname — middle tokens never
-// count. An expected entry that yields no qualifying surname is a hard
-// rejection (the contributor passed something we cannot verify).
-//
-// Format-tolerant on both sides: "A. W. Harrow" / "Aram W. Harrow" /
-// "Harrow, Aram" all extract "harrow" as the surname token; the actual
-// "Aram W. Harrow" has "harrow" as its last token, so the match holds.
-// A bare "W" yields no surname (< minSurnameLen) and is rejected.
-func authorsMatch(expected, actual []string) bool {
-	if len(actual) == 0 {
-		return false
-	}
-	actualSurnames := make([]string, 0, len(actual))
-	for _, a := range actual {
-		actualSurnames = append(actualSurnames, surnameToken(a))
-	}
-	checked := 0
-	for _, e := range expected {
-		sur := surnameToken(e)
-		if len(sur) < minSurnameLen {
-			// The contributor supplied an entry from which we can't
-			// derive a surname (empty / single-letter / pure-initials).
-			// Refuse rather than silently skip — `?verify=strict` must
-			// not be bypassable by feeding noise.
-			return false
-		}
-		checked++
-		found := false
-		for _, asur := range actualSurnames {
-			if asur != "" && asur == sur {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-	// At least one expected author must have been checked. Empty
-	// expected (len == 0) is handled at the call site (verifyDOIMetadata
-	// short-circuits to VerifyRecorded), but be defensive.
-	return checked > 0
-}
-
-// surnameToken returns the most likely surname token from a name,
-// normalized to lower-case ASCII. Handles both "First Last" and
-// "Last, First" orderings; returns "" when the name has no usable
-// surname (empty / pure punctuation / pure single-letter middle name).
-func surnameToken(name string) string {
-	if comma := strings.IndexByte(name, ','); comma >= 0 {
-		// "Lloyd, Seth" → surname is before the comma.
-		toks := strings.Fields(normalizeForMatch(name[:comma]))
-		if len(toks) > 0 {
-			return toks[len(toks)-1]
-		}
-	}
-	toks := strings.Fields(normalizeForMatch(name))
-	if len(toks) == 0 {
-		return ""
-	}
-	return toks[len(toks)-1]
 }
 
 // storedSha256AtKey returns the lower-cased sha256 user-metadata of the

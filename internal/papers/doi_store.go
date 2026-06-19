@@ -25,30 +25,33 @@ import (
 )
 
 // Verification statuses recorded on DOI nodes (p.verification_status).
+//
+// Title / authors are NEVER taken from the contributor — they are always
+// resolved from OpenAlex. The status records whether that resolution
+// succeeded.
 const (
-	// VerifyVerified: caller supplied a title/authors that matched the
-	// DOI's OpenAlex metadata.
+	// VerifyVerified: OpenAlex returned a record for the DOI; Title /
+	// Authors / ArxivID populated from the canonical metadata.
 	VerifyVerified = "verified"
-	// VerifyMismatch: caller-supplied title/authors did NOT match.
-	VerifyMismatch = "mismatch"
-	// VerifyRecorded: OpenAlex metadata was fetched and stored, but the
-	// caller supplied nothing to cross-check against.
-	VerifyRecorded = "recorded"
-	// VerifyDOINotFound: OpenAlex has no record for this DOI.
+	// VerifyDOINotFound: OpenAlex confirmed the DOI does not exist.
 	VerifyDOINotFound = "doi-not-found"
 	// VerifyUnavailable: OpenAlex was unreachable / errored.
 	VerifyUnavailable = "metadata-unavailable"
 	// VerifyUnconfigured: the server has no OpenAlex mailto configured,
-	// so DOI metadata verification is disabled.
+	// so DOI metadata enrichment is disabled.
 	VerifyUnconfigured = "unconfigured"
 )
 
-// DOIVerification is the outcome of upload-time title/author cross-check
-// against a DOI's OpenAlex metadata, persisted on the catalog node.
+// DOIVerification is the outcome of upload-time DOI metadata enrichment
+// against OpenAlex, persisted on the catalog node. Title / Authors /
+// ArxivID are populated only when Status == VerifyVerified; on every
+// other status the catalog write must NOT clobber any previously-stored
+// values (the DOI may have been verified by an earlier upload that
+// caught a transient OpenAlex outage on the next).
 type DOIVerification struct {
 	Status  string   // one of the Verify* constants
-	Title   string   // OpenAlex canonical title (may be empty)
-	Authors []string // OpenAlex author display names
+	Title   string   // OpenAlex canonical title (only set on verified)
+	Authors []string // OpenAlex author display names (only set on verified)
 	ArxivID string   // linked arxiv id when OpenAlex knows one, else ""
 }
 
@@ -154,6 +157,13 @@ func (s *Store) LookupArxivToDOI(ctx context.Context, bareArxivID string) (strin
 // preprint). Creates the node if missing, is idempotent, and stores the
 // verification outcome. Returns ErrCatalogUnavailable when Neo4j is down
 // (handler treats as deferred, object is already durably written).
+//
+// Metadata preservation: when the verification was non-verified (e.g.
+// OpenAlex was transiently unavailable, or the DOI was not found), the
+// CASE WHEN clauses below preserve any previously-stored title / authors
+// / linked arxiv id — a transient outage during a re-upload must not
+// silently overwrite a prior verified record. verification_status itself
+// is always overwritten so the latest attempt is visible to operators.
 func (s *Store) UpsertPDFByDOI(ctx context.Context, doi, sha string, size int64, etag string, v DOIVerification) error {
 	if !s.ensure(ctx) {
 		return ErrCatalogUnavailable
@@ -171,7 +181,7 @@ func (s *Store) UpsertPDFByDOI(ctx context.Context, doi, sha string, size int64,
 		              p.has_json = false
 		SET p.doi = $doi,
 		    p.identifier_scheme = 'doi',
-		    p.doi_arxiv_id = $arxiv_id,
+		    p.doi_arxiv_id = CASE WHEN $arxiv_id <> '' THEN $arxiv_id ELSE p.doi_arxiv_id END,
 		    p.has_pdf = true,
 		    p.pdf_path = $pdf_path,
 		    p.pdf_size = $size,
@@ -179,8 +189,8 @@ func (s *Store) UpsertPDFByDOI(ctx context.Context, doi, sha string, size int64,
 		    p.pdf_etag = $etag,
 		    p.pdf_uploaded_at = datetime(),
 		    p.last_assets_change_at = datetime(),
-		    p.doi_title = $title,
-		    p.doi_authors = $authors,
+		    p.doi_title = CASE WHEN $title <> '' THEN $title ELSE p.doi_title END,
+		    p.doi_authors = CASE WHEN size($authors) > 0 THEN $authors ELSE p.doi_authors END,
 		    p.verification_status = $vstatus,
 		    p.verified_at = datetime()
 		RETURN p.arxiv_id`,
@@ -206,6 +216,10 @@ func (s *Store) UpsertPDFByDOI(ctx context.Context, doi, sha string, size int64,
 // converted-PDF markdown bundle contributed against a DOI. Creates the
 // node if missing, flips has_md=true, and stores the verification
 // outcome. Idempotent.
+//
+// Metadata preservation: same CASE WHEN guard as UpsertPDFByDOI — a
+// non-verified status (transient OpenAlex outage / doi-not-found) does
+// not overwrite previously-stored title / authors / linked arxiv id.
 func (s *Store) UpsertMDByDOI(ctx context.Context, doi, sha string, size int64, etag string, imageCount int, v DOIVerification) error {
 	if !s.ensure(ctx) {
 		return ErrCatalogUnavailable
@@ -223,7 +237,7 @@ func (s *Store) UpsertMDByDOI(ctx context.Context, doi, sha string, size int64, 
 		              p.has_json = false
 		SET p.doi = $doi,
 		    p.identifier_scheme = 'doi',
-		    p.doi_arxiv_id = $arxiv_id,
+		    p.doi_arxiv_id = CASE WHEN $arxiv_id <> '' THEN $arxiv_id ELSE p.doi_arxiv_id END,
 		    p.has_md = true,
 		    p.md_path = $md_path,
 		    p.md_size = $size,
@@ -231,8 +245,8 @@ func (s *Store) UpsertMDByDOI(ctx context.Context, doi, sha string, size int64, 
 		    p.image_count = $image_count,
 		    p.md_uploaded_at = datetime(),
 		    p.last_assets_change_at = datetime(),
-		    p.doi_title = $title,
-		    p.doi_authors = $authors,
+		    p.doi_title = CASE WHEN $title <> '' THEN $title ELSE p.doi_title END,
+		    p.doi_authors = CASE WHEN size($authors) > 0 THEN $authors ELSE p.doi_authors END,
 		    p.verification_status = $vstatus,
 		    p.verified_at = datetime()
 		RETURN p.arxiv_id`,

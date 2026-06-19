@@ -70,12 +70,12 @@ qatlas upload pdf 2501.00010v1 --pdf ./paper-v2.pdf --overwrite
 # (full.md + images/*) — push the raw zip MinerU returned at its
 # `full_zip_url`, the server unzips it. The arxiv direct-zip form
 # was removed in v0.19.0 (use `qatlas contrib mineru` instead);
-# the DOI form below remains the only direct-zip path.
+# the DOI form below remains the only direct-zip path. Title and
+# authors are auto-fetched from OpenAlex — the contributor never
+# supplies them.
 qatlas upload mineru 10.1103/PhysRevLett.123.070501 \
     --zip ./mineru-result.zip \
     --source mineru-client-v0.8 \
-    --title "Quantum advantage with shallow circuits" \
-    --authors "Bravyi; Gosset; König" \
     --verify warn
 ```
 
@@ -362,45 +362,29 @@ pointers + verification fields below.
 > `force_arxiv=1` the reverse lookup is skipped and the request lands on
 > the arxiv handlers directly.
 
-### Metadata verification (title + authors)
+### Metadata enrichment (auto-fetched from OpenAlex)
 
-Because nothing binds raw PDF bytes to a DOI, the server cross-checks
-the contribution against the DOI's **OpenAlex metadata** (the same
-resolver used for DOI→arXiv on the download path). Pass the title and
-authors you believe the paper has; the server resolves the DOI and
-compares:
+Because nothing binds raw PDF bytes to a DOI, the server resolves the
+DOI's **OpenAlex metadata** (the same resolver used for DOI→arXiv on
+the download path) and persists the canonical title / authors / linked
+arxiv id on the catalog node. **Contributors cannot supply or override
+this metadata** — by design, the only metadata input is the DOI itself,
+and a typo'd DOI surfaces either as a different paper's record (the
+contributor sees it via the response header / JSON block and can resubmit
+under the correct DOI) or as `doi-not-found`.
 
 ```bash
-qatlas upload pdf 10.1103/PhysRevLett.123.070501 \
-    --pdf ./published.pdf \
-    --title "Quantum algorithm for linear systems of equations" \
-    --authors "Harrow; Hassidim; Lloyd"
+qatlas upload pdf 10.1103/PhysRevLett.123.070501 --pdf ./published.pdf
 ```
 
-Direct HTTP (multipart form fields `title`, `authors`):
+Direct HTTP — no `title`/`authors` form fields:
 
 ```bash
 curl -X POST \
     -H "Authorization: Bearer $QATLAS_TOKEN" \
     -F "pdf=@published.pdf;type=application/pdf" \
-    -F "title=Quantum algorithm for linear systems of equations" \
-    -F "authors=Harrow; Hassidim; Lloyd" \
     "https://quantum-atlas.ai/api/papers/10.1103/PhysRevLett.123.070501/upload-pdf"
 ```
-
-- `authors` is **semicolon-separated** (names often contain commas).
-- Title matching: case- and punctuation-insensitive normalized
-  comparison. A substring on either side is accepted only when the
-  shorter side has at least 5 whitespace tokens AND 20 normalized
-  characters — so contributors cannot pass `?verify=strict` with a
-  1-token "Quantum" prefix that would otherwise match almost any
-  OpenAlex record. Pass the full title (or the full title up to the
-  subtitle separator) and you're fine.
-- Author matching: anchored on the **surname** token, which must be
-  ≥ 2 characters and must equal the LAST whitespace token of at least
-  one actual author's splitname. So `A. W. Harrow`, `Aram W. Harrow`,
-  and `Harrow, Aram` all match, but a bare `W` (middle initial) does
-  NOT — strict mode cannot be bypassed by single-letter tokens.
 
 The outcome is **recorded** on the node (`verification_status`,
 `doi_title`, `doi_authors`, `doi_arxiv_id`, `verified_at`) and returned
@@ -411,40 +395,43 @@ whenever the upload actually writes bytes:
   `arxiv_id`)
 
 > A no-op re-upload (the object's sha256 already matches) does **not**
-> re-run verification: the header and `verification` block are omitted and
-> the catalog node is left untouched. The prior verification is still on
-> the node. This keeps repeated uploads from hitting OpenAlex.
+> re-run the OpenAlex lookup: the header and `verification` block are
+> omitted and the catalog node is left untouched. The prior metadata is
+> still on the node. This keeps repeated uploads from hitting OpenAlex.
 >
 > Resolved metadata is cached in-process for a few minutes (same LRU as
 > DOI→arXiv resolution, keyed separately), so a PDF-then-MinerU pair for
 > one DOI costs a single OpenAlex lookup.
+>
+> **Metadata preservation under failure:** when the server cannot resolve
+> the DOI on a given upload (transient OpenAlex outage, server unconfigured,
+> or `doi-not-found`), the catalog write preserves any previously-stored
+> `doi_title` / `doi_authors` / `doi_arxiv_id` rather than overwriting them
+> with empty values — a transient failure during a re-upload must never
+> erase a prior verified record. `verification_status` itself is always
+> overwritten so operators see the latest attempt.
 
 | `verification_status`  | Meaning                                                             |
 | ---------------------- | ------------------------------------------------------------------- |
-| `verified`             | supplied title/authors matched the DOI's OpenAlex record            |
-| `mismatch`             | supplied title/authors did NOT match                                |
-| `recorded`             | metadata fetched + stored, but nothing supplied to cross-check      |
-| `doi-not-found`        | OpenAlex has no record for this DOI                                 |
+| `verified`             | OpenAlex returned a record; title / authors / linked arxiv id stored |
+| `doi-not-found`        | OpenAlex confirmed the DOI does not exist                           |
 | `metadata-unavailable` | OpenAlex was unreachable / errored                                  |
-| `unconfigured`         | server has no `QATLAS_OPENALEX_MAILTO`, so verification is disabled |
+| `unconfigured`         | server has no `QATLAS_OPENALEX_MAILTO`, so enrichment is disabled   |
 
 ### `?verify=` policy
 
-Verification is **advisory by default** (`verify=warn`): the outcome is
-recorded and surfaced, but the upload still succeeds — OpenAlex coverage
-is incomplete and blocking would reject legitimate contributions.
+The DOI's OpenAlex resolution is **advisory by default** (`verify=warn`):
+the outcome is recorded and surfaced, but the upload still succeeds even
+when OpenAlex cannot confirm the DOI — coverage is incomplete and blocking
+would reject legitimate contributions.
 
-Pass `?verify=strict` to make it blocking — the matching rules above
-(min 5-token / 20-char floor for substring title match; min 2-char
-surname anchored to the LAST splitname token) ensure strict mode
-cannot be bypassed by trivial inputs like `title=q&authors=W`:
+Pass `?verify=strict` to make resolution mandatory:
 
-- `mismatch` / `doi-not-found` → `409 Conflict` (body carries
-  `expected_*` vs `found_*` so the contributor sees the discrepancy)
+- `doi-not-found` → `409 Conflict` (contributor-correctable: typo'd DOI)
 - `metadata-unavailable` / `unconfigured` → `503 Service Unavailable`
-  (can't verify; not the contributor's fault)
+  (server-side, can't verify)
 
-Everything else (`verified`, `recorded`) proceeds.
+`verified` proceeds.
 
 All the arXiv-path guarantees still apply to DOI uploads: sha256
 idempotency (200 / 409), `?expected_sha256=` in-transit guard, `%PDF-`
@@ -456,17 +443,16 @@ source-PDF cross-check (against the stored DOI PDF).
 CLI support for DOI uploads covers **both** `pdf` and `mineru` subcommands:
 
 - `qatlas upload pdf <DOI> --pdf ...` accepts a DOI in the ID slot and
-  exposes `--title` / `--authors` / `--verify`; the verification status
-  is printed to stderr from the `X-QAtlas-Verification` response header.
+  exposes `--verify`; the verification status is printed to stderr from
+  the `X-QAtlas-Verification` response header.
 - `qatlas upload mineru <DOI> --zip ...` likewise accepts a DOI and the
-  same `--title` / `--authors` / `--verify` flags. The flags are honoured
-  by the server's DOI path and silently ignored on the arXiv path (which
-  does not cross-check upstream metadata), so the same invocation works
-  for either identity.
+  same `--verify` flag. The flag is honoured by the server's DOI path
+  and a no-op on the arXiv path (the arxiv catalog is enriched through
+  a separate sync pipeline), so the same invocation works for either
+  identity.
 - The arXiv-keyed `qatlas contrib mineru` runner (claim queue → MinerU →
   upload) is still arxiv-only end-to-end: it does not yet pick DOI work
   out of the queue. Contributors driving MinerU manually against a
   published PDF should use `qatlas upload mineru <DOI> --zip ...` (or
   POST the bundle directly to `/api/papers/<DOI>/upload-mineru` with
-  `title` / `authors` form fields and `?verify=` / `?pdf_sha256=` as
-  described above).
+  `?verify=` / `?pdf_sha256=` as described above).

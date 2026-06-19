@@ -4,7 +4,7 @@ Subcommands::
 
     qatlas upload pdf ARXIV_ID --pdf path.pdf [--overwrite]
     qatlas upload mineru DOI --zip path.zip [--source mineru] [--overwrite] \
-                              [--title T --authors "A; B" --verify warn|strict]
+                              [--verify warn|strict]
 
 The ARXIV_ID must include a version suffix (``vN``) so the stored filename
 matches the RAW_DIR layout. Old style (pre-Apr 2007) requires a category
@@ -30,9 +30,11 @@ one unit). The **DOI** form remains supported — DOIs aren't in the
 needs-mineru queue, so direct-zip is the only contributor path for
 DOI-only papers.
 
-Paper metadata (title / authors / abstract / DOI / citations) is sourced
-upstream from OpenAlex into the Neo4j catalog as of v0.7.0 — the upload
-endpoint no longer accepts a ``metadata`` JSON sibling.
+Paper metadata (title / authors / abstract / DOI / citations) is always
+sourced from upstream (OpenAlex for DOI uploads, arXiv/OpenAlex sync for
+arXiv uploads) — the client and server reject any attempt to override it
+from contributor input. ``--verify`` only controls *policy* (whether the
+server requires a successful OpenAlex lookup before accepting the upload).
 """
 
 from __future__ import annotations
@@ -104,8 +106,6 @@ def cmd_upload_pdf(args: argparse.Namespace) -> int:
     if getattr(args, "verify", None) == "strict":
         params["verify"] = "strict"
 
-    data = _doi_verify_form_data(args)
-
     base_url = base_url_from_args(args)
     # DOI suffixes can contain '/', '?', '#', etc. — percent-encode
     # the path segment so the server's router sees the full id verbatim.
@@ -115,7 +115,6 @@ def cmd_upload_pdf(args: argparse.Namespace) -> int:
         response = requests.post(
             url,
             files=files,
-            data=data or None,
             params=params,
             headers={**auth_headers(args), **client_version_headers()},
             timeout=args.request_timeout,
@@ -161,8 +160,6 @@ def cmd_upload_mineru(args: argparse.Namespace) -> int:
     if getattr(args, "verify", None) == "strict":
         params["verify"] = "strict"
 
-    data = _doi_verify_form_data(args)
-
     base_url = base_url_from_args(args)
     # DOI suffixes can contain '/', '?', '#', etc. — percent-encode
     # the path segment so the server's router sees the full id verbatim.
@@ -172,7 +169,6 @@ def cmd_upload_mineru(args: argparse.Namespace) -> int:
         response = requests.post(
             url,
             files=files,
-            data=data or None,
             params=params,
             headers={**auth_headers(args), **client_version_headers()},
             timeout=args.request_timeout,
@@ -205,50 +201,28 @@ def _add_arxiv_arg(parser: argparse.ArgumentParser) -> None:
 
 
 def _add_doi_verify_args(parser: argparse.ArgumentParser) -> None:
-    """Add --title / --authors / --verify shared by the DOI-capable uploaders.
+    """Add ``--verify`` shared by the DOI-capable uploaders.
 
-    These flags are ignored on arXiv uploads (the server's arXiv path doesn't
-    cross-check upstream metadata) and honoured on the DOI path (where the
-    server cross-checks them against OpenAlex).
+    DOI uploads enrich the catalog with title/authors/linked-arxiv-id
+    fetched from OpenAlex; the contributor cannot override that metadata.
+    ``--verify`` only chooses what the server does when OpenAlex cannot
+    resolve the DOI: ``warn`` records the failure and proceeds, ``strict``
+    rejects with 409 (doi-not-found) or 503 (metadata-unavailable /
+    unconfigured). The flag is a no-op for arXiv uploads (the server's
+    arXiv path resolves metadata through a separate sync pipeline).
     """
-    parser.add_argument(
-        "--title",
-        help=(
-            "DOI uploads only: expected paper title. The server verifies it "
-            "against the DOI's OpenAlex metadata and records the outcome."
-        ),
-    )
-    parser.add_argument(
-        "--authors",
-        help=(
-            "DOI uploads only: expected authors, semicolon-separated "
-            "(e.g. 'Harrow; Hassidim; Lloyd'). Verified against OpenAlex."
-        ),
-    )
     parser.add_argument(
         "--verify",
         choices=["warn", "strict"],
         default="warn",
         help=(
-            "DOI uploads only: 'warn' (default) records a metadata mismatch but "
-            "still uploads; 'strict' rejects a mismatch / unknown DOI with 409."
+            "DOI uploads only: 'warn' (default) records when OpenAlex "
+            "cannot resolve the DOI but still uploads; 'strict' rejects "
+            "(409 doi-not-found, 503 metadata-unavailable). The server "
+            "always sources title/authors from OpenAlex; the contributor "
+            "cannot override that metadata."
         ),
     )
-
-
-def _doi_verify_form_data(args: argparse.Namespace) -> dict[str, str]:
-    """Build the multipart form fields (title / authors) for the DOI path.
-
-    Returns an empty dict when the caller supplied neither; callers should
-    pass `data=data or None` so the multipart body is omitted entirely for
-    arXiv uploads.
-    """
-    data: dict[str, str] = {}
-    if getattr(args, "title", None):
-        data["title"] = args.title
-    if getattr(args, "authors", None):
-        data["authors"] = args.authors
-    return data
 
 
 def _emit_verification_header(response: requests.Response) -> None:
@@ -289,8 +263,9 @@ def build_mineru_parser() -> argparse.ArgumentParser:
             "Upload a MinerU result zip (full.md + images/*) for a paper "
             "(by arXiv ID or DOI). The server unzips and stores the markdown "
             "+ every image under their respective per-kind buckets. "
-            "DOI uploads honour --title / --authors / --verify for OpenAlex "
-            "metadata cross-checking (arXiv uploads ignore them)."
+            "DOI uploads honour --verify to choose strict vs warn policy "
+            "when OpenAlex cannot resolve the DOI; title/authors are always "
+            "sourced from OpenAlex (never from the contributor)."
         ),
     )
     _add_arxiv_arg(parser)
@@ -331,12 +306,12 @@ Usage:
   qatlas upload pdf ARXIV_ID --pdf path.pdf [--overwrite]
       → equivalent to `qatlas contrib pdf ARXIV_ID --pdf path.pdf`
 
-  qatlas upload mineru DOI --zip path.zip [--title T --authors "A; B" \\
-                                            --verify warn|strict]
+  qatlas upload mineru DOI --zip path.zip [--verify warn|strict]
       → DOI-only direct-zip MinerU bundle upload (the arxiv-id form
         was removed in v0.19.0; DOIs have no needs-mineru queue, so
-        this remains the only path). The server cross-checks
-        --title / --authors against the DOI's OpenAlex metadata.
+        this remains the only path). The server resolves the DOI's
+        title/authors from OpenAlex; --verify chooses whether
+        doi-not-found / metadata-unavailable blocks the upload.
 
 The arXiv ID must include a version suffix (e.g. quant-ph/9508027v1 or 2501.00010v1).
 Use "qatlas upload pdf --help" / "qatlas upload mineru --help" for full options.

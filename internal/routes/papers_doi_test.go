@@ -11,133 +11,62 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/papers"
 )
 
-func TestParseAuthorsForm(t *testing.T) {
-	cases := []struct {
-		in   string
-		want []string
-	}{
-		{"", nil},
-		{"   ", nil},
-		{"Seth Lloyd", []string{"Seth Lloyd"}},
-		{"Harrow; Hassidim; Lloyd", []string{"Harrow", "Hassidim", "Lloyd"}},
-		{"Lloyd, Seth\nHarrow, Aram", []string{"Lloyd, Seth", "Harrow, Aram"}},
-		{" A ;; B ", []string{"A", "B"}},
-	}
-	for _, c := range cases {
-		if got := parseAuthorsForm(c.in); !reflect.DeepEqual(got, c.want) {
-			t.Errorf("parseAuthorsForm(%q) = %v, want %v", c.in, got, c.want)
-		}
-	}
-}
-
-func TestTitlesMatch(t *testing.T) {
-	// Exact normalized equality always matches, regardless of length.
-	if !titlesMatch("Quantum Algorithm for Linear Systems", "quantum algorithm for linear systems") {
-		t.Error("case/space-insensitive title should match")
-	}
-	if !titlesMatch("Quantum Algorithm", "quantum algorithm") {
-		t.Error("exact normalized equality should match even when below the substring floor")
-	}
-
-	// Substring tolerance: passes only when the shorter side clears
-	// both the token-count and char-count floors. "Quantum algorithm
-	// for linear systems" → 5 tokens, 35 chars → passes.
-	if !titlesMatch(
-		"Quantum algorithm for linear systems",
-		"Quantum algorithm for linear systems of equations: a review",
-	) {
-		t.Error("substring above the floors should still match (subtitle tolerated)")
-	}
-
-	// Strict-mode bypass guards: short contributor input no longer
-	// passes containment against an OpenAlex title.
-	if titlesMatch("Quantum", "Quantum algorithm for linear systems of equations") {
-		t.Error("single-token prefix must NOT match (strict bypass guard)")
-	}
-	if titlesMatch("q", "Quantum algorithm for linear systems of equations") {
-		t.Error("single-char input must NOT match (strict bypass guard)")
-	}
-	if titlesMatch("Quantum algorithm", "Quantum algorithm for linear systems of equations") {
-		t.Error("2-token prefix must NOT match (below 5-token floor)")
-	}
-
-	if titlesMatch("Quantum Algorithm", "Classical Methods in Optics") {
-		t.Error("unrelated titles should not match")
-	}
-	if titlesMatch("", "anything") {
-		t.Error("empty expected should not match")
-	}
-}
-
-func TestAuthorsMatch(t *testing.T) {
-	actual := []string{"Aram W. Harrow", "Avinatan Hassidim", "Seth Lloyd"}
-	if !authorsMatch([]string{"Harrow"}, actual) {
-		t.Error("surname-only should match")
-	}
-	if !authorsMatch([]string{"A. W. Harrow", "Lloyd, Seth"}, actual) {
-		t.Error("mixed formats should match on surname")
-	}
-	if authorsMatch([]string{"Einstein"}, actual) {
-		t.Error("absent author should not match")
-	}
-	if authorsMatch([]string{"Harrow"}, nil) {
-		t.Error("no actual authors should not match")
-	}
-
-	// Strict-mode bypass guards: single-letter middle initials must
-	// never satisfy a surname match, even when the actual author has
-	// that letter as a middle name token.
-	if authorsMatch([]string{"W"}, actual) {
-		t.Error("single-letter expected must NOT match a middle initial (strict bypass guard)")
-	}
-	if authorsMatch([]string{"A", "W", "H"}, actual) {
-		t.Error("multiple single-letter expected entries must NOT pass strict")
-	}
-	if authorsMatch([]string{"   ", "\t"}, actual) {
-		t.Error("all-empty-surname expected should not match (no real check happened)")
-	}
-	if authorsMatch([]string{}, actual) {
-		t.Error("empty expected slice should not match (checked count == 0)")
-	}
-
-	// Surname-must-be-LAST-token guard: a middle-position match (e.g.
-	// expected "W" matching the W between Aram and Harrow) is rejected
-	// because surnameToken takes the last token.
-	if authorsMatch([]string{"Aram"}, actual) {
-		t.Error("first-name-only must NOT match (surnameToken takes last token)")
-	}
-
-	// Real-world surnames of length 2 (CJK transliterations like "Wu",
-	// "Li", "Xu") must pass — the floor is minSurnameLen=2.
-	wuActual := []string{"Jia Wu", "Sergei Volkov"}
-	if !authorsMatch([]string{"Wu"}, wuActual) {
-		t.Error("2-char CJK surname should match")
-	}
-}
-
 func TestStrictReject(t *testing.T) {
-	// Warn-mode rejection lives at the call site; strictReject itself
-	// only sees statuses from already-gated strict callers.
-	if r := strictReject(papers.VerifyMismatch); r == nil || r.Status != http.StatusConflict {
-		t.Errorf("strict mismatch should 409, got %v", r)
-	}
+	// strictReject is only invoked when the upload's `?verify=strict`
+	// flag is on; we drive it directly with each non-success status to
+	// pin the 4xx/5xx mapping (and confirm verified does NOT block).
 	if r := strictReject(papers.VerifyDOINotFound); r == nil || r.Status != http.StatusConflict {
 		t.Errorf("strict doi-not-found should 409, got %v", r)
 	}
 	if r := strictReject(papers.VerifyUnavailable); r == nil || r.Status != http.StatusServiceUnavailable {
 		t.Errorf("strict unavailable should 503, got %v", r)
 	}
+	if r := strictReject(papers.VerifyUnconfigured); r == nil || r.Status != http.StatusServiceUnavailable {
+		t.Errorf("strict unconfigured should 503, got %v", r)
+	}
 	if strictReject(papers.VerifyVerified) != nil {
 		t.Error("strict verified should proceed")
 	}
-	if strictReject(papers.VerifyRecorded) != nil {
-		t.Error("strict recorded should proceed")
-	}
 }
 
-func stubResolver(t *testing.T, body string, status int) *openalex.Resolver {
+func TestVerificationBody(t *testing.T) {
+	t.Run("verified populates fields", func(t *testing.T) {
+		got := verificationBody(papers.DOIVerification{
+			Status:  papers.VerifyVerified,
+			Title:   "Quantum algorithm",
+			Authors: []string{"A", "B"},
+			ArxivID: "0811.3171",
+		})
+		if got["status"] != papers.VerifyVerified {
+			t.Errorf("status: %v", got["status"])
+		}
+		if got["title"] != "Quantum algorithm" {
+			t.Errorf("title: %v", got["title"])
+		}
+		if !reflect.DeepEqual(got["authors"], []string{"A", "B"}) {
+			t.Errorf("authors: %v", got["authors"])
+		}
+		if got["arxiv_id"] != "0811.3171" {
+			t.Errorf("arxiv_id: %v", got["arxiv_id"])
+		}
+	})
+	t.Run("non-verified leaves fields nil", func(t *testing.T) {
+		got := verificationBody(papers.DOIVerification{Status: papers.VerifyUnavailable})
+		if got["status"] != papers.VerifyUnavailable {
+			t.Errorf("status: %v", got["status"])
+		}
+		if got["title"] != nil || got["authors"] != nil || got["arxiv_id"] != nil {
+			t.Errorf("expected nil fields when nothing fetched, got %+v", got)
+		}
+	})
+}
+
+func stubResolver(t *testing.T, body string, status int, hits *int) *openalex.Resolver {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if hits != nil {
+			*hits++
+		}
 		if status != 0 && status != http.StatusOK {
 			w.WriteHeader(status)
 			return
@@ -160,73 +89,96 @@ const hhlBody = `{
   "locations": [{"landing_page_url": "https://arxiv.org/abs/0811.3171", "pdf_url": ""}]
 }`
 
+// TestVerifyDOIMetadata locks in the post-design-fix contract: title /
+// authors / linked arxiv id always come from OpenAlex (never from the
+// contributor), so verifyDOIMetadata only needs (ctx, resolver, doi).
+// The status drives strict-mode policy; the populated fields are written
+// to the catalog when (and only when) the resolution succeeded.
 func TestVerifyDOIMetadata(t *testing.T) {
 	ctx := context.Background()
 	doi := "10.1103/PhysRevLett.103.150502"
 
 	t.Run("unconfigured when resolver disabled", func(t *testing.T) {
-		v := verifyDOIMetadata(ctx, openalex.New(openalex.Config{}), doi, "x", nil)
+		v := verifyDOIMetadata(ctx, openalex.New(openalex.Config{}), doi)
 		if v.Status != papers.VerifyUnconfigured {
 			t.Errorf("got %q", v.Status)
 		}
-	})
-	t.Run("unconfigured when nil", func(t *testing.T) {
-		if v := verifyDOIMetadata(ctx, nil, doi, "x", nil); v.Status != papers.VerifyUnconfigured {
-			t.Errorf("got %q", v.Status)
-		}
-	})
-	t.Run("recorded when no expected provided (no OpenAlex call)", func(t *testing.T) {
-		// resolver must NOT be hit when nothing was supplied to cross-
-		// check against — verifyDOIMetadata returns Recorded without
-		// fetching metadata, keeping Title/Authors empty (the honest
-		// signal that we never populated them).
-		var hits int
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			hits++
-			w.WriteHeader(http.StatusOK)
-		}))
-		defer srv.Close()
-		r := openalex.New(openalex.Config{Mailto: "ops@example.com", BaseURL: srv.URL + "/works/doi:"})
-		v := verifyDOIMetadata(ctx, r, doi, "", nil)
-		if v.Status != papers.VerifyRecorded {
-			t.Errorf("got %q", v.Status)
-		}
-		if hits != 0 {
-			t.Errorf("OpenAlex called %d times; want 0 (no claims, no lookup)", hits)
-		}
 		if v.Title != "" || len(v.Authors) != 0 || v.ArxivID != "" {
-			t.Errorf("metadata should be empty when not fetched: %+v", v)
+			t.Errorf("unconfigured must leave fields empty: %+v", v)
 		}
 	})
-	t.Run("verified on title+author match", func(t *testing.T) {
-		v := verifyDOIMetadata(ctx, stubResolver(t, hhlBody, 200), doi,
-			"Quantum algorithm for linear systems of equations", []string{"Harrow", "Lloyd"})
+	t.Run("unconfigured when resolver is nil", func(t *testing.T) {
+		if v := verifyDOIMetadata(ctx, nil, doi); v.Status != papers.VerifyUnconfigured {
+			t.Errorf("got %q", v.Status)
+		}
+	})
+	t.Run("verified when OpenAlex returns a record", func(t *testing.T) {
+		v := verifyDOIMetadata(ctx, stubResolver(t, hhlBody, 200, nil), doi)
 		if v.Status != papers.VerifyVerified {
 			t.Errorf("got %q, want verified", v.Status)
 		}
-	})
-	t.Run("mismatch on wrong title", func(t *testing.T) {
-		v := verifyDOIMetadata(ctx, stubResolver(t, hhlBody, 200), doi, "Totally different paper", nil)
-		if v.Status != papers.VerifyMismatch {
-			t.Errorf("got %q, want mismatch", v.Status)
+		if v.Title != "Quantum algorithm for linear systems of equations" {
+			t.Errorf("title: %q", v.Title)
 		}
-	})
-	t.Run("mismatch on wrong author", func(t *testing.T) {
-		v := verifyDOIMetadata(ctx, stubResolver(t, hhlBody, 200), doi, "", []string{"Einstein"})
-		if v.Status != papers.VerifyMismatch {
-			t.Errorf("got %q, want mismatch", v.Status)
+		want := []string{"Aram W. Harrow", "Avinatan Hassidim", "Seth Lloyd"}
+		if !reflect.DeepEqual(v.Authors, want) {
+			t.Errorf("authors: %v", v.Authors)
+		}
+		if v.ArxivID != "0811.3171" {
+			t.Errorf("arxiv_id: %q", v.ArxivID)
 		}
 	})
 	t.Run("doi-not-found on 404", func(t *testing.T) {
-		v := verifyDOIMetadata(ctx, stubResolver(t, "", http.StatusNotFound), doi, "x", nil)
+		v := verifyDOIMetadata(ctx, stubResolver(t, "", http.StatusNotFound, nil), doi)
 		if v.Status != papers.VerifyDOINotFound {
 			t.Errorf("got %q", v.Status)
 		}
+		if v.Title != "" || len(v.Authors) != 0 {
+			t.Errorf("not-found must leave fields empty: %+v", v)
+		}
 	})
 	t.Run("unavailable on upstream error", func(t *testing.T) {
-		v := verifyDOIMetadata(ctx, stubResolver(t, "", http.StatusInternalServerError), doi, "x", nil)
+		v := verifyDOIMetadata(ctx, stubResolver(t, "", http.StatusInternalServerError, nil), doi)
 		if v.Status != papers.VerifyUnavailable {
 			t.Errorf("got %q", v.Status)
 		}
+		if v.Title != "" || len(v.Authors) != 0 {
+			t.Errorf("unavailable must leave fields empty: %+v", v)
+		}
 	})
+	t.Run("calls OpenAlex exactly once per upload", func(t *testing.T) {
+		// Catches a regression where verifyDOIMetadata might short-
+		// circuit (saving a round-trip) but at the cost of leaving
+		// the catalog without the canonical title/authors. Always
+		// call when the resolver is configured.
+		var hits int
+		r := stubResolver(t, hhlBody, 200, &hits)
+		_ = verifyDOIMetadata(ctx, r, doi)
+		if hits != 1 {
+			t.Errorf("OpenAlex hit count = %d, want 1", hits)
+		}
+	})
+}
+
+// TestDOIVerificationRejectBody locks in that the strict-mode 409/503
+// body never echoes a contributor-supplied "expected_*" field — the
+// contributor cannot supply title/authors at all in the new design, so
+// the body only carries the DOI, status, and (when populated) the
+// OpenAlex-fetched title/authors.
+func TestDOIVerificationRejectBody(t *testing.T) {
+	rej := &uploadError{Status: http.StatusConflict, Detail: "DOI not found"}
+	v := papers.DOIVerification{Status: papers.VerifyDOINotFound}
+	got := doiVerificationRejectBody(rej, "10.1103/x", v)
+	if _, has := got["expected_title"]; has {
+		t.Error("response must not carry expected_title — contributor never supplies it")
+	}
+	if _, has := got["expected_authors"]; has {
+		t.Error("response must not carry expected_authors — contributor never supplies it")
+	}
+	if got["doi"] != "10.1103/x" {
+		t.Errorf("doi: %v", got["doi"])
+	}
+	if got["verification_status"] != papers.VerifyDOINotFound {
+		t.Errorf("status: %v", got["verification_status"])
+	}
 }

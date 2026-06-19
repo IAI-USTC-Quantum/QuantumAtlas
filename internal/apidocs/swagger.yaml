@@ -642,7 +642,7 @@ paths:
       description: |-
         Accepts the entire MinerU result zip exactly as returned by `full_zip_url`. Server extracts `full.md` plus every `images/*` entry and stores them to the markdown and images object buckets respectively. Images are written before the markdown so any reader that observes the markdown also observes all referenced images. Replaces the v0.7.x `upload-markdown` endpoint (which only accepted a single .md file and silently dropped images).
 
-        The {arxiv_id} slot also accepts a DOI (`10.<registrant>/<suffix>`) to contribute the converted *published* version. DOI bundles are stored under the `markdown/doi/...` + `images/doi/...` namespace and verified against OpenAlex metadata via the `title`/`authors` form fields (see upload-pdf; `verify=strict` rejects mismatches). The result is reported in `X-QAtlas-Verification`.
+        The {arxiv_id} slot also accepts a DOI (`10.<registrant>/<suffix>`) to contribute the converted *published* version. DOI bundles are stored under the `markdown/doi/...` + `images/doi/...` namespace; the server resolves canonical metadata (title, authors, linked arxiv id) from OpenAlex on the contributor's behalf — there is no `title` / `authors` form field. `verify=strict` rejects when OpenAlex cannot resolve the DOI (see upload-pdf). The result is reported in `X-QAtlas-Verification`.
       parameters:
       - description: arXiv identifier (with vN) OR DOI (10.x/...)
         in: path
@@ -662,7 +662,8 @@ paths:
         in: query
         name: pdf_sha256
         type: string
-      - description: 'DOI only: ''strict'' rejects metadata mismatch (default warn)'
+      - description: 'DOI only: ''strict'' rejects when OpenAlex cannot resolve the
+          DOI (default warn)'
         in: query
         name: verify
         type: string
@@ -676,14 +677,6 @@ paths:
         name: mineru_zip
         required: true
         type: file
-      - description: 'DOI only: expected paper title to verify against OpenAlex'
-        in: formData
-        name: title
-        type: string
-      - description: 'DOI only: expected authors (semicolon-separated) to verify'
-        in: formData
-        name: authors
-        type: string
       produces:
       - application/json
       responses:
@@ -724,11 +717,12 @@ paths:
         The {arxiv_id} slot also accepts a DOI (`10.<registrant>/<suffix>`)
         for contributing a *published* version that may have no arXiv
         preprint. DOI uploads are stored under a disjoint `pdf/doi/...`
-        namespace and cross-checked against the DOI's OpenAlex metadata:
-        pass `title` and/or `authors` (semicolon-separated) form fields
-        to verify. The outcome is reported in `X-QAtlas-Verification` and
-        the JSON `verification` block; `verify=strict` rejects a mismatch
-        or unknown DOI with 409.
+        namespace and the server resolves the DOI's title / authors /
+        linked arxiv id from OpenAlex — the contributor cannot supply
+        that metadata. The result is reported in `X-QAtlas-Verification`
+        and the JSON `verification` block; `verify=strict` rejects a
+        doi-not-found with 409 (or metadata-unavailable / unconfigured
+        with 503).
       parameters:
       - description: arXiv identifier (with vN) OR DOI (10.x/...)
         in: path
@@ -743,7 +737,8 @@ paths:
         in: query
         name: expected_sha256
         type: string
-      - description: 'DOI only: ''strict'' rejects metadata mismatch (default warn)'
+      - description: 'DOI only: ''strict'' rejects when OpenAlex cannot resolve the
+          DOI (default warn)'
         in: query
         name: verify
         type: string
@@ -752,14 +747,6 @@ paths:
         name: pdf
         required: true
         type: file
-      - description: 'DOI only: expected paper title to verify against OpenAlex'
-        in: formData
-        name: title
-        type: string
-      - description: 'DOI only: expected authors (semicolon-separated) to verify'
-        in: formData
-        name: authors
-        type: string
       produces:
       - application/json
       responses:
