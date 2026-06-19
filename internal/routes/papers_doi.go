@@ -602,6 +602,26 @@ func parseAuthorsForm(raw string) []string {
 
 var matchStripRE = regexp.MustCompile(`[^a-z0-9\s]+`)
 
+// Matching floors. These bound how lax titlesMatch / authorsMatch may be
+// so that `?verify=strict` cannot be bypassed by a contributor passing a
+// 1-token title or a single-letter author. Both warn and strict use the
+// same matcher — "verified" must mean the same thing in both modes.
+//
+//   - titles: a substring (sub/super-title tolerance) is only accepted
+//     when the shorter side has at least minMatchTitleTokens whitespace
+//     tokens AND minMatchTitleChars normalized characters. Exact
+//     normalized equality always matches regardless of length.
+//   - authors: the surname token derived from an expected author must
+//     have at least minSurnameLen normalized characters AND must equal
+//     the LAST whitespace token of at least one actual author's
+//     splitname. Middle initials ("W") and other middle tokens never
+//     satisfy the match.
+const (
+	minMatchTitleTokens = 5
+	minMatchTitleChars  = 20
+	minSurnameLen       = 2
+)
+
 // normalizeForMatch lower-cases, strips punctuation, and collapses
 // whitespace so two differently-formatted strings compare cleanly.
 func normalizeForMatch(s string) string {
@@ -611,42 +631,76 @@ func normalizeForMatch(s string) string {
 }
 
 // titlesMatch reports whether two titles are equivalent after
-// normalization. Accepts containment in either direction to tolerate
-// trailing subtitles / series suffixes that one source may omit.
+// normalization. Equality always matches; substring (subtitle / series-
+// suffix tolerance) only matches when the shorter side clears the
+// minMatchTitleTokens + minMatchTitleChars floors, so a contributor
+// cannot pass `?verify=strict` with a 1-token "Quantum" prefix that
+// would match almost any OpenAlex record.
 func titlesMatch(expected, actual string) bool {
 	e := normalizeForMatch(expected)
 	a := normalizeForMatch(actual)
 	if e == "" || a == "" {
 		return false
 	}
-	return e == a || strings.Contains(a, e) || strings.Contains(e, a)
+	if e == a {
+		return true
+	}
+	short, long := e, a
+	if len(short) > len(long) {
+		short, long = long, short
+	}
+	if !strings.Contains(long, short) {
+		return false
+	}
+	// Substring containment beyond exact equality: enforce both a token-
+	// count and a character-count floor on the shorter side. The shorter
+	// side is the one the OTHER side has to "contain" — capping it caps
+	// the leniency.
+	if len(strings.Fields(short)) < minMatchTitleTokens {
+		return false
+	}
+	if len(short) < minMatchTitleChars {
+		return false
+	}
+	return true
 }
 
 // authorsMatch reports whether every expected author has a surname match
-// among the actual authors. Lenient on purpose: author byline formatting
-// ("A. W. Harrow" vs "Aram W. Harrow" vs "Harrow, Aram") varies wildly,
-// so we anchor on the surname token, which is stable across formats.
+// among the actual authors, with strict anchoring so a single-letter
+// middle initial cannot accidentally satisfy the match.
+//
+// For each expected entry we derive a surname token (≥ minSurnameLen
+// chars after normalization). It must equal the LAST whitespace token
+// of at least one actual author's splitname — middle tokens never
+// count. An expected entry that yields no qualifying surname is a hard
+// rejection (the contributor passed something we cannot verify).
+//
+// Format-tolerant on both sides: "A. W. Harrow" / "Aram W. Harrow" /
+// "Harrow, Aram" all extract "harrow" as the surname token; the actual
+// "Aram W. Harrow" has "harrow" as its last token, so the match holds.
+// A bare "W" yields no surname (< minSurnameLen) and is rejected.
 func authorsMatch(expected, actual []string) bool {
 	if len(actual) == 0 {
 		return false
 	}
-	actualTokens := make([]map[string]struct{}, 0, len(actual))
+	actualSurnames := make([]string, 0, len(actual))
 	for _, a := range actual {
-		actualTokens = append(actualTokens, tokenSet(a))
+		actualSurnames = append(actualSurnames, surnameToken(a))
 	}
-	// Track whether we checked any surname — if every expected author
-	// yielded an empty surname token, we'd otherwise fall through to
-	// `return true` and silently accept input we never actually matched.
 	checked := 0
 	for _, e := range expected {
 		sur := surnameToken(e)
-		if sur == "" {
-			continue
+		if len(sur) < minSurnameLen {
+			// The contributor supplied an entry from which we can't
+			// derive a surname (empty / single-letter / pure-initials).
+			// Refuse rather than silently skip — `?verify=strict` must
+			// not be bypassable by feeding noise.
+			return false
 		}
 		checked++
 		found := false
-		for _, set := range actualTokens {
-			if _, ok := set[sur]; ok {
+		for _, asur := range actualSurnames {
+			if asur != "" && asur == sur {
 				found = true
 				break
 			}
@@ -655,20 +709,16 @@ func authorsMatch(expected, actual []string) bool {
 			return false
 		}
 	}
+	// At least one expected author must have been checked. Empty
+	// expected (len == 0) is handled at the call site (verifyDOIMetadata
+	// short-circuits to VerifyRecorded), but be defensive.
 	return checked > 0
 }
 
-// tokenSet returns the set of normalized whitespace tokens in a name.
-func tokenSet(name string) map[string]struct{} {
-	set := map[string]struct{}{}
-	for _, tok := range strings.Fields(normalizeForMatch(name)) {
-		set[tok] = struct{}{}
-	}
-	return set
-}
-
-// surnameToken returns the most likely surname token from a name.
-// Handles both "First Last" and "Last, First" orderings.
+// surnameToken returns the most likely surname token from a name,
+// normalized to lower-case ASCII. Handles both "First Last" and
+// "Last, First" orderings; returns "" when the name has no usable
+// surname (empty / pure punctuation / pure single-letter middle name).
 func surnameToken(name string) string {
 	if comma := strings.IndexByte(name, ','); comma >= 0 {
 		// "Lloyd, Seth" → surname is before the comma.

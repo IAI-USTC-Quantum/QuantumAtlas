@@ -335,16 +335,32 @@ the suffix become `__`. In the Neo4j catalog the contribution is a
 `identifier_scheme = 'doi'`, `source = 'doi-upload'`, and the asset
 pointers + verification fields below.
 
-> **Resolution precedence**: when OpenAlex links a DOI to an arXiv
-> preprint, `GET /api/papers/<doi>/...` resolves the DOI to the
-> canonical arXiv id and serves the arXiv-keyed assets — even if a
-> separate DOI-only contribution exists for the same DOI. The DOI-only
-> contribution is still stored and is reachable directly via the
-> client/CLI; only the **public read path** prefers arXiv when both are
-> available, so contributors who explicitly want the published version
-> back should request it under the arxiv id once the linkage is
-> established. The local DOI-only catalog node only owns the read path
-> when OpenAlex returns `ErrDOINotFound` (no arxiv presence).
+> **Canonical resolution (DOI wins)**: a `:PaperWork` node with
+> `identifier_scheme='doi'` ALWAYS takes precedence over its arxiv twin
+> when both exist. `GET /api/papers/<id>/...` serves the DOI bytes
+> whether the caller supplied the DOI or the linked arxiv id; DOI is
+> the canonical identity of the *published* version, the arxiv preprint
+> is a secondary artifact. The DOI fast path skips OpenAlex entirely
+> when the local catalog already has the DOI node.
+>
+> Two shapes hit this rule:
+>
+> 1. **Caller passes a DOI** — `LookupDOI` resolves to the local DOI
+>    namespace first; on miss, the request falls through to OpenAlex,
+>    which may surface an arxiv twin to serve.
+> 2. **Caller passes an arxiv id** — the dispatcher reverse-looks-up
+>    `doi_arxiv_id = <bare arxiv id>` to find any DOI twin. Hit → the
+>    request is redirected to the DOI handlers; miss → regular arxiv
+>    path. Redirects are observable via the `X-QAtlas-Canonical-DOI`
+>    response header and a `served_as_doi_canonical (…; pass
+>    ?force_arxiv=1 to opt out)` entry in `X-QAtlas-Defaults-Applied`.
+>
+> **Per-request opt-out**: append `?force_arxiv=1` (or `?force_arxiv=true`)
+> to bypass the DOI-canonical rule and force the arxiv path. With DOI
+> input + `force_arxiv=1` + no arxiv twin in OpenAlex you get `409
+> Conflict` (caller asked for arxiv, none exists). With arxiv input +
+> `force_arxiv=1` the reverse lookup is skipped and the request lands on
+> the arxiv handlers directly.
 
 ### Metadata verification (title + authors)
 
@@ -373,10 +389,18 @@ curl -X POST \
 ```
 
 - `authors` is **semicolon-separated** (names often contain commas).
-- Title match is case/punctuation-insensitive and tolerates a
-  subtitle on either side. Author match anchors on the **surname**
-  token, so `A. W. Harrow`, `Aram W. Harrow`, and `Harrow, Aram` all
-  match.
+- Title matching: case- and punctuation-insensitive normalized
+  comparison. A substring on either side is accepted only when the
+  shorter side has at least 5 whitespace tokens AND 20 normalized
+  characters — so contributors cannot pass `?verify=strict` with a
+  1-token "Quantum" prefix that would otherwise match almost any
+  OpenAlex record. Pass the full title (or the full title up to the
+  subtitle separator) and you're fine.
+- Author matching: anchored on the **surname** token, which must be
+  ≥ 2 characters and must equal the LAST whitespace token of at least
+  one actual author's splitname. So `A. W. Harrow`, `Aram W. Harrow`,
+  and `Harrow, Aram` all match, but a bare `W` (middle initial) does
+  NOT — strict mode cannot be bypassed by single-letter tokens.
 
 The outcome is **recorded** on the node (`verification_status`,
 `doi_title`, `doi_authors`, `doi_arxiv_id`, `verified_at`) and returned
@@ -410,7 +434,10 @@ Verification is **advisory by default** (`verify=warn`): the outcome is
 recorded and surfaced, but the upload still succeeds — OpenAlex coverage
 is incomplete and blocking would reject legitimate contributions.
 
-Pass `?verify=strict` to make it blocking:
+Pass `?verify=strict` to make it blocking — the matching rules above
+(min 5-token / 20-char floor for substring title match; min 2-char
+surname anchored to the LAST splitname token) ensure strict mode
+cannot be bypassed by trivial inputs like `title=q&authors=W`:
 
 - `mismatch` / `doi-not-found` → `409 Conflict` (body carries
   `expected_*` vs `found_*` so the contributor sees the discrepancy)

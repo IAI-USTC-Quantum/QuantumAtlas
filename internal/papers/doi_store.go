@@ -62,12 +62,16 @@ func DOINodeKey(doi string) string { return "doi:" + doi }
 // when Neo4j is unreachable (ErrCatalogUnavailable surfaces to the
 // caller; treat as "unknown" not "not found").
 //
-// Used by the GET /api/papers/<doi>/markdown route: when OpenAlex has
-// no arxiv presence for the DOI (ResolveDOI → ErrDOINotFound) but a
-// DOI-only :PaperWork node already exists in the catalog, the request
-// can be served from local storage using the synthetic key as the
-// bare-id. The synthetic key already matches the
-// "<kind>/doi/<reg>/<suffix>" bucket layout used by UpsertPDFByDOI.
+// Used by the GET /api/papers/<id>/{pdf,markdown} read path: when
+// the caller supplies a DOI, this is consulted FIRST — before any
+// OpenAlex resolution — because DOI is the canonical identity for
+// any work that has both an arxiv preprint and a DOI-only published
+// version (see docs/reference/upload-api.md §Canonical resolution).
+// `?force_arxiv=1` bypasses this lookup.
+//
+// The synthetic key matches the "<kind>/doi/<reg>/<suffix>" bucket
+// layout used by UpsertPDFByDOI, so callers can hand it straight to
+// the DOI handlers.
 func (s *Store) LookupDOI(ctx context.Context, doi string) (string, bool) {
 	if !s.ensure(ctx) {
 		return "", false
@@ -85,6 +89,41 @@ func (s *Store) LookupDOI(ctx context.Context, doi string) (string, bool) {
 		return "", false
 	}
 	return asString(rows[0]["arxiv_id"]), true
+}
+
+// LookupArxivToDOI is the reverse direction of LookupDOI: given a bare
+// (version-stripped) arxiv id, returns the DOI of any DOI-indexed node
+// whose `doi_arxiv_id` matches. Used by the GET dispatch to honour the
+// "DOI is canonical" rule even when the caller passed an arxiv id —
+// when a DOI contribution exists for the same paper, default to
+// serving the DOI bytes (caller can opt back with `?force_arxiv=1`).
+//
+// Caller MUST pass the BARE arxiv id (no `vN` suffix). DOI nodes store
+// `doi_arxiv_id` as the version-stripped form returned by
+// openalex.ExtractArxivID, so a versioned input would never match.
+//
+// Returns ("", false) for: no matching DOI node, catalog unreachable,
+// or empty input. Cannot distinguish "no twin" from "catalog down" —
+// the GET dispatcher checks Store.Available separately when it needs
+// to surface a 503 instead of falling through to the arxiv handler.
+func (s *Store) LookupArxivToDOI(ctx context.Context, bareArxivID string) (string, bool) {
+	if !s.ensure(ctx) {
+		return "", false
+	}
+	bareArxivID = paperassets.StripVersion(bareArxivID)
+	if bareArxivID == "" {
+		return "", false
+	}
+	rows, err := s.nc.ExecuteReadParams(ctx, `
+		MATCH (p:PaperWork)
+		WHERE p.identifier_scheme = 'doi'
+		  AND p.doi_arxiv_id = $arxiv_id
+		RETURN p.doi AS doi
+		LIMIT 1`, map[string]any{"arxiv_id": bareArxivID})
+	if err != nil || len(rows) == 0 {
+		return "", false
+	}
+	return asString(rows[0]["doi"]), true
 }
 
 // UpsertPDFByDOI is the DOI-indexed analogue of UpsertPDF: records a PDF

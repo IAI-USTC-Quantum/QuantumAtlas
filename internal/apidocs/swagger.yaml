@@ -797,6 +797,15 @@ paths:
         registered when QATLAS_PAPER_ACCESS_ENABLED=true on the
         server (default off).
 
+        Canonical resolution: a `:PaperWork` node with
+        `identifier_scheme='doi'` ALWAYS wins over its arxiv
+        twin when both exist — DOI is the canonical identity of
+        the published version. The dispatcher serves DOI bytes
+        for either id form when a DOI contribution is on file;
+        pass `?force_arxiv=1` to opt out per request (DOI input
+        with force_arxiv + no arxiv twin returns 409). See
+        docs/reference/upload-api.md §Canonical resolution.
+
         Long-running operation semantics: on cache miss the
         server may transparently fetch the PDF from arxiv.org
         (silent_fetch) and trigger a MinerU conversion. The
@@ -809,6 +818,11 @@ paths:
         in: path
         name: id_or_doi
         required: true
+        type: string
+      - description: '1/true: bypass the DOI-canonical default and serve the arxiv
+          twin (or 409 if no twin exists)'
+        in: query
+        name: force_arxiv
         type: string
       produces:
       - text/plain
@@ -846,6 +860,11 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "409":
+          description: force_arxiv requested but DOI has no arxiv twin
+          schema:
+            additionalProperties: true
+            type: object
         "502":
           description: prior conversion failed inside the cooldown window, or OpenAlex
             upstream error
@@ -870,6 +889,10 @@ paths:
         never triggers a fetch. Only registered when
         QATLAS_PAPER_ACCESS_ENABLED=true on the server.
 
+        Canonical resolution: same DOI-wins rule as
+        /api/papers/{id_or_doi}/markdown. Pass `?force_arxiv=1`
+        to query the arxiv-side status instead.
+
         Response shape always carries the agent-decision triple
         `state / pdf_ready / md_ready` plus an optional `phase`
         (fetching_pdf | converting_md | ready | error_fetching |
@@ -881,6 +904,10 @@ paths:
         in: path
         name: id_or_doi
         required: true
+        type: string
+      - description: '1/true: bypass DOI-canonical default'
+        in: query
+        name: force_arxiv
         type: string
       produces:
       - application/json
@@ -926,6 +953,13 @@ paths:
         arxiv id or DOI. Only registered when
         QATLAS_PAPER_ACCESS_ENABLED=true on the server.
 
+        Canonical resolution: a DOI contribution ALWAYS wins
+        over its arxiv twin when both exist — the dispatcher
+        serves the DOI PDF for either id form. Pass
+        `?force_arxiv=1` to opt out per request (DOI input
+        without an arxiv twin then returns 409). See
+        docs/reference/upload-api.md §Canonical resolution.
+
         Long-running operation semantics mirror /markdown: cache
         miss returns 202 with Operation-Location pointing at
         /pdf/status. The fetch path uses a separate semaphore
@@ -936,6 +970,11 @@ paths:
         in: path
         name: id_or_doi
         required: true
+        type: string
+      - description: '1/true: bypass DOI-canonical default; return 409 if DOI has
+          no arxiv twin'
+        in: query
+        name: force_arxiv
         type: string
       produces:
       - application/pdf
@@ -972,6 +1011,11 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "409":
+          description: force_arxiv requested but DOI has no arxiv twin
+          schema:
+            additionalProperties: true
+            type: object
         "502":
           description: arxiv upstream error / OpenAlex upstream error
           schema:
@@ -994,11 +1038,19 @@ paths:
         /markdown/status but states are restricted to the
         fetch-only flow — no convert phase. Only registered when
         QATLAS_PAPER_ACCESS_ENABLED=true.
+
+        Canonical resolution: same DOI-wins rule as
+        /api/papers/{id_or_doi}/pdf. Pass `?force_arxiv=1` to
+        query the arxiv-side status instead.
       parameters:
       - description: arXiv canonical id or DOI
         in: path
         name: id_or_doi
         required: true
+        type: string
+      - description: '1/true: bypass DOI-canonical default'
+        in: query
+        name: force_arxiv
         type: string
       produces:
       - application/json

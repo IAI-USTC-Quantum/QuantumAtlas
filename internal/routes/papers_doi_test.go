@@ -31,12 +31,36 @@ func TestParseAuthorsForm(t *testing.T) {
 }
 
 func TestTitlesMatch(t *testing.T) {
+	// Exact normalized equality always matches, regardless of length.
 	if !titlesMatch("Quantum Algorithm for Linear Systems", "quantum algorithm for linear systems") {
 		t.Error("case/space-insensitive title should match")
 	}
-	if !titlesMatch("Quantum Algorithm", "Quantum Algorithm: A Review") {
-		t.Error("containment should match (subtitle tolerated)")
+	if !titlesMatch("Quantum Algorithm", "quantum algorithm") {
+		t.Error("exact normalized equality should match even when below the substring floor")
 	}
+
+	// Substring tolerance: passes only when the shorter side clears
+	// both the token-count and char-count floors. "Quantum algorithm
+	// for linear systems" → 5 tokens, 35 chars → passes.
+	if !titlesMatch(
+		"Quantum algorithm for linear systems",
+		"Quantum algorithm for linear systems of equations: a review",
+	) {
+		t.Error("substring above the floors should still match (subtitle tolerated)")
+	}
+
+	// Strict-mode bypass guards: short contributor input no longer
+	// passes containment against an OpenAlex title.
+	if titlesMatch("Quantum", "Quantum algorithm for linear systems of equations") {
+		t.Error("single-token prefix must NOT match (strict bypass guard)")
+	}
+	if titlesMatch("q", "Quantum algorithm for linear systems of equations") {
+		t.Error("single-char input must NOT match (strict bypass guard)")
+	}
+	if titlesMatch("Quantum algorithm", "Quantum algorithm for linear systems of equations") {
+		t.Error("2-token prefix must NOT match (below 5-token floor)")
+	}
+
 	if titlesMatch("Quantum Algorithm", "Classical Methods in Optics") {
 		t.Error("unrelated titles should not match")
 	}
@@ -59,8 +83,35 @@ func TestAuthorsMatch(t *testing.T) {
 	if authorsMatch([]string{"Harrow"}, nil) {
 		t.Error("no actual authors should not match")
 	}
+
+	// Strict-mode bypass guards: single-letter middle initials must
+	// never satisfy a surname match, even when the actual author has
+	// that letter as a middle name token.
+	if authorsMatch([]string{"W"}, actual) {
+		t.Error("single-letter expected must NOT match a middle initial (strict bypass guard)")
+	}
+	if authorsMatch([]string{"A", "W", "H"}, actual) {
+		t.Error("multiple single-letter expected entries must NOT pass strict")
+	}
 	if authorsMatch([]string{"   ", "\t"}, actual) {
 		t.Error("all-empty-surname expected should not match (no real check happened)")
+	}
+	if authorsMatch([]string{}, actual) {
+		t.Error("empty expected slice should not match (checked count == 0)")
+	}
+
+	// Surname-must-be-LAST-token guard: a middle-position match (e.g.
+	// expected "W" matching the W between Aram and Harrow) is rejected
+	// because surnameToken takes the last token.
+	if authorsMatch([]string{"Aram"}, actual) {
+		t.Error("first-name-only must NOT match (surnameToken takes last token)")
+	}
+
+	// Real-world surnames of length 2 (CJK transliterations like "Wu",
+	// "Li", "Xu") must pass — the floor is minSurnameLen=2.
+	wuActual := []string{"Jia Wu", "Sergei Volkov"}
+	if !authorsMatch([]string{"Wu"}, wuActual) {
+		t.Error("2-char CJK surname should match")
 	}
 }
 

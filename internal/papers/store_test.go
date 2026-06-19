@@ -38,19 +38,49 @@ func TestNeedsMineruExcludesDOINodes(t *testing.T) {
 	}
 }
 
+// TestLookupArxivToDOICypher guards the LookupArxivToDOI reverse-lookup
+// Cypher: must filter to identifier_scheme='doi' nodes (so a NULL-scheme
+// arxiv-uploaded node never returns), must match on doi_arxiv_id (not
+// arxiv_id, which for DOI nodes is the synthetic "doi:<doi>" key), and
+// must return the DOI not the synthetic key (callers dispatch by DOI).
+func TestLookupArxivToDOICypher(t *testing.T) {
+	fn := locateDOIStoreFunc(t, "LookupArxivToDOI")
+	if !strings.Contains(fn, "identifier_scheme = 'doi'") {
+		t.Errorf("LookupArxivToDOI must filter identifier_scheme = 'doi' so it never picks up arxiv-uploaded nodes")
+	}
+	if !strings.Contains(fn, "p.doi_arxiv_id = $arxiv_id") {
+		t.Errorf("LookupArxivToDOI must match on doi_arxiv_id (not arxiv_id, which is the synthetic key for DOI nodes)")
+	}
+	if !strings.Contains(fn, "RETURN p.doi") {
+		t.Errorf("LookupArxivToDOI must RETURN p.doi so the GET dispatch can hand the DOI to the DOI handlers")
+	}
+}
+
 // locateStoreFunc returns the source text of the named (s *Store) method
 // from store.go. Used to assert on the Cypher string content of a
 // function body without actually executing it against a live Neo4j.
 func locateStoreFunc(t *testing.T, name string) string {
+	t.Helper()
+	return readAndExtract(t, "store.go", name)
+}
+
+// locateDOIStoreFunc returns the source text of the named (s *Store)
+// method from doi_store.go.
+func locateDOIStoreFunc(t *testing.T, name string) string {
+	t.Helper()
+	return readAndExtract(t, "doi_store.go", name)
+}
+
+func readAndExtract(t *testing.T, filename, name string) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("runtime.Caller failed")
 	}
 	dir := file[:strings.LastIndex(file, "/")+1]
-	src, err := os.ReadFile(dir + "store.go")
+	src, err := os.ReadFile(dir + filename)
 	if err != nil {
-		t.Fatalf("read store.go: %v", err)
+		t.Fatalf("read %s: %v", filename, err)
 	}
 	return extractFuncBody(string(src), "func (s *Store) "+name+"(")
 }

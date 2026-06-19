@@ -119,78 +119,119 @@ func RegisterPapers(
 			}
 			requestedID := arxivPart
 			bareIDPostDOI := arxivPart
+			forceArxiv := parseForceArxivQuery(re)
+			ctx := re.Request.Context()
 
-			// DOI-first dispatch: if the path component before the
-			// action is a DOI (matches the IANA prefix shape
-			// `10.<registrant>/<suffix>`), resolve it to a canonical
-			// arxiv id via OpenAlex before falling through to the
-			// regular handlers. Resolver failures map to HTTP error
-			// responses (503 not configured, 400 invalid, 404 not
-			// found, 502 upstream) so the caller can branch cleanly.
+			// Canonical resolution rule (see
+			// docs/reference/upload-api.md §Canonical resolution): a
+			// :PaperWork node with `identifier_scheme='doi'` ALWAYS
+			// wins over its arxiv twin when both exist. The DOI is the
+			// canonical identity of the published version; the arxiv
+			// preprint is a SECONDARY artifact (often older / shorter).
+			// The caller can override per-request with `?force_arxiv=1`.
 			//
-			// Exception: when the DOI has no arxiv presence in
-			// OpenAlex (ErrDOINotFound) but a DOI-only :PaperWork
-			// node already lives in the local catalog (from a prior
-			// /upload-pdf-by-doi), hand off to the DOI-specific GET
-			// handlers. Those use the "<kind>/doi/<reg>/<suffix>"
-			// bucket layout directly, so the synthetic "doi:<doi>"
-			// catalog key never has to be a valid arxiv id.
+			// Two dispatch shapes hit this rule:
+			//
+			//   (a) caller passes a DOI — try the local catalog FIRST
+			//       (skip the OpenAlex round-trip when the DOI is
+			//       already known locally). On miss fall through to
+			//       OpenAlex; the DOI might have an arxiv preprint we
+			//       can serve.
+			//
+			//   (b) caller passes an arxiv id — reverse-lookup whether
+			//       any DOI node has `doi_arxiv_id` matching the
+			//       version-stripped form. If so, redirect to the DOI
+			//       handlers; otherwise serve arxiv as before.
+			//
+			// Either shape, with `?force_arxiv=1`, bypasses (a)/(b)
+			// entirely and forces the arxiv path: (a) becomes a pure
+			// OpenAlex DOI→arxiv resolve (409 when no twin exists),
+			// (b) skips the reverse lookup and lands directly on the
+			// arxiv handlers.
 			if isDOICandidate(arxivPart) {
-				canonical, err := resolveDOIToCanonical(re.Request.Context(), doiResolver, arxivPart)
-				if err != nil {
-					if errors.Is(err, openalex.ErrDOINotFound) {
-						// LookupDOI returns false for BOTH "no DOI node in
-						// catalog" and "catalog unreachable". Distinguish
-						// via Store.Available (which attempts a cheap
-						// reconnect) so a Neo4j outage returns 503 instead
-						// of a misleading 404. Re-check Available AFTER
-						// the LookupDOI call too — Neo4j may have dropped
-						// in the narrow window between the two probes,
-						// which would otherwise show a 404 for what
-						// should be a 503 (PR #19 review TOCTOU fix).
-						if catalog.Available(re.Request.Context()) {
-							if _, ok := catalog.LookupDOI(re.Request.Context(), arxivPart); ok {
-								switch {
-								case statusKind == "markdown":
-									return markdownStatusByDOIHandler(re, rawStore, arxivPart)
-								case statusKind == "pdf":
-									return pdfStatusByDOIHandler(re, rawStore, arxivPart)
-								case action == "markdown":
-									return getMarkdownByDOIHandler(re, cfg, rawStore, converter, arxivPart)
-								case action == "pdf":
-									return getPDFByDOIHandler(re, cfg, rawStore, converter, arxivPart)
-								case action == "status":
-									return re.JSON(http.StatusOK, map[string]any{
-										"status": "available",
-										"doi":    arxivPart,
-									})
-								}
-								return re.JSON(http.StatusNotFound, map[string]string{
-									"detail": fmt.Sprintf("no GET handler for /api/papers/%s", raw),
-								})
-							}
-							// LookupDOI false-with-Available-true here means
-							// genuinely no DOI node in the catalog. But Neo4j
-							// might have dropped between Available and
-							// LookupDOI; re-probe so we don't show 404 for
-							// what should be 503.
-							if !catalog.Available(re.Request.Context()) {
-								return re.JSON(http.StatusServiceUnavailable, map[string]any{
-									"detail": "catalog unavailable (Neo4j unreachable); retry shortly",
-									"doi":    arxivPart,
-								})
-							}
-						} else {
+				// Shape (a): DOI input.
+				doi := arxivPart
+				if !forceArxiv {
+					// DOI-canonical fast path: serve from local DOI
+					// namespace when a contribution exists. Skips
+					// OpenAlex entirely (one fewer round-trip and one
+					// fewer failure mode).
+					if catalog.Available(ctx) {
+						if _, ok := catalog.LookupDOI(ctx, doi); ok {
+							applyDOICanonicalHeaders(re, requestedID, doi, "")
+							return dispatchGETDOIHandlers(re, cfg, rawStore, converter, doi, action, statusKind, raw)
+						}
+						// LookupDOI false + Available true could still
+						// be a Neo4j drop between probes — re-check so
+						// we don't show a stale 404. The OpenAlex
+						// fallback below is the real path if Available
+						// stays true.
+						if !catalog.Available(ctx) {
 							return re.JSON(http.StatusServiceUnavailable, map[string]any{
 								"detail": "catalog unavailable (Neo4j unreachable); retry shortly",
-								"doi":    arxivPart,
+								"doi":    doi,
 							})
 						}
 					}
-					return doiErrorResponse(re, arxivPart, err)
+					// catalog.Available was false: don't 503 here yet —
+					// OpenAlex may still resolve an arxiv twin we can
+					// serve as a best-effort fallback. The
+					// ErrDOINotFound branch below re-probes for the
+					// definitive 404-vs-503 split.
+				}
+				canonical, err := resolveDOIToCanonical(ctx, doiResolver, doi)
+				if err != nil {
+					if errors.Is(err, openalex.ErrDOINotFound) {
+						// No arxiv twin. Under force_arxiv this is a
+						// hard 409 (caller asked for arxiv, we have
+						// none).
+						if forceArxiv {
+							return re.JSON(http.StatusConflict, map[string]any{
+								"detail":  "DOI has no arxiv presence in OpenAlex; remove ?force_arxiv to fetch the DOI version",
+								"doi":     doi,
+								"hint":    "GET /api/papers/" + doi + "/" + actionLabel(action, statusKind),
+							})
+						}
+						// Without force_arxiv we may STILL have a local
+						// DOI node (e.g. catalog was momentarily down
+						// during the fast-path check above). Re-probe.
+						if catalog.Available(ctx) {
+							if _, ok := catalog.LookupDOI(ctx, doi); ok {
+								applyDOICanonicalHeaders(re, requestedID, doi, "")
+								return dispatchGETDOIHandlers(re, cfg, rawStore, converter, doi, action, statusKind, raw)
+							}
+							return re.JSON(http.StatusNotFound, map[string]any{
+								"detail": "DOI not found in OpenAlex and no local DOI contribution exists",
+								"doi":    doi,
+							})
+						}
+						return re.JSON(http.StatusServiceUnavailable, map[string]any{
+							"detail": "catalog unavailable (Neo4j unreachable); retry shortly",
+							"doi":    doi,
+						})
+					}
+					return doiErrorResponse(re, doi, err)
 				}
 				bareIDPostDOI = canonical
 				arxivPart = canonical
+			} else if !forceArxiv {
+				// Shape (b): arxiv input. Honour DOI canonical by
+				// looking up whether any DOI node has this arxiv id as
+				// its `doi_arxiv_id` twin. Hit → serve DOI bytes; miss
+				// → fall through to the regular arxiv path.
+				//
+				// Reverse lookup needs the BARE arxiv id (DOI nodes
+				// store doi_arxiv_id as the version-stripped form
+				// returned by openalex.ExtractArxivID).
+				if catalog.Available(ctx) {
+					if doi, ok := catalog.LookupArxivToDOI(ctx, paperassets.StripVersion(arxivPart)); ok {
+						applyDOICanonicalHeaders(re, requestedID, doi, arxivPart)
+						return dispatchGETDOIHandlers(re, cfg, rawStore, converter, doi, action, statusKind, raw)
+					}
+				}
+				// catalog down or no DOI twin: fall through to arxiv
+				// handlers. The arxiv path is independent of the
+				// catalog, so a Neo4j outage doesn't gate it.
 			}
 
 			// Latest-version inference: if the (post-DOI) id has no
@@ -199,7 +240,7 @@ func RegisterPapers(
 			// version). Applies to BOTH DOI-derived bare ids and
 			// direct-bare arxiv inputs from the caller.
 			if parsed, perr := paperassets.Parse(arxivPart); perr == nil && parsed.IsValid() && parsed.Version == "" {
-				versioned, err := resolveBareToVersioned(re.Request.Context(), arxivFetcher, arxivPart)
+				versioned, err := resolveBareToVersioned(ctx, arxivFetcher, arxivPart)
 				if err != nil {
 					return doiVersionErrorResponse(re, requestedID, arxivPart, err)
 				}
@@ -211,7 +252,7 @@ func RegisterPapers(
 			// it back to the caller via X-QAtlas-* headers + JSON
 			// body fields. See resolution.go for the contract.
 			res := computeResolution(requestedID, bareIDPostDOI, arxivPart)
-			re.Request = re.Request.WithContext(withResolution(re.Request.Context(), res))
+			re.Request = re.Request.WithContext(withResolution(ctx, res))
 
 			switch {
 			case statusKind == "markdown":
@@ -311,6 +352,99 @@ var doiPrefixRE = regexp.MustCompile(`^10\.\d{4,9}/`)
 // stricter normalizeDOI rules: max length, no control chars, etc.).
 func isDOICandidate(s string) bool {
 	return doiPrefixRE.MatchString(s)
+}
+
+// parseForceArxivQuery returns true when the request carries
+// `?force_arxiv=1` (or `=true`). This is the per-request opt-out from
+// the DOI-canonical default: with it set, the GET dispatcher serves
+// the arxiv twin even when a local DOI contribution exists; without it
+// (the default) DOI bytes win.
+//
+// Accepted truthy values: "1", "true" (case-insensitive). Anything
+// else (including absent) is false — we explicitly do NOT treat
+// `force_arxiv=0` as "force off DOI", since the absence of the
+// parameter already means that.
+func parseForceArxivQuery(re *core.RequestEvent) bool {
+	v := strings.ToLower(strings.TrimSpace(re.Request.URL.Query().Get("force_arxiv")))
+	return v == "1" || v == "true"
+}
+
+// applyDOICanonicalHeaders stamps the response with X-QAtlas-* headers
+// describing the DOI-canonical redirect, so a client that hit the
+// arxiv URL or a not-yet-normalized DOI URL learns which DOI it
+// actually got served. Always sets X-QAtlas-Resolved-Id (the DOI) and
+// X-QAtlas-Canonical-DOI (the same, in case clients filter on a
+// DOI-specific header).
+//
+// arxivTwin is non-empty only for shape (b) (caller passed an arxiv
+// id and we redirected to its DOI twin); when set, an extra
+// X-QAtlas-Defaults-Applied entry calls out the redirect and points
+// at the `?force_arxiv=1` opt-out.
+//
+// Safe to call before WriteHeader; the underlying DOI handlers stamp
+// X-QAtlas-DOI later but don't touch X-QAtlas-Resolved-Id.
+func applyDOICanonicalHeaders(re *core.RequestEvent, requestedID, doi, arxivTwin string) {
+	h := re.Response.Header()
+	if requestedID != "" {
+		h.Set("X-QAtlas-Requested-Id", requestedID)
+	}
+	h.Set("X-QAtlas-Resolved-Id", doi)
+	h.Set("X-QAtlas-Canonical-DOI", doi)
+	if arxivTwin != "" && requestedID != doi {
+		// Shape (b): arxiv → DOI redirect. Be explicit so a client
+		// parsing the header can detect the redirect cleanly.
+		h.Set("X-QAtlas-Defaults-Applied",
+			"served_as_doi_canonical (arxiv "+arxivTwin+
+				" → DOI "+doi+"; pass ?force_arxiv=1 to opt out)")
+	}
+}
+
+// dispatchGETDOIHandlers fans out to the DOI-specific GET handlers
+// based on the action + statusKind the path-parsing layer produced.
+// Centralised so both shape (a) and shape (b) of the canonical-DOI
+// redirect go through the same handler-selection logic.
+//
+// rawPath is the original "{id}/{action}" path component, used solely
+// for the 404 fallback message when an unknown action sneaks through
+// (shouldn't happen in practice but the parser leaves it observable).
+func dispatchGETDOIHandlers(
+	re *core.RequestEvent,
+	cfg *config.Config,
+	store objstore.Store,
+	converter *mineru.Converter,
+	doi, action, statusKind, rawPath string,
+) error {
+	switch {
+	case statusKind == "markdown":
+		return markdownStatusByDOIHandler(re, store, doi)
+	case statusKind == "pdf":
+		return pdfStatusByDOIHandler(re, store, doi)
+	case action == "markdown":
+		return getMarkdownByDOIHandler(re, cfg, store, converter, doi)
+	case action == "pdf":
+		return getPDFByDOIHandler(re, cfg, store, converter, doi)
+	case action == "status":
+		return re.JSON(http.StatusOK, map[string]any{
+			"status": "available",
+			"doi":    doi,
+		})
+	}
+	return re.JSON(http.StatusNotFound, map[string]string{
+		"detail": fmt.Sprintf("no GET handler for /api/papers/%s", rawPath),
+	})
+}
+
+// actionLabel renders the path-tail piece of /api/papers/<id>/<...>
+// for messages that suggest a retry without force_arxiv. Mirrors the
+// dispatcher's statusKind/action split so the hint URL is accurate.
+func actionLabel(action, statusKind string) string {
+	if statusKind != "" {
+		return statusKind + "/status"
+	}
+	if action == "" {
+		return "pdf"
+	}
+	return action
 }
 
 // normalizeIDForDispatch strips a DOI URL prefix (https://doi.org/,

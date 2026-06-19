@@ -191,6 +191,15 @@ func docNeedsMineru() {}
 // @Description registered when QATLAS_PAPER_ACCESS_ENABLED=true on the
 // @Description server (default off).
 // @Description
+// @Description Canonical resolution: a `:PaperWork` node with
+// @Description `identifier_scheme='doi'` ALWAYS wins over its arxiv
+// @Description twin when both exist — DOI is the canonical identity of
+// @Description the published version. The dispatcher serves DOI bytes
+// @Description for either id form when a DOI contribution is on file;
+// @Description pass `?force_arxiv=1` to opt out per request (DOI input
+// @Description with force_arxiv + no arxiv twin returns 409). See
+// @Description docs/reference/upload-api.md §Canonical resolution.
+// @Description
 // @Description Long-running operation semantics: on cache miss the
 // @Description server may transparently fetch the PDF from arxiv.org
 // @Description (silent_fetch) and trigger a MinerU conversion. The
@@ -202,12 +211,14 @@ func docNeedsMineru() {}
 // @Produce     plain
 // @Security    BearerAuth
 // @Param       id_or_doi path string true "arXiv canonical id with vN suffix, or a DOI (e.g. 10.1103/PhysRevLett.103.150502)"
+// @Param       force_arxiv query string false "1/true: bypass the DOI-canonical default and serve the arxiv twin (or 409 if no twin exists)"
 // @Success     200 {string} string "markdown bytes (text/markdown)"
 // @Success     202 {object} map[string]interface{} "long-running operation started; poll status_url"
 // @Failure     400 {object} map[string]string "invalid arxiv_id or DOI"
 // @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string
 // @Failure     404 {object} map[string]interface{} "DOI not in OpenAlex / not on arxiv; or paper unknown and silent fetch unavailable"
+// @Failure     409 {object} map[string]interface{} "force_arxiv requested but DOI has no arxiv twin"
 // @Failure     502 {object} map[string]interface{} "prior conversion failed inside the cooldown window, or OpenAlex upstream error"
 // @Failure     503 {object} map[string]interface{} "cache-only mode (no MinerU keys), or DOI resolution unavailable (QATLAS_OPENALEX_MAILTO unset)"
 // @Router      /api/papers/{id_or_doi}/markdown [get]
@@ -220,6 +231,10 @@ func docPaperMarkdown() {}
 // @Description never triggers a fetch. Only registered when
 // @Description QATLAS_PAPER_ACCESS_ENABLED=true on the server.
 // @Description
+// @Description Canonical resolution: same DOI-wins rule as
+// @Description /api/papers/{id_or_doi}/markdown. Pass `?force_arxiv=1`
+// @Description to query the arxiv-side status instead.
+// @Description
 // @Description Response shape always carries the agent-decision triple
 // @Description `state / pdf_ready / md_ready` plus an optional `phase`
 // @Description (fetching_pdf | converting_md | ready | error_fetching |
@@ -230,6 +245,7 @@ func docPaperMarkdown() {}
 // @Produce     json
 // @Security    BearerAuth
 // @Param       id_or_doi path string true "arXiv canonical id or DOI"
+// @Param       force_arxiv query string false "1/true: bypass DOI-canonical default"
 // @Success     200 {object} map[string]interface{} "status payload (state ∈ cached|queued|running|none|failed|cooldown|unavailable)"
 // @Failure     400 {object} map[string]string
 // @Failure     401 {object} map[string]string
@@ -246,6 +262,13 @@ func docPaperMarkdownStatus() {}
 // @Description arxiv id or DOI. Only registered when
 // @Description QATLAS_PAPER_ACCESS_ENABLED=true on the server.
 // @Description
+// @Description Canonical resolution: a DOI contribution ALWAYS wins
+// @Description over its arxiv twin when both exist — the dispatcher
+// @Description serves the DOI PDF for either id form. Pass
+// @Description `?force_arxiv=1` to opt out per request (DOI input
+// @Description without an arxiv twin then returns 409). See
+// @Description docs/reference/upload-api.md §Canonical resolution.
+// @Description
 // @Description Long-running operation semantics mirror /markdown: cache
 // @Description miss returns 202 with Operation-Location pointing at
 // @Description /pdf/status. The fetch path uses a separate semaphore
@@ -255,12 +278,14 @@ func docPaperMarkdownStatus() {}
 // @Produce     application/pdf
 // @Security    BearerAuth
 // @Param       id_or_doi path string true "arXiv canonical id with vN suffix, or a DOI"
+// @Param       force_arxiv query string false "1/true: bypass DOI-canonical default; return 409 if DOI has no arxiv twin"
 // @Success     200 {string} string "PDF bytes (application/pdf)"
 // @Success     202 {object} map[string]interface{} "silent fetch started; poll status_url"
 // @Failure     400 {object} map[string]string "invalid arxiv_id or DOI"
 // @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string
 // @Failure     404 {object} map[string]interface{} "arxiv 404 or DOI not on arxiv"
+// @Failure     409 {object} map[string]interface{} "force_arxiv requested but DOI has no arxiv twin"
 // @Failure     502 {object} map[string]interface{} "arxiv upstream error / OpenAlex upstream error"
 // @Failure     503 {object} map[string]interface{} "silent fetch disabled (no fetcher), DOI resolution unavailable"
 // @Router      /api/papers/{id_or_doi}/pdf [get]
@@ -273,10 +298,15 @@ func docPaperPDF() {}
 // @Description /markdown/status but states are restricted to the
 // @Description fetch-only flow — no convert phase. Only registered when
 // @Description QATLAS_PAPER_ACCESS_ENABLED=true.
+// @Description
+// @Description Canonical resolution: same DOI-wins rule as
+// @Description /api/papers/{id_or_doi}/pdf. Pass `?force_arxiv=1` to
+// @Description query the arxiv-side status instead.
 // @Tags        Papers
 // @Produce     json
 // @Security    BearerAuth
 // @Param       id_or_doi path string true "arXiv canonical id or DOI"
+// @Param       force_arxiv query string false "1/true: bypass DOI-canonical default"
 // @Success     200 {object} map[string]interface{} "status payload (state ∈ cached|queued|running|none|failed|unavailable)"
 // @Failure     400 {object} map[string]string
 // @Failure     401 {object} map[string]string
