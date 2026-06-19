@@ -103,6 +103,7 @@ func (s *Store) Claim(ctx context.Context, opts CreateOptions) (*Claim, error) {
 	rows, err := s.nc.ExecuteWrite(ctx, `
 		MATCH (p:PaperWork {arxiv_id: $arxiv_id})
 		WHERE p.has_pdf = true AND coalesce(p.has_md, false) <> true
+		  AND (p.identifier_scheme IS NULL OR p.identifier_scheme <> 'doi')
 		// Force a write-lock on p before evaluating the claim predicate.
 		// Without this, two concurrent claim txns both read the pre-write
 		// snapshot (no active claim), both pass the guard, and both SET ->
@@ -151,6 +152,7 @@ func (s *Store) Claim(ctx context.Context, opts CreateOptions) (*Claim, error) {
 func (s *Store) classifyClaimFailure(ctx context.Context, arxivID string) error {
 	rows, err := s.nc.ExecuteReadParams(ctx, `
 		MATCH (p:PaperWork {arxiv_id: $arxiv_id})
+		WHERE p.identifier_scheme IS NULL OR p.identifier_scheme <> 'doi'
 		RETURN coalesce(p.has_pdf, false) AS has_pdf,
 		       coalesce(p.has_md, false) AS has_md,
 		       p.claim_id AS claim_id,
@@ -189,6 +191,7 @@ func (s *Store) ReleaseClaim(ctx context.Context, arxivID, claimID string) (bool
 	rows, err := s.nc.ExecuteWrite(ctx, `
 		MATCH (p:PaperWork {arxiv_id: $arxiv_id})
 		WHERE p.claim_id = $claim_id
+		  AND (p.identifier_scheme IS NULL OR p.identifier_scheme <> 'doi')
 		REMOVE p.claimed_by_login, p.claim_expires_at, p.claim_id
 		RETURN p.arxiv_id AS arxiv_id`,
 		map[string]any{"arxiv_id": id.ArxivID, "claim_id": claimID})
@@ -204,6 +207,7 @@ func (s *Store) ReleaseClaim(ctx context.Context, arxivID, claimID string) (bool
 		MATCH (p:PaperWork {arxiv_id: $arxiv_id})
 		WHERE p.claim_id IS NOT NULL
 		  AND p.claim_expires_at >= datetime()
+		  AND (p.identifier_scheme IS NULL OR p.identifier_scheme <> 'doi')
 		RETURN p.claim_id AS claim_id`,
 		map[string]any{"arxiv_id": id.ArxivID})
 	if err != nil {

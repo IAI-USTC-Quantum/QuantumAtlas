@@ -24,7 +24,9 @@ type Stats struct {
 
 // QueryStats returns aggregate catalog counters. Returns
 // ErrCatalogUnavailable when Neo4j is unreachable so the handler can
-// degrade to {available:false}.
+// degrade to {available:false}. Excludes DOI-indexed nodes (those with
+// identifier_scheme='doi') so published-version contributions don't
+// pollute the arxiv-paper dashboard counts. (PR #19 follow-up.)
 func (s *Store) QueryStats(ctx context.Context) (Stats, error) {
 	var st Stats
 	if !s.ensure(ctx) {
@@ -32,6 +34,7 @@ func (s *Store) QueryStats(ctx context.Context) (Stats, error) {
 	}
 	rows, err := s.nc.ExecuteReadParams(ctx, `
 		MATCH (p:PaperWork)
+		WHERE p.identifier_scheme IS NULL OR p.identifier_scheme <> 'doi'
 		RETURN
 		  count(p) AS total,
 		  count(CASE WHEN p.has_pdf = true THEN 1 END) AS has_pdf,
