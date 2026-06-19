@@ -83,6 +83,20 @@ func ValidateDOI(v string) (string, bool) {
 	if !doiShapeRE.MatchString(norm) {
 		return "", false
 	}
+	// Reject DOIs whose suffix contains a literal "__": the storage
+	// stem encoding in DOISafeStem maps "/" → "__", so suffixes that
+	// already carry "__" cannot round-trip through DOIDecodeStem and
+	// would manifest the same phantom-node bug that PR #19 review-2
+	// (commit 5b84111) fixed for nested-slash DOIs. Concretely, the
+	// suffix "foo__bar" would store as "foo__bar" and decode back to
+	// "foo/bar", desynchronising the storage key from the node key
+	// the upsert path actually wrote. Rejecting upfront is safer than
+	// silently corrupting the catalog graph; the registrant
+	// ("10.\d{4,9}") cannot contain "__" per doiShapeRE so we only
+	// guard the suffix.
+	if i := strings.IndexByte(norm, '/'); i >= 0 && strings.Contains(norm[i+1:], "__") {
+		return "", false
+	}
 	for _, r := range norm {
 		if r < 0x20 || r == 0x7f {
 			return "", false

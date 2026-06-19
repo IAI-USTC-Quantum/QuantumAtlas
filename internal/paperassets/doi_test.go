@@ -39,6 +39,14 @@ func TestValidateDOI(t *testing.T) {
 		"10./missing-reg",    // no registrant digits
 		"10.1103/",           // empty suffix
 		"10.1103",            // no slash
+		// Suffix containing literal "__" — DOISafeStem encodes "/"
+		// → "__", so a suffix that already carries "__" would not
+		// round-trip and would regenerate the PR #19 phantom-node
+		// bug (sync's reverse path would synthesize a different
+		// node key than the upsert path wrote).
+		"10.5555/foo__bar",
+		"10.5555/double__under__score",
+		"10.5555/foo/bar__baz",
 	}
 	for _, v := range invalid {
 		if norm, ok := ValidateDOI(v); ok {
@@ -50,6 +58,51 @@ func TestValidateDOI(t *testing.T) {
 func TestValidateDOIRejectsControlChars(t *testing.T) {
 	if _, ok := ValidateDOI("10.1103/foo\x00bar"); ok {
 		t.Fatal("ValidateDOI should reject control chars")
+	}
+}
+
+// TestValidateDOIRejectsDoubleUnderscoreSuffix locks in the PR #19
+// review-3 fix: because DOISafeStem encodes "/" → "__" and DOIDecodeStem
+// inverts "__" → "/", any DOI whose suffix already carries a literal
+// "__" cannot round-trip through the storage-key ↔ node-key path. If
+// such a DOI ever reached the upload pipeline it would regenerate the
+// same phantom-node bug commit 5b84111 fixed for nested-slash DOIs —
+// UpsertPDFByDOI would write node key "doi:10.x/foo__bar" while sync's
+// reverse path would synthesize "doi:10.x/foo/bar", and the MERGE in
+// sync.go would create a phantom :PaperWork on every run. Rejecting at
+// the validate boundary is safer than silently corrupting the graph.
+//
+// (DOIs with "__" do occur in the wild — some publishers use "__" as an
+// internal separator — but uniqueness of the storage-stem encoding is
+// the stronger constraint here. The alternative, swapping in a properly
+// bijective encoding like percent-escape, would invalidate every
+// already-stored storage key.)
+func TestValidateDOIRejectsDoubleUnderscoreSuffix(t *testing.T) {
+	cases := []string{
+		"10.5555/foo__bar",
+		"10.5555/double__under__score",
+		"10.5555/foo/bar__baz",                          // nested slash + literal __ together
+		"https://doi.org/10.5555/foo__bar",              // URL-prefixed form
+		"10.1103/PhysRevLett.123__supplement",           // realistic-looking suffix
+	}
+	for _, doi := range cases {
+		if norm, ok := ValidateDOI(doi); ok {
+			t.Errorf("ValidateDOI(%q) = (%q,true), want invalid (suffix contains \"__\" which would break DOISafeStem round-trip)", doi, norm)
+		}
+	}
+
+	// Sanity: DOIs with "__" ONLY in the registrant are impossible
+	// (doiShapeRE forbids it), and DOIs without "__" in the suffix
+	// still validate fine.
+	stillValid := []string{
+		"10.1103/PhysRevLett.123.070501", // no underscores
+		"10.1234/foo_bar",                // single underscore is fine
+		"10.1234/foo/bar",                // nested slash, no "__"
+	}
+	for _, doi := range stillValid {
+		if _, ok := ValidateDOI(doi); !ok {
+			t.Errorf("ValidateDOI(%q) rejected a DOI that should still be valid (only suffix-\"__\" should be rejected)", doi)
+		}
 	}
 }
 
