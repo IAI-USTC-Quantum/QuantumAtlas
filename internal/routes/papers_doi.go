@@ -400,13 +400,15 @@ func uploadMinerUByDOIHandler(
 			"markdown_sha256":      mdSha,
 			"markdown_unchanged":   true,
 			"image_count":          imageCount,
-			"images_zip_path":      imgZipKey,
-			"images_zip_unchanged": true,
 			"zip_bytes":            zipSize,
 			"zip_sha256":           zipSha,
 			"source":               nil,
 			"uploaded_by":          nil,
 			"overwritten":          overwrite,
+		}
+		if imageCount > 0 {
+			resp["images_zip_path"] = imgZipKey
+			resp["images_zip_unchanged"] = true
 		}
 		if source != "" {
 			resp["source"] = source
@@ -451,14 +453,16 @@ func uploadMinerUByDOIHandler(
 		"markdown_sha256":      mdSha,
 		"markdown_unchanged":   mdOutcome.kind == outcomeUnchanged,
 		"image_count":          imageCount,
-		"images_zip_path":      imgZipKey,
-		"images_zip_unchanged": imgZipUnchanged,
 		"zip_bytes":            zipSize,
 		"zip_sha256":           zipSha,
 		"source":               nil,
 		"uploaded_by":          nil,
 		"overwritten":          overwrite,
 		"verification":         verificationBody(verification),
+	}
+	if imageCount > 0 {
+		resp["images_zip_path"] = imgZipKey
+		resp["images_zip_unchanged"] = imgZipUnchanged
 	}
 	if source != "" {
 		resp["source"] = source
@@ -501,10 +505,6 @@ func verifyDOIMetadata(ctx context.Context, resolver *openalex.Resolver, doi, ex
 		return papers.DOIVerification{Status: papers.VerifyUnavailable}
 	}
 	v := papers.DOIVerification{Title: meta.Title, Authors: meta.Authors, ArxivID: meta.ArxivID}
-	if expectedTitle == "" && len(expectedAuthors) == 0 {
-		v.Status = papers.VerifyRecorded
-		return v
-	}
 	titleOK := expectedTitle == "" || titlesMatch(expectedTitle, meta.Title)
 	authorsOK := len(expectedAuthors) == 0 || authorsMatch(expectedAuthors, meta.Authors)
 	if titleOK && authorsOK {

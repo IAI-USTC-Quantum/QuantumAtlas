@@ -94,6 +94,11 @@ func RegisterPapers(
 		// redistribute markdown bytes".
 		if cfg.PaperAccessEnabled {
 			arxivPart, action := splitPapersPath(raw)
+			// Normalize DOI URL prefixes (https://doi.org/, doi:, etc.)
+			// so web UIs that paste a full link are still dispatched to
+			// the DOI handlers. Pass through unchanged for non-DOI ids
+			// (NormalizeDOI lower-cases; arxiv ids are case-sensitive).
+			arxivPart = normalizeIDForDispatch(arxivPart)
 			requestedID := arxivPart
 			bareIDPostDOI := arxivPart
 
@@ -116,15 +121,32 @@ func RegisterPapers(
 				canonical, err := resolveDOIToCanonical(re.Request.Context(), doiResolver, arxivPart)
 				if err != nil {
 					if errors.Is(err, openalex.ErrDOINotFound) {
-						if _, ok := catalog.LookupDOI(re.Request.Context(), arxivPart); ok {
-							switch action {
-							case "markdown":
-								return getMarkdownByDOIHandler(re, cfg, rawStore, converter, arxivPart)
-							case "pdf":
-								return getPDFByDOIHandler(re, cfg, rawStore, converter, arxivPart)
+						// LookupDOI returns false for BOTH "no DOI node in
+						// catalog" and "catalog unreachable". Distinguish
+						// via Store.Available (which attempts a cheap
+						// reconnect) so a Neo4j outage returns 503 instead
+						// of a misleading 404.
+						if catalog.Available(re.Request.Context()) {
+							if _, ok := catalog.LookupDOI(re.Request.Context(), arxivPart); ok {
+								switch action {
+								case "markdown":
+									return getMarkdownByDOIHandler(re, cfg, rawStore, converter, arxivPart)
+								case "pdf":
+									return getPDFByDOIHandler(re, cfg, rawStore, converter, arxivPart)
+								case "status":
+									return re.JSON(http.StatusOK, map[string]any{
+										"status": "available",
+										"doi":    arxivPart,
+									})
+								}
+								return re.JSON(http.StatusNotFound, map[string]string{
+									"detail": fmt.Sprintf("no GET handler for /api/papers/%s", raw),
+								})
 							}
-							return re.JSON(http.StatusNotFound, map[string]string{
-								"detail": fmt.Sprintf("no GET handler for /api/papers/%s", raw),
+						} else {
+							return re.JSON(http.StatusServiceUnavailable, map[string]any{
+								"detail": "catalog unavailable (Neo4j unreachable); retry shortly",
+								"doi":    arxivPart,
 							})
 						}
 					}
@@ -178,6 +200,9 @@ func RegisterPapers(
 	se.Router.POST("/api/papers/{path...}", scopeGuard(enforcer, "papers", "write", func(re *core.RequestEvent) error {
 		raw := re.Request.PathValue("path")
 		arxiv, action := splitPapersPath(raw)
+		// Normalize DOI URL prefixes (https://doi.org/, doi:, etc.)
+		// so the DOI-vs-arxiv dispatch below picks up pasted links.
+		arxiv = normalizeIDForDispatch(arxiv)
 		switch action {
 		case "upload-pdf":
 			if isDOICandidate(arxiv) {
@@ -254,6 +279,34 @@ var doiPrefixRE = regexp.MustCompile(`^10\.\d{4,9}/`)
 // stricter normalizeDOI rules: max length, no control chars, etc.).
 func isDOICandidate(s string) bool {
 	return doiPrefixRE.MatchString(s)
+}
+
+// normalizeIDForDispatch strips a DOI URL prefix (https://doi.org/,
+// doi:, etc.) from s so the DOI-vs-arxiv dispatch below picks up
+// pasted full links. Crucially, it only normalizes when s looks
+// DOI-shaped (has a URL prefix OR already matches doiPrefixRE) —
+// arxiv ids are case-sensitive and NormalizeDOI lower-cases, so
+// passing an arxiv id through NormalizeDOI would corrupt it. Non-DOI
+// input is returned unchanged.
+func normalizeIDForDispatch(s string) string {
+	if s == "" {
+		return s
+	}
+	// Quick check: if s already matches the bare DOI prefix shape,
+	// normalize (it's idempotent — no prefix to strip, but ensures
+	// lower-casing and trimming).
+	if doiPrefixRE.MatchString(s) {
+		return paperassets.NormalizeDOI(s)
+	}
+	// Check for a DOI URL prefix (https://doi.org/, doi:, etc.) —
+	// if found, normalize to extract the bare DOI.
+	lower := strings.ToLower(s)
+	for _, p := range []string{"https://doi.org/", "http://doi.org/", "https://dx.doi.org/", "http://dx.doi.org/", "doi.org/", "dx.doi.org/", "doi:"} {
+		if strings.HasPrefix(lower, p) {
+			return paperassets.NormalizeDOI(s)
+		}
+	}
+	return s
 }
 
 // resolveDOIToCanonical wraps Resolver.ResolveDOI with the additional
