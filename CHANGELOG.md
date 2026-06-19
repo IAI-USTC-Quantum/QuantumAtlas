@@ -4,6 +4,41 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.21.0a1 (2026-06-20)
+
+### BREAKING CHANGE
+
+- `qatlas upload` and `qatlas mineru` no longer exist;
+use `qatlas contrib pdf` and `qatlas contrib mineru` (DOI direct-zip
+MinerU upload is `qatlas contrib mineru <DOI> --zip`).
+
+### Feat
+
+- **papers**: 支持 DOI 上传已发表论文（含 OpenAlex 元数据校验）
+
+### Fix
+
+- **papers,routes,client**: drop contributor metadata override on DOI uploads
+- **papers,routes**: address PR #19 review-5 — sync SET p.doi + 3-state lookup
+- **routes,papers,openalex**: address PR #19 review-4 — strict-mode bypass + DOI canonical
+- **paperassets**: address PR #19 review-3 — reject DOIs with literal __ in suffix
+- **papers,routes,client**: address PR #19 review-2 — nested-slash DOI phantom, status routing, mineru DOI CLI
+- **papers,openalex,routes**: address PR #19 review — DOI sync phantom nodes, prefix dup, ctx-cancel poisoning
+- **client**: add --title/--authors/--verify to upload mineru for DOI verification
+- **routes**: omit images_zip_path from MinerU response when no images
+- **routes**: distinguish catalog-unavailable from not-found on DOI GET
+- **papers**: exclude DOI nodes from catalog stats + claim queries
+- **papers**: route DOI stems in sync through DOINodeKey to avoid phantom arxiv-id nodes
+- **papers**: address PR #19 code-review findings for DOI upload
+- **ci**: also run pytest on the search/ package and its tests
+
+### Refactor
+
+- **client**: remove deprecated qatlas upload / qatlas mineru aliases
+- **routes**: remove unreachable recorded-status code in verifyDOIMetadata
+- **openalex**: use paperassets.NormalizeDOI and dedupe DOI prefix list
+- **paperassets**: export DOIURLPrefixes as canonical list
+
 ## v0.21.0a0 (2026-06-07)
 
 ### BREAKING CHANGE
