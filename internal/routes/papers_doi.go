@@ -501,10 +501,6 @@ func verifyDOIMetadata(ctx context.Context, resolver *openalex.Resolver, doi, ex
 		return papers.DOIVerification{Status: papers.VerifyUnavailable}
 	}
 	v := papers.DOIVerification{Title: meta.Title, Authors: meta.Authors, ArxivID: meta.ArxivID}
-	if expectedTitle == "" && len(expectedAuthors) == 0 {
-		v.Status = papers.VerifyRecorded
-		return v
-	}
 	titleOK := expectedTitle == "" || titlesMatch(expectedTitle, meta.Title)
 	authorsOK := len(expectedAuthors) == 0 || authorsMatch(expectedAuthors, meta.Authors)
 	if titleOK && authorsOK {
