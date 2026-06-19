@@ -96,14 +96,7 @@ def cmd_upload_pdf(args: argparse.Namespace) -> int:
     if getattr(args, "verify", None) == "strict":
         params["verify"] = "strict"
 
-    # DOI verification fields (multipart form fields, not files). Sent
-    # only when supplied; the server ignores them on the arXiv path and
-    # cross-checks them against OpenAlex metadata on the DOI path.
-    data: dict[str, str] = {}
-    if getattr(args, "title", None):
-        data["title"] = args.title
-    if getattr(args, "authors", None):
-        data["authors"] = args.authors
+    data = _doi_verify_form_data(args)
 
     base_url = base_url_from_args(args)
     # DOI suffixes can contain '/', '?', '#', etc. — percent-encode
@@ -127,9 +120,7 @@ def cmd_upload_pdf(args: argparse.Namespace) -> int:
 
     if not response.ok:
         return _http_error_exit(response)
-    verification = response.headers.get("X-QAtlas-Verification")
-    if verification:
-        print(f"DOI metadata verification: {verification}", file=sys.stderr)
+    _emit_verification_header(response)
     print_json(response.json())
     return 0
 
@@ -159,6 +150,10 @@ def cmd_upload_mineru(args: argparse.Namespace) -> int:
         params["overwrite"] = "true"
     if args.source:
         params["source"] = args.source
+    if getattr(args, "verify", None) == "strict":
+        params["verify"] = "strict"
+
+    data = _doi_verify_form_data(args)
 
     base_url = base_url_from_args(args)
     # DOI suffixes can contain '/', '?', '#', etc. — percent-encode
@@ -169,6 +164,7 @@ def cmd_upload_mineru(args: argparse.Namespace) -> int:
         response = requests.post(
             url,
             files=files,
+            data=data or None,
             params=params,
             headers={**auth_headers(args), **client_version_headers()},
             timeout=args.request_timeout,
@@ -181,6 +177,7 @@ def cmd_upload_mineru(args: argparse.Namespace) -> int:
 
     if not response.ok:
         return _http_error_exit(response)
+    _emit_verification_header(response)
     print_json(response.json())
     return 0
 
@@ -199,18 +196,13 @@ def _add_arxiv_arg(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def build_pdf_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="qatlas upload pdf",
-        description="Upload a paper PDF to the server (by arXiv ID or DOI).",
-    )
-    _add_arxiv_arg(parser)
-    parser.add_argument("--pdf", required=True, help="Path to the local PDF file")
-    parser.add_argument(
-        "--overwrite",
-        action="store_true",
-        help="Replace existing PDF if present on the server",
-    )
+def _add_doi_verify_args(parser: argparse.ArgumentParser) -> None:
+    """Add --title / --authors / --verify shared by the DOI-capable uploaders.
+
+    These flags are ignored on arXiv uploads (the server's arXiv path doesn't
+    cross-check upstream metadata) and honoured on the DOI path (where the
+    server cross-checks them against OpenAlex).
+    """
     parser.add_argument(
         "--title",
         help=(
@@ -234,6 +226,49 @@ def build_pdf_parser() -> argparse.ArgumentParser:
             "still uploads; 'strict' rejects a mismatch / unknown DOI with 409."
         ),
     )
+
+
+def _doi_verify_form_data(args: argparse.Namespace) -> dict[str, str]:
+    """Build the multipart form fields (title / authors) for the DOI path.
+
+    Returns an empty dict when the caller supplied neither; callers should
+    pass `data=data or None` so the multipart body is omitted entirely for
+    arXiv uploads.
+    """
+    data: dict[str, str] = {}
+    if getattr(args, "title", None):
+        data["title"] = args.title
+    if getattr(args, "authors", None):
+        data["authors"] = args.authors
+    return data
+
+
+def _emit_verification_header(response: requests.Response) -> None:
+    """Print the X-QAtlas-Verification header (if present) to stderr.
+
+    The server emits this on the DOI path to tell the caller what the
+    metadata cross-check decided (matched / mismatch / unknown-DOI). It's
+    useful to surface because the JSON body only carries the upload status;
+    the verification result is purely a response-header signal.
+    """
+    verification = response.headers.get("X-QAtlas-Verification")
+    if verification:
+        print(f"DOI metadata verification: {verification}", file=sys.stderr)
+
+
+def build_pdf_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="qatlas upload pdf",
+        description="Upload a paper PDF to the server (by arXiv ID or DOI).",
+    )
+    _add_arxiv_arg(parser)
+    parser.add_argument("--pdf", required=True, help="Path to the local PDF file")
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Replace existing PDF if present on the server",
+    )
+    _add_doi_verify_args(parser)
     add_common_http_args(parser)
     parser.set_defaults(func=cmd_upload_pdf)
     return parser
@@ -243,9 +278,11 @@ def build_mineru_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="qatlas upload mineru",
         description=(
-            "Upload a MinerU result zip (full.md + images/*) for a paper. "
-            "The server unzips and stores the markdown + every image under "
-            "their respective per-kind buckets."
+            "Upload a MinerU result zip (full.md + images/*) for a paper "
+            "(by arXiv ID or DOI). The server unzips and stores the markdown "
+            "+ every image under their respective per-kind buckets. "
+            "DOI uploads honour --title / --authors / --verify for OpenAlex "
+            "metadata cross-checking (arXiv uploads ignore them)."
         ),
     )
     _add_arxiv_arg(parser)
@@ -269,6 +306,7 @@ def build_mineru_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Replace existing markdown / images if present on the server",
     )
+    _add_doi_verify_args(parser)
     add_common_http_args(parser)
     parser.set_defaults(func=cmd_upload_mineru)
     return parser
