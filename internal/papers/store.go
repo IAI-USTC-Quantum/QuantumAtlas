@@ -76,6 +76,7 @@ func (s *Store) NeedsMineru(ctx context.Context, limit int) ([]NeedsMineruRow, e
 		MATCH (p:PaperWork)
 		WHERE p.has_pdf = true AND coalesce(p.has_md, false) = false
 		  AND (p.claim_expires_at IS NULL OR p.claim_expires_at < datetime())
+		  AND (p.identifier_scheme IS NULL OR p.identifier_scheme <> 'doi')
 		RETURN p.arxiv_id AS arxiv_id, p.yymm AS yymm,
 		       p.pdf_path AS pdf_path, p.pdf_size AS pdf_size,
 		       p.pdf_uploaded_at AS pdf_uploaded_at

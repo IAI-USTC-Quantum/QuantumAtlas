@@ -66,8 +66,8 @@ func NormalizeDOI(v string) string {
 // ValidateDOI normalizes input and reports whether it is a syntactically
 // valid DOI. Returns the normalized bare DOI and true on success, or
 // ("", false) for invalid input (the caller emits the 400). Rejects
-// over-length input and control characters that could break path /
-// header construction.
+// over-length input, control characters, and non-ASCII bytes that could
+// break path / header construction.
 func ValidateDOI(v string) (string, bool) {
 	norm := NormalizeDOI(v)
 	if norm == "" || len(norm) > MaxDOILen {
@@ -78,6 +78,13 @@ func ValidateDOI(v string) (string, bool) {
 	}
 	for _, r := range norm {
 		if r < 0x20 || r == 0x7f {
+			return "", false
+		}
+		if r > 0x7f {
+			// Real DOIs per the DOI Handbook are ASCII; non-ASCII
+			// runelets (U+00AD soft-hyphen, U+FEFF BOM, etc.) pass
+			// the control-char check but risk URL building + header
+			// injection.
 			return "", false
 		}
 	}

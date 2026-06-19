@@ -303,6 +303,10 @@ func TestNormalizeDOI(t *testing.T) {
 		{"simple", "10.1103/PhysRevLett.103.150502", "10.1103/physrevlett.103.150502", false},
 		{"https doi.org prefix stripped", "https://doi.org/10.1103/abc", "10.1103/abc", false},
 		{"http doi.org prefix stripped", "http://doi.org/10.1103/abc", "10.1103/abc", false},
+		{"https dx.doi.org prefix stripped", "https://dx.doi.org/10.1103/abc", "10.1103/abc", false},
+		{"http dx.doi.org prefix stripped", "http://dx.doi.org/10.1103/abc", "10.1103/abc", false},
+		{"bare dx.doi.org prefix stripped", "dx.doi.org/10.1103/abc", "10.1103/abc", false},
+		{"bare doi.org prefix stripped", "doi.org/10.1103/abc", "10.1103/abc", false},
 		{"doi: prefix stripped", "doi:10.1103/abc", "10.1103/abc", false},
 		{"upper-case lowered", "10.1103/AbC", "10.1103/abc", false},
 		{"whitespace trimmed", "  10.1103/abc  ", "10.1103/abc", false},
@@ -312,6 +316,8 @@ func TestNormalizeDOI(t *testing.T) {
 		{"empty suffix", "10.1103/", "", true},
 		{"too long", strings.Repeat("a", 300), "", true},
 		{"control char", "10.1103/ab\x00c", "", true},
+		{"non-ASCII soft-hyphen", "10.1103/ab\xc2\xadc", "", true},
+		{"non-ASCII BOM", "10.1103/\xef\xbb\xbfabc", "", true},
 	}
 	for _, tc := range cases {
 		tc := tc

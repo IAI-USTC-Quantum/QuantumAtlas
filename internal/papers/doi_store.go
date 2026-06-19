@@ -56,6 +56,37 @@ type DOIVerification struct {
 // identity. Exported so handlers/tests can assert on the stored key.
 func DOINodeKey(doi string) string { return "doi:" + doi }
 
+// LookupDOI returns the catalog node's primary key (the synthetic
+// "doi:<doi>" string) when a DOI contribution has been recorded
+// against the given DOI. Returns ("", false) for a missing node or
+// when Neo4j is unreachable (ErrCatalogUnavailable surfaces to the
+// caller; treat as "unknown" not "not found").
+//
+// Used by the GET /api/papers/<doi>/markdown route: when OpenAlex has
+// no arxiv presence for the DOI (ResolveDOI → ErrDOINotFound) but a
+// DOI-only :PaperWork node already exists in the catalog, the request
+// can be served from local storage using the synthetic key as the
+// bare-id. The synthetic key already matches the
+// "<kind>/doi/<reg>/<suffix>" bucket layout used by UpsertPDFByDOI.
+func (s *Store) LookupDOI(ctx context.Context, doi string) (string, bool) {
+	if !s.ensure(ctx) {
+		return "", false
+	}
+	norm, ok := paperassets.ValidateDOI(doi)
+	if !ok {
+		return "", false
+	}
+	rows, err := s.nc.ExecuteReadParams(ctx, `
+		MATCH (p:PaperWork {doi: $doi})
+		WHERE p.identifier_scheme = 'doi'
+		RETURN p.arxiv_id AS arxiv_id
+		LIMIT 1`, map[string]any{"doi": norm})
+	if err != nil || len(rows) == 0 {
+		return "", false
+	}
+	return asString(rows[0]["arxiv_id"]), true
+}
+
 // UpsertPDFByDOI is the DOI-indexed analogue of UpsertPDF: records a PDF
 // contributed against a DOI (a published version that may have no arXiv
 // preprint). Creates the node if missing, is idempotent, and stores the

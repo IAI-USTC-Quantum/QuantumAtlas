@@ -142,7 +142,8 @@ type Resolver struct {
 
 type cacheEntry struct {
 	canonical string // empty for negative cache
-	err       error  // ErrDOINotFound when negative
+	meta      Metadata
+	err       error // ErrDOINotFound when negative
 	expiresAt time.Time
 }
 
@@ -258,10 +259,15 @@ type Metadata struct {
 // point at a published version that never had an arXiv id.
 //
 // Reuses the same DOI normalization/validation, HTTP client, polite-pool
-// mailto, and singleflight coalescing as ResolveDOI (keyed under a
-// "meta:" namespace so the two never share a cache slot). Returns
-// ErrNotConfigured when no mailto is set, ErrInvalidDOI for malformed
-// input, ErrDOINotFound on a 404, ErrUpstream on transport failures.
+// mailto, singleflight coalescing, and in-memory LRU as ResolveDOI.
+// Results are cached under a "meta:<doi>" key (so a metadata lookup and
+// a ResolveDOI for the same DOI occupy two distinct slots and never
+// collide): positives for PositiveTTL, ErrDOINotFound for NegativeTTL,
+// transient errors not at all. This matters because a contributor often
+// uploads PDF then MinerU for the same DOI within minutes — the second
+// upload should not re-hit OpenAlex. Returns ErrNotConfigured when no
+// mailto is set, ErrInvalidDOI for malformed input, ErrDOINotFound on a
+// 404, ErrUpstream on transport failures.
 func (r *Resolver) LookupMetadata(ctx context.Context, doi string) (Metadata, error) {
 	if !r.enabled {
 		return Metadata{}, ErrNotConfigured
@@ -270,17 +276,36 @@ func (r *Resolver) LookupMetadata(ctx context.Context, doi string) (Metadata, er
 	if err != nil {
 		return Metadata{}, err
 	}
-	result, err, _ := r.sf.Do("meta:"+norm, func() (any, error) {
-		work, ferr := r.fetchWork(ctx, norm)
+	key := "meta:" + norm
+	if v, ok := r.cacheGet(key); ok {
+		return v.meta, v.err
+	}
+	// Detach from caller context so cancellation of the first caller
+	// doesn't poison coalesced waiters.
+	detachedCtx := context.WithoutCancel(ctx)
+	result, err, _ := r.sf.Do(key, func() (any, error) {
+		work, ferr := r.fetchWork(detachedCtx, norm)
 		if ferr != nil {
-			return Metadata{}, ferr
+			// Negative-cache only ErrDOINotFound (a DOI absent from
+			// OpenAlex won't appear within seconds); transient upstream
+			// errors stay uncached so the next caller can retry.
+			if errors.Is(ferr, ErrDOINotFound) {
+				r.cachePut(key, cacheEntry{
+					meta:      Metadata{DOI: norm},
+					err:       ferr,
+					expiresAt: r.now().Add(r.cfg.NegativeTTL),
+				})
+			}
+			return Metadata{DOI: norm}, ferr
 		}
-		return Metadata{
+		meta := Metadata{
 			DOI:     norm,
 			Title:   strings.TrimSpace(work.Title),
 			Authors: AuthorNames(work),
 			ArxivID: ExtractArxivID(work),
-		}, nil
+		}
+		r.cachePut(key, cacheEntry{meta: meta, expiresAt: r.now().Add(r.cfg.PositiveTTL)})
+		return meta, nil
 	})
 	if err != nil {
 		return Metadata{DOI: norm}, err
@@ -300,11 +325,15 @@ func normalizeDOI(in string, maxLen int) (string, error) {
 		return "", fmt.Errorf("%w: exceeds %d chars", ErrInvalidDOI, maxLen)
 	}
 	v = strings.ToLower(v)
-	// Strip common URL prefixes contributors paste.
+	// Strip common URL prefixes contributors paste. Keep in sync with
+	// paperassets.doiURLPrefixes so both layers accept the same inputs.
 	for _, prefix := range []string{
 		"https://doi.org/",
 		"http://doi.org/",
+		"https://dx.doi.org/",
+		"http://dx.doi.org/",
 		"doi.org/",
+		"dx.doi.org/",
 		"doi:",
 	} {
 		if strings.HasPrefix(v, prefix) {
@@ -322,11 +351,16 @@ func normalizeDOI(in string, maxLen int) (string, error) {
 	if slash == len(v)-1 {
 		return "", fmt.Errorf("%w: empty suffix", ErrInvalidDOI)
 	}
-	// Reject control chars (anything < 0x20 or 0x7f) that would break
-	// URL building or risk header injection.
+	// Reject control chars (anything < 0x20 or 0x7f) and non-ASCII
+	// runelets (Unicode non-printables such as U+00AD soft-hyphen or
+	// U+FEFF BOM) that would break URL building or risk header
+	// injection. Real DOIs per the DOI Handbook are always ASCII.
 	for _, r := range v {
 		if r < 0x20 || r == 0x7f {
 			return "", fmt.Errorf("%w: control character in DOI", ErrInvalidDOI)
+		}
+		if r > 0x7f {
+			return "", fmt.Errorf("%w: non-ASCII character in DOI", ErrInvalidDOI)
 		}
 	}
 	return v, nil
@@ -413,11 +447,16 @@ func (r *Resolver) cacheGet(key string) (cacheEntry, bool) {
 }
 
 // cachePut inserts (or refreshes) an entry, evicting the oldest when
-// at capacity.
+// at capacity. When the key already exists, it is moved to the tail
+// (most-recently-used position) to preserve true LRU semantics.
 func (r *Resolver) cachePut(key string, e cacheEntry) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, exists := r.cache[key]; !exists {
+	if _, exists := r.cache[key]; exists {
+		// Move existing key to tail (most-recently-used).
+		r.evictFromOrder(key)
+		r.order = append(r.order, key)
+	} else {
 		// New key — track in order. Evict oldest if at capacity.
 		if len(r.cache) >= r.cfg.MaxCacheSize {
 			oldest := r.order[0]

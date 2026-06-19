@@ -24,6 +24,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
@@ -105,12 +106,22 @@ func uploadPDFByDOIHandler(
 		})
 	}
 
-	// DOI metadata verification (record always; block only under strict).
+	// DOI metadata verification.
+	//
+	// Timing is mode-dependent so we never pay an OpenAlex round-trip
+	// for a pointless upload:
+	//   - strict verifies BEFORE the write so a mismatch blocks storage;
+	//   - warn verifies AFTER the write, and only when bytes actually
+	//     changed, so a no-op re-upload (sha matches) skips OpenAlex
+	//     entirely — the catalog already holds the prior verification.
 	expectedTitle := strings.TrimSpace(re.Request.FormValue("title"))
 	expectedAuthors := parseAuthorsForm(re.Request.FormValue("authors"))
-	verification := verifyDOIMetadata(ctx, resolver, doi, expectedTitle, expectedAuthors)
-	if rejErr := strictReject(strict, verification.Status); rejErr != nil {
-		return re.JSON(rejErr.Status, doiVerificationRejectBody(rejErr, doi, verification, expectedTitle, expectedAuthors))
+	var verification papers.DOIVerification
+	if strict {
+		verification = verifyDOIMetadata(ctx, resolver, doi, expectedTitle, expectedAuthors)
+		if rejErr := strictReject(verification.Status); rejErr != nil {
+			return re.JSON(rejErr.Status, doiVerificationRejectBody(rejErr, doi, verification, expectedTitle, expectedAuthors))
+		}
 	}
 
 	pdfOutcome, err := uploadOne(ctx, store, pdfKey, pdfStaged, "application/pdf", overwrite, "PDF")
@@ -134,7 +145,36 @@ func uploadPDFByDOIHandler(
 	if cfg.UserHeader != "" {
 		requester = re.Request.Header.Get(cfg.UserHeader)
 	}
-	overallUnchanged := pdfOutcome.kind == outcomeUnchanged
+
+	if pdfOutcome.kind == outcomeUnchanged {
+		// Identical bytes already stored; the catalog node — including
+		// any prior verification — is unchanged. Acknowledge the no-op
+		// without re-hitting OpenAlex or refreshing the node.
+		slog.Info("uploaded pdf by doi (unchanged)",
+			"doi", doi, "requester", requester, "pdf_sha256", pdfSha, "pdf_key", pdfKey)
+		resp := map[string]any{
+			"doi":           doi,
+			"key":           pdfKey,
+			"pdf_path":      pdfKey,
+			"pdf_bytes":     pdfSize,
+			"pdf_sha256":    pdfSha,
+			"pdf_unchanged": true,
+			"uploaded_by":   nil,
+			"overwritten":   overwrite,
+			"unchanged":     true,
+		}
+		if requester != "" {
+			resp["uploaded_by"] = requester
+		}
+		re.Response.WriteHeader(http.StatusOK)
+		return jsonBody(re, resp)
+	}
+
+	// outcomeWritten — record verification. warn computes it now (post-
+	// write); strict already has it from the pre-write blocking check.
+	if !strict {
+		verification = verifyDOIMetadata(ctx, resolver, doi, expectedTitle, expectedAuthors)
+	}
 
 	catalogDeferred := false
 	if err := catalog.UpsertPDFByDOI(ctx, doi, pdfSha, pdfSize, pdfOutcome.existingSha, verification); err != nil {
@@ -149,7 +189,6 @@ func uploadPDFByDOIHandler(
 		"requester", requester,
 		"pdf_bytes", pdfSize,
 		"pdf_sha256", pdfSha,
-		"pdf_unchanged", overallUnchanged,
 		"verification", verification.Status,
 		"catalog_deferred", catalogDeferred,
 		"pdf_key", pdfKey,
@@ -162,10 +201,10 @@ func uploadPDFByDOIHandler(
 		"pdf_path":      pdfKey,
 		"pdf_bytes":     pdfSize,
 		"pdf_sha256":    pdfSha,
-		"pdf_unchanged": overallUnchanged,
+		"pdf_unchanged": false,
 		"uploaded_by":   nil,
 		"overwritten":   overwrite,
-		"unchanged":     overallUnchanged,
+		"unchanged":     false,
 		"verification":  verificationBody(verification),
 	}
 	if requester != "" {
@@ -174,11 +213,7 @@ func uploadPDFByDOIHandler(
 	if catalogDeferred {
 		re.Response.Header().Set("X-Catalog-Sync", "deferred")
 	}
-	if overallUnchanged {
-		re.Response.WriteHeader(http.StatusOK)
-	} else {
-		re.Response.WriteHeader(http.StatusCreated)
-	}
+	re.Response.WriteHeader(http.StatusCreated)
 	return jsonBody(re, resp)
 }
 
@@ -267,12 +302,17 @@ func uploadMinerUByDOIHandler(
 	zipBytes = nil
 	_ = zipStaged.Close()
 
-	// DOI metadata verification (after the bundle is known-good).
+	// DOI metadata verification. strict verifies BEFORE the writes so a
+	// mismatch blocks storage; warn verifies AFTER, and only when the
+	// bundle actually changed, so a no-op re-upload skips OpenAlex.
 	expectedTitle := strings.TrimSpace(re.Request.FormValue("title"))
 	expectedAuthors := parseAuthorsForm(re.Request.FormValue("authors"))
-	verification := verifyDOIMetadata(ctx, resolver, doi, expectedTitle, expectedAuthors)
-	if rejErr := strictReject(strict, verification.Status); rejErr != nil {
-		return re.JSON(rejErr.Status, doiVerificationRejectBody(rejErr, doi, verification, expectedTitle, expectedAuthors))
+	var verification papers.DOIVerification
+	if strict {
+		verification = verifyDOIMetadata(ctx, resolver, doi, expectedTitle, expectedAuthors)
+		if rejErr := strictReject(verification.Status); rejErr != nil {
+			return re.JSON(rejErr.Status, doiVerificationRejectBody(rejErr, doi, verification, expectedTitle, expectedAuthors))
+		}
 	}
 
 	requester := ""
@@ -283,7 +323,11 @@ func uploadMinerUByDOIHandler(
 	// Images first, markdown last (so any reader that sees the markdown
 	// also sees every referenced image).
 	imgZipKey := paperassets.DOIAssetKey("images", doi)
-	imgZipUnchanged := false
+	// When the bundle has no images, the "images zip" is trivially
+	// unchanged (nothing to upload). Setting this to true here makes
+	// `allUnchanged` reduce to `md unchanged` so a no-op re-upload of
+	// an image-free bundle doesn't trigger a spurious OpenAlex call.
+	imgZipUnchanged := true
 	imageCount := 0
 	for rel := range result.Images {
 		name := strings.TrimPrefix(rel, "images/")
@@ -339,6 +383,47 @@ func uploadMinerUByDOIHandler(
 		return re.JSON(http.StatusConflict, body)
 	}
 
+	allUnchanged := mdOutcome.kind == outcomeUnchanged && imgZipUnchanged
+
+	if allUnchanged {
+		// Bundle already stored byte-for-byte; the catalog node —
+		// including any prior verification — is unchanged. Skip
+		// OpenAlex + the write-through.
+		slog.Info("uploaded mineru bundle by doi (unchanged)",
+			"doi", doi, "requester", requester, "source", source,
+			"md_sha256", mdSha, "image_count", imageCount)
+		resp := map[string]any{
+			"doi":                  doi,
+			"key":                  mdKey,
+			"markdown_path":        mdKey,
+			"markdown_bytes":       mdSize,
+			"markdown_sha256":      mdSha,
+			"markdown_unchanged":   true,
+			"image_count":          imageCount,
+			"images_zip_path":      imgZipKey,
+			"images_zip_unchanged": true,
+			"zip_bytes":            zipSize,
+			"zip_sha256":           zipSha,
+			"source":               nil,
+			"uploaded_by":          nil,
+			"overwritten":          overwrite,
+		}
+		if source != "" {
+			resp["source"] = source
+		}
+		if requester != "" {
+			resp["uploaded_by"] = requester
+		}
+		re.Response.WriteHeader(http.StatusOK)
+		return jsonBody(re, resp)
+	}
+
+	// Something was written — record verification. warn computes it now
+	// (post-write); strict already has it from the pre-write check.
+	if !strict {
+		verification = verifyDOIMetadata(ctx, resolver, doi, expectedTitle, expectedAuthors)
+	}
+
 	catalogDeferred := false
 	if err := catalog.UpsertMDByDOI(ctx, doi, mdSha, mdSize, mdOutcome.existingSha, imageCount, verification); err != nil {
 		if !errors.Is(err, papers.ErrCatalogUnavailable) {
@@ -384,13 +469,7 @@ func uploadMinerUByDOIHandler(
 	if catalogDeferred {
 		re.Response.Header().Set("X-Catalog-Sync", "deferred")
 	}
-
-	allUnchanged := mdOutcome.kind == outcomeUnchanged && imgZipUnchanged
-	if allUnchanged {
-		re.Response.WriteHeader(http.StatusOK)
-	} else {
-		re.Response.WriteHeader(http.StatusCreated)
-	}
+	re.Response.WriteHeader(http.StatusCreated)
 	return jsonBody(re, resp)
 }
 
@@ -406,6 +485,13 @@ func uploadMinerUByDOIHandler(
 func verifyDOIMetadata(ctx context.Context, resolver *openalex.Resolver, doi, expectedTitle string, expectedAuthors []string) papers.DOIVerification {
 	if resolver == nil || !resolver.Enabled() {
 		return papers.DOIVerification{Status: papers.VerifyUnconfigured}
+	}
+	// Nothing to cross-check — skip the OpenAlex round-trip entirely.
+	// Returning VerifyRecorded without fetching also keeps the recorded
+	// `Title`/`Authors` empty, which is the honest signal: we never
+	// populated them, so the catalog must not pretend we did.
+	if expectedTitle == "" && len(expectedAuthors) == 0 {
+		return papers.DOIVerification{Status: papers.VerifyRecorded}
 	}
 	meta, err := resolver.LookupMetadata(ctx, doi)
 	if err != nil {
@@ -429,16 +515,18 @@ func verifyDOIMetadata(ctx context.Context, resolver *openalex.Resolver, doi, ex
 	return v
 }
 
-// strictReject returns the uploadError to emit when strict mode is on and
-// the verification status warrants blocking, or nil to proceed.
+// strictReject returns the uploadError to emit when the verification
+// status warrants blocking under strict mode, or nil to proceed.
 //
 //   - mismatch / doi-not-found → 409 (contributor-correctable)
 //   - metadata-unavailable / unconfigured → 503 (server-side, can't verify)
 //   - anything else (verified / recorded) → proceed
-func strictReject(strict bool, status string) *uploadError {
-	if !strict {
-		return nil
-	}
+//
+// The strict-mode gate lives at the call site: this function is only
+// called when `strict` is true (the upload's `?verify=strict` flag).
+// Keeping the bool out of the signature forces that gate to be explicit
+// and makes "did we mean to reject this?" grep-able.
+func strictReject(status string) *uploadError {
 	switch status {
 	case papers.VerifyMismatch:
 		return &uploadError{Status: http.StatusConflict, Detail: "DOI metadata mismatch — uploaded paper's title/authors do not match the DOI's OpenAlex record"}
@@ -546,11 +634,16 @@ func authorsMatch(expected, actual []string) bool {
 	for _, a := range actual {
 		actualTokens = append(actualTokens, tokenSet(a))
 	}
+	// Track whether we checked any surname — if every expected author
+	// yielded an empty surname token, we'd otherwise fall through to
+	// `return true` and silently accept input we never actually matched.
+	checked := 0
 	for _, e := range expected {
 		sur := surnameToken(e)
 		if sur == "" {
 			continue
 		}
+		checked++
 		found := false
 		for _, set := range actualTokens {
 			if _, ok := set[sur]; ok {
@@ -562,7 +655,7 @@ func authorsMatch(expected, actual []string) bool {
 			return false
 		}
 	}
-	return true
+	return checked > 0
 }
 
 // tokenSet returns the set of normalized whitespace tokens in a name.
@@ -602,4 +695,104 @@ func storedSha256AtKey(ctx context.Context, store objstore.Store, key string) st
 		return ""
 	}
 	return strings.ToLower(info.Metadata["sha256"])
+}
+
+// getMarkdownByDOIHandler answers GET /api/papers/<doi>/markdown for
+// a DOI-only contribution (published paper with no arxiv presence).
+// Resolved to this handler when the OpenAlex resolver returns
+// ErrDOINotFound but the local catalog has a DOI node — meaning the
+// stored bytes are the only source of truth. Streams the markdown
+// object directly from the "<kind>/doi/<reg>/<suffix>" bucket layout.
+func getMarkdownByDOIHandler(
+	re *core.RequestEvent,
+	cfg *config.Config,
+	store objstore.Store,
+	converter *mineru.Converter,
+	rawDOI string,
+) error {
+	doi, ok := paperassets.ValidateDOI(rawDOI)
+	if !ok {
+		return re.JSON(http.StatusBadRequest, map[string]string{
+			"detail": fmt.Sprintf("invalid DOI for markdown: %q", rawDOI),
+		})
+	}
+	ctx := re.Request.Context()
+	mdKey := paperassets.DOIAssetKey("markdown", doi)
+	if mdKey == "" {
+		return re.JSON(http.StatusInternalServerError, map[string]string{
+			"detail": "could not compute markdown key for DOI",
+		})
+	}
+	rc, info, err := store.Get(ctx, mdKey)
+	if err != nil {
+		if errors.Is(err, objstore.ErrNotFound) {
+			return re.JSON(http.StatusNotFound, map[string]string{
+				"detail": fmt.Sprintf("markdown not found for DOI %s", doi),
+				"doi":    doi,
+			})
+		}
+		return re.JSON(http.StatusInternalServerError, map[string]string{
+			"detail": "fetch markdown: " + err.Error(),
+		})
+	}
+	defer rc.Close()
+	re.Response.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	if info.Size > 0 {
+		re.Response.Header().Set("Content-Length", strconv.FormatInt(info.Size, 10))
+	}
+	re.Response.Header().Set("X-QAtlas-DOI", doi)
+	re.Response.WriteHeader(http.StatusOK)
+	if _, err := io.Copy(re.Response, rc); err != nil {
+		slog.Warn("doi markdown: stream copy failed", "doi", doi, "error", err)
+	}
+	return nil
+}
+
+// getPDFByDOIHandler answers GET /api/papers/<doi>/pdf for a DOI-only
+// contribution. Same dispatch rationale as getMarkdownByDOIHandler.
+// Streams the PDF bytes directly from the "<kind>/doi/<reg>/<suffix>"
+// bucket layout.
+func getPDFByDOIHandler(
+	re *core.RequestEvent,
+	cfg *config.Config,
+	store objstore.Store,
+	converter *mineru.Converter,
+	rawDOI string,
+) error {
+	doi, ok := paperassets.ValidateDOI(rawDOI)
+	if !ok {
+		return re.JSON(http.StatusBadRequest, map[string]string{
+			"detail": fmt.Sprintf("invalid DOI for pdf: %q", rawDOI),
+		})
+	}
+	ctx := re.Request.Context()
+	pdfKey := paperassets.DOIAssetKey("pdf", doi)
+	if pdfKey == "" {
+		return re.JSON(http.StatusInternalServerError, map[string]string{
+			"detail": "could not compute pdf key for DOI",
+		})
+	}
+	rc, info, err := store.Get(ctx, pdfKey)
+	if err != nil {
+		if errors.Is(err, objstore.ErrNotFound) {
+			return re.JSON(http.StatusNotFound, map[string]string{
+				"detail": fmt.Sprintf("pdf not found for DOI %s", doi),
+				"doi":    doi,
+			})
+		}
+		return re.JSON(http.StatusInternalServerError, map[string]string{
+			"detail": "fetch pdf: " + err.Error(),
+		})
+	}
+	defer rc.Close()
+	re.Response.Header().Set("Content-Type", "application/pdf")
+	if info.Size > 0 {
+		re.Response.Header().Set("Content-Length", strconv.FormatInt(info.Size, 10))
+	}
+	re.Response.Header().Set("X-QAtlas-DOI", doi)
+	re.Response.WriteHeader(http.StatusOK)
+	if _, err := io.Copy(re.Response, rc); err != nil {
+		slog.Warn("doi pdf: stream copy failed", "doi", doi, "error", err)
+	}
+	return nil
 }

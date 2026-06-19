@@ -140,9 +140,20 @@ func listImageCounts(ctx context.Context, store objstore.Store) (map[string]int,
 }
 
 // stemFromKey extracts the arxiv stem from a "<kind>/<yymm>/<stem>.<ext>"
-// key. Returns ok=false for keys that don't match the shape.
+// key, or the DOI stem from a "<kind>/doi/<registrant>/<suffix>.<ext>" key.
+// Returns ok=false for keys that don't match either shape.
 func stemFromKey(key, kind string) (string, bool) {
 	parts := strings.Split(key, "/")
+	// DOI keys: <kind>/doi/<registrant>/<suffix>.<ext>
+	if len(parts) == 4 && parts[1] == "doi" && parts[0] == kind {
+		ext := path.Ext(parts[3])
+		stem := parts[2] + "/" + strings.TrimSuffix(parts[3], ext)
+		if stem == "" {
+			return "", false
+		}
+		return stem, true
+	}
+	// arXiv keys: <kind>/<yymm>/<stem>.<ext>
 	if len(parts) != 3 || parts[0] != kind {
 		return "", false
 	}

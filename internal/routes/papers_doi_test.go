@@ -59,25 +59,27 @@ func TestAuthorsMatch(t *testing.T) {
 	if authorsMatch([]string{"Harrow"}, nil) {
 		t.Error("no actual authors should not match")
 	}
+	if authorsMatch([]string{"   ", "\t"}, actual) {
+		t.Error("all-empty-surname expected should not match (no real check happened)")
+	}
 }
 
 func TestStrictReject(t *testing.T) {
-	if strictReject(false, papers.VerifyMismatch) != nil {
-		t.Error("warn mode must never reject")
-	}
-	if r := strictReject(true, papers.VerifyMismatch); r == nil || r.Status != http.StatusConflict {
+	// Warn-mode rejection lives at the call site; strictReject itself
+	// only sees statuses from already-gated strict callers.
+	if r := strictReject(papers.VerifyMismatch); r == nil || r.Status != http.StatusConflict {
 		t.Errorf("strict mismatch should 409, got %v", r)
 	}
-	if r := strictReject(true, papers.VerifyDOINotFound); r == nil || r.Status != http.StatusConflict {
+	if r := strictReject(papers.VerifyDOINotFound); r == nil || r.Status != http.StatusConflict {
 		t.Errorf("strict doi-not-found should 409, got %v", r)
 	}
-	if r := strictReject(true, papers.VerifyUnavailable); r == nil || r.Status != http.StatusServiceUnavailable {
+	if r := strictReject(papers.VerifyUnavailable); r == nil || r.Status != http.StatusServiceUnavailable {
 		t.Errorf("strict unavailable should 503, got %v", r)
 	}
-	if strictReject(true, papers.VerifyVerified) != nil {
+	if strictReject(papers.VerifyVerified) != nil {
 		t.Error("strict verified should proceed")
 	}
-	if strictReject(true, papers.VerifyRecorded) != nil {
+	if strictReject(papers.VerifyRecorded) != nil {
 		t.Error("strict recorded should proceed")
 	}
 }
@@ -122,13 +124,27 @@ func TestVerifyDOIMetadata(t *testing.T) {
 			t.Errorf("got %q", v.Status)
 		}
 	})
-	t.Run("recorded when no expected provided", func(t *testing.T) {
-		v := verifyDOIMetadata(ctx, stubResolver(t, hhlBody, 200), doi, "", nil)
+	t.Run("recorded when no expected provided (no OpenAlex call)", func(t *testing.T) {
+		// resolver must NOT be hit when nothing was supplied to cross-
+		// check against — verifyDOIMetadata returns Recorded without
+		// fetching metadata, keeping Title/Authors empty (the honest
+		// signal that we never populated them).
+		var hits int
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hits++
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer srv.Close()
+		r := openalex.New(openalex.Config{Mailto: "ops@example.com", BaseURL: srv.URL + "/works/doi:"})
+		v := verifyDOIMetadata(ctx, r, doi, "", nil)
 		if v.Status != papers.VerifyRecorded {
 			t.Errorf("got %q", v.Status)
 		}
-		if v.Title == "" || len(v.Authors) != 3 || v.ArxivID != "0811.3171" {
-			t.Errorf("metadata not recorded: %+v", v)
+		if hits != 0 {
+			t.Errorf("OpenAlex called %d times; want 0 (no claims, no lookup)", hits)
+		}
+		if v.Title != "" || len(v.Authors) != 0 || v.ArxivID != "" {
+			t.Errorf("metadata should be empty when not fetched: %+v", v)
 		}
 	})
 	t.Run("verified on title+author match", func(t *testing.T) {

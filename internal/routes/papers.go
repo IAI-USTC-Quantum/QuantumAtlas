@@ -104,9 +104,30 @@ func RegisterPapers(
 			// regular handlers. Resolver failures map to HTTP error
 			// responses (503 not configured, 400 invalid, 404 not
 			// found, 502 upstream) so the caller can branch cleanly.
+			//
+			// Exception: when the DOI has no arxiv presence in
+			// OpenAlex (ErrDOINotFound) but a DOI-only :PaperWork
+			// node already lives in the local catalog (from a prior
+			// /upload-pdf-by-doi), hand off to the DOI-specific GET
+			// handlers. Those use the "<kind>/doi/<reg>/<suffix>"
+			// bucket layout directly, so the synthetic "doi:<doi>"
+			// catalog key never has to be a valid arxiv id.
 			if isDOICandidate(arxivPart) {
 				canonical, err := resolveDOIToCanonical(re.Request.Context(), doiResolver, arxivPart)
 				if err != nil {
+					if errors.Is(err, openalex.ErrDOINotFound) {
+						if _, ok := catalog.LookupDOI(re.Request.Context(), arxivPart); ok {
+							switch action {
+							case "markdown":
+								return getMarkdownByDOIHandler(re, cfg, rawStore, converter, arxivPart)
+							case "pdf":
+								return getPDFByDOIHandler(re, cfg, rawStore, converter, arxivPart)
+							}
+							return re.JSON(http.StatusNotFound, map[string]string{
+								"detail": fmt.Sprintf("no GET handler for /api/papers/%s", raw),
+							})
+						}
+					}
 					return doiErrorResponse(re, arxivPart, err)
 				}
 				bareIDPostDOI = canonical

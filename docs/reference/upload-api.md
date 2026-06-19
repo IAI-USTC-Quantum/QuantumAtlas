@@ -355,12 +355,22 @@ curl -X POST \
   token, so `A. W. Harrow`, `Aram W. Harrow`, and `Harrow, Aram` all
   match.
 
-The outcome is always **recorded** on the node (`verification_status`,
-`doi_title`, `doi_authors`, `doi_arxiv_id`, `verified_at`) and returned:
+The outcome is **recorded** on the node (`verification_status`,
+`doi_title`, `doi_authors`, `doi_arxiv_id`, `verified_at`) and returned
+whenever the upload actually writes bytes:
 
 - response header `X-QAtlas-Verification: <status>`
 - response body `verification` block (`status`, `title`, `authors`,
   `arxiv_id`)
+
+> A no-op re-upload (the object's sha256 already matches) does **not**
+> re-run verification: the header and `verification` block are omitted and
+> the catalog node is left untouched. The prior verification is still on
+> the node. This keeps repeated uploads from hitting OpenAlex.
+>
+> Resolved metadata is cached in-process for a few minutes (same LRU as
+> DOI→arXiv resolution, keyed separately), so a PDF-then-MinerU pair for
+> one DOI costs a single OpenAlex lookup.
 
 | `verification_status`  | Meaning                                                             |
 | ---------------------- | ------------------------------------------------------------------- |
@@ -390,3 +400,18 @@ All the arXiv-path guarantees still apply to DOI uploads: sha256
 idempotency (200 / 409), `?expected_sha256=` in-transit guard, `%PDF-`
 magic check, `?overwrite=true`, and `upload-mineru`'s `?pdf_sha256=`
 source-PDF cross-check (against the stored DOI PDF).
+
+### Client coverage
+
+CLI support for DOI uploads is **PDF-only** today:
+
+- `qatlas contrib pdf <DOI> --pdf ...` (and the deprecated `qatlas upload
+  pdf`) accept a DOI in the ID slot and expose `--title` / `--authors` /
+  `--verify`; the verification status is printed to stderr.
+- `upload-mineru` by DOI is **HTTP-only** for now. The `qatlas contrib
+  mineru` runner is keyed on arXiv ids end-to-end (claim queue → MinerU →
+  upload) and does not yet drive DOI contributions. To contribute a
+  converted published PDF, POST the MinerU zip to
+  `/api/papers/<DOI>/upload-mineru` directly (e.g. via `curl`), passing
+  `title` / `authors` form fields and `?verify=` / `?pdf_sha256=` as
+  described above.

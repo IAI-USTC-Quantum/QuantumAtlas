@@ -35,6 +35,7 @@ import hashlib
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import requests
 
@@ -105,7 +106,9 @@ def cmd_upload_pdf(args: argparse.Namespace) -> int:
         data["authors"] = args.authors
 
     base_url = base_url_from_args(args)
-    url = f"{base_url}/api/papers/{args.arxiv_id}/upload-pdf"
+    # DOI suffixes can contain '/', '?', '#', etc. — percent-encode
+    # the path segment so the server's router sees the full id verbatim.
+    url = f"{base_url}/api/papers/{quote(args.arxiv_id, safe='')}/upload-pdf"
 
     try:
         response = requests.post(
@@ -158,7 +161,9 @@ def cmd_upload_mineru(args: argparse.Namespace) -> int:
         params["source"] = args.source
 
     base_url = base_url_from_args(args)
-    url = f"{base_url}/api/papers/{args.arxiv_id}/upload-mineru"
+    # DOI suffixes can contain '/', '?', '#', etc. — percent-encode
+    # the path segment so the server's router sees the full id verbatim.
+    url = f"{base_url}/api/papers/{quote(args.arxiv_id, safe='')}/upload-mineru"
 
     try:
         response = requests.post(

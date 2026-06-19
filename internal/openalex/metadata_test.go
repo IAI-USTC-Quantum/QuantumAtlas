@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync/atomic"
 	"testing"
 )
 
@@ -114,5 +115,72 @@ func TestLookupMetadata_NotFound(t *testing.T) {
 	r := New(Config{Mailto: "ops@example.com", BaseURL: srv.URL + "/works/doi:"})
 	if _, err := r.LookupMetadata(context.Background(), "10.1/missing"); !errors.Is(err, ErrDOINotFound) {
 		t.Fatalf("got %v, want ErrDOINotFound", err)
+	}
+}
+
+// TestLookupMetadata_PositiveCache: a second lookup for the same DOI
+// within the TTL must be served from cache (one upstream hit).
+func TestLookupMetadata_PositiveCache(t *testing.T) {
+	t.Parallel()
+	var hits atomic.Int64
+	srv := stubOpenAlex(t, func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(stubBodyWithAuthors))
+	})
+	defer srv.Close()
+	r := New(Config{Mailto: "ops@example.com", BaseURL: srv.URL + "/works/doi:"})
+	for i := 0; i < 4; i++ {
+		if _, err := r.LookupMetadata(context.Background(), "10.1103/PhysRevLett.103.150502"); err != nil {
+			t.Fatalf("call %d: %v", i, err)
+		}
+	}
+	if got := hits.Load(); got != 1 {
+		t.Errorf("upstream hits: got %d, want 1 (cached)", got)
+	}
+}
+
+// TestLookupMetadata_NegativeCache: ErrDOINotFound is cached briefly so
+// repeated uploads of an unknown DOI don't hammer OpenAlex.
+func TestLookupMetadata_NegativeCache(t *testing.T) {
+	t.Parallel()
+	var hits atomic.Int64
+	srv := stubOpenAlex(t, func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusNotFound)
+	})
+	defer srv.Close()
+	r := New(Config{Mailto: "ops@example.com", BaseURL: srv.URL + "/works/doi:"})
+	for i := 0; i < 4; i++ {
+		if _, err := r.LookupMetadata(context.Background(), "10.9999/missing"); !errors.Is(err, ErrDOINotFound) {
+			t.Fatalf("call %d: got %v, want ErrDOINotFound", i, err)
+		}
+	}
+	if got := hits.Load(); got != 1 {
+		t.Errorf("upstream hits: got %d, want 1 (negative cached)", got)
+	}
+}
+
+// TestLookupMetadata_DoesNotShareCacheWithResolveDOI: the "meta:" key
+// namespace keeps a metadata lookup and an arxiv resolution of the same
+// DOI in separate slots — populating one must not satisfy the other.
+func TestLookupMetadata_DoesNotShareCacheWithResolveDOI(t *testing.T) {
+	t.Parallel()
+	var hits atomic.Int64
+	srv := stubOpenAlex(t, func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(stubBodyWithAuthors))
+	})
+	defer srv.Close()
+	r := New(Config{Mailto: "ops@example.com", BaseURL: srv.URL + "/works/doi:"})
+	if _, err := r.LookupMetadata(context.Background(), "10.1103/PhysRevLett.103.150502"); err != nil {
+		t.Fatalf("LookupMetadata: %v", err)
+	}
+	if _, err := r.ResolveDOI(context.Background(), "10.1103/PhysRevLett.103.150502"); err != nil {
+		t.Fatalf("ResolveDOI: %v", err)
+	}
+	if got := hits.Load(); got != 2 {
+		t.Errorf("upstream hits: got %d, want 2 (separate cache slots)", got)
 	}
 }
