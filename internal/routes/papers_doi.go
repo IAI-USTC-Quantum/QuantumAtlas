@@ -796,3 +796,102 @@ func getPDFByDOIHandler(
 	}
 	return nil
 }
+
+// probeDOIAssetReadiness mirrors probeAssetReadiness for the DOI bucket
+// layout. A DOI's PDF / markdown live at deterministic paths
+// (paperassets.DOIAssetKey), so a single Stat per kind tells us whether
+// the bytes are on disk. Unlike the arxiv path there is no MinerU job
+// state to surface — DOI uploads come pre-converted via the
+// upload-mineru zip endpoint, so the paper is either fully cached or
+// not present yet.
+//
+// Returns (pdfReady, mdReady). A nil store argument or invalid DOI both
+// report (false, false); callers validate the DOI separately and emit
+// 400 / 500 there.
+func probeDOIAssetReadiness(ctx context.Context, store objstore.Store, doi string) (pdfReady, mdReady bool) {
+	if store == nil {
+		return false, false
+	}
+	if pdfKey := paperassets.DOIAssetKey("pdf", doi); pdfKey != "" {
+		if _, exists, err := store.Stat(ctx, pdfKey); err == nil && exists {
+			pdfReady = true
+		}
+	}
+	if mdKey := paperassets.DOIAssetKey("markdown", doi); mdKey != "" {
+		if _, exists, err := store.Stat(ctx, mdKey); err == nil && exists {
+			mdReady = true
+		}
+	}
+	return pdfReady, mdReady
+}
+
+// markdownStatusByDOIHandler answers GET /api/papers/<doi>/markdown/status
+// for a DOI-indexed contribution. It mirrors markdownStatusHandler's
+// arxiv contract — same JSON shape with `doi` replacing `arxiv_id` —
+// so a generic client that swaps an arxiv id for a DOI in the same URL
+// template gets symmetric behaviour. There is no MinerU job state to
+// report (DOI uploads arrive pre-converted), so the response is a
+// straightforward "cached" / "missing" snapshot derived from the
+// bucket layout.
+func markdownStatusByDOIHandler(re *core.RequestEvent, store objstore.Store, rawDOI string) error {
+	doi, ok := paperassets.ValidateDOI(rawDOI)
+	if !ok {
+		return re.JSON(http.StatusBadRequest, map[string]string{
+			"detail": fmt.Sprintf("invalid DOI for markdown/status: %q", rawDOI),
+		})
+	}
+	ctx := re.Request.Context()
+	pdfReady, mdReady := probeDOIAssetReadiness(ctx, store, doi)
+	re.Response.Header().Set("X-QAtlas-DOI", doi)
+	if mdReady {
+		return re.JSON(http.StatusOK, map[string]any{
+			"doi":          doi,
+			"state":        "cached",
+			"phase":        string(mineru.PhaseReady),
+			"pdf_ready":    pdfReady,
+			"md_ready":     true,
+			"markdown_url": "/api/papers/" + doi + "/markdown",
+		})
+	}
+	// No markdown bytes: this DOI hasn't had a MinerU bundle uploaded
+	// yet. Distinct from arxiv, the server can't kick off a fetch
+	// itself (no PDF source URL and no autoconvert path for DOIs).
+	return re.JSON(http.StatusOK, map[string]any{
+		"doi":       doi,
+		"state":     "missing",
+		"pdf_ready": pdfReady,
+		"md_ready":  false,
+	})
+}
+
+// pdfStatusByDOIHandler answers GET /api/papers/<doi>/pdf/status. Same
+// rationale as markdownStatusByDOIHandler — keep symmetry with the
+// arxiv pdfStatusHandler so URL templates that swap an id for a DOI
+// keep working.
+func pdfStatusByDOIHandler(re *core.RequestEvent, store objstore.Store, rawDOI string) error {
+	doi, ok := paperassets.ValidateDOI(rawDOI)
+	if !ok {
+		return re.JSON(http.StatusBadRequest, map[string]string{
+			"detail": fmt.Sprintf("invalid DOI for pdf/status: %q", rawDOI),
+		})
+	}
+	ctx := re.Request.Context()
+	pdfReady, mdReady := probeDOIAssetReadiness(ctx, store, doi)
+	re.Response.Header().Set("X-QAtlas-DOI", doi)
+	if pdfReady {
+		return re.JSON(http.StatusOK, map[string]any{
+			"doi":       doi,
+			"state":     "cached",
+			"phase":     string(mineru.PhaseReady),
+			"pdf_ready": true,
+			"md_ready":  mdReady,
+			"pdf_url":   "/api/papers/" + doi + "/pdf",
+		})
+	}
+	return re.JSON(http.StatusOK, map[string]any{
+		"doi":       doi,
+		"state":     "missing",
+		"pdf_ready": false,
+		"md_ready":  mdReady,
+	})
+}

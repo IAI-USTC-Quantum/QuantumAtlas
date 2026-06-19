@@ -66,11 +66,17 @@ qatlas upload pdf 2501.00010v1 --pdf ./paper-v2.pdf
 # recoverable until the next storage prune)
 qatlas upload pdf 2501.00010v1 --pdf ./paper-v2.pdf --overwrite
 
-# Upload a MinerU result bundle (full.md + images/*) — push the
-# raw zip MinerU returned at its `full_zip_url`, the server unzips it.
-qatlas upload mineru 2501.00010v1 \
+# Upload a MinerU result bundle for a DOI-only published paper
+# (full.md + images/*) — push the raw zip MinerU returned at its
+# `full_zip_url`, the server unzips it. The arxiv direct-zip form
+# was removed in v0.19.0 (use `qatlas contrib mineru` instead);
+# the DOI form below remains the only direct-zip path.
+qatlas upload mineru 10.1103/PhysRevLett.123.070501 \
     --zip ./mineru-result.zip \
-    --source mineru-client-v0.8
+    --source mineru-client-v0.8 \
+    --title "Quantum advantage with shallow circuits" \
+    --authors "Bravyi; Gosset; König" \
+    --verify warn
 ```
 
 The CLI streams the file once through sha256 before posting and
@@ -278,6 +284,12 @@ CLI:
 - qatlas upload markdown 2501.00010v1 --markdown full.md --source mineru
 + qatlas upload mineru   2501.00010v1 --zip path/to/mineru.zip --source mineru
 ```
+
+> **v0.19.0 update**: the arxiv form `qatlas upload mineru <ARXIV_ID>` shown
+> above was itself replaced by `qatlas contrib mineru [<ARXIV_ID>]`, which
+> claims, runs MinerU, and uploads as one unit. The direct-zip form
+> survives only for **DOI** uploads — see the [Contributing by DOI](#contributing-by-doi)
+> section below.
 
 Why the change: the old endpoint only stored the markdown and
 silently dropped every figure in the bundle, leaving detail pages

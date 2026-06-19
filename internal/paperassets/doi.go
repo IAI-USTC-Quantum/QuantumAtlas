@@ -126,6 +126,26 @@ func DOISafeStem(doi string) string {
 	return strings.ReplaceAll(doi[i+1:], "/", "__")
 }
 
+// DOIDecodeStem is the inverse of DOISafeStem: restores any "__"
+// in a stored stem back to the "/" the DOI originally carried. Used
+// by sync's reverse path (storage-key → node-key) so a nested-slash
+// DOI like "10.1234/foo/bar" round-trips through:
+//
+//	DOIAssetKey  : (10.1234, foo/bar)   → "<kind>/doi/10.1234/foo__bar.<ext>"
+//	storage list :                       returns parts[3] = "foo__bar.<ext>"
+//	strip ext    :                       "foo__bar"
+//	DOIDecodeStem:                       "foo/bar"
+//	parts[2] + "/" + decoded = "10.1234/foo/bar" → DOINodeKey matches
+//
+// Without this inverse, sync built synthetic node keys with the "__"
+// still in place ("doi:10.1234/foo__bar"), which never matched any
+// :PaperWork node UpsertMDByDOI ever wrote ("doi:10.1234/foo/bar"),
+// so every sync run created a phantom node per nested-slash DOI.
+// safe is the post-extension-strip stem (parts[3] without path.Ext).
+func DOIDecodeStem(safe string) string {
+	return strings.ReplaceAll(safe, "__", "/")
+}
+
 // DOIAssetKey returns the canonical forward-slash object key for a
 // DOI-indexed asset of kind "pdf" | "markdown" | "json" | "images":
 //

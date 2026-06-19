@@ -233,3 +233,116 @@ func TestDOINodeKey(t *testing.T) {
 		t.Errorf("DOINodeKey = %q, want doi:<doi>", got)
 	}
 }
+
+// TestListImageCountsNestedSlashDOIPhantomNodeRegression locks in the
+// PR #19 review-2 fix: a DOI whose suffix contains "/" (DOI Handbook
+// 4.2 allows nested slashes — e.g. "10.1234/foo/bar") was stored by
+// paperassets.DOIAssetKey as "images/doi/10.1234/foo__bar.zip" (the
+// "/" was encoded to "__" by DOISafeStem). The first-cut listImageCounts
+// stripped the .zip extension but left the "__" in place, producing the
+// synthetic node key "doi:10.1234/foo__bar" — which never matched the
+// real "doi:10.1234/foo/bar" written by UpsertMDByDOI. Result: every
+// sync run created a NEW phantom :PaperWork node per nested-slash DOI,
+// the real node's image_count was never refreshed, and the catalog
+// silently accumulated phantoms.
+//
+// Fix: paperassets.DOIDecodeStem("foo__bar") = "foo/bar" lets sync
+// round-trip the storage key back to the canonical node key.
+func TestListImageCountsNestedSlashDOIPhantomNodeRegression(t *testing.T) {
+	// Two nested-slash DOIs sharing the same registrant, plus one
+	// flat DOI to confirm the simple case still works.
+	doiNested1 := "10.1234/foo/bar"
+	doiNested2 := "10.1234/foo/bar/baz"
+	doiFlat := "10.1234/simple-id"
+	store := &fakeListStore{infos: []objstore.ObjectInfo{
+		{Key: paperassets.DOIAssetKey("images", doiNested1)},
+		{Key: paperassets.DOIAssetKey("images", doiNested2)},
+		{Key: paperassets.DOIAssetKey("images", doiFlat)},
+	}}
+	// Sanity: the stored keys really do contain the "__" placeholder,
+	// otherwise the test isn't exercising the fix.
+	for i, info := range store.infos {
+		if i < 2 && !strings.Contains(info.Key, "__") {
+			t.Fatalf("test pre-condition: nested-slash DOI key %q lacks __ placeholder; DOIAssetKey contract changed", info.Key)
+		}
+	}
+	counts, total, err := listImageCounts(context.Background(), store)
+	if err != nil {
+		t.Fatalf("listImageCounts: %v", err)
+	}
+	if total != 3 {
+		t.Errorf("total = %d, want 3", total)
+	}
+	for _, doi := range []string{doiNested1, doiNested2, doiFlat} {
+		want := DOINodeKey(doi)
+		if counts[want] != 1 {
+			t.Errorf("counts[%q] = %d, want 1 (phantom-node bug regressed: nested-slash DOI %q would not refresh real node)", want, counts[want], doi)
+		}
+	}
+	// Guard: NO key may contain "__" — that's the encoded form,
+	// node keys always carry the decoded "/".
+	for k := range counts {
+		if strings.Contains(k, "__") {
+			t.Errorf("counts has phantom encoded-form key %q — listImageCounts must DOIDecodeStem the suffix", k)
+		}
+	}
+}
+
+// TestStemFromKeyNestedSlashDOI is the listKindPaths-side mirror of the
+// nested-slash phantom-node regression: the pdf/markdown reverse path
+// must also DOIDecodeStem so the synthetic node key matches what
+// UpsertPDFByDOI / UpsertMDByDOI wrote.
+func TestStemFromKeyNestedSlashDOI(t *testing.T) {
+	doi := "10.1234/foo/bar"
+	pdfKey := paperassets.DOIAssetKey("pdf", doi)
+	mdKey := paperassets.DOIAssetKey("markdown", doi)
+	if pdfKey == "" || mdKey == "" {
+		t.Fatalf("test pre-condition: DOIAssetKey returned empty for %q", doi)
+	}
+	if !strings.Contains(pdfKey, "__") {
+		t.Fatalf("test pre-condition: stored key %q lacks __ placeholder", pdfKey)
+	}
+
+	stemPDF, isDOIPDF, okPDF := stemFromKey(pdfKey, "pdf")
+	if !okPDF || !isDOIPDF {
+		t.Fatalf("stemFromKey(%q,pdf) = (%q,%v,%v), want (decoded,true,true)", pdfKey, stemPDF, isDOIPDF, okPDF)
+	}
+	if stemPDF != doi {
+		t.Errorf("pdf stem = %q, want %q (DOIDecodeStem must restore __ → /)", stemPDF, doi)
+	}
+
+	stemMD, isDOIMD, okMD := stemFromKey(mdKey, "markdown")
+	if !okMD || !isDOIMD {
+		t.Fatalf("stemFromKey(%q,markdown) = (%q,%v,%v), want (decoded,true,true)", mdKey, stemMD, isDOIMD, okMD)
+	}
+	if stemMD != doi {
+		t.Errorf("markdown stem = %q, want %q", stemMD, doi)
+	}
+}
+
+// TestListKindPathsNestedSlashDOIRouting confirms the upstream effect:
+// the synthetic key handed to mergeAssetBatch matches DOINodeKey(doi),
+// which is the exact key UpsertPDFByDOI writes. Without this, the
+// pdf/markdown sync MERGE would create a phantom doi:10.1234/foo__bar
+// node beside the real doi:10.1234/foo/bar.
+func TestListKindPathsNestedSlashDOIRouting(t *testing.T) {
+	doi := "10.1234/foo/bar"
+	store := &fakeListStore{infos: []objstore.ObjectInfo{
+		{Key: paperassets.DOIAssetKey("pdf", doi)},
+	}}
+	pdfPaths, err := listKindPaths(context.Background(), store, "pdf")
+	if err != nil {
+		t.Fatalf("listKindPaths pdf: %v", err)
+	}
+	want := DOINodeKey(doi) // "doi:10.1234/foo/bar"
+	if _, ok := pdfPaths[want]; !ok {
+		t.Errorf("pdfPaths missing canonical DOI key %q; got %v", want, pdfPaths)
+	}
+	// Guard: the encoded form must not appear as a key — that would
+	// route to the wrong (phantom) :PaperWork node on MERGE.
+	for k := range pdfPaths {
+		if strings.Contains(k, "__") {
+			t.Errorf("pdfPaths has phantom encoded-form key %q — listKindPaths must DOIDecodeStem", k)
+		}
+	}
+}

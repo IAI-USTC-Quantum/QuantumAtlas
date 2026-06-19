@@ -84,6 +84,60 @@ func TestDOIKeyNamespaceDisjointFromArxiv(t *testing.T) {
 	}
 }
 
+// TestDOIDecodeStem locks in the inverse-of-DOISafeStem contract that
+// internal/papers/sync.go relies on for the nested-slash phantom-node
+// fix: any "__" in a stored stem must round-trip back to "/" so the
+// reverse path (storage key → node key) lands on the original DOI
+// node UpsertPDFByDOI / UpsertMDByDOI created.
+func TestDOIDecodeStem(t *testing.T) {
+	cases := map[string]string{
+		"":             "",
+		"foo":          "foo",
+		"foo__bar":     "foo/bar",
+		"a__b__c":      "a/b/c",
+		"already/slash": "already/slash", // pass-through; sync feeds us the post-extension-strip stem
+	}
+	for in, want := range cases {
+		if got := DOIDecodeStem(in); got != want {
+			t.Errorf("DOIDecodeStem(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestDOISafeStemDecodeRoundTrip is the linchpin: for every legitimate
+// DOI suffix, encoding for storage and decoding back must reproduce the
+// original suffix exactly. Without this guarantee, sync's reverse path
+// for nested-slash DOIs produces a node key that never matches the
+// :PaperWork node, regenerating the phantom-node bug at a different
+// layer (reported during PR #19 review).
+func TestDOISafeStemDecodeRoundTrip(t *testing.T) {
+	dois := []string{
+		"10.1103/physrevlett.123.070501",
+		"10.1234/foo/bar",
+		"10.1234/foo/bar/baz",
+		"10.7717/peerj.4375",
+		"10.1000/182",
+	}
+	for _, doi := range dois {
+		safe := DOISafeStem(doi)
+		// The original suffix is everything after the first "/".
+		idx := -1
+		for i := 0; i < len(doi); i++ {
+			if doi[i] == '/' {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 {
+			t.Fatalf("test bug: DOI %q has no slash", doi)
+		}
+		want := doi[idx+1:]
+		if got := DOIDecodeStem(safe); got != want {
+			t.Errorf("round-trip for DOI %q: DOISafeStem=%q DOIDecodeStem=%q, want %q", doi, safe, got, want)
+		}
+	}
+}
+
 // TestDOIURLPrefixesExported guards the PR #19 follow-up: the DOI URL
 // prefix list is the canonical list for the whole codebase and must be
 // importable (capitalized) from other packages, not just used

@@ -99,6 +99,24 @@ func RegisterPapers(
 			// the DOI handlers. Pass through unchanged for non-DOI ids
 			// (NormalizeDOI lower-cases; arxiv ids are case-sensitive).
 			arxivPart = normalizeIDForDispatch(arxivPart)
+			// Peel the 2-segment status actions (.../markdown/status,
+			// .../pdf/status) at the top so the rest of the dispatcher
+			// sees a single concrete action and a clean id. Without
+			// this, splitPapersPath's last-slash rule glues the trailing
+			// kind onto arxivPart (".../markdown" / ".../pdf"), which
+			// for DOI ids slipped past isDOICandidate as a malformed
+			// DOI and dead-ended at OpenAlex 404 (PR #19 review fix).
+			statusKind := ""
+			if action == "status" {
+				switch {
+				case strings.HasSuffix(arxivPart, "/markdown"):
+					arxivPart = strings.TrimSuffix(arxivPart, "/markdown")
+					statusKind = "markdown"
+				case strings.HasSuffix(arxivPart, "/pdf"):
+					arxivPart = strings.TrimSuffix(arxivPart, "/pdf")
+					statusKind = "pdf"
+				}
+			}
 			requestedID := arxivPart
 			bareIDPostDOI := arxivPart
 
@@ -125,15 +143,23 @@ func RegisterPapers(
 						// catalog" and "catalog unreachable". Distinguish
 						// via Store.Available (which attempts a cheap
 						// reconnect) so a Neo4j outage returns 503 instead
-						// of a misleading 404.
+						// of a misleading 404. Re-check Available AFTER
+						// the LookupDOI call too — Neo4j may have dropped
+						// in the narrow window between the two probes,
+						// which would otherwise show a 404 for what
+						// should be a 503 (PR #19 review TOCTOU fix).
 						if catalog.Available(re.Request.Context()) {
 							if _, ok := catalog.LookupDOI(re.Request.Context(), arxivPart); ok {
-								switch action {
-								case "markdown":
+								switch {
+								case statusKind == "markdown":
+									return markdownStatusByDOIHandler(re, rawStore, arxivPart)
+								case statusKind == "pdf":
+									return pdfStatusByDOIHandler(re, rawStore, arxivPart)
+								case action == "markdown":
 									return getMarkdownByDOIHandler(re, cfg, rawStore, converter, arxivPart)
-								case "pdf":
+								case action == "pdf":
 									return getPDFByDOIHandler(re, cfg, rawStore, converter, arxivPart)
-								case "status":
+								case action == "status":
 									return re.JSON(http.StatusOK, map[string]any{
 										"status": "available",
 										"doi":    arxivPart,
@@ -141,6 +167,17 @@ func RegisterPapers(
 								}
 								return re.JSON(http.StatusNotFound, map[string]string{
 									"detail": fmt.Sprintf("no GET handler for /api/papers/%s", raw),
+								})
+							}
+							// LookupDOI false-with-Available-true here means
+							// genuinely no DOI node in the catalog. But Neo4j
+							// might have dropped between Available and
+							// LookupDOI; re-probe so we don't show 404 for
+							// what should be 503.
+							if !catalog.Available(re.Request.Context()) {
+								return re.JSON(http.StatusServiceUnavailable, map[string]any{
+									"detail": "catalog unavailable (Neo4j unreachable); retry shortly",
+									"doi":    arxivPart,
 								})
 							}
 						} else {
@@ -176,20 +213,15 @@ func RegisterPapers(
 			res := computeResolution(requestedID, bareIDPostDOI, arxivPart)
 			re.Request = re.Request.WithContext(withResolution(re.Request.Context(), res))
 
-			// splitPapersPath splits on the LAST slash, so
-			// ".../markdown/status" arrives as arxiv="…/markdown",
-			// action="status".
 			switch {
+			case statusKind == "markdown":
+				return markdownStatusHandler(re, cfg, rawStore, converter, arxivPart)
+			case statusKind == "pdf":
+				return pdfStatusHandler(re, cfg, rawStore, converter, arxivPart)
 			case action == "markdown":
 				return markdownHandler(re, cfg, rawStore, converter, arxivPart)
 			case action == "pdf":
 				return pdfHandler(re, cfg, rawStore, converter, arxivPart)
-			case action == "status" && strings.HasSuffix(arxivPart, "/markdown"):
-				realArxiv := strings.TrimSuffix(arxivPart, "/markdown")
-				return markdownStatusHandler(re, cfg, rawStore, converter, realArxiv)
-			case action == "status" && strings.HasSuffix(arxivPart, "/pdf"):
-				realArxiv := strings.TrimSuffix(arxivPart, "/pdf")
-				return pdfStatusHandler(re, cfg, rawStore, converter, realArxiv)
 			}
 		}
 		return re.JSON(http.StatusNotFound, map[string]string{

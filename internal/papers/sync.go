@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperassets"
 )
 
 // SyncReport summarizes a reconcile pass.
@@ -129,12 +130,18 @@ func listKindPaths(ctx context.Context, store objstore.Store, kind string) (map[
 // emits "images/doi/<reg>/<suffix>.zip") — not a per-file directory.
 // We therefore (a) strip the .zip / .<ext> suffix when reassembling the
 // node key so the synthetic id matches DOINodeKey(<reg>/<suffix>)
-// instead of leaking a phantom "doi:<reg>/<suffix>.zip" node, and
-// (b) report a count of 1 zip per DOI. The "true" image_count (number
-// of images inside the zip) is set authoritatively by UpsertMDByDOI
-// from the parsed bundle; mergeImageBatch's DOI cypher uses
-// coalesce(p.image_count, r.image_count) so this 1-per-zip presence
-// signal never clobbers a real count.
+// instead of leaking a phantom "doi:<reg>/<suffix>.zip" node, AND
+// (b) decode the "__" back to "/" via paperassets.DOIDecodeStem so a
+// nested-slash DOI ("10.1234/foo/bar" → stored as "foo__bar.zip")
+// round-trips back to the original node key — without the decode
+// the synthetic key was "doi:10.1234/foo__bar" and never matched the
+// real "doi:10.1234/foo/bar" written by UpsertMDByDOI, regenerating
+// the same phantom-node bug at a different layer. Finally
+// (c) report a count of 1 zip per DOI. The "true" image_count
+// (number of images inside the zip) is set authoritatively by
+// UpsertMDByDOI from the parsed bundle; mergeImageBatch's DOI cypher
+// uses coalesce(p.image_count, r.image_count) so this 1-per-zip
+// presence signal never clobbers a real count.
 //
 // Returns (counts, total, err). A non-nil err means the listing was
 // incomplete (S3 paginate failed, ctx canceled, etc.) — callers MUST
@@ -159,10 +166,12 @@ func listImageCounts(ctx context.Context, store objstore.Store) (map[string]int,
 		// legacy per-file directory layout (images/doi/<reg>/<suffix>/<file>).
 		// In both cases the synthetic node key is built from
 		// segments [2] (registrant) and [3] (suffix), with any
-		// trailing extension stripped so the key round-trips back
-		// to DOINodeKey(<reg>/<suffix>) — never "doi:<reg>/<suffix>.zip".
+		// trailing extension stripped AND the "__" placeholder
+		// decoded back to "/" so the key round-trips to
+		// DOINodeKey(<reg>/<suffix>) — never "doi:<reg>/<suffix>.zip"
+		// or "doi:<reg>/foo__bar".
 		if len(parts) >= 4 && parts[0] == "images" && parts[1] == "doi" {
-			suffix := strings.TrimSuffix(parts[3], path.Ext(parts[3]))
+			suffix := paperassets.DOIDecodeStem(strings.TrimSuffix(parts[3], path.Ext(parts[3])))
 			if suffix == "" {
 				continue
 			}
@@ -186,12 +195,18 @@ func listImageCounts(ctx context.Context, store objstore.Store) (map[string]int,
 // isDOI is true for DOI-keyed assets so the caller can route them to a
 // DOI-aware MERGE (DOINodeKey) instead of the arxiv fallback. Returns
 // ok=false for keys that don't match either shape.
+//
+// For DOI keys, the suffix segment is post-processed by
+// paperassets.DOIDecodeStem so a nested-slash DOI's "__" placeholder
+// is restored to "/" — required for the synthetic node key to match
+// what UpsertPDFByDOI / UpsertMDByDOI write (which use the original
+// pre-DOISafeStem suffix). See listImageCounts for the same fix.
 func stemFromKey(key, kind string) (stem string, isDOI bool, ok bool) {
 	parts := strings.Split(key, "/")
 	// DOI keys: <kind>/doi/<registrant>/<suffix>.<ext>
 	if len(parts) == 4 && parts[1] == "doi" && parts[0] == kind {
 		ext := path.Ext(parts[3])
-		s := parts[2] + "/" + strings.TrimSuffix(parts[3], ext)
+		s := parts[2] + "/" + paperassets.DOIDecodeStem(strings.TrimSuffix(parts[3], ext))
 		if s == "" {
 			return "", false, false
 		}

@@ -3,7 +3,8 @@
 Subcommands::
 
     qatlas upload pdf ARXIV_ID --pdf path.pdf [--overwrite]
-    qatlas upload mineru ARXIV_ID --zip path.zip [--source mineru] [--overwrite]
+    qatlas upload mineru DOI --zip path.zip [--source mineru] [--overwrite] \
+                              [--title T --authors "A; B" --verify warn|strict]
 
 The ARXIV_ID must include a version suffix (``vN``) so the stored filename
 matches the RAW_DIR layout. Old style (pre-Apr 2007) requires a category
@@ -23,6 +24,12 @@ in the images bucket under the same ``<yymm>/<stem>/`` prefix. This
 replaces v0.7.x's ``upload markdown`` (which only accepted a single .md
 file and silently dropped images).
 
+Since v0.19.0 the **arxiv-id** form of ``upload mineru`` is no longer
+accepted (use ``qatlas contrib mineru`` which does claim+run+upload as
+one unit). The **DOI** form remains supported — DOIs aren't in the
+needs-mineru queue, so direct-zip is the only contributor path for
+DOI-only papers.
+
 Paper metadata (title / authors / abstract / DOI / citations) is sourced
 upstream from OpenAlex into the Neo4j catalog as of v0.7.0 — the upload
 endpoint no longer accepts a ``metadata`` JSON sibling.
@@ -32,6 +39,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -323,15 +331,23 @@ Usage:
   qatlas upload pdf ARXIV_ID --pdf path.pdf [--overwrite]
       → equivalent to `qatlas contrib pdf ARXIV_ID --pdf path.pdf`
 
+  qatlas upload mineru DOI --zip path.zip [--title T --authors "A; B" \\
+                                            --verify warn|strict]
+      → DOI-only direct-zip MinerU bundle upload (the arxiv-id form
+        was removed in v0.19.0; DOIs have no needs-mineru queue, so
+        this remains the only path). The server cross-checks
+        --title / --authors against the DOI's OpenAlex metadata.
+
 The arXiv ID must include a version suffix (e.g. quant-ph/9508027v1 or 2501.00010v1).
-Use "qatlas upload pdf --help" for full options.
+Use "qatlas upload pdf --help" / "qatlas upload mineru --help" for full options.
 
 Notes:
   * `qatlas upload markdown` was removed in v0.8.0 — use `qatlas contrib mineru`
     to run MinerU locally (which uploads markdown + images automatically).
-  * `qatlas upload mineru` (the direct-zip upload subcommand) was removed in
-    v0.19.0 — all MinerU pushes must now go through `qatlas contrib mineru`
-    so the same path always handles claim/lease/upload as one unit."""
+  * `qatlas upload mineru ARXIV_ID` (the arxiv direct-zip form) was removed in
+    v0.19.0 — arxiv MinerU pushes must now go through `qatlas contrib mineru`
+    so the same path always handles claim/lease/upload as one unit. The DOI
+    form (`qatlas upload mineru DOI`) remains supported."""
     )
 
 
@@ -347,6 +363,42 @@ def _emit_deprecation_warning(new_cmd: str) -> None:
     )
 
 
+# DOI prefix shape per IANA assignments: "10.<4-9 digits>/<non-empty>".
+# Mirrors the server-side regex in internal/paperassets/doi.go and
+# internal/routes/papers.go (doiPrefixRE) so client+server agree on what
+# qualifies as a DOI for routing decisions. The client side only needs
+# the prefix check — the server still validates the full DOI shape +
+# normalizes URL prefixes via paperassets.ValidateDOI before storing.
+_DOI_PREFIX_RE = re.compile(r"^10\.\d{4,9}/")
+
+
+def _looks_like_doi(value: str) -> bool:
+    """Return True if `value` syntactically looks like a bare DOI.
+
+    Used by `qatlas upload mineru` to gate the surviving DOI direct-zip
+    path against the killed arxiv direct-zip path. URL-prefixed DOIs
+    (e.g. ``https://doi.org/10.x/y``, ``doi:10.x/y``) are stripped and
+    re-checked so a contributor pasting a full link still hits the DOI
+    branch.
+    """
+    if not value:
+        return False
+    stripped = value.strip().lower()
+    for prefix in (
+        "https://doi.org/",
+        "http://doi.org/",
+        "https://dx.doi.org/",
+        "http://dx.doi.org/",
+        "doi.org/",
+        "dx.doi.org/",
+        "doi:",
+    ):
+        if stripped.startswith(prefix):
+            stripped = stripped[len(prefix):].lstrip()
+            break
+    return bool(_DOI_PREFIX_RE.match(stripped))
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv[0] in {"-h", "--help"}:
@@ -357,17 +409,31 @@ def main(argv: list[str] | None = None) -> int:
         _emit_deprecation_warning("qatlas contrib pdf")
         parser = build_pdf_parser()
     elif subcommand == "mineru":
-        print(
-            "ERROR: `qatlas upload mineru` was removed in v0.19.0.\n"
-            "The direct-zip upload path was a parallel surface to the contributor\n"
-            "MinerU runner and led to inconsistent claim/lease state. All MinerU\n"
-            "uploads now go through:\n"
-            "    qatlas contrib mineru [ARXIV_ID]\n"
-            "    qatlas contrib mineru --watch\n"
-            "which handles claim, MinerU run, and upload as one unit.",
-            file=sys.stderr,
-        )
-        return 2
+        # Parse first so we can tell DOI from arxiv before deciding
+        # whether to dispatch or kill. argparse handles flags-in-any-
+        # order, so we can't rely on argv[0] being the positional.
+        parser = build_mineru_parser()
+        args = parser.parse_args(argv)
+        # v0.19.0 killed the **arxiv** direct-zip path (it raced
+        # `qatlas contrib mineru`'s claim/lease state). DOIs have no
+        # needs-mineru queue and no claim/lease — direct-zip is the
+        # only contributor path for DOI-only papers, so it survived.
+        if not _looks_like_doi(args.arxiv_id):
+            print(
+                "ERROR: `qatlas upload mineru ARXIV_ID` was removed in v0.19.0.\n"
+                "The arxiv direct-zip path was a parallel surface to the contributor\n"
+                "MinerU runner and led to inconsistent claim/lease state. arxiv MinerU\n"
+                "uploads now go through:\n"
+                "    qatlas contrib mineru [ARXIV_ID]\n"
+                "    qatlas contrib mineru --watch\n"
+                "which handles claim, MinerU run, and upload as one unit.\n\n"
+                "The DOI form (`qatlas upload mineru DOI`) is still supported —\n"
+                "DOIs aren't in the needs-mineru queue, so direct-zip is the only\n"
+                "contributor path for DOI-only papers.",
+                file=sys.stderr,
+            )
+            return 2
+        return run_with_request_errors(args.func, args)
     elif subcommand == "markdown":
         print(
             "ERROR: `qatlas upload markdown` was removed in v0.8.0 (breaking change).\n"
