@@ -36,6 +36,11 @@ schemes are accepted:
 The server rejects bare ids without `vN` to keep on-disk paths and
 listings deterministic.
 
+> **Since v0.21**: the `{arxiv_id}` slot ALSO accepts a **DOI**
+> (`10.<registrant>/<suffix>`) so contributors can upload a *published*
+> version that may have no arXiv preprint. See
+> [Contributing by DOI](#contributing-by-doi) below.
+
 > **v0.8.0 BREAKING CHANGE**: the legacy `POST upload-markdown`
 > endpoint that accepted a bare `.md` file has been removed. Use
 > `upload-mineru` with the **entire MinerU result zip** instead —
@@ -61,11 +66,17 @@ qatlas upload pdf 2501.00010v1 --pdf ./paper-v2.pdf
 # recoverable until the next storage prune)
 qatlas upload pdf 2501.00010v1 --pdf ./paper-v2.pdf --overwrite
 
-# Upload a MinerU result bundle (full.md + images/*) — push the
-# raw zip MinerU returned at its `full_zip_url`, the server unzips it.
-qatlas upload mineru 2501.00010v1 \
+# Upload a MinerU result bundle for a DOI-only published paper
+# (full.md + images/*) — push the raw zip MinerU returned at its
+# `full_zip_url`, the server unzips it. The arxiv direct-zip form
+# was removed in v0.19.0 (use `qatlas contrib mineru` instead);
+# the DOI form below remains the only direct-zip path. Title and
+# authors are auto-fetched from OpenAlex — the contributor never
+# supplies them.
+qatlas upload mineru 10.1103/PhysRevLett.123.070501 \
     --zip ./mineru-result.zip \
-    --source mineru-client-v0.8
+    --source mineru-client-v0.8 \
+    --verify warn
 ```
 
 The CLI streams the file once through sha256 before posting and
@@ -254,7 +265,6 @@ of RustFS's "INSERT" primitive — same relationship a typical app
 has with a SQL store. See README.md for the wider design rationale.
 
 ## Breaking change v0.8.0
-
 The pre-v0.8 `POST /api/papers/{arxiv_id}/upload-markdown` endpoint
 took a single `.md` file as the multipart part `markdown`. It is
 **gone** as of v0.8.0 — calling it returns `404 no POST handler`.
@@ -275,6 +285,12 @@ CLI:
 + qatlas upload mineru   2501.00010v1 --zip path/to/mineru.zip --source mineru
 ```
 
+> **v0.19.0 update**: the arxiv form `qatlas upload mineru <ARXIV_ID>` shown
+> above was itself replaced by `qatlas contrib mineru [<ARXIV_ID>]`, which
+> claims, runs MinerU, and uploads as one unit. The direct-zip form
+> survives only for **DOI** uploads — see the [Contributing by DOI](#contributing-by-doi)
+> section below.
+
 Why the change: the old endpoint only stored the markdown and
 silently dropped every figure in the bundle, leaving detail pages
 with broken image references. `upload-mineru` keeps the bundle
@@ -286,3 +302,157 @@ Client-server version skew: the `X-Qatlas-Server-Version` response
 header (added in v0.8.0) lets the `qatlas` CLI detect when it's
 talking to a newer server and refuse writes (hard fail) / warn on
 reads. Old clients that don't inspect the header simply ignore it.
+
+## Contributing by DOI
+
+Since v0.21 the `{arxiv_id}` path slot also accepts a **DOI**
+(`10.<registrant>/<suffix>`). This exists for *published* versions —
+the Physical Review / Nature / etc. PDF — which is a different artifact
+from any arXiv preprint, and which may have no arXiv id at all.
+
+DOI is a **second, independent identity** alongside arXiv (still a
+single unique index per asset). It is NOT collapsed onto the arXiv
+preprint: a DOI upload is always stored and recorded under the DOI,
+even when OpenAlex links that DOI to an arXiv work.
+
+### Storage layout
+
+DOI-indexed assets live in a namespace disjoint from arXiv's `<yymm>/`
+shards, so an arXiv id and a DOI can never collide on the same key:
+
+```text
+<kind>/doi/<registrant>/<safe-suffix>.<ext>
+
+pdf/doi/10.1103/physrevlett.123.070501.pdf
+markdown/doi/10.1103/physrevlett.123.070501.md
+images/doi/10.1103/physrevlett.123.070501.zip
+```
+
+The DOI is lower-cased (DOIs are case-insensitive); nested slashes in
+the suffix become `__`. In the Neo4j catalog the contribution is a
+`:PaperWork` node keyed `arxiv_id = "doi:<doi>"` (reusing the
+`arxiv_id` UNIQUE constraint for atomic, race-safe MERGE) with
+`identifier_scheme = 'doi'`, `source = 'doi-upload'`, and the asset
+pointers + verification fields below.
+
+> **Canonical resolution (DOI wins)**: a `:PaperWork` node with
+> `identifier_scheme='doi'` ALWAYS takes precedence over its arxiv twin
+> when both exist. `GET /api/papers/<id>/...` serves the DOI bytes
+> whether the caller supplied the DOI or the linked arxiv id; DOI is
+> the canonical identity of the *published* version, the arxiv preprint
+> is a secondary artifact. The DOI fast path skips OpenAlex entirely
+> when the local catalog already has the DOI node.
+>
+> Two shapes hit this rule:
+>
+> 1. **Caller passes a DOI** — `LookupDOI` resolves to the local DOI
+>    namespace first; on miss, the request falls through to OpenAlex,
+>    which may surface an arxiv twin to serve.
+> 2. **Caller passes an arxiv id** — the dispatcher reverse-looks-up
+>    `doi_arxiv_id = <bare arxiv id>` to find any DOI twin. Hit → the
+>    request is redirected to the DOI handlers; miss → regular arxiv
+>    path. Redirects are observable via the `X-QAtlas-Canonical-DOI`
+>    response header and a `served_as_doi_canonical (…; pass
+>    ?force_arxiv=1 to opt out)` entry in `X-QAtlas-Defaults-Applied`.
+>
+> **Per-request opt-out**: append `?force_arxiv=1` (or `?force_arxiv=true`)
+> to bypass the DOI-canonical rule and force the arxiv path. With DOI
+> input + `force_arxiv=1` + no arxiv twin in OpenAlex you get `409
+> Conflict` (caller asked for arxiv, none exists). With arxiv input +
+> `force_arxiv=1` the reverse lookup is skipped and the request lands on
+> the arxiv handlers directly.
+
+### Metadata enrichment (auto-fetched from OpenAlex)
+
+Because nothing binds raw PDF bytes to a DOI, the server resolves the
+DOI's **OpenAlex metadata** (the same resolver used for DOI→arXiv on
+the download path) and persists the canonical title / authors / linked
+arxiv id on the catalog node. **Contributors cannot supply or override
+this metadata** — by design, the only metadata input is the DOI itself,
+and a typo'd DOI surfaces either as a different paper's record (the
+contributor sees it via the response header / JSON block and can resubmit
+under the correct DOI) or as `doi-not-found`.
+
+```bash
+qatlas upload pdf 10.1103/PhysRevLett.123.070501 --pdf ./published.pdf
+```
+
+Direct HTTP — no `title`/`authors` form fields:
+
+```bash
+curl -X POST \
+    -H "Authorization: Bearer $QATLAS_TOKEN" \
+    -F "pdf=@published.pdf;type=application/pdf" \
+    "https://quantum-atlas.ai/api/papers/10.1103/PhysRevLett.123.070501/upload-pdf"
+```
+
+The outcome is **recorded** on the node (`verification_status`,
+`doi_title`, `doi_authors`, `doi_arxiv_id`, `verified_at`) and returned
+whenever the upload actually writes bytes:
+
+- response header `X-QAtlas-Verification: <status>`
+- response body `verification` block (`status`, `title`, `authors`,
+  `arxiv_id`)
+
+> A no-op re-upload (the object's sha256 already matches) does **not**
+> re-run the OpenAlex lookup: the header and `verification` block are
+> omitted and the catalog node is left untouched. The prior metadata is
+> still on the node. This keeps repeated uploads from hitting OpenAlex.
+>
+> Resolved metadata is cached in-process for a few minutes (same LRU as
+> DOI→arXiv resolution, keyed separately), so a PDF-then-MinerU pair for
+> one DOI costs a single OpenAlex lookup.
+>
+> **Metadata preservation under failure:** when the server cannot resolve
+> the DOI on a given upload (transient OpenAlex outage, server unconfigured,
+> or `doi-not-found`), the catalog write preserves any previously-stored
+> `doi_title` / `doi_authors` / `doi_arxiv_id` rather than overwriting them
+> with empty values — a transient failure during a re-upload must never
+> erase a prior verified record. `verification_status` itself is always
+> overwritten so operators see the latest attempt.
+
+| `verification_status`  | Meaning                                                             |
+| ---------------------- | ------------------------------------------------------------------- |
+| `verified`             | OpenAlex returned a record; title / authors / linked arxiv id stored |
+| `doi-not-found`        | OpenAlex confirmed the DOI does not exist                           |
+| `metadata-unavailable` | OpenAlex was unreachable / errored                                  |
+| `unconfigured`         | server has no `QATLAS_OPENALEX_MAILTO`, so enrichment is disabled   |
+
+### `?verify=` policy
+
+The DOI's OpenAlex resolution is **advisory by default** (`verify=warn`):
+the outcome is recorded and surfaced, but the upload still succeeds even
+when OpenAlex cannot confirm the DOI — coverage is incomplete and blocking
+would reject legitimate contributions.
+
+Pass `?verify=strict` to make resolution mandatory:
+
+- `doi-not-found` → `409 Conflict` (contributor-correctable: typo'd DOI)
+- `metadata-unavailable` / `unconfigured` → `503 Service Unavailable`
+  (server-side, can't verify)
+
+`verified` proceeds.
+
+All the arXiv-path guarantees still apply to DOI uploads: sha256
+idempotency (200 / 409), `?expected_sha256=` in-transit guard, `%PDF-`
+magic check, `?overwrite=true`, and `upload-mineru`'s `?pdf_sha256=`
+source-PDF cross-check (against the stored DOI PDF).
+
+### Client coverage
+
+CLI support for DOI uploads covers **both** `pdf` and `mineru` subcommands:
+
+- `qatlas upload pdf <DOI> --pdf ...` accepts a DOI in the ID slot and
+  exposes `--verify`; the verification status is printed to stderr from
+  the `X-QAtlas-Verification` response header.
+- `qatlas upload mineru <DOI> --zip ...` likewise accepts a DOI and the
+  same `--verify` flag. The flag is honoured by the server's DOI path
+  and a no-op on the arXiv path (the arxiv catalog is enriched through
+  a separate sync pipeline), so the same invocation works for either
+  identity.
+- The arXiv-keyed `qatlas contrib mineru` runner (claim queue → MinerU →
+  upload) is still arxiv-only end-to-end: it does not yet pick DOI work
+  out of the queue. Contributors driving MinerU manually against a
+  published PDF should use `qatlas upload mineru <DOI> --zip ...` (or
+  POST the bundle directly to `/api/papers/<DOI>/upload-mineru` with
+  `?verify=` / `?pdf_sha256=` as described above).

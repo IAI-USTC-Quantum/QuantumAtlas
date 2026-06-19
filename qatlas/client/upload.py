@@ -3,7 +3,8 @@
 Subcommands::
 
     qatlas upload pdf ARXIV_ID --pdf path.pdf [--overwrite]
-    qatlas upload mineru ARXIV_ID --zip path.zip [--source mineru] [--overwrite]
+    qatlas upload mineru DOI --zip path.zip [--source mineru] [--overwrite] \
+                              [--verify warn|strict]
 
 The ARXIV_ID must include a version suffix (``vN``) so the stored filename
 matches the RAW_DIR layout. Old style (pre-Apr 2007) requires a category
@@ -23,18 +24,28 @@ in the images bucket under the same ``<yymm>/<stem>/`` prefix. This
 replaces v0.7.x's ``upload markdown`` (which only accepted a single .md
 file and silently dropped images).
 
-Paper metadata (title / authors / abstract / DOI / citations) is sourced
-upstream from OpenAlex into the Neo4j catalog as of v0.7.0 — the upload
-endpoint no longer accepts a ``metadata`` JSON sibling.
+Since v0.19.0 the **arxiv-id** form of ``upload mineru`` is no longer
+accepted (use ``qatlas contrib mineru`` which does claim+run+upload as
+one unit). The **DOI** form remains supported — DOIs aren't in the
+needs-mineru queue, so direct-zip is the only contributor path for
+DOI-only papers.
+
+Paper metadata (title / authors / abstract / DOI / citations) is always
+sourced from upstream (OpenAlex for DOI uploads, arXiv/OpenAlex sync for
+arXiv uploads) — the client and server reject any attempt to override it
+from contributor input. ``--verify`` only controls *policy* (whether the
+server requires a successful OpenAlex lookup before accepting the upload).
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
+import re
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import requests
 
@@ -92,9 +103,13 @@ def cmd_upload_pdf(args: argparse.Namespace) -> int:
     params: dict[str, str] = {"expected_sha256": pdf_sha}
     if args.overwrite:
         params["overwrite"] = "true"
+    if getattr(args, "verify", None) == "strict":
+        params["verify"] = "strict"
 
     base_url = base_url_from_args(args)
-    url = f"{base_url}/api/papers/{args.arxiv_id}/upload-pdf"
+    # DOI suffixes can contain '/', '?', '#', etc. — percent-encode
+    # the path segment so the server's router sees the full id verbatim.
+    url = f"{base_url}/api/papers/{quote(args.arxiv_id, safe='')}/upload-pdf"
 
     try:
         response = requests.post(
@@ -112,6 +127,7 @@ def cmd_upload_pdf(args: argparse.Namespace) -> int:
 
     if not response.ok:
         return _http_error_exit(response)
+    _emit_verification_header(response)
     print_json(response.json())
     return 0
 
@@ -141,9 +157,13 @@ def cmd_upload_mineru(args: argparse.Namespace) -> int:
         params["overwrite"] = "true"
     if args.source:
         params["source"] = args.source
+    if getattr(args, "verify", None) == "strict":
+        params["verify"] = "strict"
 
     base_url = base_url_from_args(args)
-    url = f"{base_url}/api/papers/{args.arxiv_id}/upload-mineru"
+    # DOI suffixes can contain '/', '?', '#', etc. — percent-encode
+    # the path segment so the server's router sees the full id verbatim.
+    url = f"{base_url}/api/papers/{quote(args.arxiv_id, safe='')}/upload-mineru"
 
     try:
         response = requests.post(
@@ -161,6 +181,7 @@ def cmd_upload_mineru(args: argparse.Namespace) -> int:
 
     if not response.ok:
         return _http_error_exit(response)
+    _emit_verification_header(response)
     print_json(response.json())
     return 0
 
@@ -168,18 +189,59 @@ def cmd_upload_mineru(args: argparse.Namespace) -> int:
 def _add_arxiv_arg(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "arxiv_id",
+        metavar="ID",
         help=(
-            "arXiv ID with explicit version suffix, e.g. 'quant-ph/9508027v1' or "
-            "'2501.00010v1'. The version is required so the stored filename "
-            "matches RAW_DIR layout."
+            "arXiv ID with explicit version suffix (e.g. 'quant-ph/9508027v1' or "
+            "'2501.00010v1'), OR a DOI (e.g. '10.1103/PhysRevLett.123.070501') to "
+            "contribute a published version. The arXiv version is required so the "
+            "stored filename matches RAW_DIR layout; DOIs are stored under a "
+            "separate 'doi/' namespace."
         ),
     )
+
+
+def _add_doi_verify_args(parser: argparse.ArgumentParser) -> None:
+    """Add ``--verify`` shared by the DOI-capable uploaders.
+
+    DOI uploads enrich the catalog with title/authors/linked-arxiv-id
+    fetched from OpenAlex; the contributor cannot override that metadata.
+    ``--verify`` only chooses what the server does when OpenAlex cannot
+    resolve the DOI: ``warn`` records the failure and proceeds, ``strict``
+    rejects with 409 (doi-not-found) or 503 (metadata-unavailable /
+    unconfigured). The flag is a no-op for arXiv uploads (the server's
+    arXiv path resolves metadata through a separate sync pipeline).
+    """
+    parser.add_argument(
+        "--verify",
+        choices=["warn", "strict"],
+        default="warn",
+        help=(
+            "DOI uploads only: 'warn' (default) records when OpenAlex "
+            "cannot resolve the DOI but still uploads; 'strict' rejects "
+            "(409 doi-not-found, 503 metadata-unavailable). The server "
+            "always sources title/authors from OpenAlex; the contributor "
+            "cannot override that metadata."
+        ),
+    )
+
+
+def _emit_verification_header(response: requests.Response) -> None:
+    """Print the X-QAtlas-Verification header (if present) to stderr.
+
+    The server emits this on the DOI path to tell the caller what the
+    metadata cross-check decided (matched / mismatch / unknown-DOI). It's
+    useful to surface because the JSON body only carries the upload status;
+    the verification result is purely a response-header signal.
+    """
+    verification = response.headers.get("X-QAtlas-Verification")
+    if verification:
+        print(f"DOI metadata verification: {verification}", file=sys.stderr)
 
 
 def build_pdf_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="qatlas upload pdf",
-        description="Upload a paper PDF to the server.",
+        description="Upload a paper PDF to the server (by arXiv ID or DOI).",
     )
     _add_arxiv_arg(parser)
     parser.add_argument("--pdf", required=True, help="Path to the local PDF file")
@@ -188,6 +250,7 @@ def build_pdf_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Replace existing PDF if present on the server",
     )
+    _add_doi_verify_args(parser)
     add_common_http_args(parser)
     parser.set_defaults(func=cmd_upload_pdf)
     return parser
@@ -197,9 +260,12 @@ def build_mineru_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="qatlas upload mineru",
         description=(
-            "Upload a MinerU result zip (full.md + images/*) for a paper. "
-            "The server unzips and stores the markdown + every image under "
-            "their respective per-kind buckets."
+            "Upload a MinerU result zip (full.md + images/*) for a paper "
+            "(by arXiv ID or DOI). The server unzips and stores the markdown "
+            "+ every image under their respective per-kind buckets. "
+            "DOI uploads honour --verify to choose strict vs warn policy "
+            "when OpenAlex cannot resolve the DOI; title/authors are always "
+            "sourced from OpenAlex (never from the contributor)."
         ),
     )
     _add_arxiv_arg(parser)
@@ -223,6 +289,7 @@ def build_mineru_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Replace existing markdown / images if present on the server",
     )
+    _add_doi_verify_args(parser)
     add_common_http_args(parser)
     parser.set_defaults(func=cmd_upload_mineru)
     return parser
@@ -239,15 +306,23 @@ Usage:
   qatlas upload pdf ARXIV_ID --pdf path.pdf [--overwrite]
       → equivalent to `qatlas contrib pdf ARXIV_ID --pdf path.pdf`
 
+  qatlas upload mineru DOI --zip path.zip [--verify warn|strict]
+      → DOI-only direct-zip MinerU bundle upload (the arxiv-id form
+        was removed in v0.19.0; DOIs have no needs-mineru queue, so
+        this remains the only path). The server resolves the DOI's
+        title/authors from OpenAlex; --verify chooses whether
+        doi-not-found / metadata-unavailable blocks the upload.
+
 The arXiv ID must include a version suffix (e.g. quant-ph/9508027v1 or 2501.00010v1).
-Use "qatlas upload pdf --help" for full options.
+Use "qatlas upload pdf --help" / "qatlas upload mineru --help" for full options.
 
 Notes:
   * `qatlas upload markdown` was removed in v0.8.0 — use `qatlas contrib mineru`
     to run MinerU locally (which uploads markdown + images automatically).
-  * `qatlas upload mineru` (the direct-zip upload subcommand) was removed in
-    v0.19.0 — all MinerU pushes must now go through `qatlas contrib mineru`
-    so the same path always handles claim/lease/upload as one unit."""
+  * `qatlas upload mineru ARXIV_ID` (the arxiv direct-zip form) was removed in
+    v0.19.0 — arxiv MinerU pushes must now go through `qatlas contrib mineru`
+    so the same path always handles claim/lease/upload as one unit. The DOI
+    form (`qatlas upload mineru DOI`) remains supported."""
     )
 
 
@@ -263,6 +338,42 @@ def _emit_deprecation_warning(new_cmd: str) -> None:
     )
 
 
+# DOI prefix shape per IANA assignments: "10.<4-9 digits>/<non-empty>".
+# Mirrors the server-side regex in internal/paperassets/doi.go and
+# internal/routes/papers.go (doiPrefixRE) so client+server agree on what
+# qualifies as a DOI for routing decisions. The client side only needs
+# the prefix check — the server still validates the full DOI shape +
+# normalizes URL prefixes via paperassets.ValidateDOI before storing.
+_DOI_PREFIX_RE = re.compile(r"^10\.\d{4,9}/")
+
+
+def _looks_like_doi(value: str) -> bool:
+    """Return True if `value` syntactically looks like a bare DOI.
+
+    Used by `qatlas upload mineru` to gate the surviving DOI direct-zip
+    path against the killed arxiv direct-zip path. URL-prefixed DOIs
+    (e.g. ``https://doi.org/10.x/y``, ``doi:10.x/y``) are stripped and
+    re-checked so a contributor pasting a full link still hits the DOI
+    branch.
+    """
+    if not value:
+        return False
+    stripped = value.strip().lower()
+    for prefix in (
+        "https://doi.org/",
+        "http://doi.org/",
+        "https://dx.doi.org/",
+        "http://dx.doi.org/",
+        "doi.org/",
+        "dx.doi.org/",
+        "doi:",
+    ):
+        if stripped.startswith(prefix):
+            stripped = stripped[len(prefix):].lstrip()
+            break
+    return bool(_DOI_PREFIX_RE.match(stripped))
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv[0] in {"-h", "--help"}:
@@ -273,17 +384,31 @@ def main(argv: list[str] | None = None) -> int:
         _emit_deprecation_warning("qatlas contrib pdf")
         parser = build_pdf_parser()
     elif subcommand == "mineru":
-        print(
-            "ERROR: `qatlas upload mineru` was removed in v0.19.0.\n"
-            "The direct-zip upload path was a parallel surface to the contributor\n"
-            "MinerU runner and led to inconsistent claim/lease state. All MinerU\n"
-            "uploads now go through:\n"
-            "    qatlas contrib mineru [ARXIV_ID]\n"
-            "    qatlas contrib mineru --watch\n"
-            "which handles claim, MinerU run, and upload as one unit.",
-            file=sys.stderr,
-        )
-        return 2
+        # Parse first so we can tell DOI from arxiv before deciding
+        # whether to dispatch or kill. argparse handles flags-in-any-
+        # order, so we can't rely on argv[0] being the positional.
+        parser = build_mineru_parser()
+        args = parser.parse_args(argv)
+        # v0.19.0 killed the **arxiv** direct-zip path (it raced
+        # `qatlas contrib mineru`'s claim/lease state). DOIs have no
+        # needs-mineru queue and no claim/lease — direct-zip is the
+        # only contributor path for DOI-only papers, so it survived.
+        if not _looks_like_doi(args.arxiv_id):
+            print(
+                "ERROR: `qatlas upload mineru ARXIV_ID` was removed in v0.19.0.\n"
+                "The arxiv direct-zip path was a parallel surface to the contributor\n"
+                "MinerU runner and led to inconsistent claim/lease state. arxiv MinerU\n"
+                "uploads now go through:\n"
+                "    qatlas contrib mineru [ARXIV_ID]\n"
+                "    qatlas contrib mineru --watch\n"
+                "which handles claim, MinerU run, and upload as one unit.\n\n"
+                "The DOI form (`qatlas upload mineru DOI`) is still supported —\n"
+                "DOIs aren't in the needs-mineru queue, so direct-zip is the only\n"
+                "contributor path for DOI-only papers.",
+                file=sys.stderr,
+            )
+            return 2
+        return run_with_request_errors(args.func, args)
     elif subcommand == "markdown":
         print(
             "ERROR: `qatlas upload markdown` was removed in v0.8.0 (breaking change).\n"

@@ -191,6 +191,15 @@ func docNeedsMineru() {}
 // @Description registered when QATLAS_PAPER_ACCESS_ENABLED=true on the
 // @Description server (default off).
 // @Description
+// @Description Canonical resolution: a `:PaperWork` node with
+// @Description `identifier_scheme='doi'` ALWAYS wins over its arxiv
+// @Description twin when both exist — DOI is the canonical identity of
+// @Description the published version. The dispatcher serves DOI bytes
+// @Description for either id form when a DOI contribution is on file;
+// @Description pass `?force_arxiv=1` to opt out per request (DOI input
+// @Description with force_arxiv + no arxiv twin returns 409). See
+// @Description docs/reference/upload-api.md §Canonical resolution.
+// @Description
 // @Description Long-running operation semantics: on cache miss the
 // @Description server may transparently fetch the PDF from arxiv.org
 // @Description (silent_fetch) and trigger a MinerU conversion. The
@@ -202,12 +211,14 @@ func docNeedsMineru() {}
 // @Produce     plain
 // @Security    BearerAuth
 // @Param       id_or_doi path string true "arXiv canonical id with vN suffix, or a DOI (e.g. 10.1103/PhysRevLett.103.150502)"
+// @Param       force_arxiv query string false "1/true: bypass the DOI-canonical default and serve the arxiv twin (or 409 if no twin exists)"
 // @Success     200 {string} string "markdown bytes (text/markdown)"
 // @Success     202 {object} map[string]interface{} "long-running operation started; poll status_url"
 // @Failure     400 {object} map[string]string "invalid arxiv_id or DOI"
 // @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string
 // @Failure     404 {object} map[string]interface{} "DOI not in OpenAlex / not on arxiv; or paper unknown and silent fetch unavailable"
+// @Failure     409 {object} map[string]interface{} "force_arxiv requested but DOI has no arxiv twin"
 // @Failure     502 {object} map[string]interface{} "prior conversion failed inside the cooldown window, or OpenAlex upstream error"
 // @Failure     503 {object} map[string]interface{} "cache-only mode (no MinerU keys), or DOI resolution unavailable (QATLAS_OPENALEX_MAILTO unset)"
 // @Router      /api/papers/{id_or_doi}/markdown [get]
@@ -220,6 +231,10 @@ func docPaperMarkdown() {}
 // @Description never triggers a fetch. Only registered when
 // @Description QATLAS_PAPER_ACCESS_ENABLED=true on the server.
 // @Description
+// @Description Canonical resolution: same DOI-wins rule as
+// @Description /api/papers/{id_or_doi}/markdown. Pass `?force_arxiv=1`
+// @Description to query the arxiv-side status instead.
+// @Description
 // @Description Response shape always carries the agent-decision triple
 // @Description `state / pdf_ready / md_ready` plus an optional `phase`
 // @Description (fetching_pdf | converting_md | ready | error_fetching |
@@ -230,6 +245,7 @@ func docPaperMarkdown() {}
 // @Produce     json
 // @Security    BearerAuth
 // @Param       id_or_doi path string true "arXiv canonical id or DOI"
+// @Param       force_arxiv query string false "1/true: bypass DOI-canonical default"
 // @Success     200 {object} map[string]interface{} "status payload (state ∈ cached|queued|running|none|failed|cooldown|unavailable)"
 // @Failure     400 {object} map[string]string
 // @Failure     401 {object} map[string]string
@@ -246,6 +262,13 @@ func docPaperMarkdownStatus() {}
 // @Description arxiv id or DOI. Only registered when
 // @Description QATLAS_PAPER_ACCESS_ENABLED=true on the server.
 // @Description
+// @Description Canonical resolution: a DOI contribution ALWAYS wins
+// @Description over its arxiv twin when both exist — the dispatcher
+// @Description serves the DOI PDF for either id form. Pass
+// @Description `?force_arxiv=1` to opt out per request (DOI input
+// @Description without an arxiv twin then returns 409). See
+// @Description docs/reference/upload-api.md §Canonical resolution.
+// @Description
 // @Description Long-running operation semantics mirror /markdown: cache
 // @Description miss returns 202 with Operation-Location pointing at
 // @Description /pdf/status. The fetch path uses a separate semaphore
@@ -255,12 +278,14 @@ func docPaperMarkdownStatus() {}
 // @Produce     application/pdf
 // @Security    BearerAuth
 // @Param       id_or_doi path string true "arXiv canonical id with vN suffix, or a DOI"
+// @Param       force_arxiv query string false "1/true: bypass DOI-canonical default; return 409 if DOI has no arxiv twin"
 // @Success     200 {string} string "PDF bytes (application/pdf)"
 // @Success     202 {object} map[string]interface{} "silent fetch started; poll status_url"
 // @Failure     400 {object} map[string]string "invalid arxiv_id or DOI"
 // @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string
 // @Failure     404 {object} map[string]interface{} "arxiv 404 or DOI not on arxiv"
+// @Failure     409 {object} map[string]interface{} "force_arxiv requested but DOI has no arxiv twin"
 // @Failure     502 {object} map[string]interface{} "arxiv upstream error / OpenAlex upstream error"
 // @Failure     503 {object} map[string]interface{} "silent fetch disabled (no fetcher), DOI resolution unavailable"
 // @Router      /api/papers/{id_or_doi}/pdf [get]
@@ -273,10 +298,15 @@ func docPaperPDF() {}
 // @Description /markdown/status but states are restricted to the
 // @Description fetch-only flow — no convert phase. Only registered when
 // @Description QATLAS_PAPER_ACCESS_ENABLED=true.
+// @Description
+// @Description Canonical resolution: same DOI-wins rule as
+// @Description /api/papers/{id_or_doi}/pdf. Pass `?force_arxiv=1` to
+// @Description query the arxiv-side status instead.
 // @Tags        Papers
 // @Produce     json
 // @Security    BearerAuth
 // @Param       id_or_doi path string true "arXiv canonical id or DOI"
+// @Param       force_arxiv query string false "1/true: bypass DOI-canonical default"
 // @Success     200 {object} map[string]interface{} "status payload (state ∈ cached|queued|running|none|failed|unavailable)"
 // @Failure     400 {object} map[string]string
 // @Failure     401 {object} map[string]string
@@ -286,17 +316,28 @@ func docPaperPDFStatus() {}
 
 // uploadPDF stores a paper PDF.
 //
-// @Summary     Upload paper PDF
+// @Summary     Upload paper PDF (arXiv id or DOI)
 // @Description Content-addressed upload with sha256 idempotency. 200 when
 // @Description bytes are unchanged, 201 when written, 409 on a content
 // @Description conflict without overwrite=true.
+// @Description
+// @Description The {arxiv_id} slot also accepts a DOI (`10.<registrant>/<suffix>`)
+// @Description for contributing a *published* version that may have no arXiv
+// @Description preprint. DOI uploads are stored under a disjoint `pdf/doi/...`
+// @Description namespace and the server resolves the DOI's title / authors /
+// @Description linked arxiv id from OpenAlex — the contributor cannot supply
+// @Description that metadata. The result is reported in `X-QAtlas-Verification`
+// @Description and the JSON `verification` block; `verify=strict` rejects a
+// @Description doi-not-found with 409 (or metadata-unavailable / unconfigured
+// @Description with 503).
 // @Tags        Papers
 // @Accept      mpfd
 // @Produce     json
 // @Security    BearerAuth
-// @Param       arxiv_id        path     string true  "arXiv identifier"
+// @Param       arxiv_id        path     string true  "arXiv identifier (with vN) OR DOI (10.x/...)"
 // @Param       overwrite       query    bool   false "overwrite on content conflict"
 // @Param       expected_sha256 query    string false "client-computed PDF sha256 (in-transit guard)"
+// @Param       verify          query    string false "DOI only: 'strict' rejects when OpenAlex cannot resolve the DOI (default warn)"
 // @Param       pdf             formData file   true  "PDF file"
 // @Success     201 {object} map[string]interface{} "created"
 // @Success     200 {object} map[string]interface{} "unchanged"
@@ -307,15 +348,19 @@ func docUploadPDF() {}
 
 // uploadMineRU stores a MinerU result zip (markdown + images bundle) for a paper.
 //
-// @Summary     Upload paper MinerU bundle
+// @Summary     Upload paper MinerU bundle (arXiv id or DOI)
 // @Description Accepts the entire MinerU result zip exactly as returned by `full_zip_url`. Server extracts `full.md` plus every `images/*` entry and stores them to the markdown and images object buckets respectively. Images are written before the markdown so any reader that observes the markdown also observes all referenced images. Replaces the v0.7.x `upload-markdown` endpoint (which only accepted a single .md file and silently dropped images).
+// @Description
+// @Description The {arxiv_id} slot also accepts a DOI (`10.<registrant>/<suffix>`) to contribute the converted *published* version. DOI bundles are stored under the `markdown/doi/...` + `images/doi/...` namespace; the server resolves canonical metadata (title, authors, linked arxiv id) from OpenAlex on the contributor's behalf — there is no `title` / `authors` form field. `verify=strict` rejects when OpenAlex cannot resolve the DOI (see upload-pdf). The result is reported in `X-QAtlas-Verification`.
 // @Tags        Papers
 // @Accept      mpfd
 // @Produce     json
 // @Security    BearerAuth
-// @Param       arxiv_id        path     string true  "arXiv identifier (must include version suffix vN)"
+// @Param       arxiv_id        path     string true  "arXiv identifier (with vN) OR DOI (10.x/...)"
 // @Param       overwrite       query    bool   false "overwrite on content conflict"
 // @Param       expected_sha256 query    string false "client-computed zip sha256 (in-transit integrity check)"
+// @Param       pdf_sha256      query    string false "sha256 of the source PDF that was converted (cross-checked against stored PDF)"
+// @Param       verify          query    string false "DOI only: 'strict' rejects when OpenAlex cannot resolve the DOI (default warn)"
 // @Param       source          query    string false "short label of the contributor's MinerU run (truncated to 64 chars)"
 // @Param       mineru_zip      formData file   true  "MinerU result zip (must contain full.md; optional images/*)"
 // @Success     201 {object} map[string]interface{}

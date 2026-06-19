@@ -19,13 +19,14 @@ import (
 // records have ~40 top-level fields; we deliberately decode only what
 // maps onto :PaperWork properties + citation edges.
 type Work struct {
-	ID              string     `json:"id"`    // "https://openalex.org/W2741809807"
-	DOI             string     `json:"doi"`   // "https://doi.org/10.7717/peerj.4375"
-	Title           string     `json:"title"`
-	PublicationDate string     `json:"publication_date"`
-	Locations       []Location `json:"locations"`
-	ReferencedWorks []string   `json:"referenced_works"`
-	CitedByCount    int        `json:"cited_by_count"`
+	ID              string       `json:"id"`  // "https://openalex.org/W2741809807"
+	DOI             string       `json:"doi"` // "https://doi.org/10.7717/peerj.4375"
+	Title           string       `json:"title"`
+	PublicationDate string       `json:"publication_date"`
+	Locations       []Location   `json:"locations"`
+	Authorships     []Authorship `json:"authorships"`
+	ReferencedWorks []string     `json:"referenced_works"`
+	CitedByCount    int          `json:"cited_by_count"`
 }
 
 // Location is one OpenAlex location (landing page / pdf host). arxiv ids
@@ -33,6 +34,37 @@ type Work struct {
 type Location struct {
 	LandingPageURL string `json:"landing_page_url"`
 	PDFURL         string `json:"pdf_url"`
+}
+
+// Authorship is one author slot on a Work. OpenAlex gives both a
+// disambiguated author object and the raw byline string; we keep both so
+// AuthorNames can fall back when disambiguation is missing.
+type Authorship struct {
+	Author        Author `json:"author"`
+	RawAuthorName string `json:"raw_author_name"`
+}
+
+// Author is the disambiguated author entity (subset).
+type Author struct {
+	DisplayName string `json:"display_name"`
+}
+
+// AuthorNames returns a Work's author display names in byline order,
+// falling back to raw_author_name when the disambiguated author has no
+// display name. Blank names are skipped. Used for upload-time author
+// verification on DOI contributions.
+func AuthorNames(w Work) []string {
+	out := make([]string, 0, len(w.Authorships))
+	for _, a := range w.Authorships {
+		name := strings.TrimSpace(a.Author.DisplayName)
+		if name == "" {
+			name = strings.TrimSpace(a.RawAuthorName)
+		}
+		if name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // arxivURLRE captures the arxiv id out of an arxiv.org URL in any of the
@@ -81,9 +113,10 @@ func shortID(openalexURL string) string {
 	return openalexURL
 }
 
-// shortDOI strips the doi.org URL prefix, leaving the bare DOI.
+// shortDOI strips the doi.org URL prefix, leaving the bare DOI. Uses
+// paperassets.NormalizeDOI to keep the same prefix set as the rest of
+// the DOI handling layer (including dx.doi.org variants and the
+// "doi:" scheme).
 func shortDOI(doiURL string) string {
-	s := strings.TrimPrefix(doiURL, "https://doi.org/")
-	s = strings.TrimPrefix(s, "http://doi.org/")
-	return s
+	return paperassets.NormalizeDOI(doiURL)
 }

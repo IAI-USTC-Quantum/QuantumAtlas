@@ -639,14 +639,12 @@ paths:
     post:
       consumes:
       - multipart/form-data
-      description: Accepts the entire MinerU result zip exactly as returned by `full_zip_url`.
-        Server extracts `full.md` plus every `images/*` entry and stores them to the
-        markdown and images object buckets respectively. Images are written before
-        the markdown so any reader that observes the markdown also observes all referenced
-        images. Replaces the v0.7.x `upload-markdown` endpoint (which only accepted
-        a single .md file and silently dropped images).
+      description: |-
+        Accepts the entire MinerU result zip exactly as returned by `full_zip_url`. Server extracts `full.md` plus every `images/*` entry and stores them to the markdown and images object buckets respectively. Images are written before the markdown so any reader that observes the markdown also observes all referenced images. Replaces the v0.7.x `upload-markdown` endpoint (which only accepted a single .md file and silently dropped images).
+
+        The {arxiv_id} slot also accepts a DOI (`10.<registrant>/<suffix>`) to contribute the converted *published* version. DOI bundles are stored under the `markdown/doi/...` + `images/doi/...` namespace; the server resolves canonical metadata (title, authors, linked arxiv id) from OpenAlex on the contributor's behalf — there is no `title` / `authors` form field. `verify=strict` rejects when OpenAlex cannot resolve the DOI (see upload-pdf). The result is reported in `X-QAtlas-Verification`.
       parameters:
-      - description: arXiv identifier (must include version suffix vN)
+      - description: arXiv identifier (with vN) OR DOI (10.x/...)
         in: path
         name: arxiv_id
         required: true
@@ -658,6 +656,16 @@ paths:
       - description: client-computed zip sha256 (in-transit integrity check)
         in: query
         name: expected_sha256
+        type: string
+      - description: sha256 of the source PDF that was converted (cross-checked against
+          stored PDF)
+        in: query
+        name: pdf_sha256
+        type: string
+      - description: 'DOI only: ''strict'' rejects when OpenAlex cannot resolve the
+          DOI (default warn)'
+        in: query
+        name: verify
         type: string
       - description: short label of the contributor's MinerU run (truncated to 64
           chars)
@@ -694,7 +702,7 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: Upload paper MinerU bundle
+      summary: Upload paper MinerU bundle (arXiv id or DOI)
       tags:
       - Papers
   /api/papers/{arxiv_id}/upload-pdf:
@@ -705,8 +713,18 @@ paths:
         Content-addressed upload with sha256 idempotency. 200 when
         bytes are unchanged, 201 when written, 409 on a content
         conflict without overwrite=true.
+
+        The {arxiv_id} slot also accepts a DOI (`10.<registrant>/<suffix>`)
+        for contributing a *published* version that may have no arXiv
+        preprint. DOI uploads are stored under a disjoint `pdf/doi/...`
+        namespace and the server resolves the DOI's title / authors /
+        linked arxiv id from OpenAlex — the contributor cannot supply
+        that metadata. The result is reported in `X-QAtlas-Verification`
+        and the JSON `verification` block; `verify=strict` rejects a
+        doi-not-found with 409 (or metadata-unavailable / unconfigured
+        with 503).
       parameters:
-      - description: arXiv identifier
+      - description: arXiv identifier (with vN) OR DOI (10.x/...)
         in: path
         name: arxiv_id
         required: true
@@ -718,6 +736,11 @@ paths:
       - description: client-computed PDF sha256 (in-transit guard)
         in: query
         name: expected_sha256
+        type: string
+      - description: 'DOI only: ''strict'' rejects when OpenAlex cannot resolve the
+          DOI (default warn)'
+        in: query
+        name: verify
         type: string
       - description: PDF file
         in: formData
@@ -749,7 +772,7 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: Upload paper PDF
+      summary: Upload paper PDF (arXiv id or DOI)
       tags:
       - Papers
   /api/papers/{id_or_doi}/markdown:
@@ -760,6 +783,15 @@ paths:
         against the IANA prefix `10.<registrant>/...`). Only
         registered when QATLAS_PAPER_ACCESS_ENABLED=true on the
         server (default off).
+
+        Canonical resolution: a `:PaperWork` node with
+        `identifier_scheme='doi'` ALWAYS wins over its arxiv
+        twin when both exist — DOI is the canonical identity of
+        the published version. The dispatcher serves DOI bytes
+        for either id form when a DOI contribution is on file;
+        pass `?force_arxiv=1` to opt out per request (DOI input
+        with force_arxiv + no arxiv twin returns 409). See
+        docs/reference/upload-api.md §Canonical resolution.
 
         Long-running operation semantics: on cache miss the
         server may transparently fetch the PDF from arxiv.org
@@ -773,6 +805,11 @@ paths:
         in: path
         name: id_or_doi
         required: true
+        type: string
+      - description: '1/true: bypass the DOI-canonical default and serve the arxiv
+          twin (or 409 if no twin exists)'
+        in: query
+        name: force_arxiv
         type: string
       produces:
       - text/plain
@@ -810,6 +847,11 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "409":
+          description: force_arxiv requested but DOI has no arxiv twin
+          schema:
+            additionalProperties: true
+            type: object
         "502":
           description: prior conversion failed inside the cooldown window, or OpenAlex
             upstream error
@@ -834,6 +876,10 @@ paths:
         never triggers a fetch. Only registered when
         QATLAS_PAPER_ACCESS_ENABLED=true on the server.
 
+        Canonical resolution: same DOI-wins rule as
+        /api/papers/{id_or_doi}/markdown. Pass `?force_arxiv=1`
+        to query the arxiv-side status instead.
+
         Response shape always carries the agent-decision triple
         `state / pdf_ready / md_ready` plus an optional `phase`
         (fetching_pdf | converting_md | ready | error_fetching |
@@ -845,6 +891,10 @@ paths:
         in: path
         name: id_or_doi
         required: true
+        type: string
+      - description: '1/true: bypass DOI-canonical default'
+        in: query
+        name: force_arxiv
         type: string
       produces:
       - application/json
@@ -890,6 +940,13 @@ paths:
         arxiv id or DOI. Only registered when
         QATLAS_PAPER_ACCESS_ENABLED=true on the server.
 
+        Canonical resolution: a DOI contribution ALWAYS wins
+        over its arxiv twin when both exist — the dispatcher
+        serves the DOI PDF for either id form. Pass
+        `?force_arxiv=1` to opt out per request (DOI input
+        without an arxiv twin then returns 409). See
+        docs/reference/upload-api.md §Canonical resolution.
+
         Long-running operation semantics mirror /markdown: cache
         miss returns 202 with Operation-Location pointing at
         /pdf/status. The fetch path uses a separate semaphore
@@ -900,6 +957,11 @@ paths:
         in: path
         name: id_or_doi
         required: true
+        type: string
+      - description: '1/true: bypass DOI-canonical default; return 409 if DOI has
+          no arxiv twin'
+        in: query
+        name: force_arxiv
         type: string
       produces:
       - application/pdf
@@ -936,6 +998,11 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "409":
+          description: force_arxiv requested but DOI has no arxiv twin
+          schema:
+            additionalProperties: true
+            type: object
         "502":
           description: arxiv upstream error / OpenAlex upstream error
           schema:
@@ -958,11 +1025,19 @@ paths:
         /markdown/status but states are restricted to the
         fetch-only flow — no convert phase. Only registered when
         QATLAS_PAPER_ACCESS_ENABLED=true.
+
+        Canonical resolution: same DOI-wins rule as
+        /api/papers/{id_or_doi}/pdf. Pass `?force_arxiv=1` to
+        query the arxiv-side status instead.
       parameters:
       - description: arXiv canonical id or DOI
         in: path
         name: id_or_doi
         required: true
+        type: string
+      - description: '1/true: bypass DOI-canonical default'
+        in: query
+        name: force_arxiv
         type: string
       produces:
       - application/json

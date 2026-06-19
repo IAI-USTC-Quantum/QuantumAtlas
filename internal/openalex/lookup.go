@@ -39,6 +39,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperassets"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -46,12 +47,16 @@ import (
 // hammer OpenAlex. The 5-minute TTL is a compromise between freshness
 // (DOI → arxiv mappings rarely change) and quota friendliness.
 const (
-	DefaultBaseURL        = "https://api.openalex.org/works/doi:"
-	DefaultHTTPTimeout    = 10 * time.Second
-	DefaultPositiveTTL    = 5 * time.Minute
-	DefaultNegativeTTL    = 1 * time.Minute
-	DefaultMaxCacheSize   = 1024
-	DefaultMaxDOILen      = 256
+	DefaultBaseURL      = "https://api.openalex.org/works/doi:"
+	DefaultHTTPTimeout  = 10 * time.Second
+	DefaultPositiveTTL  = 5 * time.Minute
+	DefaultNegativeTTL  = 1 * time.Minute
+	DefaultMaxCacheSize = 1024
+	// DefaultMaxDOILen mirrors paperassets.MaxDOILen so the two
+	// layers can't drift; the alias keeps the openalex-facing API
+	// (resolver Config.MaxDOILen) stable while the source of truth
+	// lives in paperassets.
+	DefaultMaxDOILen = paperassets.MaxDOILen
 )
 
 // Errors returned by ResolveDOI. errors.Is-compatible so callers can
@@ -142,7 +147,8 @@ type Resolver struct {
 
 type cacheEntry struct {
 	canonical string // empty for negative cache
-	err       error  // ErrDOINotFound when negative
+	meta      Metadata
+	err       error // ErrDOINotFound when negative
 	expiresAt time.Time
 }
 
@@ -214,8 +220,16 @@ func (r *Resolver) ResolveDOI(ctx context.Context, doi string) (string, error) {
 	// Singleflight: collapse concurrent ResolveDOI(same-doi) calls to
 	// one upstream lookup. The shared result is then cached so the
 	// next 5 minutes of identical requests are free.
+	//
+	// Detach from the caller's context (same rationale as LookupMetadata):
+	// if caller A cancels mid-flight (browser navigation, request
+	// timeout) and other waiters B, C, … are still alive on the same
+	// singleflight slot, A's cancellation must not propagate into B/C's
+	// returned error. The HTTP timeout still bounds the outbound call
+	// via cfg.HTTPTimeout.
+	detachedCtx := context.WithoutCancel(ctx)
 	result, err, _ := r.sf.Do(norm, func() (any, error) {
-		canonical, lookupErr := r.lookup(ctx, norm)
+		canonical, lookupErr := r.lookup(detachedCtx, norm)
 		// Cache both positive and negative answers (the negative-cache
 		// case is the most important — protects against flood of
 		// unknown-DOI hits).
@@ -240,7 +254,78 @@ func (r *Resolver) ResolveDOI(ctx context.Context, doi string) (string, error) {
 	return result.(string), nil
 }
 
-// normalizeDOI validates and case-normalizes a DOI for cache-key /
+// Metadata is the subset of a DOI's OpenAlex record used for upload-time
+// verification + accounting on DOI contributions.
+type Metadata struct {
+	DOI     string   // normalized bare doi the lookup was keyed on
+	Title   string   // OpenAlex display title (may be empty)
+	Authors []string // author display names in byline order
+	ArxivID string   // linked canonical arxiv id, or "" when none
+}
+
+// LookupMetadata fetches a DOI's OpenAlex record and returns its title +
+// authors (+ any linked arxiv id) for upload-time verification.
+//
+// Unlike ResolveDOI it does NOT require the work to have an arxiv
+// presence: a published-only paper (no preprint) resolves fine. This is
+// exactly the case the DOI upload endpoints care about — the DOI may
+// point at a published version that never had an arXiv id.
+//
+// Reuses the same DOI normalization/validation, HTTP client, polite-pool
+// mailto, singleflight coalescing, and in-memory LRU as ResolveDOI.
+// Results are cached under a "meta:<doi>" key (so a metadata lookup and
+// a ResolveDOI for the same DOI occupy two distinct slots and never
+// collide): positives for PositiveTTL, ErrDOINotFound for NegativeTTL,
+// transient errors not at all. This matters because a contributor often
+// uploads PDF then MinerU for the same DOI within minutes — the second
+// upload should not re-hit OpenAlex. Returns ErrNotConfigured when no
+// mailto is set, ErrInvalidDOI for malformed input, ErrDOINotFound on a
+// 404, ErrUpstream on transport failures.
+func (r *Resolver) LookupMetadata(ctx context.Context, doi string) (Metadata, error) {
+	if !r.enabled {
+		return Metadata{}, ErrNotConfigured
+	}
+	norm, err := normalizeDOI(doi, r.cfg.MaxDOILen)
+	if err != nil {
+		return Metadata{}, err
+	}
+	key := "meta:" + norm
+	if v, ok := r.cacheGet(key); ok {
+		return v.meta, v.err
+	}
+	// Detach from caller context so cancellation of the first caller
+	// doesn't poison coalesced waiters.
+	detachedCtx := context.WithoutCancel(ctx)
+	result, err, _ := r.sf.Do(key, func() (any, error) {
+		work, ferr := r.fetchWork(detachedCtx, norm)
+		if ferr != nil {
+			// Negative-cache only ErrDOINotFound (a DOI absent from
+			// OpenAlex won't appear within seconds); transient upstream
+			// errors stay uncached so the next caller can retry.
+			if errors.Is(ferr, ErrDOINotFound) {
+				r.cachePut(key, cacheEntry{
+					meta:      Metadata{DOI: norm},
+					err:       ferr,
+					expiresAt: r.now().Add(r.cfg.NegativeTTL),
+				})
+			}
+			return Metadata{DOI: norm}, ferr
+		}
+		meta := Metadata{
+			DOI:     norm,
+			Title:   strings.TrimSpace(work.Title),
+			Authors: AuthorNames(work),
+			ArxivID: ExtractArxivID(work),
+		}
+		r.cachePut(key, cacheEntry{meta: meta, expiresAt: r.now().Add(r.cfg.PositiveTTL)})
+		return meta, nil
+	})
+	if err != nil {
+		return Metadata{DOI: norm}, err
+	}
+	return result.(Metadata), nil
+}
+
 // URL-build use. DOI grammar accepted: must start with `10.` then
 // digits then `/` then non-empty suffix. Whitespace trimmed,
 // case-lowered (DOIs are case-insensitive per DOI Handbook).
@@ -253,13 +338,10 @@ func normalizeDOI(in string, maxLen int) (string, error) {
 		return "", fmt.Errorf("%w: exceeds %d chars", ErrInvalidDOI, maxLen)
 	}
 	v = strings.ToLower(v)
-	// Strip common URL prefixes contributors paste.
-	for _, prefix := range []string{
-		"https://doi.org/",
-		"http://doi.org/",
-		"doi.org/",
-		"doi:",
-	} {
+	// Strip common URL prefixes contributors paste. Sources the canonical
+	// list from paperassets so both layers (validation + URL building +
+	// router dispatch) accept the same inputs.
+	for _, prefix := range paperassets.DOIURLPrefixes {
 		if strings.HasPrefix(v, prefix) {
 			v = strings.TrimPrefix(v, prefix)
 			break
@@ -275,19 +357,43 @@ func normalizeDOI(in string, maxLen int) (string, error) {
 	if slash == len(v)-1 {
 		return "", fmt.Errorf("%w: empty suffix", ErrInvalidDOI)
 	}
-	// Reject control chars (anything < 0x20 or 0x7f) that would break
-	// URL building or risk header injection.
+	// Reject control chars (anything < 0x20 or 0x7f) and non-ASCII
+	// runelets (Unicode non-printables such as U+00AD soft-hyphen or
+	// U+FEFF BOM) that would break URL building or risk header
+	// injection. Real DOIs per the DOI Handbook are always ASCII.
 	for _, r := range v {
 		if r < 0x20 || r == 0x7f {
 			return "", fmt.Errorf("%w: control character in DOI", ErrInvalidDOI)
+		}
+		if r > 0x7f {
+			return "", fmt.Errorf("%w: non-ASCII character in DOI", ErrInvalidDOI)
 		}
 	}
 	return v, nil
 }
 
 // lookup does the actual HTTP round-trip without any caching or
-// dedup. Pure function of (doi, http client, config).
+// dedup, then extracts the canonical arxiv id. Pure function of
+// (doi, http client, config).
 func (r *Resolver) lookup(ctx context.Context, doi string) (string, error) {
+	work, err := r.fetchWork(ctx, doi)
+	if err != nil {
+		return "", err
+	}
+	id := ExtractArxivID(work)
+	if id == "" {
+		return "", ErrDOINotFound
+	}
+	return id, nil
+}
+
+// fetchWork performs the OpenAlex `/works/doi:<doi>` round-trip and
+// decodes the Work record. doi MUST be pre-normalized (lower-cased,
+// prefix-stripped). Returns ErrDOINotFound on a 404, ErrUpstream on
+// transport / non-2xx / decode failures. Unlike lookup() it does NOT
+// require any arxiv presence — the full record (title, authors,
+// locations) is returned so callers can verify published-only works.
+func (r *Resolver) fetchWork(ctx context.Context, doi string) (Work, error) {
 	// PathEscape the DOI: the suffix can contain `/`, `?`, `#`, etc.
 	// We want them all percent-encoded so they don't terminate the
 	// path or start a query.
@@ -295,43 +401,38 @@ func (r *Resolver) lookup(ctx context.Context, doi string) (string, error) {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
-		return "", fmt.Errorf("%w: build request: %v", ErrUpstream, err)
+		return Work{}, fmt.Errorf("%w: build request: %v", ErrUpstream, err)
 	}
 	req.Header.Set("User-Agent", "qatlasd (mailto:"+r.cfg.Mailto+")")
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := r.client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("%w: http: %v", ErrUpstream, err)
+		return Work{}, fmt.Errorf("%w: http: %v", ErrUpstream, err)
 	}
 	defer resp.Body.Close()
 
 	switch {
 	case resp.StatusCode == http.StatusNotFound:
-		return "", ErrDOINotFound
+		return Work{}, ErrDOINotFound
 	case resp.StatusCode == http.StatusTooManyRequests:
-		return "", fmt.Errorf("%w: 429 rate-limited (check mailto / lower QPS)", ErrUpstream)
+		return Work{}, fmt.Errorf("%w: 429 rate-limited (check mailto / lower QPS)", ErrUpstream)
 	case resp.StatusCode != http.StatusOK:
-		return "", fmt.Errorf("%w: http %d", ErrUpstream, resp.StatusCode)
+		return Work{}, fmt.Errorf("%w: http %d", ErrUpstream, resp.StatusCode)
 	}
 
 	// Bounded read so a malicious / misconfigured upstream can't
 	// blow up our memory.
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
 	if err != nil {
-		return "", fmt.Errorf("%w: read body: %v", ErrUpstream, err)
+		return Work{}, fmt.Errorf("%w: read body: %v", ErrUpstream, err)
 	}
 
 	var work Work
 	if err := json.Unmarshal(body, &work); err != nil {
-		return "", fmt.Errorf("%w: decode body: %v", ErrUpstream, err)
+		return Work{}, fmt.Errorf("%w: decode body: %v", ErrUpstream, err)
 	}
-
-	id := ExtractArxivID(work)
-	if id == "" {
-		return "", ErrDOINotFound
-	}
-	return id, nil
+	return work, nil
 }
 
 // cacheGet returns a non-expired entry from the LRU cache, if any.
@@ -352,11 +453,16 @@ func (r *Resolver) cacheGet(key string) (cacheEntry, bool) {
 }
 
 // cachePut inserts (or refreshes) an entry, evicting the oldest when
-// at capacity.
+// at capacity. When the key already exists, it is moved to the tail
+// (most-recently-used position) to preserve true LRU semantics.
 func (r *Resolver) cachePut(key string, e cacheEntry) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, exists := r.cache[key]; !exists {
+	if _, exists := r.cache[key]; exists {
+		// Move existing key to tail (most-recently-used).
+		r.evictFromOrder(key)
+		r.order = append(r.order, key)
+	} else {
 		// New key — track in order. Evict oldest if at capacity.
 		if len(r.cache) >= r.cfg.MaxCacheSize {
 			oldest := r.order[0]

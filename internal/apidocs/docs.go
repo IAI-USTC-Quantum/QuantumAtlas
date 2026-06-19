@@ -821,7 +821,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Accepts the entire MinerU result zip exactly as returned by ` + "`" + `full_zip_url` + "`" + `. Server extracts ` + "`" + `full.md` + "`" + ` plus every ` + "`" + `images/*` + "`" + ` entry and stores them to the markdown and images object buckets respectively. Images are written before the markdown so any reader that observes the markdown also observes all referenced images. Replaces the v0.7.x ` + "`" + `upload-markdown` + "`" + ` endpoint (which only accepted a single .md file and silently dropped images).",
+                "description": "Accepts the entire MinerU result zip exactly as returned by ` + "`" + `full_zip_url` + "`" + `. Server extracts ` + "`" + `full.md` + "`" + ` plus every ` + "`" + `images/*` + "`" + ` entry and stores them to the markdown and images object buckets respectively. Images are written before the markdown so any reader that observes the markdown also observes all referenced images. Replaces the v0.7.x ` + "`" + `upload-markdown` + "`" + ` endpoint (which only accepted a single .md file and silently dropped images).\n\nThe {arxiv_id} slot also accepts a DOI (` + "`" + `10.\u003cregistrant\u003e/\u003csuffix\u003e` + "`" + `) to contribute the converted *published* version. DOI bundles are stored under the ` + "`" + `markdown/doi/...` + "`" + ` + ` + "`" + `images/doi/...` + "`" + ` namespace; the server resolves canonical metadata (title, authors, linked arxiv id) from OpenAlex on the contributor's behalf — there is no ` + "`" + `title` + "`" + ` / ` + "`" + `authors` + "`" + ` form field. ` + "`" + `verify=strict` + "`" + ` rejects when OpenAlex cannot resolve the DOI (see upload-pdf). The result is reported in ` + "`" + `X-QAtlas-Verification` + "`" + `.",
                 "consumes": [
                     "multipart/form-data"
                 ],
@@ -831,11 +831,11 @@ const docTemplate = `{
                 "tags": [
                     "Papers"
                 ],
-                "summary": "Upload paper MinerU bundle",
+                "summary": "Upload paper MinerU bundle (arXiv id or DOI)",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "arXiv identifier (must include version suffix vN)",
+                        "description": "arXiv identifier (with vN) OR DOI (10.x/...)",
                         "name": "arxiv_id",
                         "in": "path",
                         "required": true
@@ -850,6 +850,18 @@ const docTemplate = `{
                         "type": "string",
                         "description": "client-computed zip sha256 (in-transit integrity check)",
                         "name": "expected_sha256",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "sha256 of the source PDF that was converted (cross-checked against stored PDF)",
+                        "name": "pdf_sha256",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "DOI only: 'strict' rejects when OpenAlex cannot resolve the DOI (default warn)",
+                        "name": "verify",
                         "in": "query"
                     },
                     {
@@ -905,7 +917,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Content-addressed upload with sha256 idempotency. 200 when\nbytes are unchanged, 201 when written, 409 on a content\nconflict without overwrite=true.",
+                "description": "Content-addressed upload with sha256 idempotency. 200 when\nbytes are unchanged, 201 when written, 409 on a content\nconflict without overwrite=true.\n\nThe {arxiv_id} slot also accepts a DOI (` + "`" + `10.\u003cregistrant\u003e/\u003csuffix\u003e` + "`" + `)\nfor contributing a *published* version that may have no arXiv\npreprint. DOI uploads are stored under a disjoint ` + "`" + `pdf/doi/...` + "`" + `\nnamespace and the server resolves the DOI's title / authors /\nlinked arxiv id from OpenAlex — the contributor cannot supply\nthat metadata. The result is reported in ` + "`" + `X-QAtlas-Verification` + "`" + `\nand the JSON ` + "`" + `verification` + "`" + ` block; ` + "`" + `verify=strict` + "`" + ` rejects a\ndoi-not-found with 409 (or metadata-unavailable / unconfigured\nwith 503).",
                 "consumes": [
                     "multipart/form-data"
                 ],
@@ -915,11 +927,11 @@ const docTemplate = `{
                 "tags": [
                     "Papers"
                 ],
-                "summary": "Upload paper PDF",
+                "summary": "Upload paper PDF (arXiv id or DOI)",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "arXiv identifier",
+                        "description": "arXiv identifier (with vN) OR DOI (10.x/...)",
                         "name": "arxiv_id",
                         "in": "path",
                         "required": true
@@ -934,6 +946,12 @@ const docTemplate = `{
                         "type": "string",
                         "description": "client-computed PDF sha256 (in-transit guard)",
                         "name": "expected_sha256",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "DOI only: 'strict' rejects when OpenAlex cannot resolve the DOI (default warn)",
+                        "name": "verify",
                         "in": "query"
                     },
                     {
@@ -983,7 +1001,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns the cached MinerU markdown for the given arxiv id\n(or DOI — the id_or_doi path component is auto-detected\nagainst the IANA prefix ` + "`" + `10.\u003cregistrant\u003e/...` + "`" + `). Only\nregistered when QATLAS_PAPER_ACCESS_ENABLED=true on the\nserver (default off).\n\nLong-running operation semantics: on cache miss the\nserver may transparently fetch the PDF from arxiv.org\n(silent_fetch) and trigger a MinerU conversion. The\nfirst call returns 202 with ` + "`" + `Operation-Location:\n/api/papers/{id}/markdown/status` + "`" + ` and ` + "`" + `Retry-After: 5` + "`" + `;\nclients poll the status endpoint until state=cached then\nre-GET this resource for the bytes.",
+                "description": "Returns the cached MinerU markdown for the given arxiv id\n(or DOI — the id_or_doi path component is auto-detected\nagainst the IANA prefix ` + "`" + `10.\u003cregistrant\u003e/...` + "`" + `). Only\nregistered when QATLAS_PAPER_ACCESS_ENABLED=true on the\nserver (default off).\n\nCanonical resolution: a ` + "`" + `:PaperWork` + "`" + ` node with\n` + "`" + `identifier_scheme='doi'` + "`" + ` ALWAYS wins over its arxiv\ntwin when both exist — DOI is the canonical identity of\nthe published version. The dispatcher serves DOI bytes\nfor either id form when a DOI contribution is on file;\npass ` + "`" + `?force_arxiv=1` + "`" + ` to opt out per request (DOI input\nwith force_arxiv + no arxiv twin returns 409). See\ndocs/reference/upload-api.md §Canonical resolution.\n\nLong-running operation semantics: on cache miss the\nserver may transparently fetch the PDF from arxiv.org\n(silent_fetch) and trigger a MinerU conversion. The\nfirst call returns 202 with ` + "`" + `Operation-Location:\n/api/papers/{id}/markdown/status` + "`" + ` and ` + "`" + `Retry-After: 5` + "`" + `;\nclients poll the status endpoint until state=cached then\nre-GET this resource for the bytes.",
                 "produces": [
                     "text/plain"
                 ],
@@ -998,6 +1016,12 @@ const docTemplate = `{
                         "name": "id_or_doi",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "1/true: bypass the DOI-canonical default and serve the arxiv twin (or 409 if no twin exists)",
+                        "name": "force_arxiv",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -1048,6 +1072,13 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
+                    "409": {
+                        "description": "force_arxiv requested but DOI has no arxiv twin",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
                     "502": {
                         "description": "prior conversion failed inside the cooldown window, or OpenAlex upstream error",
                         "schema": {
@@ -1072,7 +1103,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Side-effect-free poll surface. Never starts a job and\nnever triggers a fetch. Only registered when\nQATLAS_PAPER_ACCESS_ENABLED=true on the server.\n\nResponse shape always carries the agent-decision triple\n` + "`" + `state / pdf_ready / md_ready` + "`" + ` plus an optional ` + "`" + `phase` + "`" + `\n(fetching_pdf | converting_md | ready | error_fetching |\nerror_converting) and ` + "`" + `fetch` + "`" + ` / ` + "`" + `convert` + "`" + ` sub-objects\nwith bytes_received / mineru_task_id / polled_count so a\npolling client can show precise progress.",
+                "description": "Side-effect-free poll surface. Never starts a job and\nnever triggers a fetch. Only registered when\nQATLAS_PAPER_ACCESS_ENABLED=true on the server.\n\nCanonical resolution: same DOI-wins rule as\n/api/papers/{id_or_doi}/markdown. Pass ` + "`" + `?force_arxiv=1` + "`" + `\nto query the arxiv-side status instead.\n\nResponse shape always carries the agent-decision triple\n` + "`" + `state / pdf_ready / md_ready` + "`" + ` plus an optional ` + "`" + `phase` + "`" + `\n(fetching_pdf | converting_md | ready | error_fetching |\nerror_converting) and ` + "`" + `fetch` + "`" + ` / ` + "`" + `convert` + "`" + ` sub-objects\nwith bytes_received / mineru_task_id / polled_count so a\npolling client can show precise progress.",
                 "produces": [
                     "application/json"
                 ],
@@ -1087,6 +1118,12 @@ const docTemplate = `{
                         "name": "id_or_doi",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "1/true: bypass DOI-canonical default",
+                        "name": "force_arxiv",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -1143,7 +1180,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns the cached PDF (application/pdf) for the given\narxiv id or DOI. Only registered when\nQATLAS_PAPER_ACCESS_ENABLED=true on the server.\n\nLong-running operation semantics mirror /markdown: cache\nmiss returns 202 with Operation-Location pointing at\n/pdf/status. The fetch path uses a separate semaphore\nfrom MinerU conversion (QATLAS_ARXIV_FETCH_CONCURRENT)\nand a polite-pool rate limiter (QATLAS_ARXIV_FETCH_RPS).",
+                "description": "Returns the cached PDF (application/pdf) for the given\narxiv id or DOI. Only registered when\nQATLAS_PAPER_ACCESS_ENABLED=true on the server.\n\nCanonical resolution: a DOI contribution ALWAYS wins\nover its arxiv twin when both exist — the dispatcher\nserves the DOI PDF for either id form. Pass\n` + "`" + `?force_arxiv=1` + "`" + ` to opt out per request (DOI input\nwithout an arxiv twin then returns 409). See\ndocs/reference/upload-api.md §Canonical resolution.\n\nLong-running operation semantics mirror /markdown: cache\nmiss returns 202 with Operation-Location pointing at\n/pdf/status. The fetch path uses a separate semaphore\nfrom MinerU conversion (QATLAS_ARXIV_FETCH_CONCURRENT)\nand a polite-pool rate limiter (QATLAS_ARXIV_FETCH_RPS).",
                 "produces": [
                     "application/pdf"
                 ],
@@ -1158,6 +1195,12 @@ const docTemplate = `{
                         "name": "id_or_doi",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "1/true: bypass DOI-canonical default; return 409 if DOI has no arxiv twin",
+                        "name": "force_arxiv",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -1208,6 +1251,13 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
+                    "409": {
+                        "description": "force_arxiv requested but DOI has no arxiv twin",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
                     "502": {
                         "description": "arxiv upstream error / OpenAlex upstream error",
                         "schema": {
@@ -1232,7 +1282,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Side-effect-free poll surface for /pdf. Same shape as\n/markdown/status but states are restricted to the\nfetch-only flow — no convert phase. Only registered when\nQATLAS_PAPER_ACCESS_ENABLED=true.",
+                "description": "Side-effect-free poll surface for /pdf. Same shape as\n/markdown/status but states are restricted to the\nfetch-only flow — no convert phase. Only registered when\nQATLAS_PAPER_ACCESS_ENABLED=true.\n\nCanonical resolution: same DOI-wins rule as\n/api/papers/{id_or_doi}/pdf. Pass ` + "`" + `?force_arxiv=1` + "`" + ` to\nquery the arxiv-side status instead.",
                 "produces": [
                     "application/json"
                 ],
@@ -1247,6 +1297,12 @@ const docTemplate = `{
                         "name": "id_or_doi",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "1/true: bypass DOI-canonical default",
+                        "name": "force_arxiv",
+                        "in": "query"
                     }
                 ],
                 "responses": {
