@@ -8,10 +8,10 @@ import (
 )
 
 // These tests are static-string guards for the PR #19 follow-up: the
-// Cypher queries in claims.go (Claim, classifyClaimFailure, the two
+// SQL queries in claims.go (Claim, classifyClaimFailure, the two
 // sites in ReleaseClaim) must exclude DOI-indexed nodes so that the
 // MinerU claim machinery never tries to claim a published-version
-// contribution. We can't run the queries without a live Neo4j, so we
+// contribution. We can't run the queries without a live PostgreSQL, so we
 // assert on the source text of each method body.
 
 func TestClaimExcludesDOINodes(t *testing.T) {
@@ -50,10 +50,8 @@ func TestReleaseClaimExcludesDOINodes(t *testing.T) {
 }
 
 func TestReleaseClaimChecksCount(t *testing.T) {
-	// ReleaseClaim must do BOTH a matching-id removal and a "is there
-	// a different active lease?" check (the second is the 409 path).
-	// We assert the pattern: after the first REMOVE, there should be
-	// a second MATCH that looks for a *different* active claim.
+	// ReleaseClaim must do BOTH a matching-id UPDATE clear and a "is
+	// there a different active lease?" check (the second is the 409 path).
 	src := readClaimsFile(t)
 	sig := "func (s *Store) ReleaseClaim("
 	start := strings.Index(src, sig)
@@ -63,11 +61,11 @@ func TestReleaseClaimChecksCount(t *testing.T) {
 	end := findClosingBrace(src, start)
 	body := src[start:end]
 
-	removes := strings.Count(body, "REMOVE")
-	matches := strings.Count(body, "MATCH (p:PaperWork")
-	if removes < 1 || matches < 2 {
-		t.Errorf("ReleaseClaim shape: removes=%d, matches=%d, want removes>=1 and matches>=2",
-			removes, matches)
+	updates := strings.Count(body, "UPDATE paper_works")
+	selects := strings.Count(body, "SELECT claim_id")
+	if updates < 1 || selects < 1 {
+		t.Errorf("ReleaseClaim shape: updates=%d, active-claim selects=%d, want updates>=1 and selects>=1",
+			updates, selects)
 	}
 }
 

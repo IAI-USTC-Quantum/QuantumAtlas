@@ -26,7 +26,6 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/neo4j"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/openalex"
-	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/papers"
 
 	"github.com/spf13/cobra"
 )
@@ -113,10 +112,8 @@ func runOpenAlexBootstrap(stdout, stderr io.Writer, f openalexBootstrapFlags) er
 		return fmt.Errorf("connect neo4j: %w", err)
 	}
 	defer nc.Close(ctx)
-
-	catalog := papers.NewStore(nc)
-	if err := catalog.EnsureSchema(ctx); err != nil {
-		fmt.Fprintf(stderr, "warning: EnsureSchema: %v\n", err)
+	if err := openalex.EnsureGraphSchema(ctx, nc); err != nil {
+		fmt.Fprintf(stderr, "warning: EnsureGraphSchema: %v\n", err)
 	}
 
 	keys, err := openalex.ListPartKeys(ctx, snap, f.prefix)

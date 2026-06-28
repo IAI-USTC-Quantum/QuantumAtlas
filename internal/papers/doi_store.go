@@ -7,9 +7,9 @@ package papers
 // under the arxiv_id-keyed asset layout, so they get their own identity:
 //
 //   - storage:  paperassets.DOIAssetKey → "<kind>/doi/<reg>/<suffix>.<ext>"
-//   - catalog:  a :PaperWork node whose primary key is the reserved
+//   - catalog:  a paper_works row whose primary key is the reserved
 //               "doi:<doi>" namespace. Reusing the arxiv_id UNIQUE
-//               constraint keeps the MERGE atomic (same race-safety as
+//               primary key keeps the upsert atomic (same race-safety as
 //               arxiv upserts) while the "doi:" prefix guarantees the
 //               synthetic key can never collide with a real arxiv id.
 //
@@ -19,9 +19,11 @@ package papers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperassets"
+	"github.com/jackc/pgx/v5"
 )
 
 // Verification statuses recorded on DOI nodes (p.verification_status).
@@ -55,7 +57,7 @@ type DOIVerification struct {
 	ArxivID string   // linked arxiv id when OpenAlex knows one, else ""
 }
 
-// DOINodeKey returns the synthetic :PaperWork primary key for a DOI
+// DOINodeKey returns the synthetic paper_works primary key for a DOI
 // identity. Exported so handlers/tests can assert on the stored key.
 func DOINodeKey(doi string) string { return "doi:" + doi }
 
@@ -68,8 +70,8 @@ func DOINodeKey(doi string) string { return "doi:" + doi }
 //   - ("", false, nil)  — genuine miss (no row, or the catalog has
 //     never been configured so ensure(ctx) short-circuits); caller
 //     may fall through to OpenAlex resolution.
-//   - ("", false, err) — Neo4j query-time error (driver dropped a
-//     connection, cluster failover mid-read, etc.). Caller MUST
+//   - ("", false, err) — PostgreSQL query-time error (connection drop,
+//     failover mid-read, etc.). Caller MUST
 //     return 503 — folding this into "not found" would have the
 //     dispatcher serve a stale 404 (or worse, an arxiv twin) when
 //     the local DOI bytes are in fact present, breaking the
@@ -93,18 +95,19 @@ func (s *Store) LookupDOI(ctx context.Context, doi string) (string, bool, error)
 	if !ok {
 		return "", false, nil
 	}
-	rows, err := s.nc.ExecuteReadParams(ctx, `
-		MATCH (p:PaperWork {doi: $doi})
-		WHERE p.identifier_scheme = 'doi'
-		RETURN p.arxiv_id AS arxiv_id
-		LIMIT 1`, map[string]any{"doi": norm})
+	var nodeKey string
+	err := s.pool.QueryRow(ctx, `
+		SELECT arxiv_id
+		FROM paper_works
+		WHERE identifier_scheme = 'doi' AND doi = $1
+		LIMIT 1`, norm).Scan(&nodeKey)
 	if err != nil {
-		return "", false, fmt.Errorf("papers: lookup doi %s: %w", norm, err)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", false, nil
+		}
+		return "", false, catalogUnavailable(fmt.Sprintf("papers: lookup doi %s", norm), err)
 	}
-	if len(rows) == 0 {
-		return "", false, nil
-	}
-	return asString(rows[0]["arxiv_id"]), true, nil
+	return nodeKey, true, nil
 }
 
 // LookupArxivToDOI is the reverse direction of LookupDOI: given a bare
@@ -124,8 +127,8 @@ func (s *Store) LookupDOI(ctx context.Context, doi string) (string, bool, error)
 //     the DOI handlers.
 //   - ("", false, nil)  — no twin, empty input, or catalog never
 //     configured; caller falls through to the arxiv handlers.
-//   - ("", false, err) — Neo4j query-time error. The arxiv path is
-//     designed to be independent of the catalog (Neo4j outage MUST
+//   - ("", false, err) — PostgreSQL query-time error. The arxiv path is
+//     designed to be independent of the catalog (PostgreSQL outage MUST
 //     NOT gate arxiv access), so the dispatcher logs-and-falls-
 //     through here; the error is returned only so callers can
 //     observe / log it instead of silently dropping the signal.
@@ -137,25 +140,26 @@ func (s *Store) LookupArxivToDOI(ctx context.Context, bareArxivID string) (strin
 	if bareArxivID == "" {
 		return "", false, nil
 	}
-	rows, err := s.nc.ExecuteReadParams(ctx, `
-		MATCH (p:PaperWork)
-		WHERE p.identifier_scheme = 'doi'
-		  AND p.doi_arxiv_id = $arxiv_id
-		RETURN p.doi AS doi
-		LIMIT 1`, map[string]any{"arxiv_id": bareArxivID})
+	var doi string
+	err := s.pool.QueryRow(ctx, `
+		SELECT doi
+		FROM paper_works
+		WHERE identifier_scheme = 'doi'
+		  AND doi_arxiv_id = $1
+		LIMIT 1`, bareArxivID).Scan(&doi)
 	if err != nil {
-		return "", false, fmt.Errorf("papers: lookup arxiv-to-doi %s: %w", bareArxivID, err)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", false, nil
+		}
+		return "", false, catalogUnavailable(fmt.Sprintf("papers: lookup arxiv-to-doi %s", bareArxivID), err)
 	}
-	if len(rows) == 0 {
-		return "", false, nil
-	}
-	return asString(rows[0]["doi"]), true, nil
+	return doi, true, nil
 }
 
 // UpsertPDFByDOI is the DOI-indexed analogue of UpsertPDF: records a PDF
 // contributed against a DOI (a published version that may have no arXiv
 // preprint). Creates the node if missing, is idempotent, and stores the
-// verification outcome. Returns ErrCatalogUnavailable when Neo4j is down
+// verification outcome. Returns ErrCatalogUnavailable when PostgreSQL is down
 // (handler treats as deferred, object is already durably written).
 //
 // Metadata preservation: when the verification was non-verified (e.g.
@@ -173,41 +177,34 @@ func (s *Store) UpsertPDFByDOI(ctx context.Context, doi, sha string, size int64,
 		return fmt.Errorf("papers: upsert pdf by doi: invalid doi %q", doi)
 	}
 	pdfPath := bucketRelKey(paperassets.DOIAssetKey("pdf", norm))
-	_, err := s.nc.ExecuteWrite(ctx, `
-		MERGE (p:PaperWork {arxiv_id: $node_key})
-		ON CREATE SET p.source = 'doi-upload',
-		              p.identifier_scheme = 'doi',
-		              p.has_md = false,
-		              p.has_json = false
-		SET p.doi = $doi,
-		    p.identifier_scheme = 'doi',
-		    p.doi_arxiv_id = CASE WHEN $arxiv_id <> '' THEN $arxiv_id ELSE p.doi_arxiv_id END,
-		    p.has_pdf = true,
-		    p.pdf_path = $pdf_path,
-		    p.pdf_size = $size,
-		    p.pdf_sha256 = $sha,
-		    p.pdf_etag = $etag,
-		    p.pdf_uploaded_at = datetime(),
-		    p.last_assets_change_at = datetime(),
-		    p.doi_title = CASE WHEN $title <> '' THEN $title ELSE p.doi_title END,
-		    p.doi_authors = CASE WHEN size($authors) > 0 THEN $authors ELSE p.doi_authors END,
-		    p.verification_status = $vstatus,
-		    p.verified_at = datetime()
-		RETURN p.arxiv_id`,
-		map[string]any{
-			"node_key": DOINodeKey(norm),
-			"doi":      norm,
-			"arxiv_id": v.ArxivID,
-			"pdf_path": pdfPath,
-			"size":     size,
-			"sha":      sha,
-			"etag":     etag,
-			"title":    v.Title,
-			"authors":  v.Authors,
-			"vstatus":  v.Status,
-		})
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO paper_works (
+			arxiv_id, source, identifier_scheme, doi, doi_arxiv_id,
+			has_pdf, has_md, has_json, pdf_path, pdf_size, pdf_sha256,
+			pdf_etag, pdf_uploaded_at, last_assets_change_at,
+			doi_title, doi_authors, verification_status, verified_at
+		)
+		VALUES ($1, 'doi-upload', 'doi', $2, nullif($3, ''),
+		        true, false, false, $4, $5, $6, $7, now(), now(),
+		        nullif($8, ''), $9, $10, now())
+		ON CONFLICT (arxiv_id) DO UPDATE SET
+			doi = EXCLUDED.doi,
+			identifier_scheme = 'doi',
+			doi_arxiv_id = coalesce(EXCLUDED.doi_arxiv_id, paper_works.doi_arxiv_id),
+			has_pdf = true,
+			pdf_path = EXCLUDED.pdf_path,
+			pdf_size = EXCLUDED.pdf_size,
+			pdf_sha256 = EXCLUDED.pdf_sha256,
+			pdf_etag = EXCLUDED.pdf_etag,
+			pdf_uploaded_at = now(),
+			last_assets_change_at = now(),
+			doi_title = coalesce(EXCLUDED.doi_title, paper_works.doi_title),
+			doi_authors = CASE WHEN cardinality(EXCLUDED.doi_authors) > 0 THEN EXCLUDED.doi_authors ELSE paper_works.doi_authors END,
+			verification_status = EXCLUDED.verification_status,
+			verified_at = now()`,
+		DOINodeKey(norm), norm, v.ArxivID, pdfPath, size, sha, etag, v.Title, v.Authors, v.Status)
 	if err != nil {
-		return fmt.Errorf("papers: upsert pdf by doi %s: %w", norm, err)
+		return catalogUnavailable(fmt.Sprintf("papers: upsert pdf by doi %s", norm), err)
 	}
 	return nil
 }
@@ -229,42 +226,35 @@ func (s *Store) UpsertMDByDOI(ctx context.Context, doi, sha string, size int64, 
 		return fmt.Errorf("papers: upsert md by doi: invalid doi %q", doi)
 	}
 	mdPath := bucketRelKey(paperassets.DOIAssetKey("markdown", norm))
-	_, err := s.nc.ExecuteWrite(ctx, `
-		MERGE (p:PaperWork {arxiv_id: $node_key})
-		ON CREATE SET p.source = 'doi-upload',
-		              p.identifier_scheme = 'doi',
-		              p.has_pdf = false,
-		              p.has_json = false
-		SET p.doi = $doi,
-		    p.identifier_scheme = 'doi',
-		    p.doi_arxiv_id = CASE WHEN $arxiv_id <> '' THEN $arxiv_id ELSE p.doi_arxiv_id END,
-		    p.has_md = true,
-		    p.md_path = $md_path,
-		    p.md_size = $size,
-		    p.md_etag = $etag,
-		    p.image_count = $image_count,
-		    p.md_uploaded_at = datetime(),
-		    p.last_assets_change_at = datetime(),
-		    p.doi_title = CASE WHEN $title <> '' THEN $title ELSE p.doi_title END,
-		    p.doi_authors = CASE WHEN size($authors) > 0 THEN $authors ELSE p.doi_authors END,
-		    p.verification_status = $vstatus,
-		    p.verified_at = datetime()
-		RETURN p.arxiv_id`,
-		map[string]any{
-			"node_key":    DOINodeKey(norm),
-			"doi":         norm,
-			"arxiv_id":    v.ArxivID,
-			"md_path":     mdPath,
-			"size":        size,
-			"sha":         sha,
-			"etag":        etag,
-			"image_count": int64(imageCount),
-			"title":       v.Title,
-			"authors":     v.Authors,
-			"vstatus":     v.Status,
-		})
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO paper_works (
+			arxiv_id, source, identifier_scheme, doi, doi_arxiv_id,
+			has_pdf, has_md, has_json, md_path, md_size, md_sha256,
+			md_etag, image_count, md_uploaded_at, last_assets_change_at,
+			doi_title, doi_authors, verification_status, verified_at
+		)
+		VALUES ($1, 'doi-upload', 'doi', $2, nullif($3, ''),
+		        false, true, false, $4, $5, $6, $7, $8, now(), now(),
+		        nullif($9, ''), $10, $11, now())
+		ON CONFLICT (arxiv_id) DO UPDATE SET
+			doi = EXCLUDED.doi,
+			identifier_scheme = 'doi',
+			doi_arxiv_id = coalesce(EXCLUDED.doi_arxiv_id, paper_works.doi_arxiv_id),
+			has_md = true,
+			md_path = EXCLUDED.md_path,
+			md_size = EXCLUDED.md_size,
+			md_sha256 = EXCLUDED.md_sha256,
+			md_etag = EXCLUDED.md_etag,
+			image_count = EXCLUDED.image_count,
+			md_uploaded_at = now(),
+			last_assets_change_at = now(),
+			doi_title = coalesce(EXCLUDED.doi_title, paper_works.doi_title),
+			doi_authors = CASE WHEN cardinality(EXCLUDED.doi_authors) > 0 THEN EXCLUDED.doi_authors ELSE paper_works.doi_authors END,
+			verification_status = EXCLUDED.verification_status,
+			verified_at = now()`,
+		DOINodeKey(norm), norm, v.ArxivID, mdPath, size, sha, etag, imageCount, v.Title, v.Authors, v.Status)
 	if err != nil {
-		return fmt.Errorf("papers: upsert md by doi %s: %w", norm, err)
+		return catalogUnavailable(fmt.Sprintf("papers: upsert md by doi %s", norm), err)
 	}
 	return nil
 }

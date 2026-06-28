@@ -21,31 +21,31 @@ QuantumAtlas 处理论文图谱的本质问题是：
 | 层 | 引擎 | 存什么 | 数据量级 | 访问模式 | source of truth |
 |---|---|---|---|---|---|
 | Raw blobs | **RustFS**（S3 兼容） | PDF / Markdown / 图片 / OpenAlex snapshot | TB | 偶尔整文件下载 | ✅ 原文不可变 |
-| Metadata 索引 | **paperindex**（Parquet + 进程内 DuckDB，**就放在 RustFS 同一个桶里**） | 一个 Parquet 文件 × 数十列 | 134k 行 ≈ 7 MB | 字段筛选 / count / group by | ❌ 可从 bucket LIST 重建 |
+| Metadata 索引 | **PostgreSQL catalog** | `paper_works` 表 + partial indexes | 134k 行起步 | 字段筛选 / count / group by / claim 租约 | ❌ 可从 bucket LIST 重建 |
 | Graph | **Neo4j 5.26 LTS Community** | `(Paper)-[:CITES]->(Paper)` + Wiki 知识图 | 几十 GB | K 跳遍历、图算法 | ❌ 可重建的派生视图 |
 
 **这三层不竞争，互补**。Raw 量翻 10×，Neo4j 完全不动；Neo4j 脏了，从 raw + Wiki 跑
-`papers sync` / `wiki sync` 重建；paperindex 漂移，从 bucket LIST 对账。
+`papers sync` / `wiki sync` 重建；PostgreSQL catalog 漂移，从 bucket LIST 对账。
 
-??? note "paperindex 这层为什么不是一个独立数据库（PostgreSQL / SQLite）"
-    paperindex 不开独立数据库，走 **lakehouse-lite 模式**——索引存在 RustFS 桶里
-    （`index/papers.parquet`），qatlasd 进程内嵌 DuckDB 直接查 Parquet。
+??? note "为什么现在用 PostgreSQL，而不是把索引放进 RustFS"
+    RustFS 的职责收窄为纯 S3 后端：只保存 PDF / Markdown / 图片 / OpenAlex snapshot
+    等对象字节，不再承载应用级索引对象（例如 Parquet manifest）。
 
-    不再开独立数据库的理由：
+    PostgreSQL 承担非登录态 catalog：paper 元数据、PDF/MD/DOI 状态、MinerU claim
+    租约。登录态仍由 PocketBase 管理；图查询仍由 Neo4j 管理。
 
-    1. **多一个 stateful 系统**：要 backup、要 HA、要 schema migration、跨 edge 节点要复制；
-    2. **同步漂移**：DB 和 bucket 在两次写之间的任何 crash 都让两边状态分裂；
-    3. **跨 edge 不友好**：两台 edge 各自一份 SQLite 就是漂移源；
-    4. **凭据复用**：DuckDB 用同一组 `QATLAS_S3_*` svcacct 直读 Parquet，不开新 secret。
+    选择 PostgreSQL 的原因是它正好覆盖这层需求：`INSERT ... ON CONFLICT`、
+    partial unique/index、row lock、数组字段、事务和成熟备份工具。RustFS 仍是
+    资产字节 source of truth；PostgreSQL 是可由 bucket LIST 重建的派生索引。
 
-    完整原理 + 跟 Iceberg / Delta Lake 关系见 [`architecture.md` § paperindex 节](architecture.md#paperindex)。
+    完整原理见 [`architecture.md` § PostgreSQL catalog](architecture.md#paperindex)。
 
 ??? note "PocketBase 还在做什么"
     PocketBase（v0.38，嵌入 qatlasd 二进制，SQLite 底）现在只承担 **用户 / PAT** 等本机
     session 状态。每台 edge 一份独立 SQLite，**用户表不跨 edge 同步**（是有意的——
     多边缘 active-active 设计上接受这个 trade-off，详见内部仓库的多边缘部署文档）。
 
-    Paper 元数据由 paperindex 承担，引用图由 Neo4j 承担，PocketBase 不再是 paper 数据源。
+    Paper 元数据由 PostgreSQL catalog 承担，引用图由 Neo4j 承担，PocketBase 不再是 paper 数据源。
 
 ## 2. 三层是怎么串起来的
 
@@ -55,8 +55,8 @@ flowchart LR
 
     subgraph EDGE ["Edge — qatlasd Go 进程"]
         API[HTTP API]
-        DUCK[paperindex<br/>进程内 DuckDB]
-        API -.->|in-process| DUCK
+        PG[PostgreSQL catalog<br/>paper_works]
+        API -.->|SQL| PG
     end
 
     subgraph RUSTFS ["RustFS 对象存储"]
@@ -64,7 +64,6 @@ flowchart LR
         MD[(qatlas-md)]
         IMG[(qatlas-images)]
         OA[(qatlas-openalex)]
-        PARQ[(index/papers.parquet)]
     end
 
     NEO[(Neo4j<br/>:Paper :CITES :Concept ...)]
@@ -74,12 +73,10 @@ flowchart LR
     API -->|S3 GET/PUT| MD
     API -->|S3 GET/PUT| IMG
     API -->|S3 GET/PUT| OA
-    DUCK -->|S3 GET| PARQ
     API -.->|Bolt| NEO
 
-    PDF -.->|papers sync<br/>重建派生| NEO
     OA -.->|openalex bootstrap| NEO
-    PDF -.->|reconcile| PARQ
+    PDF -.->|papers sync<br/>reconcile| PG
 
     style RUSTFS fill:#e8f5e9
     style EDGE fill:#e3f2fd
@@ -127,8 +124,8 @@ flowchart LR
 | `qatlas-raw` | **历史单桶**（v0.6.x 时代），冻结只读做 cold backup | `pdf/<yymm>/...` 等 | TB | 备查 | 🔒 不再写 |
 | `qatlas-s3-events` | RustFS notify webhook 落盘的 PUT/DELETE 事件流（NDJSON.snappy） | Fluent Bit 自管 | KB ~ MB / 文件 | 审计 / 离线分析 | 🔒 **无 Delete 权限**（write-once 审计） |
 
-paperindex 用的 `index/papers.parquet` 不算独立桶——它就放在某个资产桶下的 `index/` prefix
-里（具体哪个桶由 deployment 决定），靠的是同一组 svcacct 凭据。
+PostgreSQL catalog 不在 RustFS 桶里；RustFS 只保存资产对象。catalog 漂移时通过
+`qatlasd papers sync --full --from-rustfs` 从三桶 LIST 重建资产状态。
 
 ### 命名约定
 
@@ -310,8 +307,8 @@ API（`upload-pdf` / `upload-mineru` / OpenAlex bootstrap 子命令）。RustFS 
 的极端 case。
 
 > **为什么这条原则比项目其它任何约束都重要**：业务数据真正的权威在对象存储 + git
-> （两个本来就有的稳定层），不增加任何"必须永远活着"的新组件。Neo4j / pb_data / paperindex
-> Parquet / 任何 derived backend 都是可替换、可重建的工具——让其它一切组件都成为可替换的
+> （两个本来就有的稳定层）。Neo4j / pb_data / PostgreSQL catalog / 任何 derived backend
+> 都是可替换、可重建的工具——让其它一切组件都成为可替换的
 > 快速失败 + 快速重建对象。
 
 ## 6. Catalog 健康度对账
@@ -422,7 +419,7 @@ count(target bucket recursive) >= count(source bucket recursive prefix)
 | Markdown | 100w × ~50 KB ≈ **50 GB** | `qatlas-md` 桶 |
 | Images | 100w × ~5 张 × 50 KB ≈ **250 GB** | `qatlas-images` 桶 |
 | OpenAlex snapshot | 全量约 **300 GB**（works/authors/sources/...） | `qatlas-openalex` 桶 |
-| paperindex Parquet | 100w 行 × 数十列 zstd ≈ **~50 MB** | `index/papers.parquet` |
+| PostgreSQL catalog | 100w 行 × 数十列 + indexes ≈ **数百 MB 级** | PostgreSQL |
 | Neo4j store + 索引 | 100w 节点 + 3000w 关系 ≈ **3–5 GB** | 本机 SSD，page cache 配 4–8 GB |
 
 **raw 量再涨 10x（千万 paper、20 TB PDF），Neo4j 还是只要几十 GB**——图库只存"id + 关系"，
@@ -441,9 +438,8 @@ count(target bucket recursive) >= count(source bucket recursive prefix)
 
 **项目整体分层**：
 
-- [`architecture.md`](architecture.md) —— 应用代码 / Wiki / RAW / Neo4j 四层分工；
-  **paperindex Lakehouse 节**详细解释了 DuckDB + Parquet on RustFS 的实现细节、写入路径、
-  跟 Iceberg / Delta Lake 的关系
+- [`architecture.md`](architecture.md) —— 应用代码 / Wiki / RAW / PostgreSQL catalog / Neo4j
+  分工；**PostgreSQL catalog 节**解释了非登录态元数据、PDF/MD/DOI 状态和 MinerU claim 的存储
 - [`data-flow.md`](data-flow.md) —— 一篇论文从 arXiv 进来到生成可运行代码的全链路图
 
 **API 与运维**：

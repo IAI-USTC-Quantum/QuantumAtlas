@@ -10,6 +10,30 @@ import (
 // IngestBatch is the default number of works MERGEd per transaction.
 const IngestBatch = 1000
 
+var graphSchemaStatements = []string{
+	`CREATE CONSTRAINT paper_arxiv_id_unique IF NOT EXISTS
+	   FOR (p:PaperWork) REQUIRE p.arxiv_id IS UNIQUE`,
+	`CREATE INDEX paper_openalex_id IF NOT EXISTS
+	   FOR (p:PaperWork) ON (p.openalex_id)`,
+	`CREATE INDEX paper_doi IF NOT EXISTS
+	   FOR (p:PaperWork) ON (p.doi)`,
+}
+
+// EnsureGraphSchema applies the small Neo4j schema needed by OpenAlex graph
+// bootstrap. The relational paper catalog lives in PostgreSQL; this schema is
+// graph-only and exists so citation ingestion can still MERGE efficiently.
+func EnsureGraphSchema(ctx context.Context, nc *neo4j.Client) error {
+	if nc == nil || !nc.Connected() {
+		return fmt.Errorf("openalex: neo4j not connected")
+	}
+	for _, stmt := range graphSchemaStatements {
+		if _, err := nc.ExecuteWrite(ctx, stmt, nil); err != nil {
+			return fmt.Errorf("openalex: ensure graph schema: %w", err)
+		}
+	}
+	return nil
+}
+
 // nodeRow is the flattened, Neo4j-friendly projection of a Work that
 // has an arxiv id. Only arxiv-bearing works become :PaperWork nodes;
 // the OpenAlex id is retained so the second (citation) pass can match

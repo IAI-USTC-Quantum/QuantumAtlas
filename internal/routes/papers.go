@@ -32,10 +32,10 @@ import (
 // touched by these handlers flows through this interface — never
 // directly via os.*, so the same routes work against either backend.
 //
-// catalog is the Neo4j-backed papers catalog (papers.Store) that owns
+// catalog is the PostgreSQL-backed papers catalog (papers.Store) that owns
 // all collection-style metadata: aggregate stats, the needs-mineru
 // queue, MinerU claim leases, and upload write-through. It degrades
-// gracefully (ErrCatalogUnavailable) when Neo4j is unreachable — read
+// gracefully (ErrCatalogUnavailable) when PostgreSQL is unreachable — read
 // endpoints report {available:false}; uploads still write the object
 // and defer the catalog sync (X-Catalog-Sync: deferred).
 //
@@ -124,7 +124,7 @@ func RegisterPapers(
 
 			// Canonical resolution rule (see
 			// docs/reference/upload-api.md §Canonical resolution): a
-			// :PaperWork node with `identifier_scheme='doi'` ALWAYS
+			// paper_works row with `identifier_scheme='doi'` ALWAYS
 			// wins over its arxiv twin when both exist. The DOI is the
 			// canonical identity of the published version; the arxiv
 			// preprint is a SECONDARY artifact (often older / shorter).
@@ -165,7 +165,7 @@ func RegisterPapers(
 					_, hit, err := catalog.LookupDOI(ctx, doi)
 					if err != nil {
 						return re.JSON(http.StatusServiceUnavailable, map[string]any{
-							"detail": "catalog unavailable (Neo4j unreachable); retry shortly",
+							"detail": "catalog unavailable (PostgreSQL unreachable); retry shortly",
 							"doi":    doi,
 						})
 					}
@@ -198,7 +198,7 @@ func RegisterPapers(
 						_, hit, lerr := catalog.LookupDOI(ctx, doi)
 						if lerr != nil {
 							return re.JSON(http.StatusServiceUnavailable, map[string]any{
-								"detail": "catalog unavailable (Neo4j unreachable); retry shortly",
+								"detail": "catalog unavailable (PostgreSQL unreachable); retry shortly",
 								"doi":    doi,
 							})
 						}
@@ -213,7 +213,7 @@ func RegisterPapers(
 						// be false and 503 is the more honest answer.
 						if !catalog.Available(ctx) {
 							return re.JSON(http.StatusServiceUnavailable, map[string]any{
-								"detail": "catalog unavailable (Neo4j unreachable); retry shortly",
+								"detail": "catalog unavailable (PostgreSQL unreachable); retry shortly",
 								"doi":    doi,
 							})
 						}
@@ -238,7 +238,7 @@ func RegisterPapers(
 				//
 				// Query-time error here is intentionally NOT a 503:
 				// the arxiv path is designed to be independent of the
-				// catalog (Neo4j outage MUST NOT gate arxiv access),
+				// catalog (PostgreSQL outage MUST NOT gate arxiv access),
 				// so we fall through to the arxiv handlers — same
 				// behaviour as a clean "no twin" result.
 				doi, hit, _ := catalog.LookupArxivToDOI(ctx, paperassets.StripVersion(arxivPart))
@@ -603,7 +603,7 @@ func doiVersionErrorResponse(re *core.RequestEvent, doi, canonical string, err e
 // (has_pdf) and "converted markdown" (has_md) tiles on the home/wiki
 // pages.
 //
-// When the catalog is unreachable (Neo4j down, or NEO4J_URI unset in
+// When the catalog is unreachable (PostgreSQL down, or QATLAS_POSTGRES_DSN unset in
 // local dev) we degrade to {available:false} rather than 500 — the
 // frontend simply hides the tiles.
 func paperStatsHandler(re *core.RequestEvent, catalog *papers.Store) error {
@@ -637,7 +637,7 @@ func paperStatsHandler(re *core.RequestEvent, catalog *papers.Store) error {
 // needsMineruHandler answers GET /api/papers/needs-mineru.
 //
 // The catalog query already filters out papers with an active claim
-// (claims are inlined on the :PaperWork node), so the response is the
+// (claims are inlined on the paper_works row), so the response is the
 // list of papers with a PDF, no markdown, and no live lease — ready to
 // be claimed and converted. When the catalog is unreachable we return
 // an empty list with available:false rather than 500.
@@ -707,8 +707,8 @@ func needsMineruHandler(re *core.RequestEvent, catalog *papers.Store) error {
 //     trusted as a backfill.
 //
 // The lease itself is granted atomically by the catalog (single
-// MERGE/SET that only matches when the paper has a PDF, lacks
-// markdown, and has no live claim).
+// PostgreSQL row lock/update that only matches when the paper has a PDF,
+// lacks markdown, and has no live claim).
 func mineruClaimHandler(re *core.RequestEvent, cfg *config.Config, store objstore.Store, catalog *papers.Store, arxivID string, ttl int) error {
 	ctx := re.Request.Context()
 	canonical, ok := paperassets.ValidateUploadID(arxivID)
@@ -737,7 +737,7 @@ func mineruClaimHandler(re *core.RequestEvent, cfg *config.Config, store objstor
 		switch {
 		case errors.Is(err, papers.ErrCatalogUnavailable):
 			return re.JSON(http.StatusServiceUnavailable, map[string]string{
-				"detail": "catalog unavailable (Neo4j unreachable); retry shortly",
+				"detail": "catalog unavailable (PostgreSQL unreachable); retry shortly",
 			})
 		case errors.Is(err, papers.ErrNotClaimable):
 			return re.JSON(http.StatusNotFound, map[string]string{
@@ -845,7 +845,7 @@ func mineruClaimReleaseHandler(re *core.RequestEvent, catalog *papers.Store, arx
 		}
 		if errors.Is(err, papers.ErrCatalogUnavailable) {
 			return re.JSON(http.StatusServiceUnavailable, map[string]string{
-				"detail": "catalog unavailable (Neo4j unreachable); retry shortly",
+				"detail": "catalog unavailable (PostgreSQL unreachable); retry shortly",
 			})
 		}
 		return re.JSON(http.StatusInternalServerError, map[string]string{"detail": err.Error()})
@@ -921,7 +921,7 @@ func uploadPDFHandler(re *core.RequestEvent, cfg *config.Config, store objstore.
 	}
 
 	// v0.7.0: the json/metadata sidecar bucket was cut — paper metadata
-	// now lives in the Neo4j catalog (sourced from OpenAlex), so the
+	// now lives in the PostgreSQL catalog (sourced from OpenAlex / DOI verification), so the
 	// handler only accepts a single 'pdf' multipart part. Any other
 	// parts in the request are ignored.
 	pdfOutcome, err := uploadOne(ctx, store, pdfKey, pdfStaged, "application/pdf", overwrite, "PDF")
@@ -948,9 +948,9 @@ func uploadPDFHandler(re *core.RequestEvent, cfg *config.Config, store objstore.
 	}
 	overallUnchanged := pdfOutcome.kind == outcomeUnchanged
 
-	// Catalog write-through: flip has_pdf=true on the :PaperWork node
+	// Catalog write-through: flip has_pdf=true on the paper_works row
 	// (creating a minimal arxiv-fallback node if the paper predates the
-	// OpenAlex bootstrap). When Neo4j is down we still return success —
+	// OpenAlex bootstrap). When PostgreSQL is down we still return success —
 	// the object is durably written; `papers sync` reconciles later.
 	catalogDeferred := false
 	if err := catalog.UpsertPDF(ctx, canonical, pdfSha, pdfSize, pdfOutcome.existingSha); err != nil {

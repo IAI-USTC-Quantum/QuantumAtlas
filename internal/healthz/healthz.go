@@ -26,12 +26,12 @@
 //
 //   - "healthy"   — every configured dependency responded.
 //   - "degraded"  — server up, but one or more configured dependencies
-//                   failed their probe. Caller-visible APIs may still
-//                   work in fallback mode (e.g. local raw store).
+//     failed their probe. Caller-visible APIs may still
+//     work in fallback mode (e.g. local raw store).
 //   - "not_configured" appears per-check when a dependency is optional
-//                   and the operator hasn't enabled it (e.g. Neo4j
-//                   without NEO4J_URI). Not_configured checks do NOT
-//                   downgrade the aggregate status.
+//     and the operator hasn't enabled it (e.g. Neo4j
+//     without NEO4J_URI). Not_configured checks do NOT
+//     downgrade the aggregate status.
 //
 // # Privacy tiers
 //
@@ -42,13 +42,13 @@
 // two tiers:
 //
 //   - Public (anonymous):  status + version + uptime + per-check status.
-//                          Enough for monitors / SDK pb.health.check()
-//                          to tell "alive vs degraded vs down".
+//     Enough for monitors / SDK pb.health.check()
+//     to tell "alive vs degraded vs down".
 //   - Detail (authenticated): everything above + endpoint URLs, bucket
-//                          names, wiki commit SHA / branch / dirty
-//                          flag, etc. Useful for operators staring at
-//                          a dashboard; absolutely not useful for
-//                          attackers, which is why it gates.
+//     names, wiki commit SHA / branch / dirty
+//     flag, etc. Useful for operators staring at
+//     a dashboard; absolutely not useful for
+//     attackers, which is why it gates.
 //
 // Sanitise() drops the detail fields and is what handlers call when
 // the request is unauthenticated. Authenticated callers get the raw
@@ -66,30 +66,31 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/safego"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/wiki"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Check is a single dependency probe result. LatencyMS is the wall
 // time of the underlying call (in milliseconds) when applicable;
 // omitted when the check was skipped (not_configured).
 type Check struct {
-	Status    string `json:"status"`              // "ok" | "error" | "not_configured"
-	Error     string `json:"error,omitempty"`     // populated when Status="error"
+	Status    string `json:"status"`          // "ok" | "error" | "not_configured"
+	Error     string `json:"error,omitempty"` // populated when Status="error"
 	LatencyMS int64  `json:"latency_ms,omitempty"`
 
 	// Optional per-check fields. Different checks fill different
 	// subsets — we keep them on one struct so the JSON layout stays
 	// uniform and the SPA doesn't need a discriminated union.
-	Backend    string `json:"backend,omitempty"`     // raw store: "s3" | "s3-router" | "local"
-	Endpoint   string `json:"endpoint,omitempty"`    // s3 endpoint URL
-	Bucket     string `json:"bucket,omitempty"`      // s3 bucket name
-	Buckets    []string `json:"buckets,omitempty"`   // s3-router: probed bucket names
-	URI        string `json:"uri,omitempty"`         // neo4j bolt URI
-	Database   string `json:"database,omitempty"`    // neo4j database
-	Dir        string `json:"dir,omitempty"`         // wiki working tree path
-	Commit     string `json:"commit,omitempty"`      // wiki HEAD short SHA
-	CommitTime string `json:"commit_time,omitempty"` // wiki HEAD commit ISO 8601
-	Branch     string `json:"branch,omitempty"`      // wiki branch
-	Dirty      *bool  `json:"dirty,omitempty"`       // wiki worktree dirty flag
+	Backend    string   `json:"backend,omitempty"`     // raw store: "s3" | "s3-router" | "local"
+	Endpoint   string   `json:"endpoint,omitempty"`    // s3 endpoint URL
+	Bucket     string   `json:"bucket,omitempty"`      // s3 bucket name
+	Buckets    []string `json:"buckets,omitempty"`     // s3-router: probed bucket names
+	URI        string   `json:"uri,omitempty"`         // neo4j bolt URI
+	Database   string   `json:"database,omitempty"`    // neo4j database
+	Dir        string   `json:"dir,omitempty"`         // wiki working tree path
+	Commit     string   `json:"commit,omitempty"`      // wiki HEAD short SHA
+	CommitTime string   `json:"commit_time,omitempty"` // wiki HEAD commit ISO 8601
+	Branch     string   `json:"branch,omitempty"`      // wiki branch
+	Dirty      *bool    `json:"dirty,omitempty"`       // wiki worktree dirty flag
 }
 
 // Result is the full /api/health response payload.
@@ -239,7 +240,7 @@ func Run(ctx context.Context, p Probes) Result {
 		Version:       p.Version,
 		UptimeSeconds: int64(now.Sub(p.Started).Seconds()),
 		Time:          now.Format(time.RFC3339),
-		Checks:        make(map[string]Check, 3),
+		Checks:        make(map[string]Check, 4),
 	}
 
 	var (
@@ -252,7 +253,7 @@ func Run(ctx context.Context, p Probes) Result {
 		mu.Unlock()
 	}
 
-	wg.Add(3)
+	wg.Add(4)
 
 	// Each probe goroutine wraps its body in a recover() so a panic
 	// inside a probe (e.g. an SDK bug, a nil-deref) is logged and the
@@ -271,6 +272,7 @@ func Run(ctx context.Context, p Probes) Result {
 	}
 
 	go probe("rawstore", func() Check { return probeRawStore(ctx, p.RawStore) })
+	go probe("postgres", func() Check { return probePostgres(ctx, p.Cfg) })
 	go probe("neo4j", func() Check { return probeNeo4j(ctx, p.Cfg) })
 	go probe("wiki", func() Check { return probeWiki(p.Cfg) })
 
@@ -373,6 +375,43 @@ func probeRouter(ctx context.Context, r *objstore.Router) Check {
 			break
 		}
 	}
+	return c
+}
+
+func probePostgres(ctx context.Context, cfg *config.Config) Check {
+	if cfg == nil || cfg.PostgresDSN == "" {
+		return Check{Status: "not_configured"}
+	}
+	c := Check{Backend: "postgres"}
+	pctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	start := time.Now()
+	poolCfg, err := pgxpool.ParseConfig(cfg.PostgresDSN)
+	if err != nil {
+		c.LatencyMS = time.Since(start).Milliseconds()
+		c.Status = "error"
+		c.Error = err.Error()
+		return c
+	}
+	if cfg.PostgresMaxConns > 0 {
+		poolCfg.MaxConns = int32(cfg.PostgresMaxConns)
+	}
+	pool, err := pgxpool.NewWithConfig(pctx, poolCfg)
+	if err != nil {
+		c.LatencyMS = time.Since(start).Milliseconds()
+		c.Status = "error"
+		c.Error = err.Error()
+		return c
+	}
+	defer pool.Close()
+	if err := pool.Ping(pctx); err != nil {
+		c.LatencyMS = time.Since(start).Milliseconds()
+		c.Status = "error"
+		c.Error = err.Error()
+		return c
+	}
+	c.LatencyMS = time.Since(start).Milliseconds()
+	c.Status = "ok"
 	return c
 }
 

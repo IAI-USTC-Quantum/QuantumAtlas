@@ -382,7 +382,7 @@ func docUploadMineRU() {}
 // @Failure     404 {object} map[string]string      "not claimable (no PDF in catalog, or markdown already exists)"
 // @Failure     409 {object} map[string]interface{} "already claimed by someone else (body includes existing claim details)"
 // @Failure     500 {object} map[string]string      "internal error"
-// @Failure     503 {object} map[string]string      "catalog unavailable (Neo4j unreachable)"
+// @Failure     503 {object} map[string]string      "catalog unavailable (PostgreSQL unreachable)"
 // @Router      /api/papers/{arxiv_id}/mineru-claim [post]
 func docMineruClaim() {}
 
@@ -397,7 +397,7 @@ func docMineruClaim() {}
 // @Failure     400 {object} map[string]string "invalid arxiv_id"
 // @Failure     409 {object} map[string]string "claim_id does not match the active claim"
 // @Failure     500 {object} map[string]string "internal error"
-// @Failure     503 {object} map[string]string "catalog unavailable (Neo4j unreachable)"
+// @Failure     503 {object} map[string]string "catalog unavailable (PostgreSQL unreachable)"
 // @Router      /api/papers/{arxiv_id}/mineru-claim/{claim_id} [delete]
 func docMineruClaimRelease() {}
 

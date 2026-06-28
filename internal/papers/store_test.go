@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// TestQueryStatsExcludesDOINodes asserts that the QueryStats Cypher query
+// TestQueryStatsExcludesDOINodes asserts that the QueryStats SQL query
 // carries the identifier_scheme filter that excludes DOI-indexed nodes
 // from the dashboard counters. This is a static-string regression test
 // for the PR #19 follow-up — we can't run the query without a live
@@ -24,7 +24,7 @@ func TestQueryStatsExcludesDOINodes(t *testing.T) {
 	}
 }
 
-// TestNeedsMineruExcludesDOINodes guards the NeedsMineru Cypher query
+// TestNeedsMineruExcludesDOINodes guards the NeedsMineru SQL query
 // for the same reason. NeedsMineru feeds the mineru worker queue, and
 // queueing a DOI-only paper would cause the worker to look for an
 // arxiv-id PDF that doesn't exist.
@@ -38,27 +38,27 @@ func TestNeedsMineruExcludesDOINodes(t *testing.T) {
 	}
 }
 
-// TestLookupArxivToDOICypher guards the LookupArxivToDOI reverse-lookup
-// Cypher: must filter to identifier_scheme='doi' nodes (so a NULL-scheme
-// arxiv-uploaded node never returns), must match on doi_arxiv_id (not
-// arxiv_id, which for DOI nodes is the synthetic "doi:<doi>" key), and
-// must return the DOI not the synthetic key (callers dispatch by DOI).
-func TestLookupArxivToDOICypher(t *testing.T) {
+// TestLookupArxivToDOISQL guards the LookupArxivToDOI reverse-lookup SQL:
+// must filter to identifier_scheme='doi' rows (so arxiv-uploaded rows never
+// return), must match on doi_arxiv_id (not arxiv_id, which for DOI rows is
+// the synthetic "doi:<doi>" key), and must return the DOI not the synthetic
+// key (callers dispatch by DOI).
+func TestLookupArxivToDOISQL(t *testing.T) {
 	fn := locateDOIStoreFunc(t, "LookupArxivToDOI")
 	if !strings.Contains(fn, "identifier_scheme = 'doi'") {
 		t.Errorf("LookupArxivToDOI must filter identifier_scheme = 'doi' so it never picks up arxiv-uploaded nodes")
 	}
-	if !strings.Contains(fn, "p.doi_arxiv_id = $arxiv_id") {
+	if !strings.Contains(fn, "doi_arxiv_id = $1") {
 		t.Errorf("LookupArxivToDOI must match on doi_arxiv_id (not arxiv_id, which is the synthetic key for DOI nodes)")
 	}
-	if !strings.Contains(fn, "RETURN p.doi") {
+	if !strings.Contains(fn, "SELECT doi") {
 		t.Errorf("LookupArxivToDOI must RETURN p.doi so the GET dispatch can hand the DOI to the DOI handlers")
 	}
 }
 
 // locateStoreFunc returns the source text of the named (s *Store) method
 // from store.go. Used to assert on the Cypher string content of a
-// function body without actually executing it against a live Neo4j.
+// function body without actually executing it against a live PostgreSQL.
 func locateStoreFunc(t *testing.T, name string) string {
 	t.Helper()
 	return readAndExtract(t, "store.go", name)

@@ -50,6 +50,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
@@ -65,7 +66,7 @@ import (
 // The flag's actual default is intentionally NOT stored here — we
 // register flags with empty defaults so applyServeFlags() can
 // distinguish "user didn't pass --foo" (Flag.Changed=false) from
-// "user passed --foo=''" (Changed=true, value=""). Real defaults are
+// "user passed --foo=”" (Changed=true, value=""). Real defaults are
 // preserved by config.Load's existing fallback logic.
 type serveFlagSpec struct {
 	name    string // cobra flag name, e.g. "neo4j-uri"
@@ -96,7 +97,11 @@ type qatlasdServeFlags struct {
 	systemPAT       string
 	systemPATScopes []string
 
-	// Neo4j
+	// PostgreSQL catalog
+	postgresDSN      string
+	postgresMaxConns string
+
+	// Neo4j graph
 	neo4jURI      string
 	neo4jUsername string
 	neo4jPassword string
@@ -139,8 +144,12 @@ func serveFlagSpecs(f *qatlasdServeFlags) []serveFlagSpec {
 		{"system-pat", "QATLAS_SYSTEM_PAT", "Operator breakglass bearer token (≥16 chars or boot fatal)", "string", &f.systemPAT},
 		{"system-pat-scopes", "QATLAS_SYSTEM_PAT_SCOPES", "Comma-separated scope list for the system PAT (default: *)", "stringslice", &f.systemPATScopes},
 
-		// Neo4j (third-party env names — no QATLAS_ prefix)
-		{"neo4j-uri", "NEO4J_URI", "Neo4j Bolt URL (empty disables catalog features)", "string", &f.neo4jURI},
+		// PostgreSQL catalog (non-login state)
+		{"postgres-dsn", "QATLAS_POSTGRES_DSN", "PostgreSQL DSN for paper catalog / claims / DOI state (empty disables catalog features)", "string", &f.postgresDSN},
+		{"postgres-max-conns", "QATLAS_POSTGRES_MAX_CONNS", "Maximum PostgreSQL pool size for the catalog", "string", &f.postgresMaxConns},
+
+		// Neo4j graph (third-party env names — no QATLAS_ prefix)
+		{"neo4j-uri", "NEO4J_URI", "Neo4j Bolt URL (empty disables graph features)", "string", &f.neo4jURI},
 		{"neo4j-username", "NEO4J_USERNAME", "Neo4j username", "string", &f.neo4jUsername},
 		{"neo4j-password", "NEO4J_PASSWORD", "Neo4j password", "string", &f.neo4jPassword},
 		{"neo4j-database", "NEO4J_DATABASE", "Neo4j database name (multi-DB deployments)", "string", &f.neo4jDatabase},
@@ -251,6 +260,16 @@ func applyServeFlags(cmd *cobra.Command, f *qatlasdServeFlags, cfg *config.Confi
 	}
 	if set("system-pat-scopes") {
 		_ = os.Setenv("QATLAS_SYSTEM_PAT_SCOPES", strings.Join(f.systemPATScopes, ","))
+	}
+
+	// PostgreSQL catalog
+	if set("postgres-dsn") {
+		cfg.PostgresDSN = f.postgresDSN
+	}
+	if set("postgres-max-conns") {
+		if n, err := strconv.Atoi(strings.TrimSpace(f.postgresMaxConns)); err == nil {
+			cfg.PostgresMaxConns = n
+		}
 	}
 
 	// Neo4j

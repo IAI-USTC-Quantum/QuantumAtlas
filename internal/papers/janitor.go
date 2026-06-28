@@ -28,7 +28,7 @@ func (s *Store) RunJanitor(ctx context.Context) {
 }
 
 // sweep runs one GC pass. Errors are logged, never fatal — a transient
-// Neo4j outage just means the next tick retries.
+// PostgreSQL outage just means the next tick retries.
 func (s *Store) sweep(ctx context.Context) {
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()

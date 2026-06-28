@@ -22,7 +22,8 @@ server 端项目自有变量带 `QATLAS_` 前缀；第三方 SDK 标准名（`NE
 | `openai_api_key` / `anthropic_api_key` | ✅（本地跑 extractor）| — |
 | `QATLAS_RAW_DIR` / `DATA_DIR` / `PB_DATA_DIR` | — | ✅ |
 | `QATLAS_HTTP_ADDR` / `QATLAS_FORCE_TCP4` | — | ✅ |
-| `NEO4J_*` | — | ✅ |
+| `QATLAS_POSTGRES_DSN` / `_MAX_CONNS` | — | ✅ |
+| `NEO4J_*` | — | ✅ graph-only |
 | `QATLAS_S3_*` | — | ✅ |
 | `QATLAS_USER_HEADER` | — | ✅ |
 | `QATLAS_PAPER_ACCESS_ENABLED` | — | ✅ self-hosted 可选 |
@@ -158,7 +159,28 @@ OpenAlex DOI 解析（path 头匹配 `^10\.\d{4,9}/` 时自动触发）和 arxiv
 | `QATLAS_ARXIV_FETCH_CONCURRENT` | `2` | 并行 arxiv fetch 上限（与 `MINERU_MAX_CONCURRENT_JOBS` 独立——fetch 是 I/O bound，MinerU 是 API+GPU bound，两条管线互不阻塞）|
 | `QATLAS_ARXIV_FETCH_RPS` | `0.33` | token-bucket 速率（req/s, 支持小数）。默认 ≈ 每 3 秒一次，配合 burst 2 严格满足 arxiv 「bulk_data#etiquette」要求。多 edge 共享同一公网 NAT 时应**调低**让聚合速率仍 ≤ 1/3s |
 
-## Server: Neo4j
+## Server: PostgreSQL catalog
+
+论文 catalog（arxiv/DOI 元数据、PDF/Markdown 状态、MinerU claim 租约）使用
+PostgreSQL；登录态仍由 PocketBase 独立管理。
+
+| 变量 | 必填 | 默认 |
+|---|---|---|
+| `QATLAS_POSTGRES_DSN` | paper catalog 启用时必填 | — |
+| `QATLAS_POSTGRES_MAX_CONNS` | 否 | `10` |
+
+未配 → paper catalog 端点降级：`/api/papers/stats` 和 needs-mineru 返回
+`available:false`；上传对象仍落 S3/LocalStore，并用 `X-Catalog-Sync: deferred`
+标记后续可通过 `qatlasd papers sync --full --from-rustfs` 从对象存储重建。
+
+推荐给 qatlasd 单独 database 和 role；DSN 示例：
+
+```env
+QATLAS_POSTGRES_DSN=postgres://qatlasd:<password>@postgres.internal:5432/qatlas?sslmode=disable
+QATLAS_POSTGRES_MAX_CONNS=10
+```
+
+## Server: Neo4j graph
 
 | 变量 | 必填 | 默认 |
 |---|---|---|
@@ -167,6 +189,7 @@ OpenAlex DOI 解析（path 头匹配 `^10\.\d{4,9}/` 时自动触发）和 arxiv
 | `NEO4J_PASSWORD` | ✅ | — |
 | `NEO4J_DATABASE` | 否 | `neo4j` |
 
+Neo4j 只服务图查询 / OpenAlex citation bootstrap；paper catalog 不再依赖它。
 未配 → graph endpoint 返回 `{"error":"..."}` 200，`/api/health` 报 `neo4j: not_configured`，**不下拉聚合等级**。
 
 ## Server: S3 / RustFS（连接字段 + 三桶 all-or-nothing）

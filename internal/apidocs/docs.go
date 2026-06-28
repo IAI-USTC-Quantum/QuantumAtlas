@@ -733,7 +733,7 @@ const docTemplate = `{
                         }
                     },
                     "503": {
-                        "description": "catalog unavailable (Neo4j unreachable)",
+                        "description": "catalog unavailable (PostgreSQL unreachable)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -803,7 +803,7 @@ const docTemplate = `{
                         }
                     },
                     "503": {
-                        "description": "catalog unavailable (Neo4j unreachable)",
+                        "description": "catalog unavailable (PostgreSQL unreachable)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {

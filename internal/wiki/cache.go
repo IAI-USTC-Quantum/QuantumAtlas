@@ -18,9 +18,9 @@
 //   - Two refresh triggers: (1) background ticker every refreshEvery,
 //     (2) synchronous Refresh(true) called from /api/wiki/sync/pull after
 //     `git pull` succeeds so the client sees fresh data immediately.
-//   - This is intentionally NOT the paperindex (S3 parquet + DuckDB)
-//     pattern. Paperindex exists to converge multi-edge writes into one
-//     queryable catalog; wiki is single-source-of-truth per edge (the
+//   - This is intentionally NOT the paper catalog pattern. The catalog
+//     exists to converge multi-edge writes into one queryable database;
+//     wiki is single-source-of-truth per edge (the
 //     git checkout) so all that machinery is overkill here.
 package wiki
 

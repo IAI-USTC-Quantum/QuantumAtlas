@@ -23,7 +23,7 @@ type Stats struct {
 }
 
 // QueryStats returns aggregate catalog counters. Returns
-// ErrCatalogUnavailable when Neo4j is unreachable so the handler can
+// ErrCatalogUnavailable when PostgreSQL is unreachable so the handler can
 // degrade to {available:false}. Excludes DOI-indexed nodes (those with
 // identifier_scheme='doi') so published-version contributions don't
 // pollute the arxiv-paper dashboard counts. (PR #19 follow-up.)
@@ -32,28 +32,25 @@ func (s *Store) QueryStats(ctx context.Context) (Stats, error) {
 	if !s.ensure(ctx) {
 		return st, ErrCatalogUnavailable
 	}
-	rows, err := s.nc.ExecuteReadParams(ctx, `
-		MATCH (p:PaperWork)
-		WHERE p.identifier_scheme IS NULL OR p.identifier_scheme <> 'doi'
-		RETURN
-		  count(p) AS total,
-		  count(CASE WHEN p.has_pdf = true THEN 1 END) AS has_pdf,
-		  count(CASE WHEN p.has_md = true THEN 1 END) AS has_md,
-		  count(CASE WHEN p.has_pdf = true AND coalesce(p.has_md, false) = false THEN 1 END) AS needs_mineru,
-		  coalesce(sum(p.image_count), 0) AS total_images`, nil)
+	var total, hasPDF, hasMD, needsMineru, totalImages int64
+	err := s.pool.QueryRow(ctx, `
+		SELECT
+		  count(*)::bigint AS total,
+		  count(*) FILTER (WHERE has_pdf)::bigint AS has_pdf,
+		  count(*) FILTER (WHERE has_md)::bigint AS has_md,
+		  count(*) FILTER (WHERE has_pdf AND NOT has_md)::bigint AS needs_mineru,
+		  coalesce(sum(image_count), 0)::bigint AS total_images
+		FROM paper_works
+		WHERE identifier_scheme <> 'doi'`,
+	).Scan(&total, &hasPDF, &hasMD, &needsMineru, &totalImages)
 	if err != nil {
-		return st, fmt.Errorf("papers: query stats: %w", err)
+		return st, catalogUnavailable("papers: query stats", err)
 	}
-	if len(rows) == 0 {
-		st.LoadedAt = time.Now().UTC()
-		return st, nil
-	}
-	r := rows[0]
-	st.Total = asInt(r["total"])
-	st.HasPDF = asInt(r["has_pdf"])
-	st.HasMD = asInt(r["has_md"])
-	st.NeedsMineru = asInt(r["needs_mineru"])
-	st.TotalImages = asInt(r["total_images"])
+	st.Total = int(total)
+	st.HasPDF = int(hasPDF)
+	st.HasMD = int(hasMD)
+	st.NeedsMineru = int(needsMineru)
+	st.TotalImages = int(totalImages)
 	st.LoadedAt = time.Now().UTC()
 	return st, nil
 }
@@ -75,40 +72,44 @@ func (s *Store) NeedsMineru(ctx context.Context, limit int) ([]NeedsMineruRow, e
 	if !s.ensure(ctx) {
 		return nil, ErrCatalogUnavailable
 	}
-	rows, err := s.nc.ExecuteReadParams(ctx, `
-		MATCH (p:PaperWork)
-		WHERE p.has_pdf = true AND coalesce(p.has_md, false) = false
-		  AND (p.claim_expires_at IS NULL OR p.claim_expires_at < datetime())
-		  AND (p.identifier_scheme IS NULL OR p.identifier_scheme <> 'doi')
-		RETURN p.arxiv_id AS arxiv_id, p.yymm AS yymm,
-		       p.pdf_path AS pdf_path, p.pdf_size AS pdf_size,
-		       p.pdf_uploaded_at AS pdf_uploaded_at
-		ORDER BY p.pdf_uploaded_at DESC
-		LIMIT $limit`, map[string]any{"limit": int64(limit)})
+	rows, err := s.pool.Query(ctx, `
+		SELECT arxiv_id, yymm, pdf_path, pdf_size, pdf_uploaded_at
+		FROM paper_works
+		WHERE has_pdf
+		  AND NOT has_md
+		  AND (claim_expires_at IS NULL OR claim_expires_at < now())
+		  AND identifier_scheme <> 'doi'
+		ORDER BY pdf_uploaded_at DESC NULLS LAST, arxiv_id
+		LIMIT $1`, limit)
 	if err != nil {
-		return nil, fmt.Errorf("papers: needs-mineru: %w", err)
+		return nil, catalogUnavailable("papers: needs-mineru", err)
 	}
-	out := make([]NeedsMineruRow, 0, len(rows))
-	for _, r := range rows {
-		row := NeedsMineruRow{
-			ArxivID:      asString(r["arxiv_id"]),
-			YYMM:         asString(r["yymm"]),
-			PDFSizeBytes: int64(asInt(r["pdf_size"])),
+	defer rows.Close()
+	out := make([]NeedsMineruRow, 0, limit)
+	for rows.Next() {
+		var row NeedsMineruRow
+		var pdfPath *string
+		var pdfSize *int64
+		if err := rows.Scan(&row.ArxivID, &row.YYMM, &pdfPath, &pdfSize, &row.PDFUploadedAt); err != nil {
+			return nil, catalogUnavailable("papers: scan needs-mineru", err)
 		}
-		if pp := asString(r["pdf_path"]); pp != "" {
-			row.PDFKey = "pdf/" + pp
+		if pdfPath != nil && *pdfPath != "" {
+			row.PDFKey = "pdf/" + *pdfPath
 		}
-		if t := asTime(r["pdf_uploaded_at"]); t != nil {
-			row.PDFUploadedAt = t
+		if pdfSize != nil {
+			row.PDFSizeBytes = *pdfSize
 		}
 		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, catalogUnavailable("papers: iterate needs-mineru", err)
 	}
 	return out, nil
 }
 
-// UpsertPDF write-through: creates the :PaperWork node if missing
+// UpsertPDF write-through: creates the paper_works row if missing
 // (source='arxiv-fallback') and flips has_pdf=true with the asset
-// pointers. Idempotent. Returns ErrCatalogUnavailable when Neo4j is
+// pointers. Idempotent. Returns ErrCatalogUnavailable when PostgreSQL is
 // down (handler treats as deferred).
 func (s *Store) UpsertPDF(ctx context.Context, arxivID, sha string, size int64, etag string) error {
 	if !s.ensure(ctx) {
@@ -116,34 +117,27 @@ func (s *Store) UpsertPDF(ctx context.Context, arxivID, sha string, size int64, 
 	}
 	id := deriveIDs(arxivID)
 	pdfPath := bucketRelKey(paperassets.AssetKey("pdf", id.ArxivID))
-	_, err := s.nc.ExecuteWrite(ctx, `
-		MERGE (p:PaperWork {arxiv_id: $arxiv_id})
-		ON CREATE SET p.source = 'arxiv-fallback',
-		              p.arxiv_id_canonical = $canonical,
-		              p.yymm = $yymm,
-		              p.has_md = false,
-		              p.has_json = false
-		SET p.arxiv_id_canonical = coalesce(p.arxiv_id_canonical, $canonical),
-		    p.yymm = coalesce(p.yymm, $yymm),
-		    p.has_pdf = true,
-		    p.pdf_path = $pdf_path,
-		    p.pdf_size = $size,
-		    p.pdf_sha256 = $sha,
-		    p.pdf_etag = $etag,
-		    p.pdf_uploaded_at = datetime(),
-		    p.last_assets_change_at = datetime()
-		RETURN p.arxiv_id`,
-		map[string]any{
-			"arxiv_id":  id.ArxivID,
-			"canonical": id.Canonical,
-			"yymm":      id.YYMM,
-			"pdf_path":  pdfPath,
-			"size":      size,
-			"sha":       sha,
-			"etag":      etag,
-		})
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO paper_works (
+			arxiv_id, source, identifier_scheme, arxiv_id_canonical, yymm,
+			has_pdf, has_md, has_json, pdf_path, pdf_size, pdf_sha256,
+			pdf_etag, pdf_uploaded_at, last_assets_change_at
+		)
+		VALUES ($1, 'arxiv-fallback', 'arxiv', $2, $3, true, false, false,
+		        $4, $5, $6, $7, now(), now())
+		ON CONFLICT (arxiv_id) DO UPDATE SET
+			arxiv_id_canonical = coalesce(paper_works.arxiv_id_canonical, EXCLUDED.arxiv_id_canonical),
+			yymm = coalesce(paper_works.yymm, EXCLUDED.yymm),
+			has_pdf = true,
+			pdf_path = EXCLUDED.pdf_path,
+			pdf_size = EXCLUDED.pdf_size,
+			pdf_sha256 = EXCLUDED.pdf_sha256,
+			pdf_etag = EXCLUDED.pdf_etag,
+			pdf_uploaded_at = now(),
+			last_assets_change_at = now()`,
+		id.ArxivID, id.Canonical, id.YYMM, pdfPath, size, sha, etag)
 	if err != nil {
-		return fmt.Errorf("papers: upsert pdf %s: %w", id.ArxivID, err)
+		return catalogUnavailable(fmt.Sprintf("papers: upsert pdf %s", id.ArxivID), err)
 	}
 	return nil
 }
@@ -157,34 +151,30 @@ func (s *Store) UpsertMD(ctx context.Context, arxivID, sha string, size int64, e
 	}
 	id := deriveIDs(arxivID)
 	mdPath := bucketRelKey(paperassets.AssetKey("markdown", id.ArxivID))
-	_, err := s.nc.ExecuteWrite(ctx, `
-		MERGE (p:PaperWork {arxiv_id: $arxiv_id})
-		ON CREATE SET p.source = 'arxiv-fallback',
-		              p.arxiv_id_canonical = $canonical,
-		              p.yymm = $yymm,
-		              p.has_pdf = false,
-		              p.has_json = false
-		SET p.arxiv_id_canonical = coalesce(p.arxiv_id_canonical, $canonical),
-		    p.yymm = coalesce(p.yymm, $yymm),
-		    p.has_md = true,
-		    p.md_path = $md_path,
-		    p.md_size = $size,
-		    p.md_etag = $etag,
-		    p.md_uploaded_at = datetime(),
-		    p.last_assets_change_at = datetime()
-		REMOVE p.claimed_by_login, p.claim_expires_at, p.claim_id
-		RETURN p.arxiv_id`,
-		map[string]any{
-			"arxiv_id":  id.ArxivID,
-			"canonical": id.Canonical,
-			"yymm":      id.YYMM,
-			"md_path":   mdPath,
-			"size":      size,
-			"sha":       sha,
-			"etag":      etag,
-		})
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO paper_works (
+			arxiv_id, source, identifier_scheme, arxiv_id_canonical, yymm,
+			has_pdf, has_md, has_json, md_path, md_size, md_sha256,
+			md_etag, md_uploaded_at, last_assets_change_at
+		)
+		VALUES ($1, 'arxiv-fallback', 'arxiv', $2, $3, false, true, false,
+		        $4, $5, $6, $7, now(), now())
+		ON CONFLICT (arxiv_id) DO UPDATE SET
+			arxiv_id_canonical = coalesce(paper_works.arxiv_id_canonical, EXCLUDED.arxiv_id_canonical),
+			yymm = coalesce(paper_works.yymm, EXCLUDED.yymm),
+			has_md = true,
+			md_path = EXCLUDED.md_path,
+			md_size = EXCLUDED.md_size,
+			md_sha256 = EXCLUDED.md_sha256,
+			md_etag = EXCLUDED.md_etag,
+			md_uploaded_at = now(),
+			last_assets_change_at = now(),
+			claimed_by_login = NULL,
+			claim_expires_at = NULL,
+			claim_id = NULL`,
+		id.ArxivID, id.Canonical, id.YYMM, mdPath, size, sha, etag)
 	if err != nil {
-		return fmt.Errorf("papers: upsert md %s: %w", id.ArxivID, err)
+		return catalogUnavailable(fmt.Sprintf("papers: upsert md %s", id.ArxivID), err)
 	}
 	return nil
 }

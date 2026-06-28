@@ -580,7 +580,7 @@ paths:
               type: string
             type: object
         "503":
-          description: catalog unavailable (Neo4j unreachable)
+          description: catalog unavailable (PostgreSQL unreachable)
           schema:
             additionalProperties:
               type: string
@@ -625,7 +625,7 @@ paths:
               type: string
             type: object
         "503":
-          description: catalog unavailable (Neo4j unreachable)
+          description: catalog unavailable (PostgreSQL unreachable)
           schema:
             additionalProperties:
               type: string

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperassets"
+	"github.com/jackc/pgx/v5"
 )
 
 // Claim TTL bounds (seconds), matching the legacy mineruclaim constants
@@ -75,15 +76,14 @@ var ErrIDMismatch = errors.New("claim_id does not match the active claim")
 // has no PDF, already has markdown, or isn't in the catalog at all.
 var ErrNotClaimable = errors.New("paper has no PDF or already has markdown")
 
-// Claim atomically grants a MinerU lease via a single MERGE/SET that
-// only matches when the paper has a PDF, lacks markdown, and has no
-// unexpired claim. The MERGE node lock guarantees two concurrent
-// transactions can't both win. Returns:
+// Claim atomically grants a MinerU lease inside one PostgreSQL
+// transaction. SELECT ... FOR UPDATE serializes contenders for the same
+// paper row; the first live transaction to set claim_id wins. Returns:
 //
 //	(*Claim, nil)              lease granted
 //	(nil, *ErrAlreadyClaimed)  active lease held by someone
 //	(nil, ErrNotClaimable)     no PDF / already has MD / not in catalog
-//	(nil, ErrCatalogUnavailable) Neo4j down
+//	(nil, ErrCatalogUnavailable) PostgreSQL down
 func (s *Store) Claim(ctx context.Context, opts CreateOptions) (*Claim, error) {
 	if !s.ensure(ctx) {
 		return nil, ErrCatalogUnavailable
@@ -100,46 +100,65 @@ func (s *Store) Claim(ctx context.Context, opts CreateOptions) (*Claim, error) {
 	}
 	id := deriveIDs(opts.ArxivID)
 	claimID := newClaimID()
-	rows, err := s.nc.ExecuteWrite(ctx, `
-		MATCH (p:PaperWork {arxiv_id: $arxiv_id})
-		WHERE p.has_pdf = true AND coalesce(p.has_md, false) <> true
-		  AND (p.identifier_scheme IS NULL OR p.identifier_scheme <> 'doi')
-		// Force a write-lock on p before evaluating the claim predicate.
-		// Without this, two concurrent claim txns both read the pre-write
-		// snapshot (no active claim), both pass the guard, and both SET ->
-		// lost update / double-win. The unconditional SET serializes them;
-		// the loser re-reads the committed lease below and matches 0 rows.
-		// _claim_lock is transient lease bookkeeping (not in source).
-		SET p._claim_lock = coalesce(p._claim_lock, 0) + 1
-		WITH p
-		WHERE (p.claim_expires_at IS NULL OR p.claim_expires_at < datetime())
-		SET p.claimed_by_login = $login,
-		    p.claim_expires_at  = datetime() + duration({seconds: $ttl}),
-		    p.claim_id          = $claim_id
-		RETURN p.claim_id AS claim_id, p.claimed_by_login AS requester,
-		       toString(p.claim_expires_at) AS expires_at`,
-		map[string]any{
-			"arxiv_id": id.ArxivID,
-			"login":    opts.Requester,
-			"ttl":      int64(ttl),
-			"claim_id": claimID,
-		})
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("papers: claim %s: %w", id.ArxivID, err)
+		return nil, catalogUnavailable(fmt.Sprintf("papers: claim begin %s", id.ArxivID), err)
 	}
-	if len(rows) == 0 {
-		// Distinguish "already claimed" from "not claimable" for a
-		// useful 409 body.
-		return nil, s.classifyClaimFailure(ctx, id.ArxivID)
+	defer tx.Rollback(ctx)
+
+	var (
+		hasPDF, hasMD bool
+		existingID    *string
+		requester     *string
+		expiresAt     *time.Time
+	)
+	err = tx.QueryRow(ctx, `
+		SELECT has_pdf, has_md, claim_id, claimed_by_login, claim_expires_at
+		FROM paper_works
+		WHERE arxiv_id = $1 AND identifier_scheme <> 'doi'
+		FOR UPDATE`, id.ArxivID,
+	).Scan(&hasPDF, &hasMD, &existingID, &requester, &expiresAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotClaimable
+		}
+		return nil, catalogUnavailable(fmt.Sprintf("papers: claim load %s", id.ArxivID), err)
 	}
 	now := time.Now().UTC()
+	if expiresAt != nil && !expiresAt.Before(now) {
+		return nil, &ErrAlreadyClaimed{Existing: &Claim{
+			ClaimID:   derefString(existingID),
+			ArxivID:   id.ArxivID,
+			Requester: derefString(requester),
+			ExpiresAt: expiresAt.UTC().Format(time.RFC3339),
+		}}
+	}
+	if !hasPDF || hasMD {
+		return nil, ErrNotClaimable
+	}
+	var dbExpiresAt time.Time
+	err = tx.QueryRow(ctx, `
+		UPDATE paper_works
+		SET claimed_by_login = $2,
+		    claim_expires_at = now() + make_interval(secs => $3),
+		    claim_id = $4
+		WHERE arxiv_id = $1 AND identifier_scheme <> 'doi'
+		RETURN claim_expires_at`,
+		id.ArxivID, opts.Requester, ttl, claimID,
+	).Scan(&dbExpiresAt)
+	if err != nil {
+		return nil, catalogUnavailable(fmt.Sprintf("papers: claim update %s", id.ArxivID), err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, catalogUnavailable(fmt.Sprintf("papers: claim commit %s", id.ArxivID), err)
+	}
 	return &Claim{
 		ClaimID:    claimID,
 		ArxivID:    id.ArxivID,
 		Key:        paperassets.StorageKey(id.ArxivID),
 		Requester:  opts.Requester,
 		CreatedAt:  now.Format(time.RFC3339),
-		ExpiresAt:  now.Add(time.Duration(ttl) * time.Second).Format(time.RFC3339),
+		ExpiresAt:  dbExpiresAt.UTC().Format(time.RFC3339),
 		TTLSeconds: ttl,
 		PDFURL:     opts.PDFURL,
 		PDFSha256:  opts.PDFSha256,
@@ -150,33 +169,35 @@ func (s *Store) Claim(ctx context.Context, opts CreateOptions) (*Claim, error) {
 // handler can return a precise 409 (already claimed, with details) vs a
 // 404/409 (no PDF / has MD / unknown paper).
 func (s *Store) classifyClaimFailure(ctx context.Context, arxivID string) error {
-	rows, err := s.nc.ExecuteReadParams(ctx, `
-		MATCH (p:PaperWork {arxiv_id: $arxiv_id})
-		WHERE p.identifier_scheme IS NULL OR p.identifier_scheme <> 'doi'
-		RETURN coalesce(p.has_pdf, false) AS has_pdf,
-		       coalesce(p.has_md, false) AS has_md,
-		       p.claim_id AS claim_id,
-		       p.claimed_by_login AS requester,
-		       toString(p.claim_expires_at) AS expires_at,
-		       (p.claim_expires_at IS NOT NULL AND p.claim_expires_at >= datetime()) AS claim_active`,
-		map[string]any{"arxiv_id": arxivID})
+	var (
+		existingID *string
+		requester  *string
+		expiresAt  *time.Time
+	)
+	err := s.pool.QueryRow(ctx, `
+		SELECT claim_id, claimed_by_login, claim_expires_at
+		FROM paper_works
+		WHERE arxiv_id = $1
+		  AND identifier_scheme <> 'doi'
+		  AND claim_id IS NOT NULL
+		  AND claim_expires_at >= now()`,
+		arxivID,
+	).Scan(&existingID, &requester, &expiresAt)
 	if err != nil {
-		return fmt.Errorf("papers: classify claim failure: %w", err)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotClaimable
+		}
+		return catalogUnavailable("papers: classify claim failure", err)
 	}
-	if len(rows) == 0 {
-		return ErrNotClaimable // paper not in catalog
+	claim := &Claim{
+		ClaimID:   derefString(existingID),
+		ArxivID:   arxivID,
+		Requester: derefString(requester),
 	}
-	r := rows[0]
-	active, _ := r["claim_active"].(bool)
-	if active {
-		return &ErrAlreadyClaimed{Existing: &Claim{
-			ClaimID:   asString(r["claim_id"]),
-			ArxivID:   arxivID,
-			Requester: asString(r["requester"]),
-			ExpiresAt: asString(r["expires_at"]),
-		}}
+	if expiresAt != nil {
+		claim.ExpiresAt = expiresAt.UTC().Format(time.RFC3339)
 	}
-	return ErrNotClaimable // no PDF or already has MD
+	return &ErrAlreadyClaimed{Existing: claim}
 }
 
 // ReleaseClaim removes a lease, refusing when claim_id doesn't match the
@@ -187,36 +208,41 @@ func (s *Store) ReleaseClaim(ctx context.Context, arxivID, claimID string) (bool
 		return false, ErrCatalogUnavailable
 	}
 	id := deriveIDs(arxivID)
-	// First try the matching-id removal.
-	rows, err := s.nc.ExecuteWrite(ctx, `
-		MATCH (p:PaperWork {arxiv_id: $arxiv_id})
-		WHERE p.claim_id = $claim_id
-		  AND (p.identifier_scheme IS NULL OR p.identifier_scheme <> 'doi')
-		REMOVE p.claimed_by_login, p.claim_expires_at, p.claim_id
-		RETURN p.arxiv_id AS arxiv_id`,
-		map[string]any{"arxiv_id": id.ArxivID, "claim_id": claimID})
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE paper_works
+		SET claimed_by_login = NULL,
+		    claim_expires_at = NULL,
+		    claim_id = NULL
+		WHERE arxiv_id = $1
+		  AND claim_id = $2
+		  AND identifier_scheme <> 'doi'`,
+		id.ArxivID, claimID)
 	if err != nil {
-		return false, fmt.Errorf("papers: release claim %s: %w", id.ArxivID, err)
+		return false, catalogUnavailable(fmt.Sprintf("papers: release claim %s", id.ArxivID), err)
 	}
-	if len(rows) > 0 {
+	if tag.RowsAffected() > 0 {
 		return true, nil
 	}
 	// Nothing removed — is there a *different* active lease, or just
 	// nothing to release (idempotent)?
-	chk, err := s.nc.ExecuteReadParams(ctx, `
-		MATCH (p:PaperWork {arxiv_id: $arxiv_id})
-		WHERE p.claim_id IS NOT NULL
-		  AND p.claim_expires_at >= datetime()
-		  AND (p.identifier_scheme IS NULL OR p.identifier_scheme <> 'doi')
-		RETURN p.claim_id AS claim_id`,
-		map[string]any{"arxiv_id": id.ArxivID})
+	var activeID string
+	err = s.pool.QueryRow(ctx, `
+		SELECT claim_id
+		FROM paper_works
+		WHERE arxiv_id = $1
+		  AND claim_id IS NOT NULL
+		  AND claim_expires_at >= now()
+		  AND identifier_scheme <> 'doi'
+		LIMIT 1`,
+		id.ArxivID,
+	).Scan(&activeID)
 	if err != nil {
-		return false, fmt.Errorf("papers: release claim check %s: %w", id.ArxivID, err)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return true, nil // idempotent: already released / expired
+		}
+		return false, catalogUnavailable(fmt.Sprintf("papers: release claim check %s", id.ArxivID), err)
 	}
-	if len(chk) > 0 {
-		return false, ErrIDMismatch
-	}
-	return true, nil // idempotent: already released / expired
+	return false, ErrIDMismatch
 }
 
 // GCExpiredClaims removes all expired leases in one pass. Idempotent and
@@ -225,18 +251,17 @@ func (s *Store) GCExpiredClaims(ctx context.Context) (int, error) {
 	if !s.ensure(ctx) {
 		return 0, ErrCatalogUnavailable
 	}
-	rows, err := s.nc.ExecuteWrite(ctx, `
-		MATCH (p:PaperWork)
-		WHERE p.claim_expires_at IS NOT NULL AND p.claim_expires_at < datetime()
-		REMOVE p.claimed_by_login, p.claim_expires_at, p.claim_id
-		RETURN count(p) AS n`, nil)
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE paper_works
+		SET claimed_by_login = NULL,
+		    claim_expires_at = NULL,
+		    claim_id = NULL
+		WHERE claim_expires_at IS NOT NULL
+		  AND claim_expires_at < now()`)
 	if err != nil {
-		return 0, fmt.Errorf("papers: gc claims: %w", err)
+		return 0, catalogUnavailable("papers: gc claims", err)
 	}
-	if len(rows) == 0 {
-		return 0, nil
-	}
-	return asInt(rows[0]["n"]), nil
+	return int(tag.RowsAffected()), nil
 }
 
 // newClaimID generates a 32-char hex id (16 random bytes).
@@ -244,4 +269,11 @@ func newClaimID() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+func derefString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }

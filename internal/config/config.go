@@ -40,7 +40,11 @@ type Config struct {
 	DataDir   string // server-managed metadata (ingests/, mineru-claim sidecars, etc.).
 	PBDataDir string // PocketBase pb_data (SQLite + uploads); passed to --dir=.
 
-	// Neo4j (server-only).
+	// PostgreSQL catalog (server-only, non-login state).
+	PostgresDSN      string
+	PostgresMaxConns int
+
+	// Neo4j (graph-only).
 	Neo4jURI      string
 	Neo4jUser     string
 	Neo4jPassword string
@@ -281,37 +285,39 @@ func Load(dotenvPath string) (*Config, error) {
 	}
 
 	cfg := &Config{
-		HTTPAddr:                 firstEnv("QATLAS_HTTP_ADDR"),
-		WikiDir:                  firstEnv("QATLAS_WIKI_DIR", "WIKI_DIR"),
-		RawDir:                   firstEnv("QATLAS_RAW_DIR", "RAW_DIR"),
-		DataDir:                  firstEnv("QATLAS_DATA_DIR", "DATA_DIR"),
-		PBDataDir:                firstEnv("QATLAS_PB_DATA_DIR", "PB_DATA_DIR"),
-		Neo4jURI:                 firstEnv("NEO4J_URI"),
-		Neo4jUser:                firstEnv("NEO4J_USERNAME", "NEO4J_USER"),
-		Neo4jPassword:            firstEnv("NEO4J_PASSWORD"),
-		Neo4jDatabase:            firstEnv("NEO4J_DATABASE"),
-		PublicURL:                firstEnv("QATLAS_PUBLIC_URL"),
-		UserHeader:               firstEnv("QATLAS_USER_HEADER", "USER_HEADER"),
-		GitHubClientID:           firstEnv("GITHUB_CLIENT_ID"),
-		GitHubClientSecret:       firstEnv("GITHUB_CLIENT_SECRET"),
-		S3Endpoint:               firstEnv("QATLAS_S3_ENDPOINT"),
-		S3PublicEndpoint:         firstEnv("QATLAS_S3_PUBLIC_ENDPOINT"),
-		S3BucketPDF:              firstEnv("QATLAS_S3_BUCKET_PDF"),
-		S3BucketMD:               firstEnv("QATLAS_S3_BUCKET_MD"),
-		S3BucketImages:           firstEnv("QATLAS_S3_BUCKET_IMAGES"),
-		S3BucketOpenAlex:         firstEnv("QATLAS_S3_BUCKET_OPENALEX_SNAPSHOT"),
-		S3AccessKeyID:            firstEnv("QATLAS_S3_ACCESS_KEY_ID"),
-		S3SecretAccessKey:        firstEnv("QATLAS_S3_SECRET_ACCESS_KEY"),
-		EdgeName:                 firstEnv("QATLAS_EDGE_NAME"),
-		PaperAccessEnabled:    parseBoolEnv("QATLAS_PAPER_ACCESS_ENABLED", false),
-		RAGQdrantURL:             firstEnv("QATLAS_RAG_QDRANT_URL"),
-		RAGQdrantAPIKey:          firstEnv("QATLAS_RAG_QDRANT_API_KEY"),
-		RAGQdrantCollection:      firstEnvDefault("qatlas_papers_v1", "QATLAS_RAG_QDRANT_COLLECTION"),
-		RAGEmbedURL:              firstEnv("QATLAS_RAG_EMBED_URL"),
-		RAGEmbedToken:            firstEnv("QATLAS_RAG_EMBED_TOKEN"),
-		OpenAlexMailto:           firstEnv("QATLAS_OPENALEX_MAILTO"),
-		ArxivFetchConcurrent:     firstEnvIntDefault(2, "QATLAS_ARXIV_FETCH_CONCURRENT"),
-		ArxivFetchRPS:            firstEnvFloatDefault(0.33, "QATLAS_ARXIV_FETCH_RPS"),
+		HTTPAddr:             firstEnv("QATLAS_HTTP_ADDR"),
+		WikiDir:              firstEnv("QATLAS_WIKI_DIR", "WIKI_DIR"),
+		RawDir:               firstEnv("QATLAS_RAW_DIR", "RAW_DIR"),
+		DataDir:              firstEnv("QATLAS_DATA_DIR", "DATA_DIR"),
+		PBDataDir:            firstEnv("QATLAS_PB_DATA_DIR", "PB_DATA_DIR"),
+		PostgresDSN:          firstEnv("QATLAS_POSTGRES_DSN"),
+		PostgresMaxConns:     firstEnvIntDefault(10, "QATLAS_POSTGRES_MAX_CONNS"),
+		Neo4jURI:             firstEnv("NEO4J_URI"),
+		Neo4jUser:            firstEnv("NEO4J_USERNAME", "NEO4J_USER"),
+		Neo4jPassword:        firstEnv("NEO4J_PASSWORD"),
+		Neo4jDatabase:        firstEnv("NEO4J_DATABASE"),
+		PublicURL:            firstEnv("QATLAS_PUBLIC_URL"),
+		UserHeader:           firstEnv("QATLAS_USER_HEADER", "USER_HEADER"),
+		GitHubClientID:       firstEnv("GITHUB_CLIENT_ID"),
+		GitHubClientSecret:   firstEnv("GITHUB_CLIENT_SECRET"),
+		S3Endpoint:           firstEnv("QATLAS_S3_ENDPOINT"),
+		S3PublicEndpoint:     firstEnv("QATLAS_S3_PUBLIC_ENDPOINT"),
+		S3BucketPDF:          firstEnv("QATLAS_S3_BUCKET_PDF"),
+		S3BucketMD:           firstEnv("QATLAS_S3_BUCKET_MD"),
+		S3BucketImages:       firstEnv("QATLAS_S3_BUCKET_IMAGES"),
+		S3BucketOpenAlex:     firstEnv("QATLAS_S3_BUCKET_OPENALEX_SNAPSHOT"),
+		S3AccessKeyID:        firstEnv("QATLAS_S3_ACCESS_KEY_ID"),
+		S3SecretAccessKey:    firstEnv("QATLAS_S3_SECRET_ACCESS_KEY"),
+		EdgeName:             firstEnv("QATLAS_EDGE_NAME"),
+		PaperAccessEnabled:   parseBoolEnv("QATLAS_PAPER_ACCESS_ENABLED", false),
+		RAGQdrantURL:         firstEnv("QATLAS_RAG_QDRANT_URL"),
+		RAGQdrantAPIKey:      firstEnv("QATLAS_RAG_QDRANT_API_KEY"),
+		RAGQdrantCollection:  firstEnvDefault("qatlas_papers_v1", "QATLAS_RAG_QDRANT_COLLECTION"),
+		RAGEmbedURL:          firstEnv("QATLAS_RAG_EMBED_URL"),
+		RAGEmbedToken:        firstEnv("QATLAS_RAG_EMBED_TOKEN"),
+		OpenAlexMailto:       firstEnv("QATLAS_OPENALEX_MAILTO"),
+		ArxivFetchConcurrent: firstEnvIntDefault(2, "QATLAS_ARXIV_FETCH_CONCURRENT"),
+		ArxivFetchRPS:        firstEnvFloatDefault(0.33, "QATLAS_ARXIV_FETCH_RPS"),
 	}
 
 	// MinerU* fields are only populated when the master switch is on.
@@ -411,13 +417,13 @@ func Load(dotenvPath string) (*Config, error) {
 // was a phantom alias referenced only in old .env.example comments.
 func deprecatedAliases() map[string]string {
 	return map[string]string{
-		"WIKI_DIR":        "QATLAS_WIKI_DIR",
-		"RAW_DIR":         "QATLAS_RAW_DIR",
-		"DATA_DIR":        "QATLAS_DATA_DIR",
-		"PB_DATA_DIR":     "QATLAS_PB_DATA_DIR",
-		"SERVER_HOST":     "QATLAS_SERVER_HOST",
-		"SERVER_PORT":     "QATLAS_SERVER_PORT",
-		"USER_HEADER":     "QATLAS_USER_HEADER",
+		"WIKI_DIR":    "QATLAS_WIKI_DIR",
+		"RAW_DIR":     "QATLAS_RAW_DIR",
+		"DATA_DIR":    "QATLAS_DATA_DIR",
+		"PB_DATA_DIR": "QATLAS_PB_DATA_DIR",
+		"SERVER_HOST": "QATLAS_SERVER_HOST",
+		"SERVER_PORT": "QATLAS_SERVER_PORT",
+		"USER_HEADER": "QATLAS_USER_HEADER",
 	}
 }
 

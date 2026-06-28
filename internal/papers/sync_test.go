@@ -60,11 +60,11 @@ func (f *fakeListStore) PresignGet(_ context.Context, _ string, _ time.Duration)
 
 func TestStemFromKey(t *testing.T) {
 	cases := []struct {
-		name        string
-		key, kind   string
-		wantStem    string
-		wantIsDOI   bool
-		wantOK      bool
+		name      string
+		key, kind string
+		wantStem  string
+		wantIsDOI bool
+		wantOK    bool
 	}{
 		// arXiv — stem is the bare arxiv id, no yymm prefix in the
 		// returned key (the caller pairs it with the bucket path).
@@ -348,16 +348,15 @@ func TestListKindPathsNestedSlashDOIRouting(t *testing.T) {
 }
 
 // TestMergeAssetBatchSetsDOIOnDOINodes guards the PR #19 review-5 fix:
-// the doiCypher in mergeAssetBatch must SET p.doi when (re)creating a
-// :PaperWork node from the bucket. Without it, a sync that rebuilds
-// the catalog from object storage (e.g. after a Neo4j restore from an
-// older backup) leaves the new node with only the synthetic arxiv_id
-// key — but LookupDOI matches on p.doi, so the recovered node is
+// the DOI branch in mergeAssetBatch must persist doi when (re)creating a
+// paper_works row from the bucket. Without it, a sync that rebuilds
+// the catalog from object storage leaves the new row with only the
+// synthetic arxiv_id key — but LookupDOI matches on doi, so the recovered row is
 // invisible to GET /api/papers/<doi>/{pdf,markdown}, and the dispatcher
 // falls through to OpenAlex (or 404) even though the bytes are local.
 //
-// Static-string regression: we can't run the Cypher without a live
-// Neo4j, but we can guard against accidental removal of the SET clause.
+// Static-string regression: we can't run the SQL without a live
+// PostgreSQL, but we can guard against accidental removal of the upsert.
 func TestMergeAssetBatchSetsDOIOnDOINodes(t *testing.T) {
 	fn := readAndExtract(t, "sync.go", "mergeAssetBatch")
 	if fn == "" {
@@ -367,9 +366,9 @@ func TestMergeAssetBatchSetsDOIOnDOINodes(t *testing.T) {
 		t.Errorf("mergeAssetBatch doiItems must carry a \"doi\" key derived from the node_key; " +
 			"otherwise the doiCypher cannot SET p.doi on the merged node")
 	}
-	if !strings.Contains(fn, "p.doi = r.doi") {
-		t.Errorf("mergeAssetBatch doiCypher must SET p.doi = r.doi so sync-recreated DOI nodes are " +
-			"findable by LookupDOI (which matches on p.doi, not on the synthetic arxiv_id key)")
+	if !strings.Contains(fn, "doi = EXCLUDED.doi") {
+		t.Errorf("mergeAssetBatch DOI upsert must persist doi so sync-recreated DOI rows are " +
+			"findable by LookupDOI (which matches on doi, not on the synthetic arxiv_id key)")
 	}
 }
 
@@ -385,7 +384,7 @@ func TestMergeImageBatchSetsDOIOnDOINodes(t *testing.T) {
 	if !strings.Contains(fn, `"doi":`) {
 		t.Errorf("mergeImageBatch doiItems must carry a \"doi\" key derived from the node_key")
 	}
-	if !strings.Contains(fn, "p.doi = r.doi") {
-		t.Errorf("mergeImageBatch doiCypher must SET p.doi = r.doi for the same LookupDOI reason as mergeAssetBatch")
+	if !strings.Contains(fn, "doi = EXCLUDED.doi") {
+		t.Errorf("mergeImageBatch DOI upsert must persist doi for the same LookupDOI reason as mergeAssetBatch")
 	}
 }

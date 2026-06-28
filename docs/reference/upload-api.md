@@ -10,10 +10,9 @@
 > versioning lifecycle, `qatlasd storage prune` operator guide)
 > lives in [storage-rustfs.md](../deployment/rustfs.md).
 >
-> Paper metadata (title / authors / abstract / DOI / citations) is
-> sourced upstream from OpenAlex into the Neo4j catalog as of
-> v0.7.0; the upload endpoint no longer accepts a metadata JSON
-> sidecar.
+> Paper metadata and asset status live in the PostgreSQL catalog; citation
+> graph data remains graph-specific. The upload endpoint no longer accepts
+> a metadata JSON sidecar.
 
 ## Endpoints
 
@@ -290,13 +289,12 @@ images/doi/10.1103/physrevlett.123.070501.zip
 ```
 
 The DOI is lower-cased (DOIs are case-insensitive); nested slashes in
-the suffix become `__`. In the Neo4j catalog the contribution is a
-`:PaperWork` node keyed `arxiv_id = "doi:<doi>"` (reusing the
-`arxiv_id` UNIQUE constraint for atomic, race-safe MERGE) with
-`identifier_scheme = 'doi'`, `source = 'doi-upload'`, and the asset
-pointers + verification fields below.
+the suffix become `__`. In the PostgreSQL catalog the contribution is a
+`paper_works` row keyed `arxiv_id = "doi:<doi>"` (reusing the primary key
+for atomic, race-safe upsert) with `identifier_scheme = 'doi'`,
+`source = 'doi-upload'`, and the asset pointers + verification fields below.
 
-> **Canonical resolution (DOI wins)**: a `:PaperWork` node with
+> **Canonical resolution (DOI wins)**: a `paper_works` row with
 > `identifier_scheme='doi'` ALWAYS takes precedence over its arxiv twin
 > when both exist. `GET /api/papers/<id>/...` serves the DOI bytes
 > whether the caller supplied the DOI or the linked arxiv id; DOI is

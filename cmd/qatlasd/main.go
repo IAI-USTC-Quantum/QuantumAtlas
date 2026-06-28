@@ -29,7 +29,6 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/healthz"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineru"
-	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/neo4j"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/openalex"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/papers"
@@ -41,6 +40,7 @@ import (
 	_ "github.com/IAI-USTC-Quantum/QuantumAtlas/internal/apidocs"
 
 	"github.com/casbin/casbin/v2"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/apis"
@@ -105,10 +105,10 @@ var Version = "dev"
 // @description                callers need an explicit bearer.
 func main() {
 	// Early --version / version short-circuit. Everything below
-	// (loadDotEnv, config.Load, initNeo4jClient, initRawStore, ...)
+	// (loadDotEnv, config.Load, initPostgresPool, initRawStore, ...)
 	// runs in main() body BEFORE cobra parses os.Args, so a naked
 	// `qatlasd --version` would otherwise trigger network I/O
-	// (.env load, Neo4j connect attempt, S3 client init) before
+	// (.env load, PostgreSQL pool init, S3 client init) before
 	// printing the version. Detect the version flag at the top so the
 	// command is cheap, side-effect-free, and dependency-free (no .env
 	// required — useful in install-qatlasd.sh / CI smoke checks).
@@ -233,7 +233,7 @@ func main() {
 	app.RootCmd.AddCommand(NewServiceCommand())
 
 	// Mount the `papers` subcommand group (catalog maintenance:
-	// `papers sync` reconciles Neo4j has_pdf/has_md/image_count from the
+	// `papers sync` reconciles PostgreSQL has_pdf/has_md/image_count from the
 	// object-store buckets — periodic drift repair + disaster rebuild).
 	// Same registration timing constraint as pat / storage above.
 	papersCmd := NewPapersCommand()
@@ -356,11 +356,20 @@ func main() {
 		// ── STEP 5: build the cfg-dependent backends. All closures
 		// captured by the OnServe handler below need these to be
 		// in scope.
-		nc := initNeo4jClient(cfg)
-		catalog := papers.NewStore(nc)
+		pgPool, err := initPostgresPool(cfg)
+		if err != nil {
+			return err
+		}
+		if pgPool != nil {
+			app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
+				pgPool.Close()
+				return e.Next()
+			})
+		}
+		catalog := papers.NewStore(pgPool)
 		if catalog.Configured() {
 			// Schema bootstrap runs in the background: it is ~16 sequential DDL
-			// round-trips to the (cross-mesh, ~700ms-latency) Neo4j, which can
+			// round-trips to the catalog database, which can
 			// exceed any startup-blocking budget and would otherwise delay
 			// /api/health. All statements are idempotent (IF NOT EXISTS), so we
 			// retry with a generous per-attempt timeout until every constraint +
@@ -368,7 +377,7 @@ func main() {
 			// performance, so we keep retrying rather than wait for the next boot.
 			go ensureCatalogSchema(catalog)
 		} else {
-			log.Printf("papers: catalog disabled (NEO4J_URI unset); /api/papers stats+queue report available:false")
+			log.Printf("papers: catalog disabled (QATLAS_POSTGRES_DSN unset); /api/papers stats+queue report available:false")
 		}
 
 		// Wire the raw asset backend. S3Enabled is the documented split
@@ -427,7 +436,7 @@ func main() {
 		// the API tokens themselves — only the COUNT.
 		mineruConverter := mineru.NewConverter(
 			mineru.ConverterConfig{
-				PaperAccessEnabled:   cfg.PaperAccessEnabled,
+				PaperAccessEnabled:      cfg.PaperAccessEnabled,
 				MinerUAPITokens:         cfg.MinerUAPITokens,
 				MinerUAPIBaseURL:        cfg.MinerUAPIBaseURL,
 				MinerUModelVersion:      cfg.MinerUModelVersion,
@@ -584,21 +593,41 @@ func attachPBLockProbe(root *cobra.Command, cfg *config.Config) {
 	}
 }
 
-// initNeo4jClient builds the long-lived Neo4j client shared by the
-// papers catalog. It attempts an initial Connect (best-effort, short
-// timeout) so the first request after boot doesn't pay the dial
-// latency, but a down/unconfigured Neo4j is non-fatal: NewClient
-// returns ErrNotConfigured when NEO4J_URI is empty, in which case we
-// return nil and every catalog op degrades to "unavailable". A
-// configured-but-unreachable Neo4j returns a client that lazily
-// reconnects (backoff-gated) on later requests.
-// ensureCatalogSchema applies the Neo4j constraints + indexes in the
-// background, retrying until success. EnsureSchema is ~14 sequential DDL
-// round-trips; over a cross-mesh link (~700ms/round-trip) the full pass
-// can exceed 10s, so a single short startup-blocking attempt would
-// silently leave the tail of the schema uncreated. Each attempt gets a
-// generous timeout and statements are idempotent, so retries converge
-// cheaply.
+// initPostgresPool builds the catalog database pool for non-login paper
+// state. A missing DSN is allowed (local dev / graph-only deployments);
+// a syntactically invalid DSN is fatal because the operator explicitly
+// configured the catalog. Connectivity is probed once but failures are
+// not fatal: writes degrade with X-Catalog-Sync: deferred and the pool
+// can recover when PostgreSQL comes back.
+func initPostgresPool(cfg *config.Config) (*pgxpool.Pool, error) {
+	if cfg.PostgresDSN == "" {
+		return nil, nil
+	}
+	poolCfg, err := pgxpool.ParseConfig(cfg.PostgresDSN)
+	if err != nil {
+		return nil, fmt.Errorf("postgres catalog DSN: %w", err)
+	}
+	if cfg.PostgresMaxConns > 0 {
+		poolCfg.MaxConns = int32(cfg.PostgresMaxConns)
+	}
+	pool, err := pgxpool.NewWithConfig(context.Background(), poolCfg)
+	if err != nil {
+		return nil, fmt.Errorf("postgres catalog pool: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := pool.Ping(ctx); err != nil {
+		slog.Warn("postgres catalog: initial connect failed; requests will retry via pool",
+			"error", err)
+	} else {
+		log.Printf("postgres catalog: connected")
+	}
+	return pool, nil
+}
+
+// ensureCatalogSchema applies the PostgreSQL tables + indexes in the
+// background, retrying until success. Each attempt gets a generous timeout
+// and statements are idempotent, so retries converge cheaply.
 func ensureCatalogSchema(catalog *papers.Store) {
 	const (
 		attemptTimeout = 90 * time.Second
@@ -618,22 +647,6 @@ func ensureCatalogSchema(catalog *papers.Store) {
 		time.Sleep(retryDelay)
 	}
 	slog.Error("papers: EnsureSchema gave up after retries (will retry next boot)")
-}
-
-func initNeo4jClient(cfg *config.Config) *neo4j.Client {
-	nc, err := neo4j.NewClient(cfg.Neo4jURI, cfg.Neo4jUser, cfg.Neo4jPassword, cfg.Neo4jDatabase)
-	if err != nil {
-		log.Printf("neo4j: not configured (%v); papers catalog uses file fallback", err)
-		return nil
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if cErr := nc.Connect(ctx); cErr != nil {
-		slog.Warn("neo4j: initial connect failed; will retry lazily", "uri", cfg.Neo4jURI, "error", cErr)
-	} else {
-		log.Printf("neo4j: connected (%s)", cfg.Neo4jURI)
-	}
-	return nc
 }
 
 // initShareStore was removed in v0.9.0 along with the /share/*

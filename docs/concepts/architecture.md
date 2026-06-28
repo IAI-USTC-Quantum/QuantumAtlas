@@ -110,123 +110,79 @@ related: [paper-arxiv-9508027]
 字段可以拼出 canonical arxiv URL）。
 
 
-## 论文元数据索引 (`paperindex` — Parquet + DuckDB Lakehouse 模式) { #paperindex }
+## 论文元数据索引（PostgreSQL catalog） { #paperindex }
 
-> 这是 QuantumAtlas 区别于"原始 S3 cache"的一层。理解了它就理解了为什么不需要额外开一个 PostgreSQL / MySQL。
+> `paperindex` 是历史锚点名：旧版曾把索引放成 RustFS 上的 Parquet。
+> 现在的决策是 **RustFS 只做纯 S3 后端**；集合查询、DOI 状态和 MinerU claim
+> 租约进入 PostgreSQL，登录态仍由 PocketBase 单独管理。
 
 ### 问题：对象存储不会回答"集合性"问题
 
-对象存储 (S3 / RustFS) 的原生接口只有"按 key 取一个对象 (GetObject)"、"按 key 列出对象 (ListObjects)"、"按 key 删除"几类。它**没有**：
+对象存储 (S3 / RustFS) 的原生接口只有"按 key 取一个对象 (GetObject)"、
+"按 key 列出对象 (ListObjects)"、"按 key 删除"几类。它**没有**：
 
 - 跨对象的 query / filter / sort / count / group by
 - 二级索引（按非 key 字段查）
-- 全文搜索
+- 原子租约（例如"抢一篇还没被 MinerU 处理的论文"）
 
-对单个论文做"按 id 取 PDF"这种**点查**是天然合适的（就是 GetObject）。但你的真实需求里有这些**集合性问题**：
+对单个论文做"按 id 取 PDF"这种**点查**是天然合适的（就是 GetObject）。
+但真实业务需要集合查询：
 
-| 需求 | 对象存储原生能力 | 痛点 |
+| 需求 | 对象存储原生能力 | 当前实现 |
 |---|---|---|
-| "PDF / Markdown 总数" | `ListObjects(prefix=pdf/)` 全扫 + 在内存计数 | bucket 大 → LIST 慢 / 出 500（RustFS-beta 实测：10⁵ 量级直接 timeout）|
-| "需要 MinerU 的论文（有 PDF 无 MD）" | 双 ListObjects + 内存 diff | 同上 + O(n) 内存 |
-| "上周已处理过的论文标题" | ListObjects + 每个 HeadObject 取 LastModified + 每个 GetObject 取 metadata json | N 次 round trip，分钟级 |
-| "按 category / author 筛选" | 完全做不到 | 字段不在 key 里 |
+| "PDF / Markdown 总数" | `ListObjects(prefix=pdf/)` 全扫 + 计数 | PostgreSQL `count(*) FILTER (...)` |
+| "需要 MinerU 的论文（有 PDF 无 MD）" | 双 ListObjects + 内存 diff | PostgreSQL partial index + `ORDER BY pdf_uploaded_at` |
+| "DOI 是否已有本地贡献" | 无二级索引 | PostgreSQL partial unique index on DOI |
+| "抢一个 MinerU claim" | 无事务锁 | PostgreSQL row lock + `claim_expires_at` |
 
-### 反方案：再开一个数据库？不
+### 实际方案：PostgreSQL 是非登录态 catalog
 
-最朴素的修复是"加一个 PostgreSQL / MySQL，每次上传时同时写 DB"。我们**不这样做**，理由：
+`paper_works` 表是 paper catalog 的派生索引，字段包括：
 
-1. **多一个 stateful 系统**：要 backup、要 HA、要 schema migration、跨 edge 节点要复制；
-2. **同步漂移风险真实存在**：DB 和 bucket 在两次写之间的任何 crash 都让两边状态分裂；
-3. **多一套凭据**：DB password 要轮换，要发给 client tooling，运维面增大；
-4. **跟 active-active 多 edge 不友好**：两台 edge 各自一份 SQLite 就是漂移源，要用 master-replica 就还要选主。
+- 身份：`arxiv_id`（主键，DOI 贡献使用 `doi:<doi>` 合成 key）、
+  `identifier_scheme`、`doi`、`doi_arxiv_id`
+- 资产状态：`has_pdf` / `has_md` / `pdf_sha256` / `pdf_etag` /
+  `pdf_uploaded_at` / `md_*` / `image_count`
+- DOI 验证：`doi_title` / `doi_authors text[]` / `verification_status` /
+  `verified_at`
+- MinerU 租约：`claimed_by_login` / `claim_expires_at` / `claim_id`
 
-### 实际方案：Lakehouse —— 把"索引"也当成 bucket 里的一个对象
+使用 PostgreSQL 特性：
 
-业内成熟模式叫 **lakehouse**（Snowflake / BigQuery / Athena / Trino / DuckDB 同属此谱系）：
+- `INSERT ... ON CONFLICT` 做 upload write-through 和 `papers sync` 重建；
+- partial unique index：`doi` 只对 DOI row 唯一；
+- partial queue index：只索引 `has_pdf AND NOT has_md AND identifier_scheme <> 'doi'`
+  的 MinerU 队列候选；
+- row-level lock (`SELECT ... FOR UPDATE`) 保证同一 paper 的 claim 只有一个赢家；
+- `text[]` 存 DOI 作者列表，避免把简单数组拆出多余 join 表。
 
-```text
-┌──────────────────── bucket: qatlas-raw ────────────────────┐
-│                                                            │
-│  pdf/0704/0704.2988v1.pdf       ← 原始 blob（已存在）       │
-│  markdown/0704/0704.2988v1.md                              │
-│  json/0704/0704.2988v1.json   ← arxiv 元数据（已存在）      │
-│                                                            │
-│  index/papers.parquet         ← **新增** 一个对象，就这一个 │
-│      └─ 列式表，134k 行 × 数十列                            │
-│         (arxiv_id, title, abstract, authors, categories,   │
-│          has_pdf, has_md, has_json, md_processed_at,       │
-│          pdf_size, ...)                                    │
-└────────────────────────────────────────────────────────────┘
-                          ▲  ▲
-                          │  │  GetObject (~7 MB) + 内存查询
-                          │  │
-                          │  └─ DuckDB (Go in-process, cgo lib)
-                          │     在 qatlasd 进程里跑
-                          │
-                          └─ minio-go (Go in-process)
-                             同一进程，同一个 svcacct 凭据
-```
-
-**关键性质**：
-
-- **"数据库"就是 bucket 里那个 `index/papers.parquet`**。**没有第二个 stateful 系统**。备份 / 迁移 / DR 跟 PDF 们走完全相同的路径。
-- **DuckDB 是嵌入式查询库（不是 server）**——通过 cgo binding (`marcboeker/go-duckdb`) 链进 qatlasd 二进制。**没有第二个进程**、没有 `.db` 文件。你可以把它理解成"会读 parquet 的 `sql.DB`"，跟 `database/sql` 接口完全一致。
-- **凭据复用 qatlas 现有 svcacct**：DuckDB 通过 `CREATE SECRET (TYPE S3, ENDPOINT '<rustfs-endpoint>', KEY_ID ..., SECRET ...)` 拿 RustFS 凭据，KEY/SECRET 就是 `.env` 里 `QATLAS_S3_*` 那一组，policy `qatlas-assets-rw` 已经把权限钉到资产桶上。**不开新 svcacct，不改 policy**。
-- **跨 edge 一致性**：两台 edge 看的是同一个 bucket 里的同一个 `index/papers.parquet`，**天然一致**。SQLite-per-edge 那种漂移问题在结构上就不存在。
-
-### 写入路径（保证不漂移）
-
-每次 upload PDF / Markdown / JSON 时，handler 末尾追加 paperindex upsert。**写顺序定死**：
+### 写入路径
 
 ```text
-1. PUT s3://qatlas-raw/pdf/<...>     ← 数据先落 bucket
-2. paperindex.Store.Upsert(row)      ← qatlas 进程内的 DuckDB 内存表立即更新
-3. （5s 后异步）flusher 把内存表 dump 成 parquet 并 If-Match CAS 写回 bucket
+1. PUT s3://qatlas-pdf/<yymm>/<stem>.pdf        ← 字节先落 RustFS
+2. INSERT ... ON CONFLICT paper_works           ← PostgreSQL 派生索引同步
+3. PostgreSQL 不可用时：HTTP 仍成功 + X-Catalog-Sync: deferred
+4. 之后跑 qatlasd papers sync --full --from-rustfs 从 S3 重建缺失状态
 ```
 
-中间任何一步崩 → bucket 里数据**真实**，parquet 可能滞后但**永不超前**（永远不会说"有"实际没有）。
+RustFS 仍是资产字节的 source of truth；PostgreSQL 是可重建的集合索引与租约层。
+这避免了把索引文件、Parquet 或应用级 metadata 放进 RustFS，同时也避免把登录态和
+论文业务状态混进 PocketBase。
 
-**跨 edge 并发**：两台 edge 都可能 flush parquet → 用 If-Match etag 做 CAS，冲突时 retry max 5 次。上传频率低（每天几十次），冲突极罕见。
-
-**drift 兜底**：每天凌晨跑一次 `qatlasd bootstrap-index --reconcile`，全桶 LIST 比对 parquet，修复任何漂移行。即"主索引 + 定期对账"模式（跟 Iceberg / Delta Lake 的设计哲学一致，只是简化版）。
-
-### 查询路径（毫秒级）
-
-qatlasd 启动时一次性 GET parquet → DuckDB 内存表 (~70 MB 内存)；后续所有查询命中内存，**sub-millisecond**。后台每 60s 检查远端 etag，变了就重 load（其他 edge 改了的话能拿到）。
+### 查询路径
 
 ```text
 GET /api/papers/needs-mineru
-  → paperindex.Stats()
-      → SELECT count(*) FILTER (WHERE has_pdf AND NOT has_md) FROM papers
-      → 内存 DuckDB ~1 ms
+  → SELECT ... FROM paper_works
+    WHERE has_pdf AND NOT has_md
+      AND identifier_scheme <> 'doi'
+      AND (claim_expires_at IS NULL OR claim_expires_at < now())
+    ORDER BY pdf_uploaded_at DESC
   → JSON 返回
 ```
 
-跟之前那版 "ListObjects on prefix=pdf/" 直接 timeout 的实现相比，**这条链路完全不再触发 S3 LIST**。
-
-### 为什么是 Parquet 不是 JSON / SQLite / CSV
-
-| 格式 | 134k 行体积 (压缩) | 列式 pruning | DuckDB 原生支持 | 适合 S3 |
-|---|---|---|---|---|
-| **Parquet** | ~7 MB (zstd) | ✅ | ✅ | ✅ (range GET) |
-| JSON / NDJSON | ~80 MB (gzip) | ❌ 要全读 | 🟡 (慢) | 🟡 |
-| CSV | ~30 MB (gzip) | ❌ | ✅ | 🟡 |
-| SQLite `.db` | ~30 MB | ❌ (行式) | 🟡 (需 sqlite_scanner 扩展) | ❌ 不能 partial GET |
-
-Parquet 的列式 + row group + bloom filter 跟"列出某字段为 X 的所有行"这种 OLAP 工作负载天然契合，DuckDB 又是为列式 OLAP 设计的——两者配套是 lakehouse 行业标准。
-
-### 跟 Iceberg / Delta Lake 的关系
-
-Iceberg / Delta Lake 是"分布式多写并发 + ACID + 时间穿梭 + schema evolution"的成熟实现，跑在 Spark / Trino / Flink 上，适合 TB-PB 量级 + 多 writer 团队。
-
-QuantumAtlas 现在的 single-parquet + 进程内 DuckDB + CAS 是"lakehouse-lite"——**同一个架构哲学的简化版**。如果未来真的需要多 writer 并发 + 时间穿梭等高级语义，平滑升级路径是：data files（PDF 等）不动，把 `index/papers.parquet` 改成 Iceberg / Delta 的 manifest 结构 + 多 parquet partition file。**当前的所有 data 不需要重写**。
-
-### 不做的事情
-
-- ❌ 不引入 PostgreSQL / MySQL / 外置 SQLite server
-- ❌ 不给 DuckDB 单独建桶（同一个 qatlas-raw bucket 一个 prefix `index/` 足够）
-- ❌ 不为 DuckDB 单独建 svcacct（policy 已经按 bucket 锁死）
-- ❌ 不把 parquet 当成 source of truth（bucket 里的 PDF 本身才是；parquet 是派生 cache + 索引，drift 时以 bucket 实情为准）
+跟直接 `ListObjects` 相比，这条链路不会触发全桶 LIST；跟把 catalog 放进 Neo4j 相比，
+它用的是关系型数据库擅长的约束、索引和事务，而 Neo4j 继续保留给真正的图查询。
 
 ## Client / Server 边界
 

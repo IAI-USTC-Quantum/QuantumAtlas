@@ -6,7 +6,7 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperassets"
 )
 
-// ids bundles the several arxiv-id forms a :PaperWork node needs.
+// ids bundles the several arxiv-id forms a paper_works row needs.
 type ids struct {
 	// ArxivID is the normalized identifier WITH version + category,
 	// e.g. "quant-ph/9508027v1" or "2401.12345v1". Business primary key.
