@@ -271,10 +271,10 @@ uv run --with-requirements docs/requirements.txt -- mkdocs serve
 |---|---|
 | `docs/index.md` | 欢迎页 |
 | `docs/getting-started.md` | 入门（不分子目录）|
-| `docs/concepts/` | 架构 / 思想 |
-| `docs/guides/` | "怎么做某件事" how-to |
-| `docs/reference/` | 完整 API / CLI / 配置 ref |
-| `docs/deployment/` | 部署运维 |
+| `docs/concepts/` | 架构 / 思想（跨组件共享）|
+| `docs/client/` | Python 客户端 `qatlas`：how-to + 客户端 CLI |
+| `docs/server/` | Go 服务端 `qatlasd`：部署运维 + REST API + 服务端 CLI |
+| `docs/reference/` | 跨组件数据格式 ref（env vars / Wiki schema / arXiv ID）|
 | `docs/about/` | 项目背景 |
 
 每个子目录有自己的 `.pages` 文件控制侧栏 nav。
