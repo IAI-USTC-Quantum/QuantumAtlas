@@ -163,7 +163,7 @@ qatlas contrib pdf <arxiv_id> --pdf <path> [--overwrite]
 本地用自己的 `MINERU_API_TOKENS` 跑 MinerU 解析，把结果（markdown + images）推回 server。三种模式：
 
 ```
-qatlas contrib mineru                               # 队列模式：claim 并处理 server 的 needs-mineru 队列
+qatlas contrib mineru                               # 队列模式：申请 lease 并处理 server 的 needs-mineru 队列
 qatlas contrib mineru <arxiv_id>                    # 单篇模式
 qatlas contrib mineru --watch [--watch-interval N]  # 守护循环
 ```
@@ -173,10 +173,10 @@ qatlas contrib mineru --watch [--watch-interval N]  # 守护循环
 | `<arxiv_id>` | — | 省略 = 队列模式遍历 server 的未处理列表；给定（必含版本）= 只处理这一篇 |
 | `--batch-size N` | MinerU 单批上限 | 队列模式每批最多几篇 |
 | `--continue-on-error` | off | 队列模式遇到单篇失败继续（批模式下隐式开启）|
-| `--ttl-seconds N` | server 默认 1800（max 7200）| claim 租约时长 |
+| `--ttl-seconds N` | server 默认 1800（max 7200）| MinerU lease 租约时长 |
 | `--no-cache` | off | 让 MinerU 绕过 server 端缓存 |
 | `--overwrite` | off | 覆盖 server 上已有 markdown / images |
-| `--no-push` | off | 跑 MinerU 但不上传，结果 zip 留在临时目录、立即释放 claim |
+| `--no-push` | off | 跑 MinerU 但不上传，结果 zip 留在临时目录、立即释放 lease |
 | `--watch` | off | 守护模式：每轮排空队列后 sleep `--watch-interval` 再轮询；隐含 `--continue-on-error`，SIGINT/SIGTERM 处理完当前篇干净退出 |
 | `--watch-interval N` | 300 | 守护模式两批之间的轮询间隔（秒）|
 
@@ -275,7 +275,7 @@ qatlas contrib mineru [arxiv_id] [options...]
 | `--batch-size N` | ❌ | 50 | 队列模式：每批最多多少篇（硬上限 50 = MinerU 单批限制）|
 | `--max N` | ❌ | — | **已弃用**，`--batch-size` 的兼容别名；两个都给时 `--batch-size` 优先 |
 | `--continue-on-error` | ❌ | false | 队列模式：单篇失败继续下一篇（batch 模式下隐式启用）|
-| `--ttl-seconds N` | ❌ | server 默认 1800 | claim 租约（最长 7200）|
+| `--ttl-seconds N` | ❌ | server 默认 1800 | MinerU lease 租约（最长 7200）|
 | `--no-cache` | ❌ | false | 让 MinerU bypass 服务端缓存 |
 | `--overwrite` | ❌ | false | server 已有 markdown 时仍允许覆盖 |
 | `--no-push` | ❌ | false | 跑 MinerU 但不推回（留 tmp zip）|
@@ -284,9 +284,9 @@ qatlas contrib mineru [arxiv_id] [options...]
 
 **退出码**：成功 = 0；失败 = 1；MinerU 每日额度耗尽 = 75（`EX_TEMPFAIL`，CI 可视为 transient 重试）。
 
-调用链（单篇模式）：`POST /api/papers/{id}/mineru-claim` → MinerU 单 task → `POST /api/papers/{id}/upload-mineru` → `DELETE /api/papers/{id}/mineru-claim/{cid}`。
+调用链（单篇模式）：`POST /api/v1/papers/{id}/mineru-lease` → MinerU 单 task → `POST /api/papers/{id}/upload-mineru` → `DELETE /api/v1/papers/{id}/mineru-lease/{cid}`。
 
-调用链（队列 / daemon 模式，v0.15.0+）：list `needs-mineru` → 逐篇 `mineru-claim` → 一次 `POST /api/v4/extract/task/batch` → 周期 `GET /api/v4/extract-results/batch/{id}` → 每 done 立即 `upload-mineru` + `DELETE mineru-claim`。
+调用链（队列 / daemon 模式，v0.15.0+）：list `needs-mineru` → 逐篇申请 MinerU lease → 一次 `POST /api/v4/extract/task/batch` → 周期 `GET /api/v4/extract-results/batch/{id}` → 每 done 立即 `upload-mineru` + 释放 lease。
 
 详细：[用 MinerU 解析](../guides/parse-with-mineru.md)。
 

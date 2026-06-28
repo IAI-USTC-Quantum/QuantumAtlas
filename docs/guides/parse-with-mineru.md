@@ -115,12 +115,12 @@ PDF 必须**已经在 server 上**（通过 `qatlas ingest` 或 `qatlas contrib 
 
     流程：
 
-    1. client POST `/api/papers/<id>/mineru-claim` 拿 30 分钟原子 claim + 临时 presign URL
+    1. client POST `/api/v1/papers/<id>/mineru-lease` 拿 30 分钟原子 lease + 临时 presign URL
     2. 用 `mineru_api_token` 提交解析任务给 MinerU（**单 task API** `POST /api/v4/extract/task`，单篇不走 batch）
     3. 轮询 MinerU 直到 done（带 timeout）
     4. 下载 **完整结果 zip**（含 `full.md` + `images/*`）到临时目录
     5. POST `/api/papers/<id>/upload-mineru` 把整 zip 推回，server 解包后 markdown 落 `qatlas-md`，每张图落 `qatlas-images/<canonical>/`
-    6. 完成后 server 端 claim 自动释放
+    6. 完成后 server 端 lease 自动释放
 
 === "队列模式（推荐多人协作）"
 
@@ -132,13 +132,13 @@ PDF 必须**已经在 server 上**（通过 `qatlas ingest` 或 `qatlas contrib 
     自 v0.15.0 起队列模式走 **MinerU batch API**（`POST /api/v4/extract/task/batch`）：
 
     1. GET `/api/papers/needs-mineru?limit=<batch_size>` 拿 server 列表
-    2. 对每篇逐一 claim + sha256 校验（**一次性预处理**），失败的释放 claim、不影响其它论文
+    2. 对每篇逐一申请 lease + sha256 校验（**一次性预处理**），失败的释放 lease、不影响其它论文
     3. 把所有 survivors 用**一次** `submit_url_batch` 调用塞进 MinerU（最多 50 篇 / 批）
-    4. 周期性 `get_batch` 轮询；任何 `state=done` 的条目立刻下载 zip → upload → release claim，**不**等整批完事
-    5. `state=failed` 的条目按 err_msg 分类（daily-limit / fatal / 其它）后 release claim
+    4. 周期性 `get_batch` 轮询；任何 `state=done` 的条目立刻下载 zip → upload → release lease，**不**等整批完事
+    5. `state=failed` 的条目按 err_msg 分类（daily-limit / fatal / 其它）后 release lease
     6. 全批 terminal 或触发 daily-limit 后退出
 
-    多个贡献者同时跑 `qatlas contrib mineru` 不会撞 MinerU 配额——claim 是 atomic；同一批内某篇失败也不阻塞其它论文。
+    多个贡献者同时跑 `qatlas contrib mineru` 不会撞 MinerU 配额——lease 是 atomic；同一批内某篇失败也不阻塞其它论文。
 
 === "daemon 模式（挂着持续贡献）"
 
@@ -148,7 +148,7 @@ PDF 必须**已经在 server 上**（通过 `qatlas ingest` 或 `qatlas contrib 
     qatlas contrib mineru --watch --watch-interval 600
     ```
 
-    跑完一批 queue → sleep `--watch-interval`（默认 300 秒）→ 再来一批，循环直到收到 SIGINT/SIGTERM。Ctrl-C 一次会**等当前 batch 完事再退**并释放所有 in-flight claim；两次直接 abort。隐含 `--continue-on-error`（不然单 paper 5xx 会让整个 daemon 退）。
+    跑完一批 queue → sleep `--watch-interval`（默认 300 秒）→ 再来一批，循环直到收到 SIGINT/SIGTERM。Ctrl-C 一次会**等当前 batch 完事再退**并释放所有 in-flight lease；两次直接 abort。隐含 `--continue-on-error`（不然单 paper 5xx 会让整个 daemon 退）。
 
     **Daily-limit 触发**：MinerU 每天 5000 篇免费额度耗尽（`-60018` / `-60019` / HTTP 429 / 关键词命中）后，daemon **自动跳过 `--watch-interval`，直接 sleep 到下一个本地 00:01**（quota 重置时刻），避免空轮询浪费请求。一次性运行命中 daily-limit 则退出码 **75 (EX_TEMPFAIL)**，CI 可视为可重试错误。
 
@@ -241,7 +241,7 @@ PDF 必须**已经在 server 上**（通过 `qatlas ingest` 或 `qatlas contrib 
 | `--batch-size N` | 50 | 队列模式：每批最多多少篇（硬上限 50 = MinerU 单批限制）|
 | `--max N` | — | **已弃用**，`--batch-size` 的兼容别名；两个都给时 `--batch-size` 优先 |
 | `--continue-on-error` | false | 队列模式：单篇失败时继续（batch 模式下**隐式启用**——一篇失败不阻塞同批其它论文）|
-| `--ttl-seconds N` | server 默认 1800 | claim 租约秒数（最长 7200）|
+| `--ttl-seconds N` | server 默认 1800 | MinerU lease 租约秒数（最长 7200）|
 | `--no-cache` | false | 让 MinerU bypass 它的服务端缓存（重新跑）|
 | `--overwrite` | false | server 已有 markdown / images 时仍允许覆盖 |
 | `--no-push` | false | 跑 MinerU 但**不**推回 server（zip 留在本地 tmp，方便 debug）|
@@ -257,11 +257,11 @@ PDF 必须**已经在 server 上**（通过 `qatlas ingest` 或 `qatlas contrib 
 | 类别 | 触发码 / 信号 | client 行为 |
 |---|---|---|
 | **DailyLimit** | `-60018` / `-60019` / HTTP 429 / 关键词（`限额`、`额度`、`tomorrow`、`5000` 等）| daemon 睡到次日 00:01；one-shot 退出 75 |
-| **Fatal** | `A0202` / `A0211`（token）/ `-60002..-60017` / HTTP 401/403 | 释放 claim、log 错误并提示具体含义（如"页数超 200"、"token 过期"），**不重试**——人工介入 |
+| **Fatal** | `A0202` / `A0211`（token）/ `-60002..-60017` / HTTP 401/403 | 释放 lease、log 错误并提示具体含义（如"页数超 200"、"token 过期"），**不重试**——人工介入 |
 | **Retryable** | `-10001` / `-60001` / `-60007..-60010` / `-60020..-60022` / HTTP 5xx / 408 | 继续轮询（get_batch 失败时立即重试），下次 batch 自然带上 |
 | 未分类 | 其它 | 保守处理：当作普通失败，**不**触发 daily-limit 退避 |
 
-**为什么不实现客户端 PDF split**：MinerU 单文件上限 200 页（`-60006` Fatal），超长 paper 自动跳过 + 释放 claim。本地拆 PDF 后再合并 markdown 会破坏交叉引用、图片相对路径、表格连续性等结构信息，得不偿失。
+**为什么不实现客户端 PDF split**：MinerU 单文件上限 200 页（`-60006` Fatal），超长 paper 自动跳过 + 释放 lease。本地拆 PDF 后再合并 markdown 会破坏交叉引用、图片相对路径、表格连续性等结构信息，得不偿失。
 
 !!! note "v0.15.0：batch + daily-limit"
     队列 / daemon 模式从 v0.15.0 起走 batch API。同等 PDF 数量比逐篇模式快约 N 倍（N = batch 大小，理由：每篇省一次 submit 往返 + 共享 MinerU 内部 batch scheduler）。Daily-limit 自动退避避免了 daemon 在配额耗尽后整夜空轮询的浪费。
@@ -280,21 +280,21 @@ PDF 必须**已经在 server 上**（通过 `qatlas ingest` 或 `qatlas contrib 
 | `MINERU_POLL_INTERVAL` | `3` | 轮询间隔（秒）|
 | `MINERU_TIMEOUT` | `1800` | 单篇总超时（秒，30 分钟）|
 
-## claim 是怎么回事
+## MinerU lease 是怎么回事
 
-claim 是 server 颁发的**原子租约**：
+MinerU lease 是 server 颁发的**原子租约**，`claim_id` 是 lease 的稳定标识符字段。
 
 ```bash
-POST /api/papers/<id>/mineru-claim
+POST /api/v1/papers/<id>/mineru-lease
   → 201 {claim_id: "...", pdf_url: "<short-TTL presign URL>", expires_at: "..."}
 
-DELETE /api/papers/<id>/mineru-claim/<claim_id>
+DELETE /api/v1/papers/<id>/mineru-lease/<claim_id>
   → 200 (释放)
 ```
 
-server 维护 `<data_dir>/mineru-claims/*.json`：
+server 维护 catalog 中的 lease 字段：
 
-- claim 期间，其他 client 对同一 arxiv_id 调 `mineru-claim` **会被拒（409）**
+- lease 期间，其他 client 对同一 arxiv_id 调 `mineru-lease` **会被拒（409）**
 - 30 分钟（可调）后 server 自动认为放弃
 - 处理完成 / 失败时 client 显式 DELETE 释放
 
@@ -326,7 +326,7 @@ server 维护 `<data_dir>/mineru-claims/*.json`：
     今日 5000 篇免费额度用完。一次性运行退出 75；CI 把 75 视为 transient，下次任务自然重试。要立即继续就改用 daemon 模式（`--watch`），它会自动 sleep 到次日 00:01。
 
 !!! failure "[fatal] MinerU rejected batch submission: code -60006 (文件页数超过限制（最多 200 页）)"
-    MinerU 单文件上限 200 页。本 paper 自动 skip + release claim；client 不重试。要解析需先手工拆分 PDF（**`qatlas contrib mineru` 不实现客户端 split**——拆完后再 ingest）。
+    MinerU 单文件上限 200 页。本 paper 自动 skip + release lease；client 不重试。要解析需先手工拆分 PDF（**`qatlas contrib mineru` 不实现客户端 split**——拆完后再 ingest）。
 
 !!! failure "[fatal] MinerU rejected batch submission: code A0202 (Token 错误)"
     `mineru_api_token` 错或带 `Bearer ` 前缀。换 token 即可；client 不重试。

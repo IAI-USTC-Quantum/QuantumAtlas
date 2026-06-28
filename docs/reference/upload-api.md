@@ -20,11 +20,17 @@
 | ------- | --------------------------------------------- | -------------- |
 | `POST`  | `/api/papers/{arxiv_id}/upload-pdf`           | `papers:write` |
 | `POST`  | `/api/papers/{arxiv_id}/upload-mineru`        | `papers:write` |
+| `POST`  | `/api/v1/papers/{arxiv_id}/mineru-lease`      | `papers:write` |
+| `DELETE`| `/api/v1/papers/{arxiv_id}/mineru-lease/{claim_id}` | `papers:write` |
 
-Both routes require auth: either a browser session token or a PAT
+These routes require auth: either a browser session token or a PAT
 (`Authorization: Bearer qat_…`) whose scopes include `papers:write`.
 See [contribute-content.md](../guides/contribute-content.md) for how to
 mint a PAT.
+
+MinerU processing leases use `claim_id` as the stable lease identifier
+field. The server accepts both `/api/v1/papers/{arxiv_id}/mineru-lease`
+and `/api/papers/{arxiv_id}/mineru-claim` for the same lease operation.
 
 `{arxiv_id}` MUST include the explicit `vN` version suffix. Both
 schemes are accepted:

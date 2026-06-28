@@ -56,31 +56,41 @@ type ExternalLink struct {
 	Note  string `yaml:"note,omitempty" json:"note,omitempty"`
 }
 
+// VerificationFrontmatter is reserved for theorem pages. It is populated by
+// external verification plugins; the wiki parser preserves it so theorem pages
+// can be indexed without treating the block as an unknown schema error.
+type VerificationFrontmatter struct {
+	Status               string    `yaml:"status,omitempty" json:"status,omitempty"`
+	LatestVerificationID string    `yaml:"latest_verification_id,omitempty" json:"latest_verification_id,omitempty"`
+	LastUpdated          *FlexTime `yaml:"last_updated,omitempty" json:"last_updated,omitempty"`
+}
+
 // Frontmatter is the parsed YAML header of a wiki page. Field tags follow
 // the Python pydantic schema's snake_case names so the JSON we emit
 // matches what the existing frontend expects.
 type Frontmatter struct {
-	ID             string         `yaml:"id" json:"id"`
-	Title          string         `yaml:"title" json:"title"`
-	Type           string         `yaml:"type" json:"type"`
-	Category       string         `yaml:"category,omitempty" json:"category,omitempty"`
-	Tags           []string       `yaml:"tags,omitempty" json:"tags"`
-	CreatedAt      *FlexTime      `yaml:"created_at,omitempty" json:"created_at,omitempty"`
-	UpdatedAt      *FlexTime      `yaml:"updated_at,omitempty" json:"updated_at,omitempty"`
-	Version        int            `yaml:"version,omitempty" json:"version,omitempty"`
-	Status         string         `yaml:"status,omitempty" json:"status"`
-	Related        []string       `yaml:"related,omitempty" json:"related"`
-	ExternalLinks  []ExternalLink `yaml:"external_links,omitempty" json:"external_links"`
-	Neo4jSynced    bool           `yaml:"neo4j_synced,omitempty" json:"neo4j_synced"`
-	Neo4jID        string         `yaml:"neo4j_id,omitempty" json:"neo4j_id,omitempty"`
+	ID            string                   `yaml:"id" json:"id"`
+	Title         string                   `yaml:"title" json:"title"`
+	Type          string                   `yaml:"type" json:"type"`
+	Category      string                   `yaml:"category,omitempty" json:"category,omitempty"`
+	Tags          []string                 `yaml:"tags,omitempty" json:"tags"`
+	CreatedAt     *FlexTime                `yaml:"created_at,omitempty" json:"created_at,omitempty"`
+	UpdatedAt     *FlexTime                `yaml:"updated_at,omitempty" json:"updated_at,omitempty"`
+	Version       int                      `yaml:"version,omitempty" json:"version,omitempty"`
+	Status        string                   `yaml:"status,omitempty" json:"status"`
+	Related       []string                 `yaml:"related,omitempty" json:"related"`
+	ExternalLinks []ExternalLink           `yaml:"external_links,omitempty" json:"external_links"`
+	Verification  *VerificationFrontmatter `yaml:"verification,omitempty" json:"verification,omitempty"`
+	Neo4jSynced   bool                     `yaml:"neo4j_synced,omitempty" json:"neo4j_synced"`
+	Neo4jID       string                   `yaml:"neo4j_id,omitempty" json:"neo4j_id,omitempty"`
 	// DOI enrichment fields. Bare DOI string (no scheme/host prefix).
 	// `doi_source` values: arxiv | crossref | openalex | semantic-scholar | manual | unresolved.
 	// `doi_confidence` values: high | medium | low.
 	// Mirrors atlas/wiki/page.py:WikiFrontmatter.
-	DOI            string         `yaml:"doi,omitempty" json:"doi,omitempty"`
-	DOISource      string         `yaml:"doi_source,omitempty" json:"doi_source,omitempty"`
-	DOIConfidence  string         `yaml:"doi_confidence,omitempty" json:"doi_confidence,omitempty"`
-	DOIResolvedAt  *FlexTime      `yaml:"doi_resolved_at,omitempty" json:"doi_resolved_at,omitempty"`
+	DOI           string    `yaml:"doi,omitempty" json:"doi,omitempty"`
+	DOISource     string    `yaml:"doi_source,omitempty" json:"doi_source,omitempty"`
+	DOIConfidence string    `yaml:"doi_confidence,omitempty" json:"doi_confidence,omitempty"`
+	DOIResolvedAt *FlexTime `yaml:"doi_resolved_at,omitempty" json:"doi_resolved_at,omitempty"`
 }
 
 // Page is one parsed wiki page (frontmatter + markdown body + source path).
@@ -109,7 +119,7 @@ func (t *FlexTime) UnmarshalYAML(node *yaml.Node) error {
 	if raw == "" {
 		return nil
 	}
-	for _, layout := range []string{"2006-01-02", time.RFC3339, time.RFC3339Nano, "2006-01-02 15:04:05"} {
+	for _, layout := range []string{"2006-01-02", time.RFC3339, time.RFC3339Nano, "2006-01-02 15:04:05", "2006-01-02 15:04:05-07:00"} {
 		if parsed, err := time.Parse(layout, raw); err == nil {
 			t.Time = parsed
 			return nil

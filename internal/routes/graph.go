@@ -9,6 +9,7 @@ import (
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/neo4j"
+	qplugin "github.com/IAI-USTC-Quantum/QuantumAtlas/internal/plugin"
 
 	"github.com/casbin/casbin/v2"
 	"github.com/pocketbase/pocketbase/core"
@@ -44,8 +45,15 @@ import (
 // Browser users are unaffected: session tokens carry the implicit
 // ScopeMaster and short-circuit the scope check. PAT callers must mint a
 // token with graph:read.
-func RegisterGraph(se *core.ServeEvent, cfg *config.Config, enforcer *casbin.Enforcer) {
-	se.Router.GET("/api/graph/stats", scopeGuard(enforcer, "graph", "read", func(re *core.RequestEvent) error {
+func RegisterGraph(se *core.ServeEvent, cfg *config.Config, registry *qplugin.Registry, enforcer *casbin.Enforcer) {
+	available := func() bool {
+		return pluginAvailable(registry, "graph")
+	}
+
+	stats := scopeGuard(enforcer, "graph", "read", func(re *core.RequestEvent) error {
+		if !available() {
+			return pluginUnavailable(re, "graph")
+		}
 		ctx, cancel := context.WithTimeout(re.Request.Context(), 10*time.Second)
 		defer cancel()
 
@@ -80,9 +88,12 @@ func RegisterGraph(se *core.ServeEvent, cfg *config.Config, enforcer *casbin.Enf
 			"labels":        labels,
 			"label_counts":  labelCounts,
 		})
-	}))
+	})
 
-	se.Router.POST("/api/graph/query", scopeGuard(enforcer, "graph", "read", func(re *core.RequestEvent) error {
+	query := scopeGuard(enforcer, "graph", "read", func(re *core.RequestEvent) error {
+		if !available() {
+			return pluginUnavailable(re, "graph")
+		}
 		ctx, cancel := context.WithTimeout(re.Request.Context(), 30*time.Second)
 		defer cancel()
 
@@ -121,9 +132,12 @@ func RegisterGraph(se *core.ServeEvent, cfg *config.Config, enforcer *casbin.Enf
 			"query":   body.Query,
 			"records": records,
 		})
-	}))
+	})
 
-	se.Router.GET("/api/graph/schema", scopeGuard(enforcer, "graph", "read", func(re *core.RequestEvent) error {
+	schema := scopeGuard(enforcer, "graph", "read", func(re *core.RequestEvent) error {
+		if !available() {
+			return pluginUnavailable(re, "graph")
+		}
 		ctx, cancel := context.WithTimeout(re.Request.Context(), 10*time.Second)
 		defer cancel()
 
@@ -144,5 +158,24 @@ func RegisterGraph(se *core.ServeEvent, cfg *config.Config, enforcer *casbin.Enf
 			"labels":             labels,
 			"relationship_types": relTypes,
 		})
-	}))
+	})
+
+	se.Router.GET("/api/v1/graph/stats", stats)
+	se.Router.POST("/api/v1/graph/query", query)
+	se.Router.GET("/api/v1/graph/schema", schema)
+
+	se.Router.GET("/api/graph/stats", stats)
+	se.Router.POST("/api/graph/query", query)
+	se.Router.GET("/api/graph/schema", schema)
+}
+
+func pluginUnavailable(re *core.RequestEvent, id string) error {
+	return re.JSON(http.StatusServiceUnavailable, map[string]string{
+		"detail":    "plugin unavailable: " + id,
+		"plugin_id": id,
+	})
+}
+
+func pluginAvailable(registry *qplugin.Registry, id string) bool {
+	return registry == nil || registry.Available(id)
 }

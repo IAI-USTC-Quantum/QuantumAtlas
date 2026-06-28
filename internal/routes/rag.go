@@ -55,6 +55,7 @@ import (
 	"github.com/qdrant/go-client/qdrant"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
+	qplugin "github.com/IAI-USTC-Quantum/QuantumAtlas/internal/plugin"
 )
 
 const (
@@ -532,7 +533,7 @@ func payloadStringList(m map[string]*qdrant.Value, key string) []string {
 // The retriever is constructed lazily on the first /api/rag request.
 // Startup must not panic / fail just because Qdrant is currently down —
 // /api/rag/healthz is what reports degraded health.
-func RegisterRAG(se *core.ServeEvent, cfg *config.Config, enforcer *casbin.Enforcer) {
+func RegisterRAG(se *core.ServeEvent, cfg *config.Config, registry *qplugin.Registry, enforcer *casbin.Enforcer) {
 	if !cfg.PaperAccessEnabled {
 		slog.Info("rag: disabled (QATLAS_PAPER_ACCESS_ENABLED is off)")
 		return
@@ -562,37 +563,49 @@ func RegisterRAG(se *core.ServeEvent, cfg *config.Config, enforcer *casbin.Enfor
 		"collection", cfg.RAGQdrantCollection,
 		"embed", cfg.RAGEmbedURL)
 
-	se.Router.POST("/api/rag/search",
-		scopeGuard(enforcer, "papers", "read", func(e *core.RequestEvent) error {
-			r, err := getRetriever()
-			if err != nil {
-				return router.NewApiError(http.StatusBadGateway, "rag retriever unavailable: "+err.Error(), nil)
-			}
-			var req ragSearchRequest
-			if err := e.BindBody(&req); err != nil {
-				return router.NewBadRequestError("invalid JSON: "+err.Error(), nil)
-			}
-			req.Query = strings.TrimSpace(req.Query)
-			if req.Query == "" {
-				return router.NewBadRequestError("query must not be empty", nil)
-			}
-			if len(req.Query) > 2048 {
-				return router.NewBadRequestError("query too long (max 2048 chars)", nil)
-			}
-			resp, err := r.search(e.Request.Context(), req)
-			if err != nil {
-				slog.Error("rag: search failed", "err", err)
-				return router.NewApiError(http.StatusBadGateway, "rag upstream failure: "+err.Error(), nil)
-			}
-			return e.JSON(http.StatusOK, resp)
-		}),
-	)
+	available := func() bool {
+		return pluginAvailable(registry, "rag")
+	}
 
-	se.Router.GET("/api/rag/healthz", func(e *core.RequestEvent) error {
+	search := scopeGuard(enforcer, "papers", "read", func(e *core.RequestEvent) error {
+		if !available() {
+			return pluginUnavailable(e, "rag")
+		}
+		r, err := getRetriever()
+		if err != nil {
+			return router.NewApiError(http.StatusBadGateway, "rag retriever unavailable: "+err.Error(), nil)
+		}
+		var req ragSearchRequest
+		if err := e.BindBody(&req); err != nil {
+			return router.NewBadRequestError("invalid JSON: "+err.Error(), nil)
+		}
+		req.Query = strings.TrimSpace(req.Query)
+		if req.Query == "" {
+			return router.NewBadRequestError("query must not be empty", nil)
+		}
+		if len(req.Query) > 2048 {
+			return router.NewBadRequestError("query too long (max 2048 chars)", nil)
+		}
+		resp, err := r.search(e.Request.Context(), req)
+		if err != nil {
+			slog.Error("rag: search failed", "err", err)
+			return router.NewApiError(http.StatusBadGateway, "rag upstream failure: "+err.Error(), nil)
+		}
+		return e.JSON(http.StatusOK, resp)
+	})
+	healthz := func(e *core.RequestEvent) error {
+		if !available() {
+			return pluginUnavailable(e, "rag")
+		}
 		r, err := getRetriever()
 		if err != nil {
 			return e.JSON(http.StatusOK, ragHealthResponse{Status: "down"})
 		}
 		return e.JSON(http.StatusOK, r.health(e.Request.Context()))
-	})
+	}
+
+	se.Router.POST("/api/v1/rag/search", search)
+	se.Router.GET("/api/v1/rag/healthz", healthz)
+	se.Router.POST("/api/rag/search", search)
+	se.Router.GET("/api/rag/healthz", healthz)
 }

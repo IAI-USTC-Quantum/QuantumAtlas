@@ -91,6 +91,88 @@ class TestSecondsUntilNextDaily:
         assert 60.0 <= s <= 24 * 3600 + 120
 
 
+def test_claim_one_uses_v1_mineru_lease_endpoint(monkeypatch):
+    resp = MagicMock()
+    resp.status_code = 201
+    resp.json.return_value = {"claim_id": "c1", "pdf_url": "https://arxiv.org/pdf/2501.00010v1"}
+
+    with patch.object(cli, "check_response_version"), \
+         patch.object(cli.requests, "post", return_value=resp) as post:
+        claim, skip = cli._claim_one(
+            "http://server",
+            "2501.00010v1",
+            request_timeout=5.0,
+            verify=True,
+            headers={"Authorization": "Bearer t"},
+            ttl_seconds=600,
+        )
+
+    assert skip is None
+    assert claim["claim_id"] == "c1"
+    assert post.call_args[0][0] == "http://server/api/v1/papers/2501.00010v1/mineru-lease"
+    assert post.call_args.kwargs["params"] == {"ttl_seconds": 600}
+
+
+def test_claim_one_falls_back_to_claim_endpoint_on_v1_404():
+    missing = MagicMock()
+    missing.status_code = 404
+    ok = MagicMock()
+    ok.status_code = 201
+    ok.json.return_value = {"claim_id": "c1", "pdf_url": "https://arxiv.org/pdf/2501.00010v1"}
+
+    with patch.object(cli, "check_response_version"), \
+         patch.object(cli.requests, "post", side_effect=[missing, ok]) as post:
+        claim, skip = cli._claim_one(
+            "http://server",
+            "2501.00010v1",
+            request_timeout=5.0,
+            verify=True,
+            headers={},
+            ttl_seconds=None,
+        )
+
+    assert skip is None
+    assert claim["claim_id"] == "c1"
+    assert post.call_args_list[0][0][0] == "http://server/api/v1/papers/2501.00010v1/mineru-lease"
+    assert post.call_args_list[1][0][0] == "http://server/api/papers/2501.00010v1/mineru-claim"
+
+
+def test_release_claim_uses_v1_mineru_lease_endpoint():
+    ok = MagicMock()
+    ok.status_code = 204
+    with patch.object(cli.requests, "delete", return_value=ok) as delete:
+        cli._release_claim(
+            "http://server",
+            "2501.00010v1",
+            "c1",
+            request_timeout=5.0,
+            verify=True,
+            headers={},
+        )
+
+    assert delete.call_args[0][0] == "http://server/api/v1/papers/2501.00010v1/mineru-lease/c1"
+
+
+def test_release_claim_falls_back_to_claim_endpoint_on_v1_404():
+    missing = MagicMock()
+    missing.status_code = 404
+    ok = MagicMock()
+    ok.status_code = 204
+
+    with patch.object(cli.requests, "delete", side_effect=[missing, ok]) as delete:
+        cli._release_claim(
+            "http://server",
+            "2501.00010v1",
+            "c1",
+            request_timeout=5.0,
+            verify=True,
+            headers={},
+        )
+
+    assert delete.call_args_list[0][0][0] == "http://server/api/v1/papers/2501.00010v1/mineru-lease/c1"
+    assert delete.call_args_list[1][0][0] == "http://server/api/papers/2501.00010v1/mineru-claim/c1"
+
+
 class TestPrepareBatchJobs:
     def test_skips_non_arxiv_url(self) -> None:
         args = _make_args()

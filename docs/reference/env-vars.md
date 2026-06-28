@@ -29,6 +29,7 @@ server 端项目自有变量带 `QATLAS_` 前缀；第三方 SDK 标准名（`NE
 | `QATLAS_PAPER_ACCESS_ENABLED` | — | ✅ self-hosted 可选 |
 | `QATLAS_OPENALEX_MAILTO` | — | ✅（开了 PAPER_ACCESS 后要求填）|
 | `QATLAS_ARXIV_FETCH_CONCURRENT` / `_RPS` | — | ✅ |
+| `QATLAS_PLUGINS_*` / `QATLAS_RPC_WS_BIND` | — | ✅ |
 | `GITHUB_CLIENT_ID` / `SECRET` | — | ✅（只能走 env，无 CLI flag） |
 | `QATLAS_SYSTEM_PAT` / `_SCOPES` | — | ✅ |
 | `QATLAS_EDGE_NAME` | — | ✅ |
@@ -161,13 +162,26 @@ OpenAlex DOI 解析（path 头匹配 `^10\.\d{4,9}/` 时自动触发）和 arxiv
 
 ## Server: PostgreSQL catalog
 
-论文 catalog（arxiv/DOI 元数据、PDF/Markdown 状态、MinerU claim 租约）使用
+论文 catalog（arxiv/DOI 元数据、PDF/Markdown 状态、MinerU lease 租约）使用
 PostgreSQL；登录态仍由 PocketBase 独立管理。
 
 | 变量 | 必填 | 默认 |
 |---|---|---|
 | `QATLAS_POSTGRES_DSN` | paper catalog 启用时必填 | — |
 | `QATLAS_POSTGRES_MAX_CONNS` | 否 | `10` |
+
+## Server: plugin platform
+
+| 变量 | 默认 | 作用 |
+|---|---|---|
+| `QATLAS_PLUGINS_DIR` | `${XDG_CONFIG_HOME:-$HOME/.config}/qatlasd/plugins` | 插件清单目录；扫描其一级子目录的 `plugin.json` |
+| `QATLAS_PLUGINS_ENABLED` | 空 | CSV 白名单；空表示所有发现的插件都可启用 |
+| `QATLAS_PLUGINS_DISABLED` | 空 | CSV 黑名单；与 enabled 同时命中时 disabled 胜 |
+| `QATLAS_RPC_WS_BIND` | `127.0.0.1:8799` | 外部 JSON-RPC WebSocket 插件拨入的监听地址（Phase 1 先保留配置面） |
+| `QATLAS_EVENT_RETENTION` | `7d` | 插件断连事件缓冲保留时间；支持 Go duration（如 `168h`）或 `Nd` |
+| `QATLAS_PLUGIN_RPC_TIMEOUT_MS` | `30000` | 单次 host↔plugin RPC 超时（毫秒）|
+| `QATLAS_PLUGIN_RECONNECT_MS` | `5000` | 外部插件重连退避基数（毫秒）|
+| `QATLAS_DEADLETTER_DIR` | `${XDG_STATE_HOME:-$HOME/.local/state}/qatlasd/dead` | 事件缓冲溢出死信目录 |
 
 未配 → paper catalog 端点降级：`/api/papers/stats` 和 needs-mineru 返回
 `available:false`；上传对象仍落 S3/LocalStore，并用 `X-Catalog-Sync: deferred`

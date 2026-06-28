@@ -1,0 +1,14 @@
+{
+  "id": "graph",
+  "name": "QuantumAtlas Graph",
+  "version": "1.0.0",
+  "abi_version": "1",
+  "transport": "in-process-go",
+  "spawn": null,
+  "contributes": {
+    "capabilities": ["graph.query", "graph.schema", "graph.stats"],
+    "subscribes": [],
+    "publishes": []
+  },
+  "needs": ["wiki:read", "papers:read"]
+}

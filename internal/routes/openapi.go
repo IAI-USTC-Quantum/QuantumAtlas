@@ -45,6 +45,46 @@ func docHealthCheck() {}
 // @Router      /api/server/info [get]
 func docServerInfo() {}
 
+// listPlugins returns discovered plugin manifests and runtime status.
+//
+// @Summary     List plugins
+// @Tags        Plugins
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200 {object} map[string]interface{}
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Router      /api/v1/plugins [get]
+func docListPlugins() {}
+
+// enablePlugin enables a configured plugin at runtime.
+//
+// @Summary     Enable plugin
+// @Tags        Plugins
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id path string true "plugin id"
+// @Success     200 {object} map[string]interface{}
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Failure     404 {object} map[string]string
+// @Router      /api/v1/plugins/{id}/enable [post]
+func docEnablePlugin() {}
+
+// disablePlugin disables a configured plugin at runtime.
+//
+// @Summary     Disable plugin
+// @Tags        Plugins
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id path string true "plugin id"
+// @Success     200 {object} map[string]interface{}
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Failure     404 {object} map[string]string
+// @Router      /api/v1/plugins/{id}/disable [post]
+func docDisablePlugin() {}
+
 // docInstallScript serves the POSIX-sh installer for the qatlasd binary.
 //
 // @Summary     Installer script
@@ -386,6 +426,23 @@ func docUploadMineRU() {}
 // @Router      /api/papers/{arxiv_id}/mineru-claim [post]
 func docMineruClaim() {}
 
+// mineruLease acquires a MinerU processing lease for a paper.
+//
+// @Summary     Acquire MinerU processing lease
+// @Description Acquires the same MinerU processing lease returned by the claim path. The response body uses claim_id as the lease identifier.
+// @Tags        Papers
+// @Produce     json
+// @Security    BearerAuth
+// @Param       arxiv_id path string true "arXiv identifier"
+// @Success     201 {object} map[string]interface{} "lease granted (body is the lease record; claim_id identifies the lease)"
+// @Failure     400 {object} map[string]string      "invalid arxiv_id"
+// @Failure     404 {object} map[string]string      "not claimable (no PDF in catalog, or markdown already exists)"
+// @Failure     409 {object} map[string]interface{} "already leased by someone else (body includes existing lease details)"
+// @Failure     500 {object} map[string]string      "internal error"
+// @Failure     503 {object} map[string]string      "catalog unavailable (PostgreSQL unreachable)"
+// @Router      /api/v1/papers/{arxiv_id}/mineru-lease [post]
+func docMineruLease() {}
+
 // mineruClaimRelease releases a previously acquired MinerU claim.
 //
 // @Summary     Release MinerU claim
@@ -401,6 +458,22 @@ func docMineruClaim() {}
 // @Router      /api/papers/{arxiv_id}/mineru-claim/{claim_id} [delete]
 func docMineruClaimRelease() {}
 
+// mineruLeaseRelease releases a previously acquired MinerU lease.
+//
+// @Summary     Release MinerU lease
+// @Description Releases a MinerU processing lease by claim_id.
+// @Tags        Papers
+// @Security    BearerAuth
+// @Param       arxiv_id path string true "arXiv identifier"
+// @Param       claim_id path string true "claim id"
+// @Success     204 "lease released (empty body)"
+// @Failure     400 {object} map[string]string "invalid arxiv_id"
+// @Failure     409 {object} map[string]string "claim_id does not match the active lease"
+// @Failure     500 {object} map[string]string "internal error"
+// @Failure     503 {object} map[string]string "catalog unavailable (PostgreSQL unreachable)"
+// @Router      /api/v1/papers/{arxiv_id}/mineru-lease/{claim_id} [delete]
+func docMineruLeaseRelease() {}
+
 // --- Graph -------------------------------------------------------------------
 
 // graphStats returns node/relationship counts from Neo4j.
@@ -415,6 +488,8 @@ func docMineruClaimRelease() {}
 // @Success     200 {object} map[string]interface{}
 // @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string
+// @Failure     503 {object} map[string]string
+// @Router      /api/v1/graph/stats [get]
 // @Router      /api/graph/stats [get]
 func docGraphStats() {}
 
@@ -429,6 +504,8 @@ func docGraphStats() {}
 // @Param       body body object true "{query: string, limit: int}"
 // @Success     200 {object} map[string]interface{}
 // @Failure     400 {object} map[string]string
+// @Failure     503 {object} map[string]string
+// @Router      /api/v1/graph/query [post]
 // @Router      /api/graph/query [post]
 func docGraphQuery() {}
 
@@ -442,8 +519,117 @@ func docGraphQuery() {}
 // @Success     200 {object} map[string]interface{}
 // @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string
+// @Failure     503 {object} map[string]string
+// @Router      /api/v1/graph/schema [get]
 // @Router      /api/graph/schema [get]
 func docGraphSchema() {}
+
+// --- RAG ----------------------------------------------------------------------
+
+// ragSearch returns semantic search hits from the configured RAG backend.
+//
+// @Summary     RAG search
+// @Description Requires PAPER_ACCESS and papers:read. Returns 503 when the rag plugin is disabled.
+// @Tags        RAG
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body body object true "{query: string, top_k?: int, rerank?: bool}"
+// @Success     200 {object} map[string]interface{}
+// @Failure     400 {object} map[string]string
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Failure     502 {object} map[string]string
+// @Failure     503 {object} map[string]string
+// @Router      /api/v1/rag/search [post]
+// @Router      /api/rag/search [post]
+func docRAGSearch() {}
+
+// ragHealth returns coarse RAG backend health.
+//
+// @Summary     RAG health
+// @Description Anonymous coarse status endpoint. Returns 503 when the rag plugin is disabled.
+// @Tags        RAG
+// @Produce     json
+// @Success     200 {object} map[string]interface{}
+// @Failure     503 {object} map[string]string
+// @Router      /api/v1/rag/healthz [get]
+// @Router      /api/rag/healthz [get]
+func docRAGHealth() {}
+
+// --- Theorems / verifications -------------------------------------------------
+
+// listTheorems lists theorem records.
+//
+// @Summary     List theorems
+// @Tags        Theorems
+// @Produce     json
+// @Security    BearerAuth
+// @Param       paper_id query string false "filter by source paper id"
+// @Success     200 {object} map[string]interface{}
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Router      /api/v1/theorems [get]
+func docListTheorems() {}
+
+// getTheorem returns one theorem record.
+//
+// @Summary     Get theorem
+// @Tags        Theorems
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id path string true "theorem id"
+// @Success     200 {object} map[string]interface{}
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Failure     404 {object} map[string]string
+// @Router      /api/v1/theorems/{id} [get]
+func docGetTheorem() {}
+
+// upsertTheorem creates or updates a theorem record.
+//
+// @Summary     Create or update theorem
+// @Tags        Theorems
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body body object true "theorem payload"
+// @Success     200 {object} map[string]interface{}
+// @Success     201 {object} map[string]interface{}
+// @Failure     400 {object} map[string]string
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Router      /api/v1/theorems [post]
+func docUpsertTheorem() {}
+
+// listVerifications lists verification records.
+//
+// @Summary     List verifications
+// @Tags        Verifications
+// @Produce     json
+// @Security    BearerAuth
+// @Param       theorem_id query string false "filter by theorem id"
+// @Success     200 {object} map[string]interface{}
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Router      /api/v1/verifications [get]
+func docListVerifications() {}
+
+// submitVerification creates or updates a verification record.
+//
+// @Summary     Submit verification
+// @Tags        Verifications
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body body object true "verification payload"
+// @Success     200 {object} map[string]interface{}
+// @Success     201 {object} map[string]interface{}
+// @Failure     400 {object} map[string]string
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Router      /api/v1/verifications [post]
+func docSubmitVerification() {}
 
 // --- PAT ---------------------------------------------------------------------
 

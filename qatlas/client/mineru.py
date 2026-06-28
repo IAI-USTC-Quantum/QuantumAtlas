@@ -8,9 +8,9 @@ Modes::
 
     qatlas contrib mineru               # queue mode: pick up to --max papers
                                         # that have PDF but no markdown yet,
-                                        # claim each, process, upload, release.
+                                        # lease each, process, upload, release.
 
-    qatlas contrib mineru quant-ph/9508027v1   # single mode: claim and process
+    qatlas contrib mineru quant-ph/9508027v1   # single mode: lease and process
                                         # one specific paper.
 
     qatlas contrib mineru --watch       # daemon mode: loop forever, sleeping
@@ -22,13 +22,13 @@ Modes::
 Concurrency::
 
     Multiple contributors can run ``qatlas contrib mineru`` in parallel; the server
-    issues atomic per-paper claims (default 30-minute lease) so two clients
+    issues atomic per-paper leases (default 30-minute lease) so two clients
     never burn MinerU quota on the same paper. If a claim is already held by
     someone else the client silently skips and moves to the next candidate.
 
 PDF sha256 verification (since v0.9.0)::
 
-    The claim response carries the sha256 the server stored for that paper's
+    The lease response carries the sha256 the server stored for that paper's
     PDF (read from RustFS object metadata). We download the arxiv URL, hash
     the bytes, compare to the server's hash, then pass the hash back on
     upload-mineru via ``?pdf_sha256=<hex>``. The server cross-checks against
@@ -235,16 +235,25 @@ def _claim_one(
     params: dict[str, Any] = {}
     if ttl_seconds is not None:
         params["ttl_seconds"] = ttl_seconds
+    urls = [
+        f"{base_url}/api/v1/papers/{arxiv_id}/mineru-lease",
+        f"{base_url}/api/papers/{arxiv_id}/mineru-claim",
+    ]
     try:
-        resp = requests.post(
-            f"{base_url}/api/papers/{arxiv_id}/mineru-claim",
-            params=params or None,
-            headers={**headers, **client_version_headers()},
-            timeout=request_timeout,
-            verify=verify,
-        )
+        resp = None
+        for i, url in enumerate(urls):
+            resp = requests.post(
+                url,
+                params=params or None,
+                headers={**headers, **client_version_headers()},
+                timeout=request_timeout,
+                verify=verify,
+            )
+            if resp.status_code != 404 or i == len(urls) - 1:
+                break
     except requests.RequestException as exc:
         return None, f"claim request errored: {exc}"
+    assert resp is not None
     check_response_version(resp, write=True)
     if resp.status_code == 201:
         return resp.json(), None
@@ -254,7 +263,7 @@ def _claim_one(
         except ValueError:
             detail = resp.text
         return None, f"skip (HTTP {resp.status_code}): {detail}"
-    return None, _http_error(resp, f"Claim {arxiv_id}")
+    return None, _http_error(resp, f"MinerU lease {arxiv_id}")
 
 
 def _release_claim(
@@ -266,13 +275,20 @@ def _release_claim(
     verify: bool,
     headers: dict[str, str],
 ) -> None:
+    urls = [
+        f"{base_url}/api/v1/papers/{arxiv_id}/mineru-lease/{claim_id}",
+        f"{base_url}/api/papers/{arxiv_id}/mineru-claim/{claim_id}",
+    ]
     try:
-        requests.delete(
-            f"{base_url}/api/papers/{arxiv_id}/mineru-claim/{claim_id}",
-            headers={**headers, **client_version_headers()},
-            timeout=request_timeout,
-            verify=verify,
-        )
+        for i, url in enumerate(urls):
+            resp = requests.delete(
+                url,
+                headers={**headers, **client_version_headers()},
+                timeout=request_timeout,
+                verify=verify,
+            )
+            if resp.status_code != 404 or i == len(urls) - 1:
+                break
     except requests.RequestException as exc:
         _print_err(f"warning: could not release claim for {arxiv_id}: {exc}")
 
@@ -1327,4 +1343,3 @@ def main(argv: list[str] | None = None, *, prog: str | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

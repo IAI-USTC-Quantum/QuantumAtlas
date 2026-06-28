@@ -5,6 +5,7 @@ Subcommands::
     qatlas paper get markdown ID_OR_DOI [--output FILE | --to-stdout]
     qatlas paper get pdf      ID_OR_DOI [--output FILE | --to-stdout]
     qatlas paper status       ID_OR_DOI [--kind markdown|pdf]
+    qatlas paper mineru-lease ID [--ttl-seconds N]
 
 These wrap the server's paper-access endpoints (only registered when
 ``QATLAS_PAPER_ACCESS_ENABLED=true``):
@@ -395,6 +396,47 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_mineru_lease(args: argparse.Namespace) -> int:
+    base_url = base_url_from_args(args)
+    arxiv_id = args.id_or_doi.strip().lstrip("/")
+    params: dict[str, Any] = {}
+    if args.ttl_seconds is not None:
+        params["ttl_seconds"] = args.ttl_seconds
+    resp = requests.post(
+        f"{base_url}/api/v1/papers/{arxiv_id}/mineru-lease",
+        params=params or None,
+        headers={**auth_headers(args), **client_version_headers()},
+        verify=request_verify(args),
+        timeout=args.request_timeout,
+    )
+    check_response_version(resp, write=True)
+    if resp.status_code != 201:
+        print(_render_server_error("mineru lease", resp), file=sys.stderr)
+        return 1
+    try:
+        print_json(resp.json())
+    except json.JSONDecodeError:
+        print(resp.text)
+    return 0
+
+
+def cmd_release_mineru_lease(args: argparse.Namespace) -> int:
+    base_url = base_url_from_args(args)
+    arxiv_id = args.id_or_doi.strip().lstrip("/")
+    claim_id = args.claim_id.strip()
+    resp = requests.delete(
+        f"{base_url}/api/v1/papers/{arxiv_id}/mineru-lease/{claim_id}",
+        headers={**auth_headers(args), **client_version_headers()},
+        verify=request_verify(args),
+        timeout=args.request_timeout,
+    )
+    check_response_version(resp, write=True)
+    if resp.status_code != 204:
+        print(_render_server_error("mineru lease release", resp), file=sys.stderr)
+        return 1
+    return 0
+
+
 def _add_id_arg(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "id_or_doi",
@@ -483,6 +525,35 @@ def build_status_parser() -> argparse.ArgumentParser:
     return p
 
 
+def build_mineru_lease_parser(*, prog: str = "qatlas paper mineru-lease") -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog=prog,
+        description="Acquire a MinerU processing lease for a paper.",
+    )
+    _add_id_arg(p)
+    p.add_argument(
+        "--ttl-seconds",
+        type=int,
+        default=None,
+        help="Lease TTL in seconds. Server default is 1800; server clamps to its allowed range.",
+    )
+    add_common_http_args(p)
+    p.set_defaults(func=cmd_mineru_lease)
+    return p
+
+
+def build_release_mineru_lease_parser(*, prog: str = "qatlas paper mineru-lease release") -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog=prog,
+        description="Release a MinerU processing lease by claim_id.",
+    )
+    _add_id_arg(p)
+    p.add_argument("claim_id", help="claim_id returned by mineru-lease")
+    add_common_http_args(p)
+    p.set_defaults(func=cmd_release_mineru_lease)
+    return p
+
+
 def _print_top_help() -> None:
     print(
         """qatlas paper — fetch paper assets from the server
@@ -491,6 +562,8 @@ Usage:
   qatlas paper get markdown ID_OR_DOI [--output FILE] [--no-wait]
   qatlas paper get pdf      ID_OR_DOI [--output FILE] [--no-wait]
   qatlas paper status       ID_OR_DOI [--kind markdown|pdf]
+  qatlas paper mineru-lease ID_OR_DOI [--ttl-seconds N]
+  qatlas paper mineru-lease release ID_OR_DOI CLAIM_ID
 
 ID forms accepted:
   - Versioned arxiv id          0811.3171v3 / quant-ph/9508027v2
@@ -528,6 +601,13 @@ def main(argv: list[str] | None = None) -> int:
             return 2
     elif subcommand == "status":
         parser = build_status_parser()
+    elif subcommand in {"mineru-lease", "claim"}:
+        prog_base = "qatlas paper mineru-lease" if subcommand == "mineru-lease" else "qatlas paper claim"
+        if argv and argv[0] == "release":
+            argv.pop(0)
+            parser = build_release_mineru_lease_parser(prog=f"{prog_base} release")
+        else:
+            parser = build_mineru_lease_parser(prog=prog_base)
     else:
         print(f"unknown paper subcommand: {subcommand!r}", file=sys.stderr)
         _print_top_help()

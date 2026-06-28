@@ -78,6 +78,8 @@ func RegisterPapers(
 	doiResolver *openalex.Resolver,
 	arxivFetcher *arxiv.Fetcher,
 ) {
+	registerV1MineruLeaseRoutes(se, cfg, rawStore, catalog, enforcer)
+
 	se.Router.GET("/api/papers/{path...}", scopeGuard(enforcer, "papers", "read", func(re *core.RequestEvent) error {
 		raw := re.Request.PathValue("path")
 		if raw == "needs-mineru" {
@@ -187,9 +189,9 @@ func RegisterPapers(
 						// none).
 						if forceArxiv {
 							return re.JSON(http.StatusConflict, map[string]any{
-								"detail":  "DOI has no arxiv presence in OpenAlex; remove ?force_arxiv to fetch the DOI version",
-								"doi":     doi,
-								"hint":    "GET /api/papers/" + doi + "/" + actionLabel(action, statusKind),
+								"detail": "DOI has no arxiv presence in OpenAlex; remove ?force_arxiv to fetch the DOI version",
+								"doi":    doi,
+								"hint":   "GET /api/papers/" + doi + "/" + actionLabel(action, statusKind),
 							})
 						}
 						// Without force_arxiv we may STILL have a local
@@ -303,7 +305,7 @@ func RegisterPapers(
 				return uploadMinerUByDOIHandler(re, cfg, rawStore, catalog, doiResolver, arxiv)
 			}
 			return uploadMinerUHandler(re, cfg, rawStore, catalog, arxiv)
-		case "mineru-claim":
+		case actionMineruClaim, actionMineruLease:
 			ttl, _ := strconv.Atoi(re.Request.URL.Query().Get("ttl_seconds"))
 			if ttl <= 0 {
 				ttl = papers.DefaultTTLSeconds
@@ -327,6 +329,46 @@ func RegisterPapers(
 	}))
 }
 
+const (
+	actionMineruClaim = "mineru-claim"
+	actionMineruLease = "mineru-lease"
+)
+
+func registerV1MineruLeaseRoutes(
+	se *core.ServeEvent,
+	cfg *config.Config,
+	rawStore objstore.Store,
+	catalog *papers.Store,
+	enforcer *casbin.Enforcer,
+) {
+	se.Router.POST("/api/v1/papers/{path...}", scopeGuard(enforcer, "papers", "write", func(re *core.RequestEvent) error {
+		raw := re.Request.PathValue("path")
+		arxiv, action := splitPapersPath(raw)
+		arxiv = normalizeIDForDispatch(arxiv)
+		if action != actionMineruLease {
+			return re.JSON(http.StatusNotFound, map[string]string{
+				"detail": fmt.Sprintf("no POST handler for /api/v1/papers/%s", raw),
+			})
+		}
+		ttl, _ := strconv.Atoi(re.Request.URL.Query().Get("ttl_seconds"))
+		if ttl <= 0 {
+			ttl = papers.DefaultTTLSeconds
+		}
+		return mineruClaimHandler(re, cfg, rawStore, catalog, arxiv, ttl)
+	}))
+
+	se.Router.DELETE("/api/v1/papers/{path...}", scopeGuard(enforcer, "papers", "write", func(re *core.RequestEvent) error {
+		raw := re.Request.PathValue("path")
+		arxiv, claimID, ok := splitMineruLeaseRelease(raw, actionMineruLease)
+		if !ok {
+			return re.JSON(http.StatusNotFound, map[string]string{
+				"detail": fmt.Sprintf("no DELETE handler for /api/v1/papers/%s", raw),
+			})
+		}
+		return mineruClaimReleaseHandler(re, catalog, arxiv, claimID)
+	}))
+}
+
 // splitPapersPath splits "<arxiv_id>/<action>" into the parts. arxiv_id
 // may contain slashes (old-style ids), so we anchor on the last segment
 // which must be one of the known action names.
@@ -342,12 +384,29 @@ func splitPapersPath(raw string) (arxivID, action string) {
 	return raw[:idx], raw[idx+1:]
 }
 
-// splitMineruClaimRelease parses "<arxiv_id>/mineru-claim/<claim_id>"
-// and returns arxiv_id, claim_id, ok.
+// splitMineruClaimRelease parses MinerU lease release paths and returns
+// arxiv_id, claim_id, ok.
 func splitMineruClaimRelease(raw string) (arxivID, claimID string, ok bool) {
+	return splitMineruLeaseRelease(raw, actionMineruClaim, actionMineruLease)
+}
+
+// splitMineruLeaseRelease parses "<arxiv_id>/<action>/<claim_id>" for the
+// supplied action names.
+func splitMineruLeaseRelease(raw string, actions ...string) (arxivID, claimID string, ok bool) {
 	raw = strings.Trim(raw, "/")
 	parts := strings.Split(raw, "/")
-	if len(parts) < 3 || parts[len(parts)-2] != "mineru-claim" {
+	if len(parts) < 3 {
+		return "", "", false
+	}
+	action := parts[len(parts)-2]
+	matched := false
+	for _, allowed := range actions {
+		if action == allowed {
+			matched = true
+			break
+		}
+	}
+	if !matched {
 		return "", "", false
 	}
 	claimID = parts[len(parts)-1]
@@ -680,7 +739,8 @@ func needsMineruHandler(re *core.RequestEvent, catalog *papers.Store) error {
 // MinerU claim handlers
 // ---------------------------------------------------------------------------
 
-// mineruClaimHandler answers POST /api/papers/{arxiv_id}/mineru-claim.
+// mineruClaimHandler answers POST /api/papers/{arxiv_id}/mineru-claim
+// and POST /api/v1/papers/{arxiv_id}/mineru-lease.
 //
 // The lease lets a contributor reserve a paper for MinerU conversion
 // without other contributors stepping on the same work. The response
@@ -853,7 +913,6 @@ func mineruClaimReleaseHandler(re *core.RequestEvent, catalog *papers.Store, arx
 	re.Response.WriteHeader(http.StatusNoContent)
 	return nil
 }
-
 
 // ---------------------------------------------------------------------------
 // Upload handlers
@@ -1073,9 +1132,9 @@ func uploadMinerUHandler(re *core.RequestEvent, cfg *config.Config, store objsto
 		storedPDFSha := lookupStoredPDFSha256(ctx, store, canonical)
 		if storedPDFSha != "" && storedPDFSha != claimedPDFSha {
 			return re.JSON(http.StatusBadRequest, map[string]any{
-				"detail":              "pdf_sha256 mismatch — the PDF you converted does not match the one in the catalog (wrong arxiv version, or corrupted source PDF). Re-fetch the PDF from the pdf_url returned by mineru-claim and try again.",
-				"claimed_pdf_sha256":  claimedPDFSha,
-				"catalog_pdf_sha256":  storedPDFSha,
+				"detail":             "pdf_sha256 mismatch — the PDF you converted does not match the one in the catalog (wrong arxiv version, or corrupted source PDF). Re-fetch the PDF from the pdf_url returned by mineru-claim and try again.",
+				"claimed_pdf_sha256": claimedPDFSha,
+				"catalog_pdf_sha256": storedPDFSha,
 			})
 		}
 	}
@@ -1237,20 +1296,20 @@ func uploadMinerUHandler(re *core.RequestEvent, cfg *config.Config, store objsto
 	}
 
 	resp := map[string]any{
-		"arxiv_id":              canonical,
-		"key":                   paperassets.StorageKey(canonical),
-		"markdown_path":         mdKey,
-		"markdown_bytes":        mdSize,
-		"markdown_sha256":       mdSha,
-		"markdown_unchanged":    mdOutcome.kind == outcomeUnchanged,
-		"image_count":           imageCount,
-		"images_zip_path":       imgZipKey,
-		"images_zip_unchanged":  imgZipUnchanged,
-		"zip_bytes":             zipSize,
-		"zip_sha256":            zipSha,
-		"source":                nil,
-		"uploaded_by":           nil,
-		"overwritten":           overwrite,
+		"arxiv_id":             canonical,
+		"key":                  paperassets.StorageKey(canonical),
+		"markdown_path":        mdKey,
+		"markdown_bytes":       mdSize,
+		"markdown_sha256":      mdSha,
+		"markdown_unchanged":   mdOutcome.kind == outcomeUnchanged,
+		"image_count":          imageCount,
+		"images_zip_path":      imgZipKey,
+		"images_zip_unchanged": imgZipUnchanged,
+		"zip_bytes":            zipSize,
+		"zip_sha256":           zipSha,
+		"source":               nil,
+		"uploaded_by":          nil,
+		"overwritten":          overwrite,
 	}
 	if source != "" {
 		resp["source"] = source

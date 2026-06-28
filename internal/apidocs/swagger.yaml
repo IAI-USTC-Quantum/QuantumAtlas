@@ -183,6 +183,12 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
       security:
       - BearerAuth: []
       summary: Graph query
@@ -207,6 +213,12 @@ paths:
             type: object
         "403":
           description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
           schema:
             additionalProperties:
               type: string
@@ -238,6 +250,12 @@ paths:
             type: object
         "403":
           description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
           schema:
             additionalProperties:
               type: string
@@ -1225,6 +1243,83 @@ paths:
       summary: PAT scopes
       tags:
       - PAT
+  /api/rag/healthz:
+    get:
+      description: Anonymous coarse status endpoint. Returns 503 when the rag plugin
+        is disabled.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: RAG health
+      tags:
+      - RAG
+  /api/rag/search:
+    post:
+      consumes:
+      - application/json
+      description: Requires PAPER_ACCESS and papers:read. Returns 503 when the rag
+        plugin is disabled.
+      parameters:
+      - description: '{query: string, top_k?: int, rerank?: bool}'
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "502":
+          description: Bad Gateway
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: RAG search
+      tags:
+      - RAG
   /api/search:
     get:
       parameters:
@@ -1306,6 +1401,591 @@ paths:
       summary: Wiki statistics
       tags:
       - Wiki
+  /api/v1/graph/query:
+    post:
+      consumes:
+      - application/json
+      description: Executes caller-supplied read-only Cypher. graph:read scope.
+      parameters:
+      - description: '{query: string, limit: int}'
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Graph query
+      tags:
+      - Graph
+  /api/v1/graph/schema:
+    get:
+      description: Requires the graph:read scope.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Graph schema
+      tags:
+      - Graph
+  /api/v1/graph/stats:
+    get:
+      description: |-
+        Returns 200 with {"error":...} when Neo4j is unreachable
+        (the UI renders a friendly banner rather than a crash page).
+        Requires the graph:read scope.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Graph statistics
+      tags:
+      - Graph
+  /api/v1/papers/{arxiv_id}/mineru-lease:
+    post:
+      description: Acquires the same MinerU processing lease returned by the claim
+        path. The response body uses claim_id as the lease identifier.
+      parameters:
+      - description: arXiv identifier
+        in: path
+        name: arxiv_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: lease granted (body is the lease record; claim_id identifies
+            the lease)
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: invalid arxiv_id
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: not claimable (no PDF in catalog, or markdown already exists)
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: already leased by someone else (body includes existing lease
+            details)
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: internal error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: catalog unavailable (PostgreSQL unreachable)
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Acquire MinerU processing lease
+      tags:
+      - Papers
+  /api/v1/papers/{arxiv_id}/mineru-lease/{claim_id}:
+    delete:
+      description: Releases a MinerU processing lease by claim_id.
+      parameters:
+      - description: arXiv identifier
+        in: path
+        name: arxiv_id
+        required: true
+        type: string
+      - description: claim id
+        in: path
+        name: claim_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: lease released (empty body)
+        "400":
+          description: invalid arxiv_id
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: claim_id does not match the active lease
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: internal error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: catalog unavailable (PostgreSQL unreachable)
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Release MinerU lease
+      tags:
+      - Papers
+  /api/v1/plugins:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List plugins
+      tags:
+      - Plugins
+  /api/v1/plugins/{id}/disable:
+    post:
+      parameters:
+      - description: plugin id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Disable plugin
+      tags:
+      - Plugins
+  /api/v1/plugins/{id}/enable:
+    post:
+      parameters:
+      - description: plugin id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Enable plugin
+      tags:
+      - Plugins
+  /api/v1/rag/healthz:
+    get:
+      description: Anonymous coarse status endpoint. Returns 503 when the rag plugin
+        is disabled.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: RAG health
+      tags:
+      - RAG
+  /api/v1/rag/search:
+    post:
+      consumes:
+      - application/json
+      description: Requires PAPER_ACCESS and papers:read. Returns 503 when the rag
+        plugin is disabled.
+      parameters:
+      - description: '{query: string, top_k?: int, rerank?: bool}'
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "502":
+          description: Bad Gateway
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: RAG search
+      tags:
+      - RAG
+  /api/v1/theorems:
+    get:
+      parameters:
+      - description: filter by source paper id
+        in: query
+        name: paper_id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List theorems
+      tags:
+      - Theorems
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: theorem payload
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create or update theorem
+      tags:
+      - Theorems
+  /api/v1/theorems/{id}:
+    get:
+      parameters:
+      - description: theorem id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get theorem
+      tags:
+      - Theorems
+  /api/v1/verifications:
+    get:
+      parameters:
+      - description: filter by theorem id
+        in: query
+        name: theorem_id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List verifications
+      tags:
+      - Verifications
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: verification payload
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Submit verification
+      tags:
+      - Verifications
   /api/wiki/sync/pull:
     post:
       description: |-

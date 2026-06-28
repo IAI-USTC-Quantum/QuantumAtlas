@@ -146,3 +146,31 @@ func TestClaimPDFURL_FallbackResolverWhenStatMisses(t *testing.T) {
 		t.Fatalf("Stat never called; claimPDFURL should sanity-check existence first")
 	}
 }
+
+func TestSplitMineruClaimReleaseAcceptsLeaseAlias(t *testing.T) {
+	t.Parallel()
+	for _, raw := range []string{
+		"2501.00010v1/mineru-claim/cid-1",
+		"2501.00010v1/mineru-lease/cid-1",
+		"quant-ph/9508027v2/mineru-claim/cid-2",
+		"quant-ph/9508027v2/mineru-lease/cid-2",
+	} {
+		arxivID, claimID, ok := splitMineruClaimRelease(raw)
+		if !ok {
+			t.Fatalf("splitMineruClaimRelease(%q) did not match", raw)
+		}
+		if arxivID == "" || claimID == "" {
+			t.Fatalf("splitMineruClaimRelease(%q) = (%q, %q), want non-empty fields", raw, arxivID, claimID)
+		}
+	}
+}
+
+func TestSplitMineruLeaseReleaseV1OnlyAcceptsLeaseName(t *testing.T) {
+	t.Parallel()
+	if _, _, ok := splitMineruLeaseRelease("2501.00010v1/mineru-lease/cid", actionMineruLease); !ok {
+		t.Fatal("v1 mineru-lease release path should match")
+	}
+	if _, _, ok := splitMineruLeaseRelease("2501.00010v1/mineru-claim/cid", actionMineruLease); ok {
+		t.Fatal("v1 release parser must not accept mineru-claim action")
+	}
+}

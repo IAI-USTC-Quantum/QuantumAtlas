@@ -20,7 +20,8 @@ const (
 	MaxTTLSeconds     = 7200 // 2 hours
 )
 
-// Claim is the lease record returned to the API.
+// Claim is the MinerU lease record returned by the API.
+// The wire format uses claim_id as the stable lease identifier field.
 //
 // Contract changed in v0.9.0: PDFURL is now always the canonical
 // arxiv.org versioned URL (https://arxiv.org/pdf/<id>v<n>), never a
@@ -49,6 +50,9 @@ type Claim struct {
 	PDFSha256  string `json:"pdf_sha256,omitempty"`
 }
 
+// MineruLease is the per-paper MinerU processing lease.
+type MineruLease = Claim
+
 // CreateOptions parameterizes Claim.
 type CreateOptions struct {
 	ArxivID    string
@@ -57,6 +61,9 @@ type CreateOptions struct {
 	PDFURL     string
 	PDFSha256  string
 }
+
+// CreateMineruLeaseOptions parameterizes MineruLease creation.
+type CreateMineruLeaseOptions = CreateOptions
 
 // ErrAlreadyClaimed is returned when an active lease (held by anyone)
 // blocks a new claim. Carries the conflicting lease for the 409 body.

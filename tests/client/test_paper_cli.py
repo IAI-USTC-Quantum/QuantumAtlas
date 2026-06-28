@@ -180,6 +180,36 @@ def test_do_get_cache_hit_streams_bytes(monkeypatch, capsys, tmp_path):
     assert out_path.read_bytes() == b"# hello world\n"
 
 
+def test_cmd_mineru_lease_posts_v1_endpoint(capsys):
+    args = _args(ttl_seconds=600)
+    resp = _resp(
+        201,
+        json_body={
+            "claim_id": "cid-1",
+            "arxiv_id": "0811.3171v3",
+            "ttl_seconds": 600,
+        },
+    )
+    with patch.object(cli.requests, "post", return_value=resp) as mock_post:
+        rc = cli.cmd_mineru_lease(args)
+
+    assert rc == 0
+    assert mock_post.call_args[0][0] == "http://server.test/api/v1/papers/0811.3171v3/mineru-lease"
+    assert mock_post.call_args.kwargs["params"] == {"ttl_seconds": 600}
+    out = capsys.readouterr().out
+    assert '"claim_id": "cid-1"' in out
+
+
+def test_cmd_release_mineru_lease_deletes_v1_endpoint():
+    args = _args(claim_id="cid-1")
+    resp = _resp(204)
+    with patch.object(cli.requests, "delete", return_value=resp) as mock_delete:
+        rc = cli.cmd_release_mineru_lease(args)
+
+    assert rc == 0
+    assert mock_delete.call_args[0][0] == "http://server.test/api/v1/papers/0811.3171v3/mineru-lease/cid-1"
+
+
 # ---------------------------------------------------------------------------
 # LRO 202 → poll → 200
 # ---------------------------------------------------------------------------

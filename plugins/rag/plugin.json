@@ -1,0 +1,14 @@
+{
+  "id": "rag",
+  "name": "QuantumAtlas RAG",
+  "version": "1.0.0",
+  "abi_version": "1",
+  "transport": "in-process-go",
+  "spawn": null,
+  "contributes": {
+    "capabilities": ["rag.search"],
+    "subscribes": [],
+    "publishes": []
+  },
+  "needs": ["papers:read"]
+}

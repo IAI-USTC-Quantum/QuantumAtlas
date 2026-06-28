@@ -50,9 +50,15 @@ PAT 携带一组显式 scope（GitHub fine-grained PAT 同款设计）。当前�
 |---|---|
 | `wiki:read` | `GET /api/pages` `GET /api/pages/{id}` `GET /api/stats` `GET /api/search` `GET /api/wiki/sync/status` |
 | `papers:read` | `GET /api/papers/stats` `GET /api/papers/needs-mineru`；当部署方启用 `QATLAS_PAPER_ACCESS_ENABLED` 时还覆盖 `GET /api/papers/{id}/markdown` `GET /api/papers/{id}/markdown/status` |
-| `papers:write` | `POST /api/papers/{id}/upload-pdf` `POST /api/papers/{id}/upload-mineru` `POST /api/papers/{id}/mineru-claim` `DELETE /api/papers/{id}/mineru-claim/{cid}`（隐式含 `papers:read`）|
+| `papers:write` | `POST /api/papers/{id}/upload-pdf` `POST /api/papers/{id}/upload-mineru` `POST /api/v1/papers/{id}/mineru-lease` `DELETE /api/v1/papers/{id}/mineru-lease/{cid}`（隐式含 `papers:read`）|
 | `graph:read` | `GET /api/graph/stats` `GET /api/graph/schema` `POST /api/graph/query`（含只读 Cypher）|
 | `wiki:write` | `POST /api/wiki/sync/pull`（服务端 git fast-forward + 缓存刷新；隐式含 `wiki:read`）|
+| `plugins:read` | `GET /api/v1/plugins` |
+| `plugins:write` | `POST /api/v1/plugins/{id}/enable` `POST /api/v1/plugins/{id}/disable`（隐式含 `plugins:read`）|
+| `theorems:read` | `GET /api/v1/theorems` `GET /api/v1/theorems/{id}` |
+| `theorems:write` | `POST /api/v1/theorems`（隐式含 `theorems:read`）|
+| `verifications:read` | `GET /api/v1/verifications` |
+| `verifications:write` | `POST /api/v1/verifications`（隐式含 `verifications:read`）|
 
 **Scope 是编译时静态的**——加新 scope 需要改代码 + 重新部署。完整词表在 `internal/pat/scopes.go`。
 

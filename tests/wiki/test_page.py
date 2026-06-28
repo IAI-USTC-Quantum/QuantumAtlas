@@ -120,6 +120,45 @@ class TestWikiFrontmatter:
         assert "doi" not in yaml_dict
         assert "doi_confidence" not in yaml_dict
 
+    def test_frontmatter_verification_block_roundtrip(self):
+        """The theorem verification block is a reserved schema extension."""
+        fm = WikiFrontmatter(
+            id="thm-test",
+            title="Test theorem",
+            type="concept",
+            category="theorem",
+            verification={
+                "status": "verified",
+                "latest_verification_id": "vrf-1",
+                "last_updated": "2026-06-28T10:00:00Z",
+            },
+        )
+
+        yaml_dict = fm.to_yaml_dict()
+
+        assert yaml_dict["category"] == "theorem"
+        assert yaml_dict["verification"]["status"] == "verified"
+        assert yaml_dict["verification"]["latest_verification_id"] == "vrf-1"
+
+    def test_frontmatter_verification_unset_fields_dropped(self):
+        fm = WikiFrontmatter(id="plain", title="Plain", type="concept")
+
+        assert "verification" not in fm.to_yaml_dict()
+
+    def test_frontmatter_verification_nested_datetime_serializes_rfc3339(self):
+        fm = WikiFrontmatter(
+            id="thm-test",
+            title="Test theorem",
+            type="concept",
+            category="theorem",
+            verification={
+                "status": "verified",
+                "last_updated": datetime(2026, 6, 28, 10, 0, 0),
+            },
+        )
+
+        assert fm.to_yaml_dict()["verification"]["last_updated"] == "2026-06-28T10:00:00Z"
+
 
 class TestWikiPage:
     """Tests for WikiPage model."""
@@ -183,6 +222,28 @@ This is the content.
         assert page.frontmatter.tags == ["quantum", "algorithm"]
         assert page.frontmatter.status == "published"
         assert "## Overview" in page.content
+
+    def test_theorem_verification_timestamp_roundtrip_uses_rfc3339(self):
+        markdown = """---
+id: thm-test
+title: Test theorem
+type: concept
+category: theorem
+verification:
+  status: verified
+  latest_verification_id: vrf-1
+  last_updated: 2026-06-28T10:00:00Z
+---
+
+## Statement
+
+Example.
+"""
+
+        rendered = WikiPage.from_markdown(markdown).to_markdown()
+
+        assert "last_updated: '2026-06-28T10:00:00Z'" in rendered
+        assert "2026-06-28 10:00:00+00:00" not in rendered
 
     def test_roundtrip(self):
         """Test that to_markdown and from_markdown are inverses."""

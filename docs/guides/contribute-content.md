@@ -149,17 +149,17 @@ qatlas contrib mineru quant-ph/9508027v1
 qatlas contrib mineru --watch
 qatlas contrib mineru --watch --watch-interval 600 --batch-size 30
 
-# 只跑 MinerU 不上传（zip 留在本地临时目录，claim 立刻释放）
+# 只跑 MinerU 不上传（zip 留在本地临时目录，lease 立刻释放）
 qatlas contrib mineru 2501.00010v1 --no-push
 ```
 
-**并发模型（claim/lease）**：
+**并发模型（MinerU lease）**：
 
-- 想处理一篇 → `POST /api/papers/{arxiv_id}/mineru-claim` 申请一个短期租约（默认 30 分钟，最长 2 小时，可用 `--ttl-seconds` 调整）。
-- 服务端原子地写 `DATA_DIR/mineru-claims/{key}.json`；如果已有未过期 claim → 409 + 现有租约元数据。
-- 上传成功 → 服务端自动删除 claim。
-- 客户端异常中断 → 用 `DELETE /api/papers/{arxiv_id}/mineru-claim/{claim_id}` 主动释放（`qatlas contrib mineru` 在 except 分支和 SIGINT 处理里都会自动调用）。
-- 没释放也没事：lease 到期后会被下一个 claim 请求覆盖。
+- 想处理一篇 → `POST /api/v1/papers/{arxiv_id}/mineru-lease` 申请一个短期租约（默认 30 分钟，最长 2 小时，可用 `--ttl-seconds` 调整）。
+- 服务端原子地更新 catalog lease 字段；如果已有未过期 lease → 409 + 现有租约元数据。
+- 上传成功 → 服务端自动删除 lease。
+- 客户端异常中断 → 用 `DELETE /api/v1/papers/{arxiv_id}/mineru-lease/{claim_id}` 主动释放（`qatlas contrib mineru` 在 except 分支和 SIGINT 处理里都会自动调用）。
+- 没释放也没事：lease 到期后会被下一个 lease 请求覆盖。
 
 `qatlas contrib mineru` 流程：
 
@@ -254,7 +254,7 @@ agent 决策三元组（state / pdf_ready / md_ready）见
 
 | Scope | 覆盖端点 | 说明 |
 |---|---|---|
-| `papers:write` | `POST /api/papers/.../upload-pdf` / `upload-mineru` / `mineru-claim`，`DELETE .../mineru-claim/{id}` | 上传 PDF / MinerU 结果包、跑 MinerU 任务 |
+| `papers:write` | `POST /api/papers/.../upload-pdf` / `upload-mineru` / `POST /api/v1/papers/.../mineru-lease`，`DELETE .../mineru-lease/{id}` | 上传 PDF / MinerU 结果包、跑 MinerU 任务 |
 | `papers:read` | `GET /api/papers/...` 各只读 endpoint（stats / needs-mineru）；以及 PAPER_ACCESS 启用后的 `GET …/markdown[/status]` / `GET …/pdf[/status]` | 读取 paper catalog 元数据；可触发 server 端 silent fetch + MinerU convert（需要部署方知情）|
 | `wiki:read` / `wiki:write` | `/api/wiki/*` | wiki 内容只读 / 同步 |
 | `graph:read` | `/api/graph/*` | Neo4j 查询 |

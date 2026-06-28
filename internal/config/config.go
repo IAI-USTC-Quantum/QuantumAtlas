@@ -37,7 +37,7 @@ type Config struct {
 	// or the process CWD when no .env was supplied.
 	WikiDir   string // local clone of the Wiki repo (markdown + frontmatter).
 	RawDir    string // RAW asset store (PDFs, MinerU outputs, etc.).
-	DataDir   string // server-managed metadata (ingests/, mineru-claim sidecars, etc.).
+	DataDir   string // server-managed metadata (ingests/, MinerU lease state, etc.).
 	PBDataDir string // PocketBase pb_data (SQLite + uploads); passed to --dir=.
 
 	// PostgreSQL catalog (server-only, non-login state).
@@ -244,6 +244,18 @@ type Config struct {
 	// edges sharing a public NAT should set this LOWER to stay polite
 	// in aggregate. Only consulted when PaperAccessEnabled=true.
 	ArxivFetchRPS float64
+
+	// Plugin platform (Phase 1 skeleton). Plugins are optional: an empty
+	// directory or no manifests means the core server still starts with just
+	// papers/wiki/auth enabled.
+	PluginsDir              string
+	PluginsEnabled          []string
+	PluginsDisabled         []string
+	RPCWSBind               string
+	EventRetention          time.Duration
+	PluginRPCTimeout        time.Duration
+	PluginReconnectInterval time.Duration
+	DeadLetterDir           string
 }
 
 // MinerUEnabled reports whether the server should drive MinerU itself
@@ -318,6 +330,24 @@ func Load(dotenvPath string) (*Config, error) {
 		OpenAlexMailto:       firstEnv("QATLAS_OPENALEX_MAILTO"),
 		ArxivFetchConcurrent: firstEnvIntDefault(2, "QATLAS_ARXIV_FETCH_CONCURRENT"),
 		ArxivFetchRPS:        firstEnvFloatDefault(0.33, "QATLAS_ARXIV_FETCH_RPS"),
+		PluginsDir:           firstEnv("QATLAS_PLUGINS_DIR"),
+		PluginsEnabled:       parseTokenList(firstEnv("QATLAS_PLUGINS_ENABLED")),
+		PluginsDisabled:      parseTokenList(firstEnv("QATLAS_PLUGINS_DISABLED")),
+		RPCWSBind:            firstEnvDefault("127.0.0.1:8799", "QATLAS_RPC_WS_BIND"),
+	}
+
+	var err error
+	cfg.EventRetention, err = parseDurationEnv("QATLAS_EVENT_RETENTION", 7*24*time.Hour)
+	if err != nil {
+		return nil, err
+	}
+	cfg.PluginRPCTimeout, err = parseMillisEnv("QATLAS_PLUGIN_RPC_TIMEOUT_MS", 30000)
+	if err != nil {
+		return nil, err
+	}
+	cfg.PluginReconnectInterval, err = parseMillisEnv("QATLAS_PLUGIN_RECONNECT_MS", 5000)
+	if err != nil {
+		return nil, err
 	}
 
 	// MinerU* fields are only populated when the master switch is on.
@@ -368,6 +398,8 @@ func Load(dotenvPath string) (*Config, error) {
 	cfg.RawDir = expandPath(defaultIfEmpty(cfg.RawDir, defaultXDGSubdir("raw")), anchor)
 	cfg.DataDir = expandPath(defaultIfEmpty(cfg.DataDir, defaultXDGSubdir("data")), anchor)
 	cfg.PBDataDir = expandPath(defaultIfEmpty(cfg.PBDataDir, defaultXDGSubdir("pb_data")), anchor)
+	cfg.PluginsDir = expandPath(defaultIfEmpty(cfg.PluginsDir, defaultXDGConfigSubdir("plugins")), anchor)
+	cfg.DeadLetterDir = expandPath(defaultIfEmpty(firstEnv("QATLAS_DEADLETTER_DIR"), defaultXDGStateSubdir("dead")), anchor)
 
 	// Legacy single-bucket var QATLAS_S3_BUCKET (gone since v0.7.0) is
 	// always a hard fail regardless of subcommand: a stale .env that
@@ -669,6 +701,47 @@ func parseFloatEnvSeconds(name string, def float64) (time.Duration, error) {
 	return time.Duration(v * float64(time.Second)), nil
 }
 
+// parseMillisEnv reads an env var as an integer millisecond duration.
+func parseMillisEnv(name string, def int) (time.Duration, error) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return time.Duration(def) * time.Millisecond, nil
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be an integer millisecond value, got %q: %w", name, raw, err)
+	}
+	if v <= 0 {
+		return 0, fmt.Errorf("%s must be > 0 milliseconds, got %d", name, v)
+	}
+	return time.Duration(v) * time.Millisecond, nil
+}
+
+// parseDurationEnv reads a Go duration string, plus a small "Nd" days
+// extension because QATLAS_EVENT_RETENTION defaults are documented in days.
+func parseDurationEnv(name string, def time.Duration) (time.Duration, error) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return def, nil
+	}
+	if strings.HasSuffix(raw, "d") {
+		daysRaw := strings.TrimSuffix(raw, "d")
+		days, err := strconv.ParseFloat(daysRaw, 64)
+		if err != nil || days <= 0 {
+			return 0, fmt.Errorf("%s must be a positive duration, got %q", name, raw)
+		}
+		return time.Duration(days * 24 * float64(time.Hour)), nil
+	}
+	v, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a duration like 168h or 7d, got %q: %w", name, raw, err)
+	}
+	if v <= 0 {
+		return 0, fmt.Errorf("%s must be > 0, got %s", name, raw)
+	}
+	return v, nil
+}
+
 // parseTokenList splits a CSV-style env value into trimmed, non-empty
 // tokens. Used for MINERU_API_TOKENS where the operator supplies a
 // pool ("tok-a,tok-b,tok-c") and the converter rotates through them.
@@ -733,6 +806,28 @@ func defaultIfEmpty(v, def string) string {
 // indistinguishable.
 func defaultWikiDir() string {
 	return filepath.Join("..", "QuantumAtlas-Wiki")
+}
+
+func defaultXDGConfigSubdir(name string) string {
+	if base, err := os.UserConfigDir(); err == nil && base != "" && filepath.IsAbs(base) {
+		return filepath.Join(base, "qatlasd", name)
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return filepath.Join(home, ".config", "qatlasd", name)
+	}
+	return filepath.Join(".qatlasd-config-" + name)
+}
+
+func defaultXDGStateSubdir(name string) string {
+	base := strings.TrimSpace(os.Getenv("XDG_STATE_HOME"))
+	if base == "" || !filepath.IsAbs(base) {
+		if home, err := os.UserHomeDir(); err == nil && home != "" {
+			base = filepath.Join(home, ".local", "state")
+		} else {
+			return filepath.Join(".qatlasd-state-" + name)
+		}
+	}
+	return filepath.Join(base, "qatlasd", name)
 }
 
 // IsGitHubLoginAllowed reports whether the given GitHub login (username)

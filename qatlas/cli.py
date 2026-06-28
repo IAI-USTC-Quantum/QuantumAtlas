@@ -52,6 +52,7 @@ COMMANDS: Mapping[str, Command] = {
 }
 
 ALIASES: Mapping[str, str] = {
+    "papers": "paper",
     "parse": "parser",
     "design": "designer",
     "generate": "codegen",
@@ -90,6 +91,7 @@ Commands:"""
     print(
         """
 Aliases:
+  papers -> paper
   parse -> parser, design -> designer, generate -> codegen
   validate -> validator, estimate -> estimator, extract -> extractor
 

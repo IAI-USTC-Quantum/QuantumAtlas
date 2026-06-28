@@ -21,7 +21,7 @@ QuantumAtlas 处理论文图谱的本质问题是：
 | 层 | 引擎 | 存什么 | 数据量级 | 访问模式 | source of truth |
 |---|---|---|---|---|---|
 | Raw blobs | **RustFS**（S3 兼容） | PDF / Markdown / 图片 / OpenAlex snapshot | TB | 偶尔整文件下载 | ✅ 原文不可变 |
-| Metadata 索引 | **PostgreSQL catalog** | `paper_works` 表 + partial indexes | 134k 行起步 | 字段筛选 / count / group by / claim 租约 | ❌ 可从 bucket LIST 重建 |
+| Metadata 索引 | **PostgreSQL catalog** | `paper_works` 表 + partial indexes | 134k 行起步 | 字段筛选 / count / group by / MinerU lease | ❌ 可从 bucket LIST 重建 |
 | Graph | **Neo4j 5.26 LTS Community** | `(Paper)-[:CITES]->(Paper)` + Wiki 知识图 | 几十 GB | K 跳遍历、图算法 | ❌ 可重建的派生视图 |
 
 **这三层不竞争，互补**。Raw 量翻 10×，Neo4j 完全不动；Neo4j 脏了，从 raw + Wiki 跑
@@ -31,7 +31,7 @@ QuantumAtlas 处理论文图谱的本质问题是：
     RustFS 的职责收窄为纯 S3 后端：只保存 PDF / Markdown / 图片 / OpenAlex snapshot
     等对象字节，不再承载应用级索引对象（例如 Parquet manifest）。
 
-    PostgreSQL 承担非登录态 catalog：paper 元数据、PDF/MD/DOI 状态、MinerU claim
+    PostgreSQL 承担非登录态 catalog：paper 元数据、PDF/MD/DOI 状态、MinerU lease
     租约。登录态仍由 PocketBase 管理；图查询仍由 Neo4j 管理。
 
     选择 PostgreSQL 的原因是它正好覆盖这层需求：`INSERT ... ON CONFLICT`、

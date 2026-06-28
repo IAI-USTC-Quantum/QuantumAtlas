@@ -16,7 +16,7 @@ Markdown content here...
 ```
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, ClassVar, Dict, List, Literal, Optional
 import re
@@ -30,6 +30,19 @@ except ImportError:
         "PyYAML is required for wiki page parsing. "
         "Install with: pip install pyyaml"
     )
+
+
+def _normalise_nested_datetimes(value: Any) -> Any:
+    """Return a YAML-safe copy with nested datetimes rendered as RFC3339."""
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.isoformat().replace("+00:00", "Z")
+    if isinstance(value, dict):
+        return {k: _normalise_nested_datetimes(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_normalise_nested_datetimes(v) for v in value]
+    return value
 
 
 class WikiFrontmatter(BaseModel):
@@ -67,6 +80,10 @@ class WikiFrontmatter(BaseModel):
     external_links: List["ExternalLink"] = Field(
         default_factory=list,
         description="External resource links such as PDFs, datasets, or databases",
+    )
+    verification: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Reserved theorem verification block populated by verification plugins",
     )
     neo4j_synced: bool = Field(
         False, description="Whether this page has been synced to Neo4j"
@@ -110,6 +127,10 @@ class WikiFrontmatter(BaseModel):
         for key in ("doi", "doi_source", "doi_confidence"):
             if data.get(key) is None:
                 data.pop(key, None)
+        if data.get("verification") is None:
+            data.pop("verification", None)
+        else:
+            data["verification"] = _normalise_nested_datetimes(data["verification"])
         return data
 
 

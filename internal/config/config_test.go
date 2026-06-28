@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestExpandPath_RelativeUsesAnchor(t *testing.T) {
@@ -294,6 +295,81 @@ func TestDefaultXDGSubdir_Unit(t *testing.T) {
 	t.Setenv("HOME", "/home/test")
 	if got := defaultXDGSubdir("pb_data"); got != "/home/test/.local/share/qatlasd/pb_data" {
 		t.Errorf("relative XDG should be rejected: got %q", got)
+	}
+}
+
+func TestLoad_PluginDefaults(t *testing.T) {
+	clearStorageEnv(t)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_STATE_HOME", "")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.PluginsDir != filepath.Join(home, ".config", "qatlasd", "plugins") {
+		t.Errorf("PluginsDir = %q", cfg.PluginsDir)
+	}
+	if cfg.DeadLetterDir != filepath.Join(home, ".local", "state", "qatlasd", "dead") {
+		t.Errorf("DeadLetterDir = %q", cfg.DeadLetterDir)
+	}
+	if cfg.RPCWSBind != "127.0.0.1:8799" {
+		t.Errorf("RPCWSBind = %q", cfg.RPCWSBind)
+	}
+	if cfg.EventRetention.String() != (7 * 24 * time.Hour).String() {
+		t.Errorf("EventRetention = %s", cfg.EventRetention)
+	}
+	if cfg.PluginRPCTimeout.String() != (30 * time.Second).String() {
+		t.Errorf("PluginRPCTimeout = %s", cfg.PluginRPCTimeout)
+	}
+	if cfg.PluginReconnectInterval.String() != (5 * time.Second).String() {
+		t.Errorf("PluginReconnectInterval = %s", cfg.PluginReconnectInterval)
+	}
+}
+
+func TestLoad_PluginEnvOverrides(t *testing.T) {
+	clearStorageEnv(t)
+	tmp := t.TempDir()
+	t.Setenv("QATLAS_PLUGINS_DIR", "plugins")
+	t.Setenv("QATLAS_PLUGINS_ENABLED", "graph, lean")
+	t.Setenv("QATLAS_PLUGINS_DISABLED", "rag")
+	t.Setenv("QATLAS_RPC_WS_BIND", "127.0.0.1:9999")
+	t.Setenv("QATLAS_EVENT_RETENTION", "2d")
+	t.Setenv("QATLAS_PLUGIN_RPC_TIMEOUT_MS", "1234")
+	t.Setenv("QATLAS_PLUGIN_RECONNECT_MS", "250")
+	t.Setenv("QATLAS_DEADLETTER_DIR", "dead")
+
+	cfg, err := Load(filepath.Join(tmp, ".env"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.PluginsDir != filepath.Join(tmp, "plugins") {
+		t.Errorf("PluginsDir = %q", cfg.PluginsDir)
+	}
+	if cfg.DeadLetterDir != filepath.Join(tmp, "dead") {
+		t.Errorf("DeadLetterDir = %q", cfg.DeadLetterDir)
+	}
+	if strings.Join(cfg.PluginsEnabled, ",") != "graph,lean" {
+		t.Errorf("PluginsEnabled = %v", cfg.PluginsEnabled)
+	}
+	if strings.Join(cfg.PluginsDisabled, ",") != "rag" {
+		t.Errorf("PluginsDisabled = %v", cfg.PluginsDisabled)
+	}
+	if cfg.RPCWSBind != "127.0.0.1:9999" {
+		t.Errorf("RPCWSBind = %q", cfg.RPCWSBind)
+	}
+	if cfg.EventRetention != 48*time.Hour {
+		t.Errorf("EventRetention = %s", cfg.EventRetention)
+	}
+	if cfg.PluginRPCTimeout != 1234*time.Millisecond {
+		t.Errorf("PluginRPCTimeout = %s", cfg.PluginRPCTimeout)
+	}
+	if cfg.PluginReconnectInterval != 250*time.Millisecond {
+		t.Errorf("PluginReconnectInterval = %s", cfg.PluginReconnectInterval)
 	}
 }
 

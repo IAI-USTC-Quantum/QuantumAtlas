@@ -33,6 +33,7 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/openalex"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/papers"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/pat"
+	qplugin "github.com/IAI-USTC-Quantum/QuantumAtlas/internal/plugin"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/routes"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/wiki"
 	qweb "github.com/IAI-USTC-Quantum/QuantumAtlas/web"
@@ -480,7 +481,7 @@ func main() {
 			)
 		}
 
-		// Background janitor: sweep expired MinerU claims every
+		// Background janitor: sweep expired MinerU leases every
 		// JanitorInterval. Idempotent and safe to run on both edges.
 		janitorCtx, janitorCancel := context.WithCancel(context.Background())
 		if catalog.Configured() {
@@ -881,12 +882,28 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// Wiki / pages / stats / search / lint — see internal/routes/wiki.go.
 	routes.RegisterWiki(se, cfg, wikiCache, enforcer)
 
+	pluginRegistry, err := qplugin.LoadDir(cfg.PluginsDir, qplugin.Options{
+		Enabled:  cfg.PluginsEnabled,
+		Disabled: cfg.PluginsDisabled,
+		Builtins: qplugin.BuiltinManifests(),
+	})
+	if err != nil {
+		slog.Warn("plugins: failed to load plugin manifests", "dir", cfg.PluginsDir, "error", err)
+		pluginRegistry = qplugin.NewBuiltinRegistry(qplugin.Options{
+			Enabled:  cfg.PluginsEnabled,
+			Disabled: cfg.PluginsDisabled,
+		})
+	}
+	routes.RegisterPlugins(se, pluginRegistry, enforcer)
+	routes.RegisterTheorems(se, app, enforcer)
+	routes.RegisterVerifications(se, app, enforcer)
+
 	// Graph (Neo4j) — see internal/routes/graph.go. Gated by
 	// authGuard + scopeGuard("graph", "read") so it matches the rest
 	// of the non-public-repo surface; sessions bypass via ScopeMaster.
-	routes.RegisterGraph(se, cfg, enforcer)
+	routes.RegisterGraph(se, cfg, pluginRegistry, enforcer)
 
-	// Papers (stats, needs-mineru, mineru-claim, uploads) — see
+	// Papers (stats, needs-mineru, mineru-lease, uploads) — see
 	// internal/routes/papers.go. v0.9.0 dropped the byte-serving
 	// endpoints (markdown / resources / shares); the server only
 	// exposes catalog metadata + the contribution flow by default.
@@ -912,7 +929,7 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// set. Same posture as /api/papers/{id}/markdown: serves derivative
 	// paper content (chunk-text snippets), so we gate behind the
 	// operator's opt-in. See internal/routes/rag.go.
-	routes.RegisterRAG(se, cfg, enforcer)
+	routes.RegisterRAG(se, cfg, pluginRegistry, enforcer)
 }
 
 // injectHTTPFlag mutates os.Args to add --http=<addr> when the user invokes

@@ -63,14 +63,18 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
 | `GET` | `/api/papers/needs-mineru?limit=&include_claimed=` | `papers:read` | 列等待 MinerU 解析的论文 |
 | `POST` | `/api/papers/{arxiv_id}/upload-pdf` | `papers:write` | 上传 PDF，见 [Upload API](upload-api.md) |
 | `POST` | `/api/papers/{arxiv_id}/upload-mineru` | `papers:write` | 上传 MinerU 结果 zip（含 markdown + images）|
-| `POST` | `/api/papers/{arxiv_id}/mineru-claim` | `papers:write` | 申请 MinerU 处理 claim |
-| `DELETE` | `/api/papers/{arxiv_id}/mineru-claim/{claim_id}` | `papers:write` | 释放 claim |
+| `POST` | `/api/v1/papers/{arxiv_id}/mineru-lease` | `papers:write` | 申请 MinerU 处理 lease（响应字段含 `claim_id`）|
+| `DELETE` | `/api/v1/papers/{arxiv_id}/mineru-lease/{claim_id}` | `papers:write` | 释放 MinerU lease |
+| `POST` | `/api/papers/{arxiv_id}/mineru-claim` | `papers:write` | 申请 MinerU 处理 lease |
+| `DELETE` | `/api/papers/{arxiv_id}/mineru-claim/{claim_id}` | `papers:write` | 释放 MinerU lease |
 | `GET` | `/api/papers/{id_or_doi}/markdown` | `papers:read` | **PAPER_ACCESS** · 返回缓存的 markdown 字节；未命中走 LRO 流程：202 → 后台 silent fetch PDF + MinerU convert → poll 后再 GET 200 |
 | `GET` | `/api/papers/{id_or_doi}/markdown/status` | `papers:read` | **PAPER_ACCESS** · side-effect-free 进度查询；body 含 `state` / `phase` / `pdf_ready` / `md_ready` / `fetch.*` / `convert.*` |
 | `GET` | `/api/papers/{id_or_doi}/pdf` | `papers:read` | **PAPER_ACCESS** · 返回缓存的 PDF 字节；未命中走 LRO 流程：202 → 后台 silent fetch PDF → poll 后 GET 200。**不**触发 MinerU |
 | `GET` | `/api/papers/{id_or_doi}/pdf/status` | `papers:read` | **PAPER_ACCESS** · `/pdf` 的 side-effect-free 进度查询；状态机比 markdown 少 convert 阶段 |
-| `POST` | `/api/rag/search` | `papers:read` | **PAPER_ACCESS** · 仅当 `QATLAS_RAG_QDRANT_URL` + `QATLAS_RAG_EMBED_URL` 都已设。qatlasd 直接 gRPC 查 Qdrant + 调 GPU embed worker，body 形如 `{"query":"...","top_k":8,"rerank":true,"use_sparse":true}`；返回 chunk 级 hit（含 `arxiv_id`、`section_path`、`snippet`、`score`）|
-| `GET` | `/api/rag/healthz` | 匿名 | **PAPER_ACCESS** · 同上注册条件。返回 `{"status":"ok"\|"degraded"\|"down"}`；SPA 用它决定是否在 `/papers/search` 显示搜索框 |
+| `POST` | `/api/v1/rag/search` | `papers:read` | **PAPER_ACCESS** · 仅当 `QATLAS_RAG_QDRANT_URL` + `QATLAS_RAG_EMBED_URL` 都已设。qatlasd 直接 gRPC 查 Qdrant + 调 GPU embed worker，body 形如 `{"query":"...","top_k":8,"rerank":true,"use_sparse":true}`；返回 chunk 级 hit（含 `arxiv_id`、`section_path`、`snippet`、`score`）|
+| `GET` | `/api/v1/rag/healthz` | 匿名 | **PAPER_ACCESS** · 同上注册条件。返回 `{"status":"ok"\|"degraded"\|"down"}`；SPA 用它决定是否在 `/papers/search` 显示搜索框 |
+| `POST` | `/api/rag/search` | `papers:read` | RAG 搜索 |
+| `GET` | `/api/rag/healthz` | 匿名 | RAG 健康状态 |
 
 > `papers:write` 隐式含 `papers:read`。
 >
@@ -108,11 +112,32 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
 
 | Method | Path | 鉴权 | 用途 |
 |---|---|---|---|
+| `GET` | `/api/v1/graph/stats` | `graph:read` | Neo4j 节点 / 关系计数 |
+| `GET` | `/api/v1/graph/schema` | `graph:read` | Neo4j label / relationship type 清单 |
+| `POST` | `/api/v1/graph/query` | `graph:read` | 执行 Cypher（**只读**，server 端跑 `ExecuteRead`）|
 | `GET` | `/api/graph/stats` | `graph:read` | Neo4j 节点 / 关系计数 |
 | `GET` | `/api/graph/schema` | `graph:read` | Neo4j label / relationship type 清单 |
 | `POST` | `/api/graph/query` | `graph:read` | 执行 Cypher（**只读**，server 端跑 `ExecuteRead`）|
 
 > 三个 graph 读口都收敛到 `authGuard + graph:read`。session token（浏览器登录）自带 `*` 自动放行；PAT 调用方需勾选 `graph:read`。其中 `/api/graph/query` 风险最高（执行调用方提供的 Cypher、无成本上限）——见下方 query 详述。
+
+### Plugins
+
+| Method | Path | 鉴权 | 用途 |
+|---|---|---|---|
+| `GET` | `/api/v1/plugins` | `plugins:read` | 列出发现的插件清单与状态（`connected` / `disconnected` / `disabled` / `incompatible`）|
+| `POST` | `/api/v1/plugins/{id}/enable` | `plugins:write` | 运行时启用已配置插件 |
+| `POST` | `/api/v1/plugins/{id}/disable` | `plugins:write` | 运行时禁用已配置插件 |
+
+### Theorems / Verifications
+
+| Method | Path | 鉴权 | 用途 |
+|---|---|---|---|
+| `GET` | `/api/v1/theorems?paper_id=` | `theorems:read` | 列 theorem 记录 |
+| `GET` | `/api/v1/theorems/{id}` | `theorems:read` | 取单个 theorem |
+| `POST` | `/api/v1/theorems` | `theorems:write` | 创建或更新 theorem（Phase 3 skeleton）|
+| `GET` | `/api/v1/verifications?theorem_id=` | `verifications:read` | 列 verification 记录 |
+| `POST` | `/api/v1/verifications` | `verifications:write` | 提交或更新 verification |
 
 ### PAT 管理（**只接受 session token**，PAT auth 被拒）
 
