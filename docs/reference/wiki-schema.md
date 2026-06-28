@@ -28,7 +28,7 @@
 > （type 改写）。下面各模板里的 `type: entity` / `type: comparison` 为**历史记录**，
 > 新页面一律 `type: concept` + 合适的 `category`；旧 type 常量在 Go 侧仍可解析以兼容
 > 未迁移数据，但统计与 UI 统一按 concept 处理。批量追加内容见
-> [generate-wiki-content.md](../guides/generate-wiki-content.md)。
+> [generate-wiki-content.md](../client/generate-wiki-content.md)。
 
 ## Wiki 页面类型
 

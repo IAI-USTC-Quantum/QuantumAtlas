@@ -1,12 +1,12 @@
 # 环境变量参考
 
-> **本页只描述 server (`qatlasd`) 的 env / .env 字段**。client (`qatlas` Python CLI) 自 v0.17.0 起**不再读任何 env / .env**，所有配置写在平台原生 user-config 路径下的 `config.yaml`（Linux `~/.config/qatlas/`、macOS `~/Library/Application Support/qatlas/`、Windows `%APPDATA%\qatlas\`；首次运行自动创建），见 [`qatlas config` reference](cli-qatlas.md#qatlas-config)。
+> **本页只描述 server (`qatlasd`) 的 env / .env 字段**。client (`qatlas` Python CLI) 自 v0.17.0 起**不再读任何 env / .env**，所有配置写在平台原生 user-config 路径下的 `config.yaml`（Linux `~/.config/qatlas/`、macOS `~/Library/Application Support/qatlas/`、Windows `%APPDATA%\qatlas\`；首次运行自动创建），见 [`qatlas config` reference](../client/cli-qatlas.md#qatlas-config)。
 
 QuantumAtlas server（Go `qatlasd` 二进制）通过三入口读配置：
 
 **CLI flag > OS env > `.env` 文件 > 内置 default**
 
-server 端项目自有变量带 `QATLAS_` 前缀；第三方 SDK 标准名（`NEO4J_*` / `GITHUB_CLIENT_*`）保留原始命名。每个字段都有等价 CLI flag（除了 OAuth 4 字段，详见 [issue #6](https://github.com/IAI-USTC-Quantum/QuantumAtlas/issues/6)），完整 flag 列见 [cli-qatlasd.md §serve](cli-qatlasd.md#serve)。
+server 端项目自有变量带 `QATLAS_` 前缀；第三方 SDK 标准名（`NEO4J_*` / `GITHUB_CLIENT_*`）保留原始命名。每个字段都有等价 CLI flag（除了 OAuth 4 字段，详见 [issue #6](https://github.com/IAI-USTC-Quantum/QuantumAtlas/issues/6)），完整 flag 列见 [cli-qatlasd.md §serve](../server/cli-qatlasd.md#serve)。
 
 > 完整 server `.env` 模板：[`.env.example`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.env.example)
 
@@ -74,7 +74,7 @@ server 端项目自有变量带 `QATLAS_` 前缀；第三方 SDK 标准名（`NE
 - `QATLAS_PB_DATA_DIR` 被自动注入为 PocketBase `--dir=`——**不要**在 systemd `ExecStart` 里再硬写 `--dir=`
 - **`QATLAS_RAW_DIR` 是 dev-only fallback**：启用 S3 / RustFS 时 server 完全不读它；生产部署强烈建议配 S3，把 LocalStore 留给 dev / CI
 
-详见 [Migration: 存储布局](../deployment/migration-storage-layout.md)。
+详见 [Migration: 存储布局](../server/migration-storage-layout.md)。
 
 ## Server: HTTP 绑定
 
@@ -112,7 +112,7 @@ Self-hosted 部署在受控范围（私有团队、内部站点）可以启用�
 Contributor 流程（`qatlas contrib mineru` → `POST /api/papers/{id}/upload-mineru`）
 与本开关**无关**，开关 OFF 时也照常工作。
 
-### Server-side MinerU（仅当 `QATLAS_PAPER_ACCESS_ENABLED=true` 时生效）
+### Server-side MinerU（仅当 `QATLAS_PAPER_ACCESS_ENABLED=true` 时生效） { #server-side-mineru }
 
 启用论文访问开关后，server 在 `GET /api/papers/{id}/markdown` 缓存未命中时会
 用下面这组**服务端**配置（独立于 contributor 端 `qatlas contrib mineru` 的 YAML 配置）
@@ -236,7 +236,7 @@ Neo4j 只服务图查询 / OpenAlex citation bootstrap；paper catalog 不再依
 
 > 注意：v0.7.0 删除了 RustFS notification webhook（`/api/_rustfs/event` + `QATLAS_RUSTFS_EVENT_TOKEN`）。应用对 bucket 独占写，catalog 由上传写路径直接同步进 Neo4j，无需外部事件回灌。
 
-详见 [RustFS 部署](../deployment/rustfs.md)。
+详见 [RustFS 部署](../server/rustfs.md)。
 
 ## Server: 写入留痕（T10）
 
@@ -244,7 +244,7 @@ Neo4j 只服务图查询 / OpenAlex citation bootstrap；paper catalog 不再依
 |---|---|---|---|
 | `QATLAS_EDGE_NAME` | ❌ | — | 这台 edge 的名字（如 `us-east` / `cn-shanghai`）；折进 S3 client UA `qatlasd/<ver>/<edge>`，让 RustFS notify 事件流里正规 server 写与直连 mc/boto3 一眼可分。**UA 可伪造，仅辅助标识，绝不用于鉴权** |
 
-这是 qatlasd 端**唯一**与写入留痕相关的 env。sink 本身**不在我们的 binary / `.env` 里**——由一个通用、零后端约定的日志转发器（Fluent Bit）作为 sidecar 跑在 NAS 上 RustFS 旁边，接 RustFS notify webhook（per-bucket subscribe，5 个资产桶 PUT/DELETE 推到 sink）、写进 `qatlas-s3-events` 桶。sink 用的 svcacct key（`qatlas-s3-events-writer`）、桶名、订阅列表全在 NAS 侧 Fluent Bit / RustFS compose 配置里，与 server 解耦——这样 dumb 存储层不被我们演进中的后端约定绑死。判定主键是 SigV4 `accessKey`（不可伪造）。整套部署见 [RustFS 部署 · 写入留痕](../deployment/rustfs.md#写入留痕-audit-sink-t10)。
+这是 qatlasd 端**唯一**与写入留痕相关的 env。sink 本身**不在我们的 binary / `.env` 里**——由一个通用、零后端约定的日志转发器（Fluent Bit）作为 sidecar 跑在 NAS 上 RustFS 旁边，接 RustFS notify webhook（per-bucket subscribe，5 个资产桶 PUT/DELETE 推到 sink）、写进 `qatlas-s3-events` 桶。sink 用的 svcacct key（`qatlas-s3-events-writer`）、桶名、订阅列表全在 NAS 侧 Fluent Bit / RustFS compose 配置里，与 server 解耦——这样 dumb 存储层不被我们演进中的后端约定绑死。判定主键是 SigV4 `accessKey`（不可伪造）。整套部署见 [RustFS 部署 · 写入留痕](../server/rustfs.md#写入留痕-audit-sink-t10)。
 
 ## Server: System PAT（运维兜底 bearer）
 
@@ -281,7 +281,7 @@ contributor 自己的 MinerU 配额。**v0.17.0+ 只能放 `~/.config/qatlas/con
 不再支持 env / `MINERU_*` env var。
 
 > server-side（qatlasd）启用论文访问开关后**也**会读 MinerU 字段，但走
-> [独立的环境变量](#server-side-mineru仅当-qatlas_asset_downloads_enabledtrue-时生效)
+> [独立的环境变量](#server-side-mineru)
 > 而**不**读 contributor 的 YAML。两条路径互不影响：contributor 用自己的
 > token 在自己机器上跑、把成品 upload 给 server；启用论文访问开关后 server
 > 用部署方配置的 token 代客户端跑。
@@ -338,7 +338,7 @@ client 现在**完全独立于 server**：
 
 要换文件位置 → 用平台标准 env（Linux `XDG_CONFIG_HOME`、Windows `APPDATA`；macOS 没标准 env，symlink 就好）。
 
-具体子命令见 [`qatlas config` reference](cli-qatlas.md#qatlas-config)。
+具体子命令见 [`qatlas config` reference](../client/cli-qatlas.md#qatlas-config)。
 
 ### YAML schema
 

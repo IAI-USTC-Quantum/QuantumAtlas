@@ -39,7 +39,7 @@ import (
 //     holder who explicitly opted into graph:read), and the same person
 //     could run the same query straight against Bolt. The accepted risk
 //     and its rationale are documented in docs/concepts/auth-model.md and
-//     docs/deployment/neo4j.md so operators know the only mitigation is
+//     docs/server/neo4j.md so operators know the only mitigation is
 //     revoking the offending credential.
 //
 // Browser users are unaffected: session tokens carry the implicit

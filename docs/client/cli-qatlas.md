@@ -98,7 +98,7 @@ qatlas contrib mineru --batch-size 3
 
 > v0.16 / 更早升级到 v0.17.0：删了 `qatlas config init` 子命令、删了 `.env` → yaml 自动迁移。如果你之前在用 `~/.config/qatlas/.env`，**手工**把内容搬到 `~/.config/qatlas/config.yaml`（字段名从 `QATLAS_SERVER_URL` 改成 `server_url`、`MINERU_API_TOKEN` 改成 `mineru_api_tokens`（列表形式），去掉 `QATLAS_` 前缀小写化），原 .env 删掉。
 
-详细：[管理凭证](../guides/manage-credentials.md)、[入门](../getting-started.md)。
+详细：[管理凭证](manage-credentials.md)、[入门](../getting-started.md)。
 
 ---
 
@@ -127,7 +127,7 @@ qatlas ingest status <task_id>
 
 调用：`POST /api/ingest/paper`，轮询 `GET /api/ingest/{task_id}`。
 
-详细 how-to：[从 arXiv 摄入论文](../guides/ingest-papers.md)。
+详细 how-to：[从 arXiv 摄入论文](ingest-papers.md)。
 
 ---
 
@@ -156,7 +156,7 @@ qatlas contrib pdf <arxiv_id> --pdf <path> [--overwrite]
 
 调用：`POST /api/papers/{arxiv_id}/upload-pdf`（multipart），自动加 `?expected_sha256=<hex>`。
 
-详细 how-to：[贡献内容](../guides/contribute-content.md)，详细 API：[Upload API](upload-api.md)。
+详细 how-to：[贡献内容](contribute-content.md)，详细 API：[Upload API](../server/upload-api.md)。
 
 #### `qatlas contrib mineru`
 
@@ -180,7 +180,7 @@ qatlas contrib mineru --watch [--watch-interval N]  # 守护循环
 | `--watch` | off | 守护模式：每轮排空队列后 sleep `--watch-interval` 再轮询；隐含 `--continue-on-error`，SIGINT/SIGTERM 处理完当前篇干净退出 |
 | `--watch-interval N` | 300 | 守护模式两批之间的轮询间隔（秒）|
 
-需要 `papers:write` scope。详细 how-to：[贡献内容](../guides/contribute-content.md) / [用 MinerU 解析](../guides/parse-with-mineru.md)。
+需要 `papers:write` scope。详细 how-to：[贡献内容](contribute-content.md) / [用 MinerU 解析](parse-with-mineru.md)。
 
 ---
 
@@ -202,7 +202,7 @@ qatlas paper status       ID_OR_DOI [--kind markdown|pdf]
 |---|---|
 | 完整 `0811.3171v3` / `quant-ph/9508027v2` | 不动 |
 | 无版本 `0811.3171` / `quant-ph/9508027` | 自动加 latest `vN`（fetch `/abs/<id>` HTML `og:url`）|
-| bare old-style `9508027` / `9508027v2` | 自动加 `category=quant-ph`（生产 bootstrap 假设；详见 [arxiv-ids §3.1](arxiv-ids.md)）|
+| bare old-style `9508027` / `9508027v2` | 自动加 `category=quant-ph`（生产 bootstrap 假设；详见 [arxiv-ids §3.1](../reference/arxiv-ids.md)）|
 | DOI `10.1103/PhysRevLett.103.150502` | OpenAlex 反查 → arxiv id |
 
 每应用一次默认值，CLI 在 stderr 打一行 `Note (server applied defaults): ...`，
@@ -257,7 +257,7 @@ ID 解析到了哪一步所有信息。
 - `status`：单次 `GET .../{kind}/status`
 
 详细 LRO 协议、Phase 字段语义、agent 决策三元组见
-[REST API · 长任务（LRO）](rest-api.md#长任务lroapipapersid_or_doimarkdownpdf)。
+[REST API · 长任务（LRO）](../server/rest-api.md#长任务lroapipapersid_or_doimarkdownpdf)。
 
 ---
 
@@ -288,7 +288,7 @@ qatlas contrib mineru [arxiv_id] [options...]
 
 调用链（队列 / daemon 模式，v0.15.0+）：list `needs-mineru` → 逐篇申请 MinerU lease → 一次 `POST /api/v4/extract/task/batch` → 周期 `GET /api/v4/extract-results/batch/{id}` → 每 done 立即 `upload-mineru` + 释放 lease。
 
-详细：[用 MinerU 解析](../guides/parse-with-mineru.md)。
+详细：[用 MinerU 解析](parse-with-mineru.md)。
 
 ---
 
@@ -331,7 +331,7 @@ qatlas auth token  [-s | --server-url <URL>]
 
 > v0.19.0 删了 `qatlas config set token` 路径——config.yaml 的 `token:` 字段会静默盖 hosts.yml 里所有 per-host token，是 footgun。所有 PAT 现在都通过 `qatlas auth login`（OAuth）或 `qatlas auth login --with-token`（CI stdin）走 hosts.yml。
 
-文件 layout 是 YAML，0600 权限，详见 [管理凭据](../guides/manage-credentials.md)。
+文件 layout 是 YAML，0600 权限，详见 [管理凭据](manage-credentials.md)。
 
 ---
 
@@ -354,7 +354,7 @@ qatlas wiki <list|show|search|links|lint|sync|stats|ingest|create> [options...]
 | `ingest <arxiv_id>` | `--no-fetch --no-parse --no-extract` | 旧 monolith pipeline（开发期，新代码用 `qatlas ingest`）|
 | `create <id>` | `--title T --type entity --category primitive --tags a,b --status draft --content ... --file ... --subdir ...` | 生成页面模板文件 |
 
-详细：[写 Wiki 页面](../guides/write-wiki-pages.md) / [Lint](../guides/lint-wiki.md) / [Schema](wiki-schema.md)。
+详细：[写 Wiki 页面](write-wiki-pages.md) / [Lint](lint-wiki.md) / [Schema](../reference/wiki-schema.md)。
 
 ---
 
@@ -366,7 +366,7 @@ qatlas wiki <list|show|search|links|lint|sync|stats|ingest|create> [options...]
 qatlas designer <algorithm_id> [-o <path>] [--n-qubits N] [--params k=v,...] [--no-optimize]
 ```
 
-把 algorithm Wiki page 编译成 Quantum IR。详细：[电路工具链](../guides/circuit-toolchain.md)。
+把 algorithm Wiki page 编译成 Quantum IR。详细：[电路工具链](circuit-toolchain.md)。
 
 ### `qatlas codegen`
 
@@ -427,6 +427,6 @@ LLM 辅助从 paper markdown 抽取算法描述。需要 `OPENAI_API_KEY` / `ANT
 |---|---|---|
 | `XDG_CONFIG_HOME` | 所有 `qatlas` 命令 | config.yaml + hosts.yml 父目录（默认 `~/.config`）|
 | `XDG_DATA_HOME` | 服务端 qatlasd | 默认 raw/data/pb_data 父目录 |
-| `QATLAS_*` env | **server 端 qatlasd**，参见 [qatlasd CLI](cli-qatlasd.md) + [env vars](env-vars.md) | client 不读 |
+| `QATLAS_*` env | **server 端 qatlasd**，参见 [qatlasd CLI](../server/cli-qatlasd.md) + [env vars](../reference/env-vars.md) | client 不读 |
 
-完整列表：[环境变量参考](env-vars.md)。
+完整列表：[环境变量参考](../reference/env-vars.md)。

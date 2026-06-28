@@ -1,6 +1,15 @@
-# 操作指南
+# Python 客户端 `qatlas`
 
-按"我想做什么"组织的 how-to 指南。每篇都是一个具体任务，从前置条件到完整命令再到常见错误。
+`qatlas` 是 QuantumAtlas 的 Python 包：命令行客户端 + 库。它通过 HTTP 与 `qatlasd` 服务端通信，覆盖论文摄入、Wiki 写作、本地 MinerU 解析、电路设计与代码生成、凭据管理等工作流。
+
+```bash
+uv tool install quantum-atlas    # 或 pipx install / pip install
+qatlas --help
+```
+
+读接口公开、无需 token；写操作（上传、贡献）需要一个 PAT，见 [管理凭据](manage-credentials.md)。客户端配置（server URL / token）写在平台原生 user-config 路径，详见 [入门指南](../getting-started.md)。
+
+每篇指南都是一个具体任务，从前置条件到完整命令再到常见错误。
 
 ## 论文与资产
 
@@ -56,7 +65,7 @@
 
 </div>
 
-## 协作
+## 凭据与集成
 
 <div class="grid cards" markdown>
 
@@ -83,5 +92,17 @@
     ---
 
     `designer → codegen → validator → estimator` 完整链路，含 IR 中间格式。
+
+</div>
+
+## CLI 参考
+
+<div class="grid cards" markdown>
+
+-   :material-console:{ .lg .middle } **[`qatlas` CLI](cli-qatlas.md)**
+
+    ---
+
+    全部子命令（`ingest` / `contrib` / `auth` / `wiki` / `designer` / `codegen` / `validator` / `estimator` / `config` …）+ 每个 flag 完整说明。
 
 </div>

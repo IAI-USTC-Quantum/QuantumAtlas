@@ -5,7 +5,7 @@
 - **Raw 资产贡献**：把论文 PDF、解析 Markdown、元数据落到 `RAW_DIR`。
 - **Wiki 协作**：在独立 Git 仓库里编辑知识页面，按需触发服务器拉取。
 
-如果你想理解项目分层和设计动机，先看 [architecture.md](../concepts/architecture.md)。如果你只想跑起来一个服务，看 [deployment.md](../deployment/operations.md)。本文档定位是「内容贡献的 how-to」。
+如果你想理解项目分层和设计动机，先看 [architecture.md](../concepts/architecture.md)。如果你只想跑起来一个服务，看 [deployment.md](../server/operations.md)。本文档定位是「内容贡献的 how-to」。
 
 ---
 
@@ -38,9 +38,9 @@ echo mn_xxxxx | qatlas config set mineru_api_token   # 从 stdin 读，不进 hi
 # 其余 mineru_* 字段都有合理默认值，按需覆盖
 ```
 
-完整字段映射 + YAML schema 见 [client config reference](../reference/cli-qatlas.md#qatlas-config) 与 [env-vars.md §Client](../reference/env-vars.md#client-qatlas-配置yaml-onlyv0170)。
+完整字段映射 + YAML schema 见 [client config reference](cli-qatlas.md#qatlas-config) 与 [env-vars.md §Client](../reference/env-vars.md#client-qatlas-配置yaml-onlyv0170)。
 
-**服务端的 `.env`**（含 `NEO4J_*` / `QATLAS_S3_*` / `GITHUB_CLIENT_*` / `QATLAS_SYSTEM_PAT` 等）见 [server-config.md](../deployment/server-config.md) 与 [operations.md](../deployment/operations.md) 的「推荐的单机生产目录」段。
+**服务端的 `.env`**（含 `NEO4J_*` / `QATLAS_S3_*` / `GITHUB_CLIENT_*` / `QATLAS_SYSTEM_PAT` 等）见 [server-config.md](../server/server-config.md) 与 [operations.md](../server/operations.md) 的「推荐的单机生产目录」段。
 
 ---
 
@@ -196,7 +196,7 @@ qatlas paper get markdown 10.1103/PhysRevLett.103.150502 -o hhl.md
 qatlas paper status 0811.3171v3 --kind pdf
 ```
 
-详细 flag 与退出码见 [CLI · qatlas paper](../reference/cli-qatlas.md#qatlas-paper)。
+详细 flag 与退出码见 [CLI · qatlas paper](cli-qatlas.md#qatlas-paper)。
 
 **底层：直接 curl** —— agent 不依赖 Python client、或想要更细粒度控制时：
 
@@ -228,7 +228,7 @@ N 个并发请求同一篇论文被**同一 process** 内 server-side 自动 ded
 所有调用方看到同一份 Job snapshot。**跨 edge 不 dedupe**（issue [#13](https://github.com/IAI-USTC-Quantum/QuantumAtlas/issues/13)
 跟踪 active-active 部署的优化）。完整 LRO 状态表、各 phase 字段含义、
 agent 决策三元组（state / pdf_ready / md_ready）见
-[REST API · 长任务](../reference/rest-api.md#长任务lroapipapersid_or_doimarkdownpdf)。
+[REST API · 长任务](../server/rest-api.md#长任务lroapipapersid_or_doimarkdownpdf)。
 
 **鉴权**：`papers:read` scope（与现有 `/api/papers/stats` 同）。**没有匿名入口**——
 对外受众范围由 PAT / session token 控制，部署方对 markdown / PDF 字节的对外
@@ -337,7 +337,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
   "https://quantum-atlas.ai/api/papers/quant-ph/9508027v1/upload-pdf?overwrite=true"
 ```
 
-具体反代配置（Caddy 现在已经是纯 reverse_proxy）见 [deployment.md](../deployment/operations.md)。
+具体反代配置（Caddy 现在已经是纯 reverse_proxy）见 [deployment.md](../server/operations.md)。
 
 ---
 

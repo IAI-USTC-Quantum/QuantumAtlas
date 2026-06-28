@@ -4,9 +4,9 @@ The single source of truth for the API spec is ``internal/apidocs/swagger.json``
 generated from the swaggo annotations by ``pixi run swagger`` and compiled into
 the qatlasd binary (served live at ``/swagger``). To avoid committing a
 second copy that could silently drift, we do NOT keep a copy under ``docs/``.
-Instead this hook copies the committed spec into ``docs/reference/openapi.json``
+Instead this hook copies the committed spec into ``docs/server/openapi.json``
 at build time so the ``mkdocs-swagger-ui-tag`` plugin can render it, then removes
-it afterwards. ``docs/reference/openapi.json`` is gitignored.
+it afterwards. ``docs/server/openapi.json`` is gitignored.
 
 Read the Docs runs ``mkdocs build`` after a plain checkout (no Go toolchain), so
 this relies only on the committed JSON — never on regenerating it here.
@@ -20,7 +20,7 @@ from pathlib import Path
 # Resolved at runtime from the mkdocs config file path so the hook works
 # regardless of the process cwd (RTD, pixi, local serve).
 _SPEC_REL = Path("internal/apidocs/swagger.json")
-_DEST_REL = Path("docs/reference/openapi.json")
+_DEST_REL = Path("docs/server/openapi.json")
 
 
 def _paths(config) -> tuple[Path, Path]:

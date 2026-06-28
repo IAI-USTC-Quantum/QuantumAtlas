@@ -238,7 +238,7 @@ func docNeedsMineru() {}
 // @Description for either id form when a DOI contribution is on file;
 // @Description pass `?force_arxiv=1` to opt out per request (DOI input
 // @Description with force_arxiv + no arxiv twin returns 409). See
-// @Description docs/reference/upload-api.md §Canonical resolution.
+// @Description docs/server/upload-api.md §Canonical resolution.
 // @Description
 // @Description Long-running operation semantics: on cache miss the
 // @Description server may transparently fetch the PDF from arxiv.org
@@ -307,7 +307,7 @@ func docPaperMarkdownStatus() {}
 // @Description serves the DOI PDF for either id form. Pass
 // @Description `?force_arxiv=1` to opt out per request (DOI input
 // @Description without an arxiv twin then returns 409). See
-// @Description docs/reference/upload-api.md §Canonical resolution.
+// @Description docs/server/upload-api.md §Canonical resolution.
 // @Description
 // @Description Long-running operation semantics mirror /markdown: cache
 // @Description miss returns 202 with Operation-Location pointing at

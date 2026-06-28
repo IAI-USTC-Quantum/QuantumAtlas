@@ -4,7 +4,7 @@
 > 边界、数据流与对账规则。本文给"为什么不把 PDF 塞 Neo4j 节点属性"、"图脏了怎么重建"、
 > "桶之间漏对象怎么核"这类反复出现的问题一个 canonical 回答。
 >
-> **不在范围**：具体安装步骤 / 容器配置 / bootstrap 脚本走 [`deployment/`](../deployment/index.md)；
+> **不在范围**：具体安装步骤 / 容器配置 / bootstrap 脚本走 [`deployment/`](../server/index.md)；
 > 项目整体应用分层走 [`architecture.md`](architecture.md)；多边缘节点拓扑走内部仓库的
 > 部署文档。
 
@@ -93,7 +93,7 @@ flowchart LR
   silent last-writer-wins）
 - client 上传时 `?expected_sha256=` 做 in-transit 损坏防护（PyPI / Docker 同款）
 
-完整 upload 写口语义、conditional PUT 实现细节走 [`reference/upload-api.md`](../reference/upload-api.md)。
+完整 upload 写口语义、conditional PUT 实现细节走 [`reference/upload-api.md`](../server/upload-api.md)。
 
 ??? note "为什么是 arxiv ID 而不是 content-addressed（sha256 寻址）"
     content-addressed 命名（`raw/<sha[:2]>/<sha>.pdf`，按 SHA256 寻址）的诱惑是：天然
@@ -429,11 +429,11 @@ count(target bucket recursive) >= count(source bucket recursive prefix)
 
 **部署侧细节**（具体安装步骤 / 配置 / 运维）：
 
-- [`deployment/rustfs.md`](../deployment/rustfs.md) —— RustFS bucket / user / policy bootstrap，
+- [`deployment/rustfs.md`](../server/rustfs.md) —— RustFS bucket / user / policy bootstrap，
   notify webhook + Fluent Bit 事件流，dual-endpoint presign 配置
-- [`deployment/neo4j.md`](../deployment/neo4j.md) —— Neo4j 5.26 LTS 安装（apt @ WSL2）、
+- [`deployment/neo4j.md`](../server/neo4j.md) —— Neo4j 5.26 LTS 安装（apt @ WSL2）、
   `preferIPv4Stack` IPv6 dual-stack 坑（WSL #14154）修复、Windows portproxy 暴露给 mesh
-- [`deployment/backup-and-upgrade.md`](../deployment/backup-and-upgrade.md) —— 三层数据
+- [`deployment/backup-and-upgrade.md`](../server/backup-and-upgrade.md) —— 三层数据
   的备份与灾难恢复（Neo4j dump 流程、RustFS rsync、PocketBase pb_data 备份）
 
 **项目整体分层**：
@@ -444,9 +444,9 @@ count(target bucket recursive) >= count(source bucket recursive prefix)
 
 **API 与运维**：
 
-- [`reference/upload-api.md`](../reference/upload-api.md) —— upload handler 同步写、S3
+- [`reference/upload-api.md`](../server/upload-api.md) —— upload handler 同步写、S3
   conditional PUT、sha256 idempotency、bucket versioning 完整规范
-- [`deployment/migration-storage-layout.md`](../deployment/migration-storage-layout.md) ——
+- [`deployment/migration-storage-layout.md`](../server/migration-storage-layout.md) ——
   把 wiki / raw / data / pb_data 从仓库内搬到 XDG / 挂载点的实操步骤
 
 **多边缘部署**：跨节点拓扑（节点列表、IP、共享什么、不共享什么、用户/PAT 影响、presign URL

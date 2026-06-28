@@ -164,4 +164,4 @@ schema 文档在 `atlas/designer/quantum_ir.py`（Python 源码定义）。
 ## 下一步
 
 - 想做新的 algorithm Wiki 页面？[写 Wiki 页面](write-wiki-pages.md)
-- 想用图谱关系？[Neo4j 部署](../deployment/neo4j.md)
+- 想用图谱关系？[Neo4j 部署](../server/neo4j.md)

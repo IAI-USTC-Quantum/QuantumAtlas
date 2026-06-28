@@ -167,7 +167,7 @@ dual-read 命中由 `paperassets.LegacyLayoutReads()` 计数，运维可观测 m
 
 !!! info "DOI 入口同一个端点"
     `GET /api/papers/{id_or_doi}/markdown` 自动 detect DOI（`^10\.\d{4,9}/`），
-    经 OpenAlex 反查成 arxiv_id 后走同一套 handler。详见 [REST API · DOI 寻址](rest-api.md#doi-addressing)。
+    经 OpenAlex 反查成 arxiv_id 后走同一套 handler。详见 [REST API · DOI 寻址](../server/rest-api.md#doi-addressing)。
 
 ## 7. 跟 Wiki page id 的关系
 

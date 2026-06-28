@@ -117,7 +117,7 @@ plugins:
             show_signature_annotations: true
             separate_signature: true
   # Render the swaggo-generated OpenAPI spec as an embedded Swagger UI on
-  # docs/reference/api-explorer.md. The spec is copied into the docs tree by
+  # docs/server/api-explorer.md. The spec is copied into the docs tree by
   # hooks/openapi_spec.py at build time (single source: internal/apidocs).
   # Bundles its own JS/CSS (no CDN) and syncs with Material's dark mode.
   # supportedSubmitMethods=[] disables "Try it out": the RTD-hosted docs are a

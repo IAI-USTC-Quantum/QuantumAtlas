@@ -81,7 +81,7 @@ func DOINodeKey(doi string) string { return "doi:" + doi }
 // the caller supplies a DOI, this is consulted FIRST — before any
 // OpenAlex resolution — because DOI is the canonical identity for
 // any work that has both an arxiv preprint and a DOI-only published
-// version (see docs/reference/upload-api.md §Canonical resolution).
+// version (see docs/server/upload-api.md §Canonical resolution).
 // `?force_arxiv=1` bypasses this lookup.
 //
 // The synthetic key matches the "<kind>/doi/<reg>/<suffix>" bucket

@@ -45,9 +45,9 @@
 
     **下一步：**
 
-    - [写作 Wiki 页面](guides/write-wiki-pages.md) — 想贡献内容了？
-    - [浏览图谱](guides/circuit-toolchain.md#explore-graph) — 用图查询关系
-    - [reference/CLI](reference/cli-qatlas.md) — 看全 CLI 命令
+    - [写作 Wiki 页面](client/write-wiki-pages.md) — 贡献内容
+    - [浏览图谱](client/circuit-toolchain.md#explore-graph) — 用图查询关系
+    - [CLI 参考](client/cli-qatlas.md) — 看全 CLI 命令
 
 === ":material-upload: 我是贡献者"
 
@@ -95,10 +95,10 @@
 
     **下一步：**
 
-    - [上传论文资产](guides/upload-assets.md) — sha256 dedup、冲突处理、`--overwrite`
-    - [用 MinerU 解析](guides/parse-with-mineru.md) — 单篇 / 队列模式 / 并发协作
-    - [写 Wiki 页面](guides/write-wiki-pages.md) — 把论文沉淀成 Concept / Paper / Algo
-    - [管理 PAT](guides/manage-credentials.md) — 撤销、轮换、scope 升降
+    - [上传论文资产](client/upload-assets.md) — sha256 dedup、冲突处理、`--overwrite`
+    - [用 MinerU 解析](client/parse-with-mineru.md) — 单篇 / 队列模式 / 并发协作
+    - [写 Wiki 页面](client/write-wiki-pages.md) — 把论文沉淀成 Concept / Paper / Algo
+    - [管理 PAT](client/manage-credentials.md) — 撤销、轮换、scope 升降
 
 === ":material-server-network: 我是运维者"
 
@@ -144,10 +144,10 @@
 
     **下一步：**
 
-    - [部署运维总览](deployment/index.md) — 反代、TLS、OAuth、Neo4j、RustFS 全过完一遍
-    - [GitHub OAuth 接入](deployment/github-oauth.md)
-    - [反向代理模板](deployment/reverse-proxy.md) — Caddy 和 nginx 配置
-    - [健康检查 + 监控](deployment/health-and-monitoring.md)
+    - [Go 服务端总览](server/index.md) — 反代、TLS、OAuth、Neo4j、RustFS 全过完一遍
+    - [GitHub OAuth 接入](server/github-oauth.md)
+    - [反向代理模板](server/reverse-proxy.md) — Caddy 和 nginx 配置
+    - [健康检查 + 监控](server/health-and-monitoring.md)
 
 === ":material-code-braces: 我是开发者"
 
@@ -208,7 +208,7 @@
 
     - [贡献指南](contributing.md) — 仓库结构、Conventional Commits、release 流程
     - [架构概览](concepts/index.md) — 理解代码组织前先看
-    - [参考手册](reference/index.md)
+    - [参考](reference/index.md)
 
 ---
 
@@ -232,9 +232,9 @@
 
 - **Server (`qatlasd`)**: 三入口 CLI flag > OS env > `.env` 文件 > default。最小 `.env` 见 [reference/env-vars](reference/env-vars.md) 和模板 [`.env.example`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.env.example)。
 
-## 找不到答案？
+## 获取帮助
 
-- 看 [操作指南](guides/index.md)（"怎么做某件事"）
-- 查 [参考手册](reference/index.md)（"API 长什么样"）
+- 看 [Python 客户端](client/index.md)（客户端工作流）
+- 查 [参考](reference/index.md)（字段 / 格式 / 环境变量）
 - 翻 [FAQ](about/faq.md)
 - 提 [GitHub issue](https://github.com/IAI-USTC-Quantum/QuantumAtlas/issues)

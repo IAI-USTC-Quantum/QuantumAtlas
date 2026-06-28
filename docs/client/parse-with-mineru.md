@@ -7,7 +7,7 @@ QuantumAtlas 默认只暴露**一条** MinerU 路径——**贡献者本地解�
 > **Self-hosted 部署**可以通过 `QATLAS_PAPER_ACCESS_ENABLED=true`
 > 在受控范围内**额外**开启 server-side on-demand conversion，详见
 > [License & Attribution · 论文访问开关](../about/license-and-attribution.md#论文访问开关-self-hosted)
-> 与 [env-vars · Server-side MinerU](../reference/env-vars.md#server-side-mineru仅当-qatlas_asset_downloads_enabledtrue-时生效)。
+> 与 [env-vars · Server-side MinerU](../reference/env-vars.md#server-side-mineru)。
 > 那条路径不替代本页讲的贡献者流程——两者并行：开关 ON 时 server 会用
 > **自己的** MinerU token 在 `GET /markdown` 缓存未命中时透明跑一次；贡献者
 > 仍可继续用自己的配额走 `qatlas contrib mineru` → `upload-mineru` 主动暖缓存。

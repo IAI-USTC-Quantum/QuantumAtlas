@@ -140,7 +140,7 @@ type Config struct {
 	// its own dedicated svcacct. Keeping the dumb storage layer free of
 	// our evolving backend conventions is the whole point — so none of
 	// the sink's wiring (bucket name, sink keys, listen addr, webhook
-	// token) lives in this config. See docs/deployment/rustfs.md.
+	// token) lives in this config. See docs/server/rustfs.md.
 	EdgeName string
 
 	// PaperAccessEnabled is the master switch for the opt-in
@@ -885,7 +885,7 @@ func (c *Config) IsGitHubLoginAllowed(login string) bool {
 //
 // or set the explicit env vars (QATLAS_RAW_DIR / _DATA_DIR /
 // _PB_DATA_DIR) to point at the old paths. See
-// docs/deployment/migration-storage-layout.md.
+// docs/server/migration-storage-layout.md.
 func defaultXDGSubdir(name string) string {
 	base := strings.TrimSpace(os.Getenv("XDG_DATA_HOME"))
 	if base == "" || !filepath.IsAbs(base) {

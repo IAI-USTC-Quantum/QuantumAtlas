@@ -306,7 +306,7 @@ uv run --with-requirements docs/requirements.txt -- mkdocs serve
 
 Wiki 在独立 repo：<https://github.com/IAI-USTC-Quantum/QuantumAtlas-Wiki>
 
-完整模板和写作指南：[写 Wiki 页面](guides/write-wiki-pages.md)。
+完整模板和写作指南：[写 Wiki 页面](client/write-wiki-pages.md)。
 
 简版流程：
 
@@ -351,7 +351,7 @@ catalog 里却永远有几千篇 PDF 在 `/api/papers/needs-mineru` 队列里等
 **零代码贡献路径**。
 
 完整使用指南、错误码分类、daily-limit 退避语义、claim 原子租约模型见
-[用 MinerU 解析 PDF（贡献你的额度）](guides/parse-with-mineru.md)。
+[用 MinerU 解析 PDF（贡献你的额度）](client/parse-with-mineru.md)。
 最简流程：
 
 ```bash
@@ -367,7 +367,7 @@ qatlas contrib mineru --watch
 ```
 
 想跨终端 / 跨开关机持续跑（systemd unit、tmux、agent CLI 后台 shell 等方案）见指南里的
-[把 daemon 挂久一点](guides/parse-with-mineru.md#把-daemon-挂久一点)。
+[把 daemon 挂久一点](client/parse-with-mineru.md#把-daemon-挂久一点)。
 
 ---
 

@@ -21,7 +21,7 @@ qatlas contrib pdf 2501.00010v1 --pdf paper.pdf
 
 把 PDF 解析成 markdown + 图片再推回 server，走 [`qatlas contrib mineru`](parse-with-mineru.md)——它用你自己的 MinerU 配额跑解析，再把完整 bundle（`full.md` + 每张 `images/*`）一次推给 server 的 `upload-mineru` 端点。server 解包、把 `full.md` 写到 markdown bucket、每张 `images/<name>` 写到 images bucket，保证一篇论文的 md 和图片**同时**落到对应桶里。
 
-## sha256 dedup：上传一次还是上传两次？
+## sha256 去重语义
 
 server 端的 object 都带 `x-amz-meta-sha256` metadata，所以**同一字节再次上传是 200 OK + `{unchanged:true}` 短路**——零写入、幂等。换句话说：
 
@@ -53,7 +53,7 @@ server 用 S3 `If-None-Match: "*"` conditional PUT，**多 client 同时上传�
 
 `contrib mineru` 内部每张图、每个 md 各自走这条 conditional PUT 流水线；保证 markdown 写之前所有 image 先落盘（markdown 是 completion marker）。
 
-参看 [对象寻址](../concepts/storage-architecture.md)（即 storage-architecture）和 [上传 API 详解](../reference/upload-api.md) 了解底层语义。
+参看 [对象寻址](../concepts/storage-architecture.md)（即 storage-architecture）和 [上传 API 详解](../server/upload-api.md) 了解底层语义。
 
 ## 完整 flags
 
@@ -113,4 +113,4 @@ qatlas wiki list --type source
 
 - 继续做 MinerU 解析？[parse-with-mineru](parse-with-mineru.md)
 - 写 paper Wiki 页面？[write-wiki-pages](write-wiki-pages.md)
-- 详细 API 参考（status code 全量）？[reference/upload-api](../reference/upload-api.md)
+- 详细 API 参考（status code 全量）？[reference/upload-api](../server/upload-api.md)

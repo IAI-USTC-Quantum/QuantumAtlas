@@ -809,7 +809,7 @@ paths:
         for either id form when a DOI contribution is on file;
         pass `?force_arxiv=1` to opt out per request (DOI input
         with force_arxiv + no arxiv twin returns 409). See
-        docs/reference/upload-api.md §Canonical resolution.
+        docs/server/upload-api.md §Canonical resolution.
 
         Long-running operation semantics: on cache miss the
         server may transparently fetch the PDF from arxiv.org
@@ -963,7 +963,7 @@ paths:
         serves the DOI PDF for either id form. Pass
         `?force_arxiv=1` to opt out per request (DOI input
         without an arxiv twin then returns 409). See
-        docs/reference/upload-api.md §Canonical resolution.
+        docs/server/upload-api.md §Canonical resolution.
 
         Long-running operation semantics mirror /markdown: cache
         miss returns 202 with Operation-Location pointing at

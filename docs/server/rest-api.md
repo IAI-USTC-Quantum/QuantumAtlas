@@ -106,7 +106,7 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
 !!! note "内容追加不走 server"
     QuantumAtlas **没有**在线 ingest 端点。Wiki 内容追加走离线多 subagent 流水线
     （读 paper → 总结 concept → 去重合并 → commit 到 wiki repo），server 只读地
-    serve 生成好的词条。详见 [生成 wiki 内容](../guides/generate-wiki-content.md)。
+    serve 生成好的词条。详见 [生成 wiki 内容](../client/generate-wiki-content.md)。
 
 ### Graph（Neo4j）
 
@@ -422,7 +422,7 @@ curl https://<server>/api/papers/quant-ph/9508027v2/markdown/status \
 | `failed` `kind=fatal` | ✗ | ✗ | 永久失败，放弃 |
 | `failed` `kind=retryable` | ✗ / ✅ | ✗ | 到 `retry_after_iso` 后重试 |
 
-#### DOI 入口
+#### DOI 入口 { #doi-addressing }
 
 `{id_or_doi}` 路径段头部如果匹配 `^10\.\d{4,9}/`（IANA DOI 前缀），server
 自动经 OpenAlex 反查 → canonical arxiv id → 走同一套 handler。
@@ -517,7 +517,7 @@ curl -X POST https://<server>/api/graph/query \
 **Neo4j 故障时返回 200 + `{"error": "..."}`**——这是有意的，让 SPA 渲染"Neo4j 不可用"banner 而不是错误页。
 
 !!! warning "已接受的风险：Cypher 无代价上限"
-    `query` 是只读的（驱动层 `ExecuteRead` 拒绝写），但**没有查询代价上限**——理论上一条病态查询（如无界笛卡尔积）能拖垮 Neo4j。**这是有意不加限制的取舍**：过了 `graph:read` 鉴权的调用方即「自己人」（登录用户或显式勾了 `graph:read` 的 PAT 持有者），同一个人本就能直连 Bolt 跑同样的查询，加应用层限制器只是徒增复杂度而挡不住真正想跑重查询的人。唯一缓解手段是**撤销出问题的凭据**（删 PAT / 登出用户）。详见 [鉴权模型](../concepts/auth-model.md) 与 [Neo4j 部署](../deployment/neo4j.md)。
+    `query` 是只读的（驱动层 `ExecuteRead` 拒绝写），但**没有查询代价上限**——理论上一条病态查询（如无界笛卡尔积）能拖垮 Neo4j。**这是有意不加限制的取舍**：过了 `graph:read` 鉴权的调用方即「自己人」（登录用户或显式勾了 `graph:read` 的 PAT 持有者），同一个人本就能直连 Bolt 跑同样的查询，加应用层限制器只是徒增复杂度而挡不住真正想跑重查询的人。唯一缓解手段是**撤销出问题的凭据**（删 PAT / 登出用户）。详见 [鉴权模型](../concepts/auth-model.md) 与 [Neo4j 部署](neo4j.md)。
 
 ### `POST /api/pat`（session only）
 

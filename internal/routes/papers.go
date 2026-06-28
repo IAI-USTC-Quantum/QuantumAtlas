@@ -125,7 +125,7 @@ func RegisterPapers(
 			ctx := re.Request.Context()
 
 			// Canonical resolution rule (see
-			// docs/reference/upload-api.md §Canonical resolution): a
+			// docs/server/upload-api.md §Canonical resolution): a
 			// paper_works row with `identifier_scheme='doi'` ALWAYS
 			// wins over its arxiv twin when both exist. The DOI is the
 			// canonical identity of the published version; the arxiv

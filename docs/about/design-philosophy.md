@@ -28,7 +28,7 @@ Wiki 写"这个算法解决什么问题、怎么解的、跟哪些原语相关"�
 1. **概念相似或可视作同一概念**（如 variational ≈ parameterized quantum circuit）→ **合并**为一个词条，整合两边正文。
 2. **A 是 B 的子概念 / 延伸**（如 hamiltonian simulation ⊂ quantum simulation）→ **不合并**，用双向 `[[...]]` 交叉链接点明上下位关系。
 
-`entity` / `comparison` 的 type 常量在 Go 侧仍可解析（兼容未迁移的历史数据），但统计与 UI 一律按 concept 处理；新页面统一 `type: concept`。规模化追加见 [generate-wiki-content.md](../guides/generate-wiki-content.md) 的多 subagent 流水线。
+`entity` / `comparison` 的 type 常量在 Go 侧仍可解析（兼容未迁移的历史数据），但统计与 UI 一律按 concept 处理；新页面统一 `type: concept`。规模化追加见 [generate-wiki-content.md](../client/generate-wiki-content.md) 的多 subagent 流水线。
 
 > **Graph 暂时隐去**：图谱可视化尚未打磨好，前端入口（侧栏 + 首页 CTA）已隐藏，但路由与 `/api/graph/*` 后端保留，待成熟后重新开放。读者现在以词条为中心浏览，关系靠词条内的 `[[...]]` 交叉链接表达。
 

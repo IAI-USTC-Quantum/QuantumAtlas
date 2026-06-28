@@ -91,13 +91,13 @@ flowchart TB
 
     本地用自己的 MinerU 配额跑解析。**server 颁发 30 分钟原子 claim**——多个贡献者并发跑不会撞重。需要 `papers:write` scope。
 
-详见 [上传论文资产](../guides/upload-assets.md) 和 [用 MinerU 解析](../guides/parse-with-mineru.md)。
+详见 [上传论文资产](../client/upload-assets.md) 和 [用 MinerU 解析](../client/parse-with-mineru.md)。
 
 ## Wiki 沉淀的两种方式
 
 从 Raw Markdown 到 Wiki 页面没有完全自动化的路径——**有意如此**。Wiki 是人 + LLM 共同审阅后的结果，不是直接拼接。
 
-- **人写**：研究者读完 raw markdown，提炼出 algorithm / primitive / paper 三类页面。模板见 [写 Wiki 页面](../guides/write-wiki-pages.md)。
+- **人写**：研究者读完 raw markdown，提炼出 algorithm / primitive / paper 三类页面。模板见 [写 Wiki 页面](../client/write-wiki-pages.md)。
 - **LLM 辅助**：通过 `qatlas extractor` 抽取候选算法描述（实验性），人 review 后编辑入 Wiki repo。
 
 Wiki 是**独立的 Git 仓库**（[QuantumAtlas-Wiki](https://github.com/IAI-USTC-Quantum/QuantumAtlas-Wiki)），任何人 clone / commit / PR 都可以。Server 端的 wiki checkout **只接受 fast-forward pull**（`POST /api/wiki/sync/pull`），无需 SSH 上服务器。
@@ -128,7 +128,7 @@ flowchart LR
     C -->|qatlas validator --compare-with qft| F[等价性 / 性能验证]
 ```
 
-每一步都可以独立运行 / 替换 / 缓存。`circuit_ir.json` 是 Quantum IR 的载体，是后续步骤的统一输入。详见 [电路工具链](../guides/circuit-toolchain.md)。
+每一步都可以独立运行 / 替换 / 缓存。`circuit_ir.json` 是 Quantum IR 的载体，是后续步骤的统一输入。详见 [电路工具链](../client/circuit-toolchain.md)。
 
 ## 关键不变量
 

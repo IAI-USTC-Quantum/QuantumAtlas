@@ -38,7 +38,7 @@
 
     理论可以——Go binary 可以 cross-compile 出 Windows 版（release pipeline 当前没出 Windows artifact，需要手 build）。但 systemd / Caddy 这套生态都是 Linux 一等，Windows 不建议生产。
 
-    **WSL2 可以**——按 [Neo4j 部署](../deployment/neo4j.md) 那段 WSL2 注意事项配 portproxy 即可。
+    **WSL2 可以**——按 [Neo4j 部署](../server/neo4j.md) 那段 WSL2 注意事项配 portproxy 即可。
 
 ??? question "macOS 能跑 server 吗？"
 
@@ -132,7 +132,7 @@
 
 ??? question "qatlasd 默认监听 127.0.0.1，怎么对外？"
 
-    前面挂反代（Caddy 推荐）做 TLS 终结。**不要**直接 `--http=0.0.0.0:4200` 暴露——会绕过反代的 TLS / 鉴权 / Host header preserve。详见 [反向代理](../deployment/reverse-proxy.md)。
+    前面挂反代（Caddy 推荐）做 TLS 终结。**不要**直接 `--http=0.0.0.0:4200` 暴露——会绕过反代的 TLS / 鉴权 / Host header preserve。详见 [反向代理](../server/reverse-proxy.md)。
 
 ??? question "pb_data 多大？"
 

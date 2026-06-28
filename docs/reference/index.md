@@ -1,40 +1,13 @@
-# 参考手册
+# 参考 / 数据格式
 
-> 当你已经知道想做什么，只想查"那个 flag 叫什么"/"那个字段是必填的吗"/"哪个 endpoint 返回什么 status code"。
+跨组件的稳定约定：环境变量、Wiki 页面 schema、arXiv ID 格式。需要查具体字段 / flag / 格式时来这里。
 
-## CLI
-
-<div class="grid cards" markdown>
-
--   :material-console:{ .lg .middle } **[`qatlas` 客户端 CLI](cli-qatlas.md)**
-
-    ---
-
-    全部子命令（`ingest` / `upload` / `mineru` / `auth` / `wiki` / `designer` / `codegen` / `validator` / `estimator` / ...）+ 每个 flag 完整说明。
-
--   :material-server-network:{ .lg .middle } **[`qatlasd` 服务端 CLI](cli-qatlasd.md)**
-
-    ---
-
-    `serve` / `service install` / `pat mint` / `storage prune` / `superuser upsert` 等运维命令。
-
-</div>
-
-## API & 配置
+!!! tip "CLI 与 API 参考在组件分节下"
+    - `qatlas` 客户端 CLI → [Python 客户端 › CLI 参考](../client/cli-qatlas.md)
+    - `qatlasd` 服务端 CLI → [Go 服务端 › CLI 参考](../server/cli-qatlasd.md)
+    - REST API / Upload API / API Explorer → [Go 服务端 › API](../server/rest-api.md)
 
 <div class="grid cards" markdown>
-
--   :material-api:{ .lg .middle } **[REST API](rest-api.md)**
-
-    ---
-
-    `/api/papers/*` / `/api/wiki/*` / `/api/pat/*` / `/api/graph/*` / `/api/health` 全 endpoint 参考（method / path / auth / payload / response / status codes）。
-
--   :material-upload:{ .lg .middle } **[Upload API 详解](upload-api.md)**
-
-    ---
-
-    `POST /api/papers/{id}/upload-pdf` 完整流程：sha256 dedup、in-transit guard、`If-None-Match` 并发安全、覆盖语义。
 
 -   :material-cog:{ .lg .middle } **[环境变量](env-vars.md)**
 

@@ -21,7 +21,7 @@ qatlasd [global flags] <subcommand> [args...]
 
 ---
 
-## `serve`：启动 HTTP server
+## `serve`：启动 HTTP server { #serve }
 
 ```
 qatlasd serve [domain(s)] [flags]
@@ -99,7 +99,7 @@ docker run --rm -p 4200:4200 \
 QATLAS_DOTENV=/etc/quantum-atlas/.env qatlasd serve
 ```
 
-完整字段语义见 [`server-config.md`](../deployment/server-config.md)。
+完整字段语义见 [`server-config.md`](server-config.md)。
 
 ---
 
@@ -285,7 +285,7 @@ qatlasd storage prune --prefix pdf/2511/ --older-than 30d --yes
 
 **永远不会删的对象**：current version、delete marker、metadata sidecar（LocalStore）。
 
-详见 [RustFS 部署](../deployment/rustfs.md#prune)。
+详见 [RustFS 部署](rustfs.md#prune)。
 
 ---
 

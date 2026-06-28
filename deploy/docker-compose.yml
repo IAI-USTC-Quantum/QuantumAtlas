@@ -10,13 +10,13 @@
 #                Browser UI on 127.0.0.1:7474, Bolt on internal 7687.
 #   * qatlasd  — the Go server. Listens on 127.0.0.1:4200; put a TLS
 #                reverse proxy in front of it for the public hostname
-#                (see docs/deployment/reverse-proxy.md or add a Caddy
+#                (see docs/server/reverse-proxy.md or add a Caddy
 #                service block below).
 #
 # This file is intended for single-host evaluation / lab / personal
 # setups. For production multi-edge use the systemd flavour
 # (qatlasd installed via install-qatlasd.sh + service install) plus an
-# external rustfs / neo4j — see docs/deployment/docker.md for the full
+# external rustfs / neo4j — see docs/server/docker.md for the full
 # decision matrix.
 #
 # Usage:
@@ -30,7 +30,7 @@
 #
 # After rustfs comes up you'll need to create a service account + the
 # three buckets (qatlas-pdf, qatlas-md, qatlas-images) before qatlasd
-# can write to them. The docs/deployment/docker.md page walks through
+# can write to them. The docs/server/docker.md page walks through
 # the mc commands; the included scripts/rustfs_bootstrap.sh also works
 # (point it at http://localhost:9000).
 # ─────────────────────────────────────────────────────────────────────────
@@ -68,7 +68,7 @@ services:
       NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?NEO4J_PASSWORD required in .env}
       # JVM heap caps — Neo4j is memory-sensitive. 1G suits the dev /
       # 10k-node regime; bump to 2-4G once the graph grows past 100k
-      # nodes. See docs/deployment/neo4j.md "Hardware sizing".
+      # nodes. See docs/server/neo4j.md "Hardware sizing".
       NEO4J_server_memory_heap_max__size: ${NEO4J_HEAP:-1G}
     volumes:
       - ./data/neo4j/data:/data
@@ -100,7 +100,7 @@ services:
       QATLAS_S3_ENDPOINT: http://rustfs:9000
       # Empty when not split (single-host eval). Set to a public-facing
       # HTTPS URL when clients sit outside the docker network and need
-      # presigned-URL access. See docs/deployment/rustfs.md#dual-endpoint.
+      # presigned-URL access. See docs/server/rustfs.md#dual-endpoint.
       QATLAS_S3_PUBLIC_ENDPOINT: ${QATLAS_S3_PUBLIC_ENDPOINT:-}
       QATLAS_S3_BUCKET_PDF: qatlas-pdf
       QATLAS_S3_BUCKET_MD: qatlas-md
@@ -141,7 +141,7 @@ services:
     ports:
       # Loopback only by default — put a reverse proxy in front for
       # public access (see Caddy / nginx snippets in
-      # docs/deployment/reverse-proxy.md). To expose directly, change
+      # docs/server/reverse-proxy.md). To expose directly, change
       # to "4200:4200" — only safe on a private network.
       - "127.0.0.1:4200:4200"
 

@@ -8,7 +8,7 @@
 # stay stateless and trivially redeploy.
 #
 # For the all-in-one flavour see ./docker-compose.yml.
-# Full discussion: docs/deployment/docker.md.
+# Full discussion: docs/server/docker.md.
 #
 # Usage:
 #   cp .env.docker.example .env

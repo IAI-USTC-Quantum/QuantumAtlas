@@ -7,7 +7,7 @@
 >
 > Application-level upload semantics (sha256 dedup, 409 conflict
 > behaviour, `?expected_sha256=` guard) live in
-> [upload-api.md](../reference/upload-api.md). Wider storage architecture (why
+> [upload-api.md](upload-api.md). Wider storage architecture (why
 > we have separate Raw / Metadata / Graph layers) lives in
 > [storage-architecture.md](../concepts/storage-architecture.md).
 
@@ -44,7 +44,7 @@ all-or-nothing rule is enforced by
 half-set quartet so non-serve subcommands like `qatlasd --help` /
 `qatlasd pat list` keep working on a partially-configured `.env`.
 
-## 对象存储不必跟 qatlasd 同机：支持哪些后端？
+## 支持的对象存储后端
 
 qatlasd 通过 [`minio-go/v7`](https://github.com/minio/minio-go) 走 **AWS SigV4** 协议，所以**任何 S3-compatible 后端都能用**。验证过 / 强推荐：
 
@@ -226,7 +226,7 @@ listings manageable.
 | `markdown` | `markdown/<prefix>/<id>v<n>.md`       | `text/markdown; charset=utf-8`       |
 
 User metadata always includes `x-amz-meta-sha256` (lowercase) with
-the hex digest of the bytes — see [upload-api.md](../reference/upload-api.md).
+the hex digest of the bytes — see [upload-api.md](upload-api.md).
 This is the field `qatlasd storage prune` and the upload handler
 both rely on for idempotency / dedup.
 
@@ -607,7 +607,7 @@ S3 无 append，但这里根本不需要 append（不是 read-modify-write 同�
 
 ## Related docs
 
-- [upload-api.md](../reference/upload-api.md) — request/response shape, sha256
+- [upload-api.md](upload-api.md) — request/response shape, sha256
   semantics, in-transit guard from the client's perspective.
 - [storage-architecture.md](../concepts/storage-architecture.md) — wider architecture (why
   Raw / Metadata / Graph are separate layers).

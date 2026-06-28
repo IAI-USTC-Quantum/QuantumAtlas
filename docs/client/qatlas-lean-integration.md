@@ -20,7 +20,9 @@ JSON-RPC connection to the server and does not expose public HTTP endpoints.
    `theorems` and `verifications` collections.
 
 The WebSocket transport is message-framed JSON-RPC: each WebSocket message is
-one JSON object. Do not use `Content-Length` stream framing on this transport.
+one JSON object. If the plugin uses `vscode-jsonrpc`, attach it through a
+WebSocket message adapter; the default `Content-Length:` stream framing is for
+stdio/TCP streams and is not valid on this transport.
 
 ## Server configuration
 

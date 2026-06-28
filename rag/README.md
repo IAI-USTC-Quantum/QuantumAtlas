@@ -49,4 +49,4 @@ uv run uvicorn qatlas_rag.embed.worker:app --host 0.0.0.0 --port 8801
 
 ## 部署端到端
 
-整套（Qdrant + embed worker + qatlasd 启用 RAG）部署见 [`docs/deployment/rag.md`](../docs/deployment/rag.md)。
+整套（Qdrant + embed worker + qatlasd 启用 RAG）部署见 [`docs/server/rag.md`](../docs/server/rag.md)。

@@ -101,7 +101,7 @@ QuantumAtlas 的 Wiki 模板和 schema 受这几篇影响：
 
 完整 contributor 列表见 [GitHub graphs](https://github.com/IAI-USTC-Quantum/QuantumAtlas/graphs/contributors)。
 
-## 想被加进 contributors？
+## 加入 contributors
 
 提 PR + 合并即可——GitHub 自动算。也欢迎在 issue 里指出"这里不对/这里没说清楚"。
 

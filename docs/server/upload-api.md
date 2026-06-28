@@ -8,7 +8,7 @@
 >
 > Storage / ops perspective (RustFS env vars, IAM policy, bucket
 > versioning lifecycle, `qatlasd storage prune` operator guide)
-> lives in [storage-rustfs.md](../deployment/rustfs.md).
+> lives in [storage-rustfs.md](rustfs.md).
 >
 > Paper metadata and asset status live in the PostgreSQL catalog; citation
 > graph data remains graph-specific. The upload endpoint no longer accepts
@@ -25,7 +25,7 @@
 
 These routes require auth: either a browser session token or a PAT
 (`Authorization: Bearer qat_…`) whose scopes include `papers:write`.
-See [contribute-content.md](../guides/contribute-content.md) for how to
+See [contribute-content.md](../client/contribute-content.md) for how to
 mint a PAT.
 
 MinerU processing leases use `claim_id` as the stable lease identifier
@@ -221,7 +221,7 @@ see identical concurrency behavior.
 
 ## Recovering an overwritten version (operator side)
 
-Bucket versioning is enabled (see [storage-rustfs.md](../deployment/rustfs.md)).
+Bucket versioning is enabled (see [storage-rustfs.md](rustfs.md)).
 When `--overwrite` replaces an object, the prior version becomes
 noncurrent and stays on disk. Ops can recover it:
 

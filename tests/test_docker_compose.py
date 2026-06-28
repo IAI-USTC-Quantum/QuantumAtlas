@@ -187,7 +187,7 @@ class TestDockerfileSanity:
 
     def test_runtime_user_is_nonroot(self, dockerfile: str) -> None:
         # USER nonroot:nonroot makes the container default to UID
-        # 65532. This is documented in docs/deployment/docker.md
+        # 65532. This is documented in docs/server/docker.md
         # (chown 65532:65532 ./data/* before first start); dropping it
         # to default root silently makes the warnings in docs wrong.
         assert "USER nonroot:nonroot" in dockerfile

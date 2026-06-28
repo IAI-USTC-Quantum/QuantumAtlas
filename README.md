@@ -78,7 +78,7 @@ curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh -s -- --version v0.2
 curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh -s -- --dir /opt/qatlas/bin
 ```
 
-支持 `linux/{amd64,arm64}` + `darwin/arm64` 三个平台（Intel Mac 用 [`go install`](docs/deployment/install.md) 路径）。
+支持 `linux/{amd64,arm64}` + `darwin/arm64` 三个平台（Intel Mac 用 [`go install`](docs/server/install.md) 路径）。
 
 装完后**手动**注册成 systemd 服务（脚本不再链式调用，保证在 dash / busybox 等流式 parser 上稳定）：
 
@@ -138,7 +138,7 @@ cp .env.example .env
 - PocketBase admin UI：`http://localhost:4200/_/`
 - PAT 管理页：`http://localhost:4200/pat`（CLI bearer 走 PAT，更细的 scope/过期/审计）
 
-生产部署、systemd 安装、反向代理和鉴权边界请看 [docs/deployment/](docs/deployment/index.md)。
+生产部署、systemd 安装、反向代理和鉴权边界请看 [docs/server/](docs/server/index.md)。
 
 ## 常用命令
 
@@ -185,18 +185,18 @@ server 项目自有字段统一用 `QATLAS_` 前缀；多人协作时通常什�
   3. 本地用自己的 MinerU token（`qatlas config set mineru_api_token ...`）跑 MinerU 后推回云端（`qatlas contrib mineru`）。
 - **Wiki 内容**走独立 Git 仓库（推荐作为应用仓库的兄弟目录 checkout），任何人都可以 clone / commit / PR；服务器侧的 Wiki checkout 只接受 fast-forward 拉取，通过 `POST /api/wiki/sync/pull` 触发，无需 SSH 上服务器。
 
-完整 CLI 选项、鉴权说明（`QATLAS_USER_HEADER` / bearer token）、ff-only 同步语义和推荐协作节奏见 [docs/guides/contribute-content.md](docs/guides/contribute-content.md)。
+完整 CLI 选项、鉴权说明（`QATLAS_USER_HEADER` / bearer token）、ff-only 同步语义和推荐协作节奏见 [docs/client/contribute-content.md](docs/client/contribute-content.md)。
 
 ## 文档导航
 
 > 在线版（推荐）：<https://quantum-atlas.readthedocs.io>。下面是仓库内对应路径。
 
 - [docs/concepts/architecture.md](docs/concepts/architecture.md): 项目的分层模型、source of truth、Wiki/Raw/Neo4j 边界，以及协作方式。
-- [docs/guides/contribute-content.md](docs/guides/contribute-content.md): Raw 贡献的三条路径、鉴权、Wiki Git 协作与服务器同步的完整 how-to。
-- [docs/reference/upload-api.md](docs/reference/upload-api.md): `qatlas contrib pdf` / `POST /api/papers/.../upload-pdf` 完整 API 参考（sha256 dedup、idempotent retry、in-transit guard、conflict 处理）。
+- [docs/client/contribute-content.md](docs/client/contribute-content.md): Raw 贡献的三条路径、鉴权、Wiki Git 协作与服务器同步的完整 how-to。
+- [docs/server/upload-api.md](docs/server/upload-api.md): `qatlas contrib pdf` / `POST /api/papers/.../upload-pdf` 完整 API 参考（sha256 dedup、idempotent retry、in-transit guard、conflict 处理）。
 - [docs/concepts/storage-architecture.md](docs/concepts/storage-architecture.md): Raw / Metadata / Graph 三层存储如何切分、为什么这样设计、桶布局、对账与重建。
-- [docs/deployment/rustfs.md](docs/deployment/rustfs.md): qatlas ↔ RustFS 集成 ops 指南（env vars、IAM policy、bucket versioning 自管、`qatlasd storage prune` 使用、故障排查）。
-- [docs/deployment/](docs/deployment/index.md): 本地启动、单机部署、systemd、环境变量、反向代理与鉴权示例。
+- [docs/server/rustfs.md](docs/server/rustfs.md): qatlas ↔ RustFS 集成 ops 指南（env vars、IAM policy、bucket versioning 自管、`qatlasd storage prune` 使用、故障排查）。
+- [docs/server/](docs/server/index.md): 本地启动、单机部署、systemd、环境变量、反向代理与鉴权示例。
 - [docs/contributing.md](docs/contributing.md): 开发命令、Conventional Commits、Commitizen 发版流程、测试约定。
 - [docs/about/graph-visualization-research.md](docs/about/graph-visualization-research.md): 图谱可视化前端选型调研（待实现）。
 - [docs/reference/wiki-schema.md](docs/reference/wiki-schema.md): Wiki 页面类型、模板、frontmatter schema、lint 规则与同步约定。
@@ -219,7 +219,7 @@ QuantumAtlas/
 > 状态目录（`wiki/`、`raw/`、`data/`、`pb_data/`）已**不在**仓库内——
 > 它们默认落到 `${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/`
 > 之下，或通过 `.env` 显式覆盖到挂载盘 / `/var/lib/...`。详见
-> [docs/deployment/migration-storage-layout.md](docs/deployment/migration-storage-layout.md)。
+> [docs/server/migration-storage-layout.md](docs/server/migration-storage-layout.md)。
 
 ## 当前状态
 

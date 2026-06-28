@@ -88,7 +88,7 @@ flowchart TD
 
 ## 哪些端点要鉴权
 
-完整清单在 [REST API 参考](../reference/rest-api.md)。粗略分布：
+完整清单在 [REST API 参考](../server/rest-api.md)。粗略分布：
 
 | 类别 | 鉴权 |
 |---|---|
@@ -105,7 +105,7 @@ flowchart TD
 
 ### Graph 查询：同 scope 下危害最大的那一档
 
-`graph:read` 同时覆盖 `stats` / `schema`（server 自算的固定形状聚合）和 `POST /api/graph/query`。三者都要鉴权，但 `query` 风险最高：它执行调用方提供的 Cypher。查询**只读**（驱动层 `ExecuteRead` 拒绝写），但**故意不加查询代价上限**：过了 `graph:read` 的调用方即「自己人」，同一个人本就能直连 Bolt 跑同样的重查询，应用层限制器挡不住、只增复杂度。病态查询（如无界笛卡尔积）能拖垮 Neo4j，**唯一缓解是撤销出问题的凭据**。这是明确接受的风险，不是待办——细节见 [REST API · graph/query](../reference/rest-api.md) 与 [Neo4j 部署](../deployment/neo4j.md)。
+`graph:read` 同时覆盖 `stats` / `schema`（server 自算的固定形状聚合）和 `POST /api/graph/query`。三者都要鉴权，但 `query` 风险最高：它执行调用方提供的 Cypher。查询**只读**（驱动层 `ExecuteRead` 拒绝写），但**故意不加查询代价上限**：过了 `graph:read` 的调用方即「自己人」，同一个人本就能直连 Bolt 跑同样的重查询，应用层限制器挡不住、只增复杂度。病态查询（如无界笛卡尔积）能拖垮 Neo4j，**唯一缓解是撤销出问题的凭据**。这是明确接受的风险，不是待办——细节见 [REST API · graph/query](../server/rest-api.md) 与 [Neo4j 部署](../server/neo4j.md)。
 
 ## 怎么实操
 
@@ -136,7 +136,7 @@ flowchart TD
     单入口减少认知负担，跟 `gh auth login --with-token` 同款设计；secret
     从 stdin 走也避免被 shell history / `ps` / CI runner log 抓到。
 
-更详细的操作见 [管理凭据](../guides/manage-credentials.md)。
+更详细的操作见 [管理凭据](../client/manage-credentials.md)。
 
 ## 多边缘节点的坑
 

@@ -1,6 +1,6 @@
-# 部署运维
+# Go 服务端 `qatlasd`
 
-QuantumAtlas server 是一个 Go 单 binary。这一节覆盖从"裸 VPS"到"生产可用 + 监控 + 备份 + 升级"的完整流程。
+`qatlasd` 是 QuantumAtlas 的服务端：一个 Go 单 binary，提供 REST API、对象与元数据存储、鉴权（PAT + GitHub OAuth），并内嵌 SPA 前端。这一节覆盖部署运维（从"裸 VPS"到"生产可用 + 监控 + 备份 + 升级"），以及它对外暴露的 REST API 与服务端 CLI。
 
 ## 快速路径
 
@@ -42,6 +42,12 @@ QuantumAtlas server 是一个 Go 单 binary。这一节覆盖从"裸 VPS"到"生
 
     bootstrap script 流程、IAM policy、bucket versioning、dual endpoint（presign 公网 + 内网传输）。
 
+-   :material-magnify:{ .lg .middle } **[RAG 向量检索](rag.md)**
+
+    ---
+
+    `/api/rag/*` 接 Qdrant + embed worker 做 chunk 级语义检索；两个开关都 ON 才注册。
+
 -   :material-heart-pulse:{ .lg .middle } **[健康检查与监控](health-and-monitoring.md)**
 
     ---
@@ -53,6 +59,36 @@ QuantumAtlas server 是一个 Go 单 binary。这一节覆盖从"裸 VPS"到"生
     ---
 
     pb_data SQLite 备份、RustFS bucket versioning + prune、Neo4j dump、binary 滚动升级。
+
+</div>
+
+## API 与 CLI 参考
+
+<div class="grid cards" markdown>
+
+-   :material-api:{ .lg .middle } **[REST API 总览](rest-api.md)**
+
+    ---
+
+    `/api/papers/*` / `/api/wiki/*` / `/api/pat/*` / `/api/graph/*` / `/api/health` 全 endpoint（method / path / auth / payload / response / status）。
+
+-   :material-upload:{ .lg .middle } **[Upload API 详解](upload-api.md)**
+
+    ---
+
+    `POST /api/papers/{id}/upload-pdf` 完整流程：sha256 dedup、in-transit guard、`If-None-Match` 并发安全、覆盖语义。
+
+-   :material-file-search:{ .lg .middle } **[API Explorer](api-explorer.md)**
+
+    ---
+
+    swaggo 生成的交互式 OpenAPI 文档，可展开浏览全部参数 / 请求体 / 响应 schema。
+
+-   :material-console-network:{ .lg .middle } **[`qatlasd` CLI](cli-qatlasd.md)**
+
+    ---
+
+    `serve` / `service install` / `pat mint` / `storage prune` / `superuser upsert` 等运维命令。
 
 </div>
 

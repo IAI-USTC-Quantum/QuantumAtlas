@@ -57,7 +57,7 @@ QuantumAtlas 是 **University of Science and Technology of China (USTC) 量子�
   **不留可追踪日志**（只有 Caddy access log，常规 IP/UA/path/status，按 Caddy 默认轮转）
 - 登录后调写口或受 scope 保护的读口：**会记录** `accessKey` / `principalId` /
   IP / 时间到审计桶 `qatlas-s3-events`（详见
-  [RustFS 部署 · 写入留痕](../deployment/rustfs.md#写入留痕-audit-sink-t10)）。
+  [RustFS 部署 · 写入留痕](../server/rustfs.md#写入留痕-audit-sink-t10)）。
   这是**反滥用 + 取证**用，不分析用户行为也不用于推荐 / 广告
 - 上传到对象桶的内容**全员可见**（同登录用户读得到，本服务不做
   per-user 隔离）——不要上传敏感 / 私密内容

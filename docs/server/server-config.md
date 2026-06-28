@@ -7,7 +7,7 @@
 > - **Server** (`qatlasd`): 三入口 **CLI flag > OS env > `.env` 文件 > default**（本页主题）
 > - **Client** (`qatlas` Python CLI): **只读 YAML** `~/.config/qatlas/config.yaml`，首次跑任意 `qatlas <cmd>` 自动创建模板（不再支持 CLI flag / OS env / `QATLAS_DOTENV`，自 v0.17.0 起）
 >
-> 设计哲学：server 是 long-lived daemon，运维要同时支持 systemd / docker / k8s / nohup 多形态，所以三入口；client 是 short-lived 命令，用户配置一次长期复用，YAML 单入口最简单。client 配置参考见 [`qatlas config` reference](../reference/cli-qatlas.md#qatlas-config)。
+> 设计哲学：server 是 long-lived daemon，运维要同时支持 systemd / docker / k8s / nohup 多形态，所以三入口；client 是 short-lived 命令，用户配置一次长期复用，YAML 单入口最简单。client 配置参考见 [`qatlas config` reference](../client/cli-qatlas.md#qatlas-config)。
 
 ---
 
