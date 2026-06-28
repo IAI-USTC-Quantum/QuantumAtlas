@@ -18,8 +18,8 @@
 > **破坏性变更**：原先的 `entity` / `comparison` 页面类型已合并进 **`concept`**。
 > 现在 wiki 以「concept 词条」为唯一可浏览单位（Wikipedia 风格），子类靠 `category`
 > 区分（`algorithm` / `primitive` / `technique` / `problem` / `framework` / `comparison` / …）。
-> `category: theorem` 是插件化验证平台的预留扩展位：Phase 0 起 schema/lint
-> 接受它；正式 theorem 索引和页面模板在后续 phase 启用。
+> `category: theorem` 是插件化验证平台的 theorem subtype；schema/lint
+> 接受它，theorem / verification API 使用该 subtype 做页面与验证结果的 join。
 > `source`（论文）仍存在，但**不作为可浏览条目**——它只在词条的「参考文献」里被
 > `[[paper-arxiv-*]]` 引用，列表/搜索 API 默认排除（`/api/pages`、`/api/search`），
 > 详情仍可经引用点入。Graph 入口暂时在前端隐藏（路由与 `/api/graph/*` 保留）。
@@ -67,10 +67,10 @@ Formal or mathematical definition.
 - [[concept-related-2]]
 ```
 
-#### Theorem（预留 subtype）
+#### Theorem subtype
 
 `type: concept` + `category: theorem` 用于表示论文中的主定理、算法正确性或复杂度结论。
-Phase 0 只保留 schema 兼容；后续 theorem / verification 数据模型启用后会提供完整模板。
+Theorem 页面使用 `type: concept` + `category: theorem`，并可关联论文、算法和验证状态。
 这类页面可带一个由验证插件写回的 `verification` frontmatter 区段，Wiki 解析器和 lint
 必须接受该字段：
 

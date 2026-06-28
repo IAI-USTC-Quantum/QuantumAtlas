@@ -66,6 +66,12 @@
 
     PAT 创建 / 撤销 / 轮换、`qatlas auth login` 多 host 切换、shell vs CI 配置。
 
+-   :material-connection:{ .lg .middle } **[连接 qatlas-lean 插件](qatlas-lean-integration.md)**
+
+    ---
+
+    外部 JSON-RPC 插件握手、host capabilities、theorem/verification smoke test。
+
 </div>
 
 ## 电路 / 代码

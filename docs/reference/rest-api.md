@@ -123,11 +123,21 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
 
 ### Plugins
 
+Plugins share one manifest/capability model. Native Go plugins such as Graph
+and RAG use `in-process-go` transport inside `qatlasd`; external plugins such
+as `qatlas-lean` use `jsonrpc-ws` and connect to the RPC listener.
+
 | Method | Path | 鉴权 | 用途 |
 |---|---|---|---|
 | `GET` | `/api/v1/plugins` | `plugins:read` | 列出发现的插件清单与状态（`connected` / `disconnected` / `disabled` / `incompatible`）|
 | `POST` | `/api/v1/plugins/{id}/enable` | `plugins:write` | 运行时启用已配置插件 |
 | `POST` | `/api/v1/plugins/{id}/disable` | `plugins:write` | 运行时禁用已配置插件 |
+
+External plugins do not call host capabilities over HTTP. They connect to the
+WebSocket JSON-RPC service at `QATLAS_RPC_WS_BIND`. `initialize` params contain
+`id`, `secret`, and `abi_version`; after the handshake the same connection can
+call `pages/get`, `papers/getMarkdown`, `papers/getCitedRefs`, `theorems/get`,
+`theorems/create`, `verifications/submit`, and `events/publish`.
 
 ### Theorems / Verifications
 
@@ -135,7 +145,7 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
 |---|---|---|---|
 | `GET` | `/api/v1/theorems?paper_id=` | `theorems:read` | 列 theorem 记录 |
 | `GET` | `/api/v1/theorems/{id}` | `theorems:read` | 取单个 theorem |
-| `POST` | `/api/v1/theorems` | `theorems:write` | 创建或更新 theorem（Phase 3 skeleton）|
+| `POST` | `/api/v1/theorems` | `theorems:write` | 创建或更新 theorem |
 | `GET` | `/api/v1/verifications?theorem_id=` | `verifications:read` | 列 verification 记录 |
 | `POST` | `/api/v1/verifications` | `verifications:write` | 提交或更新 verification |
 

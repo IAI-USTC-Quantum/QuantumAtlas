@@ -19,6 +19,7 @@ import (
 	"log"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,7 +28,9 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/arxiv"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/auth"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/events"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/healthz"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/hostapi"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineru"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/openalex"
@@ -882,6 +885,7 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// Wiki / pages / stats / search / lint — see internal/routes/wiki.go.
 	routes.RegisterWiki(se, cfg, wikiCache, enforcer)
 
+	eventBus := events.NewBus()
 	pluginRegistry, err := qplugin.LoadDir(cfg.PluginsDir, qplugin.Options{
 		Enabled:  cfg.PluginsEnabled,
 		Disabled: cfg.PluginsDisabled,
@@ -895,8 +899,9 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 		})
 	}
 	routes.RegisterPlugins(se, pluginRegistry, enforcer)
-	routes.RegisterTheorems(se, app, enforcer)
+	routes.RegisterTheorems(se, app, eventBus, enforcer)
 	routes.RegisterVerifications(se, app, enforcer)
+	startPluginRPCServer(cfg, app, wikiCache, rawStore, pluginRegistry, eventBus)
 
 	// Graph (Neo4j) — see internal/routes/graph.go. Gated by
 	// authGuard + scopeGuard("graph", "read") so it matches the rest
@@ -930,6 +935,27 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// paper content (chunk-text snippets), so we gate behind the
 	// operator's opt-in. See internal/routes/rag.go.
 	routes.RegisterRAG(se, cfg, pluginRegistry, enforcer)
+}
+
+func startPluginRPCServer(cfg *config.Config, app core.App, wikiCache *wiki.Cache, rawStore objstore.Store, pluginRegistry *qplugin.Registry, eventBus *events.Bus) {
+	hostAPI := hostapi.NewRegistry()
+	if err := hostapi.RegisterCoreMethods(hostAPI, app, wikiCache, rawStore, eventBus); err != nil {
+		slog.Error("plugin rpc: host capability registration failed", "error", err)
+		return
+	}
+	rpcServer := (&qplugin.RPCServer{
+		Registry:      pluginRegistry,
+		HostAPI:       hostAPI,
+		Events:        eventBus,
+		ConnectSecret: cfg.PluginConnectSecret,
+	}).Handler()
+	srv := &http.Server{Addr: cfg.RPCWSBind, Handler: rpcServer}
+	go func() {
+		slog.Info("plugin rpc: listening", "addr", cfg.RPCWSBind)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("plugin rpc: server stopped", "addr", cfg.RPCWSBind, "error", err)
+		}
+	}()
 }
 
 // injectHTTPFlag mutates os.Args to add --http=<addr> when the user invokes

@@ -172,12 +172,23 @@ PostgreSQL；登录态仍由 PocketBase 独立管理。
 
 ## Server: plugin platform
 
+QuantumAtlas plugins share one manifest and capability model, but use two
+transport styles:
+
+- `in-process-go`: native Go plugins compiled into `qatlasd` (for example
+  Graph and RAG). They are controlled by the plugin registry but do not open a
+  WebSocket connection.
+- `jsonrpc-ws`: external process plugins (for example `qatlas-lean`). They
+  connect to `QATLAS_RPC_WS_BIND`, complete `initialize`, then call host
+  capabilities over that connection.
+
 | 变量 | 默认 | 作用 |
 |---|---|---|
 | `QATLAS_PLUGINS_DIR` | `${XDG_CONFIG_HOME:-$HOME/.config}/qatlasd/plugins` | 插件清单目录；扫描其一级子目录的 `plugin.json` |
 | `QATLAS_PLUGINS_ENABLED` | 空 | CSV 白名单；空表示所有发现的插件都可启用 |
 | `QATLAS_PLUGINS_DISABLED` | 空 | CSV 黑名单；与 enabled 同时命中时 disabled 胜 |
-| `QATLAS_RPC_WS_BIND` | `127.0.0.1:8799` | 外部 JSON-RPC WebSocket 插件拨入的监听地址（Phase 1 先保留配置面） |
+| `QATLAS_PLUGIN_CONNECT_SECRET` | 空 | 外部 `jsonrpc-ws` 插件 initialize 握手 secret；空表示仅依赖 loopback 监听 |
+| `QATLAS_RPC_WS_BIND` | `127.0.0.1:8799` | 外部 JSON-RPC WebSocket 插件拨入的监听地址 |
 | `QATLAS_EVENT_RETENTION` | `7d` | 插件断连事件缓冲保留时间；支持 Go duration（如 `168h`）或 `Nd` |
 | `QATLAS_PLUGIN_RPC_TIMEOUT_MS` | `30000` | 单次 host↔plugin RPC 超时（毫秒）|
 | `QATLAS_PLUGIN_RECONNECT_MS` | `5000` | 外部插件重连退避基数（毫秒）|

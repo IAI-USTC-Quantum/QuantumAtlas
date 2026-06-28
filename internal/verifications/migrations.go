@@ -25,7 +25,7 @@ func upCreateVerifications(app core.App) error {
 		Name:      "verdict",
 		Required:  true,
 		MaxSelect: 1,
-		Values:    []string{"verified", "refuted", "disputed", "pending", "failed"},
+		Values:    []string{"verified", "refuted", "disputed", "intractable", "pending", "failed"},
 	})
 	col.Fields.Add(&core.TextField{Name: "evidence_url", Max: 1000})
 	col.Fields.Add(&core.TextField{Name: "payload", Max: 20000})

@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/events"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/theorems"
 
 	"github.com/casbin/casbin/v2"
@@ -21,7 +23,7 @@ type theoremRequest struct {
 	StatementNL string `json:"statement_nl"`
 }
 
-func RegisterTheorems(se *core.ServeEvent, app core.App, enforcer *casbin.Enforcer) {
+func RegisterTheorems(se *core.ServeEvent, app core.App, eventBus *events.Bus, enforcer *casbin.Enforcer) {
 	se.Router.GET("/api/v1/theorems", scopeGuard(enforcer, "theorems", "read", func(re *core.RequestEvent) error {
 		filter := ""
 		params := map[string]any{}
@@ -69,9 +71,11 @@ func RegisterTheorems(se *core.ServeEvent, app core.App, enforcer *casbin.Enforc
 		}
 		rec, err := app.FindFirstRecordByFilter(theorems.CollectionName, "theorem_id = {:id}", map[string]any{"id": body.ID})
 		status := http.StatusOK
+		eventType := "theorem.updated"
 		if err != nil {
 			rec = core.NewRecord(collection)
 			status = http.StatusCreated
+			eventType = "theorem.added"
 		}
 		rec.Set("theorem_id", body.ID)
 		rec.Set("page_id", body.PageID)
@@ -81,6 +85,19 @@ func RegisterTheorems(se *core.ServeEvent, app core.App, enforcer *casbin.Enforc
 		rec.Set("statement_nl", body.StatementNL)
 		if err := app.Save(rec); err != nil {
 			return re.JSON(http.StatusInternalServerError, map[string]string{"detail": fmt.Sprintf("save theorem: %v", err)})
+		}
+		if eventBus != nil {
+			eventBus.Publish(re.Request.Context(), events.Event{
+				ID:    events.NewID(),
+				Type:  eventType,
+				Time:  time.Now().UTC(),
+				Actor: "user",
+				Payload: map[string]any{
+					"theorem_id": body.ID,
+					"paper_id":   body.PaperID,
+					"page_id":    body.PageID,
+				},
+			})
 		}
 		return re.JSON(status, theorems.FromRecord(rec))
 	}))

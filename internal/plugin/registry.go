@@ -139,6 +139,38 @@ func (r *Registry) Available(id string) bool {
 	return p != nil && p.Enabled && p.Status != StatusIncompatible
 }
 
+func (r *Registry) Manifest(id string) (Manifest, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	p := r.plugins[id]
+	if p == nil {
+		return Manifest{}, false
+	}
+	return p.Manifest, true
+}
+
+func (r *Registry) MarkConnected(id string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	p := r.plugins[id]
+	if p == nil || !p.Enabled || p.Manifest.ABIVersion != HostABIVersion {
+		return false
+	}
+	p.Status = StatusConnected
+	p.Error = ""
+	return true
+}
+
+func (r *Registry) MarkDisconnected(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	p := r.plugins[id]
+	if p == nil || !p.Enabled || p.Manifest.Transport == TransportInProcessGo || p.Manifest.ABIVersion != HostABIVersion {
+		return
+	}
+	p.Status = StatusDisconnected
+}
+
 func (r *Registry) Enable(id string) (Summary, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

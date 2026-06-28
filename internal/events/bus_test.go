@@ -9,7 +9,7 @@ import (
 func TestBusPublishesToMatchingSubscribers(t *testing.T) {
 	b := NewBus()
 	called := 0
-	b.Subscribe("theorem.added", func(_ context.Context, ev Event) error {
+	unsubscribe := b.Subscribe("theorem.added", func(_ context.Context, ev Event) error {
 		called++
 		if ev.ID != "evt-1" {
 			t.Fatalf("event id = %q", ev.ID)
@@ -28,5 +28,10 @@ func TestBusPublishesToMatchingSubscribers(t *testing.T) {
 	}
 	if called != 1 {
 		t.Fatalf("called = %d, want 1", called)
+	}
+	unsubscribe()
+	_ = b.Publish(context.Background(), Event{ID: "evt-2", Type: "theorem.added", Time: time.Now()})
+	if called != 1 {
+		t.Fatalf("called after unsubscribe = %d, want 1", called)
 	}
 }

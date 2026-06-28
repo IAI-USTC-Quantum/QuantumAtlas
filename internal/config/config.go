@@ -251,6 +251,7 @@ type Config struct {
 	PluginsDir              string
 	PluginsEnabled          []string
 	PluginsDisabled         []string
+	PluginConnectSecret     string
 	RPCWSBind               string
 	EventRetention          time.Duration
 	PluginRPCTimeout        time.Duration
@@ -333,6 +334,7 @@ func Load(dotenvPath string) (*Config, error) {
 		PluginsDir:           firstEnv("QATLAS_PLUGINS_DIR"),
 		PluginsEnabled:       parseTokenList(firstEnv("QATLAS_PLUGINS_ENABLED")),
 		PluginsDisabled:      parseTokenList(firstEnv("QATLAS_PLUGINS_DISABLED")),
+		PluginConnectSecret:  firstEnv("QATLAS_PLUGIN_CONNECT_SECRET"),
 		RPCWSBind:            firstEnvDefault("127.0.0.1:8799", "QATLAS_RPC_WS_BIND"),
 	}
 

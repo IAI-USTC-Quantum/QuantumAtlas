@@ -336,6 +336,7 @@ func TestLoad_PluginEnvOverrides(t *testing.T) {
 	t.Setenv("QATLAS_PLUGINS_DIR", "plugins")
 	t.Setenv("QATLAS_PLUGINS_ENABLED", "graph, lean")
 	t.Setenv("QATLAS_PLUGINS_DISABLED", "rag")
+	t.Setenv("QATLAS_PLUGIN_CONNECT_SECRET", "secret")
 	t.Setenv("QATLAS_RPC_WS_BIND", "127.0.0.1:9999")
 	t.Setenv("QATLAS_EVENT_RETENTION", "2d")
 	t.Setenv("QATLAS_PLUGIN_RPC_TIMEOUT_MS", "1234")
@@ -358,6 +359,9 @@ func TestLoad_PluginEnvOverrides(t *testing.T) {
 	}
 	if strings.Join(cfg.PluginsDisabled, ",") != "rag" {
 		t.Errorf("PluginsDisabled = %v", cfg.PluginsDisabled)
+	}
+	if cfg.PluginConnectSecret != "secret" {
+		t.Errorf("PluginConnectSecret = %q", cfg.PluginConnectSecret)
 	}
 	if cfg.RPCWSBind != "127.0.0.1:9999" {
 		t.Errorf("RPCWSBind = %q", cfg.RPCWSBind)
