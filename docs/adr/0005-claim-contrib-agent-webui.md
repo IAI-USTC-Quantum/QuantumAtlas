@@ -1,12 +1,14 @@
 # Claim drafting lives in a localhost contrib agent + WebUI
 
 The `qatlas contrib claim` command starts a **localhost** WebUI and a Copilot-SDK-driven custom
-agent that, with a human in the loop, drafts a single Claim against a paper (paper-of-record +
+agent that, with a human in the loop, drafts one or more Claims against a paper (paper-of-record +
 near-verbatim NL statement + stated/implicit assumptions + reference IDs the agent resolved
-against OpenAlex / arxiv). When the user clicks **Confirm claim** (中文: **确认 claim**) in the
-WebUI, the localhost process files **one gitea issue** on `agony/qatlas-lean` under the user's
-own gitea token — and that is the end of the workflow for this iteration. The QA server is not
-involved (see ADR `0004`).
+against OpenAlex / arxiv). The command name reflects the **kind of contribution**, not the
+per-session count — one session may yield several Claim drafts (matching scout's "extract every
+formalization-ready claim" contract). When the user clicks **Confirm claim** (中文: **确认
+claim**) on a single drafted Claim in the WebUI, the localhost process files **one gitea issue**
+per click on `agony/qatlas-lean` under the user's own gitea token — and that is the end of the
+workflow for this iteration. The QA server is not involved (see ADR `0004`).
 
 This pattern is the **first** of a planned family of localhost contrib WebUIs. The terminal
 state merges every Lean-side agent (`scout`, `statement`, `enricher`, `issue-raiser`, `solver`,
@@ -55,20 +57,21 @@ for forward consistency.
 
 ## Naming
 
-- CLI: `qatlas contrib claims` (plural — one session yields N Claim drafts; reflects
-  scout's "extract every formalization-ready claim" contract). The existing `qatlas contrib`
-  group already carries "contributor workflows" (today: PDF / MinerU uploads); this slots in
-  as the first agent-driven contributor workflow.
-- Button text: English **"Confirm claim"** / Chinese **"确认 claim"** — singular, because each
-  click confirms exactly one Claim and files exactly one gitea issue.
-- Terminal-state additions, not built this iteration: a contrib subcommand that drives the
-  full proof flow (solver + Magi) and a contrib subcommand that drives audit-existing. Their
-  singular-vs-plural naming follows the same "command reflects N-per-session" rule and will be
-  decided when they are designed; do not assume `qatlas contrib theorem(s)` is finalized.
+- CLI: `qatlas contrib claim` (singular — the command names the **act of contributing a
+  Claim**; one webui session may produce several Claim drafts and file several gitea issues,
+  but the command name reflects the contribution kind, not the per-session count). The
+  existing `qatlas contrib` group already carries "contributor workflows" (today: PDF /
+  MinerU uploads); this slots in as the first agent-driven contributor workflow.
+- Button text: English **"Confirm claim"** / Chinese **"确认 claim"** — each click confirms
+  exactly one Claim and files exactly one gitea issue (so the button text is singular and
+  matches the per-click semantics).
+- Terminal-state additions, not built this iteration: a `qatlas contrib theorem`
+  subcommand that drives the full proof flow (solver + Magi), and a `qatlas contrib audit`
+  that drives audit-existing. Same singular-action naming rule.
 
 ## Consequences
 
-- The Python `qatlas` package gains a `qatlas.client.contrib.claims` module: a process that
+- The Python `qatlas` package gains a `qatlas.client.contrib.claim` module: a process that
   starts a localhost HTTP server, opens a browser, drives a Copilot-SDK custom agent (system
   prompt = scout + enricher + issue-raiser combined), uses paper bytes via the QA suspend-and-
   wait endpoints, and posts to gitea on each Confirm.
