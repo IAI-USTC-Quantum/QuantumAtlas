@@ -1,0 +1,7 @@
+nav:
+  - 概览: index.md
+  - "0001 插件类型双轴命名 (builtin/external × socket/stdio)": 0001-plugin-type-taxonomy.md
+  - "0002 theorems / wiki 为 builtin 拉取插件": 0002-theorems-wiki-builtin-pull-plugins.md
+  - "0003 插件端到端 owning 自己领域，host 核心去领域词": 0003-plugins-own-their-domain.md
+  - "0004 本轮不引入 QA 侧 Claim 集合 / Claims 页": 0004-no-claim-collection-this-iteration.md
+  - "0005 Claim 起草走 localhost claim agent + WebUI": 0005-claims-contrib-agent-webui.md
