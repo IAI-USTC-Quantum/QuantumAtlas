@@ -22,6 +22,7 @@ QuantumAtlas 处理论文图谱的本质问题是：
 |---|---|---|---|---|---|
 | Raw blobs | **RustFS**（S3 兼容） | PDF / Markdown / 图片 / OpenAlex snapshot | TB | 偶尔整文件下载 | ✅ 原文不可变 |
 | Metadata 索引 | **PostgreSQL catalog** | `paper_works` 表 + partial indexes | 134k 行起步 | 字段筛选 / count / group by / MinerU lease | ❌ 可从 bucket LIST 重建 |
+| OpenAlex 语料 | **PostgreSQL**（同库，另一组表） | `openalex_works`(jsonb) + `work_referenced` + `work_embeddings` | ~2.87×10⁸ 行 / 1–2 TB | jsonb `@>` / 引用 join / 向量 join | ❌ 可从 OpenAlex snapshot 重灌 |
 | Graph | **Neo4j 5.26 LTS Community** | `(Paper)-[:CITES]->(Paper)` + Wiki 知识图 | 几十 GB | K 跳遍历、图算法 | ❌ 可重建的派生视图 |
 
 **这三层不竞争，互补**。Raw 量翻 10×，Neo4j 完全不动；Neo4j 脏了，从 raw + Wiki 跑
@@ -39,6 +40,21 @@ QuantumAtlas 处理论文图谱的本质问题是：
     资产字节 source of truth；PostgreSQL 是可由 bucket LIST 重建的派生索引。
 
     完整原理见 [`architecture.md` § PostgreSQL catalog](architecture.md#paperindex)。
+
+??? note "同一个 PostgreSQL 里还有 OpenAlex 语料（corpus）"
+    除了 `paper_works` catalog，同一个 database 还存一份**本地化的 OpenAlex works
+    语料**（`openalex_works` + `work_referenced` + `work_embeddings`，见
+    [ADR 0006](../adr/0006-postgres-central-store-not-mysql.md)）。每条 work
+    原样存进 `record jsonb`（**只筛选、不修改**），热字段用 generated column +
+    GIN / 表达式索引暴露（不重写 record）；引用关系抽到 `work_referenced`，所以
+    citation 解析永远本地，不回落公开 API；域子集向量进 `work_embeddings`
+    （`pgvector`，1024 维 = BGE-M3）。
+
+    catalog（~10⁵ 行、可由 bucket 重建的主核索引）与 corpus（~10⁸ 行的外部参考
+    语料）**语义不同、同库不同表**，所以 corpus × 资产状态 × 向量的深 join 一条
+    SQL 完成。灌库走 operator 驱动的 `qatlasd openalex bootstrap-pg`（流式读
+    `qatlas-openalex` 桶的 gzip parts → 批量 upsert），增量刷新只拉新的
+    `updated_date` 分区。**绝不对外提供 OpenAlex API**。
 
 ??? note "PocketBase 还在做什么"
     PocketBase（v0.38，嵌入 qatlasd 二进制，SQLite 底）现在只承担 **用户 / PAT** 等本机
