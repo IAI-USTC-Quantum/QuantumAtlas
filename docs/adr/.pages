@@ -5,3 +5,5 @@ nav:
   - "0003 插件端到端 owning 自己领域，host 核心去领域词": 0003-plugins-own-their-domain.md
   - "0004 本轮不引入 QA 侧 Claim 集合 / Claims 页": 0004-no-claim-collection-this-iteration.md
   - "0005 Claim 起草走 localhost claim agent + WebUI": 0005-claim-contrib-agent-webui.md
+  - "0006 PostgreSQL 中心化关系库（catalog + OpenAlex 语料），不用 MySQL": 0006-postgres-central-store-not-mysql.md
+  - "0007 Claim 的 references 用 kind:id，服务端 /api/papers/lookup 精确解析": 0007-claim-references-and-lookup-boundary.md

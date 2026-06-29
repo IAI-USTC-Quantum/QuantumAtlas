@@ -70,3 +70,29 @@ paper catalog.
 > 三个字段实现。
 
 _Avoid_: claim, claim_id, claimed_by (renamed — "claim" now means the formalization statement above).
+
+### Paper catalog & reference data
+
+**Paper catalog**:
+The host-core index of the Papers QuantumAtlas hosts — asset status (PDF / Markdown / DOI),
+MinerU lease — derived from and rebuildable off the asset buckets. Backed by the `paper_works`
+table in the central PostgreSQL.
+_Avoid_: "the database" / "the catalog" used loosely (the same PostgreSQL also holds the OpenAlex
+corpus, a different thing).
+
+**OpenAlex corpus**:
+A locally-held copy of OpenAlex works (each record stored verbatim as `jsonb`, only filtered,
+never modified), used for citation context, batch analysis, and vector joins against our own
+assets. Far larger than the Paper catalog and mostly **not** Papers we host; lives as separate
+tables in the same central PostgreSQL. See ADR `0006`.
+_Avoid_: conflating with the Paper catalog / `paper_works`; "OpenAlex mirror" (we never re-serve
+it as an outbound API).
+
+**Reference**:
+A bibliographic pointer from a Claim to a cited work, stored as a namespaced, unversioned `kind:id`
+string (`arxiv:2208.06941`, `openalex:W4406693713`, `doi:10.22331/…`) in the Claim's `references`
+field and the gitea issue body. Resolved to metadata on demand via `GET /api/papers/lookup` against
+the OpenAlex corpus. See ADR `0007`.
+_Avoid_: reference lemma (a lean in-corpus Lean reuse-shortlist entry — a different thing), proof
+citation (the proof-prose citation carrying a `citation_string`), "full citation" (a Reference is
+just the id, not a rendered citation).
