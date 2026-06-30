@@ -47,16 +47,20 @@ Usage:
   qatlas contrib mineru <DOI> --zip <path> [--verify warn|strict]
                                                       # upload a pre-made MinerU zip (DOI-only)
 
-  qatlas contrib claim <ARXIV_ID|DOI>                 # localhost WebUI: draft Claims, file gitea issues
-                                                      # (needs the optional 'contrib' extras)
-
 Common subcommand options pass through to the underlying module
-(`qatlas.client.upload` / `qatlas.client.mineru` / `qatlas.client.claim`).  Use
-`qatlas contrib pdf --help`, `qatlas contrib mineru --help` or
-`qatlas contrib claim --help` for the full per-subcommand argument set.
+(`qatlas.client.upload` / `qatlas.client.mineru`).  Use
+`qatlas contrib pdf --help` or `qatlas contrib mineru --help` for the
+full per-subcommand argument set.
 """,
         end="",
     )
+    # Plugin-contributed subcommands (e.g. `claim` when the claim plugin is
+    # enabled) only appear when active.
+    plugin_subs = _plugin_subcommands()
+    if plugin_subs:
+        print("\nPlugin subcommands:")
+        for name in sorted(plugin_subs):
+            print(f"  qatlas contrib {name:<8} {plugin_subs[name].summary}")
 
 
 def _cmd_pdf(argv: list[str]) -> int:
@@ -126,19 +130,32 @@ def _cmd_mineru(argv: list[str]) -> int:
     return _mineru.main(argv, prog="qatlas contrib mineru")
 
 
-def _cmd_claim(argv: list[str]) -> int:
-    # Lazy import so `qatlas contrib --help` doesn't pay for the claim
-    # workflow's HTTP / FastAPI imports.
-    from qatlas.client.claim import cli as claim_cli
+def _plugin_subcommands():
+    """Active plugin-contributed contrib subcommands (name -> CommandSpec)."""
+    try:
+        from qatlas.client.plugins import registry
 
-    return claim_cli.main(argv)
+        return registry.contrib_subcommands()
+    except Exception:
+        return {}
 
 
-_SUBCOMMANDS: Mapping[str, callable] = {
+_BUILTIN_SUBCOMMANDS: Mapping[str, callable] = {
     "pdf": _cmd_pdf,
     "mineru": _cmd_mineru,
-    "claim": _cmd_claim,
 }
+
+
+def _subcommands() -> dict:
+    """Built-in subcommands merged with active plugin subcommands.
+
+    `claim` (the localhost Claim-drafting WebUI) is contributed by the claim
+    plugin and only appears when that plugin is enabled (ADR 0005).
+    """
+    out: dict = dict(_BUILTIN_SUBCOMMANDS)
+    for name, spec in _plugin_subcommands().items():
+        out[name] = spec.handler
+    return out
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -147,16 +164,17 @@ def main(argv: list[str] | None = None) -> int:
     if not argv or argv[0] in {"-h", "--help"}:
         _print_top_help()
         return 0
+    subcommands = _subcommands()
     sub, rest = argv[0], argv[1:]
-    if sub not in _SUBCOMMANDS:
+    if sub not in subcommands:
         print(
             f"qatlas contrib: unknown subcommand {sub!r} "
-            f"(valid: {', '.join(sorted(_SUBCOMMANDS))})",
+            f"(valid: {', '.join(sorted(subcommands))})",
             file=sys.stderr,
         )
         _print_top_help()
         return 2
-    return _SUBCOMMANDS[sub](rest)
+    return subcommands[sub](rest)
 
 
 if __name__ == "__main__":  # pragma: no cover

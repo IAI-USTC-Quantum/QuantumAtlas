@@ -88,6 +88,19 @@ Commands:"""
             continue
         print(f"    {name:<10} {command.summary}")
 
+    # Plugin-contributed top-level commands (only those available in the
+    # current environment, e.g. `lean` when a checkout is configured).
+    try:
+        from qatlas.client.plugins import registry
+
+        plugin_cmds = registry.top_level_commands()
+    except Exception:
+        plugin_cmds = {}
+    if plugin_cmds:
+        print("\n  Plugin commands:")
+        for name in sorted(plugin_cmds):
+            print(f"    {name:<10} {plugin_cmds[name].summary}")
+
     print(
         """
 Aliases:
@@ -156,9 +169,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     command_name = ALIASES.get(requested_command, requested_command)
     command = COMMANDS.get(command_name)
 
+    # Plugin-contributed top-level commands (e.g. `qatlas lean`) fill gaps the
+    # static table doesn't cover. Built-ins always take precedence.
+    plugin_spec = None
     if command is None:
-        _print_usage_error(f"unknown command '{args[0]}'")
-        return 2
+        try:
+            from qatlas.client.plugins import registry
+
+            plugin_spec = registry.top_level_commands().get(command_name)
+        except Exception:
+            plugin_spec = None
+        if plugin_spec is None:
+            _print_usage_error(f"unknown command '{args[0]}'")
+            return 2
 
     # v0.17.0+: client config lives exclusively in
     # ~/.config/qatlas/config.yaml. Ensure it exists on first run so
@@ -176,6 +199,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             # Defensive: never block a subcommand on config-file IO;
             # the embedded defaults work for any read-only command.
             pass
+
+    if plugin_spec is not None:
+        return plugin_spec.handler(args[1:])
 
     return _run_module(
         command.module,

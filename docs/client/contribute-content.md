@@ -388,16 +388,52 @@ Wiki 页面本身的格式规范（页面类型、frontmatter schema、命名前
 
 ---
 
-## 5. 起草 Claim 并提 issue：`qatlas contrib claim`
+## 5. 客户端插件系统（`qatlas` CLI 插件）
+
+`qatlas` 客户端有一个轻量插件机制：插件可以往 CLI 里注册**顶层命令**（`qatlas <name>`）
+或 **contrib 子命令**（`qatlas contrib <name>`）。内置两个插件，都按环境/配置**自动启停**：
+
+| 插件 | 贡献的命令 | 默认 | 怎么开 |
+|---|---|---|---|
+| `claim` | `qatlas contrib claim`（§6 的本地 WebUI） | **关** | `export QATLAS_CLAIM_PLUGIN=1` 或 `qatlas config set claim_plugin_enabled true` |
+| `lean` | `qatlas lean <subcommand>`（透传到本地 qatlas-lean checkout） | 配了 checkout 就**开** | `export QATLAS_LEAN_DIR=<path>` 或 `qatlas config set lean_dir <path>` |
+
+`qatlas --help` 会列出当前可用的插件命令；第三方插件可通过 `qatlas.plugins` entry point 注册。
+
+### `qatlas lean` —— 透传到本地 qatlas-lean
+
+把本地的 qatlas-lean checkout 接进来，直接用它原本的 CLI（**不改 lean 仓库代码**，
+子进程透传）。配了 `lean_dir` 后：
+
+```bash
+export QATLAS_LEAN_DIR=~/path/to/qatlas-lean   # 或 qatlas config set lean_dir <path>
+qatlas lean help                                # 等价于在那个 checkout 里跑 ./qatlas-lean help
+qatlas lean precompute-claims --paper 2208.06941   # scout→statement→enricher 填 lean 的 claim bank
+qatlas lean start                               # 起 dashboard；start-daemon / status / logs / …
+```
+
+claim 草稿、提 issue、证明全部走 lean 自己那套（`precompute-claims` 填 claim bank，
+daemon 提 issue 并证明）；`qatlas lean` 只是个统一入口。
+
+---
+
+## 6. 起草 Claim 并提 issue：`qatlas contrib claim`（claim 插件）
+
+> 这条命令由 **claim 插件**提供，默认**关闭**（贡献流程正逐步迁到上游 lean 侧——见 §5）。
+> 先 `export QATLAS_CLAIM_PLUGIN=1`（或 `qatlas config set claim_plugin_enabled true`）才会出现。
 
 把一篇论文里"可形式化的命题"（**Claim**——预证明的近似逐字自然语言陈述）整理成一个
 `type/theorem` gitea issue，交给上游 Lean prover（`agony/qatlas-lean`）去证。**这是
 localhost 的人在环路（human-in-the-loop）工作流**，不经过 QA server 的写路径
 （server 只被读：取论文字节 + 解析 references）。详见 ADR 0005 / 0007。
 
+
 ```bash
 # 需要可选的 WebUI 依赖（FastAPI/uvicorn）：
 uv tool install 'quantum-atlas[contrib]'   # 或 pip install 'quantum-atlas[contrib]'
+
+# 启用 claim 插件（默认关）：
+export QATLAS_CLAIM_PLUGIN=1                # 或 qatlas config set claim_plugin_enabled true
 
 # gitea 凭据（提 issue 用你自己的 token）：
 export GITEA_HOST=https://git.example.com       # 或 --gitea-url

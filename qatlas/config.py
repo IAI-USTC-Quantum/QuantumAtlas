@@ -193,6 +193,15 @@ class ServerConfig(BaseSettings):
     openai_api_key: Optional[str] = Field(default=None)
     anthropic_api_key: Optional[str] = Field(default=None)
 
+    # ── Client plugins (qatlas client plugin system) ─────────────
+    # lean_dir points at a local qatlas-lean checkout; when set (and the
+    # checkout exists), the `lean` plugin exposes `qatlas lean <subcommand>`
+    # as a passthrough to that checkout's CLI. Env QATLAS_LEAN_DIR overrides.
+    lean_dir: Optional[str] = Field(default=None)
+    # The Claim-drafting WebUI plugin (`qatlas contrib claim`) is OFF by
+    # default; enable it here or via env QATLAS_CLAIM_PLUGIN. (ADR 0005)
+    claim_plugin_enabled: bool = Field(default=False)
+
     @property
     def public_base_url(self) -> Optional[str]:
         """Back-compat shim: server_url used to be called public_base_url."""
