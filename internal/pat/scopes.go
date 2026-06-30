@@ -42,17 +42,15 @@ import (
 // "<resource>:<action>" naming convention so future tooling (rate
 // limits, audit logs) can group by resource easily.
 const (
-	ScopeWikiRead           = "wiki:read"     // GET /api/pages*, /api/stats, /api/search, /api/wiki/sync/status
-	ScopePapersRead         = "papers:read"   // GET /api/papers/{path...} (stats / needs-mineru; also markdown when QATLAS_PAPER_ACCESS_ENABLED=true)
-	ScopePapersWrite        = "papers:write"  // upload-pdf / upload-mineru / mineru-lease CRUD (implies papers:read)
-	ScopeGraphRead          = "graph:read"    // GET /api/graph/stats, GET /api/graph/schema, POST /api/graph/query
-	ScopeWikiWrite          = "wiki:write"    // POST /api/wiki/sync/pull (server-side git fast-forward; implies wiki:read)
-	ScopePluginsRead        = "plugins:read"  // GET /api/v1/plugins
-	ScopePluginsWrite       = "plugins:write" // enable / disable plugins (implies plugins:read)
-	ScopeTheoremsRead       = "theorems:read"
-	ScopeTheoremsWrite      = "theorems:write"
-	ScopeVerificationsRead  = "verifications:read"
-	ScopeVerificationsWrite = "verifications:write"
+	ScopeWikiRead      = "wiki:read"      // GET /api/pages*, /api/stats, /api/search, /api/wiki/sync/status
+	ScopePapersRead    = "papers:read"    // GET /api/papers/{path...} (stats / needs-mineru; also markdown when QATLAS_PAPER_ACCESS_ENABLED=true)
+	ScopePapersWrite   = "papers:write"   // upload-pdf / upload-mineru / mineru-lease CRUD (implies papers:read)
+	ScopeGraphRead     = "graph:read"     // GET /api/graph/stats, GET /api/graph/schema, POST /api/graph/query
+	ScopeWikiWrite     = "wiki:write"     // POST /api/wiki/sync/pull (server-side git fast-forward; implies wiki:read)
+	ScopePluginsRead   = "plugins:read"   // GET /api/v1/plugins
+	ScopePluginsWrite  = "plugins:write"  // enable / disable plugins (implies plugins:read)
+	ScopeTheoremsRead  = "theorems:read"  // GET /api/theorems/{list,families,stats,theorem,theorem-source}, /api/theorems/sync/status
+	ScopeTheoremsWrite = "theorems:write" // POST /api/theorems/sync/pull (server-side git fast-forward; implies theorems:read)
 
 	// ScopeMaster is the wildcard internal-only scope assigned to
 	// PocketBase session tokens (browser users). Never accepted as
@@ -66,22 +64,20 @@ const (
 // ScopeDescription supplies one-line human-readable copy for the SPA
 // scope picker. Keep these short — they appear next to a checkbox.
 var ScopeDescription = map[string]string{
-	ScopeWikiRead:           "Read wiki pages, stats, search and sync status",
-	ScopePapersRead:         "Read paper catalog (stats, needs-mineru; also markdown download when the server enables asset downloads)",
-	ScopePapersWrite:        "Upload paper PDFs and submit MinerU markdown (includes read)",
-	ScopeGraphRead:          "Read the knowledge graph: stats, schema and read-only Cypher",
-	ScopeWikiWrite:          "Trigger server-side wiki git sync (fast-forward pull; includes read)",
-	ScopePluginsRead:        "Read plugin manifests and connection status",
-	ScopePluginsWrite:       "Enable or disable configured plugins (includes read)",
-	ScopeTheoremsRead:       "Read theorem records",
-	ScopeTheoremsWrite:      "Create or update theorem records (includes read)",
-	ScopeVerificationsRead:  "Read theorem verification records",
-	ScopeVerificationsWrite: "Submit theorem verification records (includes read)",
+	ScopeWikiRead:      "Read wiki pages, stats, search and sync status",
+	ScopePapersRead:    "Read paper catalog (stats, needs-mineru; also markdown download when the server enables asset downloads)",
+	ScopePapersWrite:   "Upload paper PDFs and submit MinerU markdown (includes read)",
+	ScopeGraphRead:     "Read the knowledge graph: stats, schema and read-only Cypher",
+	ScopeWikiWrite:     "Trigger server-side wiki git sync (fast-forward pull; includes read)",
+	ScopePluginsRead:   "Read plugin manifests and connection status",
+	ScopePluginsWrite:  "Enable or disable configured plugins (includes read)",
+	ScopeTheoremsRead:  "Read the proved-Theorems catalog (list, detail, source) and sync status",
+	ScopeTheoremsWrite: "Trigger server-side theorems git sync (fast-forward pull; includes read)",
 }
 
 // AllScopes is the canonical vocabulary surfaced to clients. Keep it
 // in the order you want users to see in the SPA (most common first).
-var AllScopes = []string{ScopeWikiRead, ScopePapersRead, ScopePapersWrite, ScopeGraphRead, ScopeWikiWrite, ScopePluginsRead, ScopePluginsWrite, ScopeTheoremsRead, ScopeTheoremsWrite, ScopeVerificationsRead, ScopeVerificationsWrite}
+var AllScopes = []string{ScopeWikiRead, ScopePapersRead, ScopePapersWrite, ScopeGraphRead, ScopeWikiWrite, ScopePluginsRead, ScopePluginsWrite, ScopeTheoremsRead, ScopeTheoremsWrite}
 
 // casbinModel is the in-memory casbin model. Each scope acts as its
 // own subject — the matcher just checks (scope, obj, act) equality
@@ -117,11 +113,8 @@ var scopePolicies = [][3]string{
 	{ScopePluginsWrite, "plugins", "read"}, // write implies read
 	{ScopePluginsWrite, "plugins", "write"},
 	{ScopeTheoremsRead, "theorems", "read"},
-	{ScopeTheoremsWrite, "theorems", "read"},
+	{ScopeTheoremsWrite, "theorems", "read"}, // write implies read
 	{ScopeTheoremsWrite, "theorems", "write"},
-	{ScopeVerificationsRead, "verifications", "read"},
-	{ScopeVerificationsWrite, "verifications", "read"},
-	{ScopeVerificationsWrite, "verifications", "write"},
 }
 
 // NewEnforcer constructs a fresh in-memory casbin enforcer pre-loaded

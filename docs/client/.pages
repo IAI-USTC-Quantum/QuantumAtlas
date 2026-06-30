@@ -12,6 +12,6 @@ nav:
   - 电路 / 代码: circuit-toolchain.md
   - 凭据与集成:
     - 管理凭据: manage-credentials.md
-    - qatlas-lean 集成: qatlas-lean-integration.md
+    - 外部插件集成: external-plugins.md
   - CLI 参考: cli-qatlas.md
   - "..."

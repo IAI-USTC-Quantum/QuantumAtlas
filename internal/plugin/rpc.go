@@ -198,8 +198,8 @@ func (s *RPCServer) authenticate(params initializeParams) (Manifest, error) {
 	if !s.Registry.Available(params.ID) {
 		return Manifest{}, fmt.Errorf("plugin %q is disabled", params.ID)
 	}
-	if manifest.Transport != TransportJSONRPCWS {
-		return Manifest{}, fmt.Errorf("plugin %q does not use jsonrpc-ws transport", params.ID)
+	if manifest.Kind != KindExternal || manifest.Transport != TransportSocket {
+		return Manifest{}, fmt.Errorf("plugin %q is not an external socket plugin", params.ID)
 	}
 	return manifest, nil
 }
@@ -222,12 +222,6 @@ func requireScope(method string, granted []string) error {
 		required = "papers:read"
 	case "pages/get", "search/query":
 		required = "wiki:read"
-	case "theorems/get":
-		required = "theorems:read"
-	case "theorems/create":
-		required = "theorems:write"
-	case "verifications/submit":
-		required = "verifications:write"
 	case "events/publish":
 		return nil
 	default:

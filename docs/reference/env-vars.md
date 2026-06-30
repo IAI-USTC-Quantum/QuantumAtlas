@@ -54,6 +54,11 @@ server 端项目自有变量带 `QATLAS_` 前缀；第三方 SDK 标准名（`NE
 - **默认**: `<.env 所在目录>/../QuantumAtlas-Wiki`（兄弟 Git checkout）
 - **作用**: server 的 wiki 读 endpoint 用这个路径
 
+### `QATLAS_THEOREMS_DIR`
+
+- **默认**: `<.env 所在目录>/../qatlas-lean`（兄弟 Git checkout；theorems 插件的过渡期 pull 目标，最终指向 content-only 的 `QuantumAtlas-Theorems`）
+- **作用**: theorems builtin 插件读 `artifacts/registry.json` + `artifacts/audit_records/certified.json` + Lean 源文件的路径；`POST /api/theorems/sync/pull` 在此目录跑 `git pull --ff-only`
+
 ### `QATLAS_USER_HEADER`
 
 - **Alias**: `USER_HEADER`（**⚠️ v0.17.0 移除**）
@@ -172,22 +177,25 @@ PostgreSQL；登录态仍由 PocketBase 独立管理。
 
 ## Server: plugin platform
 
-QuantumAtlas plugins share one manifest and capability model, but use two
-transport styles:
+QuantumAtlas plugins share one manifest and capability model. A plugin's type
+is two orthogonal axes (`kind` × `transport`):
 
-- `in-process-go`: native Go plugins compiled into `qatlasd` (for example
-  Graph and RAG). They are controlled by the plugin registry but do not open a
-  WebSocket connection.
-- `jsonrpc-ws`: external process plugins (for example `qatlas-lean`). They
-  connect to `QATLAS_RPC_WS_BIND`, complete `initialize`, then call host
-  capabilities over that connection.
+- `kind=builtin`: first-party plugins compiled into `qatlasd`, running
+  in-process as Go (for example Graph and RAG). They are controlled by the
+  plugin registry but do not open a WebSocket connection and carry no
+  `transport`.
+- `kind=external`: third-party plugins running as a separate process speaking
+  JSON-RPC to the host. Their `transport` is either `socket` (the plugin dials
+  into `QATLAS_RPC_WS_BIND` and authenticates with a connect secret) or `stdio`
+  (the host spawns the plugin from `spawn.command` and talks over its
+  stdin/stdout, the LSP model).
 
 | 变量 | 默认 | 作用 |
 |---|---|---|
 | `QATLAS_PLUGINS_DIR` | `${XDG_CONFIG_HOME:-$HOME/.config}/qatlasd/plugins` | 插件清单目录；扫描其一级子目录的 `plugin.json` |
 | `QATLAS_PLUGINS_ENABLED` | 空 | CSV 白名单；空表示所有发现的插件都可启用 |
 | `QATLAS_PLUGINS_DISABLED` | 空 | CSV 黑名单；与 enabled 同时命中时 disabled 胜 |
-| `QATLAS_PLUGIN_CONNECT_SECRET` | 空 | 外部 `jsonrpc-ws` 插件 initialize 握手 secret；空表示仅依赖 loopback 监听 |
+| `QATLAS_PLUGIN_CONNECT_SECRET` | 空 | 外部 `transport=socket` 插件 initialize 握手 secret；空表示仅依赖 loopback 监听 |
 | `QATLAS_RPC_WS_BIND` | `127.0.0.1:8799` | 外部 JSON-RPC WebSocket 插件拨入的监听地址 |
 | `QATLAS_EVENT_RETENTION` | `7d` | 插件断连事件缓冲保留时间；支持 Go duration（如 `168h`）或 `Nd` |
 | `QATLAS_PLUGIN_RPC_TIMEOUT_MS` | `30000` | 单次 host↔plugin RPC 超时（毫秒）|

@@ -34,6 +34,7 @@ type Summary struct {
 	Name        string      `json:"name,omitempty"`
 	Version     string      `json:"version,omitempty"`
 	ABIVersion  string      `json:"abi_version,omitempty"`
+	Kind        string      `json:"kind,omitempty"`
 	Transport   string      `json:"transport,omitempty"`
 	Status      string      `json:"status"`
 	Enabled     bool        `json:"enabled"`
@@ -109,7 +110,7 @@ func (r *Registry) addManifest(manifest Manifest, allowAll bool, enabledSet, dis
 	} else if manifest.ABIVersion != HostABIVersion {
 		status = StatusIncompatible
 		errMsg = fmt.Sprintf("plugin ABI %s is incompatible with host ABI %s", manifest.ABIVersion, HostABIVersion)
-	} else if manifest.Transport == TransportInProcessGo {
+	} else if manifest.Kind == KindBuiltin {
 		status = StatusConnected
 	}
 	r.plugins[manifest.ID] = &Plugin{
@@ -165,7 +166,7 @@ func (r *Registry) MarkDisconnected(id string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	p := r.plugins[id]
-	if p == nil || !p.Enabled || p.Manifest.Transport == TransportInProcessGo || p.Manifest.ABIVersion != HostABIVersion {
+	if p == nil || !p.Enabled || p.Manifest.Kind == KindBuiltin || p.Manifest.ABIVersion != HostABIVersion {
 		return
 	}
 	p.Status = StatusDisconnected
@@ -182,7 +183,7 @@ func (r *Registry) Enable(id string) (Summary, bool) {
 	if p.Manifest.ABIVersion != HostABIVersion {
 		p.Status = StatusIncompatible
 		p.Error = fmt.Sprintf("plugin ABI %s is incompatible with host ABI %s", p.Manifest.ABIVersion, HostABIVersion)
-	} else if p.Manifest.Transport == TransportInProcessGo {
+	} else if p.Manifest.Kind == KindBuiltin {
 		p.Status = StatusConnected
 		p.Error = ""
 	} else {
@@ -211,6 +212,7 @@ func (p *Plugin) summary() Summary {
 		Name:        p.Manifest.Name,
 		Version:     p.Manifest.Version,
 		ABIVersion:  p.Manifest.ABIVersion,
+		Kind:        p.Manifest.Kind,
 		Transport:   p.Manifest.Transport,
 		Status:      p.Status,
 		Enabled:     p.Enabled,

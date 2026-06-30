@@ -55,10 +55,8 @@ PAT 携带一组显式 scope（GitHub fine-grained PAT 同款设计）。当前�
 | `wiki:write` | `POST /api/wiki/sync/pull`（服务端 git fast-forward + 缓存刷新；隐式含 `wiki:read`）|
 | `plugins:read` | `GET /api/v1/plugins` |
 | `plugins:write` | `POST /api/v1/plugins/{id}/enable` `POST /api/v1/plugins/{id}/disable`（隐式含 `plugins:read`）|
-| `theorems:read` | `GET /api/v1/theorems` `GET /api/v1/theorems/{id}` |
-| `theorems:write` | `POST /api/v1/theorems`（隐式含 `theorems:read`）|
-| `verifications:read` | `GET /api/v1/verifications` |
-| `verifications:write` | `POST /api/v1/verifications`（隐式含 `verifications:read`）|
+| `theorems:read` | `GET /api/theorems/list` `GET /api/theorems/families` `GET /api/theorems/stats` `GET /api/theorems/theorem/{fqn}` `GET /api/theorems/theorem-source/{fqn}` `GET /api/theorems/sync/status` |
+| `theorems:write` | `POST /api/theorems/sync/pull`（服务端 git fast-forward + 缓存 reload；隐式含 `theorems:read`）|
 
 **Scope 是编译时静态的**——加新 scope 需要改代码 + 重新部署。完整词表在 `internal/pat/scopes.go`。
 

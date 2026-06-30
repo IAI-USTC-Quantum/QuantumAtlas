@@ -35,10 +35,11 @@ type Config struct {
 	//   - PBDataDir -> ${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/pb_data
 	// "anchor" is the directory containing the .env loaded by the caller,
 	// or the process CWD when no .env was supplied.
-	WikiDir   string // local clone of the Wiki repo (markdown + frontmatter).
-	RawDir    string // RAW asset store (PDFs, MinerU outputs, etc.).
-	DataDir   string // server-managed metadata (ingests/, MinerU lease state, etc.).
-	PBDataDir string // PocketBase pb_data (SQLite + uploads); passed to --dir=.
+	WikiDir     string // local clone of the Wiki repo (markdown + frontmatter).
+	TheoremsDir string // local clone of the Lean-content repo (proved Theorems; theorems plugin pull target).
+	RawDir      string // RAW asset store (PDFs, MinerU outputs, etc.).
+	DataDir     string // server-managed metadata (ingests/, MinerU lease state, etc.).
+	PBDataDir   string // PocketBase pb_data (SQLite + uploads); passed to --dir=.
 
 	// PostgreSQL catalog (server-only, non-login state).
 	PostgresDSN      string
@@ -300,6 +301,7 @@ func Load(dotenvPath string) (*Config, error) {
 	cfg := &Config{
 		HTTPAddr:             firstEnv("QATLAS_HTTP_ADDR"),
 		WikiDir:              firstEnv("QATLAS_WIKI_DIR", "WIKI_DIR"),
+		TheoremsDir:          firstEnv("QATLAS_THEOREMS_DIR"),
 		RawDir:               firstEnv("QATLAS_RAW_DIR", "RAW_DIR"),
 		DataDir:              firstEnv("QATLAS_DATA_DIR", "DATA_DIR"),
 		PBDataDir:            firstEnv("QATLAS_PB_DATA_DIR", "PB_DATA_DIR"),
@@ -397,6 +399,7 @@ func Load(dotenvPath string) (*Config, error) {
 	// checkout (no more `wiki/`, `raw/`, `data/`, `pb_data/` showing up
 	// in `git status` after a clean clone).
 	cfg.WikiDir = expandPath(defaultIfEmpty(cfg.WikiDir, defaultWikiDir()), anchor)
+	cfg.TheoremsDir = expandPath(defaultIfEmpty(cfg.TheoremsDir, defaultTheoremsDir()), anchor)
 	cfg.RawDir = expandPath(defaultIfEmpty(cfg.RawDir, defaultXDGSubdir("raw")), anchor)
 	cfg.DataDir = expandPath(defaultIfEmpty(cfg.DataDir, defaultXDGSubdir("data")), anchor)
 	cfg.PBDataDir = expandPath(defaultIfEmpty(cfg.PBDataDir, defaultXDGSubdir("pb_data")), anchor)
@@ -808,6 +811,14 @@ func defaultIfEmpty(v, def string) string {
 // indistinguishable.
 func defaultWikiDir() string {
 	return filepath.Join("..", "QuantumAtlas-Wiki")
+}
+
+// defaultTheoremsDir returns the conventional Lean-content checkout relative to
+// the .env anchor: a sibling "../qatlas-lean" (the theorems plugin's transitional
+// pull target; eventually a content-only "../QuantumAtlas-Theorems"). Relative
+// for the same anchor-resolution reason as defaultWikiDir.
+func defaultTheoremsDir() string {
+	return filepath.Join("..", "qatlas-lean")
 }
 
 func defaultXDGConfigSubdir(name string) string {

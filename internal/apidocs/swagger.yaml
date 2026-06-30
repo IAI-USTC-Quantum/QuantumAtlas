@@ -1088,6 +1088,51 @@ paths:
       summary: Get PDF fetch status
       tags:
       - Papers
+  /api/papers/lookup:
+    get:
+      description: |-
+        Resolves comma-separated namespaced `kind:id` refs
+        (arxiv:… / openalex:… / doi:…) against the local OpenAlex
+        corpus. Returns per-ref {ref,title,authors,year,hosted,resolved}
+        plus corpus_available. Exact-by-id only; fuzzy search is a
+        separate deferred capability.
+      parameters:
+      - description: comma-separated kind:id refs
+        in: query
+        name: ids
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Resolve references (batch, exact)
+      tags:
+      - Papers
   /api/papers/needs-mineru:
     get:
       parameters:
@@ -1401,6 +1446,245 @@ paths:
       summary: Wiki statistics
       tags:
       - Wiki
+  /api/theorems/families:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List theorem families
+      tags:
+      - Theorems
+  /api/theorems/list:
+    get:
+      description: |-
+        Lists registry.json entries from the theorems plugin's git
+        checkout. Filterable by family_id, audit_status, kind.
+      parameters:
+      - description: filter by family id
+        in: query
+        name: family_id
+        type: string
+      - description: filter by audit status
+        in: query
+        name: audit_status
+        type: string
+      - description: filter by kind (theorem|lemma|definition|bound)
+        in: query
+        name: kind
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List theorems
+      tags:
+      - Theorems
+  /api/theorems/stats:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Theorem stats
+      tags:
+      - Theorems
+  /api/theorems/sync/pull:
+    post:
+      description: |-
+        Runs `git fetch --prune` + `git pull --ff-only` on the server
+        theorems checkout, then reloads the in-memory registry cache.
+        Mutates server state, so it requires the theorems:write scope.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: non-fast-forward / theorems dir missing
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Theorems sync pull
+      tags:
+      - Theorems
+  /api/theorems/sync/status:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Theorems sync status
+      tags:
+      - Theorems
+  /api/theorems/theorem-source/{fqn}:
+    get:
+      parameters:
+      - description: lean_fqn
+        in: path
+        name: fqn
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get theorem source
+      tags:
+      - Theorems
+  /api/theorems/theorem/{fqn}:
+    get:
+      parameters:
+      - description: lean_fqn
+        in: path
+        name: fqn
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get theorem
+      tags:
+      - Theorems
   /api/v1/graph/query:
     post:
       consumes:
@@ -1791,201 +2075,6 @@ paths:
       summary: RAG search
       tags:
       - RAG
-  /api/v1/theorems:
-    get:
-      parameters:
-      - description: filter by source paper id
-        in: query
-        name: paper_id
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-        "401":
-          description: Unauthorized
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "403":
-          description: Forbidden
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      security:
-      - BearerAuth: []
-      summary: List theorems
-      tags:
-      - Theorems
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: theorem payload
-        in: body
-        name: body
-        required: true
-        schema:
-          type: object
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-        "201":
-          description: Created
-          schema:
-            additionalProperties: true
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "401":
-          description: Unauthorized
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "403":
-          description: Forbidden
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Create or update theorem
-      tags:
-      - Theorems
-  /api/v1/theorems/{id}:
-    get:
-      parameters:
-      - description: theorem id
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-        "401":
-          description: Unauthorized
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "403":
-          description: Forbidden
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "404":
-          description: Not Found
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Get theorem
-      tags:
-      - Theorems
-  /api/v1/verifications:
-    get:
-      parameters:
-      - description: filter by theorem id
-        in: query
-        name: theorem_id
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-        "401":
-          description: Unauthorized
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "403":
-          description: Forbidden
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      security:
-      - BearerAuth: []
-      summary: List verifications
-      tags:
-      - Verifications
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: verification payload
-        in: body
-        name: body
-        required: true
-        schema:
-          type: object
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-        "201":
-          description: Created
-          schema:
-            additionalProperties: true
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "401":
-          description: Unauthorized
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "403":
-          description: Forbidden
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Submit verification
-      tags:
-      - Verifications
   /api/wiki/sync/pull:
     post:
       description: |-

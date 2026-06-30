@@ -75,11 +75,11 @@ qatlas --help
 
     PAT 创建 / 撤销 / 轮换、`qatlas auth login` 多 host 切换、shell vs CI 配置。
 
--   :material-connection:{ .lg .middle } **[连接 qatlas-lean 插件](qatlas-lean-integration.md)**
+-   :material-connection:{ .lg .middle } **[外部插件集成](external-plugins.md)**
 
     ---
 
-    外部 JSON-RPC 插件握手、host capabilities、theorem/verification smoke test。
+    kind×transport 插件模型、外部 JSON-RPC（socket/stdio）握手、host capabilities、smoke test。
 
 </div>
 

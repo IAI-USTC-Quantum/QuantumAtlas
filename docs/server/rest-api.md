@@ -123,9 +123,11 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
 
 ### Plugins
 
-Plugins share one manifest/capability model. Native Go plugins such as Graph
-and RAG use `in-process-go` transport inside `qatlasd`; external plugins such
-as `qatlas-lean` use `jsonrpc-ws` and connect to the RPC listener.
+Plugins share one manifest/capability model with two orthogonal axes
+(`kind` × `transport`). First-party plugins such as Graph and RAG are
+`kind=builtin` (compiled into `qatlasd`, in-process); third-party plugins are
+`kind=external` and connect to the RPC listener over `transport=socket`, or are
+spawned by the host over `transport=stdio`.
 
 | Method | Path | 鉴权 | 用途 |
 |---|---|---|---|
@@ -136,18 +138,29 @@ as `qatlas-lean` use `jsonrpc-ws` and connect to the RPC listener.
 External plugins do not call host capabilities over HTTP. They connect to the
 WebSocket JSON-RPC service at `QATLAS_RPC_WS_BIND`. `initialize` params contain
 `id`, `secret`, and `abi_version`; after the handshake the same connection can
-call `pages/get`, `papers/getMarkdown`, `papers/getCitedRefs`, `theorems/get`,
-`theorems/create`, `verifications/submit`, and `events/publish`.
+call the host-shared capabilities `pages/get`, `search/query`,
+`papers/getMarkdown`, `papers/getMeta`, `papers/getCitedRefs`, and
+`events/publish`. (The host core carries no plugin-domain methods — ADR 0003.)
 
-### Theorems / Verifications
+### Theorems（builtin 插件，read-through 一个 Lean-content git checkout）
+
+theorems builtin 插件把上游 Lean-content 仓库（`QATLAS_THEOREMS_DIR`）的
+`artifacts/registry.json` + `artifacts/audit_records/certified.json` + Lean 源
+read-through 暴露出来。它**不持有** PocketBase collection（ADR 0004：已证 Theorem
+是从 git read-through，不落库）。
 
 | Method | Path | 鉴权 | 用途 |
 |---|---|---|---|
-| `GET` | `/api/v1/theorems?paper_id=` | `theorems:read` | 列 theorem 记录 |
-| `GET` | `/api/v1/theorems/{id}` | `theorems:read` | 取单个 theorem |
-| `POST` | `/api/v1/theorems` | `theorems:write` | 创建或更新 theorem |
-| `GET` | `/api/v1/verifications?theorem_id=` | `verifications:read` | 列 verification 记录 |
-| `POST` | `/api/v1/verifications` | `verifications:write` | 提交或更新 verification |
+| `GET` | `/api/theorems/list` | `theorems:read` | 列已证 Theorem（支持 `?family_id=&audit_status=&kind=` 过滤）|
+| `GET` | `/api/theorems/families` | `theorems:read` | 列 theorem family 定义（过滤下拉数据源）|
+| `GET` | `/api/theorems/stats` | `theorems:read` | 聚合计数（by_kind / by_family / by_audit_status / sorry_free / certified）|
+| `GET` | `/api/theorems/theorem/{fqn}` | `theorems:read` | 取单个 Theorem（完整 registry 条目 + audit verdict）|
+| `GET` | `/api/theorems/theorem-source/{fqn}` | `theorems:read` | 按需取该 Theorem 的 Lean 源文件 |
+| `GET` | `/api/theorems/sync/status` | `theorems:read` | theorems git 状态（与 wiki 同形）|
+| `POST` | `/api/theorems/sync/pull` | `theorems:write` | 触发服务端 theorems git fast-forward pull，随后同步 reload 内存缓存 |
+
+> `theorems:write` 隐式含 `theorems:read`。`/api/<id>/sync/{pull,status}` 是平台为
+> 每个 pull 类插件（wiki、theorems）挂的**统一形状**（ADR 0002/0003）。
 
 ### PAT 管理（**只接受 session token**，PAT auth 被拒）
 

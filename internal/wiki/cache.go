@@ -32,6 +32,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/gitpull"
 )
 
 // CacheSnapshot is one immutable view of the parsed wiki tree. New
@@ -131,7 +133,7 @@ func (c *Cache) Refresh(force bool) (bool, error) {
 	// gitOutput returns "" and we end up re-walking every tick, which
 	// is acceptable for the once-a-minute cadence (the walk is ~1s
 	// even cold; the goal was just to stop doing it per-request).
-	currentCommit := gitOutput(c.dir, "rev-parse", "HEAD")
+	currentCommit := gitpull.Output(c.dir, "rev-parse", "HEAD")
 	cur := c.snap.Load()
 	if !force && cur != nil && cur.GitCommit != "" && cur.GitCommit == currentCommit {
 		return false, nil

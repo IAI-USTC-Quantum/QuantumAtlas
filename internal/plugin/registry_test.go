@@ -23,7 +23,8 @@ func TestLoadDirDiscoversManifestAndAppliesDisableWins(t *testing.T) {
 	  "name": "Lean",
 	  "version": "1.0.0",
 	  "abi_version": "1",
-	  "transport": "jsonrpc-ws",
+	  "kind": "external",
+	  "transport": "socket",
 	  "spawn": null,
 	  "contributes": {"capabilities": ["theorem.verify"], "subscribes": ["theorem.added"], "publishes": []},
 	  "needs": ["papers:read"]
@@ -49,7 +50,8 @@ func TestEnableDisable(t *testing.T) {
 	  "name": "Lean",
 	  "version": "1.0.0",
 	  "abi_version": "1",
-	  "transport": "jsonrpc-ws",
+	  "kind": "external",
+	  "transport": "socket",
 	  "spawn": null,
 	  "contributes": {},
 	  "needs": []
@@ -73,7 +75,8 @@ func TestIncompatibleABIStatus(t *testing.T) {
 	  "name": "Future",
 	  "version": "1.0.0",
 	  "abi_version": "99",
-	  "transport": "jsonrpc-ws",
+	  "kind": "external",
+	  "transport": "socket",
 	  "spawn": null,
 	  "contributes": {},
 	  "needs": []

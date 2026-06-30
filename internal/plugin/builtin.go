@@ -7,7 +7,7 @@ func BuiltinManifests() []Manifest {
 			Name:       "QuantumAtlas Graph",
 			Version:    "1.0.0",
 			ABIVersion: HostABIVersion,
-			Transport:  TransportInProcessGo,
+			Kind:       KindBuiltin,
 			Contributes: Contributes{
 				Capabilities: []string{"graph.query", "graph.schema", "graph.stats"},
 			},
@@ -18,11 +18,31 @@ func BuiltinManifests() []Manifest {
 			Name:       "QuantumAtlas RAG",
 			Version:    "1.0.0",
 			ABIVersion: HostABIVersion,
-			Transport:  TransportInProcessGo,
+			Kind:       KindBuiltin,
 			Contributes: Contributes{
 				Capabilities: []string{"rag.search"},
 			},
 			Needs: []string{"papers:read"},
+		},
+		{
+			ID:         "wiki",
+			Name:       "QuantumAtlas Wiki",
+			Version:    "1.0.0",
+			ABIVersion: HostABIVersion,
+			Kind:       KindBuiltin,
+			Contributes: Contributes{
+				Capabilities: []string{"wiki.pages", "wiki.search", "wiki.stats", "wiki.sync"},
+			},
+		},
+		{
+			ID:         "theorems",
+			Name:       "QuantumAtlas Theorems",
+			Version:    "1.0.0",
+			ABIVersion: HostABIVersion,
+			Kind:       KindBuiltin,
+			Contributes: Contributes{
+				Capabilities: []string{"theorems.list", "theorems.get", "theorems.source", "theorems.sync"},
+			},
 		},
 	}
 }

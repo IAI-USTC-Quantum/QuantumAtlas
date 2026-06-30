@@ -15,9 +15,13 @@ A source of record (arXiv / DOI work) that results are extracted from.
 **Claim**:
 A single pre-proof natural-language statement extracted from a Paper — a candidate for
 formalization (paper-of-record + near-verbatim NL + stated/implicit assumptions). Owns the
-namespace `<paper_id>:<slug>`.
-_Avoid_: unit, unit_id (retired — a Claim's id is the former unit_id), "theorem" (a Claim is
-pre-proof), proposition.
+namespace `claim_id = <paper_id>:<slug>`. A Paper may yield several Claims; a Claim formalizes
+into 0..1 Theorem. The Claim is the only thing QuantumAtlas models and produces — QA's world ends
+at filing the issue (`claim_id` in the trailing issue marker); what happens after (the prover's
+work units, the proof closure) is qatlas-lean's internal concern, not QA's.
+_Avoid_: "theorem" (a Claim is pre-proof), proposition, unit / unit_id (a prover-side work/registry
+id that lives after the issue — not a QA concept; most lean registry entries are proof-closure
+lemmas/definitions with no Claim at all).
 
 **Theorem**:
 A machine-checked Lean 4 declaration that faithfully formalizes a Claim (a `registry.json` entry

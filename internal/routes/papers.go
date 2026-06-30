@@ -18,6 +18,7 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineru"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/openalex"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/openalexcorpus"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperassets"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/papers"
 
@@ -73,6 +74,7 @@ func RegisterPapers(
 	cfg *config.Config,
 	rawStore objstore.Store,
 	catalog *papers.Store,
+	corpus *openalexcorpus.Store,
 	enforcer *casbin.Enforcer,
 	converter *mineru.Converter,
 	doiResolver *openalex.Resolver,
@@ -87,6 +89,12 @@ func RegisterPapers(
 		}
 		if raw == "stats" {
 			return paperStatsHandler(re, catalog)
+		}
+		// Batch reference resolver (ADR 0007): GET /api/papers/lookup?ids=...
+		// is a path-only special case (like stats / needs-mineru), resolving
+		// namespaced kind:id refs against the local OpenAlex corpus.
+		if raw == "lookup" {
+			return paperLookupHandler(re, catalog, corpus)
 		}
 		// Asset-download endpoints are only registered when the
 		// operator opted in via QATLAS_PAPER_ACCESS_ENABLED. When

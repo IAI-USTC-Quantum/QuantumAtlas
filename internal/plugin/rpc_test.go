@@ -22,7 +22,8 @@ func TestRPCInitializeAndHostCall(t *testing.T) {
 	  "name": "Lean",
 	  "version": "1.0.0",
 	  "abi_version": "1",
-	  "transport": "jsonrpc-ws",
+	  "kind": "external",
+	  "transport": "socket",
 	  "spawn": null,
 	  "contributes": {"capabilities": ["theorem.verify"], "subscribes": [], "publishes": []},
 	  "needs": ["wiki:read"]
@@ -89,7 +90,8 @@ func TestRPCEventsPublishAllowedWithoutPluginWriteScope(t *testing.T) {
 	  "name": "Lean",
 	  "version": "1.0.0",
 	  "abi_version": "1",
-	  "transport": "jsonrpc-ws",
+	  "kind": "external",
+	  "transport": "socket",
 	  "spawn": null,
 	  "contributes": {"capabilities": [], "subscribes": [], "publishes": ["lean.verification.completed"]},
 	  "needs": ["verifications:write"]
@@ -100,7 +102,7 @@ func TestRPCEventsPublishAllowedWithoutPluginWriteScope(t *testing.T) {
 	}
 	host := hostapi.NewRegistry()
 	bus := events.NewBus()
-	if err := hostapi.RegisterCoreMethods(host, nil, nil, nil, bus); err != nil {
+	if err := hostapi.RegisterCoreMethods(host, nil, nil, bus); err != nil {
 		t.Fatalf("RegisterCoreMethods: %v", err)
 	}
 	s := httptest.NewServer((&RPCServer{
@@ -144,7 +146,8 @@ func TestRPCPushesSubscribedEvents(t *testing.T) {
 	  "name": "Lean",
 	  "version": "1.0.0",
 	  "abi_version": "1",
-	  "transport": "jsonrpc-ws",
+	  "kind": "external",
+	  "transport": "socket",
 	  "spawn": null,
 	  "contributes": {"capabilities": [], "subscribes": ["theorem.added"], "publishes": []},
 	  "needs": ["wiki:read"]

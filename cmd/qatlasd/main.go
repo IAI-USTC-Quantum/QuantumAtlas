@@ -34,10 +34,12 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineru"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/openalex"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/openalexcorpus"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/papers"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/pat"
 	qplugin "github.com/IAI-USTC-Quantum/QuantumAtlas/internal/plugin"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/routes"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/theoremsplugin"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/wiki"
 	qweb "github.com/IAI-USTC-Quantum/QuantumAtlas/web"
 
@@ -371,6 +373,12 @@ func main() {
 			})
 		}
 		catalog := papers.NewStore(pgPool)
+		// The OpenAlex corpus (ADR 0006) lives in the SAME database as the
+		// paper catalog, so it shares the catalog pool — no separate DSN. The
+		// /api/papers/lookup resolver reads it by id (ADR 0007); when pgPool is
+		// nil (local dev / no DSN) the corpus reports unavailable and lookup
+		// degrades gracefully (resolved=false, corpus_available=false).
+		corpus := openalexcorpus.NewStore(pgPool)
 		if catalog.Configured() {
 			// Schema bootstrap runs in the background: it is ~16 sequential DDL
 			// round-trips to the catalog database, which can
@@ -504,6 +512,17 @@ func main() {
 			return e.Next()
 		})
 
+		// Build the theorems in-memory cache (proved-Theorems catalog read
+		// through a git checkout of the Lean-content repo). Loads
+		// cfg.TheoremsDir/artifacts/registry.json once at startup so the
+		// first /api/theorems request hits warm data.
+		theoremsCache := theoremsplugin.NewCache(cfg.TheoremsDir, 60*time.Second)
+		log.Printf("theorems: cache initialized (dir=%s)", cfg.TheoremsDir)
+		app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
+			theoremsCache.Stop()
+			return e.Next()
+		})
+
 		// ── STEP 6: register the HTTP handlers + pb_data lock as
 		// an OnServe hook. PocketBase fires the hook when
 		// `apis.Serve` builds the router (originalServeRunE below).
@@ -540,7 +559,7 @@ func main() {
 				}
 			}
 
-			registerRoutes(se, app, cfg, rawStore, catalog, wikiCache, enforcer, mineruConverter, doiResolver, arxivFetcher, serverStarted)
+			registerRoutes(se, app, cfg, rawStore, catalog, corpus, wikiCache, theoremsCache, enforcer, mineruConverter, doiResolver, arxivFetcher, serverStarted)
 
 			// Serve the embedded SPA last as the catch-all. apis.Static's
 			// indexFallback=true means any path that doesn't match a real
@@ -738,7 +757,7 @@ func ensureBucketVersioning(rawStore objstore.Store) {
 // registerRoutes wires the QuantumAtlas /api/* surface. Most endpoints are
 // implemented under internal/routes/ and pulled in by their respective
 // Register* helpers as we migrate each module in subsequent phases.
-func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawStore objstore.Store, catalog *papers.Store, wikiCache *wiki.Cache, enforcer *casbin.Enforcer, mineruConverter *mineru.Converter, doiResolver *openalex.Resolver, arxivFetcher *arxiv.Fetcher, started time.Time) {
+func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawStore objstore.Store, catalog *papers.Store, corpus *openalexcorpus.Store, wikiCache *wiki.Cache, theoremsCache *theoremsplugin.Cache, enforcer *casbin.Enforcer, mineruConverter *mineru.Converter, doiResolver *openalex.Resolver, arxivFetcher *arxiv.Fetcher, started time.Time) {
 	probes := healthz.Probes{
 		Cfg:      cfg,
 		RawStore: rawStore,
@@ -882,9 +901,6 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// directly; non-browser callers mint a PAT at /pat or use the
 	// QATLAS_SYSTEM_PAT env on the server.)
 
-	// Wiki / pages / stats / search / lint — see internal/routes/wiki.go.
-	routes.RegisterWiki(se, cfg, wikiCache, enforcer)
-
 	eventBus := events.NewBus()
 	pluginRegistry, err := qplugin.LoadDir(cfg.PluginsDir, qplugin.Options{
 		Enabled:  cfg.PluginsEnabled,
@@ -899,14 +915,30 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 		})
 	}
 	routes.RegisterPlugins(se, pluginRegistry, enforcer)
-	routes.RegisterTheorems(se, app, eventBus, enforcer)
-	routes.RegisterVerifications(se, app, enforcer)
-	startPluginRPCServer(cfg, app, wikiCache, rawStore, pluginRegistry, eventBus)
 
-	// Graph (Neo4j) — see internal/routes/graph.go. Gated by
-	// authGuard + scopeGuard("graph", "read") so it matches the rest
-	// of the non-public-repo surface; sessions bypass via ScopeMaster.
-	routes.RegisterGraph(se, cfg, pluginRegistry, enforcer)
+	// Builtin plugins register through ONE platform hook (ADR 0003): each
+	// implements routes.BuiltinPlugin; the pull plugins (wiki, theorems) also
+	// implement routes.GitPullPlugin, so the platform mounts a uniform
+	// POST /api/<id>/sync/pull + GET /api/<id>/sync/status for them. New
+	// builtins land by adding to this list — no host-core surgery.
+	//
+	//   - graph / rag (internal/routes/graph.go, rag.go): in-process readers
+	//     of Neo4j / Qdrant; gated by scopeGuard, plugin-availability aware.
+	//   - wiki (internal/routes/wiki.go): markdown knowledge base, read-through
+	//     a git checkout; /api/pages*, /api/stats, /api/search + sync.
+	//   - theorems (internal/routes/theorems.go): proved-Theorems catalog,
+	//     read-through a Lean-content git checkout; /api/theorems/* + sync.
+	builtinDeps := routes.PluginDeps{Cfg: cfg, Enforcer: enforcer, Registry: pluginRegistry}
+	if err := routes.RegisterBuiltins(se, builtinDeps,
+		routes.NewGraphPlugin(),
+		routes.NewRAGPlugin(),
+		routes.NewWikiPlugin(cfg, wikiCache),
+		routes.NewTheoremsPlugin(cfg, theoremsCache),
+	); err != nil {
+		slog.Error("plugins: failed to register builtin plugins", "error", err)
+	}
+
+	startPluginRPCServer(cfg, wikiCache, rawStore, pluginRegistry, eventBus)
 
 	// Papers (stats, needs-mineru, mineru-lease, uploads) — see
 	// internal/routes/papers.go. v0.9.0 dropped the byte-serving
@@ -914,7 +946,7 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// exposes catalog metadata + the contribution flow by default.
 	// /markdown + /markdown/status come back when the operator opts
 	// in via QATLAS_PAPER_ACCESS_ENABLED=true.
-	routes.RegisterPapers(se, cfg, rawStore, catalog, enforcer, mineruConverter, doiResolver, arxivFetcher)
+	routes.RegisterPapers(se, cfg, rawStore, catalog, corpus, enforcer, mineruConverter, doiResolver, arxivFetcher)
 
 	// Personal Access Tokens — see internal/routes/pat.go.
 	// /api/pat is session-token-only (PAT auth refused by sessionGuard);
@@ -927,19 +959,11 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// and /token are anonymous; /lookup, /approve, /deny require a
 	// browser session (sessionGuard, same as /api/pat).
 	routes.RegisterOAuthDevice(se, app)
-
-	// RAG (vector search) — qatlasd is itself the Qdrant client + caller
-	// of the GPU embed worker. Registered iff QATLAS_PAPER_ACCESS_ENABLED
-	// is on AND both QATLAS_RAG_QDRANT_URL and QATLAS_RAG_EMBED_URL are
-	// set. Same posture as /api/papers/{id}/markdown: serves derivative
-	// paper content (chunk-text snippets), so we gate behind the
-	// operator's opt-in. See internal/routes/rag.go.
-	routes.RegisterRAG(se, cfg, pluginRegistry, enforcer)
 }
 
-func startPluginRPCServer(cfg *config.Config, app core.App, wikiCache *wiki.Cache, rawStore objstore.Store, pluginRegistry *qplugin.Registry, eventBus *events.Bus) {
+func startPluginRPCServer(cfg *config.Config, wikiCache *wiki.Cache, rawStore objstore.Store, pluginRegistry *qplugin.Registry, eventBus *events.Bus) {
 	hostAPI := hostapi.NewRegistry()
-	if err := hostapi.RegisterCoreMethods(hostAPI, app, wikiCache, rawStore, eventBus); err != nil {
+	if err := hostapi.RegisterCoreMethods(hostAPI, wikiCache, rawStore, eventBus); err != nil {
 		slog.Error("plugin rpc: host capability registration failed", "error", err)
 		return
 	}

@@ -1,10 +1,14 @@
-// Package wiki — git subprocess helpers used by the /api/wiki/sync/*
-// endpoints. We deliberately shell out to the `git` binary rather than
-// pull in go-git: the operations needed (rev-parse, fetch, pull --ff-only)
-// are simple, and shelling out matches the existing Python implementation
-// exactly, which makes operational behavior easy to reason about across
-// the transition.
-package wiki
+// Package gitpull is the host-neutral `git pull --ff-only` machinery shared
+// by every builtin plugin that reads through a server-side checkout of an
+// upstream content repo (wiki, theorems). It deliberately shells out to the
+// `git` binary rather than pull in go-git: the operations needed (rev-parse,
+// fetch, pull --ff-only) are simple, and shelling out keeps operational
+// behavior easy to reason about.
+//
+// This package carries NO plugin-specific vocabulary — it knows nothing about
+// wiki pages or theorems. Plugins layer their own post-pull work (cache
+// refresh) via the platform's GitPullPlugin.OnPullSucceeded hook.
+package gitpull
 
 import (
 	"context"
@@ -15,9 +19,7 @@ import (
 	"time"
 )
 
-// GitInfo captures the local state of a wiki working tree. Mirrors the
-// Python _git_info() return shape exactly so the JSON payload is
-// byte-compatible with the existing UI.
+// GitInfo captures the local state of a git working tree.
 type GitInfo struct {
 	Enabled    bool         `json:"enabled"`
 	Branch     string       `json:"branch,omitempty"`
@@ -61,9 +63,10 @@ func gitRun(dir string, timeout time.Duration, args ...string) (stdout string, s
 	return outBuf.String(), errBuf.String(), 0, true
 }
 
-// gitOutput is the trimmed stdout of a successful git command, or "" on
-// any failure (matches Python _git_output behavior).
-func gitOutput(dir string, args ...string) string {
+// Output is the trimmed stdout of a successful git command, or "" on any
+// failure. Exported so callers (e.g. an in-memory cache's staleness check)
+// can run cheap `rev-parse HEAD` probes without re-implementing exec plumbing.
+func Output(dir string, args ...string) string {
 	stdout, _, code, ok := gitRun(dir, 2*time.Second, args...)
 	if !ok || code != 0 {
 		return ""
@@ -76,17 +79,17 @@ func gitOutput(dir string, args ...string) string {
 func ReadGitInfo(dir string) GitInfo {
 	// rev-parse --is-inside-work-tree returns "true" for valid worktrees
 	// and exit-codes non-zero (or returns "false") otherwise.
-	if gitOutput(dir, "rev-parse", "--is-inside-work-tree") != "true" {
+	if Output(dir, "rev-parse", "--is-inside-work-tree") != "true" {
 		return GitInfo{Enabled: false}
 	}
 
 	info := GitInfo{Enabled: true}
-	info.Branch = gitOutput(dir, "branch", "--show-current")
-	info.Commit = gitOutput(dir, "rev-parse", "--short", "HEAD")
+	info.Branch = Output(dir, "branch", "--show-current")
+	info.Commit = Output(dir, "rev-parse", "--short", "HEAD")
 	// %cI is the committer date in strict ISO 8601 (RFC 3339). Falls
 	// back to empty string when HEAD doesn't exist (fresh / empty repo).
-	info.CommitTime = gitOutput(dir, "log", "-1", "--format=%cI", "HEAD")
-	info.Upstream = gitOutput(dir, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
+	info.CommitTime = Output(dir, "log", "-1", "--format=%cI", "HEAD")
+	info.Upstream = Output(dir, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
 	info.Ahead, info.Behind = gitCounts(dir, info.Upstream)
 
 	if status, ok := gitStatus(dir); ok {
@@ -96,8 +99,8 @@ func ReadGitInfo(dir string) GitInfo {
 
 	if info.Branch != "" && info.Branch != "main" && info.Branch != "master" {
 		info.Warnings = append(info.Warnings, GitWarning{
-			Code:    "wiki_branch_not_main",
-			Message: "Wiki repo is not checked out on main or master.",
+			Code:    "branch_not_main",
+			Message: "Content repo is not checked out on main or master.",
 			Branch:  info.Branch,
 		})
 	}
@@ -122,7 +125,7 @@ func gitCounts(dir, upstream string) (*int, *int) {
 	if upstream == "" {
 		return nil, nil
 	}
-	out := gitOutput(dir, "rev-list", "--left-right", "--count", "HEAD..."+upstream)
+	out := Output(dir, "rev-list", "--left-right", "--count", "HEAD..."+upstream)
 	if out == "" {
 		return nil, nil
 	}
@@ -138,7 +141,7 @@ func gitCounts(dir, upstream string) (*int, *int) {
 	return &a, &b
 }
 
-// PullResult is the JSON shape returned by /api/wiki/sync/pull on success.
+// PullResult is the JSON shape returned on a successful pull.
 type PullResult struct {
 	Status    string `json:"status"`
 	Changed   bool   `json:"changed"`
@@ -146,11 +149,11 @@ type PullResult struct {
 	NewCommit string `json:"new_commit"`
 }
 
-// PullError carries a status code and a human-readable message so the
-// route handler can map onto an HTTPException-equivalent response.
+// PullError carries a status code and a human-readable message so a route
+// handler can map onto an HTTP response.
 type PullError struct {
-	Status  int    // intended HTTP status
-	Detail  string // safe-to-show error message
+	Status int    // intended HTTP status
+	Detail string // safe-to-show error message
 }
 
 func (e *PullError) Error() string {
@@ -158,18 +161,18 @@ func (e *PullError) Error() string {
 }
 
 // Pull runs `git fetch --prune` + `git pull --ff-only` on dir. Returns
-// PullResult on success or a PullError describing the failure mode in
-// the same way the Python wiki_sync_pull does (HTTP 409 / 502 / 500).
+// PullResult on success or a PullError describing the failure mode
+// (HTTP 409 / 502 / 500).
 func Pull(dir string) (*PullResult, error) {
 	before := ReadGitInfo(dir)
 	if !before.Enabled {
-		return nil, &PullError{Status: 409, Detail: "wiki directory is not a git repository"}
+		return nil, &PullError{Status: 409, Detail: "directory is not a git repository"}
 	}
 	if before.Dirty != nil && *before.Dirty {
-		return nil, &PullError{Status: 409, Detail: "wiki worktree has local changes"}
+		return nil, &PullError{Status: 409, Detail: "worktree has local changes"}
 	}
 
-	oldCommit := gitOutput(dir, "rev-parse", "--short", "HEAD")
+	oldCommit := Output(dir, "rev-parse", "--short", "HEAD")
 
 	_, stderr, code, ok := gitRun(dir, 30*time.Second, "fetch", "--prune")
 	if !ok {
@@ -181,7 +184,7 @@ func Pull(dir string) (*PullResult, error) {
 
 	afterFetch := ReadGitInfo(dir)
 	if afterFetch.Dirty != nil && *afterFetch.Dirty {
-		return nil, &PullError{Status: 409, Detail: "wiki worktree has local changes"}
+		return nil, &PullError{Status: 409, Detail: "worktree has local changes"}
 	}
 
 	_, stderr, code, ok = gitRun(dir, 30*time.Second, "pull", "--ff-only")
@@ -192,7 +195,7 @@ func Pull(dir string) (*PullResult, error) {
 		return nil, &PullError{Status: 409, Detail: nonEmpty(stderr, "git pull --ff-only failed")}
 	}
 
-	newCommit := gitOutput(dir, "rev-parse", "--short", "HEAD")
+	newCommit := Output(dir, "rev-parse", "--short", "HEAD")
 	return &PullResult{
 		Status:    "succeeded",
 		Changed:   oldCommit != newCommit,

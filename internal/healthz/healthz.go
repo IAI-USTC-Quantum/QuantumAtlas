@@ -62,10 +62,10 @@ import (
 	"time"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/gitpull"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/neo4j"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/safego"
-	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/wiki"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -449,7 +449,7 @@ func probeWiki(cfg *config.Config) Check {
 	if cfg == nil || cfg.WikiDir == "" {
 		return Check{Status: "not_configured"}
 	}
-	info := wiki.ReadGitInfo(cfg.WikiDir)
+	info := gitpull.ReadGitInfo(cfg.WikiDir)
 	c := Check{Dir: cfg.WikiDir}
 	if !info.Enabled {
 		c.Status = "error"

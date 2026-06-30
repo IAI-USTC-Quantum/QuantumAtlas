@@ -11,23 +11,28 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/events"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperassets"
-	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/theorems"
-	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/verifications"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/wiki"
-	"github.com/pocketbase/pocketbase/core"
 )
 
-func RegisterCoreMethods(r *Registry, app core.App, pages *wiki.Cache, rawStore objstore.Store, bus *events.Bus) error {
+// RegisterCoreMethods registers the genuinely host-shared capabilities an
+// external (socket/stdio) plugin may call over RPC: the Paper catalog readers,
+// the wiki page/search readers, and the events bus. It deliberately carries NO
+// plugin-domain methods (ADR 0003) — the theorems/verifications methods that
+// earlier commits put here were a domain leak and were removed (ADR 0004).
+//
+// Note: there are no external plugins in this iteration, so this RPC surface
+// has no live consumer. The wiki-domain readers (pages/get, search/query) stay
+// here for now; when an external plugin actually consumes the host API, they
+// move under the wiki plugin's own RegisterHostAPI hook (ADR 0003) — deferred
+// until there is a consumer to justify the churn.
+func RegisterCoreMethods(r *Registry, pages *wiki.Cache, rawStore objstore.Store, bus *events.Bus) error {
 	for method, handler := range map[string]Handler{
-		"pages/get":            pagesGet(pages),
-		"papers/getMarkdown":   papersGetMarkdown(rawStore),
-		"papers/getMeta":       papersGetMeta(),
-		"papers/getCitedRefs":  papersGetCitedRefs(),
-		"theorems/get":         theoremsGet(app),
-		"theorems/create":      theoremsCreate(app),
-		"verifications/submit": verificationsSubmit(app),
-		"events/publish":       eventsPublish(bus),
-		"search/query":         searchQuery(pages),
+		"pages/get":           pagesGet(pages),
+		"papers/getMarkdown":  papersGetMarkdown(rawStore),
+		"papers/getMeta":      papersGetMeta(),
+		"papers/getCitedRefs": papersGetCitedRefs(),
+		"events/publish":      eventsPublish(bus),
+		"search/query":        searchQuery(pages),
 	} {
 		if err := r.Register(method, handler); err != nil {
 			return err
@@ -86,6 +91,10 @@ func papersGetMeta() Handler {
 	}
 }
 
+// papersGetCitedRefs is the paper-centric "what works does paper X cite" query
+// (ADR 0007): its result items are themselves resolvable to metadata via
+// GET /api/papers/lookup. Currently a stub returning an empty ref list; wire to
+// the OpenAlex corpus when the corpus tables land (ADR 0006).
 func papersGetCitedRefs() Handler {
 	return func(_ context.Context, params any) (any, error) {
 		id := stringParam(params, "id", "paper_id", "arxiv_id")
@@ -93,107 +102,6 @@ func papersGetCitedRefs() Handler {
 			return nil, fmt.Errorf("id is required")
 		}
 		return map[string]any{"id": id, "refs": []any{}}, nil
-	}
-}
-
-func theoremsGet(app core.App) Handler {
-	return func(_ context.Context, params any) (any, error) {
-		id := stringParam(params, "theorem_id", "id")
-		if id == "" {
-			return nil, fmt.Errorf("theorem_id is required")
-		}
-		rec, err := app.FindFirstRecordByFilter(theorems.CollectionName, "theorem_id = {:id}", map[string]any{"id": id})
-		if err != nil {
-			return nil, fmt.Errorf("theorem %s not found", id)
-		}
-		return theorems.FromRecord(rec), nil
-	}
-}
-
-func theoremsCreate(app core.App) Handler {
-	return func(_ context.Context, params any) (any, error) {
-		body := struct {
-			ID          string `json:"id"`
-			TheoremID   string `json:"theorem_id"`
-			PageID      string `json:"page_id"`
-			PaperID     string `json:"paper_id"`
-			Section     string `json:"section"`
-			MDLines     []int  `json:"md_lines"`
-			StatementNL string `json:"statement_nl"`
-		}{}
-		if err := decodeParams(params, &body); err != nil {
-			return nil, err
-		}
-		id := strings.TrimSpace(firstNonEmpty(body.TheoremID, body.ID))
-		if id == "" {
-			return nil, fmt.Errorf("theorem_id is required")
-		}
-		collection, err := app.FindCollectionByNameOrId(theorems.CollectionName)
-		if err != nil {
-			return nil, err
-		}
-		rec, err := app.FindFirstRecordByFilter(theorems.CollectionName, "theorem_id = {:id}", map[string]any{"id": id})
-		if err != nil {
-			rec = core.NewRecord(collection)
-		}
-		rec.Set("theorem_id", id)
-		rec.Set("page_id", body.PageID)
-		rec.Set("paper_id", body.PaperID)
-		rec.Set("section", body.Section)
-		rec.Set("md_lines", theorems.EncodeLines(body.MDLines))
-		rec.Set("statement_nl", body.StatementNL)
-		if err := app.Save(rec); err != nil {
-			return nil, err
-		}
-		return theorems.FromRecord(rec), nil
-	}
-}
-
-func verificationsSubmit(app core.App) Handler {
-	return func(_ context.Context, params any) (any, error) {
-		body := struct {
-			ID          string         `json:"id"`
-			TheoremID   string         `json:"theorem_id"`
-			PluginID    string         `json:"plugin_id"`
-			Verdict     string         `json:"verdict"`
-			EvidenceURL string         `json:"evidence_url"`
-			Payload     map[string]any `json:"payload"`
-			Evidence    map[string]any `json:"evidence"`
-		}{}
-		if err := decodeParams(params, &body); err != nil {
-			return nil, err
-		}
-		if body.Payload == nil {
-			body.Payload = body.Evidence
-		}
-		body.ID = strings.TrimSpace(body.ID)
-		if body.ID == "" {
-			body.ID = fmt.Sprintf("vrf-%d", time.Now().UnixNano())
-		}
-		body.TheoremID = strings.TrimSpace(body.TheoremID)
-		body.PluginID = strings.TrimSpace(body.PluginID)
-		body.Verdict = strings.TrimSpace(body.Verdict)
-		if body.TheoremID == "" || body.PluginID == "" || body.Verdict == "" {
-			return nil, fmt.Errorf("theorem_id, plugin_id and verdict are required")
-		}
-		collection, err := app.FindCollectionByNameOrId(verifications.CollectionName)
-		if err != nil {
-			return nil, err
-		}
-		rec, err := app.FindFirstRecordByFilter(verifications.CollectionName, "verification_id = {:id}", map[string]any{"id": body.ID})
-		if err != nil {
-			rec = core.NewRecord(collection)
-		}
-		rec.Set("verification_id", body.ID)
-		rec.Set("theorem_id", body.TheoremID)
-		rec.Set("plugin_id", body.PluginID)
-		rec.Set("verdict", body.Verdict)
-		rec.Set("evidence_url", body.EvidenceURL)
-		rec.Set("payload", verifications.EncodePayload(body.Payload))
-		if err := app.Save(rec); err != nil {
-			return nil, err
-		}
-		return verifications.FromRecord(rec), nil
 	}
 }
 
@@ -247,13 +155,4 @@ func decodeParams(params any, out any) error {
 		return err
 	}
 	return json.Unmarshal(data, out)
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if strings.TrimSpace(v) != "" {
-			return v
-		}
-	}
-	return ""
 }

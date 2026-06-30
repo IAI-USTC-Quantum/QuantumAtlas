@@ -186,6 +186,105 @@ func docWikiSyncStatus() {}
 // @Router      /api/wiki/sync/pull [post]
 func docWikiSyncPull() {}
 
+// --- Theorems (builtin plugin, read-through a Lean-content git checkout) ------
+
+// listTheorems lists the proved-Theorems catalog.
+//
+// @Summary     List theorems
+// @Description Lists registry.json entries from the theorems plugin's git
+// @Description checkout. Filterable by family_id, audit_status, kind.
+// @Tags        Theorems
+// @Produce     json
+// @Security    BearerAuth
+// @Param       family_id query string false "filter by family id"
+// @Param       audit_status query string false "filter by audit status"
+// @Param       kind query string false "filter by kind (theorem|lemma|definition|bound)"
+// @Success     200 {object} map[string]interface{}
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Router      /api/theorems/list [get]
+func docListTheorems() {}
+
+// listTheoremFamilies lists the theorem family definitions.
+//
+// @Summary     List theorem families
+// @Tags        Theorems
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200 {object} map[string]interface{}
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Router      /api/theorems/families [get]
+func docTheoremFamilies() {}
+
+// theoremStats returns aggregate counts over the proved-Theorems catalog.
+//
+// @Summary     Theorem stats
+// @Tags        Theorems
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200 {object} map[string]interface{}
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Router      /api/theorems/stats [get]
+func docTheoremStats() {}
+
+// getTheorem returns one theorem's full registry entry + audit verdict.
+//
+// @Summary     Get theorem
+// @Tags        Theorems
+// @Produce     json
+// @Security    BearerAuth
+// @Param       fqn path string true "lean_fqn"
+// @Success     200 {object} map[string]interface{}
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Failure     404 {object} map[string]string
+// @Router      /api/theorems/theorem/{fqn} [get]
+func docGetTheorem() {}
+
+// getTheoremSource returns the Lean source file backing a theorem.
+//
+// @Summary     Get theorem source
+// @Tags        Theorems
+// @Produce     json
+// @Security    BearerAuth
+// @Param       fqn path string true "lean_fqn"
+// @Success     200 {object} map[string]interface{}
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Failure     404 {object} map[string]string
+// @Router      /api/theorems/theorem-source/{fqn} [get]
+func docGetTheoremSource() {}
+
+// theoremsSyncStatus reports the theorems checkout git HEAD / ahead / behind.
+//
+// @Summary     Theorems sync status
+// @Tags        Theorems
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200 {object} map[string]interface{}
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Router      /api/theorems/sync/status [get]
+func docTheoremsSyncStatus() {}
+
+// theoremsSyncPull fast-forwards the theorems checkout and reloads the cache.
+//
+// @Summary     Theorems sync pull
+// @Description Runs `git fetch --prune` + `git pull --ff-only` on the server
+// @Description theorems checkout, then reloads the in-memory registry cache.
+// @Description Mutates server state, so it requires the theorems:write scope.
+// @Tags        Theorems
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200 {object} map[string]interface{}
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Failure     409 {object} map[string]string "non-fast-forward / theorems dir missing"
+// @Router      /api/theorems/sync/pull [post]
+func docTheoremsSyncPull() {}
+
 // --- Papers ------------------------------------------------------------------
 
 // paperStats returns downloaded / converted paper counts from the index.
@@ -215,6 +314,26 @@ func docPaperStats() {}
 // @Failure     403 {object} map[string]string
 // @Router      /api/papers/needs-mineru [get]
 func docNeedsMineru() {}
+
+// paperLookup batch-resolves namespaced kind:id references against the local
+// OpenAlex corpus (ADR 0007).
+//
+// @Summary     Resolve references (batch, exact)
+// @Description Resolves comma-separated namespaced `kind:id` refs
+// @Description (arxiv:… / openalex:… / doi:…) against the local OpenAlex
+// @Description corpus. Returns per-ref {ref,title,authors,year,hosted,resolved}
+// @Description plus corpus_available. Exact-by-id only; fuzzy search is a
+// @Description separate deferred capability.
+// @Tags        Papers
+// @Produce     json
+// @Param       ids query string true "comma-separated kind:id refs"
+// @Success     200 {object} map[string]interface{}
+// @Security    BearerAuth
+// @Failure     400 {object} map[string]string
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Router      /api/papers/lookup [get]
+func docPaperLookup() {}
 
 // paperResources stanzas were removed in v0.9.0 — the server no longer
 // serves PDF or image bytes outbound by default. paperMarkdown /
@@ -556,80 +675,6 @@ func docRAGSearch() {}
 // @Router      /api/v1/rag/healthz [get]
 // @Router      /api/rag/healthz [get]
 func docRAGHealth() {}
-
-// --- Theorems / verifications -------------------------------------------------
-
-// listTheorems lists theorem records.
-//
-// @Summary     List theorems
-// @Tags        Theorems
-// @Produce     json
-// @Security    BearerAuth
-// @Param       paper_id query string false "filter by source paper id"
-// @Success     200 {object} map[string]interface{}
-// @Failure     401 {object} map[string]string
-// @Failure     403 {object} map[string]string
-// @Router      /api/v1/theorems [get]
-func docListTheorems() {}
-
-// getTheorem returns one theorem record.
-//
-// @Summary     Get theorem
-// @Tags        Theorems
-// @Produce     json
-// @Security    BearerAuth
-// @Param       id path string true "theorem id"
-// @Success     200 {object} map[string]interface{}
-// @Failure     401 {object} map[string]string
-// @Failure     403 {object} map[string]string
-// @Failure     404 {object} map[string]string
-// @Router      /api/v1/theorems/{id} [get]
-func docGetTheorem() {}
-
-// upsertTheorem creates or updates a theorem record.
-//
-// @Summary     Create or update theorem
-// @Tags        Theorems
-// @Accept      json
-// @Produce     json
-// @Security    BearerAuth
-// @Param       body body object true "theorem payload"
-// @Success     200 {object} map[string]interface{}
-// @Success     201 {object} map[string]interface{}
-// @Failure     400 {object} map[string]string
-// @Failure     401 {object} map[string]string
-// @Failure     403 {object} map[string]string
-// @Router      /api/v1/theorems [post]
-func docUpsertTheorem() {}
-
-// listVerifications lists verification records.
-//
-// @Summary     List verifications
-// @Tags        Verifications
-// @Produce     json
-// @Security    BearerAuth
-// @Param       theorem_id query string false "filter by theorem id"
-// @Success     200 {object} map[string]interface{}
-// @Failure     401 {object} map[string]string
-// @Failure     403 {object} map[string]string
-// @Router      /api/v1/verifications [get]
-func docListVerifications() {}
-
-// submitVerification creates or updates a verification record.
-//
-// @Summary     Submit verification
-// @Tags        Verifications
-// @Accept      json
-// @Produce     json
-// @Security    BearerAuth
-// @Param       body body object true "verification payload"
-// @Success     200 {object} map[string]interface{}
-// @Success     201 {object} map[string]interface{}
-// @Failure     400 {object} map[string]string
-// @Failure     401 {object} map[string]string
-// @Failure     403 {object} map[string]string
-// @Router      /api/v1/verifications [post]
-func docSubmitVerification() {}
 
 // --- PAT ---------------------------------------------------------------------
 

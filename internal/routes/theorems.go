@@ -1,104 +1,112 @@
 package routes
 
 import (
-	"encoding/json"
-	"fmt"
 	"net/http"
-	"strings"
-	"time"
 
-	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/events"
-	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/theorems"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/theoremsplugin"
 
-	"github.com/casbin/casbin/v2"
 	"github.com/pocketbase/pocketbase/core"
 )
 
-type theoremRequest struct {
-	ID          string `json:"id"`
-	PageID      string `json:"page_id"`
-	PaperID     string `json:"paper_id"`
-	Section     string `json:"section"`
-	MDLines     []int  `json:"md_lines"`
-	StatementNL string `json:"statement_nl"`
+// TheoremsPlugin is the builtin theorems plugin (ADR 0002): it reads through a
+// server-side `git pull --ff-only` checkout of the upstream Lean-content repo
+// and exposes the proved-Theorems catalog read-only under /api/theorems/*. Its
+// git-sync pair (/api/theorems/sync/{pull,status}) is mounted by the platform's
+// GitPullPlugin capability, symmetric with wiki.
+//
+// It deliberately does NOT own a PocketBase collection (ADR 0004): proved
+// Theorems are read-through from git, not persisted. Claims (pre-proof) live
+// only in the localhost contrib agent + gitea (ADR 0005), never in QA.
+type TheoremsPlugin struct {
+	cfg   *config.Config
+	cache *theoremsplugin.Cache
 }
 
-func RegisterTheorems(se *core.ServeEvent, app core.App, eventBus *events.Bus, enforcer *casbin.Enforcer) {
-	se.Router.GET("/api/v1/theorems", scopeGuard(enforcer, "theorems", "read", func(re *core.RequestEvent) error {
-		filter := ""
-		params := map[string]any{}
-		if paperID := strings.TrimSpace(re.Request.URL.Query().Get("paper_id")); paperID != "" {
-			filter = "paper_id = {:paper_id}"
-			params["paper_id"] = paperID
+// NewTheoremsPlugin constructs the theorems builtin. cache MUST be non-nil and
+// already constructed (NewCache happens in main.go at startup so the first
+// request hits warm data).
+func NewTheoremsPlugin(cfg *config.Config, cache *theoremsplugin.Cache) *TheoremsPlugin {
+	return &TheoremsPlugin{cfg: cfg, cache: cache}
+}
+
+// PluginID is the theorems plugin's URL/scope namespace.
+func (t *TheoremsPlugin) PluginID() string { return "theorems" }
+
+// GitRepoDir is the Lean-content checkout the host's `git pull --ff-only`
+// runs in.
+func (t *TheoremsPlugin) GitRepoDir() string { return t.cfg.TheoremsDir }
+
+// OnPullSucceeded reloads the in-memory registry cache synchronously so the
+// next read reflects the pulled commit immediately.
+func (t *TheoremsPlugin) OnPullSucceeded() error { return t.cache.Reload() }
+
+// RegisterRoutes mounts the theorems read surface. All endpoints are gated
+// behind scopeGuard("theorems", "read"): the catalog is not anonymously
+// browsable — callers need a session token or a PAT carrying theorems:read.
+func (t *TheoremsPlugin) RegisterRoutes(se *core.ServeEvent, deps PluginDeps) error {
+	cache, enforcer := t.cache, deps.Enforcer
+
+	// GET /api/theorems/list — filterable catalog listing.
+	se.Router.GET("/api/theorems/list", scopeGuard(enforcer, "theorems", "read", func(re *core.RequestEvent) error {
+		q := re.Request.URL.Query()
+		items := cache.List(theoremsplugin.ListFilter{
+			FamilyID:    q.Get("family_id"),
+			AuditStatus: q.Get("audit_status"),
+			Kind:        q.Get("kind"),
+		})
+		return re.JSON(http.StatusOK, map[string]any{
+			"total":    len(items),
+			"theorems": items,
+		})
+	}))
+
+	// GET /api/theorems/families — family definitions (filter dropdown source).
+	se.Router.GET("/api/theorems/families", scopeGuard(enforcer, "theorems", "read", func(re *core.RequestEvent) error {
+		fams := cache.Families()
+		return re.JSON(http.StatusOK, map[string]any{
+			"total":    len(fams),
+			"families": fams,
+		})
+	}))
+
+	// GET /api/theorems/stats — aggregate counts.
+	se.Router.GET("/api/theorems/stats", scopeGuard(enforcer, "theorems", "read", func(re *core.RequestEvent) error {
+		return re.JSON(http.StatusOK, cache.Stats())
+	}))
+
+	// GET /api/theorems/theorem/{fqn} — full registry entry + audit verdict.
+	se.Router.GET("/api/theorems/theorem/{fqn}", scopeGuard(enforcer, "theorems", "read", func(re *core.RequestEvent) error {
+		fqn := re.Request.PathValue("fqn")
+		thm, ok := cache.Find(fqn)
+		if !ok {
+			return re.JSON(http.StatusNotFound, map[string]string{"detail": "theorem not found: " + fqn})
 		}
-		var (
-			records []*core.Record
-			err     error
-		)
-		if filter == "" {
-			records, err = app.FindAllRecords(theorems.CollectionName)
+		out := map[string]any{"theorem": thm}
+		if cert, ok := cache.CertifiedFor(thm.UnitID); ok {
+			out["certified"] = cert
 		} else {
-			records, err = app.FindRecordsByFilter(theorems.CollectionName, filter, "-created", 200, 0, params)
+			out["certified"] = nil
 		}
+		return re.JSON(http.StatusOK, out)
+	}))
+
+	// GET /api/theorems/theorem-source/{fqn} — Lean source on demand.
+	se.Router.GET("/api/theorems/theorem-source/{fqn}", scopeGuard(enforcer, "theorems", "read", func(re *core.RequestEvent) error {
+		fqn := re.Request.PathValue("fqn")
+		file, src, err := cache.Source(fqn)
 		if err != nil {
+			if _, ok := err.(*theoremsplugin.SourceError); ok {
+				return re.JSON(http.StatusNotFound, map[string]string{"detail": err.Error()})
+			}
 			return re.JSON(http.StatusInternalServerError, map[string]string{"detail": err.Error()})
 		}
-		out := make([]theorems.Theorem, 0, len(records))
-		for _, rec := range records {
-			out = append(out, theorems.FromRecord(rec))
-		}
-		return re.JSON(http.StatusOK, map[string]any{"theorems": out})
+		return re.JSON(http.StatusOK, map[string]any{
+			"lean_fqn": fqn,
+			"file":     file,
+			"source":   src,
+		})
 	}))
-	se.Router.GET("/api/v1/theorems/{id}", scopeGuard(enforcer, "theorems", "read", func(re *core.RequestEvent) error {
-		rec, err := app.FindFirstRecordByFilter(theorems.CollectionName, "theorem_id = {:id}", map[string]any{"id": re.Request.PathValue("id")})
-		if err != nil {
-			return re.JSON(http.StatusNotFound, map[string]string{"detail": "theorem not found"})
-		}
-		return re.JSON(http.StatusOK, theorems.FromRecord(rec))
-	}))
-	se.Router.POST("/api/v1/theorems", scopeGuard(enforcer, "theorems", "write", func(re *core.RequestEvent) error {
-		var body theoremRequest
-		if err := json.NewDecoder(re.Request.Body).Decode(&body); err != nil {
-			return re.JSON(http.StatusBadRequest, map[string]string{"detail": "parse body: " + err.Error()})
-		}
-		body.ID = strings.TrimSpace(body.ID)
-		if body.ID == "" {
-			return re.JSON(http.StatusBadRequest, map[string]string{"detail": "id is required"})
-		}
-		collection, err := app.FindCollectionByNameOrId(theorems.CollectionName)
-		if err != nil {
-			return re.JSON(http.StatusInternalServerError, map[string]string{"detail": err.Error()})
-		}
-		rec, err := app.FindFirstRecordByFilter(theorems.CollectionName, "theorem_id = {:id}", map[string]any{"id": body.ID})
-		status := http.StatusOK
-		eventType := "theorem.updated"
-		if err != nil {
-			rec = core.NewRecord(collection)
-			status = http.StatusCreated
-			eventType = "theorem.added"
-		}
-		rec.Set("theorem_id", body.ID)
-		rec.Set("page_id", body.PageID)
-		rec.Set("paper_id", body.PaperID)
-		rec.Set("section", body.Section)
-		rec.Set("md_lines", theorems.EncodeLines(body.MDLines))
-		rec.Set("statement_nl", body.StatementNL)
-		if err := app.Save(rec); err != nil {
-			return re.JSON(http.StatusInternalServerError, map[string]string{"detail": fmt.Sprintf("save theorem: %v", err)})
-		}
-		if eventBus != nil {
-			eventBus.Publish(re.Request.Context(), events.Event{
-				ID:    events.NewID(),
-				Type:  eventType,
-				Time:  time.Now().UTC(),
-				Actor: "user",
-				Payload: map[string]any{
-					"theorem_id": body.ID,
-					"paper_id":   body.PaperID,
-					"page_id":    body.PageID,
-				},
-			})
-		}
-		return re.JSON(status, theorems.FromRecord(rec))
-	}))
+
+	return nil
 }

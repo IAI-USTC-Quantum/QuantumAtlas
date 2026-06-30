@@ -3,7 +3,7 @@
   "name": "QuantumAtlas Graph",
   "version": "1.0.0",
   "abi_version": "1",
-  "transport": "in-process-go",
+  "kind": "builtin",
   "spawn": null,
   "contributes": {
     "capabilities": ["graph.query", "graph.schema", "graph.stats"],

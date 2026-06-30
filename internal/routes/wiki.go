@@ -16,68 +16,48 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/wiki"
 
-	"github.com/casbin/casbin/v2"
 	"github.com/pocketbase/pocketbase/core"
 )
 
-// RegisterWiki registers the /api/wiki/*, /api/pages*, /api/stats and
-// /api/search routes on se.Router. cfg supplies the wiki_dir resolution.
-//
-// cache MUST be non-nil and already constructed (NewCache happens in
-// main.go at startup so the first request hits warm data). All read
-// paths go through the cache; only /api/wiki/sync/pull writes (then
-// refreshes the cache synchronously so callers see fresh data on the
-// next request).
-//
-// All wiki read endpoints (/api/pages*, /api/stats, /api/search,
-// /api/wiki/sync/status) are gated behind
-// scopeGuard("wiki", "read"): the knowledge base is not anonymously
-// browsable — callers need a session token or a PAT carrying wiki:read.
-// /api/wiki/sync/pull additionally mutates server state (runs git +
-// rebuilds the cache), so it requires the stronger wiki:write scope
-// (which implies wiki:read).
-func RegisterWiki(se *core.ServeEvent, cfg *config.Config, cache *wiki.Cache, enforcer *casbin.Enforcer) {
-	se.Router.GET("/api/wiki/sync/status", scopeGuard(enforcer, "wiki", "read", func(re *core.RequestEvent) error {
-		return re.JSON(http.StatusOK, wikiSyncStatus(cfg))
-	}))
+// WikiPlugin is the builtin wiki plugin (ADR 0002): it reads through a
+// server-side `git pull --ff-only` checkout of the markdown wiki repo and
+// exposes the knowledge-base read surface under /api/pages*, /api/stats,
+// /api/search. Its git-sync pair (/api/wiki/sync/{pull,status}) is mounted
+// by the platform's GitPullPlugin capability, not here.
+type WikiPlugin struct {
+	cfg   *config.Config
+	cache *wiki.Cache
+}
 
-	se.Router.POST("/api/wiki/sync/pull", scopeGuard(enforcer, "wiki", "write", func(re *core.RequestEvent) error {
-		dir, status := resolveWikiDir(cfg)
-		if !status["wiki"].(map[string]any)["exists"].(bool) {
-			return re.JSON(http.StatusConflict, map[string]string{"detail": "wiki directory does not exist"})
-		}
-		result, err := wiki.Pull(dir)
-		if err != nil {
-			if pe, ok := err.(*wiki.PullError); ok {
-				return re.JSON(pe.Status, map[string]string{"detail": pe.Detail})
-			}
-			return re.JSON(http.StatusInternalServerError, map[string]string{"detail": err.Error()})
-		}
-		// Force a synchronous refresh so the next read sees the pulled
-		// commit immediately, not 60s later when the ticker would fire.
-		// Non-fatal: a refresh failure here is logged inside Refresh and
-		// the old snapshot keeps serving.
-		if _, refreshErr := cache.Refresh(true); refreshErr != nil {
-			// Don't fail the pull response — git pull DID succeed.
-			// The next ticker tick will retry the cache rebuild.
-			_ = refreshErr
-		}
-		// Merge git status into the response just like the Python handler.
-		out := map[string]any{
-			"status":     result.Status,
-			"changed":    result.Changed,
-			"old_commit": result.OldCommit,
-			"new_commit": result.NewCommit,
-		}
-		for k, v := range wikiSyncStatus(cfg) {
-			out[k] = v
-		}
-		return re.JSON(http.StatusOK, out)
-	}))
+// NewWikiPlugin constructs the wiki builtin. cache MUST be non-nil and
+// already constructed (NewCache happens in main.go at startup so the first
+// request hits warm data).
+func NewWikiPlugin(cfg *config.Config, cache *wiki.Cache) *WikiPlugin {
+	return &WikiPlugin{cfg: cfg, cache: cache}
+}
+
+// PluginID is the wiki plugin's URL/scope namespace.
+func (w *WikiPlugin) PluginID() string { return "wiki" }
+
+// GitRepoDir is the wiki checkout the host's `git pull --ff-only` runs in.
+func (w *WikiPlugin) GitRepoDir() string { return w.cfg.WikiDir }
+
+// OnPullSucceeded refreshes the in-memory page cache synchronously so the
+// next read sees the pulled commit immediately.
+func (w *WikiPlugin) OnPullSucceeded() error {
+	_, err := w.cache.Refresh(true)
+	return err
+}
+
+// RegisterRoutes mounts the wiki read surface. All endpoints are gated behind
+// scopeGuard("wiki", "read"): the knowledge base is not anonymously browsable
+// — callers need a session token or a PAT carrying wiki:read. The git-sync
+// pair (/api/wiki/sync/*) is mounted separately by the platform.
+func (w *WikiPlugin) RegisterRoutes(se *core.ServeEvent, deps PluginDeps) error {
+	cfg, cache, enforcer := w.cfg, w.cache, deps.Enforcer
 
 	se.Router.GET("/api/pages", scopeGuard(enforcer, "wiki", "read", func(re *core.RequestEvent) error {
-		_, status := resolveWikiDir(cfg)
-		if !status["wiki"].(map[string]any)["exists"].(bool) {
+		if !wikiDirExists(cfg) {
 			return re.JSON(http.StatusOK, map[string]any{
 				"total": 0,
 				"pages": []any{},
@@ -123,8 +103,7 @@ func RegisterWiki(se *core.ServeEvent, cfg *config.Config, cache *wiki.Cache, en
 
 	se.Router.GET("/api/pages/{page_id}", scopeGuard(enforcer, "wiki", "read", func(re *core.RequestEvent) error {
 		pageID := re.Request.PathValue("page_id")
-		_, status := resolveWikiDir(cfg)
-		if !status["wiki"].(map[string]any)["exists"].(bool) {
+		if !wikiDirExists(cfg) {
 			return re.JSON(http.StatusNotFound, map[string]string{
 				"detail": "Page not found: " + pageID,
 			})
@@ -154,8 +133,7 @@ func RegisterWiki(se *core.ServeEvent, cfg *config.Config, cache *wiki.Cache, en
 	}))
 
 	se.Router.GET("/api/stats", scopeGuard(enforcer, "wiki", "read", func(re *core.RequestEvent) error {
-		_, status := resolveWikiDir(cfg)
-		if !status["wiki"].(map[string]any)["exists"].(bool) {
+		if !wikiDirExists(cfg) {
 			return re.JSON(http.StatusOK, map[string]any{
 				"total_pages":     0,
 				"entries":         0,
@@ -197,8 +175,7 @@ func RegisterWiki(se *core.ServeEvent, cfg *config.Config, cache *wiki.Cache, en
 				limit = n
 			}
 		}
-		_, status := resolveWikiDir(cfg)
-		if !status["wiki"].(map[string]any)["exists"].(bool) {
+		if !wikiDirExists(cfg) {
 			return re.JSON(http.StatusOK, map[string]any{
 				"query":   q,
 				"total":   0,
@@ -237,44 +214,22 @@ func RegisterWiki(se *core.ServeEvent, cfg *config.Config, cache *wiki.Cache, en
 			"results": results,
 		})
 	}))
+
+	return nil
 }
 
-// resolveWikiDir returns the absolute wiki dir path and the same nested
-// status map shape the /api/wiki/sync/status endpoint exposes. We compute
-// both at once because every wiki route needs to know "does the dir
-// even exist" before doing real work.
+// wikiDirExists reports whether cfg.WikiDir is an existing directory.
 //
-// cfg.WikiDir is guaranteed non-empty by config.Load (it falls back to
-// the sibling-checkout default "<.env dir>/../QuantumAtlas-Wiki" when
-// no env var is set), so no in-handler fallback is needed.
-func resolveWikiDir(cfg *config.Config) (string, map[string]any) {
-	dir := cfg.WikiDir
-	exists := false
-	if info, err := os.Stat(dir); err == nil && info.IsDir() {
-		exists = true
-	}
-	gitInfo := wiki.GitInfo{}
-	if exists {
-		gitInfo = wiki.ReadGitInfo(dir)
-	}
-	return dir, map[string]any{
-		"wiki": map[string]any{
-			"exists":   exists,
-			"external": isExternalToProject(dir),
-		},
-		"git": gitInfo,
-	}
-}
-
-// wikiSyncStatus is the public-facing payload for /api/wiki/sync/status.
-func wikiSyncStatus(cfg *config.Config) map[string]any {
-	_, status := resolveWikiDir(cfg)
-	return status
+// cfg.WikiDir is guaranteed non-empty by config.Load (it falls back to the
+// sibling-checkout default "<.env dir>/../QuantumAtlas-Wiki" when no env var
+// is set), so no in-handler fallback is needed.
+func wikiDirExists(cfg *config.Config) bool {
+	return dirExists(cfg.WikiDir)
 }
 
 // isExternalToProject reports whether dir is outside the project working
-// directory (CWD at server start). Matches the Python helper of the same
-// name; used by the UI to warn operators that the wiki repo is non-local.
+// directory (CWD at server start). Used by the platform sync-status payload
+// to warn operators that a content repo is non-local.
 func isExternalToProject(dir string) bool {
 	cwd, err := os.Getwd()
 	if err != nil {

@@ -9,20 +9,36 @@ import (
 
 const HostABIVersion = "1"
 
+// Plugin type is two orthogonal axes (ADR 0001):
+//
+//   - Kind — where the plugin lives. builtin = first-party, compiled into
+//     qatlasd, runs in-process as Go; external = third-party, a separate
+//     process speaking JSON-RPC to the host.
+//   - Transport — how the host talks to an external plugin (meaningless for
+//     builtin). socket = the plugin dials into the host's WebSocket endpoint
+//     and authenticates with a connect secret; stdio = the host spawns the
+//     plugin executable from spawn.command and talks JSON-RPC over its
+//     stdin/stdout (the LSP/DAP model).
 const (
-	TransportInProcessGo  = "in-process-go"
-	TransportJSONRPCWS    = "jsonrpc-ws"
-	TransportJSONRPCStdio = "jsonrpc-stdio"
+	KindBuiltin  = "builtin"
+	KindExternal = "external"
+
+	TransportSocket = "socket"
+	TransportStdio  = "stdio"
 )
 
 var pluginIDRE = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
 
 type Manifest struct {
-	ID          string       `json:"id"`
-	Name        string       `json:"name"`
-	Version     string       `json:"version"`
-	ABIVersion  string       `json:"abi_version"`
-	Transport   string       `json:"transport"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Version    string `json:"version"`
+	ABIVersion string `json:"abi_version"`
+	// Kind is builtin or external. Required.
+	Kind string `json:"kind"`
+	// Transport is socket or stdio, meaningful only for kind=external.
+	// Empty for builtin.
+	Transport   string       `json:"transport,omitempty"`
 	Spawn       *SpawnConfig `json:"spawn"`
 	Contributes Contributes  `json:"contributes"`
 	Needs       []string     `json:"needs"`
@@ -61,17 +77,29 @@ func (m Manifest) Validate() error {
 	if m.ABIVersion == "" {
 		return fmt.Errorf("abi_version is required")
 	}
-	switch m.Transport {
-	case TransportInProcessGo, TransportJSONRPCWS:
-		if m.Spawn != nil {
-			return fmt.Errorf("spawn must be null for transport %s", m.Transport)
+	switch m.Kind {
+	case KindBuiltin:
+		if m.Transport != "" {
+			return fmt.Errorf("transport must be empty for kind=builtin (got %q)", m.Transport)
 		}
-	case TransportJSONRPCStdio:
-		if m.Spawn == nil || m.Spawn.Command == "" {
-			return fmt.Errorf("spawn.command is required for transport %s", m.Transport)
+		if m.Spawn != nil {
+			return fmt.Errorf("spawn must be null for kind=builtin")
+		}
+	case KindExternal:
+		switch m.Transport {
+		case TransportSocket:
+			if m.Spawn != nil {
+				return fmt.Errorf("spawn must be null for transport=socket")
+			}
+		case TransportStdio:
+			if m.Spawn == nil || m.Spawn.Command == "" {
+				return fmt.Errorf("spawn.command is required for transport=stdio")
+			}
+		default:
+			return fmt.Errorf("unsupported transport %q for kind=external", m.Transport)
 		}
 	default:
-		return fmt.Errorf("unsupported transport %q", m.Transport)
+		return fmt.Errorf("unsupported kind %q", m.Kind)
 	}
 	return nil
 }
