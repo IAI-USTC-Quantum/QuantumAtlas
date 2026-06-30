@@ -385,3 +385,42 @@ Wiki 页面本身的格式规范（页面类型、frontmatter schema、命名前
 2. **整理 Wiki 页面**：在 `QuantumAtlas-Wiki` 仓库里 commit / PR / review，让分类、摘要、引用和状态可审阅。
 3. **触发服务器同步**：调用 `POST /api/wiki/sync/pull`，再让稳定的 Wiki 页面同步到 Neo4j，用关系图做依赖发现和路径查询。Graph 始终是派生视图，不是另一份手工维护的 truth。
 4. **下游使用**：从算法或原语继续生成实现，经过验证和资源估计后再进入下游。
+
+---
+
+## 5. 起草 Claim 并提 issue：`qatlas contrib claim`
+
+把一篇论文里"可形式化的命题"（**Claim**——预证明的近似逐字自然语言陈述）整理成一个
+`type/theorem` gitea issue，交给上游 Lean prover（`agony/qatlas-lean`）去证。**这是
+localhost 的人在环路（human-in-the-loop）工作流**，不经过 QA server 的写路径
+（server 只被读：取论文字节 + 解析 references）。详见 ADR 0005 / 0007。
+
+```bash
+# 需要可选的 WebUI 依赖（FastAPI/uvicorn）：
+uv tool install 'quantum-atlas[contrib]'   # 或 pip install 'quantum-atlas[contrib]'
+
+# gitea 凭据（提 issue 用你自己的 token）：
+export GITEA_HOST=https://git.example.com       # 或 --gitea-url
+export GITEA_ACCESS_TOKEN=<your-gitea-token>    # 或 --gitea-token
+# 仓库默认 agony/qatlas-lean，可用 --gitea-repo 覆盖
+
+qatlas contrib claim 2208.06941        # 起一个 localhost WebUI + 自动开浏览器
+qatlas contrib claim 10.22331/q-2023-03-20-955 --no-browser --port 8731
+```
+
+流程：
+
+1. 客户端用 **suspend-and-wait** 端点（`GET /api/papers/{id}/markdown`，202 →
+   poll → 200）把论文 markdown 取下来——PDF 还没下载/转换时 server 会后台静默处理。
+2. WebUI 里**起草 Claim**：有 LLM key（`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`）时点
+   "Draft with agent" 让 agent 抽取所有可形式化命题；没有 key 就手填（manual 模式照样能用）。
+3. 每条 Claim 编辑：近似逐字的自然语言陈述、LaTeX、假设、`source-md` 行号、**references**
+   （命名空间无版本 `kind:id`，如 `arxiv:2208.06941` / `openalex:W…` / `doi:10.x/y`）。
+4. "Resolve references" 走 `GET /api/papers/lookup` 解析 references 元数据；语料库不可达时
+   client 自动回落公共 OpenAlex API。
+5. **"Confirm claim / 确认 claim"** → 提**一个** `type/theorem` + `status/ready` issue。
+   **幂等**：如果已有一个 open issue 带相同 `claim_id`，直接拒绝并给出已存在 issue 的 URL
+   （不重复提、不自动更新——daemon 可能正在证它）。
+
+QA server 侧看不到 Claim；它只在 Claim 被证成 Theorem、落进上游 `registry.json`、
+theorems 插件 `git pull` 之后才在 `/theorems` 页面出现（ADR 0002 / 0004）。

@@ -37,6 +37,15 @@ dev = [
     "mypy>=1.7.0",
     "ruff>=0.8.0",
 ]
+# --- qatlas contrib claim (localhost Claim-drafting WebUI; ADR 0005) ----
+# Optional: only `qatlas contrib claim` needs the localhost FastAPI WebUI.
+# Most client users (upload / mineru) don't, so these stay out of core.
+# The LLM SDKs (openai / anthropic) are already core deps (used by the
+# extractor) so the agent backend needs nothing extra.
+contrib = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+]
 # --- qatlas_rag embed worker -------------------------------------------
 # Since v0.20.0 the only Python role left is the GPU embed worker:
 # qatlasd (Go) is now itself the Qdrant client + caller of /embed /rerank

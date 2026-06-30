@@ -1,6 +1,6 @@
-"""``qatlas contrib`` — contributor-side workflows (upload + local MinerU).
+"""``qatlas contrib`` — contributor-side workflows (upload + local MinerU + claim).
 
-This is a thin dispatcher over the two upload backends:
+This is a thin dispatcher over the contributor backends:
 
 * ``qatlas contrib pdf …``    → ``qatlas.client.upload`` (PDF upload, by
   arXiv ID or DOI)
@@ -9,12 +9,13 @@ This is a thin dispatcher over the two upload backends:
 * ``qatlas contrib mineru <DOI> --zip …`` → ``qatlas.client.upload``
   (direct upload of a pre-made MinerU result zip; DOI-only — arXiv papers
   go through the runner so claim/lease/upload stay one unit)
+* ``qatlas contrib claim <ARXIV|DOI>`` → ``qatlas.client.claim`` (localhost
+  WebUI + agent that drafts Claims and files ``type/theorem`` gitea issues;
+  needs the optional ``qatlas[contrib]`` extras — see ADR 0005)
 
-`qatlas contrib pdf` / `qatlas contrib mineru` are the only contributor
-entry points for upload + local-MinerU workflows. It groups what
-contributors actually do day-to-day under a single resource-ish noun
-(`contrib`); power-user verbs (`config`, `auth`, `wiki`, `designer`, etc.)
-stay top-level.
+These group what contributors actually do day-to-day under a single
+resource-ish noun (`contrib`); power-user verbs (`config`, `auth`, `wiki`,
+`designer`, etc.) stay top-level.
 
 Why a dispatcher (not a flat copy of every subcommand)?
 
@@ -46,10 +47,13 @@ Usage:
   qatlas contrib mineru <DOI> --zip <path> [--verify warn|strict]
                                                       # upload a pre-made MinerU zip (DOI-only)
 
+  qatlas contrib claim <ARXIV_ID|DOI>                 # localhost WebUI: draft Claims, file gitea issues
+                                                      # (needs the optional 'contrib' extras)
+
 Common subcommand options pass through to the underlying module
-(`qatlas.client.upload` / `qatlas.client.mineru`).  Use
-`qatlas contrib pdf --help` or `qatlas contrib mineru --help` for the
-full per-subcommand argument set.
+(`qatlas.client.upload` / `qatlas.client.mineru` / `qatlas.client.claim`).  Use
+`qatlas contrib pdf --help`, `qatlas contrib mineru --help` or
+`qatlas contrib claim --help` for the full per-subcommand argument set.
 """,
         end="",
     )
@@ -122,9 +126,18 @@ def _cmd_mineru(argv: list[str]) -> int:
     return _mineru.main(argv, prog="qatlas contrib mineru")
 
 
+def _cmd_claim(argv: list[str]) -> int:
+    # Lazy import so `qatlas contrib --help` doesn't pay for the claim
+    # workflow's HTTP / FastAPI imports.
+    from qatlas.client.claim import cli as claim_cli
+
+    return claim_cli.main(argv)
+
+
 _SUBCOMMANDS: Mapping[str, callable] = {
     "pdf": _cmd_pdf,
     "mineru": _cmd_mineru,
+    "claim": _cmd_claim,
 }
 
 
