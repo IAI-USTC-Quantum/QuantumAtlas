@@ -6,6 +6,7 @@ import {
   Home,
   Key,
   Search,
+  Sigma,
   Sparkles,
   type LucideIcon,
 } from 'lucide-react'
@@ -19,6 +20,7 @@ type NavLink = {
     | '/$lang/wiki'
     | '/$lang/wiki/search'
     | '/$lang/papers/search'
+    | '/$lang/theorems'
     | '/$lang/graph'
     | '/$lang/pat'
   labelKey: string
@@ -38,6 +40,7 @@ const links: NavLink[] = [
   { to: '/$lang/wiki', labelKey: 'nav.wiki', icon: BookOpen, matchPrefix: '/wiki' },
   { to: '/$lang/wiki/search', labelKey: 'nav.search', icon: Search },
   { to: '/$lang/papers/search', labelKey: 'nav.papers', icon: FileSearch, matchPrefix: '/papers' },
+  { to: '/$lang/theorems', labelKey: 'nav.theorems', icon: Sigma, matchPrefix: '/theorems' },
   { to: '/$lang/pat', labelKey: 'nav.pat', icon: Key },
 ]
 

@@ -19,7 +19,8 @@
       "search": "搜索",
       "papers": "文章搜索",
       "graph": "图谱",
-      "pat": "访问令牌"
+      "pat": "访问令牌",
+      "theorems": "定理"
     },
     "status": {
       "loading": "加载中…",
@@ -244,5 +245,57 @@
     "failedTitle": "登录失败",
     "failedReturn": "<loginLink>返回登录页</loginLink>重试。",
     "missingCode": "OAuth 回调缺失 code 或 state。"
+  },
+  "theorems": {
+    "eyebrow": "定理",
+    "title": "已证定理",
+    "subtitle": "机器核验的 Lean 4 声明，通过服务端 git checkout 上游 Lean 内容仓库读取。",
+    "pull": {
+      "button": "立即拉取",
+      "running": "拉取中…",
+      "changed": "已同步 {{from}} → {{to}}",
+      "upToDate": "已是最新",
+      "failed": "拉取失败：{{error}}"
+    },
+    "overview": {
+      "title": "概览",
+      "total": "总数",
+      "sorryFree": "无 sorry",
+      "families": "族",
+      "certified": "已认证"
+    },
+    "filters": {
+      "searchPlaceholder": "按名称或陈述过滤…",
+      "family": "族",
+      "allFamilies": "全部族",
+      "audit": "审计状态",
+      "allAudit": "全部状态"
+    },
+    "cols": {
+      "fqn": "Lean FQN",
+      "family": "族",
+      "kind": "类型",
+      "audit": "审计",
+      "sorryFree": "无 sorry",
+      "statement": "陈述"
+    },
+    "empty": "没有定理匹配这些过滤条件。",
+    "count": "显示 {{shown}} / {{total}}",
+    "detail": {
+      "back": "返回定理列表",
+      "sorryFree": "无 sorry",
+      "dependencies": "依赖",
+      "noDeps": "无声明依赖。",
+      "axioms": "用到的公理",
+      "noAxioms": "无额外公理。",
+      "audit": "审计结论",
+      "result": "结果",
+      "kernel": "内核",
+      "faithfulness": "claim 忠实度",
+      "auditedTs": "审计时间",
+      "magi": "Magi（忠实 / 不忠实 / 弃权）",
+      "source": "Lean 源码",
+      "showSource": "显示源码"
+    }
   }
 }

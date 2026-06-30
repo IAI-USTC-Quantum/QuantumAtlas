@@ -19,7 +19,8 @@
       "search": "Search",
       "papers": "Paper Search",
       "graph": "Graph",
-      "pat": "PATs"
+      "pat": "PATs",
+      "theorems": "Theorems"
     },
     "status": {
       "loading": "Loading…",
@@ -244,5 +245,57 @@
     "failedTitle": "Sign-in failed",
     "failedReturn": "<loginLink>Return to the sign-in page</loginLink> and try again.",
     "missingCode": "Missing code or state in OAuth callback URL."
+  },
+  "theorems": {
+    "eyebrow": "Theorems",
+    "title": "Proved theorems",
+    "subtitle": "Machine-checked Lean 4 declarations, read through a server-side git checkout of the upstream Lean-content repo.",
+    "pull": {
+      "button": "Pull now",
+      "running": "Pulling…",
+      "changed": "Synced {{from}} → {{to}}",
+      "upToDate": "Already up to date",
+      "failed": "Pull failed: {{error}}"
+    },
+    "overview": {
+      "title": "Overview",
+      "total": "Total",
+      "sorryFree": "Sorry-free",
+      "families": "Families",
+      "certified": "Certified"
+    },
+    "filters": {
+      "searchPlaceholder": "Filter by name or statement…",
+      "family": "Family",
+      "allFamilies": "All families",
+      "audit": "Audit status",
+      "allAudit": "All statuses"
+    },
+    "cols": {
+      "fqn": "Lean FQN",
+      "family": "Family",
+      "kind": "Kind",
+      "audit": "Audit",
+      "sorryFree": "Sorry-free",
+      "statement": "Statement"
+    },
+    "empty": "No theorems match these filters.",
+    "count": "Showing {{shown}} of {{total}}",
+    "detail": {
+      "back": "Back to theorems",
+      "sorryFree": "Sorry-free",
+      "dependencies": "Dependencies",
+      "noDeps": "No declared dependencies.",
+      "axioms": "Axioms used",
+      "noAxioms": "No extra axioms.",
+      "audit": "Audit verdict",
+      "result": "Result",
+      "kernel": "Kernel",
+      "faithfulness": "Claim faithfulness",
+      "auditedTs": "Audited at",
+      "magi": "Magi (faithful / unfaithful / abstain)",
+      "source": "Lean source",
+      "showSource": "Show source"
+    }
   }
 }

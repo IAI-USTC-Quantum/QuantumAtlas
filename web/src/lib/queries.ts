@@ -10,6 +10,12 @@ import {
   type RagSearchRequest,
   type SearchPayload,
   type Stats,
+  type SyncStatus,
+  type TheoremDetailPayload,
+  type TheoremFamiliesPayload,
+  type TheoremListPayload,
+  type TheoremSourcePayload,
+  type TheoremStats,
 } from './api'
 
 export function useStats() {
@@ -91,5 +97,64 @@ export function useGraphStats() {
   return useQuery({
     queryKey: ['graph', 'stats'],
     queryFn: () => getJson<GraphStats>('/api/graph/stats'),
+  })
+}
+
+// --- Theorems -------------------------------------------------------------
+
+// List the proved-Theorems catalog. family_id / audit_status are applied
+// server-side; pass '' to omit a filter.
+export function useTheorems(familyId: string, auditStatus: string) {
+  return useQuery({
+    queryKey: ['theorems', 'list', familyId, auditStatus],
+    queryFn: () => {
+      const params = new URLSearchParams()
+      if (familyId) params.set('family_id', familyId)
+      if (auditStatus) params.set('audit_status', auditStatus)
+      const qs = params.toString()
+      return getJson<TheoremListPayload>(`/api/theorems/list${qs ? `?${qs}` : ''}`)
+    },
+  })
+}
+
+export function useTheoremFamilies() {
+  return useQuery({
+    queryKey: ['theorems', 'families'],
+    queryFn: () => getJson<TheoremFamiliesPayload>('/api/theorems/families'),
+  })
+}
+
+export function useTheoremStats() {
+  return useQuery({
+    queryKey: ['theorems', 'stats'],
+    queryFn: () => getJson<TheoremStats>('/api/theorems/stats'),
+  })
+}
+
+export function useTheoremsSyncStatus() {
+  return useQuery({
+    queryKey: ['theorems', 'sync-status'],
+    queryFn: () => getJson<SyncStatus>('/api/theorems/sync/status'),
+  })
+}
+
+export function useTheoremDetail(fqn: string | null) {
+  return useQuery({
+    queryKey: ['theorems', 'detail', fqn],
+    queryFn: () =>
+      getJson<TheoremDetailPayload>(`/api/theorems/theorem/${encodeURIComponent(fqn!)}`),
+    enabled: Boolean(fqn),
+  })
+}
+
+// Source-on-demand: only fetched when `enabled` (the user clicked "Show
+// source"), so the Lean file read is not paid for on every detail view.
+export function useTheoremSource(fqn: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: ['theorems', 'source', fqn],
+    queryFn: () =>
+      getJson<TheoremSourcePayload>(`/api/theorems/theorem-source/${encodeURIComponent(fqn!)}`),
+    enabled: Boolean(fqn) && enabled,
+    retry: false,
   })
 }

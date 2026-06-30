@@ -53,6 +53,97 @@ export type GraphStats = {
   [key: string]: number | string | string[] | Record<string, number> | undefined
 }
 
+// --- Theorems (builtin plugin, read-through a Lean-content git checkout) ----
+
+export type Theorem = {
+  lean_fqn: string
+  file?: string
+  kind?: string
+  family_id?: string
+  statement_paraphrase?: string
+  unit_id?: string
+  sorry_free?: boolean
+  depends_on?: string[]
+  axioms_used?: string[]
+  audit_status?: string
+  added_ts?: string
+}
+
+export type TheoremFamily = {
+  id: string
+  name: string
+  description?: string
+}
+
+export type CertifiedEntry = {
+  unit_id?: string
+  result?: string
+  certified?: boolean
+  fqns?: string[]
+  kernel?: string
+  claim_faithfulness?: string
+  magi?: Record<string, number | string>
+  audited_ts?: string
+}
+
+export type TheoremListPayload = {
+  total: number
+  theorems: Theorem[]
+}
+
+export type TheoremFamiliesPayload = {
+  total: number
+  families: TheoremFamily[]
+}
+
+export type TheoremDetailPayload = {
+  theorem: Theorem
+  certified: CertifiedEntry | null
+}
+
+export type TheoremSourcePayload = {
+  lean_fqn: string
+  file: string
+  source: string
+}
+
+export type TheoremStats = {
+  total: number
+  sorry_free: number
+  by_kind: Record<string, number>
+  by_family: Record<string, number>
+  by_audit_status: Record<string, number>
+  families: number
+  certified: number
+  generated_ts?: string
+}
+
+export type GitInfo = {
+  enabled: boolean
+  branch?: string
+  commit?: string
+  commit_time?: string
+  upstream?: string
+  ahead?: number
+  behind?: number
+  dirty?: boolean
+  warnings?: { code: string; message: string; branch?: string }[]
+}
+
+export type SyncStatus = {
+  id: string
+  exists: boolean
+  dir_external: boolean
+  git: GitInfo
+}
+
+export type SyncPullResult = SyncStatus & {
+  status: string
+  changed: boolean
+  old_commit: string
+  new_commit: string
+}
+
 import { pb } from './pb'
 
 // Attach the current PocketBase auth token (if any) to outbound fetches so
@@ -175,4 +266,10 @@ export function graphLabelCounts(stats: GraphStats | null | undefined) {
     if (typeof value === 'number') counts[key] = value
   }
   return counts
+}
+
+// Triggers the server-side theorems git fast-forward pull + cache reload.
+// Requires theorems:write (browser sessions carry ScopeMaster).
+export async function pullTheorems(): Promise<SyncPullResult> {
+  return postJson<SyncPullResult>('/api/theorems/sync/pull', {})
 }

@@ -19,10 +19,12 @@ import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
 import { Route as LangPatRouteImport } from './routes/$lang.pat'
 import { Route as LangDeviceRouteImport } from './routes/$lang.device'
 import { Route as LangWikiIndexRouteImport } from './routes/$lang.wiki.index'
+import { Route as LangTheoremsIndexRouteImport } from './routes/$lang.theorems.index'
 import { Route as LangGraphIndexRouteImport } from './routes/$lang.graph.index'
 import { Route as LangWikiSearchRouteImport } from './routes/$lang.wiki.search'
 import { Route as LangPapersSearchRouteImport } from './routes/$lang.papers.search'
 import { Route as LangWikiPageSplatRouteImport } from './routes/$lang.wiki.page.$'
+import { Route as LangTheoremsTheoremSplatRouteImport } from './routes/$lang.theorems.theorem.$'
 import { Route as LangGraphNodeSplatRouteImport } from './routes/$lang.graph.node.$'
 
 const PatRoute = PatRouteImport.update({
@@ -75,6 +77,11 @@ const LangWikiIndexRoute = LangWikiIndexRouteImport.update({
   path: '/wiki/',
   getParentRoute: () => LangRoute,
 } as any)
+const LangTheoremsIndexRoute = LangTheoremsIndexRouteImport.update({
+  id: '/theorems/',
+  path: '/theorems/',
+  getParentRoute: () => LangRoute,
+} as any)
 const LangGraphIndexRoute = LangGraphIndexRouteImport.update({
   id: '/graph/',
   path: '/graph/',
@@ -95,6 +102,12 @@ const LangWikiPageSplatRoute = LangWikiPageSplatRouteImport.update({
   path: '/wiki/page/$',
   getParentRoute: () => LangRoute,
 } as any)
+const LangTheoremsTheoremSplatRoute =
+  LangTheoremsTheoremSplatRouteImport.update({
+    id: '/theorems/theorem/$',
+    path: '/theorems/theorem/$',
+    getParentRoute: () => LangRoute,
+  } as any)
 const LangGraphNodeSplatRoute = LangGraphNodeSplatRouteImport.update({
   id: '/graph/node/$',
   path: '/graph/node/$',
@@ -114,8 +127,10 @@ export interface FileRoutesByFullPath {
   '/$lang/papers/search': typeof LangPapersSearchRoute
   '/$lang/wiki/search': typeof LangWikiSearchRoute
   '/$lang/graph/': typeof LangGraphIndexRoute
+  '/$lang/theorems/': typeof LangTheoremsIndexRoute
   '/$lang/wiki/': typeof LangWikiIndexRoute
   '/$lang/graph/node/$': typeof LangGraphNodeSplatRoute
+  '/$lang/theorems/theorem/$': typeof LangTheoremsTheoremSplatRoute
   '/$lang/wiki/page/$': typeof LangWikiPageSplatRoute
 }
 export interface FileRoutesByTo {
@@ -130,8 +145,10 @@ export interface FileRoutesByTo {
   '/$lang/papers/search': typeof LangPapersSearchRoute
   '/$lang/wiki/search': typeof LangWikiSearchRoute
   '/$lang/graph': typeof LangGraphIndexRoute
+  '/$lang/theorems': typeof LangTheoremsIndexRoute
   '/$lang/wiki': typeof LangWikiIndexRoute
   '/$lang/graph/node/$': typeof LangGraphNodeSplatRoute
+  '/$lang/theorems/theorem/$': typeof LangTheoremsTheoremSplatRoute
   '/$lang/wiki/page/$': typeof LangWikiPageSplatRoute
 }
 export interface FileRoutesById {
@@ -148,8 +165,10 @@ export interface FileRoutesById {
   '/$lang/papers/search': typeof LangPapersSearchRoute
   '/$lang/wiki/search': typeof LangWikiSearchRoute
   '/$lang/graph/': typeof LangGraphIndexRoute
+  '/$lang/theorems/': typeof LangTheoremsIndexRoute
   '/$lang/wiki/': typeof LangWikiIndexRoute
   '/$lang/graph/node/$': typeof LangGraphNodeSplatRoute
+  '/$lang/theorems/theorem/$': typeof LangTheoremsTheoremSplatRoute
   '/$lang/wiki/page/$': typeof LangWikiPageSplatRoute
 }
 export interface FileRouteTypes {
@@ -167,8 +186,10 @@ export interface FileRouteTypes {
     | '/$lang/papers/search'
     | '/$lang/wiki/search'
     | '/$lang/graph/'
+    | '/$lang/theorems/'
     | '/$lang/wiki/'
     | '/$lang/graph/node/$'
+    | '/$lang/theorems/theorem/$'
     | '/$lang/wiki/page/$'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -183,8 +204,10 @@ export interface FileRouteTypes {
     | '/$lang/papers/search'
     | '/$lang/wiki/search'
     | '/$lang/graph'
+    | '/$lang/theorems'
     | '/$lang/wiki'
     | '/$lang/graph/node/$'
+    | '/$lang/theorems/theorem/$'
     | '/$lang/wiki/page/$'
   id:
     | '__root__'
@@ -200,8 +223,10 @@ export interface FileRouteTypes {
     | '/$lang/papers/search'
     | '/$lang/wiki/search'
     | '/$lang/graph/'
+    | '/$lang/theorems/'
     | '/$lang/wiki/'
     | '/$lang/graph/node/$'
+    | '/$lang/theorems/theorem/$'
     | '/$lang/wiki/page/$'
   fileRoutesById: FileRoutesById
 }
@@ -286,6 +311,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LangWikiIndexRouteImport
       parentRoute: typeof LangRoute
     }
+    '/$lang/theorems/': {
+      id: '/$lang/theorems/'
+      path: '/theorems'
+      fullPath: '/$lang/theorems/'
+      preLoaderRoute: typeof LangTheoremsIndexRouteImport
+      parentRoute: typeof LangRoute
+    }
     '/$lang/graph/': {
       id: '/$lang/graph/'
       path: '/graph'
@@ -314,6 +346,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LangWikiPageSplatRouteImport
       parentRoute: typeof LangRoute
     }
+    '/$lang/theorems/theorem/$': {
+      id: '/$lang/theorems/theorem/$'
+      path: '/theorems/theorem/$'
+      fullPath: '/$lang/theorems/theorem/$'
+      preLoaderRoute: typeof LangTheoremsTheoremSplatRouteImport
+      parentRoute: typeof LangRoute
+    }
     '/$lang/graph/node/$': {
       id: '/$lang/graph/node/$'
       path: '/graph/node/$'
@@ -331,8 +370,10 @@ interface LangRouteChildren {
   LangPapersSearchRoute: typeof LangPapersSearchRoute
   LangWikiSearchRoute: typeof LangWikiSearchRoute
   LangGraphIndexRoute: typeof LangGraphIndexRoute
+  LangTheoremsIndexRoute: typeof LangTheoremsIndexRoute
   LangWikiIndexRoute: typeof LangWikiIndexRoute
   LangGraphNodeSplatRoute: typeof LangGraphNodeSplatRoute
+  LangTheoremsTheoremSplatRoute: typeof LangTheoremsTheoremSplatRoute
   LangWikiPageSplatRoute: typeof LangWikiPageSplatRoute
 }
 
@@ -343,8 +384,10 @@ const LangRouteChildren: LangRouteChildren = {
   LangPapersSearchRoute: LangPapersSearchRoute,
   LangWikiSearchRoute: LangWikiSearchRoute,
   LangGraphIndexRoute: LangGraphIndexRoute,
+  LangTheoremsIndexRoute: LangTheoremsIndexRoute,
   LangWikiIndexRoute: LangWikiIndexRoute,
   LangGraphNodeSplatRoute: LangGraphNodeSplatRoute,
+  LangTheoremsTheoremSplatRoute: LangTheoremsTheoremSplatRoute,
   LangWikiPageSplatRoute: LangWikiPageSplatRoute,
 }
 
