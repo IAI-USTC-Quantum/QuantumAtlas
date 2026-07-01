@@ -1,11 +1,11 @@
 // Package papers is the PostgreSQL-backed paper catalog for non-login
-// paper state. It owns the paper_works table and exposes
+// paper state. It owns the papers + paper_assets tables and exposes
 // the read/write helpers the /api/papers handlers need:
 //
-//   - QueryStats / NeedsMineru   (dashboards + mineru queue)
-//   - UpsertPDF / UpsertMD / ...  (upload write-through, create-if-missing)
-//   - Claim / ReleaseClaim / GC   (atomic MinerU leases via row locks)
-//   - SyncFromStore               (periodic reconcile + disaster rebuild)
+//   - QueryStats / NeedsMineru      (dashboards + mineru queue)
+//   - UpsertPDF / UpsertMD / ...     (upload write-through, create-if-missing)
+//   - Lease / ReleaseLease / GC…     (atomic MinerU leases via row locks)
+//   - SyncFromStore                  (periodic reconcile + disaster rebuild)
 //
 // Every method degrades gracefully when PostgreSQL is unreachable: writes
 // return ErrCatalogUnavailable (handlers still 201 the S3 write and set
