@@ -58,4 +58,12 @@ catalog + corpus + vectors" requirement that motivates the whole design.
   distinct (a 10⁵-row, bucket-rebuildable host-core index vs a 10⁸-row external reference corpus)
   but co-resident so deep joins stay in SQL.
 - Sync: the corpus is refreshed from the OpenAlex snapshot (quarterly public cadence) by pulling
-  only new `updated_date` partitions.
+  only new `updated_date` partitions, tracked by a single-row `openalex_sync_state` watermark
+  (ADR `0010`) rather than a per-row `updated_date` column.
+- **Physical schema refined by ADR `0010` (corpus) and ADR `0009` (catalog).** The corpus's
+  citation edges — first shipped as a `work_referenced` table — become an inline generated
+  `openalex_referenced_work_ids` `jsonb` column + GIN, with cited-by served as a reverse-lookup; an
+  append-only `openalex_audit` table + structural views cover snapshot fidelity. The `paper_works`
+  catalog is redesigned into a surrogate-keyed `papers` + child `paper_assets` (ADR `0009`). The
+  decisions **here** — PostgreSQL over MySQL, one central store, raw `jsonb` "only filtered, never
+  modified", full metadata + subset vectors — are unchanged; only the table shapes evolve.
