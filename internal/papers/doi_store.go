@@ -2,20 +2,19 @@ package papers
 
 // doi_store.go: catalog write-through for DOI-indexed contributions.
 //
-// A DOI contribution records a PDF / markdown for a *published* version
-// of a paper, which may have no arXiv preprint at all. These cannot live
-// under the arxiv_id-keyed asset layout, so they get their own identity:
+// A DOI contribution records a PDF / markdown for the *published* version
+// of a paper. In the surrogate-key model a DOI upload resolves to a single
+// papers row and a paper_assets row with source='published':
 //
-//   - storage:  paperassets.DOIAssetKey → "<kind>/doi/<reg>/<suffix>.<ext>"
-//   - catalog:  a paper_works row whose primary key is the reserved
-//               "doi:<doi>" namespace. Reusing the arxiv_id UNIQUE
-//               primary key keeps the upsert atomic (same race-safety as
-//               arxiv upserts) while the "doi:" prefix guarantees the
-//               synthetic key can never collide with a real arxiv id.
+//   - when OpenAlex links the DOI to an arXiv id we already host, the
+//     published asset attaches to that existing paper (one work, an arXiv
+//     asset + a published asset — ADR 0009);
+//   - otherwise a paper keyed on paper_doi is created / reused.
 //
-// Besides the asset pointers we persist the DOI-metadata verification
-// outcome (title/authors checked against OpenAlex) so the contribution
-// is auditable — "was this PDF confirmed to be the paper it claims?".
+// Storage keys are DOI-derived (paperassets.DOIAssetKey -> "<kind>/doi/
+// <reg>/<suffix>.<ext>"). The OpenAlex-verified title lands in
+// paper_title and the verification outcome in paper_verification_status;
+// authors are not snapshotted (they resolve from the OpenAlex corpus).
 
 import (
 	"context"
@@ -26,14 +25,14 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Verification statuses recorded on DOI nodes (p.verification_status).
+// Verification statuses recorded on a DOI contribution
+// (papers.paper_verification_status).
 //
-// Title / authors are NEVER taken from the contributor — they are always
-// resolved from OpenAlex. The status records whether that resolution
-// succeeded.
+// Title is taken from OpenAlex, never the contributor; the status records
+// whether that resolution succeeded.
 const (
 	// VerifyVerified: OpenAlex returned a record for the DOI; Title /
-	// Authors / ArxivID populated from the canonical metadata.
+	// ArxivID populated from the canonical metadata.
 	VerifyVerified = "verified"
 	// VerifyDOINotFound: OpenAlex confirmed the DOI does not exist.
 	VerifyDOINotFound = "doi-not-found"
@@ -45,48 +44,28 @@ const (
 )
 
 // DOIVerification is the outcome of upload-time DOI metadata enrichment
-// against OpenAlex, persisted on the catalog node. Title / Authors /
-// ArxivID are populated only when Status == VerifyVerified; on every
-// other status the catalog write must NOT clobber any previously-stored
-// values (the DOI may have been verified by an earlier upload that
-// caught a transient OpenAlex outage on the next).
+// against OpenAlex. Title / Authors / ArxivID are populated only when
+// Status == VerifyVerified. Authors is used only for the HTTP response
+// body (it is not persisted -- authors resolve from the OpenAlex corpus).
 type DOIVerification struct {
 	Status  string   // one of the Verify* constants
 	Title   string   // OpenAlex canonical title (only set on verified)
-	Authors []string // OpenAlex author display names (only set on verified)
+	Authors []string // OpenAlex author display names (response body only)
 	ArxivID string   // linked arxiv id when OpenAlex knows one, else ""
 }
 
-// DOINodeKey returns the synthetic paper_works primary key for a DOI
-// identity. Exported so handlers/tests can assert on the stored key.
-func DOINodeKey(doi string) string { return "doi:" + doi }
-
-// LookupDOI returns the catalog node's primary key (the synthetic
-// "doi:<doi>" string) when a DOI contribution has been recorded
-// against the given DOI. The three return modes are:
+// LookupDOI reports whether a DOI contribution has been recorded for the
+// given DOI. The three return modes are:
 //
-//   - (key, true, nil)  — DOI node found locally; caller dispatches
-//     to the DOI handlers using `doi`.
-//   - ("", false, nil)  — genuine miss (no row, or the catalog has
-//     never been configured so ensure(ctx) short-circuits); caller
-//     may fall through to OpenAlex resolution.
-//   - ("", false, err) — PostgreSQL query-time error (connection drop,
-//     failover mid-read, etc.). Caller MUST
-//     return 503 — folding this into "not found" would have the
-//     dispatcher serve a stale 404 (or worse, an arxiv twin) when
-//     the local DOI bytes are in fact present, breaking the
-//     DOI-canonical invariant.
+//   - (doi, true, nil)  -- a paper with this DOI exists; caller dispatches
+//     to the DOI handlers.
+//   - ("", false, nil)  -- genuine miss (no row, or catalog unconfigured).
+//   - ("", false, err)  -- PostgreSQL query-time error; caller MUST 503.
 //
-// Used by the GET /api/papers/<id>/{pdf,markdown} read path: when
-// the caller supplies a DOI, this is consulted FIRST — before any
-// OpenAlex resolution — because DOI is the canonical identity for
-// any work that has both an arxiv preprint and a DOI-only published
-// version (see docs/server/upload-api.md §Canonical resolution).
-// `?force_arxiv=1` bypasses this lookup.
-//
-// The synthetic key matches the "<kind>/doi/<reg>/<suffix>" bucket
-// layout used by UpsertPDFByDOI, so callers can hand it straight to
-// the DOI handlers.
+// Used by the GET /api/papers/<id>/{pdf,markdown} read path: when the
+// caller supplies a DOI this is consulted FIRST -- before any OpenAlex
+// resolution -- because DOI is the canonical identity for any work that
+// has both an arxiv preprint and a DOI-only published version.
 func (s *Store) LookupDOI(ctx context.Context, doi string) (string, bool, error) {
 	if !s.ensure(ctx) {
 		return "", false, nil
@@ -95,80 +74,110 @@ func (s *Store) LookupDOI(ctx context.Context, doi string) (string, bool, error)
 	if !ok {
 		return "", false, nil
 	}
-	var nodeKey string
+	var found string
 	err := s.pool.QueryRow(ctx, `
-		SELECT arxiv_id
-		FROM paper_works
-		WHERE identifier_scheme = 'doi' AND doi = $1
-		LIMIT 1`, norm).Scan(&nodeKey)
+		SELECT paper_doi FROM papers WHERE lower(paper_doi) = lower($1) LIMIT 1`, norm,
+	).Scan(&found)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", false, nil
 		}
 		return "", false, catalogUnavailable(fmt.Sprintf("papers: lookup doi %s", norm), err)
 	}
-	return nodeKey, true, nil
+	return found, true, nil
 }
 
-// LookupArxivToDOI is the reverse direction of LookupDOI: given a bare
-// (version-stripped) arxiv id, returns the DOI of any DOI-indexed node
-// whose `doi_arxiv_id` matches. Used by the GET dispatch to honour the
-// "DOI is canonical" rule even when the caller passed an arxiv id —
-// when a DOI contribution exists for the same paper, default to
-// serving the DOI bytes (caller can opt back with `?force_arxiv=1`).
+// LookupArxivToDOI is the reverse of LookupDOI: given a bare arxiv id,
+// returns the DOI of the same paper when it also carries a published DOI
+// contribution. Used by the GET dispatch to honour "DOI is canonical" --
+// when a DOI twin exists for the requested arxiv id, default to serving
+// the DOI bytes (caller can opt back with ?force_arxiv=1).
 //
-// Caller MUST pass the BARE arxiv id (no `vN` suffix). DOI nodes store
-// `doi_arxiv_id` as the version-stripped form returned by
-// openalex.ExtractArxivID, so a versioned input would never match.
+// Caller MUST pass the BARE arxiv id (no vN suffix).
 //
-// Three return modes, mirroring LookupDOI:
-//
-//   - (doi, true, nil)  — a DOI twin exists; caller dispatches to
-//     the DOI handlers.
-//   - ("", false, nil)  — no twin, empty input, or catalog never
-//     configured; caller falls through to the arxiv handlers.
-//   - ("", false, err) — PostgreSQL query-time error. The arxiv path is
-//     designed to be independent of the catalog (PostgreSQL outage MUST
-//     NOT gate arxiv access), so the dispatcher logs-and-falls-
-//     through here; the error is returned only so callers can
-//     observe / log it instead of silently dropping the signal.
-func (s *Store) LookupArxivToDOI(ctx context.Context, bareArxivID string) (string, bool, error) {
+//   - (doi, true, nil)  -- a DOI twin exists.
+//   - ("", false, nil)  -- no twin, empty input, or catalog unconfigured.
+//   - ("", false, err)  -- PostgreSQL query-time error.
+func (s *Store) LookupArxivToDOI(ctx context.Context, bareArxiv string) (string, bool, error) {
 	if !s.ensure(ctx) {
 		return "", false, nil
 	}
-	bareArxivID = paperassets.StripVersion(bareArxivID)
-	if bareArxivID == "" {
+	bare := bareArxivID(bareArxiv)
+	if bare == "" {
 		return "", false, nil
 	}
 	var doi string
 	err := s.pool.QueryRow(ctx, `
-		SELECT doi
-		FROM paper_works
-		WHERE identifier_scheme = 'doi'
-		  AND doi_arxiv_id = $1
-		LIMIT 1`, bareArxivID).Scan(&doi)
+		SELECT paper_doi FROM papers
+		WHERE paper_arxiv_id = $1 AND paper_doi IS NOT NULL
+		LIMIT 1`, bare,
+	).Scan(&doi)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", false, nil
 		}
-		return "", false, catalogUnavailable(fmt.Sprintf("papers: lookup arxiv-to-doi %s", bareArxivID), err)
+		return "", false, catalogUnavailable(fmt.Sprintf("papers: lookup arxiv-to-doi %s", bare), err)
 	}
 	return doi, true, nil
 }
 
-// UpsertPDFByDOI is the DOI-indexed analogue of UpsertPDF: records a PDF
-// contributed against a DOI (a published version that may have no arXiv
-// preprint). Creates the node if missing, is idempotent, and stores the
-// verification outcome. Returns ErrCatalogUnavailable when PostgreSQL is down
-// (handler treats as deferred, object is already durably written).
+// resolveDOIPaper resolves (inside tx) the papers row a DOI contribution
+// belongs to, creating or updating it, and returns its paper_id. The
+// three-way resolution keeps one work as one paper (ADR 0009):
 //
-// Metadata preservation: when the verification was non-verified (e.g.
-// OpenAlex was transiently unavailable, or the DOI was not found), the
-// CASE WHEN clauses below preserve any previously-stored title / authors
-// / linked arxiv id — a transient outage during a re-upload must not
-// silently overwrite a prior verified record. verification_status itself
-// is always overwritten so the latest attempt is visible to operators.
-func (s *Store) UpsertPDFByDOI(ctx context.Context, doi, sha string, size int64, etag string, v DOIVerification) error {
+//  1. OpenAlex linked an arXiv id we host -> attach to that paper (set its
+//     paper_doi + verification), so the arXiv preprint and the published
+//     version share one paper.
+//  2. else a paper with this DOI exists -> reuse it.
+//  3. else create a new paper keyed on the DOI (+ the linked arXiv id when
+//     it is free).
+func resolveDOIPaper(ctx context.Context, tx pgx.Tx, doi string, v DOIVerification) (int64, error) {
+	title := nilIfEmpty(v.Title)
+	status := nilIfEmpty(v.Status)
+	linkedArxiv := ""
+	if v.ArxivID != "" {
+		linkedArxiv = bareArxivID(v.ArxivID)
+	}
+
+	if linkedArxiv != "" {
+		var pid int64
+		err := tx.QueryRow(ctx, `
+			UPDATE papers SET
+				paper_doi = $2,
+				paper_title = coalesce($3, paper_title),
+				paper_verification_status = coalesce($4, paper_verification_status)
+			WHERE paper_arxiv_id = $1
+			RETURNING paper_id`, linkedArxiv, doi, title, status,
+		).Scan(&pid)
+		if err == nil {
+			return pid, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return 0, err
+		}
+	}
+
+	var pid int64
+	err := tx.QueryRow(ctx, `
+		INSERT INTO papers (paper_doi, paper_arxiv_id, paper_title, paper_verification_status)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (paper_doi) DO UPDATE SET
+			paper_arxiv_id = coalesce(papers.paper_arxiv_id, EXCLUDED.paper_arxiv_id),
+			paper_title = coalesce(EXCLUDED.paper_title, papers.paper_title),
+			paper_verification_status = coalesce(EXCLUDED.paper_verification_status, papers.paper_verification_status)
+		RETURNING paper_id`,
+		doi, nilIfEmpty(linkedArxiv), title, status,
+	).Scan(&pid)
+	if err != nil {
+		return 0, err
+	}
+	return pid, nil
+}
+
+// UpsertPDFByDOI records a PDF contributed against a DOI (the published
+// version). Resolves/creates the paper, then upserts its single published
+// asset. Idempotent. Returns ErrCatalogUnavailable when PostgreSQL is down.
+func (s *Store) UpsertPDFByDOI(ctx context.Context, doi, sha string, size int64, v DOIVerification) error {
 	if !s.ensure(ctx) {
 		return ErrCatalogUnavailable
 	}
@@ -177,47 +186,37 @@ func (s *Store) UpsertPDFByDOI(ctx context.Context, doi, sha string, size int64,
 		return fmt.Errorf("papers: upsert pdf by doi: invalid doi %q", doi)
 	}
 	pdfPath := bucketRelKey(paperassets.DOIAssetKey("pdf", norm))
-	_, err := s.pool.Exec(ctx, `
-		INSERT INTO paper_works (
-			arxiv_id, source, identifier_scheme, doi, doi_arxiv_id,
-			has_pdf, has_md, has_json, pdf_path, pdf_size, pdf_sha256,
-			pdf_etag, pdf_uploaded_at, last_assets_change_at,
-			doi_title, doi_authors, verification_status, verified_at
-		)
-		VALUES ($1, 'doi-upload', 'doi', $2, nullif($3, ''),
-		        true, false, false, $4, $5, $6, $7, now(), now(),
-		        nullif($8, ''), $9, $10, now())
-		ON CONFLICT (arxiv_id) DO UPDATE SET
-			doi = EXCLUDED.doi,
-			identifier_scheme = 'doi',
-			doi_arxiv_id = coalesce(EXCLUDED.doi_arxiv_id, paper_works.doi_arxiv_id),
-			has_pdf = true,
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return catalogUnavailable(fmt.Sprintf("papers: upsert pdf by doi begin %s", norm), err)
+	}
+	defer tx.Rollback(ctx)
+	pid, err := resolveDOIPaper(ctx, tx, norm, v)
+	if err != nil {
+		return catalogUnavailable(fmt.Sprintf("papers: resolve doi paper %s", norm), err)
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO paper_assets (paper_id, source, pdf_path, pdf_size, pdf_sha256, fetched_at)
+		VALUES ($1, 'published', $2, $3, nullif($4,''), now())
+		ON CONFLICT (paper_id) WHERE source = 'published' DO UPDATE SET
 			pdf_path = EXCLUDED.pdf_path,
 			pdf_size = EXCLUDED.pdf_size,
 			pdf_sha256 = EXCLUDED.pdf_sha256,
-			pdf_etag = EXCLUDED.pdf_etag,
-			pdf_uploaded_at = now(),
-			last_assets_change_at = now(),
-			doi_title = coalesce(EXCLUDED.doi_title, paper_works.doi_title),
-			doi_authors = CASE WHEN cardinality(EXCLUDED.doi_authors) > 0 THEN EXCLUDED.doi_authors ELSE paper_works.doi_authors END,
-			verification_status = EXCLUDED.verification_status,
-			verified_at = now()`,
-		DOINodeKey(norm), norm, v.ArxivID, pdfPath, size, sha, etag, v.Title, v.Authors, v.Status)
+			fetched_at = now()`,
+		pid, pdfPath, size, sha)
 	if err != nil {
-		return catalogUnavailable(fmt.Sprintf("papers: upsert pdf by doi %s", norm), err)
+		return catalogUnavailable(fmt.Sprintf("papers: upsert pdf asset by doi %s", norm), err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return catalogUnavailable(fmt.Sprintf("papers: upsert pdf by doi commit %s", norm), err)
 	}
 	return nil
 }
 
-// UpsertMDByDOI is the DOI-indexed analogue of UpsertMD: records a
-// converted-PDF markdown bundle contributed against a DOI. Creates the
-// node if missing, flips has_md=true, and stores the verification
-// outcome. Idempotent.
-//
-// Metadata preservation: same CASE WHEN guard as UpsertPDFByDOI — a
-// non-verified status (transient OpenAlex outage / doi-not-found) does
-// not overwrite previously-stored title / authors / linked arxiv id.
-func (s *Store) UpsertMDByDOI(ctx context.Context, doi, sha string, size int64, etag string, imageCount int, v DOIVerification) error {
+// UpsertMDByDOI records a converted-PDF markdown bundle contributed
+// against a DOI. Resolves/creates the paper, then upserts the MinerU
+// pointers + image count on its published asset. Idempotent.
+func (s *Store) UpsertMDByDOI(ctx context.Context, doi, sha string, size int64, imageCount int, v DOIVerification) error {
 	if !s.ensure(ctx) {
 		return ErrCatalogUnavailable
 	}
@@ -226,35 +225,41 @@ func (s *Store) UpsertMDByDOI(ctx context.Context, doi, sha string, size int64, 
 		return fmt.Errorf("papers: upsert md by doi: invalid doi %q", doi)
 	}
 	mdPath := bucketRelKey(paperassets.DOIAssetKey("markdown", norm))
-	_, err := s.pool.Exec(ctx, `
-		INSERT INTO paper_works (
-			arxiv_id, source, identifier_scheme, doi, doi_arxiv_id,
-			has_pdf, has_md, has_json, md_path, md_size, md_sha256,
-			md_etag, image_count, md_uploaded_at, last_assets_change_at,
-			doi_title, doi_authors, verification_status, verified_at
-		)
-		VALUES ($1, 'doi-upload', 'doi', $2, nullif($3, ''),
-		        false, true, false, $4, $5, $6, $7, $8, now(), now(),
-		        nullif($9, ''), $10, $11, now())
-		ON CONFLICT (arxiv_id) DO UPDATE SET
-			doi = EXCLUDED.doi,
-			identifier_scheme = 'doi',
-			doi_arxiv_id = coalesce(EXCLUDED.doi_arxiv_id, paper_works.doi_arxiv_id),
-			has_md = true,
-			md_path = EXCLUDED.md_path,
-			md_size = EXCLUDED.md_size,
-			md_sha256 = EXCLUDED.md_sha256,
-			md_etag = EXCLUDED.md_etag,
-			image_count = EXCLUDED.image_count,
-			md_uploaded_at = now(),
-			last_assets_change_at = now(),
-			doi_title = coalesce(EXCLUDED.doi_title, paper_works.doi_title),
-			doi_authors = CASE WHEN cardinality(EXCLUDED.doi_authors) > 0 THEN EXCLUDED.doi_authors ELSE paper_works.doi_authors END,
-			verification_status = EXCLUDED.verification_status,
-			verified_at = now()`,
-		DOINodeKey(norm), norm, v.ArxivID, mdPath, size, sha, etag, imageCount, v.Title, v.Authors, v.Status)
+	jsonPath := bucketRelKey(paperassets.DOIAssetKey("json", norm))
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return catalogUnavailable(fmt.Sprintf("papers: upsert md by doi %s", norm), err)
+		return catalogUnavailable(fmt.Sprintf("papers: upsert md by doi begin %s", norm), err)
+	}
+	defer tx.Rollback(ctx)
+	pid, err := resolveDOIPaper(ctx, tx, norm, v)
+	if err != nil {
+		return catalogUnavailable(fmt.Sprintf("papers: resolve doi paper %s", norm), err)
+	}
+	// A markdown-only contribution still needs a published asset to hang
+	// off; pdf_path is NOT NULL, so we record the DOI PDF key as the
+	// asset's PDF pointer (the PDF lives in the same DOI-keyed layout).
+	_, err = tx.Exec(ctx, `
+		INSERT INTO paper_assets (paper_id, source, pdf_path, mineru_md_path, mineru_json_path, image_count, fetched_at)
+		VALUES ($1, 'published', $2, $3, $4, $5, now())
+		ON CONFLICT (paper_id) WHERE source = 'published' DO UPDATE SET
+			mineru_md_path = EXCLUDED.mineru_md_path,
+			mineru_json_path = EXCLUDED.mineru_json_path,
+			image_count = EXCLUDED.image_count,
+			fetched_at = now()`,
+		pid, bucketRelKey(paperassets.DOIAssetKey("pdf", norm)), mdPath, jsonPath, imageCount)
+	if err != nil {
+		return catalogUnavailable(fmt.Sprintf("papers: upsert md asset by doi %s", norm), err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return catalogUnavailable(fmt.Sprintf("papers: upsert md by doi commit %s", norm), err)
 	}
 	return nil
+}
+
+// nilIfEmpty maps "" to a nil *string so it encodes as SQL NULL.
+func nilIfEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }

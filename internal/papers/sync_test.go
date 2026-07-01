@@ -356,35 +356,49 @@ func TestListKindPathsNestedSlashDOIRouting(t *testing.T) {
 // falls through to OpenAlex (or 404) even though the bytes are local.
 //
 // Static-string regression: we can't run the SQL without a live
-// PostgreSQL, but we can guard against accidental removal of the upsert.
-func TestMergeAssetBatchSetsDOIOnDOINodes(t *testing.T) {
+// PostgreSQL, but we can guard against accidental removal of the DOI
+// routing. Behavioural coverage is in integration_test.go.
+func TestMergeAssetBatchRoutesDOI(t *testing.T) {
 	fn := readAndExtract(t, "sync.go", "mergeAssetBatch")
 	if fn == "" {
 		t.Fatal("mergeAssetBatch source not found in sync.go")
 	}
-	if !strings.Contains(fn, `"doi":`) {
-		t.Errorf("mergeAssetBatch doiItems must carry a \"doi\" key derived from the node_key; " +
-			"otherwise the doiCypher cannot SET p.doi on the merged node")
+	if !strings.Contains(fn, `strings.HasPrefix(key, "doi:")`) {
+		t.Error("mergeAssetBatch must detect DOI-keyed items by the \"doi:\" map-key prefix")
 	}
-	if !strings.Contains(fn, "doi = EXCLUDED.doi") {
-		t.Errorf("mergeAssetBatch DOI upsert must persist doi so sync-recreated DOI rows are " +
-			"findable by LookupDOI (which matches on doi, not on the synthetic arxiv_id key)")
+	if !strings.Contains(fn, "mergeDOIAsset") {
+		t.Error("mergeAssetBatch must route DOI items to mergeDOIAsset (published-asset path)")
 	}
 }
 
-// TestMergeImageBatchSetsDOIOnDOINodes mirrors the asset-batch guard for
-// the image-count batch: the doiCypher there ALSO MERGEs on the synthetic
-// "doi:<doi>" key and must SET p.doi when creating the node, so an
-// image-only sync against a fresh DOI node doesn't leave it unfindable.
-func TestMergeImageBatchSetsDOIOnDOINodes(t *testing.T) {
+// TestMergeDOIAssetResolvesPaper guards that the DOI asset path resolves
+// the paper by DOI (resolveDOIPaper) and writes a published asset, so a
+// sync-recreated DOI contribution is findable by LookupDOI.
+func TestMergeDOIAssetResolvesPaper(t *testing.T) {
+	fn := readAndExtract(t, "sync.go", "mergeDOIAsset")
+	if fn == "" {
+		t.Fatal("mergeDOIAsset source not found in sync.go")
+	}
+	if !strings.Contains(fn, "resolveDOIPaper") {
+		t.Error("mergeDOIAsset must resolve the paper by DOI via resolveDOIPaper")
+	}
+	if !strings.Contains(fn, "'published'") {
+		t.Error("mergeDOIAsset must write a published paper_assets row")
+	}
+}
+
+// TestMergeImageBatchRoutesDOI mirrors the asset-batch guard for the
+// image-count batch: DOI counts route to the published asset via
+// resolveDOIPaper.
+func TestMergeImageBatchRoutesDOI(t *testing.T) {
 	fn := readAndExtract(t, "sync.go", "mergeImageBatch")
 	if fn == "" {
 		t.Fatal("mergeImageBatch source not found in sync.go")
 	}
-	if !strings.Contains(fn, `"doi":`) {
-		t.Errorf("mergeImageBatch doiItems must carry a \"doi\" key derived from the node_key")
+	if !strings.Contains(fn, `strings.HasPrefix(key, "doi:")`) {
+		t.Error("mergeImageBatch must detect DOI-keyed items by the \"doi:\" map-key prefix")
 	}
-	if !strings.Contains(fn, "doi = EXCLUDED.doi") {
-		t.Errorf("mergeImageBatch DOI upsert must persist doi for the same LookupDOI reason as mergeAssetBatch")
+	if !strings.Contains(fn, "resolveDOIPaper") {
+		t.Error("mergeImageBatch must resolve DOI counts onto the published asset via resolveDOIPaper")
 	}
 }

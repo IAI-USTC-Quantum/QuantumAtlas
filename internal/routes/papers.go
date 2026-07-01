@@ -794,7 +794,7 @@ func mineruClaimHandler(re *core.RequestEvent, cfg *config.Config, store objstor
 	pdfURL := claimPDFURL(ctx, store, canonical)
 	pdfSha256 := lookupStoredPDFSha256(ctx, store, canonical)
 
-	claim, err := catalog.Claim(ctx, papers.CreateOptions{
+	lease, err := catalog.Lease(ctx, papers.CreateOptions{
 		ArxivID:    canonical,
 		Requester:  requester,
 		TTLSeconds: ttl,
@@ -807,33 +807,33 @@ func mineruClaimHandler(re *core.RequestEvent, cfg *config.Config, store objstor
 			return re.JSON(http.StatusServiceUnavailable, map[string]string{
 				"detail": "catalog unavailable (PostgreSQL unreachable); retry shortly",
 			})
-		case errors.Is(err, papers.ErrNotClaimable):
+		case errors.Is(err, papers.ErrNotLeasable):
 			return re.JSON(http.StatusNotFound, map[string]string{
-				"detail": fmt.Sprintf("%s cannot be claimed: no PDF in catalog, or markdown already exists. Upload the PDF first via /api/papers/{arxiv_id}/upload-pdf", canonical),
+				"detail": fmt.Sprintf("%s cannot be leased: no PDF in catalog, or markdown already exists. Upload the PDF first via /api/papers/{arxiv_id}/upload-pdf", canonical),
 			})
 		}
-		var dupErr *papers.ErrAlreadyClaimed
+		var dupErr *papers.ErrAlreadyLeased
 		if errors.As(err, &dupErr) {
 			return re.JSON(http.StatusConflict, map[string]any{
 				"detail": map[string]any{
-					"message":          fmt.Sprintf("%s is already claimed", canonical),
-					"claim_id":         dupErr.Existing.ClaimID,
-					"claim_expires_at": dupErr.Existing.ExpiresAt,
-					"claim_requester":  dupErr.Existing.Requester,
+					"message":          fmt.Sprintf("%s is already leased", canonical),
+					"lease_id":         dupErr.Existing.LeaseID,
+					"lease_expires_at": dupErr.Existing.ExpiresAt,
+					"lease_requester":  dupErr.Existing.Requester,
 				},
 			})
 		}
 		return re.JSON(http.StatusInternalServerError, map[string]string{"detail": err.Error()})
 	}
 
-	slog.Info("mineru claim granted",
+	slog.Info("mineru lease granted",
 		"arxiv_id", canonical,
 		"requester", requester,
-		"claim_id", claim.ClaimID,
-		"ttl_seconds", claim.TTLSeconds,
+		"lease_id", lease.LeaseID,
+		"ttl_seconds", lease.TTLSeconds,
 		"pdf_sha256_known", pdfSha256 != "",
 	)
-	return re.JSON(http.StatusCreated, claim)
+	return re.JSON(http.StatusCreated, lease)
 }
 
 // claimPDFTTL is how long the PDF presigned URL stays valid. 24h gives
@@ -904,11 +904,11 @@ func mineruClaimReleaseHandler(re *core.RequestEvent, catalog *papers.Store, arx
 			"detail": fmt.Sprintf("invalid arxiv_id for claim release: %q", arxivID),
 		})
 	}
-	_, err := catalog.ReleaseClaim(re.Request.Context(), canonical, claimID)
+	_, err := catalog.ReleaseLease(re.Request.Context(), canonical, claimID)
 	if err != nil {
 		if errors.Is(err, papers.ErrIDMismatch) {
 			return re.JSON(http.StatusConflict, map[string]string{
-				"detail": "claim_id does not match the active claim",
+				"detail": "lease_id does not match the active lease",
 			})
 		}
 		if errors.Is(err, papers.ErrCatalogUnavailable) {
@@ -1020,7 +1020,7 @@ func uploadPDFHandler(re *core.RequestEvent, cfg *config.Config, store objstore.
 	// OpenAlex bootstrap). When PostgreSQL is down we still return success —
 	// the object is durably written; `papers sync` reconciles later.
 	catalogDeferred := false
-	if err := catalog.UpsertPDF(ctx, canonical, pdfSha, pdfSize, pdfOutcome.existingSha); err != nil {
+	if err := catalog.UpsertPDF(ctx, canonical, pdfSha, pdfSize); err != nil {
 		if errors.Is(err, papers.ErrCatalogUnavailable) {
 			catalogDeferred = true
 		} else {
@@ -1296,7 +1296,7 @@ func uploadMinerUHandler(re *core.RequestEvent, cfg *config.Config, store objsto
 	)
 
 	catalogDeferred := false
-	if err := catalog.UpsertMD(ctx, canonical, mdSha, mdSize, mdOutcome.existingSha); err != nil {
+	if err := catalog.UpsertMD(ctx, canonical, mdSha, mdSize); err != nil {
 		if !errors.Is(err, papers.ErrCatalogUnavailable) {
 			slog.Warn("papers: UpsertMD write-through failed", "arxiv_id", canonical, "error", err)
 		}

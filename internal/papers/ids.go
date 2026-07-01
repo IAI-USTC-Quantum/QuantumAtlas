@@ -1,6 +1,7 @@
 package papers
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperassets"
@@ -31,6 +32,39 @@ func deriveIDs(arxivID string) ids {
 		StorageKey: sk,
 		YYMM:       paperassets.Shard(sk),
 	}
+}
+
+// bareArxivID returns the version-stripped canonical arxiv id used as
+// papers.paper_arxiv_id — e.g. "2208.06941" or "quant-ph/9508027". The
+// version lives per-asset in paper_assets.arxiv_version, not on the paper.
+func bareArxivID(arxivID string) string {
+	return paperassets.StripVersion(paperassets.NormalizeIdentifier(arxivID))
+}
+
+// arxivVersion returns the integer version suffix of an arxiv id (the "N"
+// in "vN"), or 0 when the id carries no version. Upload ids always carry a
+// version (paperassets.ValidateUploadID enforces vN), so a stored arxiv
+// asset always has a positive version.
+func arxivVersion(arxivID string) int {
+	p, err := paperassets.Parse(arxivID)
+	if err != nil || p.Version == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimPrefix(p.Version, "v"))
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+// versionedArxivID reconstructs the full versioned id from a bare arxiv
+// id + integer version — the inverse of bareArxivID + arxivVersion, e.g.
+// ("2208.06941", 2) → "2208.06941v2". A zero version yields the bare id.
+func versionedArxivID(bare string, version int) string {
+	if version <= 0 {
+		return bare
+	}
+	return bare + "v" + strconv.Itoa(version)
 }
 
 // bucketRelKey strips the leading "<kind>/" segment from an AssetKey,

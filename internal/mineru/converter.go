@@ -887,7 +887,7 @@ func (c *Converter) fetchAndStorePDF(ctx context.Context, canonical string) erro
 
 	// Catalog write-through is best-effort.
 	if c.catalog != nil {
-		if uErr := c.catalog.UpsertPDF(ctx, canonical, result.Sha256, result.Size, ""); uErr != nil &&
+		if uErr := c.catalog.UpsertPDF(ctx, canonical, result.Sha256, result.Size); uErr != nil &&
 			!errors.Is(uErr, papers.ErrCatalogUnavailable) {
 			c.logger.Warn("papers: UpsertPDF write-through after silent fetch failed",
 				"arxiv_id", canonical, "error", uErr)
@@ -1096,7 +1096,7 @@ func (c *Converter) writeResult(ctx context.Context, canonical string, result Re
 	if c.catalog != nil {
 		sum := sha256.Sum256(result.Markdown)
 		mdSha := hex.EncodeToString(sum[:])
-		if uErr := c.catalog.UpsertMD(ctx, canonical, mdSha, mdSize, ""); uErr != nil &&
+		if uErr := c.catalog.UpsertMD(ctx, canonical, mdSha, mdSize); uErr != nil &&
 			!errors.Is(uErr, papers.ErrCatalogUnavailable) {
 			c.logger.Warn("papers: UpsertMD write-through failed after conversion",
 				"arxiv_id", canonical, "error", uErr)

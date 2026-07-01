@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// IsHosted reports whether a bibliographic reference matches a paper_works row
+// IsHosted reports whether a bibliographic reference matches a papers row
 // — i.e. a Paper QuantumAtlas hosts. scheme is the reference namespace
 // (arxiv | doi | openalex) and id its bare, unversioned identifier. Used by
 // GET /api/papers/lookup to flag hosted refs (ADR 0007).
@@ -23,13 +23,13 @@ func (s *Store) IsHosted(ctx context.Context, scheme, id string) (bool, error) {
 	var query string
 	switch scheme {
 	case "arxiv":
-		// Match either the canonical (bare) form or the stored primary key.
-		query = `SELECT EXISTS(SELECT 1 FROM paper_works WHERE arxiv_id_canonical = $1 OR arxiv_id = $1)`
+		// papers stores the bare, version-stripped arxiv id.
+		query = `SELECT EXISTS(SELECT 1 FROM papers WHERE paper_arxiv_id = $1)`
 	case "doi":
-		// DOIs are stored lower-cased (normalizeDOI); compare case-insensitively.
-		query = `SELECT EXISTS(SELECT 1 FROM paper_works WHERE identifier_scheme = 'doi' AND lower(doi) = lower($1))`
+		// DOIs are stored lower-cased; compare case-insensitively.
+		query = `SELECT EXISTS(SELECT 1 FROM papers WHERE lower(paper_doi) = lower($1))`
 	case "openalex":
-		query = `SELECT EXISTS(SELECT 1 FROM paper_works WHERE openalex_id = $1)`
+		query = `SELECT EXISTS(SELECT 1 FROM papers WHERE paper_openalex_id = $1)`
 	default:
 		return false, nil
 	}

@@ -32,9 +32,9 @@ func (s *Store) RunJanitor(ctx context.Context) {
 func (s *Store) sweep(ctx context.Context) {
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if n, err := s.GCExpiredClaims(cctx); err != nil {
-		slog.Debug("papers janitor: claim GC failed", "error", err)
+	if n, err := s.GCExpiredLeases(cctx); err != nil {
+		slog.Debug("papers janitor: lease GC failed", "error", err)
 	} else if n > 0 {
-		slog.Info("papers janitor: expired claims cleared", "count", n)
+		slog.Info("papers janitor: expired leases cleared", "count", n)
 	}
 }

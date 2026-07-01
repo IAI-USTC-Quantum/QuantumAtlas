@@ -187,7 +187,7 @@ func uploadPDFByDOIHandler(
 	}
 
 	catalogDeferred := false
-	if err := catalog.UpsertPDFByDOI(ctx, doi, pdfSha, pdfSize, pdfOutcome.existingSha, verification); err != nil {
+	if err := catalog.UpsertPDFByDOI(ctx, doi, pdfSha, pdfSize, verification); err != nil {
 		if !errors.Is(err, papers.ErrCatalogUnavailable) {
 			slog.Warn("papers: UpsertPDFByDOI write-through failed", "doi", doi, "error", err)
 		}
@@ -437,7 +437,7 @@ func uploadMinerUByDOIHandler(
 	}
 
 	catalogDeferred := false
-	if err := catalog.UpsertMDByDOI(ctx, doi, mdSha, mdSize, mdOutcome.existingSha, imageCount, verification); err != nil {
+	if err := catalog.UpsertMDByDOI(ctx, doi, mdSha, mdSize, imageCount, verification); err != nil {
 		if !errors.Is(err, papers.ErrCatalogUnavailable) {
 			slog.Warn("papers: UpsertMDByDOI write-through failed", "doi", doi, "error", err)
 		}
