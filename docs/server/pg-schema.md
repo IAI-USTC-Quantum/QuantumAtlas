@@ -17,10 +17,10 @@ join 留在 SQL 里：
 | 块 | 表 | 规模 | 由谁建 | 可重建来源 |
 |---|---|---|---|---|
 | **Paper catalog** | `papers` + `paper_assets` | ~10⁵ 行 | qatlasd 启动时（`papers.EnsureSchema`，后台 goroutine） | 从资产桶 LIST 重建 |
-| **OpenAlex 语料** | `openalex_works` (+ `openalex_sync_state` / `openalex_audit` / `work_embeddings`) | ~2.87×10⁸ 行 / 1–2 TB | **基础 schema 启动时建**（`corpus.EnsureSchema`，先于 catalog）；行**惰性 fetch-on-miss 写穿**填充，批量 `bootstrap-pg` 为可选预热 | 从 OpenAlex snapshot 重灌（预热）/ 按需重取 |
+| **OpenAlex 语料** | `openalex_works` (+ `openalex_sync_state` / `openalex_audit` / `work_embeddings`) | ~2.87×10⁸ 行 / 1–2 TB | **基础 schema 启动时建**（`corpus.EnsureSchema`，先于 catalog）；行**懒加载 fetch-on-miss 写穿**填充，批量 `bootstrap-pg` 为可选预热 | 从 OpenAlex snapshot 重灌（预热）/ 按需重取 |
 
 两块的**生命周期不同**——catalog 每次启动 idempotent 重建；语料的**基础 schema 也每次启动重建**
-（先于 catalog），但其 ~10⁸ 行是**惰性 fetch-on-miss 写穿**填充，批量 snapshot 灌库只是可选预热。
+（先于 catalog），但其 ~10⁸ 行是**懒加载 fetch-on-miss 写穿**填充，批量 snapshot 灌库只是可选预热。
 PG 不可达时所有方法优雅降级（写返回 `ErrCatalogUnavailable` + `X-Catalog-Sync: deferred`，读报
 `available=false`）。
 
@@ -96,7 +96,7 @@ UNIQUE 允许多 NULL）。
 
 #### 为什么 openalex FK 仍用「幂等 DO 块」加
 
-`openalex_works` 现在是**启动时创建、按需惰性填充的写穿缓存**（write-through cache，见 ADR 0006）：
+`openalex_works` 现在是**启动时创建、按需懒加载填充的写穿缓存**（write-through cache，见 ADR 0006）：
 `ensureCatalogSchema` 在建 `papers` catalog **之前**先跑 `corpus.EnsureSchema`（建 `openalex_works` +
 sync-state + audit；`work_embeddings` 因需要 pgvector 扩展，用 `DO` 块条件建、无扩展时 no-op），
 所以 `papers` 的这条 FK 在 DO 块跑到时 `openalex_works` **已经在了**。DO 块在这里的作用纯粹是
@@ -122,7 +122,7 @@ END $$;
 - 全新库 → 同一次启动里 corpus 先建好，catalog 的 DO 块随后立即补上 FK。
 
 > **不变式如何维持**：这条 FK 的隐含前提是「任何被写进 `paper_openalex_id` 的 openalex id 都在
-> `openalex_works` 里」。**惰性写穿**恰好维持它——by-id lookup 一旦要给某篇填 `paper_openalex_id`，
+> `openalex_works` 里」。**懒加载写穿**恰好维持它——by-id lookup 一旦要给某篇填 `paper_openalex_id`，
 > 就已经先 fetch-on-miss 把那条 work 写进了 `openalex_works`（`Resolver.FetchWorkRecord` +
 > `corpus.UpsertFetchedWork`）。所以不再依赖「先全量 bootstrap」：语料**子集**下 miss 会自愈，
 > catalog 写入也不耦合语料完整性。批量 `openalex bootstrap-pg` 退化为**可选的预热**（补全 citation
@@ -148,9 +148,9 @@ END $$;
 | `openalex_referenced_work_ids` | `jsonb GENERATED ALWAYS AS (strip_openalex_prefix(record->'referenced_works')) STORED` | **内联引用出边**：裸 `W…` 数组 |
 | `search_text` | `tsvector GENERATED … STORED` | 标题全文检索 |
 
-**行怎么进来**：批量 `openalex bootstrap-pg`（snapshot 预热）与 by-id lookup 的**惰性 fetch-on-miss
+**行怎么进来**：批量 `openalex bootstrap-pg`（snapshot 预热）与 by-id lookup 的**懒加载 fetch-on-miss
 写穿**（`corpus.UpsertFetchedWork`）**共用同一条 `UpsertWorks` 写入路径**，`ON CONFLICT` 幂等更新
-`record` + 派生列。所以预热与惰性填充互不冲突，缺的按需自愈（见 [1.4](#14-外键与启动顺序)）。
+`record` + 派生列。所以预热与懒加载填充互不冲突，缺的按需自愈（见 [1.4](#14-外键与启动顺序)）。
 
 **引用不再用边表**（ADR 0010）：
 

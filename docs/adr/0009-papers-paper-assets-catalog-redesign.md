@@ -24,7 +24,7 @@ catalog 和一个子表 **`paper_assets`**（grill Q1–Q21）。
   id（`2208.06941`），从 OpenAlex arXiv location URL 提取，绝不取自 `ids.arxiv`（Q17）。
 - `paper_openalex_id` 带有一个**可空 FK → `openalex_works(openalex_id) ON DELETE SET NULL`**
   （Q14）： "有 openalex_id ⟺ 该 work 在 corpus 中"，因此 FK 永不阻塞写入；如果该 work 之后从快照中移除，
-  该列会变为 `NULL` 并等待回填。corpus 是一个**启动时创建、惰性填充的 write-through cache**（ADR
+  该列会变为 `NULL` 并等待回填。corpus 是一个**启动时创建、懒加载填充的 write-through cache**（ADR
   `0006`）：`openalex_works` 在启动时存在，而任何赋值 `paper_openalex_id` 的查询都已经抓取并写入该
   work（fetch-on-miss write-through），所以不需要批量预加载也能保持不变量。因此**没有启动顺序依赖**——
   FK 在两张表都存在后由幂等、有 guard 的 `DO` block 添加，而 `ensureCatalogSchema` 会先于 catalog

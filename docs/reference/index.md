@@ -9,6 +9,12 @@
 
 <div class="grid cards" markdown>
 
+-   :material-book-alphabet:{ .lg .middle } **[术语表](glossary.md)**
+
+    ---
+
+    懒加载 / 缓存词族（cache-aside、写穿、singleflight、LRO）、同步 vs 异步物化、领域术语、弃用词对照。
+
 -   :material-cog:{ .lg .middle } **[环境变量](env-vars.md)**
 
     ---

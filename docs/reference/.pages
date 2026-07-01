@@ -1,5 +1,6 @@
 nav:
   - 概览: index.md
+  - 术语表: glossary.md
   - 环境变量: env-vars.md
   - Wiki Schema: wiki-schema.md
   - arXiv ID 格式: arxiv-ids.md
