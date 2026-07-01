@@ -76,26 +76,36 @@ X-Attribution: OpenAlex (CC0), Crossref (CC0), arXiv
 ## 论文访问开关 (self-hosted)
 
 `QATLAS_PAPER_ACCESS_ENABLED` 是 qatlasd 上的**单一 master 开关**，
-默认 `false`。开关 OFF 时（quantum-atlas.ai 等公开实例的默认状态）：
+默认 `false`。**合规就落在这个开关上**：它决定 server 是否对外分发论文内容（ADR
+[0011](../adr/0011-by-id-asset-reads.md)）。开关 OFF 时（quantum-atlas.ai 等公开实例的默认状态）**不对外分发**：
 
-- 下述 `/markdown` / `/pdf` 全部端点**不注册**；客户端拿到 404
+- **PDF**：arxiv 论文 → 返回 `arxiv.org/pdf/<id>` 直链（canonical 源分发，不是 QA）；
+  非 arxiv（DOI/published-only）→ 不提供
+- **markdown / json** → 不提供
 - server 不读 `MINERU_*` / `QATLAS_OPENALEX_MAILTO` / `QATLAS_ARXIV_FETCH_*` 字段；不会代客户端做 server-side 转换或 fetch
 - Contributor 仍可走 `qatlas contrib mineru`（拿自己的 MinerU quota 在本地跑），通过
   `POST /api/papers/{id}/upload-mineru` 把成品 markdown 推到 server——这条
   路径**与开关无关**
 
-开关 ON 时，server 同时启用以下四件事，**一体不可拆**：
+> 当前实现：开关 OFF 时 `/markdown` / `/pdf` 端点整体**不注册**（客户端拿到 404）；
+> 上面「arxiv 论文 → arxiv.org 直链」是 ADR 0011 的既定 OFF 态行为，实施跟踪见
+> [#8](https://github.com/IAI-USTC-Quantum/QuantumAtlas/issues/8)。
+
+开关 ON 时（部署方**显式接受衍生作品分发义务**），server 同时启用以下四件事，**一体不可拆**（pdf / markdown / json 都对外提供）：
 
 1. **Markdown 对外 serve + on-demand convert**
-   `GET /api/papers/{id_or_doi}/markdown` 注册，受 `papers:read` 保护；缓存未
+   `GET /api/papers/{id_or_doi}/markdown` 注册，受 `papers:read` 保护。**默认串字节流**
+   （`text/markdown`），`?format=link` 改为返回 RustFS 直链（ADR 0011）；缓存未
    命中时 server 用部署方配置的 `MINERU_API_TOKENS` 跑 MinerU，markdown 写回
-   `qatlas-md` 桶后 serve 字节。
+   `qatlas-md` 桶。
 2. **PDF 对外 serve + silent fetch**
-   `GET /api/papers/{id_or_doi}/pdf` 注册，受 `papers:read` 保护；缓存未命中
-   时 server 用 `QATLAS_OPENALEX_MAILTO`（polite-pool）+ `QATLAS_ARXIV_FETCH_RPS`
-   速率限制从 arxiv.org 拉 PDF，写入 `qatlas-pdf` 桶后 serve 字节。**这意味着
-   部署方对外重分发了 arxiv PDF 的二进制副本**——arxiv 的 ToS 没禁止
-   redistribution，但**版权归原作者**，部署方应自行评估对外受众范围与法域限制。
+   `GET /api/papers/{id_or_doi}/pdf` 注册，受 `papers:read` 保护。**默认返回 RustFS
+   直链**（从 `QATLAS_S3_PUBLIC_ENDPOINT` presign，qatlasd 不代理大二进制），
+   `?format=bytes` 改为串 `application/pdf` 字节；缓存未命中时用
+   `QATLAS_OPENALEX_MAILTO`（polite-pool）+ `QATLAS_ARXIV_FETCH_RPS` 速率限制从
+   arxiv.org 拉 PDF，写入 `qatlas-pdf` 桶。**无论直链还是字节，部署方都对外重分发了
+   arxiv PDF 的副本**（直链指向 QA 存的那份）——arxiv 的 ToS 没禁止 redistribution，但
+   **版权归原作者**，部署方应自行评估对外受众范围与法域限制。
 3. **DOI 寻址**
    path 头部匹配 `^10\.\d{4,9}/` 自动经 OpenAlex 反查 → canonical arxiv id →
    走同一套 handler；缺 `QATLAS_OPENALEX_MAILTO` 时 DOI 路径返回 503。

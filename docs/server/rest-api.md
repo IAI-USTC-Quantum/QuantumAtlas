@@ -328,9 +328,18 @@ Retry-After: 5
 }
 ```
 
+#### 合规：内容访问开关（`QATLAS_PAPER_ACCESS_ENABLED`）
+
+**是否对外分发论文内容**由这个服务端开关决定（合规落点，ADR [0011](../adr/0011-by-id-asset-reads.md)），也决定上面这些 **PAPER_ACCESS** 路由是否注册：
+
+| 开关 | pdf | markdown / json | 说明 |
+|---|---|---|---|
+| **关**（默认，公共 quantum-atlas.ai） | arxiv 论文 → `arxiv.org` 直链；非 arxiv → 不给 | 不给 | 不再分发；canonical 源自己分发。*（当前实现：端点整体不注册 → 404；arxiv 直链是 ADR 0011 既定 OFF 态，跟踪 [#8](https://github.com/IAI-USTC-Quantum/QuantumAtlas/issues/8)）* |
+| **开**（operator 显式接受衍生作品分发义务） | 发（默认直链，见下） | 发（默认字节流，见下） | 详见 [License & Attribution · 论文访问开关](../about/license-and-attribution.md#论文访问开关-self-hosted) |
+
 #### 字节流 vs 直链（`?format=`，ADR 0011）
 
-是否发论文内容由服务端开关 `QATLAS_PAPER_ACCESS_ENABLED` 决定（合规），这是**上面这些路由是否注册**的前提。一旦允许发，**用什么形式发**是与合规无关的传输选择，按 kind 有默认值，并可用 `?format=link|bytes` 逐请求复写：
+开关**允许发之后**，**用什么形式发**是与合规无关的传输选择，按 kind 有默认值，并可用 `?format=link|bytes` 逐请求复写：
 
 | 资产 | 默认 | 复写 | 说明 |
 |---|---|---|---|
