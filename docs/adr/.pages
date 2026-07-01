@@ -10,4 +10,4 @@ nav:
   - "0008 Claim 起草 + issue 提交迁回上游 lean 仓，退役 QA client claim 插件": 0008-claim-authoring-moves-to-the-lean-repo.md
   - "0009 Paper catalog 重构：代理主键 papers + 子表 paper_assets": 0009-papers-paper-assets-catalog-redesign.md
   - "0010 OpenAlex works 内联引用（弃 work_referenced 边表）+ 审计": 0010-openalex-works-inline-citations-and-audit.md
-  - "0011 按 id 取资产：markdown/JSON 字节流，PDF 直链": 0011-by-id-asset-reads.md
+  - "0011 按 id 取资产：PDF 默认直链、md/JSON 默认字节流，均可复写": 0011-by-id-asset-reads.md

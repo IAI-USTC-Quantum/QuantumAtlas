@@ -90,5 +90,6 @@ catalog and a child **`paper_assets`** table (grill Q1–Q21).
   **versions live per-asset** in `paper_assets.arxiv_version`. The read-only SQL contract's table
   list becomes `papers` + `paper_assets` (+ `openalex_works`).
 - **Read path (ADR `0011`).** By-id resolution walks `papers` (three UNIQUE columns) →
-  `paper_default_asset_id` → the asset's stored key; markdown/JSON stream the bytes, PDF returns a
-  direct link (compliance).
+  `paper_default_asset_id` → the asset's stored key. Serving is gated by
+  `QATLAS_PAPER_ACCESS_ENABLED` (compliance); when served, PDF defaults to a RustFS link and
+  markdown/JSON to bytes, both overridable.

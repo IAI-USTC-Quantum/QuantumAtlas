@@ -1,59 +1,77 @@
-# By-id paper asset reads on `papers`/`paper_assets`: markdown/JSON bytes, PDF a direct link
+# By-id paper asset reads on `papers`/`paper_assets`: PDF defaults to a RustFS link, markdown/JSON to bytes, both overridable
 
 _Implements the read surface ADR `0007` decided, on top of the `papers`/`paper_assets` schema from
 ADR `0009`._
 
 `GET /api/papers/{id}/markdown` (and `/pdf`) already speaks the async LRO contract — `202 Accepted`
-+ `Operation-Location` + `Retry-After`, poll `…/status`, re-GET on completion — but it resolves
-assets **directly against the object store**. With ADR `0009` giving each work a catalog row and a
-child `paper_assets` table, the read path should resolve **through the catalog** (`papers` →
-`paper_default_asset_id` → the asset's `*_path` key). The catalog stores only the RustFS **object
-keys**; how the bytes reach the caller is decided per asset kind by what QuantumAtlas is entitled to
-redistribute.
++ `Operation-Location` + `Retry-After`, poll `…/status`, re-GET on completion. With ADR `0009` giving
+each work a catalog row and a child `paper_assets` table, the read path resolves **through the
+catalog** (`papers` → `paper_default_asset_id` → the asset's stored `*_path` key). The catalog stores
+only the RustFS **object keys**; two orthogonal questions decide how a caller gets the content:
+**(1) is QA allowed to serve it at all** (a compliance gate, in server config) and **(2) as bytes or
+as a link** (a technical/UX choice, unrelated to compliance).
 
 ## Decision
 
 - **By-id resolution through the catalog.** A read by any of the three external ids
-  (`arxiv` / `doi` / `openalex`, each `UNIQUE` on `papers`) resolves
-  `papers` → `paper_default_asset_id` → the asset's stored key
-  (`mineru_md_path` / `mineru_json_path` / `pdf_path`). The default-asset pointer (ADR `0009` Q21:
-  published-first, else latest arXiv) decides *which* asset is served for a bare by-paper read. Batch
-  id → metadata resolution stays on `GET /api/papers/lookup` (ADR `0007`).
+  (`arxiv` / `doi` / `openalex`, each `UNIQUE` on `papers`) resolves `papers` →
+  `paper_default_asset_id` → the asset's stored key (`pdf_path` / `mineru_md_path` /
+  `mineru_json_path`). The default-asset pointer (ADR `0009` Q21: published-first, else latest arXiv)
+  decides *which* asset is served for a bare by-paper read. Batch id → metadata resolution stays on
+  `GET /api/papers/lookup` (ADR `0007`).
 
-- **Markdown and JSON: stream the bytes.** MinerU markdown/JSON are QuantumAtlas's **own derived
-  artifacts**; distributing them is the opt-in *derivative-work* obligation the operator already
-  accepts via `QATLAS_PAPER_ACCESS_ENABLED` (see `internal/routes/papers.go` compliance note). So the
-  handler reads the object at `mineru_md_path` / `mineru_json_path` and streams the bytes
-  (`text/markdown`, `application/json`) — the catalog holds the key, the handler serves the content.
+- **Compliance is the access gate `QATLAS_PAPER_ACCESS_ENABLED` (server config).** Whether QA serves
+  paper content outbound at all is decided here, and that is where the redistribution obligation is
+  discharged:
+  - **OFF** (default; the public quantum-atlas.ai posture): QA does not redistribute. A **PDF** read
+    for an arXiv paper returns the canonical **`arxiv.org/pdf/<id>vN` link** (the source distributes,
+    not QA); a PDF with no arXiv source (published/DOI-only) is **not served**. **markdown / JSON**
+    are **not served**.
+  - **ON** (an operator opts in, accepting the derivative-work distribution obligation): PDF,
+    markdown, and JSON are all served.
 
-- **PDF: return a direct link, never the raw bytes.** The PDF is the **original copyrighted paper**;
-  the default posture is "hold for internal use, do **not** redistribute" (`papers.go` compliance
-  note; `ArxivVersionedURL`/`ArxivAbsURL` exist precisely for a compliance redirect — "we never serve
-  our internal PDF bytes to end users"). So a PDF read hands back a **direct link**, not a byte
-  stream: an `arxiv.org/pdf/<id>vN` URL for arXiv papers (the canonical source distributes, not QA),
-  and a **short-lived presigned RustFS URL** for published/DOI PDFs that have no arXiv source. QA
-  never proxies the raw PDF bytes.
+- **Bytes vs. link is an orthogonal per-request choice, NOT a compliance decision.** Once the gate
+  permits serving, how the bytes reach the caller is purely technical, with per-kind defaults and a
+  REST override:
+  - **PDF → default: a RustFS direct link.** The link is the server-configured RustFS public URL
+    prefix (`QATLAS_S3_PUBLIC_ENDPOINT`, reachable by all clients) joined to the stored `pdf_path`.
+    Default to a link because the PDF is a large binary better served straight from the object store
+    than proxied through qatlasd.
+  - **markdown / JSON → default: a byte stream.** The handler reads `mineru_md_path` /
+    `mineru_json_path` and streams the bytes (`text/markdown`, `application/json`) — small text the
+    API is happy to serve inline.
+  - **Override via a REST query parameter** (`?format=link|bytes`): a caller can ask for PDF **bytes**
+    (proxied through qatlasd) or a markdown/JSON **link**. On a backend that cannot presign / has no
+    public prefix (LocalStore dev), a link request degrades to bytes.
 
 - **Lazy suspend-and-wait, not 404-on-miss.** When the resolved asset lacks the requested artifact
-  (no `mineru_md_path`, or no fetched PDF yet), keep the existing LRO: `202` + `Operation-Location`,
+  (no fetched PDF, or no `mineru_md_path` yet), keep the existing LRO: `202` + `Operation-Location`,
   background silent fetch-PDF + MinerU convert, caller polls `…/status` until ready. A corpus hit QA
   does not yet host can thus *become* hosted (ADR `0007`) instead of hard-missing.
 
 - **Docs auto-generated.** The routes' OpenAPI stubs live in `internal/routes/openapi.go`,
   regenerated by `pixi run swagger` (CI drift-guard); the human reference is `docs/server/rest-api.md`.
 
-## Why the markdown-bytes / PDF-link split
+## Why the two questions are separate
 
-- **It tracks what QA may redistribute, not object size.** Both live in RustFS, but the markdown/JSON
-  are QA's derivative output (servable under the opt-in switch) while the PDF is the upstream
-  copyrighted work (not QA's to redistribute). Serving derived bytes but linking the original keeps
-  the compliance boundary the codebase already documents.
-- **PDF link = canonical source or a short-lived handle.** arXiv papers redirect to `arxiv.org`, so
-  QA is never the distributor; published/DOI PDFs use an expiring presigned URL — a fetch handle, not
-  a redistribution channel. The MinerU-lease flow already returns such a presigned PDF URL, so the
-  pattern (and its LocalStore-can't-presign fallback) is proven.
-- **Markdown/JSON bytes keep agents simple.** The consumer (qatlas-lean's scout/enrich) wants the
-  text, not another hop; streaming the derived bytes directly is the useful shape.
+- **Compliance lives entirely in the access gate.** `QATLAS_PAPER_ACCESS_ENABLED` (plus the
+  arxiv-link / not-served behaviour when it is OFF) is what keeps QA from redistributing content it
+  should not. That decision is made in server config, once, and does not depend on the transport.
+- **Bytes-vs-link never changes what is disclosed** — the same permitted content is delivered either
+  way; the only differences are who moves the bytes (qatlasd vs the object store) and how convenient
+  the client contract is. So it is a technical/UX knob, not a compliance lever, and it is safe to
+  expose as a per-request option.
+
+## Why these defaults (PDF link, markdown/JSON bytes)
+
+- **PDF link keeps qatlasd out of the large-binary path.** PDFs are big; handing back a RustFS URL
+  lets the object store serve them directly. All clients can reach the configured RustFS endpoint, so
+  there is no reachability caveat.
+- **markdown / JSON bytes keep agents simple.** The consumer (qatlas-lean's scout/enrich) wants the
+  text, not another hop; streaming the small derived artifacts inline is the useful default.
+- **Both overridable** because neither default is universal: a caller that wants a single
+  authenticated hop can force PDF bytes, and one that wants to hand a URL onward can force a
+  markdown/JSON link.
 
 ## Why keep the LRO rather than 404 on a missing artifact
 
@@ -64,21 +82,23 @@ relies on ("a corpus hit … can later … become a hosted Paper").
 
 ## Considered options
 
-- **Stream PDF bytes through qatlasd (status quo for `/pdf`).** Rejected: makes QA the redistributor
-  of the original copyrighted paper, against the documented "does not redistribute" posture.
-- **Return a direct link for markdown too (an earlier draft of this ADR).** Rejected: the markdown is
-  QA's own derived artifact meant to be served under the opt-in switch; a link adds a needless hop and
-  a presign dependency for content QA is entitled to stream.
-- **404 when the artifact is absent.** Rejected: breaks the lazy-materialise contract; a fetchable,
-  not-yet-converted work would look permanently missing.
+- **Attribute bytes-vs-link to compliance (an earlier draft of this ADR).** Rejected: compliance is
+  already enforced by the access gate; the transport choice discloses nothing extra, so tying it to
+  compliance is wrong and would needlessly forbid, e.g., a PDF byte-stream to a permitted caller.
+- **Serve everything as bytes (status quo).** Rejected for PDF: makes qatlasd proxy every large PDF
+  binary the object store could serve directly.
+- **Serve everything as links.** Rejected for markdown/JSON: adds a needless hop + a presign
+  dependency for small text the API can stream, and breaks on LocalStore (no presign).
+- **404 when the artifact is absent.** Rejected: breaks the lazy-materialise contract.
 
 ## Consequences
 
-- **`/pdf` success shape changes (Phase C).** Instead of `200` + `application/pdf` bytes, a ready PDF
-  returns a direct link (arXiv redirect, or a presigned URL for published PDFs) — a breaking change
-  for any current byte consumer (pre-launch, acceptable). `/markdown` keeps streaming bytes and gains
-  a sibling `/json` byte endpoint (now that `paper_assets.mineru_json_path` exists). `docs/server/
-  rest-api.md` + the OpenAPI spec are regenerated.
+- **`/pdf` success shape changes (Phase C).** By default a ready PDF returns a direct link (arXiv
+  redirect when the gate is OFF; a RustFS URL when ON) rather than `application/pdf` bytes —
+  breaking for current byte consumers (pre-launch, acceptable), with `?format=bytes` to opt back.
+  `/markdown` keeps streaming bytes and gains a sibling `/json` byte endpoint (now that
+  `paper_assets.mineru_json_path` exists), both with `?format=link`. `docs/server/rest-api.md` + the
+  OpenAPI spec are regenerated.
 - **Depends on ADR `0009`.** The handlers read `papers`/`paper_assets`; they land with, not before,
   Phase A.
 - **No new write path.** These are read capabilities under `papers:read`, consistent with the QA/lean
