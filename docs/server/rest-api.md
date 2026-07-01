@@ -67,9 +67,9 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
 | `DELETE` | `/api/v1/papers/{arxiv_id}/mineru-lease/{claim_id}` | `papers:write` | 释放 MinerU lease |
 | `POST` | `/api/papers/{arxiv_id}/mineru-claim` | `papers:write` | 申请 MinerU 处理 lease |
 | `DELETE` | `/api/papers/{arxiv_id}/mineru-claim/{claim_id}` | `papers:write` | 释放 MinerU lease |
-| `GET` | `/api/papers/{id_or_doi}/markdown` | `papers:read` | **PAPER_ACCESS** · 返回缓存的 markdown 字节；未命中走 LRO 流程：202 → 后台 silent fetch PDF + MinerU convert → poll 后再 GET 200 |
+| `GET` | `/api/papers/{id_or_doi}/markdown` | `papers:read` | **PAPER_ACCESS** · 默认返回缓存的 markdown **字节流**（`text/markdown`）；`?format=link` 改为返回 JSON `{markdown_url}` RustFS 直链。未命中走 LRO：202 → 后台 silent fetch PDF + MinerU convert → poll 后再 GET 200 |
 | `GET` | `/api/papers/{id_or_doi}/markdown/status` | `papers:read` | **PAPER_ACCESS** · side-effect-free 进度查询；body 含 `state` / `phase` / `pdf_ready` / `md_ready` / `fetch.*` / `convert.*` |
-| `GET` | `/api/papers/{id_or_doi}/pdf` | `papers:read` | **PAPER_ACCESS** · 返回缓存的 PDF 字节；未命中走 LRO 流程：202 → 后台 silent fetch PDF → poll 后 GET 200。**不**触发 MinerU |
+| `GET` | `/api/papers/{id_or_doi}/pdf` | `papers:read` | **PAPER_ACCESS** · 默认返回 **RustFS 直链** JSON `{pdf_url, format:"link", expires_in}`（从 `QATLAS_S3_PUBLIC_ENDPOINT` presign，服务端不代理大二进制）；`?format=bytes` 改为串 `application/pdf` 字节流。未命中走 LRO：202 → 后台 silent fetch PDF → poll。**不**触发 MinerU（ADR 0011）|
 | `GET` | `/api/papers/{id_or_doi}/pdf/status` | `papers:read` | **PAPER_ACCESS** · `/pdf` 的 side-effect-free 进度查询；状态机比 markdown 少 convert 阶段 |
 | `POST` | `/api/v1/rag/search` | `papers:read` | **PAPER_ACCESS** · 仅当 `QATLAS_RAG_QDRANT_URL` + `QATLAS_RAG_EMBED_URL` 都已设。qatlasd 直接 gRPC 查 Qdrant + 调 GPU embed worker，body 形如 `{"query":"...","top_k":8,"rerank":true,"use_sparse":true}`；返回 chunk 级 hit（含 `arxiv_id`、`section_path`、`snippet`、`score`）|
 | `GET` | `/api/v1/rag/healthz` | 匿名 | **PAPER_ACCESS** · 同上注册条件。返回 `{"status":"ok"\|"degraded"\|"down"}`；SPA 用它决定是否在 `/papers/search` 显示搜索框 |
@@ -325,6 +325,31 @@ Retry-After: 5
     "status_url":          "/api/papers/quant-ph/9508027v2/markdown/status",
     "next_poll_after_iso": "2026-06-05T03:00:05Z"
   }
+}
+```
+
+#### 字节流 vs 直链（`?format=`，ADR 0011）
+
+是否发论文内容由服务端开关 `QATLAS_PAPER_ACCESS_ENABLED` 决定（合规），这是**上面这些路由是否注册**的前提。一旦允许发，**用什么形式发**是与合规无关的传输选择，按 kind 有默认值，并可用 `?format=link|bytes` 逐请求复写：
+
+| 资产 | 默认 | 复写 | 说明 |
+|---|---|---|---|
+| `pdf` | **直链** | `?format=bytes` | PDF 是大二进制，默认给 `QATLAS_S3_PUBLIC_ENDPOINT` presign 出的 RustFS 直链，服务端不代理字节 |
+| `markdown` | **字节流** | `?format=link` | MinerU 派生的小文本，默认内联串出 |
+
+后端无法 presign（dev 的 `LocalStore`）时，`link` 请求自动回落字节流。直链响应形如：
+
+```bash
+curl -i https://<server>/api/papers/quant-ph/9508027v2/pdf \
+     -H "Authorization: ******"
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+{
+  "arxiv_id":   "quant-ph/9508027v2",
+  "format":     "link",
+  "pdf_url":    "https://raw.quantum-atlas.ai/qatlas-pdf/9508/9508027v2.pdf?X-Amz-…",
+  "expires_in": 86400
 }
 ```
 

@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -22,7 +20,7 @@ import (
 //
 // State machine driven by the converter snapshot:
 //
-//   200  cache hit — stream markdown bytes from object store (text/markdown)
+//   200  cache hit — default: stream markdown bytes (text/markdown); ?format=link returns a RustFS link
 //   202  conversion queued or running — Operation-Location + Retry-After
 //   400  malformed arxiv id (canonical version-suffix check failed)
 //   404  asset endpoints disabled (switch off — never reachable here
@@ -47,7 +45,9 @@ func markdownHandler(re *core.RequestEvent, cfg *config.Config, store objstore.S
 
 	switch job.State {
 	case mineru.JobStateDone:
-		return streamMarkdown(re, store, canonical)
+		// ADR 0011: markdown defaults to a byte stream (?format=link to get
+		// a RustFS direct link instead).
+		return serveReadyAsset(re, store, "markdown", canonical, "bytes")
 	case mineru.JobStateQueued, mineru.JobStateRunning:
 		re.Response.Header().Set("Operation-Location", fmt.Sprintf("/api/papers/%s/markdown/status", canonical))
 		re.Response.Header().Set("Retry-After", "5")
@@ -315,51 +315,6 @@ func snapshotBody(canonical string, job *mineru.Job) map[string]any {
 		body["markdown_url"] = "/api/papers/" + canonical + "/markdown"
 	}
 	return body
-}
-
-// streamMarkdown copies the cached markdown bytes from object store to
-// the response body. Sets Content-Type and Content-Length when the
-// backend reports them.
-//
-// Uses LocateAsset for dual-read fallback so pre-A1 bare-stem objects
-// are still served while the storage migration is in flight.
-func streamMarkdown(re *core.RequestEvent, store objstore.Store, canonical string) error {
-	ctx := re.Request.Context()
-	mdKey, _, exists, err := paperassets.LocateAssetByID(ctx, store, "markdown", canonical)
-	if err != nil {
-		return re.JSON(http.StatusInternalServerError, map[string]string{
-			"detail": "locate markdown: " + err.Error(),
-		})
-	}
-	if !exists {
-		return re.JSON(http.StatusNotFound, map[string]string{
-			"detail":   "markdown not found",
-			"arxiv_id": canonical,
-		})
-	}
-	rc, info, err := store.Get(ctx, mdKey)
-	if err != nil {
-		if errors.Is(err, objstore.ErrNotFound) {
-			// Raced with a delete between Locate and Get — treat as miss.
-			return re.JSON(http.StatusNotFound, map[string]string{
-				"detail":   "markdown not found",
-				"arxiv_id": canonical,
-			})
-		}
-		return re.JSON(http.StatusInternalServerError, map[string]string{
-			"detail": "fetch markdown: " + err.Error(),
-		})
-	}
-	defer rc.Close()
-	re.Response.Header().Set("Content-Type", "text/markdown; charset=utf-8")
-	if info.Size > 0 {
-		re.Response.Header().Set("Content-Length", strconv.FormatInt(info.Size, 10))
-	}
-	re.Response.WriteHeader(http.StatusOK)
-	if _, err := io.Copy(re.Response, rc); err != nil {
-		slog.Warn("markdown: stream copy failed", "arxiv_id", canonical, "error", err)
-	}
-	return nil
 }
 
 func errString(err error) string {

@@ -131,36 +131,39 @@ related: [paper-arxiv-9508027]
 | 需求 | 对象存储原生能力 | 当前实现 |
 |---|---|---|
 | "PDF / Markdown 总数" | `ListObjects(prefix=pdf/)` 全扫 + 计数 | PostgreSQL `count(*) FILTER (...)` |
-| "需要 MinerU 的论文（有 PDF 无 MD）" | 双 ListObjects + 内存 diff | PostgreSQL partial index + `ORDER BY pdf_uploaded_at` |
-| "DOI 是否已有本地贡献" | 无二级索引 | PostgreSQL partial unique index on DOI |
-| "抢一个 MinerU claim" | 无事务锁 | PostgreSQL row lock + `claim_expires_at` |
+| "需要 MinerU 的论文（有 PDF 无 MD）" | 双 ListObjects + 内存 diff | PostgreSQL partial index (`paper_assets ... WHERE mineru_md_path IS NULL`) |
+| "DOI 是否已有本地贡献" | 无二级索引 | PostgreSQL UNIQUE `papers.paper_doi` |
+| "抢一个 MinerU lease" | 无事务锁 | PostgreSQL row lock + `paper_assets.lease_expires_at` |
 
 ### 实际方案：PostgreSQL 是非登录态 catalog
 
-`paper_works` 表是 paper catalog 的派生索引，字段包括：
+`papers` + `paper_assets` 两张表是 paper catalog 的派生索引（ADR 0009）：
 
-- 身份：`arxiv_id`（主键，DOI 贡献使用 `doi:<doi>` 合成 key）、
-  `identifier_scheme`、`doi`、`doi_arxiv_id`
-- 资产状态：`has_pdf` / `has_md` / `pdf_sha256` / `pdf_etag` /
-  `pdf_uploaded_at` / `md_*` / `image_count`
-- DOI 验证：`doi_title` / `doi_authors text[]` / `verification_status` /
-  `verified_at`
-- MinerU 租约：`claimed_by_login` / `claim_expires_at` / `claim_id`
+- **`papers`**（一 work 一行）：代理主键 `paper_id`；三个外部 id 列各 UNIQUE
+  `paper_arxiv_id` / `paper_doi` / `paper_openalex_id`（`paper_openalex_id` 带可空 FK →
+  `openalex_works`）；`paper_title` / `paper_publication_date`；生成式 `paper_ref`
+  （openalex>arxiv>doi）；触发器维护的 `paper_default_asset_id`；精简
+  `paper_verification_status`
+- **`paper_assets`**（一份 PDF 一行：arxiv v1/v2/… + 正式版）：`asset_id`、
+  `paper_id`(FK CASCADE)、`source`(arxiv|published)、`arxiv_version`、对象 key
+  `pdf_path` / `mineru_md_path` / `mineru_json_path`、`pdf_sha256` / `pdf_size` /
+  `image_count` / `fetched_at`；MinerU 租约 `lease_id` / `lease_holder` /
+  `lease_expires_at`
 
 使用 PostgreSQL 特性：
 
 - `INSERT ... ON CONFLICT` 做 upload write-through 和 `papers sync` 重建；
-- partial unique index：`doi` 只对 DOI row 唯一；
-- partial queue index：只索引 `has_pdf AND NOT has_md AND identifier_scheme <> 'doi'`
+- partial unique index：`paper_assets (paper_id) WHERE source='published'`（正式版每篇一份）；
+- partial queue index：只索引 `paper_assets ... WHERE mineru_md_path IS NULL`
   的 MinerU 队列候选；
-- row-level lock (`SELECT ... FOR UPDATE`) 保证同一 paper 的 claim 只有一个赢家；
-- `text[]` 存 DOI 作者列表，避免把简单数组拆出多余 join 表。
+- row-level lock (`SELECT ... FOR UPDATE`) 保证同一资产的 lease 只有一个赢家；
+- 触发器在 `paper_assets` 增删时重算 `papers.paper_default_asset_id`（正式版优先，否则最新 arxiv）。
 
 ### 写入路径
 
 ```text
 1. PUT s3://qatlas-pdf/<yymm>/<stem>.pdf        ← 字节先落 RustFS
-2. INSERT ... ON CONFLICT paper_works           ← PostgreSQL 派生索引同步
+2. INSERT ... ON CONFLICT papers + paper_assets ← PostgreSQL 派生索引同步
 3. PostgreSQL 不可用时：HTTP 仍成功 + X-Catalog-Sync: deferred
 4. 之后跑 qatlasd papers sync --full --from-rustfs 从 S3 重建缺失状态
 ```
@@ -173,11 +176,11 @@ RustFS 仍是资产字节的 source of truth；PostgreSQL 是可重建的集合�
 
 ```text
 GET /api/papers/needs-mineru
-  → SELECT ... FROM paper_works
-    WHERE has_pdf AND NOT has_md
-      AND identifier_scheme <> 'doi'
-      AND (claim_expires_at IS NULL OR claim_expires_at < now())
-    ORDER BY pdf_uploaded_at DESC
+  → SELECT ... FROM paper_assets a JOIN papers p ON p.paper_id = a.paper_id
+    WHERE a.source = 'arxiv'
+      AND a.pdf_path IS NOT NULL AND a.mineru_md_path IS NULL
+      AND (a.lease_expires_at IS NULL OR a.lease_expires_at < now())
+    ORDER BY a.fetched_at DESC
   → JSON 返回
 ```
 

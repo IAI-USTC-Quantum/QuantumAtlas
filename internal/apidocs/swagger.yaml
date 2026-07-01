@@ -818,6 +818,13 @@ paths:
         /api/papers/{id}/markdown/status` and `Retry-After: 5`;
         clients poll the status endpoint until state=cached then
         re-GET this resource for the bytes.
+
+        Transport (ADR 0011): markdown DEFAULTS to a byte stream
+        (text/markdown). Pass `?format=link` to instead receive a
+        JSON body with a short-lived RustFS direct link
+        (`{markdown_url, format:"link", expires_in}`); on a backend
+        that cannot presign (dev LocalStore) a link request
+        transparently falls back to bytes.
       parameters:
       - description: arXiv canonical id with vN suffix, or a DOI (e.g. 10.1103/PhysRevLett.103.150502)
         in: path
@@ -829,11 +836,17 @@ paths:
         in: query
         name: force_arxiv
         type: string
+      - description: link|bytes — override the default transport (markdown defaults
+          to bytes)
+        in: query
+        name: format
+        type: string
       produces:
       - text/plain
       responses:
         "200":
-          description: markdown bytes (text/markdown)
+          description: markdown bytes (text/markdown), or a JSON {markdown_url} when
+            ?format=link
           schema:
             type: string
         "202":
@@ -970,6 +983,15 @@ paths:
         /pdf/status. The fetch path uses a separate semaphore
         from MinerU conversion (QATLAS_ARXIV_FETCH_CONCURRENT)
         and a polite-pool rate limiter (QATLAS_ARXIV_FETCH_RPS).
+
+        Transport (ADR 0011): the PDF is the original paper, so it
+        DEFAULTS to a RustFS direct link — a JSON body with a
+        short-lived presigned URL (`{pdf_url, format:"link",
+        expires_in}`) served from the configured RustFS public
+        endpoint, keeping qatlasd out of the large-binary path.
+        Pass `?format=bytes` to stream application/pdf through the
+        server instead; on a backend that cannot presign (dev
+        LocalStore) the link default falls back to bytes.
       parameters:
       - description: arXiv canonical id with vN suffix, or a DOI
         in: path
@@ -981,13 +1003,20 @@ paths:
         in: query
         name: force_arxiv
         type: string
+      - description: link|bytes — override the default transport (PDF defaults to
+          link)
+        in: query
+        name: format
+        type: string
       produces:
       - application/pdf
       responses:
         "200":
-          description: PDF bytes (application/pdf)
+          description: a JSON {pdf_url} RustFS direct link by default, or PDF bytes
+            (application/pdf) when ?format=bytes
           schema:
-            type: string
+            additionalProperties: true
+            type: object
         "202":
           description: silent fetch started; poll status_url
           schema:

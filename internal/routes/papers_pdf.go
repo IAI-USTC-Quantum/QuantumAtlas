@@ -3,8 +3,6 @@ package routes
 import (
 	"errors"
 	"fmt"
-	"io"
-	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -27,7 +25,7 @@ import (
 //
 // Response codes:
 //
-//   200  cache hit — stream application/pdf bytes
+//   200  ready — default: a RustFS direct-link JSON {pdf_url}; ?format=bytes streams application/pdf
 //   202  fetch in progress — Operation-Location + Retry-After, body
 //        contains decision triple + Phase + Fetch sub-state
 //   400  malformed arxiv id
@@ -53,7 +51,9 @@ func pdfHandler(re *core.RequestEvent, cfg *config.Config, store objstore.Store,
 
 	switch job.State {
 	case mineru.JobStateDone:
-		return streamPDF(re, store, canonical)
+		// ADR 0011: PDF defaults to a RustFS direct link (?format=bytes to
+		// stream the bytes through qatlasd instead).
+		return serveReadyAsset(re, store, "pdf", canonical, "link")
 	case mineru.JobStateQueued, mineru.JobStateRunning:
 		re.Response.Header().Set("Operation-Location", fmt.Sprintf("/api/papers/%s/pdf/status", canonical))
 		re.Response.Header().Set("Retry-After", "5")
@@ -136,47 +136,6 @@ func pdfStatusHandler(re *core.RequestEvent, cfg *config.Config, store objstore.
 	}
 	embedResolutionInBody(body, resolution)
 	return re.JSON(http.StatusOK, body)
-}
-
-// streamPDF copies the cached PDF bytes from the object store to the
-// response. Uses LocateAssetByID for dual-read fallback.
-func streamPDF(re *core.RequestEvent, store objstore.Store, canonical string) error {
-	ctx := re.Request.Context()
-	pdfKey, _, exists, err := paperassets.LocateAssetByID(ctx, store, "pdf", canonical)
-	if err != nil {
-		return re.JSON(http.StatusInternalServerError, map[string]string{
-			"detail": "locate pdf: " + err.Error(),
-		})
-	}
-	if !exists {
-		return re.JSON(http.StatusNotFound, map[string]string{
-			"detail":   "pdf not found",
-			"arxiv_id": canonical,
-		})
-	}
-	rc, info, err := store.Get(ctx, pdfKey)
-	if err != nil {
-		if errors.Is(err, objstore.ErrNotFound) {
-			return re.JSON(http.StatusNotFound, map[string]string{
-				"detail":   "pdf not found",
-				"arxiv_id": canonical,
-			})
-		}
-		return re.JSON(http.StatusInternalServerError, map[string]string{
-			"detail": "fetch pdf: " + err.Error(),
-		})
-	}
-	defer rc.Close()
-	re.Response.Header().Set("Content-Type", "application/pdf")
-	re.Response.Header().Set("Content-Disposition", fmt.Sprintf(`inline; filename="%s.pdf"`, sanitizeFilename(canonical)))
-	if info.Size > 0 {
-		re.Response.Header().Set("Content-Length", strconv.FormatInt(info.Size, 10))
-	}
-	re.Response.WriteHeader(http.StatusOK)
-	if _, err := io.Copy(re.Response, rc); err != nil {
-		slog.Warn("pdf: stream copy failed", "arxiv_id", canonical, "error", err)
-	}
-	return nil
 }
 
 // failedPDFResponse renders a JSON 4xx/5xx from a failed PDF-fetch

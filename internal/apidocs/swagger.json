@@ -1083,7 +1083,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns the cached MinerU markdown for the given arxiv id\n(or DOI — the id_or_doi path component is auto-detected\nagainst the IANA prefix `10.\u003cregistrant\u003e/...`). Only\nregistered when QATLAS_PAPER_ACCESS_ENABLED=true on the\nserver (default off).\n\nCanonical resolution: a `:PaperWork` node with\n`identifier_scheme='doi'` ALWAYS wins over its arxiv\ntwin when both exist — DOI is the canonical identity of\nthe published version. The dispatcher serves DOI bytes\nfor either id form when a DOI contribution is on file;\npass `?force_arxiv=1` to opt out per request (DOI input\nwith force_arxiv + no arxiv twin returns 409). See\ndocs/server/upload-api.md §Canonical resolution.\n\nLong-running operation semantics: on cache miss the\nserver may transparently fetch the PDF from arxiv.org\n(silent_fetch) and trigger a MinerU conversion. The\nfirst call returns 202 with `Operation-Location:\n/api/papers/{id}/markdown/status` and `Retry-After: 5`;\nclients poll the status endpoint until state=cached then\nre-GET this resource for the bytes.",
+                "description": "Returns the cached MinerU markdown for the given arxiv id\n(or DOI — the id_or_doi path component is auto-detected\nagainst the IANA prefix `10.\u003cregistrant\u003e/...`). Only\nregistered when QATLAS_PAPER_ACCESS_ENABLED=true on the\nserver (default off).\n\nCanonical resolution: a `:PaperWork` node with\n`identifier_scheme='doi'` ALWAYS wins over its arxiv\ntwin when both exist — DOI is the canonical identity of\nthe published version. The dispatcher serves DOI bytes\nfor either id form when a DOI contribution is on file;\npass `?force_arxiv=1` to opt out per request (DOI input\nwith force_arxiv + no arxiv twin returns 409). See\ndocs/server/upload-api.md §Canonical resolution.\n\nLong-running operation semantics: on cache miss the\nserver may transparently fetch the PDF from arxiv.org\n(silent_fetch) and trigger a MinerU conversion. The\nfirst call returns 202 with `Operation-Location:\n/api/papers/{id}/markdown/status` and `Retry-After: 5`;\nclients poll the status endpoint until state=cached then\nre-GET this resource for the bytes.\n\nTransport (ADR 0011): markdown DEFAULTS to a byte stream\n(text/markdown). Pass `?format=link` to instead receive a\nJSON body with a short-lived RustFS direct link\n(`{markdown_url, format:\"link\", expires_in}`); on a backend\nthat cannot presign (dev LocalStore) a link request\ntransparently falls back to bytes.",
                 "produces": [
                     "text/plain"
                 ],
@@ -1104,11 +1104,17 @@
                         "description": "1/true: bypass the DOI-canonical default and serve the arxiv twin (or 409 if no twin exists)",
                         "name": "force_arxiv",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "link|bytes — override the default transport (markdown defaults to bytes)",
+                        "name": "format",
+                        "in": "query"
                     }
                 ],
                 "responses": {
                     "200": {
-                        "description": "markdown bytes (text/markdown)",
+                        "description": "markdown bytes (text/markdown), or a JSON {markdown_url} when ?format=link",
                         "schema": {
                             "type": "string"
                         }
@@ -1262,7 +1268,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns the cached PDF (application/pdf) for the given\narxiv id or DOI. Only registered when\nQATLAS_PAPER_ACCESS_ENABLED=true on the server.\n\nCanonical resolution: a DOI contribution ALWAYS wins\nover its arxiv twin when both exist — the dispatcher\nserves the DOI PDF for either id form. Pass\n`?force_arxiv=1` to opt out per request (DOI input\nwithout an arxiv twin then returns 409). See\ndocs/server/upload-api.md §Canonical resolution.\n\nLong-running operation semantics mirror /markdown: cache\nmiss returns 202 with Operation-Location pointing at\n/pdf/status. The fetch path uses a separate semaphore\nfrom MinerU conversion (QATLAS_ARXIV_FETCH_CONCURRENT)\nand a polite-pool rate limiter (QATLAS_ARXIV_FETCH_RPS).",
+                "description": "Returns the cached PDF (application/pdf) for the given\narxiv id or DOI. Only registered when\nQATLAS_PAPER_ACCESS_ENABLED=true on the server.\n\nCanonical resolution: a DOI contribution ALWAYS wins\nover its arxiv twin when both exist — the dispatcher\nserves the DOI PDF for either id form. Pass\n`?force_arxiv=1` to opt out per request (DOI input\nwithout an arxiv twin then returns 409). See\ndocs/server/upload-api.md §Canonical resolution.\n\nLong-running operation semantics mirror /markdown: cache\nmiss returns 202 with Operation-Location pointing at\n/pdf/status. The fetch path uses a separate semaphore\nfrom MinerU conversion (QATLAS_ARXIV_FETCH_CONCURRENT)\nand a polite-pool rate limiter (QATLAS_ARXIV_FETCH_RPS).\n\nTransport (ADR 0011): the PDF is the original paper, so it\nDEFAULTS to a RustFS direct link — a JSON body with a\nshort-lived presigned URL (`{pdf_url, format:\"link\",\nexpires_in}`) served from the configured RustFS public\nendpoint, keeping qatlasd out of the large-binary path.\nPass `?format=bytes` to stream application/pdf through the\nserver instead; on a backend that cannot presign (dev\nLocalStore) the link default falls back to bytes.",
                 "produces": [
                     "application/pdf"
                 ],
@@ -1283,13 +1289,20 @@
                         "description": "1/true: bypass DOI-canonical default; return 409 if DOI has no arxiv twin",
                         "name": "force_arxiv",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "link|bytes — override the default transport (PDF defaults to link)",
+                        "name": "format",
+                        "in": "query"
                     }
                 ],
                 "responses": {
                     "200": {
-                        "description": "PDF bytes (application/pdf)",
+                        "description": "a JSON {pdf_url} RustFS direct link by default, or PDF bytes (application/pdf) when ?format=bytes",
                         "schema": {
-                            "type": "string"
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     },
                     "202": {

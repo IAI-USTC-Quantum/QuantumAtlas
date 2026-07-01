@@ -366,12 +366,20 @@ func docPaperLookup() {}
 // @Description /api/papers/{id}/markdown/status` and `Retry-After: 5`;
 // @Description clients poll the status endpoint until state=cached then
 // @Description re-GET this resource for the bytes.
+// @Description
+// @Description Transport (ADR 0011): markdown DEFAULTS to a byte stream
+// @Description (text/markdown). Pass `?format=link` to instead receive a
+// @Description JSON body with a short-lived RustFS direct link
+// @Description (`{markdown_url, format:"link", expires_in}`); on a backend
+// @Description that cannot presign (dev LocalStore) a link request
+// @Description transparently falls back to bytes.
 // @Tags        Papers
 // @Produce     plain
 // @Security    BearerAuth
 // @Param       id_or_doi path string true "arXiv canonical id with vN suffix, or a DOI (e.g. 10.1103/PhysRevLett.103.150502)"
 // @Param       force_arxiv query string false "1/true: bypass the DOI-canonical default and serve the arxiv twin (or 409 if no twin exists)"
-// @Success     200 {string} string "markdown bytes (text/markdown)"
+// @Param       format query string false "link|bytes — override the default transport (markdown defaults to bytes)"
+// @Success     200 {string} string "markdown bytes (text/markdown), or a JSON {markdown_url} when ?format=link"
 // @Success     202 {object} map[string]interface{} "long-running operation started; poll status_url"
 // @Failure     400 {object} map[string]string "invalid arxiv_id or DOI"
 // @Failure     401 {object} map[string]string
@@ -433,12 +441,22 @@ func docPaperMarkdownStatus() {}
 // @Description /pdf/status. The fetch path uses a separate semaphore
 // @Description from MinerU conversion (QATLAS_ARXIV_FETCH_CONCURRENT)
 // @Description and a polite-pool rate limiter (QATLAS_ARXIV_FETCH_RPS).
+// @Description
+// @Description Transport (ADR 0011): the PDF is the original paper, so it
+// @Description DEFAULTS to a RustFS direct link — a JSON body with a
+// @Description short-lived presigned URL (`{pdf_url, format:"link",
+// @Description expires_in}`) served from the configured RustFS public
+// @Description endpoint, keeping qatlasd out of the large-binary path.
+// @Description Pass `?format=bytes` to stream application/pdf through the
+// @Description server instead; on a backend that cannot presign (dev
+// @Description LocalStore) the link default falls back to bytes.
 // @Tags        Papers
 // @Produce     application/pdf
 // @Security    BearerAuth
 // @Param       id_or_doi path string true "arXiv canonical id with vN suffix, or a DOI"
 // @Param       force_arxiv query string false "1/true: bypass DOI-canonical default; return 409 if DOI has no arxiv twin"
-// @Success     200 {string} string "PDF bytes (application/pdf)"
+// @Param       format query string false "link|bytes — override the default transport (PDF defaults to link)"
+// @Success     200 {object} map[string]interface{} "a JSON {pdf_url} RustFS direct link by default, or PDF bytes (application/pdf) when ?format=bytes"
 // @Success     202 {object} map[string]interface{} "silent fetch started; poll status_url"
 // @Failure     400 {object} map[string]string "invalid arxiv_id or DOI"
 // @Failure     401 {object} map[string]string
