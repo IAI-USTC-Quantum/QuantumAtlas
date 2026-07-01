@@ -171,11 +171,10 @@ func runOpenAlexBootstrap(stdout, stderr io.Writer, f openalexBootstrapFlags) er
 }
 
 type openalexBootstrapPGFlags struct {
-	prefix    string
-	citations bool
-	limit     int    // cap number of part files (0 = all); smoke-test knob
-	batch     int    // unnest batch size (0 = package default)
-	since     string // only ingest parts with updated_date >= YYYY-MM-DD (incremental)
+	prefix string
+	limit  int    // cap number of part files (0 = all); smoke-test knob
+	batch  int    // unnest batch size (0 = package default)
+	since  string // only ingest parts with updated_date >= YYYY-MM-DD (incremental)
 }
 
 type openalexQueryPGFlags struct {
@@ -201,9 +200,8 @@ func newOpenAlexBootstrapPGCmd() *cobra.Command {
 		Short: "Stream the OpenAlex snapshot parts into the PostgreSQL openalex_works corpus",
 		Long: `Walk every works part under the snapshot prefix and upsert each
 record verbatim as jsonb into openalex_works (ADR 0006), deriving the
-indexed hot columns + the arxiv join key without rewriting the record.
-With --citations, also extract referenced_works into work_referenced so
-citation resolution is always local.
+indexed hot columns, the arxiv join key, and the citation out-edge array
+(openalex_referenced_work_ids, ADR 0010) without rewriting the record.
 
 Idempotent + resumable: re-running re-upserts the same rows, so an
 interrupted run is safe to resume (or restrict with --since for an
@@ -213,11 +211,11 @@ Examples:
   # Smoke test: ingest just the first part file
   qatlasd openalex bootstrap-pg --limit 1
 
-  # Full ingest including citation edges
-  qatlasd openalex bootstrap-pg --citations
+  # Full ingest
+  qatlasd openalex bootstrap-pg
 
   # Incremental: only partitions updated on/after a date
-  qatlasd openalex bootstrap-pg --citations --since 2026-01-01
+  qatlasd openalex bootstrap-pg --since 2026-01-01
 `,
 		SilenceUsage:  true,
 		SilenceErrors: false,
@@ -226,7 +224,6 @@ Examples:
 		},
 	}
 	cmd.Flags().StringVar(&f.prefix, "prefix", "works/", "object-key prefix of the works parts within the snapshot bucket")
-	cmd.Flags().BoolVar(&f.citations, "citations", false, "also extract referenced_works into work_referenced (citation edges)")
 	cmd.Flags().IntVar(&f.limit, "limit", 0, "cap the number of part files processed (0 = all; smoke-test knob)")
 	cmd.Flags().IntVar(&f.batch, "batch", 0, "unnest batch size for the upsert statements (0 = default)")
 	cmd.Flags().StringVar(&f.since, "since", "", "only ingest parts whose updated_date partition is >= this YYYY-MM-DD (incremental refresh)")
@@ -288,7 +285,7 @@ func runOpenAlexBootstrapPG(stdout, stderr io.Writer, f openalexBootstrapPGFlags
 	}
 	fmt.Fprintln(stderr, "---")
 
-	opts := openalexcorpus.IngestOptions{BatchSize: f.batch, Citations: f.citations}
+	opts := openalexcorpus.IngestOptions{BatchSize: f.batch}
 	totalWorks, totalCites := 0, 0
 	for i, key := range keys {
 		rep, err := corpus.IngestPart(ctx, snap, key, opts)

@@ -63,19 +63,12 @@ func TestRawWorkDerivations(t *testing.T) {
 	if got, want := rw.ArxivID(), "2401.12345"; got != want {
 		t.Errorf("ArxivID = %q, want %q", got, want)
 	}
-	refs := rw.ReferencedIDs()
-	if len(refs) != 2 || refs[0] != "W1" || refs[1] != "W2" {
-		t.Errorf("ReferencedIDs = %v, want [W1 W2]", refs)
-	}
 }
 
 func TestRawWorkNoArxivNoRefs(t *testing.T) {
 	rw := rawWorkFrom(t, `{"id":"https://openalex.org/W7","locations":[],"referenced_works":[]}`)
 	if got := rw.ArxivID(); got != "" {
 		t.Errorf("ArxivID = %q, want empty (no arxiv location)", got)
-	}
-	if refs := rw.ReferencedIDs(); refs != nil {
-		t.Errorf("ReferencedIDs = %v, want nil", refs)
 	}
 }
 

@@ -45,8 +45,6 @@ func TestIntegrationUpsert(t *testing.T) {
 	// Clean up whatever we insert, even on failure.
 	defer func() {
 		_, _ = pool.Exec(context.Background(),
-			`DELETE FROM work_referenced WHERE work_id LIKE $1`, prefix+"%")
-		_, _ = pool.Exec(context.Background(),
 			`DELETE FROM openalex_works WHERE openalex_id LIKE $1`, prefix+"%")
 	}()
 
@@ -88,20 +86,10 @@ func TestIntegrationUpsert(t *testing.T) {
 	if n != 2 {
 		t.Fatalf("UpsertWorks n = %d, want 2", n)
 	}
-	c, err := s.UpsertReferences(ctx, works)
-	if err != nil {
-		t.Fatalf("UpsertReferences: %v", err)
-	}
-	if c != 1 {
-		t.Fatalf("UpsertReferences c = %d, want 1 (id1 cites id2)", c)
-	}
 
 	// Idempotent re-run: same counts, no duplicate-key error.
 	if _, err := s.UpsertWorks(ctx, works, "2016-06-24"); err != nil {
 		t.Fatalf("UpsertWorks (re-run): %v", err)
-	}
-	if _, err := s.UpsertReferences(ctx, works); err != nil {
-		t.Fatalf("UpsertReferences (re-run): %v", err)
 	}
 
 	// Verify generated columns + arxiv NULLability landed correctly.
@@ -142,13 +130,15 @@ func TestIntegrationUpsert(t *testing.T) {
 		t.Errorf("id2 arxiv_id = %v, want NULL", *arxiv2)
 	}
 
-	// Citation edge present, direction id1 -> id2.
-	var edges int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM work_referenced WHERE work_id=$1 AND referenced_id=$2`, id1, id2).Scan(&edges); err != nil {
-		t.Fatalf("read edge: %v", err)
+	// Inline citation out-edge present, direction id1 -> id2: the generated
+	// openalex_referenced_work_ids array on id1 contains id2 (bare id, URL
+	// prefix stripped by strip_openalex_prefix).
+	var citesID2 bool
+	if err := pool.QueryRow(ctx, `SELECT openalex_referenced_work_ids ? $2 FROM openalex_works WHERE openalex_id=$1`, id1, id2).Scan(&citesID2); err != nil {
+		t.Fatalf("read out-edge: %v", err)
 	}
-	if edges != 1 {
-		t.Errorf("edge id1->id2 count = %d, want 1", edges)
+	if !citesID2 {
+		t.Errorf("id1.openalex_referenced_work_ids should contain id2 (%s)", id2)
 	}
 
 	// GIN containment query works on the jsonb record.

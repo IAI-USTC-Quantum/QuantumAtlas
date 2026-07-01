@@ -239,9 +239,13 @@ func addFilter(clauses *[]string, args *[]any, f Filter) error {
 	case "to_updated_date":
 		add("updated_date <= $%d::date", val)
 	case "cites":
-		add("EXISTS (SELECT 1 FROM work_referenced wr WHERE wr.work_id = openalex_works.openalex_id AND wr.referenced_id = $%d)", shortID(val))
+		// Works that cite $val: $val is an element of this row's out-edge
+		// array (GIN `?` element-exists reverse-lookup, ADR 0010).
+		add("openalex_referenced_work_ids ? $%d", shortID(val))
 	case "cited_by":
-		add("EXISTS (SELECT 1 FROM work_referenced wr WHERE wr.referenced_id = openalex_works.openalex_id AND wr.work_id = $%d)", shortID(val))
+		// Works cited by $val: this row's id is an element of $val's
+		// out-edge array (single-row PK probe on the citing side).
+		add("EXISTS (SELECT 1 FROM openalex_works citing WHERE citing.openalex_id = $%d AND citing.openalex_referenced_work_ids ? openalex_works.openalex_id)", shortID(val))
 	default:
 		return fmt.Errorf("openalexcorpus: unsupported filter %q", f.Key)
 	}

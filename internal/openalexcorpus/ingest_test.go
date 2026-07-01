@@ -40,18 +40,3 @@ func TestUpsertWorksSQL(t *testing.T) {
 		}
 	}
 }
-
-// TestUpsertReferencesSQL guards the citation-edge upsert: unnest pairs +
-// ON CONFLICT DO NOTHING (duplicate edges ignored).
-func TestUpsertReferencesSQL(t *testing.T) {
-	src := ingestSource(t)
-	for _, must := range []string{
-		"INSERT INTO work_referenced",
-		"unnest($1::text[], $2::text[])",
-		"ON CONFLICT (work_id, referenced_id) DO NOTHING",
-	} {
-		if !strings.Contains(src, must) {
-			t.Errorf("UpsertReferences SQL missing %q", must)
-		}
-	}
-}

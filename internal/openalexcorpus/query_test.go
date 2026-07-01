@@ -48,8 +48,7 @@ func TestBuildWhereUsesWhitelistedSQL(t *testing.T) {
 		"search_text @@ plainto_tsquery",
 		"work_type = $2",
 		"arxiv_id IS NOT NULL",
-		"EXISTS (SELECT 1 FROM work_referenced",
-		"referenced_id = $3",
+		"openalex_referenced_work_ids ? $3",
 	} {
 		if !strings.Contains(where, must) {
 			t.Errorf("WHERE missing %q in %s", must, where)

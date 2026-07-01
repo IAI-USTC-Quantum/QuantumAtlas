@@ -74,19 +74,44 @@ func TestSchemaArxivJoinIndex(t *testing.T) {
 	}
 }
 
-// TestSchemaCitationTable guards work_referenced: PK (work_id,
-// referenced_id) forward index + reverse index, citation source-of-truth
-// (local resolution, ADR 0006).
-func TestSchemaCitationTable(t *testing.T) {
+// TestSchemaInlineCitations guards the inline citation model (ADR 0010):
+// referenced_works is a STORED generated column of bare "W…" ids derived
+// via the IMMUTABLE strip_openalex_prefix() function and indexed by a
+// default-ops GIN for the `?` reverse-lookup — with NO separate
+// work_referenced edge table.
+func TestSchemaInlineCitations(t *testing.T) {
 	s := joinSchema()
-	if !strings.Contains(s, "CREATE TABLE IF NOT EXISTS work_referenced") {
-		t.Error("schema must create work_referenced (citation edges)")
+	for _, must := range []string{
+		"CREATE OR REPLACE FUNCTION strip_openalex_prefix",
+		"IMMUTABLE",
+		"openalex_referenced_work_ids jsonb GENERATED ALWAYS AS (strip_openalex_prefix(record->'referenced_works')) STORED",
+		"openalex_works_referenced_gin",
+		"USING gin (openalex_referenced_work_ids)",
+	} {
+		if !strings.Contains(s, must) {
+			t.Errorf("inline-citation schema missing %q", must)
+		}
 	}
-	if !strings.Contains(s, "PRIMARY KEY (work_id, referenced_id)") {
-		t.Error("work_referenced must PK (work_id, referenced_id) so the forward edge is unique + indexed")
+	if strings.Contains(s, "work_referenced") {
+		t.Error("schema must NOT create the work_referenced edge table (citations are inline, ADR 0010)")
 	}
-	if !strings.Contains(s, "work_referenced_target") {
-		t.Error("work_referenced must have a reverse index on referenced_id (who cites W)")
+}
+
+// TestSchemaSyncStateAndAudit guards the single-row refresh watermark and
+// the append-only API-comparison audit table (ADR 0010).
+func TestSchemaSyncStateAndAudit(t *testing.T) {
+	s := joinSchema()
+	for _, must := range []string{
+		"CREATE TABLE IF NOT EXISTS openalex_sync_state",
+		"id boolean PRIMARY KEY DEFAULT true CHECK (id)",
+		"CREATE TABLE IF NOT EXISTS openalex_audit",
+		"verdict text CHECK (verdict IN ('ok','field_mismatch','cited_by_regressed','stale_drift'))",
+		"openalex_audit_run",
+		"openalex_audit_field",
+	} {
+		if !strings.Contains(s, must) {
+			t.Errorf("audit/sync schema missing %q", must)
+		}
 	}
 }
 
@@ -109,8 +134,8 @@ func TestSchemaEmbeddingsTable(t *testing.T) {
 // repeated bootstraps + both edges racing are safe.
 func TestSchemaIdempotent(t *testing.T) {
 	for _, stmt := range schemaStatements {
-		if !strings.Contains(stmt, "IF NOT EXISTS") {
-			t.Errorf("non-idempotent schema statement (missing IF NOT EXISTS):\n%s", stmt)
+		if !strings.Contains(stmt, "IF NOT EXISTS") && !strings.Contains(stmt, "OR REPLACE") {
+			t.Errorf("non-idempotent schema statement (missing IF NOT EXISTS / OR REPLACE):\n%s", stmt)
 		}
 	}
 }

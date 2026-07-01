@@ -18,9 +18,9 @@ type Stats struct {
 
 // QueryStats returns corpus counters. Returns ErrCorpusUnavailable when
 // PostgreSQL is unreachable so callers can degrade to {available:false}.
-// The counts are exact (cheap on the indexed columns); the openalex_works
-// total is a seq-scan count which is fine for an operator-run sanity check
-// but should not be polled on a hot path at 10^8 rows.
+// The works count, with-arxiv count, citation-edge sum, and max
+// updated_date come from a single seq-scan over openalex_works — fine for
+// an operator-run sanity check, but not for a hot path at 10^8 rows.
 func (s *Store) QueryStats(ctx context.Context) (Stats, error) {
 	var st Stats
 	if !s.ensure(ctx) {
@@ -28,14 +28,17 @@ func (s *Store) QueryStats(ctx context.Context) (Stats, error) {
 	}
 	err := s.pool.QueryRow(ctx, `
 		SELECT
-			(SELECT count(*) FROM openalex_works)::bigint,
-			(SELECT count(*) FROM openalex_works WHERE arxiv_id IS NOT NULL)::bigint,
-			(SELECT count(*) FROM work_referenced)::bigint,
-			(SELECT count(*) FROM work_embeddings)::bigint,
-			(SELECT max(updated_date) FROM openalex_works)`,
-	).Scan(&st.Works, &st.WithArxiv, &st.Citations, &st.Embeddings, &st.MaxUpdated)
+			count(*)::bigint,
+			count(*) FILTER (WHERE arxiv_id IS NOT NULL)::bigint,
+			coalesce(sum(jsonb_array_length(openalex_referenced_work_ids)), 0)::bigint,
+			max(updated_date)
+		FROM openalex_works`,
+	).Scan(&st.Works, &st.WithArxiv, &st.Citations, &st.MaxUpdated)
 	if err != nil {
 		return st, fmt.Errorf("openalexcorpus: query stats: %w", err)
+	}
+	if err := s.pool.QueryRow(ctx, `SELECT count(*)::bigint FROM work_embeddings`).Scan(&st.Embeddings); err != nil {
+		return st, fmt.Errorf("openalexcorpus: query embeddings count: %w", err)
 	}
 	st.LoadedAt = time.Now().UTC()
 	return st, nil

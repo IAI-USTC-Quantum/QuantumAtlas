@@ -22,7 +22,9 @@ type RawWork struct {
 	// the snapshot line. Stored as openalex_works.record (jsonb).
 	Record json.RawMessage
 	// Meta is the decoded subset (id, doi, locations, referenced_works…)
-	// used to derive openalex_id / arxiv_id / citation edges.
+	// used to derive openalex_id / arxiv_id and the in-memory progress
+	// counts. Citation out-edges are materialized in-DB from the record by
+	// the openalex_referenced_work_ids generated column (ADR 0010).
 	Meta openalex.Work
 }
 
@@ -37,21 +39,6 @@ func (rw RawWork) OpenAlexID() string {
 // in internal/openalex.
 func (rw RawWork) ArxivID() string {
 	return openalex.ExtractArxivID(rw.Meta)
-}
-
-// ReferencedIDs returns the bare "W…" ids this work cites (URL prefixes
-// stripped), for the work_referenced child table.
-func (rw RawWork) ReferencedIDs() []string {
-	if len(rw.Meta.ReferencedWorks) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(rw.Meta.ReferencedWorks))
-	for _, r := range rw.Meta.ReferencedWorks {
-		if id := shortID(r); id != "" {
-			out = append(out, id)
-		}
-	}
-	return out
 }
 
 // StreamRawWorks reads a gzipped JSONL OpenAlex works object from store

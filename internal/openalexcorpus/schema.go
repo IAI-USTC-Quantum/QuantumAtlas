@@ -78,17 +78,42 @@ func (s *Store) Configured() bool {
 	return s != nil && s.pool != nil
 }
 
-// schemaStatements are the tables + indexes applied at bootstrap. All are
-// IF NOT EXISTS so repeated runs (and both edges racing) are idempotent.
+// schemaStatements are the functions, tables + indexes applied at
+// bootstrap. All are idempotent (IF NOT EXISTS / CREATE OR REPLACE) so
+// repeated runs (and both edges racing) are safe.
 //
-// Hot fields are exposed via STORED generated columns derived from the
-// jsonb record — the record itself is never rewritten (ADR 0006: "only
-// filtered, never modified"). A bad cast on a malformed record would fail
-// the whole batch (fail-loud), which is acceptable: the snapshot is
-// supposed to be byte-faithful and these OpenAlex fields have stable
-// types (year/count are ints, is_retracted is bool).
+// Hot fields — including the citation out-edge array
+// (openalex_referenced_work_ids, ADR 0010) — are exposed via STORED
+// generated columns derived from the jsonb record; the record itself is
+// never rewritten (ADR 0006: "only filtered, never modified"). A bad cast
+// on a malformed record would fail the whole batch (fail-loud), which is
+// acceptable: the snapshot is supposed to be byte-faithful and these
+// OpenAlex fields have stable types (year/count are ints, is_retracted is
+// bool).
 var schemaStatements = []string{
-	// Core corpus table: each OpenAlex work verbatim as jsonb.
+	// strip_openalex_prefix turns record.referenced_works (an array of
+	// "https://openalex.org/W…" URLs) into an array of bare "W…" ids. A
+	// generated column cannot subquery/aggregate, so the array transform is
+	// packed into this IMMUTABLE function (ADR 0010).
+	`CREATE OR REPLACE FUNCTION strip_openalex_prefix(urls jsonb)
+		RETURNS jsonb
+		LANGUAGE plpgsql
+		IMMUTABLE
+		AS $$
+		DECLARE
+			result jsonb;
+		BEGIN
+			IF urls IS NULL THEN
+				RETURN '[]'::jsonb;
+			END IF;
+			SELECT coalesce(jsonb_agg(regexp_replace(elem, '^.*/', '')), '[]'::jsonb)
+				INTO result
+				FROM jsonb_array_elements_text(urls) AS elem;
+			RETURN result;
+		END;
+		$$`,
+	// Core corpus table: each OpenAlex work verbatim as jsonb, with STORED
+	// generated hot columns + the inline citation out-edge array.
 	`CREATE TABLE IF NOT EXISTS openalex_works (
 		openalex_id text PRIMARY KEY,
 		record jsonb NOT NULL,
@@ -104,28 +129,21 @@ var schemaStatements = []string{
 		doi text GENERATED ALWAYS AS (record->>'doi') STORED,
 		is_retracted boolean GENERATED ALWAYS AS (NULLIF(record->>'is_retracted','')::boolean) STORED,
 		referenced_works_count int GENERATED ALWAYS AS (NULLIF(record->>'referenced_works_count','')::int) STORED,
+		openalex_referenced_work_ids jsonb GENERATED ALWAYS AS (strip_openalex_prefix(record->'referenced_works')) STORED,
 		search_text tsvector GENERATED ALWAYS AS (
 			to_tsvector('simple'::regconfig, coalesce(record->>'display_name', record->>'title', ''))
 		) STORED
 	)`,
-	// These ALTERs make EnsureSchema forward-compatible for a database that
-	// created openalex_works before the query surface gained generated
-	// columns. PostgreSQL supports IF NOT EXISTS for generated columns.
-	`ALTER TABLE openalex_works
-		ADD COLUMN IF NOT EXISTS display_name text GENERATED ALWAYS AS (record->>'display_name') STORED`,
-	`ALTER TABLE openalex_works
-		ADD COLUMN IF NOT EXISTS language text GENERATED ALWAYS AS (record->>'language') STORED`,
-	`ALTER TABLE openalex_works
-		ADD COLUMN IF NOT EXISTS primary_topic_id text GENERATED ALWAYS AS (record #>> '{primary_topic,id}') STORED`,
-	`ALTER TABLE openalex_works
-		ADD COLUMN IF NOT EXISTS search_text tsvector GENERATED ALWAYS AS (
-			to_tsvector('simple'::regconfig, coalesce(record->>'display_name', record->>'title', ''))
-		) STORED`,
 	// jsonb_path_ops GIN: smaller + faster than the default ops, supports
 	// @> containment (the corpus query shape, e.g. record @> '{"type":...}'
 	// or topics filters). Worth the space saving at ~10^8 rows.
 	`CREATE INDEX IF NOT EXISTS openalex_works_record_gin
 		ON openalex_works USING gin (record jsonb_path_ops)`,
+	// Default-ops GIN on the citation out-edge array: supports the `?`
+	// element-exists reverse-lookup ("who cites W", ADR 0010). jsonb_path_ops
+	// would NOT support `?`, so this uses the default operator class.
+	`CREATE INDEX IF NOT EXISTS openalex_works_referenced_gin
+		ON openalex_works USING gin (openalex_referenced_work_ids)`,
 	`CREATE INDEX IF NOT EXISTS openalex_works_pub_year
 		ON openalex_works (publication_year)`,
 	`CREATE INDEX IF NOT EXISTS openalex_works_type
@@ -148,19 +166,33 @@ var schemaStatements = []string{
 	`CREATE INDEX IF NOT EXISTS openalex_works_updated
 		ON openalex_works (updated_date)`,
 
-	// Citation edges, extracted from record.referenced_works. PG holds the
-	// source so citation resolution is ALWAYS local — never a public-API
-	// fallback (ADR 0006). Edges may dangle (a referenced work outside the
-	// ingested set), so no FK to openalex_works. The PK doubles as the
-	// forward index (who does W cite); the extra index is the reverse
-	// (who cites W).
-	`CREATE TABLE IF NOT EXISTS work_referenced (
-		work_id text NOT NULL,
-		referenced_id text NOT NULL,
-		PRIMARY KEY (work_id, referenced_id)
+	// Single-row refresh watermark (ADR 0010): incremental refresh pulls
+	// only new updated_date partitions from the snapshot, tracked here so no
+	// per-row updated_date bookkeeping is needed at 10^8 rows.
+	`CREATE TABLE IF NOT EXISTS openalex_sync_state (
+		id boolean PRIMARY KEY DEFAULT true CHECK (id),
+		last_updated_date date,
+		last_synced_at timestamptz,
+		snapshot_version text
 	)`,
-	`CREATE INDEX IF NOT EXISTS work_referenced_target
-		ON work_referenced (referenced_id)`,
+
+	// API-comparison audit (ADR 0010): append-only, one row per sampled
+	// (work, field) including verdict='ok'. sampled_count / coverage /
+	// unresolved are all derived at read time, never stored or mutated.
+	`CREATE TABLE IF NOT EXISTS openalex_audit (
+		id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+		run_id bigint,
+		openalex_id text,
+		field text,
+		verdict text CHECK (verdict IN ('ok','field_mismatch','cited_by_regressed','stale_drift')),
+		local_value jsonb,
+		remote_value jsonb,
+		checked_at timestamptz NOT NULL DEFAULT now()
+	)`,
+	`CREATE INDEX IF NOT EXISTS openalex_audit_run
+		ON openalex_audit (run_id)`,
+	`CREATE INDEX IF NOT EXISTS openalex_audit_field
+		ON openalex_audit (openalex_id, field)`,
 
 	// Domain-subset embeddings, 1:1 with openalex_works. vector(1024) =
 	// BGE-M3 dense dim (EmbeddingDim). The HNSW index + population belong

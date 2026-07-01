@@ -17,24 +17,27 @@ const DefaultBatch = 1000
 type IngestOptions struct {
 	// BatchSize is the unnest batch size for the upsert statements.
 	BatchSize int
-	// Citations also extracts record.referenced_works into work_referenced.
-	Citations bool
 }
 
 // PartReport summarizes one part ingest.
 type PartReport struct {
-	Works     int
+	// Works is the number of records upserted.
+	Works int
+	// Citations is the number of out-edges (referenced_works entries) seen
+	// in this part. The edges are materialized automatically by the
+	// openalex_referenced_work_ids generated column (ADR 0010); this is an
+	// in-memory progress counter, not a separate write.
 	Citations int
 }
 
 // IngestPart streams one gzip JSONL works part from store and upserts its
-// records into openalex_works (and, when opts.Citations, the citation
-// edges into work_referenced). It flushes every BatchSize records so peak
+// records into openalex_works. Citation out-edges need no separate write:
+// they are derived from each record by the openalex_referenced_work_ids
+// generated column (ADR 0010). It flushes every BatchSize records so peak
 // memory stays ~one batch, not the whole (hundreds-of-MB) part.
 //
 // Idempotent: re-running a part re-upserts the same rows (ON CONFLICT DO
-// UPDATE for works, DO NOTHING for edges), so an interrupted operator run
-// is safe to resume.
+// UPDATE), so an interrupted operator run is safe to resume.
 func (s *Store) IngestPart(ctx context.Context, store objstore.Store, key string, opts IngestOptions) (PartReport, error) {
 	var rep PartReport
 	if !s.ensure(ctx) {
@@ -56,12 +59,8 @@ func (s *Store) IngestPart(ctx context.Context, store objstore.Store, key string
 			return err
 		}
 		rep.Works += n
-		if opts.Citations {
-			c, err := s.UpsertReferences(ctx, buf)
-			if err != nil {
-				return err
-			}
-			rep.Citations += c
+		for _, w := range buf {
+			rep.Citations += len(w.Meta.ReferencedWorks)
 		}
 		buf = buf[:0]
 		return nil
@@ -128,39 +127,6 @@ func (s *Store) UpsertWorks(ctx context.Context, works []RawWork, updatedDate st
 		return 0, fmt.Errorf("openalexcorpus: upsert works: %w", err)
 	}
 	return len(ids), nil
-}
-
-// UpsertReferences extracts record.referenced_works from the batch and
-// upserts the (work_id → referenced_id) edges into work_referenced.
-// Duplicate edges are ignored (ON CONFLICT DO NOTHING). Returns the number
-// of edge rows in the batch.
-func (s *Store) UpsertReferences(ctx context.Context, works []RawWork) (int, error) {
-	if !s.ensure(ctx) {
-		return 0, ErrCorpusUnavailable
-	}
-	var srcIDs, dstIDs []string
-	for _, w := range works {
-		src := w.OpenAlexID()
-		if src == "" {
-			continue
-		}
-		for _, ref := range w.ReferencedIDs() {
-			srcIDs = append(srcIDs, src)
-			dstIDs = append(dstIDs, ref)
-		}
-	}
-	if len(srcIDs) == 0 {
-		return 0, nil
-	}
-	_, err := s.pool.Exec(ctx, `
-		INSERT INTO work_referenced (work_id, referenced_id)
-		SELECT * FROM unnest($1::text[], $2::text[])
-		ON CONFLICT (work_id, referenced_id) DO NOTHING`,
-		srcIDs, dstIDs)
-	if err != nil {
-		return 0, fmt.Errorf("openalexcorpus: upsert references: %w", err)
-	}
-	return len(srcIDs), nil
 }
 
 // ListPartKeys returns the object keys of every works part under prefix in
