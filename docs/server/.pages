@@ -13,6 +13,7 @@ nav:
   - API:
     - REST API 总览: rest-api.md
     - Upload API 详解: upload-api.md
+    - PG 库设计: pg-schema.md
     - API Explorer: api-explorer.md
   - CLI 参考: cli-qatlasd.md
   - 日常运维:
