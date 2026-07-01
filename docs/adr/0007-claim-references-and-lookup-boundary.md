@@ -3,8 +3,9 @@
 A Claim gains a **`references`** field: the bibliographic works it cites, stored as **namespaced,
 unversioned `kind:id` strings** — `arxiv:2208.06941`, `openalex:W4406693713`,
 `doi:10.22331/q-2023-03-20-955`. These IDs appear both in the Claim's `claims.json` and in the
-gitea issue body the localhost contrib agent files (ADR `0005`), which **locks the format** (the
-hard-to-reverse cost is rewriting `agony/qatlas-lean` issue history once issues carry them).
+gitea issue body that qatlas-lean consumes/produces during claim extraction, which **locks the
+format** (the hard-to-reverse cost is rewriting `agony/qatlas-lean` issue history once issues carry
+them).
 
 Resolution (`kind:id` → title / authors / year) is **server-side and exact**: a new
 `GET /api/papers/lookup?ids=arxiv:…,openalex:…,doi:…` batch endpoint answers from the **local
@@ -15,7 +16,8 @@ Free-text **fuzzy** literature search is a deliberately **separate, deferred** c
 
 - **Self-describing prefix** → the resolver dispatches straight to the right backend
   (`openalex:`/`doi:`/`arxiv:`) instead of inferring from shape; it is also human-readable in the
-  issue body. Matches the lean OpenAlex MCP's own input modes (`openalex_lookup(arxiv_id|doi|openalex_id)`).
+  issue body. Matches the shared lookup modes used by qatlas-lean's literature workflow and QA's
+  read-only papers/corpus surfaces.
 - **Unversioned**: a Reference cites a *work*, not a snapshot, so `arxiv:2208.06941` (no `vN`) —
   deliberately different from the paper-of-record `paper.id`, which QA's asset pipeline versions.
 - A **Reference** (this bibliographic pointer) is distinct from a lean **reference lemma** (an
@@ -31,9 +33,10 @@ client-side against the public API is exactly the redundancy `0006` was built to
 - Lookup is a **host-core Paper/corpus capability** (it fills the spirit of the existing
   `papers/getCitedRefs` stub, `hostapi/core.go:89`), **not** a claim-domain endpoint — it does not
   violate ADR `0003`. It reads the OpenAlex corpus by ID; it knows nothing about Claims.
-- Reading it is consistent with ADR `0005`: the contrib agent already **reads** paper bytes from QA
-  (the suspend-and-wait endpoints); reference lookup is one more read. ADR `0005`'s "QA server is
-  not involved" governs the **write** path (filing the gitea issue stays gitea-direct), not reads.
+- Reading it is consistent with the QA/lean boundary: qatlas-lean may run claim extraction and
+  literature/reference enrichment, but those workflows **read** paper bytes and corpus metadata from
+  QA; they do not make QA author or persist Claims, proofs, or Theorems. QA supplies the read-only
+  paper/corpus substrate; lean owns the claim/proof/theorem workflow.
 - **Graceful degradation** (mirrors ADR `0006`): when the corpus is unreachable the qatlas client
   may fall back to the public OpenAlex API for that session.
 
@@ -48,8 +51,8 @@ reverse).
    (`GET /api/papers/lookup`, `/api/papers/{id}/markdown`, `/stats`, `/needs-mineru`) under a
    `papers:read` PAT. lean holds **no QA DB credentials**, so QA may evolve its physical schema
    freely behind the stable HTTP contract. A **new QA MCP server** wraps this same read surface as
-   self-describing tools (the MCP tool schema *is* the doc) — the natural home for the
-   OpenAlex/reference read capability now that lean has dropped its own OpenAlex MCP.
+   self-describing tools (the MCP tool schema *is* the doc), so qatlas-lean's claim extraction and
+   literature/reference workflow can consume QA's paper/corpus data without direct DB access.
 2. **Read-only SQL — retained, secondary.** A direct read-only role on QA's PostgreSQL
    (`paper_works` + `openalex_works` + `work_referenced`), used **only** when a query needs a
    join/scan that HTTP cannot express efficiently. This is **no longer "deferred"**: it is a kept,
@@ -116,6 +119,6 @@ kept-unresolved Reference is stored as its raw `kind:id` with `"resolved": false
   net-new (QA has no MCP today). It re-exposes the same `papers:read` HTTP capability as MCP tools;
   it opens **no write path**.
 - **Fuzzy free-text literature search is a known future capability**, not built this iteration.
-- lean drops its own OpenAlex MCP (see the lean implementation handoff); reference resolution now
-  flows through the qatlas client → `/api/papers/lookup`, and the MCP home for that read surface
-  moves to the new QA MCP server (above).
+- qatlas-lean remains the place where claim extraction and literature/reference workflow runs; QA
+  only exposes the read-only paper/corpus substrate through CLI/HTTP, MCP, and the secondary
+  read-only SQL path above.
