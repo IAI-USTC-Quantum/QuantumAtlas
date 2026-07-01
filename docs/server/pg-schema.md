@@ -17,10 +17,11 @@ join 留在 SQL 里：
 | 块 | 表 | 规模 | 由谁建 | 可重建来源 |
 |---|---|---|---|---|
 | **Paper catalog** | `papers` + `paper_assets` | ~10⁵ 行 | qatlasd 启动时（`papers.EnsureSchema`，后台 goroutine） | 从资产桶 LIST 重建 |
-| **OpenAlex 语料** | `openalex_works` (+ `openalex_sync_state` / `openalex_audit` / `work_embeddings`) | ~2.87×10⁸ 行 / 1–2 TB | **operator 驱动**（`qatlasd openalex bootstrap-pg`），**不在启动路径** | 从 OpenAlex snapshot 重灌 |
+| **OpenAlex 语料** | `openalex_works` (+ `openalex_sync_state` / `openalex_audit` / `work_embeddings`) | ~2.87×10⁸ 行 / 1–2 TB | **基础 schema 启动时建**（`corpus.EnsureSchema`，先于 catalog）；行**惰性 fetch-on-miss 写穿**填充，批量 `bootstrap-pg` 为可选预热 | 从 OpenAlex snapshot 重灌（预热）/ 按需重取 |
 
-两块的**生命周期不同**——catalog 每次启动 idempotent 重建，语料是一次性大工程。PG 不可达时所有
-方法优雅降级（写返回 `ErrCatalogUnavailable` + `X-Catalog-Sync: deferred`，读报
+两块的**生命周期不同**——catalog 每次启动 idempotent 重建；语料的**基础 schema 也每次启动重建**
+（先于 catalog），但其 ~10⁸ 行是**惰性 fetch-on-miss 写穿**填充，批量 snapshot 灌库只是可选预热。
+PG 不可达时所有方法优雅降级（写返回 `ErrCatalogUnavailable` + `X-Catalog-Sync: deferred`，读报
 `available=false`）。
 
 ---
@@ -93,13 +94,13 @@ UNIQUE 允许多 NULL）。
   触发器再重算。
 - **`paper_openalex_id` → `openalex_works(openalex_id)` `ON DELETE SET NULL`** —— 见下面专门一节。
 
-#### 为什么 openalex FK 要「条件加」
+#### 为什么 openalex FK 仍用「幂等 DO 块」加
 
-`papers` 在**启动时**建，`openalex_works` 是 **operator 驱动**（`bootstrap-pg`）、**不在启动路径**。
-若把这条 FK 写死在 `papers` 的 `CREATE TABLE` 里，启动时 `openalex_works` 还不存在 → 建表直接失败。
-
-所以这条 FK 由一个**条件 DO 块**加：`openalex_works` 存在**才**加，不存在就跳过（no-op），等语料
-bootstrap 之后的下一次启动再补上：
+`openalex_works` 现在是**启动时创建、按需惰性填充的写穿缓存**（write-through cache，见 ADR 0006）：
+`ensureCatalogSchema` 在建 `papers` catalog **之前**先跑 `corpus.EnsureSchema`（建 `openalex_works` +
+sync-state + audit；`work_embeddings` 因需要 pgvector 扩展，用 `DO` 块条件建、无扩展时 no-op），
+所以 `papers` 的这条 FK 在 DO 块跑到时 `openalex_works` **已经在了**。DO 块在这里的作用纯粹是
+**幂等**（PG 没有 `ADD CONSTRAINT IF NOT EXISTS`）+ 防御性兜底（万一 corpus 表还没建就跳过、下次启动补）：
 
 ```sql
 DO $$
@@ -114,16 +115,18 @@ BEGIN
 END $$;
 ```
 
-**这跟「迁不迁生产数据表」无关**——它纯粹是两张表的**建表先后顺序**问题（`papers` 启动建、
-`openalex_works` 按需建），不涉及任何数据搬运。DO 块让两种顺序都安全：
+**这跟「迁不迁生产数据表」无关**——纯粹是同一次 `EnsureSchema` 里两张表的**建表先后**问题，不涉及
+任何数据搬运。因为 corpus 先于 catalog 建，**已不存在启动顺序依赖**；DO 块两种情况都安全：
 
-- 现网（RackNerd / Alibaba）已有 `openalex_works`（之前 bootstrap 过）→ 部署新 schema 时 DO 块**立即**补上 FK。
-- 全新库（还没灌语料）→ FK 暂不加（DO 块跳过），`paper_openalex_id` 先当普通列用；等语料 bootstrap 后下次启动补 FK。
+- 现网（RackNerd / Alibaba）已有 `openalex_works` → 部署新 schema 时 DO 块**立即**补上 FK。
+- 全新库 → 同一次启动里 corpus 先建好，catalog 的 DO 块随后立即补上 FK。
 
-> **注意（设计取舍）**：这条 FK 的隐含前提是 ADR 0006 的「**全量** metadata」——任何真实 openalex
-> id 都在 `openalex_works` 里。若将来只灌语料**子集**，某篇 `paper_openalex_id` 可能指向不在库里的
-> work，`ALTER … ADD CONSTRAINT` 校验既有行时会失败、且会把 catalog 写入耦合到语料完整性。真要放弃
-> 强约束，可改成「软引用（无 FK）+ 用审计视图兜 NULL 缺口」（见 [3.](#3-已设计尚未落代码)）。
+> **不变式如何维持**：这条 FK 的隐含前提是「任何被写进 `paper_openalex_id` 的 openalex id 都在
+> `openalex_works` 里」。**惰性写穿**恰好维持它——by-id lookup 一旦要给某篇填 `paper_openalex_id`，
+> 就已经先 fetch-on-miss 把那条 work 写进了 `openalex_works`（`Resolver.FetchWorkRecord` +
+> `corpus.UpsertFetchedWork`）。所以不再依赖「先全量 bootstrap」：语料**子集**下 miss 会自愈，
+> catalog 写入也不耦合语料完整性。批量 `openalex bootstrap-pg` 退化为**可选的预热**（补全 citation
+> 遍历 + 向量覆盖），不再是前置条件。
 
 ---
 
@@ -144,6 +147,10 @@ END $$;
 | `publication_year` / `work_type` / `display_name` / `language` / `primary_topic_id` / `cited_by_count` / `doi` / `is_retracted` / `referenced_works_count` | `GENERATED … STORED` | 从 `record` 派生的热字段 |
 | `openalex_referenced_work_ids` | `jsonb GENERATED ALWAYS AS (strip_openalex_prefix(record->'referenced_works')) STORED` | **内联引用出边**：裸 `W…` 数组 |
 | `search_text` | `tsvector GENERATED … STORED` | 标题全文检索 |
+
+**行怎么进来**：批量 `openalex bootstrap-pg`（snapshot 预热）与 by-id lookup 的**惰性 fetch-on-miss
+写穿**（`corpus.UpsertFetchedWork`）**共用同一条 `UpsertWorks` 写入路径**，`ON CONFLICT` 幂等更新
+`record` + 派生列。所以预热与惰性填充互不冲突，缺的按需自愈（见 [1.4](#14-外键与启动顺序)）。
 
 **引用不再用边表**（ADR 0010）：
 

@@ -49,9 +49,17 @@ catalog + corpus + vectors" requirement that motivates the whole design.
   `X-Catalog-Sync: deferred`; reads report `availability=false`. (The earlier "PG per edge"
   sketch in `storage-architecture.md` was aspirational — PG joins the other central backends.)
 - **Scope (recommended): full metadata, subset vectors.** The full ~2.87 × 10⁸-work metadata
-  corpus is stored as raw `jsonb`, so every `referenced_works` id resolves **locally** — citation
-  traversal never falls back to the public API. Vectors are built **only on the domain subset**;
-  full-corpus embeddings (~3 TB + large embedding compute) are explicitly out of scope.
+  corpus is stored as raw `jsonb`, so once a work is cached every `referenced_works` id it names
+  resolves **locally** — citation traversal over cached works never re-hits the public API. Vectors
+  are built **only on the domain subset**; full-corpus embeddings (~3 TB + large embedding compute)
+  are explicitly out of scope.
+- **The corpus is a boot-created, lazily-populated write-through cache**, not an operator-only bulk
+  table. `openalex_works` (+ sync-state + audit) is created at server boot, and a by-id lookup that
+  **misses** the corpus fetches that single work from the OpenAlex API on demand and writes it back
+  (fetch-on-miss write-through). So a miss self-heals rather than falling back permanently, and the
+  bulk `openalex bootstrap-pg` snapshot load becomes an **optional pre-warm** (for citation-traversal
+  completeness + vector coverage), no longer a prerequisite. This also means `papers.paper_openalex_id`
+  can carry an FK to `openalex_works` without a boot-order dependency (ADR `0009`).
 - The OpenAlex corpus is **only filtered, never modified**: the stored record stays faithful to
   the snapshot; every derived field is a generated column, not a destructive transformation.
 - `paper_works` and the OpenAlex corpus are **separate tables in one database** — semantically

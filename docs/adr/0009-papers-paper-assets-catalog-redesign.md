@@ -27,7 +27,12 @@ catalog and a child **`paper_assets`** table (grill Q1–Q21).
   extracted from the OpenAlex arXiv location URL, never `ids.arxiv` (Q17).
 - `paper_openalex_id` carries a **nullable FK → `openalex_works(openalex_id) ON DELETE SET NULL`**
   (Q14): "has an openalex_id ⟺ that work is in the corpus", so the FK never blocks a write; if the
-  work is later dropped from the snapshot the column goes `NULL` and awaits backfill.
+  work is later dropped from the snapshot the column goes `NULL` and awaits backfill. The corpus is
+  a **boot-created, lazily-populated write-through cache** (ADR `0006`): `openalex_works` exists at
+  boot, and a lookup that assigns a `paper_openalex_id` has already fetched-and-written that work
+  (fetch-on-miss write-through), so the invariant holds without a bulk pre-load. There is therefore
+  **no boot-order dependency** — the FK is added by an idempotent guarded `DO` block once both tables
+  exist, and `ensureCatalogSchema` applies the corpus base schema before the catalog.
 - `paper_ref text GENERATED ALWAYS AS (…) STORED` — the canonical `kind:id`, priority
   **openalex > arxiv > doi** (Q2).
 - `paper_default_asset_id bigint REFERENCES paper_assets(asset_id)` — the asset a bare
