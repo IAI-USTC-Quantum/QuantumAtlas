@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"log/slog"
 	"net/http"
 	"os"
 
@@ -57,9 +58,18 @@ type GitPullPlugin interface {
 }
 
 // RegisterBuiltins registers each builtin plugin's routes and, for those that
-// also satisfy GitPullPlugin, mounts the uniform git-sync route pair.
+// also satisfy GitPullPlugin, mounts the uniform git-sync route pair. Which
+// builtins mount is config-driven, not fixed by this arg list: a builtin whose
+// PluginID is not enabled by QATLAS_PLUGINS_ENABLED/DISABLED is skipped,
+// honoring the SAME enable/disable rule (qplugin.IsEnabled) the manifest
+// registry applies — so an operator disabling e.g. "rag" drops both its
+// manifest entry and its in-process routes.
 func RegisterBuiltins(se *core.ServeEvent, deps PluginDeps, plugins ...BuiltinPlugin) error {
 	for _, p := range plugins {
+		if !qplugin.IsEnabled(p.PluginID(), deps.Cfg.PluginsEnabled, deps.Cfg.PluginsDisabled) {
+			slog.Info("plugins: builtin disabled by config", "id", p.PluginID())
+			continue
+		}
 		if err := p.RegisterRoutes(se, deps); err != nil {
 			return err
 		}

@@ -102,7 +102,7 @@ func (r *Registry) addManifest(manifest Manifest, allowAll bool, enabledSet, dis
 	if _, exists := r.plugins[manifest.ID]; exists {
 		return fmt.Errorf("duplicate plugin id %q", manifest.ID)
 	}
-	enabled := (allowAll || enabledSet[manifest.ID]) && !disabledSet[manifest.ID]
+	enabled := activeInSets(manifest.ID, allowAll, enabledSet, disabledSet)
 	status := StatusDisconnected
 	errMsg := ""
 	if !enabled {
@@ -220,6 +220,24 @@ func (p *Plugin) summary() Summary {
 		Contributes: p.Manifest.Contributes,
 		Needs:       append([]string(nil), p.Manifest.Needs...),
 	}
+}
+
+// IsEnabled reports whether a plugin id is active under the enable/disable
+// token lists: active iff (enabled is empty OR id ∈ enabled) AND id ∉ disabled.
+// An empty enabled list means "allow all"; the disabled list always wins. This
+// is the single rule both the manifest registry (addManifest) and the
+// in-process Go builtins (routes.RegisterBuiltins) filter on, so their
+// enablement semantics can never diverge.
+func IsEnabled(id string, enabled, disabled []string) bool {
+	enabledSet := stringSet(enabled)
+	disabledSet := stringSet(disabled)
+	return activeInSets(id, len(enabledSet) == 0, enabledSet, disabledSet)
+}
+
+// activeInSets is the low-level enable/disable rule shared by IsEnabled and
+// addManifest. allowAll is len(enabledSet) == 0.
+func activeInSets(id string, allowAll bool, enabledSet, disabledSet map[string]bool) bool {
+	return (allowAll || enabledSet[id]) && !disabledSet[id]
 }
 
 func stringSet(values []string) map[string]bool {

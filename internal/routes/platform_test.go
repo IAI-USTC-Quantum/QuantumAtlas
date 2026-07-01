@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
+	"github.com/pocketbase/pocketbase/core"
 )
 
 // Compile-time: the pull plugins satisfy GitPullPlugin; the non-pull plugins
@@ -74,4 +75,69 @@ func TestDirExists(t *testing.T) {
 	if dirExists(f) {
 		t.Fatal("a file is not a dir")
 	}
+}
+
+// spyBuiltin is a minimal BuiltinPlugin that records whether its routes were
+// registered, so the filter test can assert config gating without a live
+// router. It deliberately does NOT implement GitPullPlugin, so RegisterBuiltins
+// never dereferences the nil ServeEvent through mountGitSync.
+type spyBuiltin struct {
+	id         string
+	registered *[]string
+}
+
+func (s spyBuiltin) PluginID() string { return s.id }
+func (s spyBuiltin) RegisterRoutes(_ *core.ServeEvent, _ PluginDeps) error {
+	*s.registered = append(*s.registered, s.id)
+	return nil
+}
+
+// TestRegisterBuiltinsFiltersByConfig pins the config-driven gate: which
+// builtins register is decided by PluginsEnabled/PluginsDisabled, not the
+// hardcoded arg list. Default (both empty) keeps every builtin on.
+func TestRegisterBuiltinsFiltersByConfig(t *testing.T) {
+	order := []string{"graph", "rag", "wiki", "theorems"}
+	cases := []struct {
+		name     string
+		enabled  []string
+		disabled []string
+		want     []string
+	}{
+		{"default enables all", nil, nil, order},
+		{"denylist drops theorems", nil, []string{"theorems"}, []string{"graph", "rag", "wiki"}},
+		{"allowlist keeps only graph", []string{"graph"}, nil, []string{"graph"}},
+		{"denylist wins over allowlist", []string{"graph"}, []string{"graph"}, nil},
+		{"unknown denylist id is ignored", nil, []string{"typo"}, order},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got []string
+			plugins := make([]BuiltinPlugin, len(order))
+			for i, id := range order {
+				plugins[i] = spyBuiltin{id: id, registered: &got}
+			}
+			deps := PluginDeps{Cfg: &config.Config{
+				PluginsEnabled:  tc.enabled,
+				PluginsDisabled: tc.disabled,
+			}}
+			if err := RegisterBuiltins(nil, deps, plugins...); err != nil {
+				t.Fatalf("RegisterBuiltins: %v", err)
+			}
+			if !equalStrings(got, tc.want) {
+				t.Fatalf("registered = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

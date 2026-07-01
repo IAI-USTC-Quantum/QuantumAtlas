@@ -121,6 +121,32 @@ func TestNewBuiltinRegistryHonorsDisabled(t *testing.T) {
 	}
 }
 
+// TestIsEnabledPredicate pins the single enable/disable rule shared by the
+// manifest registry and the in-process builtins: empty allowlist means all,
+// the denylist always wins, and unknown ids never crash.
+func TestIsEnabledPredicate(t *testing.T) {
+	cases := []struct {
+		name     string
+		id       string
+		enabled  []string
+		disabled []string
+		want     bool
+	}{
+		{"empty lists allow all", "graph", nil, nil, true},
+		{"allowlist includes id", "graph", []string{"graph"}, nil, true},
+		{"allowlist excludes others", "rag", []string{"graph"}, nil, false},
+		{"denylist drops id", "graph", nil, []string{"graph"}, false},
+		{"denylist wins over allowlist", "graph", []string{"graph"}, []string{"graph"}, false},
+		{"unknown denylist id ignored", "graph", nil, []string{"typo"}, true},
+	}
+	for _, tc := range cases {
+		if got := IsEnabled(tc.id, tc.enabled, tc.disabled); got != tc.want {
+			t.Errorf("%s: IsEnabled(%q, %v, %v) = %v, want %v",
+				tc.name, tc.id, tc.enabled, tc.disabled, got, tc.want)
+		}
+	}
+}
+
 func writeManifest(t *testing.T, root, id, body string) {
 	t.Helper()
 	dir := filepath.Join(root, id)
