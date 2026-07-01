@@ -10,9 +10,11 @@ This is a thin dispatcher over the contributor backends:
   (direct upload of a pre-made MinerU result zip; DOI-only — arXiv papers
   go through the runner so claim/lease/upload stay one unit)
 
-Note: claim drafting + ``type/theorem`` issue filing moved to the upstream lean
-repo (``qatlas-lean contrib claim`` — see ADR 0008); QA's client claim plugin was
-retired. ``qatlas lean contrib claim …`` still reaches it via the ``lean`` passthrough.
+Note: the claim-drafting flow (``qatlas contrib claim``) is a first-party plugin
+that is **off by default** — the maintained flow moved to the upstream lean repo
+(``qatlas-lean contrib claim`` — see ADR 0008). Enable the local plugin via the
+config ``plugins`` list (``plugins: [lean, claim]``); ``qatlas lean contrib claim …``
+also reaches the lean flow via the ``lean`` passthrough.
 
 These group what contributors actually do day-to-day under a single
 resource-ish noun (`contrib`); power-user verbs (`config`, `auth`, `wiki`,

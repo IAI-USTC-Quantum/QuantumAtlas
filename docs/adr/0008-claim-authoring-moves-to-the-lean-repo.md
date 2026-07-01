@@ -5,9 +5,9 @@ _Supersedes ADR `0005`._
 Claim drafting and `type/theorem` issue filing **move out of the QuantumAtlas client and into the
 upstream lean repo** (`agony/qatlas-lean`). What ADR `0005` shipped as a QA-side localhost plugin
 (`qatlas contrib claim` — a Copilot/anthropic/openai-SDK drafter + WebUI under
-`qatlas/client/claim/`) is **retired — unregistered from the builtin plugin registry, its files
-kept in place as a dormant, re-registerable plugin** (see "How the plugin platform stays generic"
-below); qatlas-lean now hosts the equivalent flow as its own
+`qatlas/client/claim/`) is **retired — kept as a first-party builtin plugin that ships with the
+package but is off by default, enabled only via the config-driven `plugins` list** (see "How the
+plugin platform stays generic" below); qatlas-lean now hosts the equivalent flow as its own
 `qatlas-lean contrib claim <paper>` localhost WebUI, driven by **qatlas-lean's CLI flat-agent
 runner** (`copilot -p --agent claim-drafter`), **not an SDK**.
 
@@ -33,31 +33,36 @@ the **theorems pull-plugin** consumer of proved Theorems (ADR `0002`). qatlas-le
   live under the contributor's own token. The whole author → solve → audit pipeline is testable
   end-to-end with zero accounts (`tests/integration/claim_contrib.py`).
 - **The QA boundary gets simpler, not richer.** QA exposes read-only paper/corpus data over HTTP
-  (and, later, MCP — ADR `0007`); it never authors, persists, or maintains Claims/Theorems.
-  Unregistering the client claim plugin removes the one *active* place QA client code reached into
-  the lean domain (the files remain, but inert until re-registered).
+  (and, later, MCP — ADR `0007`); it never authors, persists, or maintains Claims/Theorems. Leaving
+  the client claim plugin off by default (absent from the config `plugins` list) keeps QA client code
+  out of the lean domain by default; the files remain but are inert until a user opts in via config.
 
-## How the plugin platform stays generic (register-to-activate)
+## How the plugin platform stays generic (config-driven enablement)
 
-The QA client plugin system is deliberately **generic**, mirroring `qatlasd`'s builtin-plugin model
-(ADR `0001`/`0003`): a plugin contributes commands/features **only once it is registered**. So
-"retiring" the claim plugin is just **removing it from the builtin registry**
-(`qatlas/client/plugins/registry.py` no longer lists `ClaimPlugin`) — it does **not** require
-deleting code. The `qatlas/client/claim/` files + `tests/client/claim/` stay as a **valid,
-re-registerable-but-inactive** plugin: `config.py` keeps the `claim_plugin_enabled` gate and
-`pyproject.toml` keeps the `contrib` extra (fastapi/uvicorn) so the dormant plugin remains
-self-consistent and runnable if a future maintainer re-registers it. Nothing in `qatlas contrib`
-surfaces it today.
+The QA client plugin system is deliberately **generic** and **config-driven**, mirroring `qatlasd`'s
+builtin-plugin model (ADR `0001`/`0003`): which first-party plugins are *enabled* is decided by the
+user's config file — `config.yaml`'s `plugins:` list — **not hardcoded in code**. After
+`pip install quantum-atlas`, a user turns a builtin on/off by editing that list; no code change is
+needed. First-party plugins (`lean`, `claim`) ship with the package as a catalog in
+`qatlas/client/plugins/registry.py`; a builtin contributes CLI commands only when its name is in the
+enabled `plugins` list (default: `lean` only) **and** its `available()` env-check passes.
+Third-party plugins register via `qatlas.plugins` entry points. So "retiring" the claim plugin is
+just **leaving it out of the default enabled set** — its files stay as a shipped, opt-in plugin, and
+`pyproject.toml`'s `contrib` extra (fastapi/uvicorn) is kept so it is runnable when enabled.
+(`qatlasd` is Go with a different config path, but follows the same config-driven principle — see the
+lean-side handoff.)
 
 ## What changes
 
-- **Unregistered in QA (files kept in place)**: `qatlas/client/plugins/registry.py` no longer lists
-  `ClaimPlugin` as a builtin, so `qatlas contrib` no longer surfaces `claim`. The plugin files
-  (`qatlas/client/claim/`) + their tests (`tests/client/claim/`) are **kept** as a dormant,
-  re-registerable plugin; `qatlas/config.py`'s `claim_plugin_enabled` gate and `pyproject.toml`'s
-  `contrib` extra are **kept** so it stays self-consistent. Only the *surfacing* is updated: the
-  plugin-system docstrings + the `claim` reference in `qatlas/client/contrib.py` now point at
-  qatlas-lean.
+- **Off by default in QA (config-driven, files kept)**: the client plugin roster is now config-driven
+  — `qatlas/config.py` gains a `plugins` list and `qatlas/client/plugins/registry.py` enables only
+  the builtins named in it (default `lean`). `claim` is **not** in the default set, so `qatlas
+  contrib` no longer surfaces it; a user re-enables it with `plugins: [lean, claim]`. The plugin
+  files (`qatlas/client/claim/`) + their tests (`tests/client/claim/`) are **kept** as a shipped,
+  opt-in plugin; `pyproject.toml`'s `contrib` extra (fastapi/uvicorn) is **kept** so it runs when
+  enabled. The old bespoke `claim_plugin_enabled` flag is dropped in favor of the generic `plugins`
+  list. Only the *surfacing* docstrings + the `claim` reference in `qatlas/client/contrib.py` are
+  updated to point at qatlas-lean.
 - **Kept in QA**: the `lean` passthrough plugin (`qatlas/client/leanplugin/` — `qatlas lean
   <subcommand>` still drives a configured qatlas-lean checkout, so `qatlas lean contrib claim …`
   reaches the new flow); the literature read surface (`/api/papers/*`, ADR `0007`); the theorems
@@ -81,18 +86,21 @@ surfaces it today.
 - **Keep the QA-side claim plugin ACTIVE (ADR `0005` as-is).** Rejected: splits the *maintained*
   Lean-related flow across two repos, keeps an SDK code path live in the QA client, and contradicts
   the "qatlas-lean owns the claim/proof/theorem workflow" boundary `0007` now records.
-- **Delete the plugin files outright.** Rejected: the client plugin platform is generic
-  (register-to-activate, like qatlasd's builtins), so an *unregistered* plugin is already inert —
-  deletion buys nothing over unregistering. Keeping the files as a dormant, re-registerable plugin
-  preserves an optional local fallback + a reference implementation at zero active-surface cost.
-  Drift risk is bounded: the plugin is unregistered and explicitly marked non-canonical (qatlas-lean
-  owns the maintained flow).
+- **Delete the plugin files outright.** Rejected: enablement is config-driven (a builtin is active
+  only when named in the config `plugins` list), so a plugin that is simply *not in the default set*
+  is already inert — deletion buys nothing over leaving it off by default. Keeping the files as a
+  shipped, opt-in plugin preserves an optional local fallback + a reference implementation at zero
+  active-surface cost. Drift risk is bounded: the plugin is off by default and explicitly marked
+  non-canonical (qatlas-lean owns the maintained flow).
+- **A per-plugin boolean flag (the old `claim_plugin_enabled`).** Rejected in favor of one generic
+  `plugins` list: a bespoke on/off field per plugin does not generalize, whereas a single list scales
+  to any builtin and reads as "the enabled set" in one place.
 
 ## Consequences
 
-- The QA client surface shrinks: `qatlas contrib` loses the `claim` subcommand; the plugin registry
-  only ships the `lean` passthrough as a registered built-in. The claim plugin stays in the tree as a
-  dormant, re-registerable plugin.
+- The QA client surface shrinks: `qatlas contrib` loses the `claim` subcommand by default (the
+  default enabled set is `lean` only). `claim` still ships with the package and is one config edit
+  (`plugins: [lean, claim]`) away from returning.
 - The **maintained/canonical** issue-body shape (`## Claim` / `## Why it matters` / `## Paper
   reference` / `## References` + a trailing `claim_id:` marker) now lives **once** in
   qatlas-lean's `contrib/claim/issue.py`. QA keeps only a dormant, unregistered copy (its

@@ -14,9 +14,14 @@ from qatlas.client.plugins import registry
 
 
 @pytest.fixture(autouse=True)
-def _clean_env(monkeypatch):
+def _clean_env(monkeypatch, tmp_path):
     monkeypatch.delenv("QATLAS_LEAN_DIR", raising=False)
-    # Isolate from any real config.yaml on the host.
+    # Isolate ServerConfig from the host's real ~/.config/qatlas/config.yaml.
+    # ServerConfig is a pydantic BaseSettings whose yaml source is added whenever
+    # user_config_yaml_path() exists on disk, so patching from_env -> cls() is not
+    # enough on its own; point XDG_CONFIG_HOME at an empty dir (the path helper
+    # honors it) so no host config.yaml is ever read into a test.
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setattr(
         "qatlas.config.ServerConfig.from_env",
         classmethod(lambda cls: cls()),
@@ -74,7 +79,34 @@ def test_registry_top_level_includes_lean_when_configured(tmp_path, monkeypatch)
     assert "lean" in registry.top_level_commands()
 
 
-def test_registry_contrib_has_no_builtin_subcommands():
-    # The claim plugin (the only contrib-subcommand plugin) was retired (ADR 0008);
-    # no built-in plugin contributes a `qatlas contrib <name>` subcommand now.
+def _force_plugins(monkeypatch, names):
+    """Pin the config-driven enabled ``plugins`` list for a test."""
+    monkeypatch.setattr(
+        "qatlas.config.ServerConfig.from_env",
+        classmethod(lambda cls: cls(plugins=names)),
+    )
+
+
+def test_claim_off_by_default():
+    # claim ships with the package but is NOT in the default enabled set (ADR 0008
+    # moved the maintained flow to qatlas-lean); it must not surface by default.
     assert "claim" not in registry.contrib_subcommands()
+    assert "claim" not in [p.name for p in registry.active_plugins()]
+
+
+def test_claim_enabled_via_config(monkeypatch):
+    _force_plugins(monkeypatch, ["lean", "claim"])
+    assert "claim" in registry.contrib_subcommands()
+    assert "claim" in [p.name for p in registry.active_plugins()]
+
+
+def test_explicit_empty_plugins_disables_all_builtins(monkeypatch):
+    _force_plugins(monkeypatch, [])
+    names = [p.name for p in registry.active_plugins()]
+    assert "lean" not in names and "claim" not in names
+
+
+def test_unknown_plugin_name_is_ignored(monkeypatch):
+    _force_plugins(monkeypatch, ["nope", "claim"])
+    # unknown 'nope' is dropped; 'claim' still enabled -> no crash
+    assert "claim" in registry.contrib_subcommands()
