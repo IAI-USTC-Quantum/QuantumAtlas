@@ -1,71 +1,63 @@
-# The theorems and wiki plugins are builtin pull plugins, not a socket-push daemon
+# theorems / wiki 为 builtin 拉取插件，而不是 socket-push 守护进程
 
-The **theorems plugin** (which pulls in proved Theorems from an upstream Lean-content repo —
-today `agony/qatlas-lean`, eventually a dedicated `QuantumAtlas-Theorems` content-only repo)
-and the **wiki plugin** (pulling in markdown knowledge pages from `QuantumAtlas-Wiki`) both
-integrate as `kind=builtin` plugins that, exactly like graph and rag, expose `/api/theorems/*`
-and `/api/wiki/*` as a read-through over a **server-side `git pull --ff-only`** checkout of
-the upstream repo: the theorems plugin reads `registry.json` (+ `audit_records/certified.json`
-+ evidence dossiers + the Lean source files referenced by `registry.json`); the wiki plugin
-reads the markdown wiki cache. The wiki already pulls this way (`POST /api/wiki/sync/pull`);
-we generalize the pattern.
+**theorems 插件**（从上游 Lean-content 仓库拉取已证明 Theorems——今天是
+`agony/qatlas-lean`，最终会是专门的 `QuantumAtlas-Theorems` 内容仓）和 **wiki 插件**
+（从 `QuantumAtlas-Wiki` 拉取 markdown 知识页）都作为 `kind=builtin` 插件集成。它们和
+graph、rag 一样，把 `/api/theorems/*` 与 `/api/wiki/*` 暴露成对上游仓库的**服务端
+`git pull --ff-only`** 检出目录的透传读取：theorems 插件读取 `registry.json`
+（加上 `audit_records/certified.json`、证据档案，以及 `registry.json` 引用的
+Lean 源文件）；wiki 插件读取 markdown wiki 缓存。wiki 已经按这种方式拉取
+（`POST /api/wiki/sync/pull`）；我们把这个模式泛化。
 
-We **reject** the socket-push model that an earlier in-tree branch
-(`qatlas-lean@timidly/ts-qa-plugin`) was building: a long-running Lean daemon dialing into the
-host over jsonrpc-ws, consuming theorem events, and pushing results back via
-`verifications/submit`.
+我们**否决**早期树内分支（`qatlas-lean@timidly/ts-qa-plugin`）正在构建的 socket-push
+模型：一个长期运行的 Lean 守护进程通过 `jsonrpc-ws` 拨入 host，消费 theorem 事件，再通过
+`verifications/submit` 把结果推回。
 
-## Plugin naming: `theorems`, not `lean`
+## 插件命名：`theorems`，不是 `lean`
 
-The plugin id is **`theorems`**, not `lean`. Reasons:
+插件 id 是 **`theorems`**，不是 `lean`。理由：
 
-- It names the **content the plugin serves** (already-proved Theorems), not the prover language.
-- It aligns with the eventual content-only repo `QuantumAtlas-Theorems` (this transitional
-  iteration still pulls the larger `qatlas-lean` repo, but that's an implementation detail —
-  plugin id ≠ upstream repo name, just as `graph` ≠ neo4j and `rag` ≠ qdrant).
-- It avoids encoding "Lean 4 specifically" into the URL contract — a future Coq prover would
-  still publish into this plugin's namespace.
+- 它命名的是**插件服务的内容**（已经证明的 Theorems），而不是证明器语言。
+- 它与最终的内容仓 `QuantumAtlas-Theorems` 对齐（这个过渡迭代仍然拉取更大的
+  `qatlas-lean` 仓库，但那是实现细节——plugin id ≠ upstream repo name，正如 `graph` ≠ neo4j、
+  `rag` ≠ qdrant）。
+- 它避免把“具体是 Lean 4”编码进 URL 合约——未来的 Coq 证明器仍可发布到这个插件的命名空间。
 
-## Why pull, not push
+## 为什么是 pull，不是 push
 
-- theorems ↔ QA is a **loosely-coupled cooperation over the durable git artifact**, not a tight
-  live RPC loop. The upstream Lean-content repo is the source of truth for proved Theorems;
-  QA pulls it.
-- Consistent with graph/rag (same-language Go builtin, read-through a backend, `/api/*`).
-- The handoff removed the orchestrating daemon: **claim drafting and issue filing are a human
-  + a localhost contrib agent webui** (`qatlas-lean contrib claim` — moved to the upstream lean
-  repo by ADR `0008`), not a host poll/push loop.
-  There is no longer a daemon to hold the WS connection.
-- One git-pull endpoint per plugin is far less to operate than a WS server + connection lifecycle.
+- theorems ↔ QA 是**围绕持久 git 制品的松耦合协作**，不是紧密的实时 RPC 循环。
+  上游 Lean-content 仓库是已证明 Theorems 的事实来源；QA 负责拉取它。
+- 与 graph/rag 一致（同语言 Go builtin，透传读取一个后端，`/api/*`）。
+- 交接已经移除了编排守护进程：**Claim 起草和 issue 提交是人
+  + localhost contrib agent webui**（`qatlas-lean contrib claim`——由 ADR `0008` 迁到上游 lean
+  仓库），不是 host poll/push 循环。
+  已经没有守护进程来持有 WS 连接。
+- 每个插件一个 git-pull 端点，比运维一个 WS server + 连接生命周期少得多。
 
-## What the theorems plugin owns in this iteration
+## 本迭代中 theorems 插件负责什么
 
-- A server-side git checkout of the Lean-content upstream and the `git pull --ff-only` machinery
-  via `GitPullPlugin` (mounted at `POST /api/theorems/sync/pull`, `GET /api/theorems/sync/status`).
-- An in-memory cache of `registry.json` + `audit_records/certified.json` + relevant Lean source
-  texts, refreshed on every successful pull (mirrors `wiki.Cache.Refresh`).
-- Read-only HTTP routes under `/api/theorems/*` for the WebUI: list/detail Theorems, the
-  dependency-DAG view, axiom/sorry-free flags, source-on-demand, stats.
+- Lean-content 上游的服务端 git 检出目录，以及通过 `GitPullPlugin` 提供的 `git pull --ff-only`
+  机制（挂载在 `POST /api/theorems/sync/pull`, `GET /api/theorems/sync/status`）。
+- `registry.json` + `audit_records/certified.json` + 相关 Lean 源文本的内存缓存，
+  每次成功 pull 后刷新（镜像 `wiki.Cache.Refresh`）。
+- WebUI 使用的 `/api/theorems/*` 下只读 HTTP 路由：Theorems 列表/详情、dependency-DAG 视图、
+  axiom/sorry-free 标记、按需源码、统计。
 
-The theorems plugin **deliberately does not** own a PocketBase collection in this iteration.
-Proved Theorems are read-through-from-git, not persisted into PocketBase; Claims (pre-proof NL
-statements that the upstream `qatlas-lean` repo files as gitea issues) are out of scope for the
-WebUI in this iteration — see ADR `0004-no-claim-collection-this-iteration.md`. When (later) we
-need a PocketBase-persisted view, it lands as a separate ADR.
+theorems 插件在本迭代中**刻意不** own 一个 PocketBase collection。已证明 Theorems 是从 git
+透传读取，不持久化进 PocketBase；Claims（上游 `qatlas-lean` 仓库作为 gitea
+issues 提交的证明前自然语言陈述）在本迭代不进入 WebUI 范围——见 ADR
+`0004-no-claim-collection-this-iteration.md`。以后如果需要一个 PocketBase 持久化视图，再以单独 ADR 落地。
 
-## Reference, don't port
+## 参考，不移植
 
-`qatlas-lean@timidly/ts-qa-plugin` is **reference-only**: we absorb its good ideas but build on
-QuantumAtlas `main`'s existing plugin platform (registry, manifest, graph/rag, the retained
-external transports) — we do not cherry-pick or base on that branch.
+`qatlas-lean@timidly/ts-qa-plugin` **仅作参考**：我们吸收其中的好思路，但基于 QuantumAtlas
+`main` 现有插件平台（registry、manifest、graph/rag、保留的 external transport）实现——不 cherry-pick，也不基于该分支。
 
-## Consequences
+## 影响
 
-- A proved Theorem's verdict is read from `registry.json`'s `audit_status` at pull time, **not**
-  POSTed through anything. The push-oriented `verifications` collection + the lean-domain
-  hostapi methods that earlier commits added (`b79e622` + `160f806`) are removed (see ADR
-  `0004`).
-- The `external` (socket/stdio) transports stay in the tree for future third-party plugins, but
-  no first-party plugin uses them in this iteration.
-- The WebUI gains a `/theorems` page (read-through over the plugin) and a "Pull Now" button +
-  webhook trigger that calls `POST /api/theorems/sync/pull` — symmetric with `/wiki`.
+- 已证明 Theorem 的结论在 pull 时从 `registry.json` 的 `audit_status` 读取，**不是**
+  通过任何东西 POST 进来。早期提交添加的面向 push 的 `verifications` collection
+  + lean-domain hostapi methods（`b79e622` + `160f806`）被移除（见 ADR `0004`）。
+- `external`（socket/stdio）transport 继续留在树里，供未来三方插件使用；但本迭代没有一方插件使用它们。
+- WebUI 增加 `/theorems` 页面（通过插件透传读取）以及 “Pull Now” 按钮 + webhook trigger，
+  调用 `POST /api/theorems/sync/pull`——与 `/wiki` 对称。

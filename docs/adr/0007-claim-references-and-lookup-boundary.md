@@ -1,127 +1,119 @@
-# A Claim's `references` are namespaced `kind:id` pointers, resolved server-side via `/api/papers/lookup`
+# Claim 的 `references` 用 `kind:id`，服务端通过 `/api/papers/lookup` 精确解析
 
-A Claim gains a **`references`** field: the bibliographic works it cites, stored as **namespaced,
-unversioned `kind:id` strings** — `arxiv:2208.06941`, `openalex:W4406693713`,
-`doi:10.22331/q-2023-03-20-955`. These IDs appear both in the Claim's `claims.json` and in the
-gitea issue body that qatlas-lean consumes/produces during claim extraction, which **locks the
-format** (the hard-to-reverse cost is rewriting `agony/qatlas-lean` issue history once issues carry
-them).
+Claim 增加一个 **`references`** 字段：它引用的文献 works，存成**带命名空间、
+无版本的 `kind:id` 字符串**——`arxiv:2208.06941`, `openalex:W4406693713`,
+`doi:10.22331/q-2023-03-20-955`。这些 IDs 同时出现在 Claim 的 `claims.json` 和
+qatlas-lean 在 Claim 抽取期间消费/产出的 gitea issue 正文中，这会**锁定格式**
+（一旦 issues 携带它们，难以回退的成本就是重写 `agony/qatlas-lean` 的 issue 历史）。
 
-Resolution (`kind:id` → title / authors / year) is **server-side and exact**: a new
-`GET /api/papers/lookup?ids=arxiv:…,openalex:…,doi:…` batch endpoint answers from the **local
-OpenAlex corpus** (ADR `0006`), returning per-ref `{ref, title, authors, year, hosted, resolved}`.
-Free-text **fuzzy** literature search is a deliberately **separate, deferred** capability.
+解析（`kind:id` → title / authors / year）是**服务端且精确**的：新增
+`GET /api/papers/lookup?ids=arxiv:…,openalex:…,doi:…` 批量端点，从**本地
+OpenAlex corpus**（ADR `0006`）回答，并为每个 ref 返回 `{ref, title, authors, year, hosted, resolved}`。
+自由文本 **fuzzy** 文献检索是刻意**独立、延后**的能力。
 
-## Why namespaced `kind:id`, unversioned
+## 为什么是带命名空间的 `kind:id`，且无版本
 
-- **Self-describing prefix** → the resolver dispatches straight to the right backend
-  (`openalex:`/`doi:`/`arxiv:`) instead of inferring from shape; it is also human-readable in the
-  issue body. Matches the shared lookup modes used by qatlas-lean's literature workflow and QA's
-  read-only papers/corpus surfaces.
-- **Unversioned**: a Reference cites a *work*, not a snapshot, so `arxiv:2208.06941` (no `vN`) —
-  deliberately different from the paper-of-record, which QA identifies by the surrogate
-  `papers.paper_id` (ADR `0009`) and whose PDF versions live per-asset in
-  `paper_assets.arxiv_version`, not in the paper id itself.
-- A **Reference** (this bibliographic pointer) is distinct from a lean **reference lemma** (an
-  in-corpus Lean reuse-shortlist entry — `reference_lemmas`) and from a **proof citation** (the
-  proof-prose citation with a `citation_string`). The glossary records the distinction.
+- **自描述前缀** → 解析器直接分发到正确后端（`openalex:`/`doi:`/`arxiv:`），
+  而不是从形状推断；它在人读 issue 正文时也可读。它匹配 qatlas-lean 的文献工作流
+  和 QA 的只读 papers/corpus 接口面所共享的 lookup 模式。
+- **无版本**：一个引用（Reference）引用的是一个 *work*，不是一个快照，所以是
+  `arxiv:2208.06941`（没有 `vN`）——这刻意不同于归档论文（paper-of-record）；QA 用代理键
+  `papers.paper_id`（ADR `0009`）识别归档论文，而 PDF 版本按资产存在
+  `paper_assets.arxiv_version`，不放在 paper id 自身里。
+- 一个**引用（Reference）**（这里的文献指针）不同于 lean **reference lemma**
+  （语料内 Lean 复用候选 entry——`reference_lemmas`），也不同于 **proof citation**
+  （证明说明文字里的 citation，带 `citation_string`）。术语表记录了这个区别。
 
-## Why server-side lookup, not client-side public-API resolution
+## 为什么是服务端 lookup，而不是客户端 public API 解析
 
-ADR `0006` holds the **full** OpenAlex corpus locally precisely so "every `referenced_works` id
-resolves locally — citation traversal never falls back to the public API." Resolving references
-client-side against the public API is exactly the redundancy `0006` was built to eliminate. So:
+ADR `0006` 把**完整** OpenAlex corpus 保存在本地，目的正是让“每个 `referenced_works` id
+都能本地解析——引用遍历永不 fallback 到 public API”。让客户端对 public API 解析
+references，正是 `0006` 要消除的冗余。因此：
 
-- Lookup is a **host-core Paper/corpus capability** (it fills the spirit of the existing
-  `papers/getCitedRefs` stub, `hostapi/core.go:89`), **not** a claim-domain endpoint — it does not
-  violate ADR `0003`. It reads the OpenAlex corpus by ID; it knows nothing about Claims.
-- Reading it is consistent with the QA/lean boundary: qatlas-lean may run claim extraction and
-  literature/reference enrichment, but those workflows **read** paper bytes and corpus metadata from
-  QA; they do not make QA author or persist Claims, proofs, or Theorems. QA supplies the read-only
-  paper/corpus substrate; lean owns the claim/proof/theorem workflow.
-- **Graceful degradation** (mirrors ADR `0006`): when the corpus is unreachable the qatlas client
-  may fall back to the public OpenAlex API for that session.
+- Lookup 是一种 **host-core Paper/corpus 能力**（它补上了现有 `papers/getCitedRefs` stub,
+  `hostapi/core.go:89` 的精神），**不是** claim-domain 端点——所以不违反 ADR `0003`。
+  它按 ID 读取 OpenAlex corpus；它对 Claims 一无所知。
+- 读取它与 QA/lean 边界一致：qatlas-lean 可以运行 Claim 抽取和文献/引用增补，
+  但这些工作流只是从 QA **读取** paper bytes 和 corpus metadata；它们不会让
+  QA 起草或持久化 Claims、proofs 或 Theorems。QA 提供只读 paper/corpus 基底；
+  lean own claim/proof/theorem 工作流。
+- **优雅降级**（镜像 ADR `0006`）：当 corpus 不可达时，qatlas client 可以在该会话中 fallback
+  到 public OpenAlex API。
 
-## How the prover accesses QA: CLI/HTTP preferred (+ MCP), read-only DB retained
+## 证明器如何访问 QA：优先 CLI/HTTP（+ MCP），保留只读 DB
 
-The prover (qatlas-lean) reads QA's Paper catalog + OpenAlex corpus through **two sanctioned,
-read-only modes**, in priority order. lean never writes QA's stores — QA owns paper md / catalog /
-corpus, lean owns claims/proofs/theorems, and QA never authors or maintains lean's content (nor the
-reverse).
+证明器（qatlas-lean）通过**两种被认可的只读模式**读取 QA 的 Paper catalog + OpenAlex corpus，
+按优先级排序。lean 永不写 QA 存储——QA own paper md / catalog / corpus，lean own
+claims/proofs/theorems；QA 永不起草或维护 lean 的内容（反之亦然）。
 
-1. **CLI / HTTP — preferred, default.** The qatlas client (`qatlas paper …`) and the REST surface
-   (`GET /api/papers/lookup`, `/api/papers/{id}/markdown`, `/stats`, `/needs-mineru`) under a
-   `papers:read` PAT. lean holds **no QA DB credentials**, so QA may evolve its physical schema
-   freely behind the stable HTTP contract. A **new QA MCP server** wraps this same read surface as
-   self-describing tools (the MCP tool schema *is* the doc), so qatlas-lean's claim extraction and
-   literature/reference workflow can consume QA's paper/corpus data without direct DB access.
-2. **Read-only SQL — retained, secondary.** A direct read-only role on QA's PostgreSQL
-   (`papers` + `paper_assets` + `openalex_works` — the redesigned catalog of ADR `0009` and the
-   corpus of ADR `0010`, which drops the `work_referenced` edge table), used **only** when a query
-   needs a join/scan that HTTP cannot express efficiently. This is **no longer "deferred"**: it is a kept,
-   documented capability — but the fallback, not the default, because it couples lean to QA's
-   physical schema.
+1. **CLI / HTTP — 首选，默认。** qatlas client（`qatlas paper …`）以及 REST 接口面
+   （`GET /api/papers/lookup`, `/api/papers/{id}/markdown`, `/stats`, `/needs-mineru`），使用
+   `papers:read` PAT。lean **不持有 QA DB credentials**，因此 QA 可以在稳定 HTTP 合约
+   之后自由演进物理 schema。一个**新的 QA MCP server** 把同一个读取接口面包装成
+   自描述工具（MCP tool schema *就是* 文档），让 qatlas-lean 的 Claim 抽取与
+   文献/引用工作流不用直接 DB access 也能消费 QA 的 paper/corpus data。
+2. **Read-only SQL — 保留，次级。** QA PostgreSQL 上的直接只读 role
+   （`papers` + `paper_assets` + `openalex_works`——ADR `0009` 重构后的 catalog，以及 ADR
+   `0010` 的 corpus，后者删除了 `work_referenced` edge table），**只**在某个 query 需要
+   HTTP 无法高效表达的 join/scan 时使用。这**不再是 “deferred”**：它是保留并文档化的能力——
+   但它是 fallback，不是默认，因为它把 lean 耦合到 QA 的物理 schema。
 
-## Why `/api/papers/lookup` (the literature umbrella), not `/api/works` or `/api/openalex`
+## 为什么是 `/api/papers/lookup`（文献总入口），不是 `/api/works` 或 `/api/openalex`
 
-- The endpoint is a **path-only special case** under the existing `/api/papers/{path...}`
-  catch-all, joining `/api/papers/stats` and `/api/papers/needs-mineru`; `/api/papers/{id}/markdown`
-  and the rest of the per-id asset surface are untouched.
-- The lookup spans the **broader literature** (the OpenAlex corpus is mostly works QA does **not**
-  host) and flags each hit with `hosted`. A corpus hit that QA does not yet host can later trigger
-  a background PDF download + MinerU convert and **become** a hosted Paper — so a single
-  `/api/papers/` umbrella over "find literature" + "fetch a hosted Paper's assets" is coherent.
-- The glossary still keeps **Paper catalog** and **OpenAlex corpus** as distinct *data stores*
-  (ADR `0006`); the `/api/papers/` URL is only the literature *umbrella*. `works` / `openalex` were
-  rejected as the resource noun: `works` reads as the entity not the operation, and `openalex`
-  would weld the vendor name into the URL.
+- 这个端点是现有 `/api/papers/{path...}` catch-all 下的**仅 path 特例**，
+  与 `/api/papers/stats` 和 `/api/papers/needs-mineru` 并列；`/api/papers/{id}/markdown`
+  以及其余按 id 取资产的接口面不受影响。
+- lookup 覆盖**更广义的文献**（OpenAlex corpus 里大多是 QA **不** host 的 works），并用
+  `hosted` 标记每个命中。一个 QA 尚未 host 的 corpus 命中之后可以触发后台 PDF 下载 +
+  MinerU 转换，并**成为** hosted Paper——因此用单个 `/api/papers/` 总入口同时覆盖
+  “查找文献” + “获取 hosted Paper 的资产” 是一致的。
+- 术语表仍然把 **Paper catalog** 和 **OpenAlex corpus** 作为不同的 *数据存储*
+  （ADR `0006`）；`/api/papers/` URL 只是文献 *总入口*。`works` / `openalex` 作为
+  资源名词被否决：`works` 读起来像实体而不是操作，`openalex` 会把 vendor name 焊进 URL。
 
-## Why exact-only this iteration; fuzzy search deferred
+## 为什么本迭代只做 exact；fuzzy search 延后
 
-References are extracted from the **source paper**, which generally prints arXiv ids / DOIs, so an
-**exact batch lookup by id** is efficient (corpus by-id SQL) and sufficient now. Resolving an
-**id-less free-text citation** to the right work (fuzzy matching) is a harder, separate problem;
-it is split out as a future `/api/papers/<search>` capability and **not built this iteration**.
+引用（References）从**源论文**中抽取，而源论文通常会打印 arXiv ids / DOIs，所以
+**按 id 精确 batch lookup** 高效（corpus by-id SQL）且当前足够。把一个**无 id 的自由文本 citation**
+解析到正确 work（fuzzy matching）是更难的独立问题；它被拆成未来的 `/api/papers/<search>` 能力，
+**本迭代不构建**。
 
-## Why file-with-warning, not block, on an unresolved Reference
+## unresolved Reference 为什么带 warning 提交，而不是阻塞
 
-References **enrich** a Claim; they are not a correctness gate. OpenAlex coverage gaps (a brand-new
-preprint, a book with no DOI, a typo'd id) must not block filing an otherwise-good Claim. The
-contrib WebUI shows an unresolved Reference with a warning; the human drops / edits / keeps it. A
-kept-unresolved Reference is stored as its raw `kind:id` with `"resolved": false`.
+引用（References）是为 Claim **增补信息**；它们不是正确性门控。OpenAlex 覆盖缺口（全新 preprint、
+无 DOI 的书、打错的 id）不应阻止提交一个其它方面良好的 Claim。contrib WebUI 对 unresolved
+Reference 显示 warning；人来删除 / 编辑 / 保留它。保留下来的 unresolved Reference 以原始
+`kind:id` 和 `"resolved": false` 存储。
 
-## Considered options
+## 备选方案
 
-- **Bare ID (kind inferred)** / **full URI** — rejected (see "Why namespaced `kind:id`").
-- **Client-side public-API resolution** — rejected: redundant against ADR `0006`'s local corpus;
-  spreads load onto each user's OpenAlex key for data we already hold.
-- **A new `/api/works` or `/api/openalex` resource** — rejected in favour of the `/api/papers/`
-  literature umbrella + a `hosted` flag.
-- **Block Confirm until every Reference resolves** — rejected: brittle against corpus coverage gaps.
+- **Bare ID（推断 kind）** / **full URI** — 否决（见“为什么是带命名空间的 `kind:id`”）。
+- **客户端 public-API 解析** — 否决：与 ADR `0006` 的本地 corpus 冗余；还会把我们已经持有的数据的负载分摊到每个用户的 OpenAlex key 上。
+- **新增 `/api/works` 或 `/api/openalex` resource** — 否决，改用 `/api/papers/` 文献总入口
+  + `hosted` flag。
+- **直到每个 Reference 都解析成功才允许 Confirm** — 否决：面对 corpus 覆盖缺口太脆弱。
 
-## Consequences
+## 影响
 
-- `GET /api/papers/lookup` lands as a path-only special case under `/api/papers/{path...}`. The
-  `papers/getCitedRefs` stub's role is clarified as the paper-centric "what works does paper X
-  cite" query, whose result items are themselves resolvable via `lookup`.
-- `claims.json` and the gitea issue body gain a `references` list of `kind:id` (+ a `resolved`
-  flag); the format is locked by issue history (no backwards-compat is owed pre-launch, but issue
-  history is the practical lock).
-- **Prover access model decided (supersedes the earlier "read view deferred").** The prover reads
-  QA via **CLI/HTTP preferred (+ a new self-documenting MCP), with a retained read-only SQL role as
-  the secondary path** (see "How the prover accesses QA"). The earlier deferral is resolved: the DB
-  path is *retained, not deferred*, but demoted below CLI/HTTP. The original handoff's "design the
-  prover's PG read schema this pass" is therefore re-scoped to a **read-only schema contract** for
-  the secondary path, not a bespoke prover DB view.
-- **Both access paths are documented.** CLI/HTTP: the `qatlas paper` CLI docs (`docs/client/`) +
-  REST API docs (`docs/server/rest-api.md` + the generated OpenAPI/Swagger at `/swagger/`,
-  regenerated by `pixi run swagger`) + the new MCP server (self-describing tool schemas).
-  Read-only SQL: a published read-only schema contract (the stable readable subset of `papers`
-  / `paper_assets` / `openalex_works` — ADR `0009`/`0010`) + the read-only role grant.
-- **New build item — a QA MCP server** over the papers read surface (lookup + markdown + stats),
-  net-new (QA has no MCP today). It re-exposes the same `papers:read` HTTP capability as MCP tools;
-  it opens **no write path**.
-- **Fuzzy free-text literature search is a known future capability**, not built this iteration.
-- qatlas-lean remains the place where claim extraction and literature/reference workflow runs; QA
-  only exposes the read-only paper/corpus substrate through CLI/HTTP, MCP, and the secondary
-  read-only SQL path above.
+- `GET /api/papers/lookup` 作为 `/api/papers/{path...}` 下的仅 path 特例落地。
+  `papers/getCitedRefs` stub 的角色被澄清为以 paper 为中心的 “paper X cite 了哪些 works” query，
+  其结果 items 自身也可通过 `lookup` 解析。
+- `claims.json` 和 gitea issue body 增加一个 `references` list，元素为 `kind:id`（加一个
+  `resolved` flag）；格式由 issue history 锁定（上线前不欠 backwards-compat，但 issue
+  history 是实际锁）。
+- **证明器访问模型已决策（取代早期 “read view deferred”）。** 证明器通过
+  **优先 CLI/HTTP（+ 一个新的 self-documenting MCP），保留 read-only SQL role 作为次级路径**
+  读取 QA（见“证明器如何访问 QA”）。早期 deferral 已解决：DB path 是 *retained, not deferred*，
+  但降级到 CLI/HTTP 之下。因此原交接里的 “design the prover's PG read schema this pass”
+  被重新收束为次级路径的**只读 schema contract**，而不是 bespoke prover DB view。
+- **两条访问路径都要文档化。** CLI/HTTP：`qatlas paper` CLI docs（`docs/client/`）+
+  REST API docs（`docs/server/rest-api.md` + `/swagger/` 上生成的 OpenAPI/Swagger，
+  由 `pixi run swagger` 重新生成）+ 新 MCP server（self-describing tool schemas）。
+  Read-only SQL：发布只读 schema contract（`papers` / `paper_assets` / `openalex_works`
+  的稳定可读子集——ADR `0009`/`0010`）+ read-only role grant。
+- **新增构建项——覆盖 papers read surface 的 QA MCP server**（lookup + markdown + stats），
+  纯新增（QA 目前没有 MCP）。它把同一个 `papers:read` HTTP capability 重新暴露为 MCP tools；
+  它**不开放任何写入路径**。
+- **Fuzzy free-text literature search 是已知未来能力**，本迭代不构建。
+- qatlas-lean 仍然是运行 Claim 抽取和文献/引用工作流的地方；QA 只通过
+  CLI/HTTP、MCP，以及上述次级 read-only SQL path 暴露只读 paper/corpus 基底。
