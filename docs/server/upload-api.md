@@ -296,12 +296,14 @@ images/doi/10.1103/physrevlett.123.070501.zip
 
 The DOI is lower-cased (DOIs are case-insensitive); nested slashes in
 the suffix become `__`. In the PostgreSQL catalog the contribution is a
-`paper_works` row keyed `arxiv_id = "doi:<doi>"` (reusing the primary key
-for atomic, race-safe upsert) with `identifier_scheme = 'doi'`,
-`source = 'doi-upload'`, and the asset pointers + verification fields below.
+`papers` row with `paper_doi` set plus a `paper_assets` row with
+`source = 'published'` holding the asset pointers (ADR 0009). When the
+OpenAlex verification links the DOI to an arXiv id QA already hosts, the
+published asset **attaches to that existing paper** (one work, an arXiv
+asset + a published asset) instead of creating a separate row.
 
-> **Canonical resolution (DOI wins)**: a `paper_works` row with
-> `identifier_scheme='doi'` ALWAYS takes precedence over its arxiv twin
+> **Canonical resolution (DOI wins)**: a `papers` row with a
+> `paper_doi` ALWAYS takes precedence over its arxiv twin
 > when both exist. `GET /api/papers/<id>/...` serves the DOI bytes
 > whether the caller supplied the DOI or the linked arxiv id; DOI is
 > the canonical identity of the *published* version, the arxiv preprint
@@ -314,7 +316,8 @@ for atomic, race-safe upsert) with `identifier_scheme = 'doi'`,
 >    namespace first; on miss, the request falls through to OpenAlex,
 >    which may surface an arxiv twin to serve.
 > 2. **Caller passes an arxiv id** — the dispatcher reverse-looks-up
->    `doi_arxiv_id = <bare arxiv id>` to find any DOI twin. Hit → the
+>    `papers.paper_arxiv_id = <bare arxiv id>` for a row that also carries
+>    a `paper_doi`. Hit → the
 >    request is redirected to the DOI handlers; miss → regular arxiv
 >    path. Redirects are observable via the `X-QAtlas-Canonical-DOI`
 >    response header and a `served_as_doi_canonical (…; pass
@@ -351,9 +354,8 @@ curl -X POST \
     "https://quantum-atlas.ai/api/papers/10.1103/PhysRevLett.123.070501/upload-pdf"
 ```
 
-The outcome is **recorded** on the node (`verification_status`,
-`doi_title`, `doi_authors`, `doi_arxiv_id`, `verified_at`) and returned
-whenever the upload actually writes bytes:
+The outcome is **recorded** on the paper (`paper_verification_status`,
+`paper_title`) and returned whenever the upload actually writes bytes:
 
 - response header `X-QAtlas-Verification: <status>`
 - response body `verification` block (`status`, `title`, `authors`,
@@ -371,10 +373,10 @@ whenever the upload actually writes bytes:
 > **Metadata preservation under failure:** when the server cannot resolve
 > the DOI on a given upload (transient OpenAlex outage, server unconfigured,
 > or `doi-not-found`), the catalog write preserves any previously-stored
-> `doi_title` / `doi_authors` / `doi_arxiv_id` rather than overwriting them
-> with empty values — a transient failure during a re-upload must never
-> erase a prior verified record. `verification_status` itself is always
-> overwritten so operators see the latest attempt.
+> `paper_title` rather than overwriting it with an empty value — a transient
+> failure during a re-upload must never erase a prior verified record.
+> `paper_verification_status` itself is always overwritten so operators see
+> the latest attempt.
 
 | `verification_status`  | Meaning                                                             |
 | ---------------------- | ------------------------------------------------------------------- |
