@@ -391,12 +391,15 @@ Wiki 页面本身的格式规范（页面类型、frontmatter schema、命名前
 ## 5. 客户端插件系统（`qatlas` CLI 插件）
 
 `qatlas` 客户端有一个轻量插件机制：插件可以往 CLI 里注册**顶层命令**（`qatlas <name>`）
-或 **contrib 子命令**（`qatlas contrib <name>`）。内置两个插件，都按环境/配置**自动启停**：
+或 **contrib 子命令**（`qatlas contrib <name>`）。内置 `lean` 透传插件，按是否配置了 checkout
+**自动启停**：
 
 | 插件 | 贡献的命令 | 默认 | 怎么开 |
 |---|---|---|---|
-| `claim` | `qatlas contrib claim`（§6 的本地 WebUI） | **关** | `export QATLAS_CLAIM_PLUGIN=1` 或 `qatlas config set claim_plugin_enabled true` |
 | `lean` | `qatlas lean <subcommand>`（透传到本地 qatlas-lean checkout） | 配了 checkout 就**开** | `export QATLAS_LEAN_DIR=<path>` 或 `qatlas config set lean_dir <path>` |
+
+> 旧的 `claim` 插件（`qatlas contrib claim` 本地 WebUI）**已停维并移除**：claim 草稿 + 提
+> issue 的流程整体迁到上游 qatlas-lean（`qatlas-lean contrib claim`——见 ADR 0008，取代 0005）。
 
 `qatlas --help` 会列出当前可用的插件命令；第三方插件可通过 `qatlas.plugins` entry point 注册。
 
@@ -408,52 +411,44 @@ Wiki 页面本身的格式规范（页面类型、frontmatter schema、命名前
 ```bash
 export QATLAS_LEAN_DIR=~/path/to/qatlas-lean   # 或 qatlas config set lean_dir <path>
 qatlas lean help                                # 等价于在那个 checkout 里跑 ./qatlas-lean help
-qatlas lean precompute-claims --paper 2208.06941   # scout→statement→enricher 填 lean 的 claim bank
+qatlas lean contrib claim 2208.06941            # 起草 Claim + 提 type/theorem issue（§6）
 qatlas lean start                               # 起 dashboard；start-daemon / status / logs / …
 ```
 
-claim 草稿、提 issue、证明全部走 lean 自己那套（`precompute-claims` 填 claim bank，
-daemon 提 issue 并证明）；`qatlas lean` 只是个统一入口。
+claim 草稿、提 issue、证明全部走 lean 自己那套（`contrib claim` 的本地 WebUI 起草 + 提 issue，
+daemon 接 issue 并证明）；`qatlas lean` 只是个统一入口。
 
 ---
 
-## 6. 起草 Claim 并提 issue：`qatlas contrib claim`（claim 插件）
+## 6. 起草 Claim 并提 issue：已迁到上游 lean（`qatlas-lean contrib claim`）
 
-> 这条命令由 **claim 插件**提供，默认**关闭**（贡献流程正逐步迁到上游 lean 侧——见 §5）。
-> 先 `export QATLAS_CLAIM_PLUGIN=1`（或 `qatlas config set claim_plugin_enabled true`）才会出现。
+> claim 草稿 + 提 `type/theorem` issue 的 WebUI **已从 QA 客户端迁到上游 qatlas-lean 仓库**
+> （见 ADR 0008，取代旧的 ADR 0005）。QA 不再内置 claim 插件；它只继续当**文献 host**
+> （被读：取论文字节 + 解析 references），从不写 issue。
 
 把一篇论文里"可形式化的命题"（**Claim**——预证明的近似逐字自然语言陈述）整理成一个
 `type/theorem` gitea issue，交给上游 Lean prover（`agony/qatlas-lean`）去证。**这是
-localhost 的人在环路（human-in-the-loop）工作流**，不经过 QA server 的写路径
-（server 只被读：取论文字节 + 解析 references）。详见 ADR 0005 / 0007。
+localhost 的人在环路（human-in-the-loop）工作流**，不经过 QA server 的写路径。
 
+在 qatlas-lean checkout 里直接跑，或经 QA 的 `lean` 透传插件：
 
 ```bash
-# 需要可选的 WebUI 依赖（FastAPI/uvicorn）：
-uv tool install 'quantum-atlas[contrib]'   # 或 pip install 'quantum-atlas[contrib]'
-
-# 启用 claim 插件（默认关）：
-export QATLAS_CLAIM_PLUGIN=1                # 或 qatlas config set claim_plugin_enabled true
-
-# gitea 凭据（提 issue 用你自己的 token）：
-export GITEA_HOST=https://git.example.com       # 或 --gitea-url
-export GITEA_ACCESS_TOKEN=<your-gitea-token>    # 或 --gitea-token
-# 仓库默认 agony/qatlas-lean，可用 --gitea-repo 覆盖
-
-qatlas contrib claim 2208.06941        # 起一个 localhost WebUI + 自动开浏览器
-qatlas contrib claim 10.22331/q-2023-03-20-955 --no-browser --port 8731
+# 直接在 qatlas-lean checkout 里：
+./qatlas-lean contrib claim 2208.06941
+# 或经 QA 的 lean 透传插件（配了 lean_dir 后等价）：
+qatlas lean contrib claim 10.22331/q-2023-03-20-955 --no-browser --port 8731
 ```
 
-流程：
+流程（实现细节见 qatlas-lean 的 README / `docs/cli.md`）：
 
-1. 客户端用 **suspend-and-wait** 端点（`GET /api/papers/{id}/markdown`，202 →
-   poll → 200）把论文 markdown 取下来——PDF 还没下载/转换时 server 会后台静默处理。
-2. WebUI 里**起草 Claim**：有 LLM key（`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`）时点
-   "Draft with agent" 让 agent 抽取所有可形式化命题；没有 key 就手填（manual 模式照样能用）。
+1. qatlas-lean 用 **suspend-and-wait** 端点（`GET /api/papers/{id}/markdown`，202 →
+   poll → 200）从 QA 把论文 markdown 取下来——PDF 还没下载/转换时 server 后台静默处理。
+2. WebUI 里**起草 Claim**：点 "Draft with agent" 让 qatlas-lean 自己的 CLI flat-agent
+   （`claim-drafter`，**不用 SDK / 不需要 LLM key**）抽取所有可形式化命题；也可手填（manual 模式）。
 3. 每条 Claim 编辑：近似逐字的自然语言陈述、LaTeX、假设、`source-md` 行号、**references**
    （命名空间无版本 `kind:id`，如 `arxiv:2208.06941` / `openalex:W…` / `doi:10.x/y`）。
-4. "Resolve references" 走 `GET /api/papers/lookup` 解析 references 元数据；语料库不可达时
-   client 自动回落公共 OpenAlex API。
+4. "Resolve references" 走 QA 的 `GET /api/papers/lookup` 解析 references 元数据；语料库不可达时
+   自动回落公共 OpenAlex API（ADR 0007 的契约不变，只是改由 qatlas-lean 调）。
 5. **"Confirm claim / 确认 claim"** → 提**一个** `type/theorem` + `status/ready` issue。
    **幂等**：如果已有一个 open issue 带相同 `claim_id`，直接拒绝并给出已存在 issue 的 URL
    （不重复提、不自动更新——daemon 可能正在证它）。

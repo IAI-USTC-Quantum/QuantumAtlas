@@ -33,7 +33,8 @@ The plugin id is **`theorems`**, not `lean`. Reasons:
   QA pulls it.
 - Consistent with graph/rag (same-language Go builtin, read-through a backend, `/api/*`).
 - The handoff removed the orchestrating daemon: **claim drafting and issue filing are a human
-  + a localhost contrib agent webui** (`qatlas contrib claim`), not a host poll/push loop.
+  + a localhost contrib agent webui** (`qatlas-lean contrib claim` — moved to the upstream lean
+  repo by ADR `0008`), not a host poll/push loop.
   There is no longer a daemon to hold the WS connection.
 - One git-pull endpoint per plugin is far less to operate than a WS server + connection lifecycle.
 

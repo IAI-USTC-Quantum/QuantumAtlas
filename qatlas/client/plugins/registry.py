@@ -15,12 +15,6 @@ def _builtin_plugins() -> list[QatlasPlugin]:
     # Imported lazily + defensively so a broken/optional plugin never blocks
     # the rest of the CLI.
     try:
-        from qatlas.client.claim.plugin import ClaimPlugin
-
-        plugins.append(ClaimPlugin())
-    except Exception:  # noqa: BLE001
-        pass
-    try:
         from qatlas.client.leanplugin.plugin import LeanPlugin
 
         plugins.append(LeanPlugin())

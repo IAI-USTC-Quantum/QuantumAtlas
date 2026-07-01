@@ -1,4 +1,4 @@
-"""``qatlas contrib`` — contributor-side workflows (upload + local MinerU + claim).
+"""``qatlas contrib`` — contributor-side workflows (upload + local MinerU).
 
 This is a thin dispatcher over the contributor backends:
 
@@ -9,9 +9,10 @@ This is a thin dispatcher over the contributor backends:
 * ``qatlas contrib mineru <DOI> --zip …`` → ``qatlas.client.upload``
   (direct upload of a pre-made MinerU result zip; DOI-only — arXiv papers
   go through the runner so claim/lease/upload stay one unit)
-* ``qatlas contrib claim <ARXIV|DOI>`` → ``qatlas.client.claim`` (localhost
-  WebUI + agent that drafts Claims and files ``type/theorem`` gitea issues;
-  needs the optional ``qatlas[contrib]`` extras — see ADR 0005)
+
+Note: claim drafting + ``type/theorem`` issue filing moved to the upstream lean
+repo (``qatlas-lean contrib claim`` — see ADR 0008); QA's client claim plugin was
+retired. ``qatlas lean contrib claim …`` still reaches it via the ``lean`` passthrough.
 
 These group what contributors actually do day-to-day under a single
 resource-ish noun (`contrib`); power-user verbs (`config`, `auth`, `wiki`,
@@ -54,8 +55,9 @@ full per-subcommand argument set.
 """,
         end="",
     )
-    # Plugin-contributed subcommands (e.g. `claim` when the claim plugin is
-    # enabled) only appear when active.
+    # Plugin-contributed subcommands (from any active client plugin) only
+    # appear when active. (None are built in today; the retired claim plugin
+    # used to add one — its flow now lives in qatlas-lean, see ADR 0008.)
     plugin_subs = _plugin_subcommands()
     if plugin_subs:
         print("\nPlugin subcommands:")
@@ -149,8 +151,9 @@ _BUILTIN_SUBCOMMANDS: Mapping[str, callable] = {
 def _subcommands() -> dict:
     """Built-in subcommands merged with active plugin subcommands.
 
-    `claim` (the localhost Claim-drafting WebUI) is contributed by the claim
-    plugin and only appears when that plugin is enabled (ADR 0005).
+    Active client plugins may contribute ``qatlas contrib <name>`` subcommands;
+    none are built in today. (The retired claim plugin used to add ``claim`` —
+    that flow moved to ``qatlas-lean contrib claim``, see ADR 0008.)
     """
     out: dict = dict(_BUILTIN_SUBCOMMANDS)
     for name, spec in _plugin_subcommands().items():

@@ -5,8 +5,8 @@ them. Two contribution surfaces:
 
 * **top-level commands** — ``qatlas <name> ...`` (e.g. the ``lean`` plugin
   exposes ``qatlas lean <subcommand>``);
-* **contrib subcommands** — ``qatlas contrib <name> ...`` (e.g. the ``claim``
-  plugin exposes ``qatlas contrib claim``).
+* **contrib subcommands** — ``qatlas contrib <name> ...`` (a plugin may add a
+  subcommand under the existing ``qatlas contrib`` group; none are built in today).
 
 Plugins are discovered from a built-in list plus ``qatlas.plugins`` Python
 entry points; each declares whether it is ``available()`` in the current

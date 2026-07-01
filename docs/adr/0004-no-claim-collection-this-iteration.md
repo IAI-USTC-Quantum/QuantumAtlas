@@ -5,8 +5,9 @@ PocketBase, do **not** add a `/claims` page to QA's WebUI, and do **not** keep t
 `internal/theorems/` (which actually stored Claims, not Theorems) or `internal/verifications/`
 collections, routes, or hostapi methods that `b79e622` + `160f806` added. They are removed.
 
-Claim drafting and issue filing happen entirely **on the user's localhost**, in a Copilot-SDK-
-driven contrib agent + WebUI (`qatlas contrib claim` — see ADR `0005`). The "Confirm claim"
+Claim drafting and issue filing happen entirely **in the upstream lean repo** (`qatlas-lean`'s
+`contrib claim` localhost WebUI — see ADR `0008`, which moved this off the QA client; originally a
+QA-side Copilot-SDK plugin under ADR `0005`). The "Confirm claim"
 button in that localhost WebUI **only files a gitea issue** on `agony/qatlas-lean`. QA's server
 sees nothing until the issue produces a proved Theorem that lands in the upstream Lean-content
 repo and the **theorems plugin** pulls it (ADR `0002`).

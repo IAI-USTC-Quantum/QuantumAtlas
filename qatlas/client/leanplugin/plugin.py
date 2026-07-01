@@ -19,7 +19,7 @@ class LeanPlugin(QatlasPlugin):
             "lean": CommandSpec(
                 _run,
                 "Drive a local qatlas-lean checkout's CLI "
-                "(start / daemon / dashboard / precompute-claims / status …)",
+                "(start / daemon / dashboard / contrib claim / status …)",
             )
         }
 
@@ -64,7 +64,7 @@ def _run(argv: list[str]) -> int:
             f"  checkout: {path}\n\n"
             "Usage:  qatlas lean <subcommand> [args...]\n"
             "Run `qatlas lean help` for the full qatlas-lean command surface "
-            "(start / daemon / dashboard / precompute-claims / status / logs / …).",
+            "(start / daemon / dashboard / contrib claim / status / logs / …).",
         )
         if not argv:
             return 0

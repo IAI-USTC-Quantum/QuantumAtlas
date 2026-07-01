@@ -198,9 +198,6 @@ class ServerConfig(BaseSettings):
     # checkout exists), the `lean` plugin exposes `qatlas lean <subcommand>`
     # as a passthrough to that checkout's CLI. Env QATLAS_LEAN_DIR overrides.
     lean_dir: Optional[str] = Field(default=None)
-    # The Claim-drafting WebUI plugin (`qatlas contrib claim`) is OFF by
-    # default; enable it here or via env QATLAS_CLAIM_PLUGIN. (ADR 0005)
-    claim_plugin_enabled: bool = Field(default=False)
 
     @property
     def public_base_url(self) -> Optional[str]:

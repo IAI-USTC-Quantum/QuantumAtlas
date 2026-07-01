@@ -1,5 +1,9 @@
 # Claim drafting lives in a localhost contrib agent + WebUI
 
+_Superseded by ADR `0008` — claim drafting + issue filing moved out of the QA client into the
+upstream lean repo (`qatlas-lean`'s `contrib claim` WebUI, CLI agents not SDK). The decision below
+is kept as the record of what we first shipped; read `0008` for the current boundary._
+
 The `qatlas contrib claim` command starts a **localhost** WebUI and a Copilot-SDK-driven custom
 agent that, with a human in the loop, drafts one or more Claims against a paper (paper-of-record +
 near-verbatim NL statement + stated/implicit assumptions + reference IDs the agent resolved

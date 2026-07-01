@@ -1,4 +1,4 @@
-"""Tests for the qatlas client plugin system (registry + claim/lean gating)."""
+"""Tests for the qatlas client plugin system (registry + lean gating)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 
-from qatlas.client.claim.plugin import ClaimPlugin, claim_plugin_enabled
 from qatlas.client.leanplugin.plugin import LeanPlugin, lean_dir
 from qatlas.client.leanplugin.runner import run_lean
 from qatlas.client.plugins import registry
@@ -16,27 +15,12 @@ from qatlas.client.plugins import registry
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
-    monkeypatch.delenv("QATLAS_CLAIM_PLUGIN", raising=False)
     monkeypatch.delenv("QATLAS_LEAN_DIR", raising=False)
     # Isolate from any real config.yaml on the host.
     monkeypatch.setattr(
         "qatlas.config.ServerConfig.from_env",
         classmethod(lambda cls: cls()),
     )
-
-
-def test_claim_plugin_disabled_by_default():
-    assert claim_plugin_enabled() is False
-    assert ClaimPlugin().available() is False
-
-
-@pytest.mark.parametrize("val", ["1", "true", "yes", "on", "TRUE"])
-def test_claim_plugin_enabled_via_env(monkeypatch, val):
-    monkeypatch.setenv("QATLAS_CLAIM_PLUGIN", val)
-    assert claim_plugin_enabled() is True
-    assert ClaimPlugin().available() is True
-    subs = ClaimPlugin().contrib_subcommands()
-    assert "claim" in subs and callable(subs["claim"].handler)
 
 
 def test_lean_plugin_unavailable_without_checkout():
@@ -90,7 +74,7 @@ def test_registry_top_level_includes_lean_when_configured(tmp_path, monkeypatch)
     assert "lean" in registry.top_level_commands()
 
 
-def test_registry_contrib_includes_claim_when_enabled(monkeypatch):
+def test_registry_contrib_has_no_builtin_subcommands():
+    # The claim plugin (the only contrib-subcommand plugin) was retired (ADR 0008);
+    # no built-in plugin contributes a `qatlas contrib <name>` subcommand now.
     assert "claim" not in registry.contrib_subcommands()
-    monkeypatch.setenv("QATLAS_CLAIM_PLUGIN", "1")
-    assert "claim" in registry.contrib_subcommands()
