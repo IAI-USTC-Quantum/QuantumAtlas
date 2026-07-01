@@ -195,22 +195,30 @@ var schemaStatements = []string{
 		ON openalex_audit (openalex_id, field)`,
 
 	// Domain-subset embeddings, 1:1 with openalex_works. vector(1024) =
-	// BGE-M3 dense dim (EmbeddingDim). The HNSW index + population belong
-	// to the later subset-embedding phase (not built here: empty table,
-	// and the index is cheaper to build after a bulk load). FK with
-	// ON DELETE CASCADE because the subset is small.
-	`CREATE TABLE IF NOT EXISTS work_embeddings (
-		openalex_id text PRIMARY KEY REFERENCES openalex_works(openalex_id) ON DELETE CASCADE,
-		embedding vector(1024) NOT NULL,
-		model text NOT NULL,
-		created_at timestamptz NOT NULL DEFAULT now()
-	)`,
+	// BGE-M3 dense dim (EmbeddingDim). Guarded by a pgvector-exists DO
+	// block so EnsureSchema is safe to run at boot on a database without
+	// the `vector` extension (the table is created here once pgvector is
+	// present — the operator bootstrap provisions it). The HNSW index +
+	// population belong to the later subset-embedding phase.
+	`DO $$
+	BEGIN
+		IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector') THEN
+			EXECUTE 'CREATE TABLE IF NOT EXISTS work_embeddings (
+				openalex_id text PRIMARY KEY REFERENCES openalex_works(openalex_id) ON DELETE CASCADE,
+				embedding vector(1024) NOT NULL,
+				model text NOT NULL,
+				created_at timestamptz NOT NULL DEFAULT now()
+			)';
+		END IF;
+	END $$`,
 }
 
 // EnsureSchema applies all tables + indexes. Idempotent (every statement
-// is IF NOT EXISTS). Returns ErrCorpusUnavailable when the backend is
-// unreachable — schema is retried on the next bootstrap. Requires the
-// `vector` extension (provisioned by the pgvector image / initdb hook).
+// is IF NOT EXISTS / CREATE OR REPLACE / a guarded DO block) and safe to
+// run at boot: the pgvector-dependent work_embeddings table is created
+// only when the `vector` extension is present, so a database without
+// pgvector still boots. Returns ErrCorpusUnavailable when the backend is
+// unreachable — schema is retried on the next attempt.
 func (s *Store) EnsureSchema(ctx context.Context) error {
 	if !s.ensure(ctx) {
 		return ErrCorpusUnavailable

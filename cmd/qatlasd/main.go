@@ -387,7 +387,15 @@ func main() {
 			// retry with a generous per-attempt timeout until every constraint +
 			// index exists. Missing schema degrades correctness (uniqueness) +
 			// performance, so we keep retrying rather than wait for the next boot.
-			go ensureCatalogSchema(catalog)
+			//
+			// The OpenAlex corpus BASE schema is created here too (openalex_works
+			// + sync-state + audit; the pgvector-guarded work_embeddings is a
+			// no-op without the extension). This makes openalex_works exist at
+			// boot so (a) papers' paper_openalex_id FK can be added and (b) the
+			// corpus can be populated lazily (fetch-on-miss write-through, ADR
+			// 0006) — the bulk `openalex bootstrap-pg` is only an optional
+			// pre-warm, no longer a prerequisite.
+			go ensureCatalogSchema(catalog, corpus)
 		} else {
 			log.Printf("papers: catalog disabled (QATLAS_POSTGRES_DSN unset); /api/papers stats+queue report available:false")
 		}
@@ -650,8 +658,11 @@ func initPostgresPool(cfg *config.Config) (*pgxpool.Pool, error) {
 
 // ensureCatalogSchema applies the PostgreSQL tables + indexes in the
 // background, retrying until success. Each attempt gets a generous timeout
-// and statements are idempotent, so retries converge cheaply.
-func ensureCatalogSchema(catalog *papers.Store) {
+// and statements are idempotent, so retries converge cheaply. The OpenAlex
+// corpus BASE schema is applied first so openalex_works exists before the
+// papers catalog adds its paper_openalex_id FK (and so the corpus is ready
+// for lazy fetch-on-miss writes).
+func ensureCatalogSchema(catalog *papers.Store, corpus *openalexcorpus.Store) {
 	const (
 		attemptTimeout = 90 * time.Second
 		retryDelay     = 30 * time.Second
@@ -659,14 +670,15 @@ func ensureCatalogSchema(catalog *papers.Store) {
 	)
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		ctx, cancel := context.WithTimeout(context.Background(), attemptTimeout)
+		cErr := corpus.EnsureSchema(ctx)
 		err := catalog.EnsureSchema(ctx)
 		cancel()
-		if err == nil {
-			log.Printf("papers: catalog schema ensured")
+		if err == nil && cErr == nil {
+			log.Printf("papers: catalog + corpus schema ensured")
 			return
 		}
 		slog.Warn("papers: EnsureSchema attempt failed; retrying",
-			"attempt", attempt, "max", maxAttempts, "error", err)
+			"attempt", attempt, "max", maxAttempts, "catalog_error", err, "corpus_error", cErr)
 		time.Sleep(retryDelay)
 	}
 	slog.Error("papers: EnsureSchema gave up after retries (will retry next boot)")

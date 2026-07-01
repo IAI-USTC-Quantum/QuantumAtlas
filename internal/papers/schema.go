@@ -162,10 +162,12 @@ var schemaStatements = []string{
 	END $$`,
 
 	// papers.paper_openalex_id → openalex_works(openalex_id) (ADR 0009
-	// Q14). openalex_works is operator-provisioned (bootstrap-pg), so it
-	// may not exist at boot; the DO block adds the FK only once the corpus
-	// table is present, and is a no-op otherwise. A later boot (after the
-	// corpus bootstrap) installs it.
+	// Q14). The corpus base schema (openalex_works) is now created at boot
+	// alongside this catalog (see cmd/qatlasd ensureCatalogSchema), and the
+	// corpus is populated lazily (fetch-on-miss write-through, ADR 0006), so
+	// openalex_works reliably exists here. The guarded DO block still adds
+	// the FK conditionally — idempotent, and defensive if the corpus schema
+	// has not landed yet on this attempt (a later retry installs it).
 	`DO $$
 	BEGIN
 		IF EXISTS (

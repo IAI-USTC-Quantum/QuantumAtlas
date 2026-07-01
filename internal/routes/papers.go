@@ -94,7 +94,7 @@ func RegisterPapers(
 		// is a path-only special case (like stats / needs-mineru), resolving
 		// namespaced kind:id refs against the local OpenAlex corpus.
 		if raw == "lookup" {
-			return paperLookupHandler(re, catalog, corpus)
+			return paperLookupHandler(re, catalog, corpus, doiResolver)
 		}
 		// Asset-download endpoints are only registered when the
 		// operator opted in via QATLAS_PAPER_ACCESS_ENABLED. When

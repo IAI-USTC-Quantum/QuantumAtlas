@@ -394,45 +394,94 @@ func (r *Resolver) lookup(ctx context.Context, doi string) (string, error) {
 // require any arxiv presence — the full record (title, authors,
 // locations) is returned so callers can verify published-only works.
 func (r *Resolver) fetchWork(ctx context.Context, doi string) (Work, error) {
-	// PathEscape the DOI: the suffix can contain `/`, `?`, `#`, etc.
-	// We want them all percent-encoded so they don't terminate the
-	// path or start a query.
 	target := r.cfg.BaseURL + url.PathEscape(doi) + "?mailto=" + url.QueryEscape(r.cfg.Mailto)
+	body, err := r.getRaw(ctx, target)
+	if err != nil {
+		return Work{}, err
+	}
+	var work Work
+	if err := json.Unmarshal(body, &work); err != nil {
+		return Work{}, fmt.Errorf("%w: decode body: %v", ErrUpstream, err)
+	}
+	return work, nil
+}
 
+// FetchWorkRecord fetches one OpenAlex work live from the /works/ endpoint
+// by kind ("openalex" → /works/W…, "doi" → /works/doi:<doi>) and returns
+// BOTH the raw json record (for verbatim storage in the local corpus —
+// lazy fetch-on-miss write-through, ADR 0006) and the decoded Work. Returns
+// ErrNotConfigured when no mailto is set, ErrDOINotFound on a 404, and
+// ErrUpstream on transport / non-2xx / decode failures. "arxiv" is not a
+// /works/{id} key and returns ErrDOINotFound (resolve via the corpus filter).
+func (r *Resolver) FetchWorkRecord(ctx context.Context, kind, id string) (json.RawMessage, Work, error) {
+	if !r.enabled {
+		return nil, Work{}, ErrNotConfigured
+	}
+	// worksBase is the endpoint without the DOI convenience suffix, e.g.
+	// "https://api.openalex.org/works/".
+	worksBase := strings.TrimSuffix(r.cfg.BaseURL, "doi:")
+	var target string
+	switch kind {
+	case "openalex":
+		bare := strings.TrimSpace(id)
+		if bare == "" {
+			return nil, Work{}, ErrDOINotFound
+		}
+		target = worksBase + url.PathEscape(bare) + "?mailto=" + url.QueryEscape(r.cfg.Mailto)
+	case "doi":
+		norm, err := normalizeDOI(id, r.cfg.MaxDOILen)
+		if err != nil {
+			return nil, Work{}, err
+		}
+		// Keep "doi:" unescaped (a path prefix), escape only the DOI body —
+		// mirrors fetchWork's DOI-suffixed BaseURL behaviour.
+		target = worksBase + "doi:" + url.PathEscape(norm) + "?mailto=" + url.QueryEscape(r.cfg.Mailto)
+	default:
+		return nil, Work{}, ErrDOINotFound
+	}
+	body, err := r.getRaw(ctx, target)
+	if err != nil {
+		return nil, Work{}, err
+	}
+	var work Work
+	if err := json.Unmarshal(body, &work); err != nil {
+		return nil, Work{}, fmt.Errorf("%w: decode body: %v", ErrUpstream, err)
+	}
+	return json.RawMessage(body), work, nil
+}
+
+// getRaw performs a GET against target and returns the response body (bounded
+// read), mapping OpenAlex status codes onto the package's typed errors.
+func (r *Resolver) getRaw(ctx context.Context, target string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
-		return Work{}, fmt.Errorf("%w: build request: %v", ErrUpstream, err)
+		return nil, fmt.Errorf("%w: build request: %v", ErrUpstream, err)
 	}
 	req.Header.Set("User-Agent", "qatlasd (mailto:"+r.cfg.Mailto+")")
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := r.client.Do(req)
 	if err != nil {
-		return Work{}, fmt.Errorf("%w: http: %v", ErrUpstream, err)
+		return nil, fmt.Errorf("%w: http: %v", ErrUpstream, err)
 	}
 	defer resp.Body.Close()
 
 	switch {
 	case resp.StatusCode == http.StatusNotFound:
-		return Work{}, ErrDOINotFound
+		return nil, ErrDOINotFound
 	case resp.StatusCode == http.StatusTooManyRequests:
-		return Work{}, fmt.Errorf("%w: 429 rate-limited (check mailto / lower QPS)", ErrUpstream)
+		return nil, fmt.Errorf("%w: 429 rate-limited (check mailto / lower QPS)", ErrUpstream)
 	case resp.StatusCode != http.StatusOK:
-		return Work{}, fmt.Errorf("%w: http %d", ErrUpstream, resp.StatusCode)
+		return nil, fmt.Errorf("%w: http %d", ErrUpstream, resp.StatusCode)
 	}
 
 	// Bounded read so a malicious / misconfigured upstream can't
 	// blow up our memory.
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
 	if err != nil {
-		return Work{}, fmt.Errorf("%w: read body: %v", ErrUpstream, err)
+		return nil, fmt.Errorf("%w: read body: %v", ErrUpstream, err)
 	}
-
-	var work Work
-	if err := json.Unmarshal(body, &work); err != nil {
-		return Work{}, fmt.Errorf("%w: decode body: %v", ErrUpstream, err)
-	}
-	return work, nil
+	return body, nil
 }
 
 // cacheGet returns a non-expired entry from the LRU cache, if any.

@@ -2,9 +2,11 @@ package openalexcorpus
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/openalex"
 )
 
 // DefaultBatch is the number of works upserted per statement. Because the
@@ -127,6 +129,24 @@ func (s *Store) UpsertWorks(ctx context.Context, works []RawWork, updatedDate st
 		return 0, fmt.Errorf("openalexcorpus: upsert works: %w", err)
 	}
 	return len(ids), nil
+}
+
+// UpsertFetchedWork stores a single work fetched live from the OpenAlex API
+// (lazy fetch-on-miss write-through, ADR 0006): the local corpus is a cache,
+// and a by-id miss can be filled from the public API and written back so the
+// next read hits locally. raw is the verbatim json record; meta is its
+// decoded projection (for the openalex_id + arxiv_id derivation). Idempotent
+// (ON CONFLICT DO UPDATE). updatedDate is left empty (a live fetch is not a
+// snapshot partition). Returns ErrCorpusUnavailable when PostgreSQL is down.
+func (s *Store) UpsertFetchedWork(ctx context.Context, raw json.RawMessage, meta openalex.Work) error {
+	if !s.ensure(ctx) {
+		return ErrCorpusUnavailable
+	}
+	if shortID(meta.ID) == "" {
+		return fmt.Errorf("openalexcorpus: fetched work has no id")
+	}
+	_, err := s.UpsertWorks(ctx, []RawWork{{Record: raw, Meta: meta}}, "")
+	return err
 }
 
 // ListPartKeys returns the object keys of every works part under prefix in

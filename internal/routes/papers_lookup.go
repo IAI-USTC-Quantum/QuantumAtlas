@@ -3,6 +3,7 @@ package routes
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -20,7 +21,7 @@ import (
 // (ADR 0006). Each ref is a namespaced, unversioned `kind:id` string. The
 // response is per-ref `{ref, title, authors, year, hosted, resolved}`:
 //
-//   - hosted   — is this ref a Paper QuantumAtlas hosts (join vs paper_works)?
+//   - hosted   — is this ref a Paper QuantumAtlas hosts (join vs papers)?
 //   - resolved — did the OpenAlex corpus have it? false (not an error) for ids
 //     the corpus doesn't hold; the whole batch never errors on one miss.
 //
@@ -41,7 +42,7 @@ type lookupResult struct {
 	Resolved bool     `json:"resolved"`
 }
 
-func paperLookupHandler(re *core.RequestEvent, catalog *papers.Store, corpus *openalexcorpus.Store) error {
+func paperLookupHandler(re *core.RequestEvent, catalog *papers.Store, corpus *openalexcorpus.Store, resolver *openalex.Resolver) error {
 	refs := parseLookupIDs(re.Request.URL.Query().Get("ids"))
 	if len(refs) == 0 {
 		return re.JSON(http.StatusBadRequest, map[string]string{
@@ -51,6 +52,11 @@ func paperLookupHandler(re *core.RequestEvent, catalog *papers.Store, corpus *op
 
 	ctx := re.Request.Context()
 	corpusAvailable := corpus != nil && corpus.Available(ctx)
+	// Lazy fetch-on-miss (ADR 0006): the corpus is a write-through cache, so
+	// a by-id miss can be filled from the public OpenAlex API and written
+	// back. Only when the corpus is reachable (somewhere to write) and a
+	// resolver is configured (mailto set).
+	lazyFetch := corpusAvailable && resolver != nil && resolver.Enabled()
 
 	results := make([]lookupResult, 0, len(refs))
 	for _, ref := range refs {
@@ -66,7 +72,12 @@ func paperLookupHandler(re *core.RequestEvent, catalog *papers.Store, corpus *op
 		r.Hosted = catalogHosted(ctx, catalog, kind, id)
 
 		if corpusAvailable {
-			if work, found := corpusResolve(ctx, corpus, kind, id); found {
+			work, found := corpusResolve(ctx, corpus, kind, id)
+			if !found && lazyFetch {
+				// Cache miss: fetch live + write back so the next read is local.
+				work, found = fetchOnMiss(ctx, corpus, resolver, kind, id)
+			}
+			if found {
 				r.Title = strings.TrimSpace(work.Title)
 				r.Authors = openalex.AuthorNames(work)
 				r.Year = yearFromPubDate(work.PublicationDate)
@@ -80,6 +91,27 @@ func paperLookupHandler(re *core.RequestEvent, catalog *papers.Store, corpus *op
 		"results":          results,
 		"corpus_available": corpusAvailable,
 	})
+}
+
+// fetchOnMiss fills a corpus miss from the public OpenAlex API and writes the
+// record back (ADR 0006 write-through cache). Only "openalex" and "doi" refs
+// map to a /works/{id} GET; "arxiv" is not such a key, so it stays a
+// corpus-only lookup (found=false here). Any fetch / write error degrades to
+// found=false — a miss is never an error for the batch. On a successful fetch
+// the work is returned even if the write-back fails (the read still resolves).
+func fetchOnMiss(ctx context.Context, corpus *openalexcorpus.Store, resolver *openalex.Resolver, kind, id string) (openalex.Work, bool) {
+	if kind != "openalex" && kind != "doi" {
+		return openalex.Work{}, false
+	}
+	raw, work, err := resolver.FetchWorkRecord(ctx, kind, id)
+	if err != nil {
+		return openalex.Work{}, false
+	}
+	if err := corpus.UpsertFetchedWork(ctx, raw, work); err != nil {
+		slog.Warn("lookup: lazy corpus write-back failed", "kind", kind, "id", id, "error", err)
+		// Still return the fetched work — the read resolves even if caching failed.
+	}
+	return work, true
 }
 
 // parseLookupIDs splits the comma-separated ids param, trims, drops empties,
@@ -159,7 +191,7 @@ func corpusResolve(ctx context.Context, corpus *openalexcorpus.Store, kind, id s
 	return work, true
 }
 
-// catalogHosted reports whether a ref corresponds to a paper_works row (a Paper
+// catalogHosted reports whether a ref corresponds to a papers row (a Paper
 // QuantumAtlas hosts). Best-effort: a catalog miss or unavailability is "not
 // hosted", never an error for the batch.
 func catalogHosted(ctx context.Context, catalog *papers.Store, kind, id string) bool {
