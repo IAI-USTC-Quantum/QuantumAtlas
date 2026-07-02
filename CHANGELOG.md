@@ -4,6 +4,42 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.21.0a2 (2026-07-03)
+
+### BREAKING CHANGE
+
+- plugin.json transport enum replaced by kind + transport;
+/api/v1/theorems and /api/v1/verifications removed.
+- paper catalog now requires QATLAS_POSTGRES_DSN instead of using NEO4J_URI.
+
+### Feat
+
+- **papers**: by-id asset reads — PDF direct link, markdown bytes, ?format override
+- **client**: client plugin system + qatlas lean passthrough
+- **client**: add qatlas contrib claim localhost Claim-drafting WebUI
+- **web**: add /theorems pages
+- builtin plugin platform + theorems plugin + /api/papers/lookup
+- **openalex**: add PostgreSQL corpus ingest and query
+- add external plugin RPC integration
+- add plugin platform foundations
+
+### Fix
+
+- **papers**: bound the corpus store side of the detached lazy-load
+- **client**: keep the unregistered claim plugin self-consistent (ADR 0008)
+
+### Refactor
+
+- **papers**: extract internal/lazyload.Materializer for the corpus lookup
+- **openalex**: coalesce lazy work fetches via the shared singleflight
+- **openalex**: lazy fetch-on-miss write-through for the corpus
+- **server**: config-driven builtin plugin enablement
+- **client**: config-driven plugin enablement; claim is an off-by-default builtin
+- **papers**: surrogate-key papers + paper_assets catalog, rename lease
+- **openalex**: inline referenced_works + drop work_referenced; add sync-state + audit
+- retire client claim plugin, move claim authoring to lean repo (ADR-0008)
+- move paper catalog to PostgreSQL
+
 ## v0.21.0a1 (2026-06-20)
 
 ### BREAKING CHANGE
