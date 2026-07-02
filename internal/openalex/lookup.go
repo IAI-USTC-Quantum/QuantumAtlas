@@ -406,6 +406,13 @@ func (r *Resolver) fetchWork(ctx context.Context, doi string) (Work, error) {
 	return work, nil
 }
 
+// workFetchResult boxes FetchWorkRecord's two return values so they can
+// ride a single singleflight slot (Do returns a lone any).
+type workFetchResult struct {
+	raw  json.RawMessage
+	work Work
+}
+
 // FetchWorkRecord fetches one OpenAlex work live from the /works/ endpoint
 // by kind ("openalex" → /works/W…, "doi" → /works/doi:<doi>) and returns
 // BOTH the raw json record (for verbatim storage in the local corpus —
@@ -413,6 +420,15 @@ func (r *Resolver) fetchWork(ctx context.Context, doi string) (Work, error) {
 // ErrNotConfigured when no mailto is set, ErrDOINotFound on a 404, and
 // ErrUpstream on transport / non-2xx / decode failures. "arxiv" is not a
 // /works/{id} key and returns ErrDOINotFound (resolve via the corpus filter).
+//
+// Concurrent calls for the same work coalesce to one upstream hit via the
+// same singleflight.Group as ResolveDOI/LookupMetadata, keyed "work:<kind>:<id>"
+// so they never collide with the bare-doi (ResolveDOI) or "meta:" slots.
+// Unlike those two there is NO in-memory cache layer here: the corpus
+// (PostgreSQL) is the write-through cache and the caller persists the result
+// via UpsertFetchedWork, so an LRU copy of these large records would be
+// redundant. Coalescing still cuts a concurrent-miss stampede to a single
+// polite-pool request.
 func (r *Resolver) FetchWorkRecord(ctx context.Context, kind, id string) (json.RawMessage, Work, error) {
 	if !r.enabled {
 		return nil, Work{}, ErrNotConfigured
@@ -420,7 +436,7 @@ func (r *Resolver) FetchWorkRecord(ctx context.Context, kind, id string) (json.R
 	// worksBase is the endpoint without the DOI convenience suffix, e.g.
 	// "https://api.openalex.org/works/".
 	worksBase := strings.TrimSuffix(r.cfg.BaseURL, "doi:")
-	var target string
+	var target, sfKey string
 	switch kind {
 	case "openalex":
 		bare := strings.TrimSpace(id)
@@ -428,6 +444,7 @@ func (r *Resolver) FetchWorkRecord(ctx context.Context, kind, id string) (json.R
 			return nil, Work{}, ErrDOINotFound
 		}
 		target = worksBase + url.PathEscape(bare) + "?mailto=" + url.QueryEscape(r.cfg.Mailto)
+		sfKey = "work:openalex:" + bare
 	case "doi":
 		norm, err := normalizeDOI(id, r.cfg.MaxDOILen)
 		if err != nil {
@@ -436,18 +453,31 @@ func (r *Resolver) FetchWorkRecord(ctx context.Context, kind, id string) (json.R
 		// Keep "doi:" unescaped (a path prefix), escape only the DOI body —
 		// mirrors fetchWork's DOI-suffixed BaseURL behaviour.
 		target = worksBase + "doi:" + url.PathEscape(norm) + "?mailto=" + url.QueryEscape(r.cfg.Mailto)
+		sfKey = "work:doi:" + norm
 	default:
 		return nil, Work{}, ErrDOINotFound
 	}
-	body, err := r.getRaw(ctx, target)
+
+	// Detach from the caller context so one waiter's cancellation doesn't
+	// abort the shared fetch for the others (bounded by cfg.HTTPTimeout) —
+	// same rationale as ResolveDOI/LookupMetadata.
+	detachedCtx := context.WithoutCancel(ctx)
+	res, err, _ := r.sf.Do(sfKey, func() (any, error) {
+		body, ferr := r.getRaw(detachedCtx, target)
+		if ferr != nil {
+			return nil, ferr
+		}
+		var work Work
+		if uerr := json.Unmarshal(body, &work); uerr != nil {
+			return nil, fmt.Errorf("%w: decode body: %v", ErrUpstream, uerr)
+		}
+		return workFetchResult{raw: json.RawMessage(body), work: work}, nil
+	})
 	if err != nil {
 		return nil, Work{}, err
 	}
-	var work Work
-	if err := json.Unmarshal(body, &work); err != nil {
-		return nil, Work{}, fmt.Errorf("%w: decode body: %v", ErrUpstream, err)
-	}
-	return json.RawMessage(body), work, nil
+	out := res.(workFetchResult)
+	return out.raw, out.work, nil
 }
 
 // getRaw performs a GET against target and returns the response body (bounded
