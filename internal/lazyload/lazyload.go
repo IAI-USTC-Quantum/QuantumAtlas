@@ -110,9 +110,11 @@ type outcome[V any] struct {
 // Concurrent Get calls for the same key share a single execution: exactly one
 // runs Load→Loader→Store while the others wait and receive the same result. The
 // shared execution is detached from the caller's context so that one waiter's
-// cancellation cannot abort the load for the others (each caller still bounds
-// the real work through the timeouts baked into its Store/Loader). This mirrors
-// the context.WithoutCancel idiom already used by internal/openalex.Resolver.
+// cancellation cannot abort the load for the others. Because that also drops the
+// caller's deadline, a Store or Loader whose backend can hang MUST impose its own
+// timeout — a detached, deadline-less call would otherwise pin the shared
+// execution (and its goroutine) indefinitely. This mirrors the
+// context.WithoutCancel idiom already used by internal/openalex.Resolver.
 func (m *Materializer[V]) Get(ctx context.Context, key string) (V, bool, error) {
 	res, err, _ := m.sf.Do(key, func() (any, error) {
 		dctx := context.WithoutCancel(ctx)

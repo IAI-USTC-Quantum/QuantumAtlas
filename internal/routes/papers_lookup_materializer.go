@@ -5,11 +5,22 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"time"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/lazyload"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/openalex"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/openalexcorpus"
 )
+
+// corpusOpTimeout bounds a single corpus read/write. The Materializer detaches
+// the shared execution from the request deadline (to keep one caller's
+// cancellation from poisoning coalesced waiters), so — unlike the OpenAlex fetch,
+// which is already bounded by the resolver's HTTP timeout — the corpus DB calls
+// must impose their own bound here. Otherwise a hung/slow corpus query would pin
+// a handler goroutine + a pooled connection indefinitely, immune to client
+// disconnect (ADR 0012). Generous: corpus reads are indexed and the write-back is
+// a single upsert, so this only trips on a genuinely stuck backend.
+const corpusOpTimeout = 30 * time.Second
 
 // corpusValue is the value materialized by the OpenAlex-corpus lazy loader. It
 // carries both the verbatim record (Raw — what the corpus persists) and the
@@ -35,6 +46,8 @@ func (s corpusStore) Load(ctx context.Context, ref string) (corpusValue, bool, e
 	if !ok {
 		return corpusValue{}, false, nil
 	}
+	ctx, cancel := context.WithTimeout(ctx, corpusOpTimeout)
+	defer cancel()
 	work, found := corpusResolve(ctx, s.corpus, kind, id)
 	if !found {
 		return corpusValue{}, false, nil
@@ -49,6 +62,8 @@ func (s corpusStore) Store(ctx context.Context, ref string, v corpusValue) error
 	if len(v.Raw) == 0 {
 		return nil
 	}
+	ctx, cancel := context.WithTimeout(ctx, corpusOpTimeout)
+	defer cancel()
 	return s.corpus.UpsertFetchedWork(ctx, v.Raw, v.Work)
 }
 

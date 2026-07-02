@@ -63,8 +63,9 @@ dogpile.cache（Python）、foyer（Rust）、cache-manager（Node）、JCache/C
 - `/api/papers/lookup` 的 OpenAlex 语料解析改用 `Materializer`；`corpusResolve` 成为
   `Store.Load`，`UpsertFetchedWork` 成为 `Store.Store`，旧 `fetchOnMiss` 删除。对外
   contract、响应结构、"一个 miss/错误不拖垮整批"的语义**均不变**。
-- `Resolver.FetchWorkRecord` 自身的 singleflight 对该路径变为冗余（外层 `Materializer` 已合并），
-  但保留以保护任何直接调用者，无额外开销（内层永远只有 1 个 caller）。
+- `Resolver.FetchWorkRecord` 自身的 singleflight 对该路径基本冗余（外层 `Materializer` 已按 ref
+  合并，内层通常只剩 1 个 caller），但保留：它仍保护该方法未来的直接调用者，且能合并两个
+  文本不同、却归一到同一 DOI/id 的 ref。无额外开销。
 - PDF / Markdown **不接入** `Materializer`——它们是异步 job 模型，属于上面写明的能力边界之外。
 
 ## 备选方案与否决理由

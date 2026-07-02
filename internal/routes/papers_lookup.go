@@ -55,6 +55,14 @@ func paperLookupHandler(re *core.RequestEvent, catalog *papers.Store, corpus *op
 
 	results := make([]lookupResult, 0, len(refs))
 	for _, ref := range refs {
+		// Stop early if the client disconnected / the request deadline fired:
+		// the per-ref materialize is detached from this context (to protect
+		// coalesced waiters), so without this the batch would keep hitting the
+		// corpus + OpenAlex for a caller that has already gone away. In-flight
+		// singleflight work still completes and populates the cache.
+		if ctx.Err() != nil {
+			break
+		}
 		r := lookupResult{Ref: ref}
 		kind, id, ok := splitRef(ref)
 		if !ok {
