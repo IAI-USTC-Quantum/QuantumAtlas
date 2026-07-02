@@ -3,12 +3,12 @@ package routes
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
 	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/lazyload"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/openalex"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/openalexcorpus"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/papers"
@@ -42,7 +42,7 @@ type lookupResult struct {
 	Resolved bool     `json:"resolved"`
 }
 
-func paperLookupHandler(re *core.RequestEvent, catalog *papers.Store, corpus *openalexcorpus.Store, resolver *openalex.Resolver) error {
+func paperLookupHandler(re *core.RequestEvent, catalog *papers.Store, corpus *openalexcorpus.Store, corpusLoader *lazyload.Materializer[corpusValue]) error {
 	refs := parseLookupIDs(re.Request.URL.Query().Get("ids"))
 	if len(refs) == 0 {
 		return re.JSON(http.StatusBadRequest, map[string]string{
@@ -52,11 +52,6 @@ func paperLookupHandler(re *core.RequestEvent, catalog *papers.Store, corpus *op
 
 	ctx := re.Request.Context()
 	corpusAvailable := corpus != nil && corpus.Available(ctx)
-	// Lazy fetch-on-miss (ADR 0006): the corpus is a write-through cache, so
-	// a by-id miss can be filled from the public OpenAlex API and written
-	// back. Only when the corpus is reachable (somewhere to write) and a
-	// resolver is configured (mailto set).
-	lazyFetch := corpusAvailable && resolver != nil && resolver.Enabled()
 
 	results := make([]lookupResult, 0, len(refs))
 	for _, ref := range refs {
@@ -72,15 +67,19 @@ func paperLookupHandler(re *core.RequestEvent, catalog *papers.Store, corpus *op
 		r.Hosted = catalogHosted(ctx, catalog, kind, id)
 
 		if corpusAvailable {
-			work, found := corpusResolve(ctx, corpus, kind, id)
-			if !found && lazyFetch {
-				// Cache miss: fetch live + write back so the next read is local.
-				work, found = fetchOnMiss(ctx, corpus, resolver, kind, id)
+			// Lazy write-through cache-aside (ADR 0006 + 0012): resolve the ref
+			// against the local corpus and, on a miss, fetch it live from OpenAlex
+			// and write it back — all coalesced per-ref by the materializer's
+			// singleflight. A miss or a transient error is "unresolved", never a
+			// batch error (same contract as before this refactor).
+			cv, found, err := corpusLoader.Get(ctx, ref)
+			if err != nil {
+				found = false
 			}
 			if found {
-				r.Title = strings.TrimSpace(work.Title)
-				r.Authors = openalex.AuthorNames(work)
-				r.Year = yearFromPubDate(work.PublicationDate)
+				r.Title = strings.TrimSpace(cv.Work.Title)
+				r.Authors = openalex.AuthorNames(cv.Work)
+				r.Year = yearFromPubDate(cv.Work.PublicationDate)
 				r.Resolved = true
 			}
 		}
@@ -91,27 +90,6 @@ func paperLookupHandler(re *core.RequestEvent, catalog *papers.Store, corpus *op
 		"results":          results,
 		"corpus_available": corpusAvailable,
 	})
-}
-
-// fetchOnMiss fills a corpus miss from the public OpenAlex API and writes the
-// record back (ADR 0006 write-through cache). Only "openalex" and "doi" refs
-// map to a /works/{id} GET; "arxiv" is not such a key, so it stays a
-// corpus-only lookup (found=false here). Any fetch / write error degrades to
-// found=false — a miss is never an error for the batch. On a successful fetch
-// the work is returned even if the write-back fails (the read still resolves).
-func fetchOnMiss(ctx context.Context, corpus *openalexcorpus.Store, resolver *openalex.Resolver, kind, id string) (openalex.Work, bool) {
-	if kind != "openalex" && kind != "doi" {
-		return openalex.Work{}, false
-	}
-	raw, work, err := resolver.FetchWorkRecord(ctx, kind, id)
-	if err != nil {
-		return openalex.Work{}, false
-	}
-	if err := corpus.UpsertFetchedWork(ctx, raw, work); err != nil {
-		slog.Warn("lookup: lazy corpus write-back failed", "kind", kind, "id", id, "error", err)
-		// Still return the fetched work — the read resolves even if caching failed.
-	}
-	return work, true
 }
 
 // parseLookupIDs splits the comma-separated ids param, trims, drops empties,

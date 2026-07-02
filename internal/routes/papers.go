@@ -82,6 +82,11 @@ func RegisterPapers(
 ) {
 	registerV1MineruLeaseRoutes(se, cfg, rawStore, catalog, enforcer)
 
+	// Long-lived lazy write-through cache-aside orchestrator for the OpenAlex
+	// corpus (ADR 0012). Constructed once and captured below so its singleflight
+	// coalesces concurrent /lookup misses for the same ref across requests.
+	corpusLoader := newCorpusMaterializer(corpus, doiResolver)
+
 	se.Router.GET("/api/papers/{path...}", scopeGuard(enforcer, "papers", "read", func(re *core.RequestEvent) error {
 		raw := re.Request.PathValue("path")
 		if raw == "needs-mineru" {
@@ -94,7 +99,7 @@ func RegisterPapers(
 		// is a path-only special case (like stats / needs-mineru), resolving
 		// namespaced kind:id refs against the local OpenAlex corpus.
 		if raw == "lookup" {
-			return paperLookupHandler(re, catalog, corpus, doiResolver)
+			return paperLookupHandler(re, catalog, corpus, corpusLoader)
 		}
 		// Asset-download endpoints are only registered when the
 		// operator opted in via QATLAS_PAPER_ACCESS_ENABLED. When
