@@ -736,6 +736,37 @@ func TestLoad_PaperAccessDisabledByDefault(t *testing.T) {
 	}
 }
 
+// QATLAS_CORPUS_ENSURE_INDEXES gates the boot-time heavy openalex_works
+// index build (ADR 0013). Default true; set false to point an edge at a
+// pre-provisioned corpus without rebuilding its indexes.
+func TestLoad_CorpusEnsureIndexesDefaultsTrue(t *testing.T) {
+	clearStorageEnv(t)
+	clearS3Env(t)
+	clearMinerUEnv(t)
+	t.Setenv("QATLAS_CORPUS_ENSURE_INDEXES", "")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.CorpusEnsureIndexes {
+		t.Error("CorpusEnsureIndexes = false; want true (default)")
+	}
+}
+
+func TestLoad_CorpusEnsureIndexesDisabled(t *testing.T) {
+	clearStorageEnv(t)
+	clearS3Env(t)
+	clearMinerUEnv(t)
+	t.Setenv("QATLAS_CORPUS_ENSURE_INDEXES", "false")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.CorpusEnsureIndexes {
+		t.Error("CorpusEnsureIndexes = true; want false when QATLAS_CORPUS_ENSURE_INDEXES=false")
+	}
+}
+
 func TestLoad_PaperAccessIgnoresMinerUWhenSwitchOff(t *testing.T) {
 	clearStorageEnv(t)
 	clearS3Env(t)

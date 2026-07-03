@@ -7,8 +7,15 @@ import (
 	"testing"
 )
 
-// joinSchema returns all schema DDL as one string for substring assertions.
-func joinSchema() string { return strings.Join(schemaStatements, "\n") }
+// joinSchema returns all schema DDL (the base statements plus the
+// concurrently-built index DDL) as one string for substring assertions.
+func joinSchema() string {
+	parts := append([]string{}, baseSchemaStatements...)
+	for _, idx := range corpusIndexes {
+		parts = append(parts, idx.ddl)
+	}
+	return strings.Join(parts, "\n")
+}
 
 // TestSchemaCoreTable guards the openalex_works shape: jsonb record +
 // the STORED generated hot columns (ADR 0006: derive, never rewrite).
@@ -133,9 +140,40 @@ func TestSchemaEmbeddingsTable(t *testing.T) {
 // TestSchemaIdempotent guards that every DDL statement is IF NOT EXISTS so
 // repeated bootstraps + both edges racing are safe.
 func TestSchemaIdempotent(t *testing.T) {
-	for _, stmt := range schemaStatements {
+	stmts := append([]string{}, baseSchemaStatements...)
+	for _, idx := range corpusIndexes {
+		stmts = append(stmts, idx.ddl)
+	}
+	for _, stmt := range stmts {
 		if !strings.Contains(stmt, "IF NOT EXISTS") && !strings.Contains(stmt, "OR REPLACE") {
 			t.Errorf("non-idempotent schema statement (missing IF NOT EXISTS / OR REPLACE):\n%s", stmt)
+		}
+	}
+}
+
+// TestSchemaHeavyIndexesAreConcurrentAndSeparate guards ADR 0013: the heavy
+// openalex_works indexes are built CONCURRENTLY and live OUTSIDE the
+// boot-critical base schema, so boot never takes a table-level SHARE lock on
+// the 353 GB corpus. The base statements must not CREATE INDEX on
+// openalex_works.
+func TestSchemaHeavyIndexesAreConcurrentAndSeparate(t *testing.T) {
+	for _, stmt := range baseSchemaStatements {
+		if strings.Contains(stmt, "CREATE INDEX") && strings.Contains(stmt, "openalex_works ") {
+			t.Errorf("base schema must not build an openalex_works index (heavy indexes belong in corpusIndexes, built CONCURRENTLY):\n%s", stmt)
+		}
+	}
+	if len(corpusIndexes) == 0 {
+		t.Fatal("corpusIndexes is empty; expected the heavy openalex_works indexes")
+	}
+	for _, idx := range corpusIndexes {
+		if !strings.Contains(idx.ddl, "CONCURRENTLY") {
+			t.Errorf("corpus index %s must be built CONCURRENTLY:\n%s", idx.name, idx.ddl)
+		}
+		if !strings.Contains(idx.ddl, "IF NOT EXISTS") {
+			t.Errorf("corpus index %s must be IF NOT EXISTS (idempotent):\n%s", idx.name, idx.ddl)
+		}
+		if !strings.Contains(idx.ddl, idx.name) {
+			t.Errorf("corpus index ddl must create the named index %q:\n%s", idx.name, idx.ddl)
 		}
 	}
 }
@@ -152,6 +190,9 @@ func TestNilPoolDegradesGracefully(t *testing.T) {
 	}
 	if err := s.EnsureSchema(context.Background()); !errors.Is(err, ErrCorpusUnavailable) {
 		t.Errorf("EnsureSchema on nil pool = %v, want ErrCorpusUnavailable", err)
+	}
+	if err := s.EnsureIndexes(context.Background()); !errors.Is(err, ErrCorpusUnavailable) {
+		t.Errorf("EnsureIndexes on nil pool = %v, want ErrCorpusUnavailable", err)
 	}
 	if _, err := s.CountWorks(context.Background()); !errors.Is(err, ErrCorpusUnavailable) {
 		t.Errorf("CountWorks on nil pool = %v, want ErrCorpusUnavailable", err)

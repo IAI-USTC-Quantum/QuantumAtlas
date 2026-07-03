@@ -45,6 +45,15 @@ type Config struct {
 	PostgresDSN      string
 	PostgresMaxConns int
 
+	// CorpusEnsureIndexes gates the boot-time build of the heavy
+	// openalex_works indexes (GIN on the jsonb record + citation array +
+	// tsvector, plus the btree hot columns). Default true. Set false when an
+	// edge points at a large, pre-provisioned corpus whose indexes are built
+	// out-of-band (e.g. by `qatlasd openalex bootstrap-pg`): the base schema
+	// still ensures at boot, but the heavy CONCURRENTLY index builds — which
+	// take heavy I/O on a 353 GB table — are skipped. See ADR 0013.
+	CorpusEnsureIndexes bool
+
 	// Neo4j (graph-only).
 	Neo4jURI      string
 	Neo4jUser     string
@@ -307,6 +316,7 @@ func Load(dotenvPath string) (*Config, error) {
 		PBDataDir:            firstEnv("QATLAS_PB_DATA_DIR", "PB_DATA_DIR"),
 		PostgresDSN:          firstEnv("QATLAS_POSTGRES_DSN"),
 		PostgresMaxConns:     firstEnvIntDefault(10, "QATLAS_POSTGRES_MAX_CONNS"),
+		CorpusEnsureIndexes:  parseBoolEnv("QATLAS_CORPUS_ENSURE_INDEXES", true),
 		Neo4jURI:             firstEnv("NEO4J_URI"),
 		Neo4jUser:            firstEnv("NEO4J_USERNAME", "NEO4J_USER"),
 		Neo4jPassword:        firstEnv("NEO4J_PASSWORD"),

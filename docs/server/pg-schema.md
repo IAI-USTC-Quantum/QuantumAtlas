@@ -3,12 +3,15 @@
 > **手工维护文档**。事实源是代码里的两个 `schema.go`
 > （[`internal/papers/schema.go`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/internal/papers/schema.go)、
 > [`internal/openalexcorpus/schema.go`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/internal/openalexcorpus/schema.go)）
-> 里的 `schemaStatements`——两者都是 `EnsureSchema` 在启动 / bootstrap 时逐条 `Exec` 的幂等
-> DDL。**改了 schema.go 就要回来同步这份文档。** 设计理由见
+> 里的 DDL——`internal/papers` 的 `schemaStatements`，以及 `internal/openalexcorpus` 拆成的
+> `baseSchemaStatements`（`EnsureSchema` 在启动逐条 `Exec` 的幂等 base DDL）+ `corpusIndexes`
+> （`EnsureIndexes` 用 `CREATE INDEX CONCURRENTLY` 建的重索引，ADR 0013）。**改了 schema.go 就要
+> 回来同步这份文档。** 设计理由见
 > [ADR 0006](../adr/0006-postgres-central-store-not-mysql.md) /
 > [0009](../adr/0009-papers-paper-assets-catalog-redesign.md) /
 > [0010](../adr/0010-openalex-works-inline-citations-and-audit.md) /
-> [0011](../adr/0011-by-id-asset-reads.md)。
+> [0011](../adr/0011-by-id-asset-reads.md) /
+> [0013](../adr/0013-corpus-schema-base-index-split.md)。
 
 一套**中心化 PostgreSQL**（挂在 mesh 上，跟 RustFS / Neo4j 同级），承载两块语义上独立、但同库
 共存（一个 `pgxpool` / 一个 `QATLAS_POSTGRES_DSN`）的数据，好让「catalog × 语料 × 向量」的深
@@ -162,6 +165,12 @@ END $$;
 `gin (…)`（默认 ops，支持 `?` 反查——`jsonb_path_ops` 不支持 `?`）；`search_text` 上 `gin`；外加
 `publication_year` / `work_type` / `language`(partial) / `primary_topic_id`(partial) /
 `cited_by_count` / `doi`(partial) / `arxiv_id`(partial) / `updated_date` 的 btree。
+
+这些 `openalex_works` 重索引**不在 boot 关键路径上建**（ADR 0013）：`EnsureSchema` 只建 base 表
+（对已存在的大表 `CREATE TABLE IF NOT EXISTS` 是 no-op），重索引由 `EnsureIndexes` 用
+`CREATE INDEX CONCURRENTLY IF NOT EXISTS` 单列一个后台阶段建——只拿 `ShareUpdateExclusive` 锁、
+不挡懒加载写回 / bootstrap，并处理中断留下的 INVALID 残留。由 `QATLAS_CORPUS_ENSURE_INDEXES`
+（默认 `true`）门控：一台 edge 指向**已预置好索引**的大型共享 corpus 时设 `false` 跳过。
 
 ### 2.2 `openalex_sync_state`（增量刷新水位，单行）
 

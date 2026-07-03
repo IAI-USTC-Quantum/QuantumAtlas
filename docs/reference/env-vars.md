@@ -174,6 +174,7 @@ PostgreSQL；登录态仍由 PocketBase 独立管理。
 |---|---|---|
 | `QATLAS_POSTGRES_DSN` | paper catalog 启用时必填 | — |
 | `QATLAS_POSTGRES_MAX_CONNS` | 否 | `10` |
+| `QATLAS_CORPUS_ENSURE_INDEXES` | 否 | `true` |
 
 ## Server: plugin platform
 
@@ -212,6 +213,14 @@ is two orthogonal axes (`kind` × `transport`):
 QATLAS_POSTGRES_DSN=postgres://qatlasd:<password>@postgres.internal:5432/qatlas?sslmode=disable
 QATLAS_POSTGRES_MAX_CONNS=10
 ```
+
+`QATLAS_CORPUS_ENSURE_INDEXES`（默认 `true`，ADR 0013）门控 OpenAlex 语料 `openalex_works` 上
+**重索引**的启动建过程：boot 时先建 base 表（快，`CREATE TABLE IF NOT EXISTS` 对已存在的大表
+是 no-op），再在后台用 `CREATE INDEX CONCURRENTLY` 建重索引（`record` / citation-array /
+tsvector 三个 GIN + 若干 btree 热列）。当一台 edge 指向**已预置好索引**的大型共享 corpus
+（如 10⁸ 行 / 353 GB）时设为 `false`——只连不建索引，避免重复的并发建索引 I/O 抢占正在跑的
+bootstrap；base schema 无论开关如何都会在 boot 时保证。`qatlasd openalex bootstrap-pg` 批量灌完
+后也会自行建这些索引。
 
 ## Server: Neo4j graph
 

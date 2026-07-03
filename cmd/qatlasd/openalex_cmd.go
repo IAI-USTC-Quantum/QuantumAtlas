@@ -297,6 +297,11 @@ func runOpenAlexBootstrapPG(stdout, stderr io.Writer, f openalexBootstrapPGFlags
 		fmt.Fprintf(stderr, "[%d/%d] %s → %d works, %d cites\n", i+1, len(keys), key, rep.Works, rep.Citations)
 	}
 
+	fmt.Fprintln(stderr, "--- building corpus indexes (CONCURRENTLY; can take a long time + heavy I/O on a large corpus) ---")
+	if err := corpus.EnsureIndexes(ctx); err != nil {
+		return fmt.Errorf("ensure corpus indexes: %w", err)
+	}
+
 	fmt.Fprintf(stdout, "works ingested    : %d\n", totalWorks)
 	fmt.Fprintf(stdout, "citations ingested: %d\n", totalCites)
 	if st, err := corpus.QueryStats(ctx); err == nil {

@@ -12,3 +12,4 @@ nav:
   - "0010 OpenAlex works 内联引用（弃 work_referenced 边表）+ 审计": 0010-openalex-works-inline-citations-and-audit.md
   - "0011 按 id 取资产：PDF 默认直链、md/JSON 默认字节流，均可复写": 0011-by-id-asset-reads.md
   - "0012 懒加载模块：singleflight + 持久 Store + 组合，不引框架": 0012-lazy-load-module-singleflight-durable-store.md
+  - "0013 OpenAlex 语料 schema 分两阶段：base 启动即建、重索引 CONCURRENTLY 且可门控": 0013-corpus-schema-base-index-split.md

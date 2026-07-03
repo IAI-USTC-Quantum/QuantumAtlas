@@ -68,4 +68,7 @@ MySQL 的这些优势都不适用；而它的 sharding 王牌又与“一个数�
   append-only `openalex_audit` table + structural views 覆盖 snapshot fidelity。`paper_works`
   catalog 被重构为 surrogate-keyed `papers` + child `paper_assets`（ADR `0009`）。**这里**的决策——
   PostgreSQL 优先于 MySQL、一个中心化 store、raw `jsonb` “only filtered, never modified”、
-  full metadata + subset vectors——不变；演进的只有 table shapes。
+  full metadata + subset vectors——不变；演进的只有 table shapes。**大规模（10⁸ 行 / 353 GB）下的
+  启动建 schema 行为由 ADR `0013` 细化**：base 表 boot 即建、`openalex_works` 的重索引改
+  `CONCURRENTLY` 并由 `QATLAS_CORPUS_ENSURE_INDEXES` 门控，避免非并发建索引在 boot 时用 SHARE 锁
+  挡住懒加载写回。

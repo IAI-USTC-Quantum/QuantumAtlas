@@ -380,13 +380,14 @@ func main() {
 		// degrades gracefully (resolved=false, corpus_available=false).
 		corpus := openalexcorpus.NewStore(pgPool)
 		if catalog.Configured() {
-			// Schema bootstrap runs in the background: it is ~16 sequential DDL
-			// round-trips to the catalog database, which can
+			// Schema bootstrap runs in the background: it is a series of
+			// idempotent DDL round-trips to the catalog database, which can
 			// exceed any startup-blocking budget and would otherwise delay
 			// /api/health. All statements are idempotent (IF NOT EXISTS), so we
-			// retry with a generous per-attempt timeout until every constraint +
-			// index exists. Missing schema degrades correctness (uniqueness) +
-			// performance, so we keep retrying rather than wait for the next boot.
+			// retry with a generous per-attempt timeout until every base table +
+			// constraint exists. Missing schema degrades correctness (uniqueness)
+			// + performance, so we keep retrying rather than wait for the next
+			// boot.
 			//
 			// The OpenAlex corpus BASE schema is created here too (openalex_works
 			// + sync-state + audit; the pgvector-guarded work_embeddings is a
@@ -395,7 +396,12 @@ func main() {
 			// corpus can be populated lazily (fetch-on-miss write-through, ADR
 			// 0006) — the bulk `openalex bootstrap-pg` is only an optional
 			// pre-warm, no longer a prerequisite.
-			go ensureCatalogSchema(catalog, corpus)
+			//
+			// The HEAVY openalex_works indexes are built in a second phase
+			// CONCURRENTLY (never a boot-time SHARE lock on the 353 GB table)
+			// and only when QATLAS_CORPUS_ENSURE_INDEXES is true — an edge
+			// pointing at a pre-indexed corpus sets it false (ADR 0013).
+			go ensureCatalogSchema(catalog, corpus, cfg.CorpusEnsureIndexes)
 		} else {
 			log.Printf("papers: catalog disabled (QATLAS_POSTGRES_DSN unset); /api/papers stats+queue report available:false")
 		}
@@ -656,32 +662,57 @@ func initPostgresPool(cfg *config.Config) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
-// ensureCatalogSchema applies the PostgreSQL tables + indexes in the
-// background, retrying until success. Each attempt gets a generous timeout
-// and statements are idempotent, so retries converge cheaply. The OpenAlex
-// corpus BASE schema is applied first so openalex_works exists before the
-// papers catalog adds its paper_openalex_id FK (and so the corpus is ready
-// for lazy fetch-on-miss writes).
-func ensureCatalogSchema(catalog *papers.Store, corpus *openalexcorpus.Store) {
+// ensureCatalogSchema provisions the PostgreSQL schema in the background in
+// two phases. Phase 1 (fast, retried) applies the base tables + constraints
+// for both the paper catalog and the OpenAlex corpus; the corpus base schema
+// is applied first so openalex_works exists before the papers catalog adds
+// its paper_openalex_id FK (and so the corpus is ready for lazy fetch-on-miss
+// writes). Phase 2 (slow, gated by ensureIndexes) builds the heavy
+// openalex_works indexes CONCURRENTLY — never a boot-time SHARE lock on the
+// 353 GB table (ADR 0013).
+func ensureCatalogSchema(catalog *papers.Store, corpus *openalexcorpus.Store, ensureIndexes bool) {
 	const (
 		attemptTimeout = 90 * time.Second
 		retryDelay     = 30 * time.Second
 		maxAttempts    = 10
 	)
+	baseOK := false
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		ctx, cancel := context.WithTimeout(context.Background(), attemptTimeout)
 		cErr := corpus.EnsureSchema(ctx)
 		err := catalog.EnsureSchema(ctx)
 		cancel()
 		if err == nil && cErr == nil {
-			log.Printf("papers: catalog + corpus schema ensured")
-			return
+			log.Printf("papers: catalog + corpus base schema ensured")
+			baseOK = true
+			break
 		}
-		slog.Warn("papers: EnsureSchema attempt failed; retrying",
+		slog.Warn("papers: base schema ensure attempt failed; retrying",
 			"attempt", attempt, "max", maxAttempts, "catalog_error", err, "corpus_error", cErr)
 		time.Sleep(retryDelay)
 	}
-	slog.Error("papers: EnsureSchema gave up after retries (will retry next boot)")
+	if !baseOK {
+		slog.Error("papers: base schema ensure gave up after retries (will retry next boot)")
+		return
+	}
+
+	if !ensureIndexes {
+		slog.Info("papers: corpus index build skipped (QATLAS_CORPUS_ENSURE_INDEXES=false; operator-provisioned)")
+		return
+	}
+	// Phase 2: heavy openalex_works indexes, CONCURRENTLY, on a generous
+	// budget (a full-corpus GIN build is hours + heavy I/O). CONCURRENTLY
+	// takes only a ShareUpdateExclusive lock, so writes + the bootstrap keep
+	// running; EnsureIndexes is best-effort per index and idempotent, so a
+	// timeout just resumes the remainder on the next boot.
+	const indexBudget = 12 * time.Hour
+	ctx, cancel := context.WithTimeout(context.Background(), indexBudget)
+	defer cancel()
+	if err := corpus.EnsureIndexes(ctx); err != nil {
+		slog.Error("papers: corpus index build incomplete (will resume next boot)", "error", err)
+		return
+	}
+	log.Printf("papers: corpus indexes ensured (concurrently)")
 }
 
 // initShareStore was removed in v0.9.0 along with the /share/*

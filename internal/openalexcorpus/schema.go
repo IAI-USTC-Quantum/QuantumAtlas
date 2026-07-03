@@ -29,7 +29,9 @@ package openalexcorpus
 import (
 	"context"
 	"errors"
+	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -78,9 +80,17 @@ func (s *Store) Configured() bool {
 	return s != nil && s.pool != nil
 }
 
-// schemaStatements are the functions, tables + indexes applied at
-// bootstrap. All are idempotent (IF NOT EXISTS / CREATE OR REPLACE) so
-// repeated runs (and both edges racing) are safe.
+// baseSchemaStatements are the functions, tables, and SMALL indexes applied
+// at boot by EnsureSchema. They stay cheap even against a pre-existing
+// ~10^8-row corpus: CREATE TABLE IF NOT EXISTS is a no-op when the table
+// already exists (it never rewrites), and the only indexes here are on the
+// tiny openalex_audit table. The heavy openalex_works indexes (GIN on the
+// jsonb record, the citation array, the tsvector, plus the btree hot
+// columns) are SEPARATE — see corpusIndexes / EnsureIndexes — because
+// building them non-concurrently on a 353 GB table takes a table-level SHARE
+// lock that blocks lazy fetch-on-miss write-backs and saturates I/O (ADR
+// 0013). All statements are idempotent (IF NOT EXISTS / CREATE OR REPLACE)
+// so repeated runs (and both edges racing) are safe.
 //
 // Hot fields — including the citation out-edge array
 // (openalex_referenced_work_ids, ADR 0010) — are exposed via STORED
@@ -90,7 +100,7 @@ func (s *Store) Configured() bool {
 // acceptable: the snapshot is supposed to be byte-faithful and these
 // OpenAlex fields have stable types (year/count are ints, is_retracted is
 // bool).
-var schemaStatements = []string{
+var baseSchemaStatements = []string{
 	// strip_openalex_prefix turns record.referenced_works (an array of
 	// "https://openalex.org/W…" URLs) into an array of bare "W…" ids. A
 	// generated column cannot subquery/aggregate, so the array transform is
@@ -134,37 +144,11 @@ var schemaStatements = []string{
 			to_tsvector('simple'::regconfig, coalesce(record->>'display_name', record->>'title', ''))
 		) STORED
 	)`,
-	// jsonb_path_ops GIN: smaller + faster than the default ops, supports
-	// @> containment (the corpus query shape, e.g. record @> '{"type":...}'
-	// or topics filters). Worth the space saving at ~10^8 rows.
-	`CREATE INDEX IF NOT EXISTS openalex_works_record_gin
-		ON openalex_works USING gin (record jsonb_path_ops)`,
-	// Default-ops GIN on the citation out-edge array: supports the `?`
-	// element-exists reverse-lookup ("who cites W", ADR 0010). jsonb_path_ops
-	// would NOT support `?`, so this uses the default operator class.
-	`CREATE INDEX IF NOT EXISTS openalex_works_referenced_gin
-		ON openalex_works USING gin (openalex_referenced_work_ids)`,
-	`CREATE INDEX IF NOT EXISTS openalex_works_pub_year
-		ON openalex_works (publication_year)`,
-	`CREATE INDEX IF NOT EXISTS openalex_works_type
-		ON openalex_works (work_type)`,
-	`CREATE INDEX IF NOT EXISTS openalex_works_language
-		ON openalex_works (language) WHERE language IS NOT NULL`,
-	`CREATE INDEX IF NOT EXISTS openalex_works_primary_topic
-		ON openalex_works (primary_topic_id) WHERE primary_topic_id IS NOT NULL`,
-	`CREATE INDEX IF NOT EXISTS openalex_works_search
-		ON openalex_works USING gin (search_text)`,
-	`CREATE INDEX IF NOT EXISTS openalex_works_cited_by
-		ON openalex_works (cited_by_count)`,
-	`CREATE INDEX IF NOT EXISTS openalex_works_doi
-		ON openalex_works (doi) WHERE doi IS NOT NULL`,
-	// The cross-table join key to internal/papers.paper_works: resolve
-	// "which hosted arxiv papers does this corpus row correspond to".
-	`CREATE INDEX IF NOT EXISTS openalex_works_arxiv
-		ON openalex_works (arxiv_id) WHERE arxiv_id IS NOT NULL`,
-	// Incremental refresh pulls only new updated_date partitions.
-	`CREATE INDEX IF NOT EXISTS openalex_works_updated
-		ON openalex_works (updated_date)`,
+	// NOTE: the heavy openalex_works indexes (record GIN, citation-array
+	// GIN, tsvector GIN, and the btree hot columns) are deliberately NOT
+	// built here — they live in corpusIndexes and are built CONCURRENTLY by
+	// EnsureIndexes (gated by QATLAS_CORPUS_ENSURE_INDEXES) so they never
+	// take a boot-time SHARE lock on the 353 GB table. See ADR 0013.
 
 	// Single-row refresh watermark (ADR 0010): incremental refresh pulls
 	// only new updated_date partitions from the snapshot, tracked here so no
@@ -213,20 +197,158 @@ var schemaStatements = []string{
 	END $$`,
 }
 
-// EnsureSchema applies all tables + indexes. Idempotent (every statement
-// is IF NOT EXISTS / CREATE OR REPLACE / a guarded DO block) and safe to
-// run at boot: the pgvector-dependent work_embeddings table is created
-// only when the `vector` extension is present, so a database without
-// pgvector still boots. Returns ErrCorpusUnavailable when the backend is
-// unreachable — schema is retried on the next attempt.
+// indexDef pairs an index name with its CONCURRENTLY DDL so EnsureIndexes
+// can detect + drop a leftover INVALID build (from an interrupted
+// CONCURRENTLY run) before recreating it.
+type indexDef struct {
+	name string
+	ddl  string
+}
+
+// corpusIndexes are the heavy openalex_works indexes, built CONCURRENTLY by
+// EnsureIndexes — never on the boot-critical path in EnsureSchema. Each is
+// CREATE INDEX CONCURRENTLY IF NOT EXISTS so it neither takes a blocking
+// SHARE lock (lazy write-backs + the operator bootstrap keep running) nor
+// rebuilds an index that is already present and valid. Building any of these
+// non-concurrently on the ~10^8-row / 353 GB table is what used to thrash
+// the boot loop (ADR 0013).
+var corpusIndexes = []indexDef{
+	// jsonb_path_ops GIN: smaller + faster than the default ops, supports
+	// @> containment (the corpus query shape, e.g. record @> '{"type":...}'
+	// or topics filters). Worth the space saving at ~10^8 rows.
+	{"openalex_works_record_gin",
+		`CREATE INDEX CONCURRENTLY IF NOT EXISTS openalex_works_record_gin
+			ON openalex_works USING gin (record jsonb_path_ops)`},
+	// Default-ops GIN on the citation out-edge array: supports the `?`
+	// element-exists reverse-lookup ("who cites W", ADR 0010). jsonb_path_ops
+	// would NOT support `?`, so this uses the default operator class.
+	{"openalex_works_referenced_gin",
+		`CREATE INDEX CONCURRENTLY IF NOT EXISTS openalex_works_referenced_gin
+			ON openalex_works USING gin (openalex_referenced_work_ids)`},
+	{"openalex_works_pub_year",
+		`CREATE INDEX CONCURRENTLY IF NOT EXISTS openalex_works_pub_year
+			ON openalex_works (publication_year)`},
+	{"openalex_works_type",
+		`CREATE INDEX CONCURRENTLY IF NOT EXISTS openalex_works_type
+			ON openalex_works (work_type)`},
+	{"openalex_works_language",
+		`CREATE INDEX CONCURRENTLY IF NOT EXISTS openalex_works_language
+			ON openalex_works (language) WHERE language IS NOT NULL`},
+	{"openalex_works_primary_topic",
+		`CREATE INDEX CONCURRENTLY IF NOT EXISTS openalex_works_primary_topic
+			ON openalex_works (primary_topic_id) WHERE primary_topic_id IS NOT NULL`},
+	{"openalex_works_search",
+		`CREATE INDEX CONCURRENTLY IF NOT EXISTS openalex_works_search
+			ON openalex_works USING gin (search_text)`},
+	{"openalex_works_cited_by",
+		`CREATE INDEX CONCURRENTLY IF NOT EXISTS openalex_works_cited_by
+			ON openalex_works (cited_by_count)`},
+	{"openalex_works_doi",
+		`CREATE INDEX CONCURRENTLY IF NOT EXISTS openalex_works_doi
+			ON openalex_works (doi) WHERE doi IS NOT NULL`},
+	// The cross-table join key to internal/papers: resolve "which hosted
+	// arxiv papers does this corpus row correspond to".
+	{"openalex_works_arxiv",
+		`CREATE INDEX CONCURRENTLY IF NOT EXISTS openalex_works_arxiv
+			ON openalex_works (arxiv_id) WHERE arxiv_id IS NOT NULL`},
+	// Incremental refresh pulls only new updated_date partitions.
+	{"openalex_works_updated",
+		`CREATE INDEX CONCURRENTLY IF NOT EXISTS openalex_works_updated
+			ON openalex_works (updated_date)`},
+}
+
+// EnsureSchema applies the base functions, tables, and small indexes
+// (baseSchemaStatements). It is fast and safe to run at every boot even
+// against a pre-existing ~10^8-row corpus: CREATE TABLE IF NOT EXISTS is a
+// no-op on an existing table (never a rewrite) and the only indexes it
+// creates are on the tiny audit table. The heavy openalex_works indexes are
+// built separately by EnsureIndexes (concurrently, gated). Idempotent (every
+// statement is IF NOT EXISTS / CREATE OR REPLACE / a guarded DO block); the
+// pgvector-dependent work_embeddings table is created only when the `vector`
+// extension is present, so a database without pgvector still boots. Returns
+// ErrCorpusUnavailable when the backend is unreachable — schema is retried
+// on the next attempt.
 func (s *Store) EnsureSchema(ctx context.Context) error {
 	if !s.ensure(ctx) {
 		return ErrCorpusUnavailable
 	}
-	for _, stmt := range schemaStatements {
+	for _, stmt := range baseSchemaStatements {
 		if _, err := s.pool.Exec(ctx, stmt); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// EnsureIndexes builds the heavy openalex_works indexes (corpusIndexes)
+// CONCURRENTLY, so they never take a table-level SHARE lock that would block
+// the lazy fetch-on-miss write-backs or the operator's bulk bootstrap. On a
+// large pre-existing corpus each build can take a long time and heavy I/O,
+// which is why it is (a) separate from the boot-critical base schema and (b)
+// gated by QATLAS_CORPUS_ENSURE_INDEXES so an operator pointing an edge at a
+// pre-provisioned, already-indexed corpus can skip it entirely (ADR 0013).
+//
+// Best-effort per index: an interrupted build leaves an INVALID index behind
+// (the known CONCURRENTLY footgun) which is dropped and rebuilt on the next
+// call, and one failing index does not abort the rest. The combined error
+// (if any) is returned so the caller can retry the remainder. Idempotent:
+// CREATE INDEX CONCURRENTLY IF NOT EXISTS skips indexes already built + valid.
+//
+// CONCURRENTLY cannot run inside a transaction block, so every statement uses
+// the simple query protocol (pgx wraps the extended protocol in an implicit
+// transaction, which PostgreSQL rejects for CONCURRENTLY).
+func (s *Store) EnsureIndexes(ctx context.Context) error {
+	if !s.ensure(ctx) {
+		return ErrCorpusUnavailable
+	}
+	var errs []error
+	for _, idx := range corpusIndexes {
+		if ctx.Err() != nil {
+			errs = append(errs, ctx.Err())
+			break
+		}
+		if err := s.ensureOneIndex(ctx, idx); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", idx.name, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// ensureOneIndex drops a leftover INVALID index from a previously
+// interrupted CONCURRENTLY build (so IF NOT EXISTS does not skip a broken
+// index forever), then builds it concurrently via the simple protocol.
+func (s *Store) ensureOneIndex(ctx context.Context, idx indexDef) error {
+	if err := s.dropIfInvalid(ctx, idx.name); err != nil {
+		return err
+	}
+	if _, err := s.pool.Exec(ctx, idx.ddl, pgx.QueryExecModeSimpleProtocol); err != nil {
+		return err
+	}
+	return nil
+}
+
+// dropIfInvalid drops the named index only when it exists but is marked
+// invalid (indisvalid = false) — the state a CREATE INDEX CONCURRENTLY that
+// was interrupted (timeout / disconnect) leaves behind. A valid index or a
+// not-yet-built one is left untouched.
+func (s *Store) dropIfInvalid(ctx context.Context, name string) error {
+	var valid bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT i.indisvalid
+		FROM pg_class c
+		JOIN pg_index i ON i.indexrelid = c.oid
+		WHERE c.relname = $1`, name).Scan(&valid)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil // not built yet
+	}
+	if err != nil {
+		return err
+	}
+	if valid {
+		return nil // already good
+	}
+	_, err = s.pool.Exec(ctx,
+		`DROP INDEX CONCURRENTLY IF EXISTS `+pgx.Identifier{name}.Sanitize(),
+		pgx.QueryExecModeSimpleProtocol)
+	return err
 }
