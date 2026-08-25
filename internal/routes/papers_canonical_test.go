@@ -151,6 +151,9 @@ func (canonicalNoopStore) Delete(_ context.Context, _ string) error { return nil
 func (canonicalNoopStore) ListPrefix(_ context.Context, _ string, _ int) ([]objstore.ObjectInfo, error) {
 	return nil, nil
 }
+func (canonicalNoopStore) ListDirs(_ context.Context, _ string) ([]string, error) {
+	return nil, nil
+}
 func (canonicalNoopStore) PresignGet(_ context.Context, _ string, _ time.Duration) (string, bool, error) {
 	return "", false, nil
 }

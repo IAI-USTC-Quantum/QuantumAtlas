@@ -172,6 +172,31 @@ func (r *Registry) MarkDisconnected(id string) {
 	p.Status = StatusDisconnected
 }
 
+// SetProbeResult records the outcome of a health probe for an enabled
+// plugin: a nil err marks it connected (clearing any probe error), a
+// non-nil err marks it disconnected with the error surfaced in the
+// summary. Unlike MarkDisconnected this also applies to builtin
+// manifests whose implementation wraps a REMOTE service (e.g. the
+// search-remote manifest represents the qatlas-search microservice
+// client — "connected" there means the microservice's /healthz
+// answered), which the builtin-only guard in MarkDisconnected would
+// otherwise freeze at connected forever.
+func (r *Registry) SetProbeResult(id string, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	p := r.plugins[id]
+	if p == nil || !p.Enabled {
+		return
+	}
+	if err == nil {
+		p.Status = StatusConnected
+		p.Error = ""
+		return
+	}
+	p.Status = StatusDisconnected
+	p.Error = err.Error()
+}
+
 func (r *Registry) Enable(id string) (Summary, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

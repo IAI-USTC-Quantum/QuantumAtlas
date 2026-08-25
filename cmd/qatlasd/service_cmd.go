@@ -32,7 +32,7 @@ func (noopProgram) Stop(service.Service) error  { return nil }
 type serviceInstallOpts struct {
 	Name       string
 	Mode       string // "user" | "system" | "" (autodetect)
-	DotenvPath string
+	ConfigPath string
 	Bind       string
 	DryRun     bool
 	Force      bool
@@ -116,25 +116,25 @@ Examples:
 
   # CI-style — fully explicit, no prompts
   qatlasd service install --mode user \
-      --dotenv-path ~/QuantumAtlas/.env --force
+      --config ~/.qatlas/config.yaml --force
 
   # CI-style system mode (run as your normal user, sudo to install)
   sudo qatlasd service install --mode system \
-      --dotenv-path /etc/quantum-atlas/.env --force
+      --config /etc/quantum-atlas/config.yaml --force
 
   # Preview the rendered unit without writing
   qatlasd service install --dry-run --mode system \
-      --dotenv-path /etc/quantum-atlas/.env`,
+      --config /etc/quantum-atlas/config.yaml`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runServiceInstall(opts)
 		},
 	}
 	cmd.Flags().StringVar(&opts.Name, "name", defaultServiceName, "Service unit name (<name>.service on Linux)")
 	cmd.Flags().StringVar(&opts.Mode, "mode", "", `"user" or "system" (default: auto-detected from uid; prompted in TTY)`)
-	cmd.Flags().StringVar(&opts.DotenvPath, "dotenv-path", "",
-		"Path to .env file (env: QATLAS_DOTENV; auto-detect order: $QATLAS_DOTENV, then ~/QuantumAtlas/.env, then ./.env). Empty / not found is OK — unit will be generated without pinning a .env, operator injects config via inline Environment= or EnvironmentFile=.")
+	cmd.Flags().StringVar(&opts.ConfigPath, "config", "",
+		"Path to config.yaml (default: ~/.qatlas/config.yaml when it exists). The path is passed to the daemon as `qatlasd --config <path> serve`. Empty / not found is OK — the unit will be generated without pinning a config file and qatlasd falls back to its default path.")
 	cmd.Flags().StringVar(&opts.Bind, "bind", "127.0.0.1:4200",
-		"HTTP bind address for `serve --http=...` (runtime env: QATLAS_HTTP_ADDR or QATLAS_SERVER_HOST+QATLAS_SERVER_PORT)")
+		"HTTP bind address for `serve --http=...` (overrides http_addr from config.yaml)")
 	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "Render the unit to stdout without writing or reloading systemd")
 	cmd.Flags().BoolVar(&opts.Force, "force", false, "Overwrite an existing unit without prompting; required in non-TTY contexts")
 	return cmd
@@ -151,7 +151,7 @@ func runServiceInstall(opts serviceInstallOpts) error {
 	if err := guardSudoUserModeMismatch(opts.Mode, os.Geteuid(), os.Getenv("SUDO_USER")); err != nil {
 		return err
 	}
-	if err := resolveDotenvPath(&opts, tty); err != nil {
+	if err := resolveConfigPath(&opts, tty); err != nil {
 		return err
 	}
 
@@ -217,17 +217,14 @@ func runServiceInstall(opts serviceInstallOpts) error {
 		return fmt.Errorf("install: %w", err)
 	}
 	fmt.Printf("Installed service %s (mode=%s).\n", opts.Name, opts.Mode)
-	if opts.DotenvPath != "" {
-		absDotenv, _ := filepath.Abs(opts.DotenvPath)
-		fmt.Printf("The unit reads runtime config from %s via Environment=QATLAS_DOTENV=.\n", absDotenv)
+	if opts.ConfigPath != "" {
+		absConfig, _ := filepath.Abs(opts.ConfigPath)
+		fmt.Printf("The unit passes --config %s to the daemon.\n", absConfig)
 		fmt.Printf("Edit that file and `systemctl%s restart %s` to apply config changes.\n",
 			userFlagFor(opts.Mode), opts.Name)
 	} else {
-		fmt.Println("The unit does NOT pin a .env file (none auto-detected, none supplied).")
-		fmt.Println("Configure runtime fields by:")
-		fmt.Println("  - editing the rendered unit's `[Service]` section to add inline `Environment=KEY=VAL` lines, or")
-		fmt.Println("  - adding `EnvironmentFile=/path/to/env` to the unit, or")
-		fmt.Println("  - rerunning `qatlasd service install --dotenv-path /path/to/.env --force` to pin one")
+		fmt.Println("The unit does NOT pin a --config path (none supplied).")
+		fmt.Println("qatlasd will read its default ~/.qatlas/config.yaml at startup.")
 	}
 
 	if err := svc.Start(); err != nil {
@@ -272,90 +269,62 @@ func resolveMode(opts *serviceInstallOpts, tty bool) error {
 	return nil
 }
 
-// resolveDotenvPath fills opts.DotenvPath: explicit flag > $QATLAS_DOTENV >
-// auto-detect. Empty result is a valid outcome — the resulting unit will
-// then omit `Environment=QATLAS_DOTENV=` entirely, leaving the operator
-// to inject config via inline `Environment=KEY=...` on the unit or via
-// systemd `EnvironmentFile=` added by hand. This avoids the trap of
-// pointing the unit at a `~/QuantumAtlas/.env` that doesn't exist on
-// the target host just because such a file happens to exist on the
-// installer's machine.
+// resolveConfigPath fills opts.ConfigPath: explicit --config flag >
+// default ~/.qatlas/config.yaml (when it exists) > none. An empty
+// result is a valid outcome — the resulting unit will then omit the
+// --config argument entirely and qatlasd falls back to its default
+// path at runtime.
 //
-// Whenever the path isn't from --dotenv-path (i.e. operator didn't type it
-// in this command line), we print an announcement to stdout so the chosen
-// path is visible in deploy logs without scrolling to the rendered-unit
-// preview. Four sources, four announcement styles:
-//   - --dotenv-path: silent (operator just typed it, no surprise)
-//   - $QATLAS_DOTENV: stdout note (env var might come from .bashrc / parent
-//     shell / systemd unit operator didn't write themselves)
-//   - autodetect: TTY prompts [Y/n]; non-TTY prints to stdout
-//   - none found / declined: stdout note that the unit will not pin any
-//     .env file (no fatal)
-func resolveDotenvPath(opts *serviceInstallOpts, tty bool) error {
-	if opts.DotenvPath != "" {
-		return validateDotenvPath(opts.DotenvPath)
+// Whenever the path isn't from --config (i.e. the operator didn't type
+// it on this command line), we print an announcement to stdout so the
+// chosen path is visible in deploy logs.
+func resolveConfigPath(opts *serviceInstallOpts, tty bool) error {
+	if opts.ConfigPath != "" {
+		return validateConfigPath(opts.ConfigPath)
 	}
-	if env := strings.TrimSpace(os.Getenv("QATLAS_DOTENV")); env != "" {
-		fmt.Printf("Using .env from $QATLAS_DOTENV: %s\n", env)
-		opts.DotenvPath = env
-		return validateDotenvPath(env)
+	// Resolve the default path against the EFFECTIVE home (sudo-aware)
+	// rather than os.UserHomeDir — under sudo, $HOME is /root but the
+	// daemon runs as $SUDO_USER.
+	home := effectiveHomeDir()
+	if home == "" {
+		return nil
 	}
-	candidates := autodetectDotenvCandidates()
-	var found string
-	for _, c := range candidates {
-		if info, err := os.Stat(c); err == nil && !info.IsDir() {
-			found = c
-			break
-		}
-	}
-	if found == "" {
-		fmt.Printf("No .env auto-detected (tried: %s).\n", strings.Join(candidates, ", "))
-		fmt.Println("The generated unit will NOT set QATLAS_DOTENV — qatlasd will start " +
-			"with whatever env the operator inlines into the unit. Inject config via " +
-			"`Environment=KEY=...` lines, `EnvironmentFile=`, or rerun with --dotenv-path " +
-			"to pin a specific .env file.")
+	def := filepath.Join(home, ".qatlas", "config.yaml")
+	info, err := os.Stat(def)
+	if err != nil || info.IsDir() {
+		fmt.Printf("No config.yaml found at the default path (%s).\n", def)
+		fmt.Println("The generated unit will NOT pass --config — qatlasd will look " +
+			"for ~/.qatlas/config.yaml at startup (as the daemon user). Run " +
+			"`qatlasd config init` first, or rerun with --config to pin a specific file.")
 		return nil
 	}
 	if tty {
-		ok, err := promptYesNo(fmt.Sprintf("Use auto-detected .env at %s?", found), true)
+		ok, err := promptYesNo(fmt.Sprintf("Use config file at %s?", def), true)
 		if err != nil {
 			return err
 		}
 		if !ok {
-			fmt.Println("Auto-detected .env declined. The generated unit will NOT set " +
-				"QATLAS_DOTENV; configure via `Environment=KEY=...` inline or rerun with " +
-				"--dotenv-path to pin one explicitly.")
+			fmt.Println("Default config path declined. The generated unit will NOT pass " +
+				"--config; rerun with --config to pin one explicitly.")
 			return nil
 		}
 	} else {
 		// Non-TTY (CI / --force / sudo bash script) — can't prompt, but
-		// must not stay silent: deploy logs need to show which .env was
-		// picked, in case autodetect found the wrong one and the operator
-		// only notices when the service fails to start.
-		fmt.Printf("Auto-detected .env: %s (override with --dotenv-path; rerun without that file present to skip pinning any .env)\n", found)
+		// must not stay silent: deploy logs need to show which file was
+		// picked.
+		fmt.Printf("Using default config file: %s (override with --config)\n", def)
 	}
-	opts.DotenvPath = found
+	opts.ConfigPath = def
 	return nil
 }
 
-func autodetectDotenvCandidates() []string {
-	out := []string{}
-	if home := effectiveHomeDir(); home != "" {
-		out = append(out, filepath.Join(home, "QuantumAtlas", ".env"))
-	}
-	if cwd, err := os.Getwd(); err == nil {
-		out = append(out, filepath.Join(cwd, ".env"))
-	}
-	return out
-}
-
-func validateDotenvPath(path string) error {
+func validateConfigPath(path string) error {
 	info, err := os.Stat(path)
 	if err != nil {
-		return fmt.Errorf("dotenv path %s: %w", path, err)
+		return fmt.Errorf("config path %s: %w", path, err)
 	}
 	if info.IsDir() {
-		return fmt.Errorf("dotenv path %s is a directory, expected a regular file", path)
+		return fmt.Errorf("config path %s is a directory, expected a regular file", path)
 	}
 	return nil
 }
@@ -386,9 +355,8 @@ func effectiveHomeDir() string {
 
 // computeReadWritePaths returns the paths systemd should grant write access
 // to under ReadWritePaths=. We include:
-//   - the .env directory if a .env was pinned (server may rewrite .env in
-//     future migrations); absent when ``absDotenv`` is empty
-//   - $XDG_DATA_HOME/qatlasd (PB_DATA_DIR / DATA_DIR / RAW_DIR fallback;
+//   - the config file's directory if a --config path was pinned
+//   - $XDG_DATA_HOME/qatlasd (pb_data_dir / data_dir / raw_dir fallback;
 //     renamed from "quantum-atlas" in v0.17.0 to match the binary name)
 //   - ~/QuantumAtlas-Wiki if it exists (git fetch writes refs)
 //
@@ -396,10 +364,10 @@ func effectiveHomeDir() string {
 //
 // "Home" here resolves via effectiveHomeDir so sudo invocations target the
 // real daemon-user's home, not /root — see effectiveHomeDir docs.
-func computeReadWritePaths(absDotenv string) []string {
+func computeReadWritePaths(absConfig string) []string {
 	paths := []string{}
-	if absDotenv != "" {
-		paths = append(paths, filepath.Dir(absDotenv))
+	if absConfig != "" {
+		paths = append(paths, filepath.Dir(absConfig))
 	}
 
 	if home := effectiveHomeDir(); home != "" {
@@ -431,33 +399,31 @@ func computeReadWritePaths(absDotenv string) []string {
 // Exported (within the package) so tests can build a fixed config without
 // going through the interactive install flow.
 //
-// When ``opts.DotenvPath`` is empty, the generated unit:
-//   - sets ``WorkingDirectory`` to the daemon user's home (not the .env
-//     directory, which we don't have)
-//   - omits ``Environment=QATLAS_DOTENV=`` entirely (so qatlasd's
-//     `loadDotEnv` falls through to "no .env located; relying on process
-//     environment alone" — operator must provide config via inline
-//     ``Environment=KEY=...`` or systemd ``EnvironmentFile=``)
+// When opts.ConfigPath is empty, the generated unit:
+//   - sets WorkingDirectory to the daemon user's home
+//   - omits the --config argument entirely (qatlasd then reads its
+//     default ~/.qatlas/config.yaml at startup)
 //   - still grants the standard XDG / Wiki ReadWritePaths so the daemon
-//     can write pb_data even without a .env-relative anchor
+//     can write pb_data
 func buildServiceConfig(opts serviceInstallOpts) (*service.Config, error) {
-	envVars := map[string]string{}
 	var workingDir string
 	var rwPaths []string
+	arguments := []string{}
 
-	if opts.DotenvPath != "" {
-		absDotenv, err := filepath.Abs(opts.DotenvPath)
+	if opts.ConfigPath != "" {
+		absConfig, err := filepath.Abs(opts.ConfigPath)
 		if err != nil {
-			return nil, fmt.Errorf("dotenv abs: %w", err)
+			return nil, fmt.Errorf("config abs: %w", err)
 		}
-		workingDir = filepath.Dir(absDotenv)
-		envVars["QATLAS_DOTENV"] = absDotenv
-		rwPaths = computeReadWritePaths(absDotenv)
+		workingDir = filepath.Dir(absConfig)
+		// --config is a root persistent flag; place it before the
+		// subcommand so cobra parses it unambiguously.
+		arguments = append(arguments, "--config", absConfig)
+		rwPaths = computeReadWritePaths(absConfig)
 	} else {
-		// No .env pinned. Use the daemon user's home as WorkingDirectory
-		// (predictable cwd for any relative paths injected via inline
-		// Environment=); empty absDotenv → computeReadWritePaths skips
-		// the .env-dir entry.
+		// No config file pinned. Use the daemon user's home as
+		// WorkingDirectory (predictable cwd); empty absConfig →
+		// computeReadWritePaths skips the config-dir entry.
 		if home := effectiveHomeDir(); home != "" {
 			workingDir = home
 		} else {
@@ -465,6 +431,7 @@ func buildServiceConfig(opts serviceInstallOpts) (*service.Config, error) {
 		}
 		rwPaths = computeReadWritePaths("")
 	}
+	arguments = append(arguments, "serve", "--http="+opts.Bind)
 
 	wantedBy := "default.target"
 	userName := ""
@@ -479,8 +446,7 @@ func buildServiceConfig(opts serviceInstallOpts) (*service.Config, error) {
 		Description:      "QuantumAtlas server (Go + PocketBase)",
 		UserName:         userName,
 		WorkingDirectory: workingDir,
-		Arguments:        []string{"serve", "--http=" + opts.Bind},
-		EnvVars:          envVars,
+		Arguments:        arguments,
 		Option: service.KeyValue{
 			"SystemdScript":  serviceUnitTemplate,
 			"UserService":    opts.Mode == "user",
@@ -520,6 +486,7 @@ func resolveSystemUser() string {
 // The legitimate combinations are:
 //   - sudo + --mode system  (production daemon, writes to /etc/systemd/system)
 //   - no sudo + --mode user (per-user daemon, writes to ~/.config/systemd/user)
+//
 // Both work cleanly after the effectiveHomeDir() fix.
 //
 // Pure function (no process state read) so it's trivially testable; the

@@ -20,7 +20,7 @@ QuantumAtlas 是 **University of Science and Technology of China (USTC) 量子�
 
 - ✅ 个人研究、学习量子算法
 - ✅ 学术论文引用、教学课件中引用
-- ✅ 在 Wiki 中贡献概念 / 算法 / paper 笔记
+- ✅ 贡献论文资产（上传 PDF / 用 MinerU 解析推回）
 - ✅ 通过 PAT 用脚本批量查询 metadata
 - ✅ Fork 本项目自部署、二次开发
 
@@ -28,9 +28,8 @@ QuantumAtlas 是 **University of Science and Technology of China (USTC) 量子�
 
 - ❌ **商业产品集成**（包括 SaaS / 付费 API 转售）
 - ❌ **大规模无视 rate limit 的爬取**（如果给服务造成负担，我们可能撤销 PAT）
-- ❌ **滥用 `/api/graph/query`** 跑病态 Cypher（如无界笛卡尔积）拖垮 Neo4j——
-  detail 见 [鉴权模型](../concepts/auth-model.md#graph-查询同-scope-下危害最大的那一档)
-- ❌ **拿用户数据训练公开 LLM 模型**——Wiki 内容不构成"公开 corpus"
+- ❌ **滥用 `POST /api/search`** 以病态频率 / 病态查询拖垮本地 catalog 或上游 API
+- ❌ **拿用户数据训练公开 LLM 模型**——论文资产与 registry 数据不构成"公开 corpus"
 
 ## 数据归属
 
@@ -41,7 +40,6 @@ QuantumAtlas 是 **University of Science and Technology of China (USTC) 量子�
   不通过 API 对外分发**——原始 PDF 请到 arXiv 等上游获取。Self-hosted 部署
   方可通过 `QATLAS_PAPER_ACCESS_ENABLED` 在受控范围内启用对内下载，
   此时由部署方承担分发义务，详见 [License & Attribution · 论文访问开关](license-and-attribution.md#论文访问开关-self-hosted)
-- **Wiki 内容** Apache-2.0，在 [QuantumAtlas-Wiki repo](https://github.com/IAI-USTC-Quantum/QuantumAtlas-Wiki) 自维护
 
 ## 账户 & 凭据
 

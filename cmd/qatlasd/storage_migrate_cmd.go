@@ -52,7 +52,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperassets"
 
@@ -125,13 +124,12 @@ func (s *migrateStats) String() string {
 }
 
 func runStorageMigrateLayout(ctx context.Context, stdout, stderr io.Writer, f migrateLayoutFlags) error {
-	dotenvPath := loadDotEnv()
-	cfg, err := config.Load(dotenvPath)
+	cfg, err := loadConfig()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
 	if !cfg.S3Enabled() {
-		return errors.New("storage migrate-layout requires the S3 backend (QATLAS_S3_* env all set); LocalStore is dev-only")
+		return errors.New("storage migrate-layout requires the S3 backend (s3.* fully set in config.yaml); LocalStore is dev-only")
 	}
 	if len(f.yymmCap) != 4 {
 		return fmt.Errorf("--yymm-lt %q must be a 4-digit YYMM (e.g. 0704)", f.yymmCap)

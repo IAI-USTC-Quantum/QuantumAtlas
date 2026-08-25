@@ -42,9 +42,9 @@
 // /install-qatlasd.sh, /swagger/*, /api/pat/scopes (pure constant — the
 // scope vocabulary), the SPA shell at /{path...} (no data — data lives
 // behind the gated APIs), and the PocketBase OAuth callback
-// (/api/oauth2-redirect). Everything else — including wiki / papers /
-// graph reads — requires authGuard plus the matching scopeGuard
-// (wiki:read / papers:read / graph:read). The knowledge base is not
+// (/api/oauth2-redirect). Everything else — including papers
+// reads — requires authGuard plus the matching scopeGuard
+// (papers:read). The knowledge base is not
 // anonymously readable; see docs/concepts/auth-model.md for the full
 // rationale and the per-endpoint table.
 //

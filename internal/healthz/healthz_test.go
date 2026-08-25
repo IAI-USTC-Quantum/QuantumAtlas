@@ -8,14 +8,13 @@ import (
 
 // TestSanitise_StripsDetailFields locks down the contract that the
 // public /api/health response must not leak deployment-topology
-// detail (mesh IPs, bucket names, wiki commit, etc.).
+// detail (mesh IPs, bucket names, DSNs, etc.).
 //
 // If a future refactor adds a new detail field to Check, this test
 // will fail by surfacing the new field in the marshalled JSON of a
 // sanitised Result — pushing the author to either add the field to
 // Sanitise's safelist or explicitly decide it's safe to leak.
 func TestSanitise_StripsDetailFields(t *testing.T) {
-	dirty := false
 	raw := Result{
 		Status:        "healthy",
 		Version:       "0.10.0",
@@ -29,19 +28,11 @@ func TestSanitise_StripsDetailFields(t *testing.T) {
 				Endpoint:  "http://internal-rustfs.example:9000",
 				Buckets:   []string{"qatlas-pdf", "qatlas-md", "qatlas-images"},
 			},
-			"neo4j": {
-				Status:    "ok",
-				LatencyMS: 742,
-				URI:       "bolt://internal-neo4j.example:7687",
-				Database:  "neo4j",
-			},
-			"wiki": {
-				Status:     "ok",
-				Dir:        "/srv/qatlas/QuantumAtlas-Wiki",
-				Commit:     "38f365b",
-				CommitTime: "2026-05-29T13:16:58+08:00",
-				Branch:     "main",
-				Dirty:      &dirty,
+			"registry": {
+				Status:        "ok",
+				LatencyMS:     742,
+				Backend:       "postgres",
+				SchemaVersion: 1,
 			},
 		},
 	}
@@ -68,10 +59,8 @@ func TestSanitise_StripsDetailFields(t *testing.T) {
 		// Any of them surfacing in the sanitised JSON = bug.
 		leakSamples := []string{
 			"internal-rustfs.example", "qatlas-pdf", "qatlas-md", "qatlas-images",
-			"bolt://", "neo4j", "/srv/qatlas/", "QuantumAtlas-Wiki",
-			"38f365b", "2026-05-29", "main", "dirty",
-			"latency_ms", "backend", "endpoint", "uri", "database",
-			"dir", "commit", "commit_time", "branch", "error",
+			"postgres", "schema_version",
+			"latency_ms", "backend", "endpoint", "error",
 		}
 		for _, leak := range leakSamples {
 			if contains(s, leak) {
@@ -85,7 +74,7 @@ func TestSanitise_StripsDetailFields(t *testing.T) {
 // contract: degraded probes do NOT leak any Error string on the
 // anonymous tier. Raw err.Error() from SDK drivers and our own
 // probeRouter "bucket %s: %v" formatter embed bucket names / mesh
-// IPs / bolt URIs inline, so keeping Error on the public tier was
+// IPs / DSN hosts inline, so keeping Error on the public tier was
 // silently defeating the rest of the redaction. The aggregate
 // Status ("degraded") + per-check Status ("error") already give
 // monitors a usable alert signal without needing the underlying
@@ -95,10 +84,9 @@ func TestSanitise_DropsErrorString(t *testing.T) {
 		Status:  "degraded",
 		Version: "0.10.0",
 		Checks: map[string]Check{
-			"neo4j": {
+			"registry": {
 				Status:    "error",
-				Error:     "Neo4jError: connection refused to bolt://internal-neo4j.example:7687",
-				URI:       "bolt://internal-neo4j.example:7687",
+				Error:     "registry: read schema version: connection refused to postgres.internal:5432",
 				LatencyMS: 5000,
 			},
 			"rawstore": {
@@ -116,9 +104,6 @@ func TestSanitise_DropsErrorString(t *testing.T) {
 		if c.Error != "" {
 			t.Errorf("check %s: Error %q must be empty on anon tier", name, c.Error)
 		}
-		if c.URI != "" {
-			t.Errorf("check %s: URI must be stripped, got %q", name, c.URI)
-		}
 		if c.Bucket != "" {
 			t.Errorf("check %s: Bucket must be stripped, got %q", name, c.Bucket)
 		}
@@ -132,7 +117,7 @@ func TestSanitise_DropsErrorString(t *testing.T) {
 			t.Fatalf("marshal check %s: %v", name, err)
 		}
 		s := string(b)
-		for _, leak := range []string{"internal-rustfs.example", "qatlas-pdf", "bolt://", "NoSuchBucket", "Neo4jError"} {
+		for _, leak := range []string{"internal-rustfs.example", "qatlas-pdf", "NoSuchBucket", "postgres.internal"} {
 			if contains(s, leak) {
 				t.Errorf("check %s: sanitised JSON %s leaks %q", name, s, leak)
 			}

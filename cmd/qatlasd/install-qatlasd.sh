@@ -198,15 +198,18 @@ cat <<EOF
 
 ${bold}Next steps${reset}
 
-  1. Create a .env (see https://github.com/$REPO/blob/main/.env.example):
-       mkdir -p ~/QuantumAtlas
-       curl -fsSL https://raw.githubusercontent.com/$REPO/main/.env.example \\
-            -o ~/QuantumAtlas/.env
+  1. Create a config.yaml (see https://github.com/$REPO/blob/main/config.example.yaml):
+       mkdir -p ~/.qatlas
+       curl -fsSL https://raw.githubusercontent.com/$REPO/main/config.example.yaml \\
+            -o ~/.qatlas/config.yaml
+       chmod 600 ~/.qatlas/config.yaml
+       # then edit it (postgres.dsn, s3.*, auth.*) — qatlasd reads ONLY this
+       # file; environment variables are rejected at startup.
 
   2. Install as a systemd service (Linux) / launchd (macOS):
        $DEST service install
        # …or fully unattended:
-       $DEST service install --mode user --dotenv-path ~/QuantumAtlas/.env --force
+       $DEST service install --mode user --config ~/.qatlas/config.yaml --force
 
   3. Or run in the foreground for a smoke test:
        $DEST serve

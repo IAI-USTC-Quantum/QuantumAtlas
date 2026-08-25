@@ -1,13 +1,13 @@
 # Python 客户端 `qatlas`
 
-`qatlas` 是 QuantumAtlas 的 Python 包：命令行客户端 + 库。它通过 HTTP 与 `qatlasd` 服务端通信，覆盖论文摄入、Wiki 写作、本地 MinerU 解析、电路设计与代码生成、凭据管理等工作流。
+`qatlas` 是 QuantumAtlas 的 Python 包：命令行客户端 + 库。它通过 HTTP 与 `qatlasd` 服务端通信，覆盖论文摄入、资产上传、本地 MinerU 解析、论文 PDF / Markdown 拉取、凭据管理等工作流。
 
 ```bash
 uv tool install quantum-atlas    # 或 pipx install / pip install
 qatlas --help
 ```
 
-读接口公开、无需 token；写操作（上传、贡献）需要一个 PAT，见 [管理凭据](manage-credentials.md)。客户端配置（server URL / token）写在平台原生 user-config 路径，详见 [入门指南](../getting-started.md)。
+论文数据不匿名可读——读和写都需要一个 PAT（`papers:read` / `papers:write` scope），见 [管理凭据](manage-credentials.md)。客户端配置（server URL / token）写在平台原生 user-config 路径，详见 [入门指南](../getting-started.md)。
 
 每篇指南都是一个具体任务，从前置条件到完整命令再到常见错误。
 
@@ -33,35 +33,11 @@ qatlas --help
 
     `qatlas contrib mineru` 本地跑 MinerU 并推回。单篇 / 队列模式 / 多人并发 claim。
 
-</div>
-
-## Wiki 内容
-
-<div class="grid cards" markdown>
-
--   :material-notebook-edit:{ .lg .middle } **[写 Wiki 页面](write-wiki-pages.md)**
+-   :material-history:{ .lg .middle } **[贡献流程](contribute-content.md)**
 
     ---
 
-    统一 concept 模型下的页面模板与最小可行示例（concept + category，source 仅作引用）。
-
--   :material-robot:{ .lg .middle } **[生成 Wiki 内容](generate-wiki-content.md)**
-
-    ---
-
-    多 subagent 读 paper → 提炼 concept → 去重合并的可复用流水线（prompt + `merge_concepts.py`）。
-
--   :material-shield-check:{ .lg .middle } **[Lint 与 校验](lint-wiki.md)**
-
-    ---
-
-    `qatlas wiki lint` 错误码 W001–W008 解释、典型修复模式。
-
--   :material-history:{ .lg .middle } **[贡献 Wiki 与 Raw](contribute-content.md)**
-
-    ---
-
-    Wiki 仓库 git 协作、server 端 fast-forward pull、ingest 鉴权与同步。
+    三条贡献路径、鉴权与审计、推荐协作节奏。
 
 </div>
 
@@ -83,18 +59,6 @@ qatlas --help
 
 </div>
 
-## 电路 / 代码
-
-<div class="grid cards" markdown>
-
--   :material-vector-circle:{ .lg .middle } **[电路工具链](circuit-toolchain.md)**
-
-    ---
-
-    `designer → codegen → validator → estimator` 完整链路，含 IR 中间格式。
-
-</div>
-
 ## CLI 参考
 
 <div class="grid cards" markdown>
@@ -103,6 +67,6 @@ qatlas --help
 
     ---
 
-    全部子命令（`ingest` / `contrib` / `auth` / `wiki` / `designer` / `codegen` / `validator` / `estimator` / `config` …）+ 每个 flag 完整说明。
+    全部子命令（`ingest` / `contrib` / `paper` / `auth` / `config` …）+ 每个 flag 完整说明。
 
 </div>

@@ -1,19 +1,15 @@
 import { useTranslation } from 'react-i18next'
 import {
-  Boxes,
-  CircleDot,
+  CheckCircle2,
+  CircleX,
   Database,
-  FileDown,
-  FileText,
-  GitBranch,
-  Layers3,
-  ScrollText,
+  Loader2,
   type LucideIcon,
 } from 'lucide-react'
 
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
-import { statValue, type PaperStats, type Stats } from '@/lib/api'
+import type { PaperStats } from '@/lib/api'
 
 export type Metric = {
   key: string
@@ -24,9 +20,8 @@ export type Metric = {
 
 /**
  * MetricGrid renders a 2–4 column row of stat tiles. Pass `items` for
- * fully custom rows, or pass one of the convenience prop sets
- * (`stats=` for the wiki stats payload, `nodes/relationships/labels`
- * for the graph stats payload) and it will build the items itself.
+ * fully custom rows, or pass `paperStats=` for the registry lifecycle
+ * counters (GET /api/papers/stats) and it will build the items itself.
  */
 export function MetricGrid(
   props:
@@ -35,17 +30,7 @@ export function MetricGrid(
         loading?: boolean
       }
     | {
-        stats: Stats | null | undefined
-        loading: boolean
-      }
-    | {
         paperStats: PaperStats | null | undefined
-        loading: boolean
-      }
-    | {
-        nodes: number
-        relationships: number
-        labels: number
         loading: boolean
       },
 ) {
@@ -54,67 +39,31 @@ export function MetricGrid(
   let items: Metric[]
   if ('items' in props) {
     items = props.items
-  } else if ('stats' in props) {
-    items = [
-      {
-        key: 'entries',
-        label: t('metrics.entries'),
-        value: props.stats?.entries ?? props.stats?.total_pages ?? 0,
-        icon: FileText,
-      },
-      {
-        key: 'algorithms',
-        label: t('metrics.algorithms'),
-        value: statValue(props.stats, 'by_category', 'algorithm'),
-        icon: GitBranch,
-      },
-      {
-        key: 'primitives',
-        label: t('metrics.primitives'),
-        value: statValue(props.stats, 'by_category', 'primitive'),
-        icon: Boxes,
-      },
-      {
-        key: 'published',
-        label: t('metrics.published'),
-        value: statValue(props.stats, 'by_status', 'published'),
-        icon: CircleDot,
-      },
-    ]
-  } else if ('paperStats' in props) {
-    items = [
-      {
-        key: 'downloaded_papers',
-        label: t('metrics.downloadedPapers'),
-        value: props.paperStats?.has_pdf ?? 0,
-        icon: FileDown,
-      },
-      {
-        key: 'converted_md',
-        label: t('metrics.convertedMd'),
-        value: props.paperStats?.has_md ?? 0,
-        icon: ScrollText,
-      },
-    ]
   } else {
     items = [
       {
-        key: 'nodes',
-        label: t('metrics.nodes'),
-        value: props.nodes,
+        key: 'total',
+        label: t('metrics.papersTotal'),
+        value: props.paperStats?.total ?? 0,
         icon: Database,
       },
       {
-        key: 'relationships',
-        label: t('metrics.relationships'),
-        value: props.relationships,
-        icon: GitBranch,
+        key: 'pending',
+        label: t('metrics.papersPending'),
+        value: props.paperStats?.pending ?? 0,
+        icon: Loader2,
       },
       {
-        key: 'labels',
-        label: t('metrics.labels'),
-        value: props.labels,
-        icon: Layers3,
+        key: 'ready',
+        label: t('metrics.papersReady'),
+        value: props.paperStats?.ready ?? 0,
+        icon: CheckCircle2,
+      },
+      {
+        key: 'failed',
+        label: t('metrics.papersFailed'),
+        value: props.paperStats?.failed ?? 0,
+        icon: CircleX,
       },
     ]
   }
@@ -144,4 +93,3 @@ export function MetricGrid(
     </div>
   )
 }
-

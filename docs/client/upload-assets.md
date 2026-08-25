@@ -15,7 +15,7 @@
 qatlas contrib pdf 2501.00010v1 --pdf paper.pdf
 ```
 
-论文元数据（题目 / 作者 / 摘要 / 引用）由服务器从 OpenAlex 上游同步进 Neo4j catalog（v0.7.0 起），不再走 upload 端点。
+论文元数据（题目 / 作者 / 摘要 / 引用）由服务器从 OpenAlex 上游同步进 PostgreSQL paper registry（v0.7.0 起），不再走 upload 端点。
 
 ## 推送 MinerU 解析结果
 
@@ -105,12 +105,9 @@ server 用 S3 `If-None-Match: "*"` conditional PUT，**多 client 同时上传�
 # 还没解析过 MinerU 的列表
 qatlas contrib mineru --no-push   # 不真跑，只展示候选
 
-# 通过 wiki 看哪些有 paper page
-qatlas wiki list --type source
 ```
 
 ## 下一步
 
 - 继续做 MinerU 解析？[parse-with-mineru](parse-with-mineru.md)
-- 写 paper Wiki 页面？[write-wiki-pages](write-wiki-pages.md)
 - 详细 API 参考（status code 全量）？[reference/upload-api](../server/upload-api.md)

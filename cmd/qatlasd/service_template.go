@@ -22,14 +22,17 @@ import (
 // Field origins (all rendered by kardianos/service or
 // renderSystemdUnit below — keep this list in sync):
 //
-//   {{.Description}}       -> service.Config.Description
-//   {{.UserName}}          -> service.Config.UserName (empty in user mode)
-//   {{.WorkingDirectory}}  -> service.Config.WorkingDirectory
-//   {{.Path|cmdEscape}}    -> os.Executable() of the running qatlasd
-//   {{range .Arguments}}   -> service.Config.Arguments ("serve" "--http=...")
-//   {{range .EnvVars}}     -> service.Config.EnvVars (we inject QATLAS_DOTENV)
-//   {{index .Option "X"}}  -> service.Config.Option[X] (we inject
-//                              ReadWritePaths and WantedBy)
+//	{{.Description}}       -> service.Config.Description
+//	{{.UserName}}          -> service.Config.UserName (empty in user mode)
+//	{{.WorkingDirectory}}  -> service.Config.WorkingDirectory
+//	{{.Path|cmdEscape}}    -> os.Executable() of the running qatlasd
+//	{{range .Arguments}}   -> service.Config.Arguments
+//	                           ("--config" <path> "serve" "--http=...")
+//	{{range .EnvVars}}     -> service.Config.EnvVars (normally empty —
+//	                           env-based configuration was removed; the
+//	                           YAML config file is the source of truth)
+//	{{index .Option "X"}}  -> service.Config.Option[X] (we inject
+//	                           ReadWritePaths and WantedBy)
 //
 // The hardening block is unconditional — operators who want a minimal
 // unit can `systemctl edit qatlasd` and override individual
@@ -57,7 +60,7 @@ TimeoutStopSec=15
 
 # systemd sandboxing — defense-in-depth hardening; see systemd.exec(5).
 # ReadWritePaths must cover every directory the server writes to
-# (PB_DATA_DIR, DATA_DIR, the wiki checkout, and the .env directory).
+# (pb_data_dir, data_dir, the wiki checkout, and the config file's dir).
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full

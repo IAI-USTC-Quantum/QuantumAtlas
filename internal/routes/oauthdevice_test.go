@@ -467,7 +467,7 @@ func TestAPI_OAuthDevice_ApproveAppliesOverrides(t *testing.T) {
 	overrideBody := `{
 		"user_code":"` + uc + `",
 		"name":"edited-name",
-		"scopes":["wiki:read","papers:read"],
+		"scopes":["plugins:read","papers:read"],
 		"expires_in_days":30
 	}`
 	status, _, body := h.do(http.MethodPost, "/api/oauth/device/approve",
@@ -489,8 +489,8 @@ func TestAPI_OAuthDevice_ApproveAppliesOverrides(t *testing.T) {
 		asString(gotScopes[0]): true,
 		asString(gotScopes[1]): true,
 	}
-	if !have["wiki:read"] || !have["papers:read"] {
-		t.Errorf("approve response scopes=%v want [wiki:read papers:read]", gotScopes)
+	if !have["plugins:read"] || !have["papers:read"] {
+		t.Errorf("approve response scopes=%v want [plugins:read papers:read]", gotScopes)
 	}
 
 	// Mint the PAT and confirm it carries the edited values.

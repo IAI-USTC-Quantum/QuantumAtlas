@@ -77,7 +77,7 @@ export function Topbar() {
           const form = new FormData(event.currentTarget)
           const q = String(form.get('q') ?? '').trim()
           navigate({
-            to: '/$lang/wiki/search',
+            to: '/$lang/papers/search',
             params: { lang },
             search: q ? { q } : {},
           })
@@ -100,7 +100,7 @@ export function Topbar() {
           className="hidden text-xs text-muted-foreground sm:inline-flex"
         >
           <a
-            href="https://quantum-atlas.readthedocs.io/zh-cn/latest/reference/cli-qatlas/"
+            href="/doc"
             target="_blank"
             rel="noreferrer"
           >

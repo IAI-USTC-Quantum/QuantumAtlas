@@ -1,14 +1,14 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
-import { Activity, BookOpen, FileText, Search } from 'lucide-react'
+import { Activity, FileText, Search } from 'lucide-react'
 
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { MetricGrid } from '@/components/metric-grid'
-import { PageListItem } from '@/components/page-list-item'
 import { Panel } from '@/components/panel'
 import { StatusBlock } from '@/components/status-block'
 import { useLang } from '@/hooks/use-lang'
-import { usePages, usePaperStats, useStats } from '@/lib/queries'
+import { usePaperStats, usePapersList } from '@/lib/queries'
 
 export const Route = createFileRoute('/$lang/')({
   component: HomePage,
@@ -18,10 +18,9 @@ function HomePage() {
   const { t } = useTranslation('home')
   const lang = useLang()
   const navigate = useNavigate()
-  const stats = useStats()
   const paperStats = usePaperStats()
-  const pages = usePages()
-  const recent = (pages.data?.pages ?? []).slice(0, 5)
+  const converted = usePapersList({ has_md: true, per_page: 8, page: 1 })
+  const convertedItems = converted.data?.items ?? []
 
   return (
     <section className="space-y-6">
@@ -40,51 +39,100 @@ function HomePage() {
           </div>
           <div className="flex flex-wrap gap-2">
             <Button
-              onClick={() => navigate({ to: '/$lang/wiki', params: { lang } })}
+              onClick={() =>
+                navigate({ to: '/$lang/papers/search', params: { lang } })
+              }
             >
-              <BookOpen className="size-4" /> {t('ctaWiki')}
+              <Search className="size-4" /> {t('ctaSearch')}
             </Button>
           </div>
         </div>
       </div>
 
-      <MetricGrid stats={stats.data} loading={stats.isLoading} />
-      {paperStats.data?.available && (
+      {paperStats.data?.available ? (
         <MetricGrid
           paperStats={paperStats.data}
           loading={paperStats.isLoading}
         />
+      ) : (
+        !paperStats.isLoading && (
+          <Panel title={t('registryStats')} icon={Activity}>
+            <p className="text-sm text-muted-foreground">
+              {t('registryUnavailable')}
+            </p>
+          </Panel>
+        )
       )}
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Panel title={t('quickActions')} icon={Activity}>
-          <div className="space-y-3">
-            <Button
-              variant="outline"
-              className="w-full justify-start"
-              onClick={() =>
-                navigate({ to: '/$lang/wiki/search', params: { lang } })
-              }
-            >
-              <Search className="size-4" /> {t('searchKnowledge')}
-            </Button>
-          </div>
-        </Panel>
-
-        <Panel title={t('recentPages')} icon={FileText}>
-          <StatusBlock
-            loading={pages.isLoading}
-            error={pages.error?.message ?? ''}
-            empty={!recent.length}
+      <Panel
+        title={t('convertedPapers')}
+        icon={FileText}
+        suffix={
+          <Link
+            to="/$lang/papers"
+            params={{ lang }}
+            className="text-primary hover:underline"
           >
-            <div className="flex flex-col">
-              {recent.map((page) => (
-                <PageListItem key={page.id} page={page} />
-              ))}
-            </div>
-          </StatusBlock>
-        </Panel>
-      </div>
+            {t('viewAll')}
+          </Link>
+        }
+      >
+        <StatusBlock
+          loading={converted.isLoading}
+          error={converted.error?.message ?? ''}
+          empty={!converted.isLoading && convertedItems.length === 0}
+          emptyMessage={t('convertedPapersEmpty')}
+        >
+          <div className="grid gap-3 sm:grid-cols-2">
+            {convertedItems.map((paper) => (
+              <div
+                key={paper.paper_id}
+                className="rounded-xl border border-border bg-muted/20 p-4"
+              >
+                <Link
+                  to="/$lang/papers/$paperId"
+                  params={{ lang, paperId: paper.paper_id }}
+                  className="line-clamp-2 font-medium text-foreground hover:text-primary hover:underline"
+                  title={paper.title || paper.arxiv_id || paper.paper_id}
+                >
+                  {paper.title || paper.arxiv_id || paper.paper_id}
+                </Link>
+                <div className="mt-2 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                  {paper.arxiv_id ? (
+                    <Badge variant="secondary" className="font-mono">
+                      {paper.arxiv_id}
+                    </Badge>
+                  ) : (
+                    <span />
+                  )}
+                  <span>{formatDate(paper.created_at)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </StatusBlock>
+      </Panel>
+
+      <Panel title={t('quickActions')} icon={Activity}>
+        <div className="space-y-3">
+          <Button
+            variant="outline"
+            className="w-full justify-start"
+            onClick={() =>
+              navigate({ to: '/$lang/papers/search', params: { lang } })
+            }
+          >
+            <Search className="size-4" /> {t('searchPapers')}
+          </Button>
+        </div>
+      </Panel>
     </section>
   )
+}
+
+function formatDate(value?: string): string {
+  if (!value) return '—'
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return value
+  return parsed.toLocaleDateString()
 }

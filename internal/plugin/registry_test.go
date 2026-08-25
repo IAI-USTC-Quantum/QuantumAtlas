@@ -26,7 +26,7 @@ func TestLoadDirDiscoversManifestAndAppliesDisableWins(t *testing.T) {
 	  "kind": "external",
 	  "transport": "socket",
 	  "spawn": null,
-	  "contributes": {"capabilities": ["theorem.verify"], "subscribes": ["theorem.added"], "publishes": []},
+	  "contributes": {"capabilities": ["lean.verify"], "subscribes": ["lean.added"], "publishes": []},
 	  "needs": ["papers:read"]
 	}`)
 
@@ -91,10 +91,24 @@ func TestIncompatibleABIStatus(t *testing.T) {
 	}
 }
 
+// syntheticBuiltin is a stand-in builtin manifest used by the registry
+// tests — the repo currently ships no builtins (the Lean-content builtin
+// moved out to an external plugin), so the filtering behavior is pinned
+// against an injected manifest instead of BuiltinManifests().
+func syntheticBuiltin(id string) Manifest {
+	return Manifest{
+		ID:         id,
+		Name:       "Synthetic",
+		Version:    "1.0.0",
+		ABIVersion: HostABIVersion,
+		Kind:       KindBuiltin,
+	}
+}
+
 func TestBuiltinsParticipateInEnabledDisabledFiltering(t *testing.T) {
 	r, err := LoadDir(filepath.Join(t.TempDir(), "missing"), Options{
-		Builtins: BuiltinManifests(),
-		Enabled:  []string{"graph"},
+		Builtins: []Manifest{syntheticBuiltin("synthetic")},
+		Enabled:  []string{"synthetic"},
 	})
 	if err != nil {
 		t.Fatalf("LoadDir: %v", err)
@@ -103,21 +117,24 @@ func TestBuiltinsParticipateInEnabledDisabledFiltering(t *testing.T) {
 	if got[0].Status != StatusConnected {
 		t.Fatalf("builtin status = %s, want connected", got[0].Status)
 	}
-	if !r.Available("graph") {
-		t.Fatal("graph builtin should be available")
+	if !r.Available("synthetic") {
+		t.Fatal("synthetic builtin should be available")
 	}
-	if r.Available("rag") {
-		t.Fatal("rag builtin should not be available when enabled whitelist only contains graph")
+	if r.Available("unknown") {
+		t.Fatal("unknown builtin should not be available")
 	}
 }
 
-func TestNewBuiltinRegistryHonorsDisabled(t *testing.T) {
-	r := NewBuiltinRegistry(Options{Disabled: []string{"graph"}})
-	if r.Available("graph") {
-		t.Fatal("graph should be disabled")
+func TestNewBuiltinRegistryEmptyWhenNoBuiltins(t *testing.T) {
+	// No builtins are compiled in today, so the registry must come up
+	// empty regardless of the enabled/disabled options.
+	r := NewBuiltinRegistry(Options{Disabled: []string{"synthetic"}})
+	if got := r.List(); len(got) != 0 {
+		t.Fatalf("List() = %v, want empty", got)
 	}
-	if !r.Available("rag") {
-		t.Fatal("rag should remain available")
+	r2 := NewBuiltinRegistry(Options{})
+	if got := r2.List(); len(got) != 0 {
+		t.Fatalf("List() = %v, want empty", got)
 	}
 }
 

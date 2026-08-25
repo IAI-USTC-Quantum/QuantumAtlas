@@ -11,13 +11,13 @@ func TestEventsPublish(t *testing.T) {
 	bus := events.NewBus()
 	called := false
 	bus.Subscribe("lean.verification.completed", func(_ context.Context, ev events.Event) error {
-		called = ev.Payload["theorem_id"] == "thm-1"
+		called = ev.Payload["lemma_id"] == "lem-1"
 		return nil
 	})
 	h := eventsPublish(bus)
 	result, err := h(context.Background(), map[string]any{
 		"type":    "lean.verification.completed",
-		"payload": map[string]any{"theorem_id": "thm-1"},
+		"payload": map[string]any{"lemma_id": "lem-1"},
 	})
 	if err != nil {
 		t.Fatalf("eventsPublish: %v", err)

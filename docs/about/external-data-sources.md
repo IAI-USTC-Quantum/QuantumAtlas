@@ -114,7 +114,7 @@ arxiv 自己通过 OAI-PMH 接口对外发布的全量论文 metadata 快照。
 | **正向**（A → A 引用谁） | ✅ **更全**（含 unstructured 引文文本） | ⚠️ 少几条（只算 W-id 能解析的） |
 | **反向**（谁 → A，cited_by） | ⚠️ **只给数字**，列表锁着 | ✅ **完整列表** |
 
-→ **要建完整引用图必须两个都查**：Crossref 拿正向 + OpenAlex 拿反向。这也是 `qatlas wiki enrich-doi` chain 把 Crossref 和 OpenAlex 都接进来的原因——**互补不是冗余**。
+→ **要建完整引用图必须两个都查**：Crossref 拿正向 + OpenAlex 拿反向。DOI 解析 chain 把 Crossref 和 OpenAlex 都接进来正是这个原因——**互补不是冗余**。
 
 ## arxiv ↔ 正式 DOI 各家覆盖率
 
@@ -132,7 +132,6 @@ arxiv 自己通过 OAI-PMH 接口对外发布的全量论文 metadata 快照。
 ### 现状（2026-05）
 
 - ✅ **arxiv OAI snapshot 在团队 NAS**（`/mnt/team/Papercrawl/arxiv-metadata/`），4.9 GB，但**还没在 qatlas 代码里用**
-- ✅ **CLI `qatlas wiki enrich-doi`** 已支持 `arxiv-self → Crossref → OpenAlex` chain（按 title 匹配作 fallback；详见 [Wiki Schema 文档 Crossref 附录](../reference/wiki-schema.md#附录crossref--openalex-元数据参考)）
 - ✅ **RustFS 对象存储**（S3 兼容）已经在生产用于 paper-asset PDF/Markdown/JSON 三件套
 - ❌ OpenAlex bulk dump 还没拉到 RustFS
 
@@ -152,9 +151,11 @@ arxiv 自己通过 OAI-PMH 接口对外发布的全量论文 metadata 快照。
 
 **意义**：从此 client / server 查 DOI / 元数据全本地，不依赖外网 API、不限速、可以做大规模分析。**这是把 QuantumAtlas 从"工具"升级成"学术数据基础设施"的关键一步**。
 
-### 长期（P3）：OpenAlex 引用关系灌 Neo4j
+### 长期（P3）：OpenAlex 引用关系本地化
 
-OpenAlex `referenced_works[]` × W-id → DOI join → ~3.3 亿条 `(:Paper)-[:CITES]->(:Paper)` 边，灌 Neo4j。开 PageRank / co-citation analysis / 论文推荐等大规模图算法。Crossref `reference[]` 补正向缺失（unstructured 引文）。
+OpenAlex `referenced_works[]` 已作为内联 generated 列（`openalex_referenced_work_ids`，GIN 反查）
+随 works 语料进 PostgreSQL corpus——citation join 永远本地 SQL，不回落公开 API。
+Crossref `reference[]` 补正向缺失（unstructured 引文）。
 
 ## 引用
 
@@ -164,4 +165,4 @@ OpenAlex `referenced_works[]` × W-id → DOI join → ~3.3 亿条 `(:Paper)-[:C
 
 ## 调研原始记录
 
-字段对照实测 + spike 探索（API 抓 1000 篇 arxiv work、Shor 1995 引用子图、RustFS mirror 通路验证、跨洋吞吐测速等）记录在 issue [IAI-USTC-Quantum/QuantumAtlas#16](https://github.com/IAI-USTC-Quantum/QuantumAtlas/issues/16)（OpenAlex → Neo4j 引用图构建尝试）。
+字段对照实测 + spike 探索（API 抓 1000 篇 arxiv work、Shor 1995 引用子图、RustFS mirror 通路验证、跨洋吞吐测速等）记录在 issue [IAI-USTC-Quantum/QuantumAtlas#16](https://github.com/IAI-USTC-Quantum/QuantumAtlas/issues/16)（OpenAlex 引用语料本地化尝试）。

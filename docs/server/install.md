@@ -5,9 +5,9 @@
 | 流派 | 适合 | 起手命令 |
 |---|---|---|
 | **systemd（裸 binary）** | 长期生产、单机 / 多边缘、最少依赖 / 最少层 | `curl … install-qatlasd.sh \| sh && qatlasd service install` |
-| **docker compose 全家桶** | 评估、一键起完整栈（含 RustFS + Neo4j）、k8s 友好 | `docker compose up -d`（见 [docker.md](docker.md)） |
+| **docker compose 全家桶** | 评估、一键起完整栈（含 PostgreSQL）、k8s 友好 | `docker compose up -d`（见 [docker.md](docker.md)） |
 
-> 两套流派**完全可互换**：同一份数据（pb_data / wiki / raw / RustFS bucket）可以今天 systemd 跑，明天迁到 compose；env vars 同名同义。
+> 两套流派**完全可互换**：同一份数据（pb_data / raw / RustFS bucket / PG database）可以今天 systemd 跑，明天迁到 compose；env vars 同名同义。
 
 下面默认按 systemd 流派教。docker 流派完整教程见 **[docker.md](docker.md)**。
 
@@ -133,7 +133,7 @@ qatlasd config init
 sudo qatlasd config init --path /etc/quantum-atlas/.env
 ```
 
-模板 mode 0600，含 GitHub OAuth / Neo4j / S3 / SystemPAT 等最常用字段（commented，按需取消注释）。完整字段参考仍是 [`.env.example`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.env.example)。详见 [server-config §8](server-config.md#8-qatlasd-config-子命令)。
+模板 mode 0600，含 GitHub OAuth / PostgreSQL / S3 / SystemPAT 等最常用字段（commented，按需取消注释）。完整字段参考仍是 [`.env.example`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.env.example)。详见 [server-config §8](server-config.md#8-qatlasd-config-子命令)。
 
 **B. 自己拷 `.env.example`**：从 repo 根 / GitHub raw 直接 wget 拷下来再改。等价于 A，多一份 alias / dev-only 注释，新手干扰多。
 
@@ -289,7 +289,7 @@ qatlasd service uninstall
 # 删 binary
 trash-put ~/.local/bin/qatlasd
 
-# pb_data / wiki / raw 不会被自动删 —— 你自己决定是否保留
+# pb_data / raw 不会被自动删 —— 你自己决定是否保留
 # trash-put ~/.local/share/qatlasd/
 ```
 

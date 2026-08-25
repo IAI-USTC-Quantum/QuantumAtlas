@@ -233,8 +233,8 @@ func TestS3Store_PutWithMeta_RoundTrip(t *testing.T) {
 	// pass lowercase; we test the roundtrip behavior so a future SDK
 	// upgrade can't silently break it.
 	meta := map[string]string{
-		"sha256":         "deadbeef",
-		"original-name":  "Whatever.pdf",
+		"sha256":        "deadbeef",
+		"original-name": "Whatever.pdf",
 	}
 	if _, err := s.PutWithMeta(ctx, key, bytes.NewReader(body), int64(len(body)), "application/octet-stream", meta); err != nil {
 		t.Fatalf("PutWithMeta: %v", err)

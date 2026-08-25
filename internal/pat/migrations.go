@@ -94,7 +94,7 @@ func upCreatePATTokens(app core.App) error {
 		Name:     "token_hash",
 		Required: true,
 		Hidden:   true, // PocketBase admin UI and API responses both hide this
-		Max:      120, // bcrypt hashes are 60 chars; budget headroom for future algorithms
+		Max:      120,  // bcrypt hashes are 60 chars; budget headroom for future algorithms
 	})
 	col.Fields.Add(&core.TextField{
 		Name: "description",
@@ -137,7 +137,7 @@ func downCreatePATTokens(app core.App) error {
 
 // upAddScopesField adds a "scopes" text column to the pat_tokens
 // collection. The column stores a JSON-encoded []string of granted
-// scopes (e.g. `["papers:write","wiki:read"]`). New PATs default to
+// scopes (e.g. `["papers:write","plugins:read"]`). New PATs default to
 // the empty list, which means "this token can call no write
 // endpoint" — the same default-deny behaviour as GitHub fine-grained
 // PATs. Bumping this to a non-empty list is an explicit opt-in done

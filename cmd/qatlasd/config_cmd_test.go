@@ -14,13 +14,13 @@ import (
 
 func TestConfigInit_WritesDefaultTemplate(t *testing.T) {
 	tmp := t.TempDir()
-	target := filepath.Join(tmp, "qatlasd", ".env")
+	target := filepath.Join(tmp, "qatlasd", "config.yaml")
 
 	cmd := NewConfigCommand()
 	buf := &bytes.Buffer{}
 	cmd.SetOut(buf)
 	cmd.SetErr(buf)
-	cmd.SetArgs([]string{"init", "--path", target})
+	cmd.SetArgs([]string{"--config", target, "init"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("config init: %v (out=%s)", err, buf.String())
 	}
@@ -29,7 +29,7 @@ func TestConfigInit_WritesDefaultTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read target: %v", err)
 	}
-	if !bytes.Equal(data, defaultEnvTemplate) {
+	if !bytes.Equal(data, defaultConfigTemplate) {
 		t.Errorf("written file does not match embedded template")
 	}
 
@@ -50,7 +50,7 @@ func TestConfigInit_WritesDefaultTemplate(t *testing.T) {
 
 func TestConfigInit_RefuseOverwriteWithoutForce(t *testing.T) {
 	tmp := t.TempDir()
-	target := filepath.Join(tmp, "qatlasd", ".env")
+	target := filepath.Join(tmp, "qatlasd", "config.yaml")
 
 	// Bootstrap an existing file with a recognisable sentinel content
 	// so we can assert it was NOT clobbered.
@@ -67,7 +67,7 @@ func TestConfigInit_RefuseOverwriteWithoutForce(t *testing.T) {
 	cmd.SetOut(buf)
 	cmd.SetErr(buf)
 	cmd.SilenceUsage = true
-	cmd.SetArgs([]string{"init", "--path", target})
+	cmd.SetArgs([]string{"--config", target, "init"})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatalf("expected error when target exists and --force missing; got success (out=%s)", buf.String())
@@ -84,7 +84,7 @@ func TestConfigInit_RefuseOverwriteWithoutForce(t *testing.T) {
 
 func TestConfigInit_ForceOverwrites(t *testing.T) {
 	tmp := t.TempDir()
-	target := filepath.Join(tmp, "qatlasd", ".env")
+	target := filepath.Join(tmp, "qatlasd", "config.yaml")
 
 	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -97,180 +97,33 @@ func TestConfigInit_ForceOverwrites(t *testing.T) {
 	buf := &bytes.Buffer{}
 	cmd.SetOut(buf)
 	cmd.SetErr(buf)
-	cmd.SetArgs([]string{"init", "--path", target, "--force"})
+	cmd.SetArgs([]string{"--config", target, "init", "--force"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("config init --force: %v (out=%s)", err, buf.String())
 	}
 
 	got, _ := os.ReadFile(target)
-	if !bytes.Equal(got, defaultEnvTemplate) {
+	if !bytes.Equal(got, defaultConfigTemplate) {
 		t.Errorf("--force should replace file with default template; got %d bytes", len(got))
 	}
 }
 
-func TestConfigInit_DefaultPathUsesXDGConfigHome(t *testing.T) {
+func TestConfigInit_DefaultPathIsHomeDotQatlas(t *testing.T) {
 	tmp := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", tmp)
-
-	got, err := defaultConfigPath()
-	if err != nil {
-		t.Fatalf("defaultConfigPath: %v", err)
-	}
-	want := filepath.Join(tmp, "qatlasd", ".env")
-	if got != want {
-		t.Errorf("defaultConfigPath() = %q, want %q", got, want)
-	}
-}
-
-func TestConfigInit_DefaultPathFallsBackToHomeWhenXDGUnset(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", tmp)
 
-	got, err := defaultConfigPath()
-	if err != nil {
-		t.Fatalf("defaultConfigPath: %v", err)
-	}
-	want := filepath.Join(tmp, ".config", "qatlasd", ".env")
-	if got != want {
-		t.Errorf("defaultConfigPath() = %q, want %q", got, want)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// `qatlasd config show`
-// ---------------------------------------------------------------------------
-
-// clearQATLASEnv unsets every QuantumAtlas-relevant env var so the test
-// sees a clean baseline regardless of the developer's shell.
-func clearQATLASEnv(t *testing.T) {
-	t.Helper()
-	for _, raw := range os.Environ() {
-		eq := strings.IndexByte(raw, '=')
-		if eq <= 0 {
-			continue
-		}
-		name := raw[:eq]
-		for _, prefix := range envPrefixes {
-			if strings.HasPrefix(name, prefix) {
-				t.Setenv(name, "")
-				break
-			}
-		}
-	}
-}
-
-func TestConfigShow_RedactsSecretValues(t *testing.T) {
-	clearQATLASEnv(t)
-	t.Setenv("QATLAS_PUBLIC_URL", "https://test.example.com")
-	t.Setenv("QATLAS_S3_ACCESS_KEY_ID", "AKIA-EXAMPLE-NEVER-REAL")
-	t.Setenv("QATLAS_S3_SECRET_ACCESS_KEY", "SECRET-EXAMPLE-NEVER-REAL")
-	t.Setenv("NEO4J_PASSWORD", "supersecret")
-	t.Setenv("GITHUB_CLIENT_SECRET", "ghs_example")
-
 	cmd := NewConfigCommand()
 	buf := &bytes.Buffer{}
 	cmd.SetOut(buf)
 	cmd.SetErr(buf)
-	cmd.SetArgs([]string{"show"})
+	cmd.SetArgs([]string{"init"})
 	if err := cmd.Execute(); err != nil {
-		t.Fatalf("config show: %v", err)
+		t.Fatalf("config init: %v (out=%s)", err, buf.String())
 	}
 
-	got := buf.String()
-	// Plaintext fields stay visible.
-	if !strings.Contains(got, "QATLAS_PUBLIC_URL=https://test.example.com") {
-		t.Errorf("expected QATLAS_PUBLIC_URL plaintext; got:\n%s", got)
-	}
-	// Secret fields must be redacted.
-	for _, secretName := range []string{"QATLAS_S3_ACCESS_KEY_ID", "QATLAS_S3_SECRET_ACCESS_KEY", "NEO4J_PASSWORD", "GITHUB_CLIENT_SECRET"} {
-		if !strings.Contains(got, secretName+"=***") {
-			t.Errorf("expected %s=***; got line missing or unredacted:\n%s", secretName, got)
-		}
-	}
-	// And the plaintext secrets must NOT leak through.
-	for _, plain := range []string{"AKIA-EXAMPLE-NEVER-REAL", "SECRET-EXAMPLE-NEVER-REAL", "supersecret", "ghs_example"} {
-		if strings.Contains(got, plain) {
-			t.Errorf("secret %q leaked into show output:\n%s", plain, got)
-		}
-	}
-}
-
-func TestConfigShow_NoRedactShowsPlaintext(t *testing.T) {
-	clearQATLASEnv(t)
-	t.Setenv("NEO4J_PASSWORD", "supersecret")
-
-	cmd := NewConfigCommand()
-	buf := &bytes.Buffer{}
-	cmd.SetOut(buf)
-	cmd.SetErr(buf)
-	cmd.SetArgs([]string{"show", "--no-redact"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("config show --no-redact: %v", err)
-	}
-	if !strings.Contains(buf.String(), "NEO4J_PASSWORD=supersecret") {
-		t.Errorf("--no-redact should reveal plaintext; got:\n%s", buf.String())
-	}
-}
-
-func TestConfigShow_SortsAlphabeticallyAndSkipsEmpty(t *testing.T) {
-	clearQATLASEnv(t)
-	t.Setenv("QATLAS_PUBLIC_URL", "https://b.example")
-	t.Setenv("NEO4J_URI", "bolt://a.example:7687")
-	t.Setenv("QATLAS_EDGE_NAME", "us-east")
-	t.Setenv("MINERU_API_TOKEN", "")
-	t.Setenv("MINERU_API_BASE_URL", "https://mineru.example")
-
-	cmd := NewConfigCommand()
-	buf := &bytes.Buffer{}
-	cmd.SetOut(buf)
-	cmd.SetErr(buf)
-	cmd.SetArgs([]string{"show"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("config show: %v", err)
-	}
-
-	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
-	wantOrder := []string{
-		"MINERU_API_BASE_URL=https://mineru.example",
-		"NEO4J_URI=bolt://a.example:7687",
-		"QATLAS_EDGE_NAME=us-east",
-		"QATLAS_PUBLIC_URL=https://b.example",
-	}
-	if len(lines) != len(wantOrder) {
-		t.Fatalf("got %d lines, want %d:\n%s", len(lines), len(wantOrder), buf.String())
-	}
-	for i, want := range wantOrder {
-		if lines[i] != want {
-			t.Errorf("line[%d] = %q, want %q", i, lines[i], want)
-		}
-	}
-}
-
-func TestConfigShow_FilterOnlyQuantumAtlasVars(t *testing.T) {
-	clearQATLASEnv(t)
-	t.Setenv("QATLAS_PUBLIC_URL", "https://only.example")
-	// Random unrelated var that must NOT appear (PATH is always set).
-	t.Setenv("UNRELATED_VAR_FOR_TEST", "leak-me-if-broken")
-
-	cmd := NewConfigCommand()
-	buf := &bytes.Buffer{}
-	cmd.SetOut(buf)
-	cmd.SetErr(buf)
-	cmd.SetArgs([]string{"show"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("config show: %v", err)
-	}
-
-	if !strings.Contains(buf.String(), "QATLAS_PUBLIC_URL=") {
-		t.Errorf("expected QATLAS_PUBLIC_URL to be listed; got:\n%s", buf.String())
-	}
-	if strings.Contains(buf.String(), "UNRELATED_VAR_FOR_TEST") {
-		t.Errorf("non-QuantumAtlas env vars must not appear in show; got:\n%s", buf.String())
-	}
-	// And PATH (always set) also must not leak.
-	if strings.Contains(buf.String(), "PATH=") {
-		t.Errorf("PATH should not appear in show; got:\n%s", buf.String())
+	want := filepath.Join(tmp, ".qatlas", "config.yaml")
+	if _, err := os.Stat(want); err != nil {
+		t.Errorf("expected config at default path %s: %v", want, err)
 	}
 }
 
@@ -278,13 +131,27 @@ func TestConfigShow_FilterOnlyQuantumAtlasVars(t *testing.T) {
 // `qatlasd config path`
 // ---------------------------------------------------------------------------
 
-func TestConfigPath_ReportsQATLAS_DOTENV(t *testing.T) {
+func TestConfigPath_ReportsConfigFlag(t *testing.T) {
 	tmp := t.TempDir()
-	envFile := filepath.Join(tmp, "custom.env")
-	if err := os.WriteFile(envFile, []byte("# stub\n"), 0o600); err != nil {
-		t.Fatalf("write stub: %v", err)
+	target := filepath.Join(tmp, "custom.yaml")
+
+	cmd := NewConfigCommand()
+	buf := &bytes.Buffer{}
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"--config", target, "path"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("config path: %v", err)
 	}
-	t.Setenv("QATLAS_DOTENV", envFile)
+	got := strings.TrimSpace(buf.String())
+	if got != target {
+		t.Errorf("config path = %q, want %q", got, target)
+	}
+}
+
+func TestConfigPath_DefaultsToHomeDotQatlas(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
 
 	cmd := NewConfigCommand()
 	buf := &bytes.Buffer{}
@@ -295,56 +162,197 @@ func TestConfigPath_ReportsQATLAS_DOTENV(t *testing.T) {
 		t.Fatalf("config path: %v", err)
 	}
 	got := strings.TrimSpace(buf.String())
-	want, _ := filepath.Abs(envFile)
+	want := filepath.Join(tmp, ".qatlas", "config.yaml")
 	if got != want {
 		t.Errorf("config path = %q, want %q", got, want)
 	}
 }
 
-func TestConfigPath_ErrorsWhenNoFile(t *testing.T) {
-	// Isolated dir with no .env and no QATLAS_DOTENV pointer.
-	tmp := t.TempDir()
-	t.Setenv("QATLAS_DOTENV", "")
-	cwd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
+// ---------------------------------------------------------------------------
+// `qatlasd config show`
+// ---------------------------------------------------------------------------
+
+// clearConfigEnv unsets every env var that would trip the config
+// loader's env-rejection scan, so show tests don't depend on the
+// developer's shell.
+func clearConfigEnv(t *testing.T) {
+	t.Helper()
+	for _, raw := range os.Environ() {
+		eq := strings.IndexByte(raw, '=')
+		if eq <= 0 {
+			continue
+		}
+		name := raw[:eq]
+		if strings.HasPrefix(name, "QATLAS_") || strings.HasPrefix(name, "MINERU_") ||
+			strings.HasPrefix(name, "NEO4J_") || strings.HasPrefix(name, "POSTGRES_") ||
+			name == "GITHUB_CLIENT_ID" || name == "GITHUB_CLIENT_SECRET" {
+			t.Setenv(name, "")
+		}
 	}
-	t.Cleanup(func() { _ = os.Chdir(cwd) })
-	if err := os.Chdir(tmp); err != nil {
-		t.Fatalf("chdir tmp: %v", err)
+}
+
+func writeShowConfig(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
 	}
+	return path
+}
+
+func TestConfigShow_PrintsEffectiveYAMLAndMasksSecrets(t *testing.T) {
+	clearConfigEnv(t)
+	target := writeShowConfig(t, `
+public_url: https://test.example.com
+postgres:
+  dsn: postgres://qatlas:pw@pg:5432/qatlas
+auth:
+  github_client_id: gh-client-a
+  github_client_secret: ghs_example
+s3:
+  endpoint: http://s3.internal:9000
+  bucket_pdf: qatlas-pdf
+  bucket_md: qatlas-md
+  bucket_images: qatlas-images
+  access_key_id: AKIA-EXAMPLE-NEVER-REAL
+  secret_access_key: SECRET-EXAMPLE-NEVER-REAL
+system_pat:
+  token: supersecret-system-pat
+`)
+
+	cmd := NewConfigCommand()
+	buf := &bytes.Buffer{}
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"--config", target, "show"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("config show: %v", err)
+	}
+
+	got := buf.String()
+	// Plaintext fields stay visible.
+	for _, want := range []string{
+		"public_url: https://test.example.com",
+		"github_client_id: gh-client-a",
+		"endpoint: http://s3.internal:9000",
+		"postgres:", // DSN is not a masked class (matches old config show behaviour)
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected show output to contain %q; got:\n%s", want, got)
+		}
+	}
+	// Secret values must be masked and never leak.
+	for _, plain := range []string{"AKIA-EXAMPLE-NEVER-REAL", "SECRET-EXAMPLE-NEVER-REAL", "ghs_example", "supersecret-system-pat"} {
+		if strings.Contains(got, plain) {
+			t.Errorf("secret %q leaked into show output:\n%s", plain, got)
+		}
+	}
+	if !strings.Contains(got, "***") {
+		t.Errorf("expected masked *** entries in show output; got:\n%s", got)
+	}
+}
+
+func TestConfigShow_NoRedactShowsPlaintext(t *testing.T) {
+	clearConfigEnv(t)
+	target := writeShowConfig(t, `
+auth:
+  github_client_secret: ghs_example
+`)
+
+	cmd := NewConfigCommand()
+	buf := &bytes.Buffer{}
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"--config", target, "show", "--no-redact"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("config show --no-redact: %v", err)
+	}
+	if !strings.Contains(buf.String(), "ghs_example") {
+		t.Errorf("--no-redact should reveal plaintext; got:\n%s", buf.String())
+	}
+}
+
+func TestConfigShow_ErrorsWhenFileMissing(t *testing.T) {
+	clearConfigEnv(t)
+	missing := filepath.Join(t.TempDir(), "nope.yaml")
 
 	cmd := NewConfigCommand()
 	buf := &bytes.Buffer{}
 	cmd.SetOut(buf)
 	cmd.SetErr(buf)
 	cmd.SilenceUsage = true
-	cmd.SetArgs([]string{"path"})
-	if err := cmd.Execute(); err == nil {
-		t.Errorf("expected error when no .env; got success out=%s", buf.String())
+	cmd.SetArgs([]string{"--config", missing, "show"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("expected error for missing config file; got success out=%s", buf.String())
+	}
+	if !strings.Contains(err.Error(), "qatlasd config init") {
+		t.Errorf("error should hint at `qatlasd config init`; got: %v", err)
+	}
+}
+
+func TestConfigShow_FailsOnEnvVars(t *testing.T) {
+	// Env-based configuration is rejected everywhere — including the
+	// diagnostic surface, so an operator with a stale export sees the
+	// migration error instead of a config that looks fine.
+	clearConfigEnv(t)
+	target := writeShowConfig(t, "{}\n")
+	t.Setenv("QATLAS_POSTGRES_DSN", "postgres://x/y")
+
+	cmd := NewConfigCommand()
+	buf := &bytes.Buffer{}
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SilenceUsage = true
+	cmd.SetArgs([]string{"--config", target, "show"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("expected env-rejection error; got success out=%s", buf.String())
+	}
+	if !strings.Contains(err.Error(), "QATLAS_POSTGRES_DSN") {
+		t.Errorf("error should name the offending env var; got: %v", err)
 	}
 }
 
 // ---------------------------------------------------------------------------
-// secrecy heuristic guard (catch silent regressions on new field types)
+// --config extraction from raw argv (used by main before cobra parses)
 // ---------------------------------------------------------------------------
 
-func TestIsSecretName_KnownClasses(t *testing.T) {
-	cases := map[string]bool{
-		"QATLAS_S3_ACCESS_KEY_ID":     true,
-		"QATLAS_S3_SECRET_ACCESS_KEY": true,
-		"NEO4J_PASSWORD":              true,
-		"GITHUB_CLIENT_SECRET":        true,
-		"MINERU_API_TOKEN":            true,
-		"QATLAS_SYSTEM_PAT":           false, // intentional: name doesn't hint secret
-		"QATLAS_PUBLIC_URL":           false,
-		"NEO4J_URI":                   false,
-		"NEO4J_USERNAME":              false,
-		"QATLAS_EDGE_NAME":            false,
+func TestConfigPathFromArgs(t *testing.T) {
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"qatlasd", "serve"}, ""},
+		{[]string{"qatlasd", "--config", "/x.yaml", "serve"}, "/x.yaml"},
+		{[]string{"qatlasd", "serve", "--config", "/x.yaml"}, "/x.yaml"},
+		{[]string{"qatlasd", "--config=/x.yaml", "serve"}, "/x.yaml"},
+		{[]string{"qatlasd", "serve", "--config=/x.yaml"}, "/x.yaml"},
+		{[]string{"qatlasd", "--config"}, ""}, // dangling flag — no value
 	}
-	for name, want := range cases {
-		if got := isSecretName(name); got != want {
-			t.Errorf("isSecretName(%q) = %v, want %v", name, got, want)
+	for _, c := range cases {
+		if got := configPathFromArgs(c.args); got != c.want {
+			t.Errorf("configPathFromArgs(%v) = %q, want %q", c.args, got, c.want)
+		}
+	}
+}
+
+func TestFirstPositionalIsConfig(t *testing.T) {
+	cases := []struct {
+		args []string
+		want bool
+	}{
+		{[]string{"config"}, true},
+		{[]string{"config", "show"}, true},
+		{[]string{"--config", "/x.yaml", "config", "show"}, true},
+		{[]string{"--config=/x.yaml", "config"}, true},
+		{[]string{"serve"}, false},
+		{[]string{"--config", "/x.yaml", "serve"}, false},
+		{[]string{}, false},
+	}
+	for _, c := range cases {
+		if got := firstPositionalIsConfig(c.args); got != c.want {
+			t.Errorf("firstPositionalIsConfig(%v) = %v, want %v", c.args, got, c.want)
 		}
 	}
 }

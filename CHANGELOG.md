@@ -8,7 +8,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### BREAKING CHANGE
 
-- **qatlas CLI split into a standalone private repo.** The `qatlas` command-line client now lives at `Agony5757/qatlas-cli` (`uv tool install --from git+ssh://git@github.com/Agony5757/qatlas-cli.git qatlas-cli`); this repo no longer ships the `qatlas` command. The `qatlas.cli` / `qatlas.client` / `qatlas.config` / `qatlas.config_yaml` / `qatlas.paths` modules and the MinerU / arXiv fetch helpers (`qatlas.parser.{mineru_client,keyring,arxiv_fetcher}`) are removed from the main package.
+- **Project repositioned to "paper collection + multi-paradigm search + registry database".** The wiki, Neo4j knowledge-graph, and circuit toolchain subsystems are removed, and PostgreSQL is now a core requirement for the paper registry.
+- **Removed: wiki subsystem.** Wiki pages, `QATLAS_WIKI_DIR`, `qatlas wiki` CLI, `/api/wiki/*`, `/api/pages`, wiki PAT scopes (`wiki:read` / `wiki:write`), and the QuantumAtlas-Wiki git sync flow are gone.
+- **Removed: Neo4j knowledge graph.** All `NEO4J_*` env vars, `/api/graph/*` endpoints, `graph:read` scope, and the graph plugin are gone. Relationship queries are served by the PostgreSQL paper registry + OpenAlex corpus instead.
+- **Removed: circuit / codegen toolchain.** The Python `designer` / `codegen` / `validator` / `estimator` / `extractor` / `knowledge` packages and their CLI commands are deleted.
+- **Removed: standalone RAG endpoints.** `/api/rag/*` and `/api/v1/rag/*` are gone; Qdrant semantic retrieval survives as an optional `qdrant` provider behind `POST /api/search` (requires `QATLAS_RAG_QDRANT_URL` + `QATLAS_RAG_EMBED_URL`).
+- **PostgreSQL required for the paper registry.** `QATLAS_POSTGRES_DSN` is now a first-class, documented-active setting; goose migrations auto-apply at boot. Without a DSN the registry endpoints degrade to `available:false` (uploads still land in object storage with `X-Catalog-Sync: deferred`).
+- **docker-compose full-stack template changed.** `deploy/docker-compose.yml` now runs `postgres` + `qatlasd` (RustFS / S3 stays external, e.g. on a NAS); the rustfs service and `RUSTFS_ROOT_*` / `NEO4J_*` template variables are removed from `deploy/.env.docker.example`. PAT scope vocabulary is now `papers:read` / `papers:write` / `theorems:read` (+ `*`).
+- **qatlas CLI split into a standalone private repo.** The `qatlas` command-line client now lives at `IAI-USTC-Quantum/qatlas-cli` (PyPI: `uv tool install qatlas-cli`); this repo no longer ships the `qatlas` command. The `qatlas.cli` / `qatlas.client` / `qatlas.config` / `qatlas.config_yaml` / `qatlas.paths` modules and the MinerU / arXiv fetch helpers (`qatlas.parser.{mineru_client,keyring,arxiv_fetcher}`) are removed from the main package.
+- **Stale in-repo `search/` copy removed.** `qatlas-search` lives at `IAI-USTC-Quantum/qatlas-search`; the main repo no longer ships the `qatlas-search` script or the `qatlas_search` package. qatlasd talks to the microservice over HTTP (`search.remote`).
+
+### Feat
+
+- **search**: multi-provider search engine behind `POST /api/search`; provider fan-out list via `QATLAS_SEARCH_PROVIDERS` (default `catalog,arxiv,openalex`, optional `qdrant` semantic retrieval).
+- **ingest**: lazy ingestion — cache misses on paper assets are fetched/converted asynchronously server-side with dedupe and LRO status polling.
+- **registry**: PostgreSQL paper registry (papers / paper_assets / paper_identities) with boot-time goose migrations; `QATLAS_POSTGRES_MAX_CONNS` tunes the pool.
+
+### Refactor
+
+- **deploy/docs**: compose templates, Dockerfile (dropped `/data/wiki` volume), `.env` templates, README, and the docs site updated to the new positioning; wiki / graph / codegen / RAG-endpoint documentation pages deleted.
 
 ## v0.21.0a3 (2026-07-03)
 

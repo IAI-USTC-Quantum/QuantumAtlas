@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -16,7 +17,7 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/arxiv"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperassets"
-	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/papers"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/registry"
 )
 
 // Converter is the server-side MinerU driver gated by the opt-in
@@ -35,10 +36,13 @@ import (
 //     daily-limit failures prevents thundering herds against MinerU.
 //  3. A background goroutine acquires a slot in the concurrency
 //     semaphore (sized by MINERU_MAX_CONCURRENT_JOBS, default 4),
-//     presigns the PDF, submits to MinerU, polls until done, downloads
-//     the result zip, writes images + markdown via PutWithOptions with
-//     IfNoneMatch:"*" (matches upload-mineru's first-writer-wins
-//     idempotency), and best-effort calls catalog.UpsertMD.
+//     reads the PDF bytes from the object store, pushes them to
+//     MinerU's own storage via the file-urls upload channel (no
+//     publicly reachable S3 needed), polls the resulting batch until
+//     done, downloads the result zip, writes images + markdown via
+//     PutWithOptions with IfNoneMatch:"*" (matches upload-mineru's
+//     first-writer-wins idempotency), and best-effort calls
+//     catalog.UpsertMD.
 //  4. The Lookup method is a side-effect-free snapshot used by the
 //     markdown/status endpoint.
 //
@@ -66,7 +70,7 @@ import (
 type Converter struct {
 	cfg     ConverterConfig
 	store   objstore.Store
-	catalog *papers.Store
+	catalog *registry.Store
 	keyRing *KeyRing
 	logger  *slog.Logger
 
@@ -78,8 +82,8 @@ type Converter struct {
 	enabled     bool   // false when switch off OR no tokens OR public endpoint missing
 	disabledMsg string // non-empty when !enabled, for handler error responses
 
-	sem         chan struct{} // MinerU job slots
-	arxivSem    chan struct{} // arxiv fetch slots (nil when no fetcher)
+	sem      chan struct{} // MinerU job slots
+	arxivSem chan struct{} // arxiv fetch slots (nil when no fetcher)
 
 	mu   sync.Mutex
 	jobs map[string]*Job
@@ -90,8 +94,8 @@ type Converter struct {
 	// hot path.
 	durationsMu     sync.Mutex
 	recentDurations [convertHistoryCap]time.Duration
-	recentCount     int    // total finishes ever observed (saturates at MaxInt)
-	recentIdx       int    // next slot to overwrite (round-robin)
+	recentCount     int // total finishes ever observed (saturates at MaxInt)
+	recentIdx       int // next slot to overwrite (round-robin)
 
 	counters Counters
 }
@@ -124,13 +128,6 @@ type ConverterConfig struct {
 	MinerUPollInterval      time.Duration
 	MinerUTimeout           time.Duration
 	MinerUMaxConcurrentJobs int
-
-	// S3PublicEndpoint is the (publicly reachable) RustFS endpoint
-	// presigned URLs are signed against. When empty AND switch+token
-	// are set, NewConverter logs a WARN and the converter behaves as
-	// disabled — MinerU can't reach our internal mesh endpoint and a
-	// presigned URL pointing there would always 404 in MinerU.
-	S3PublicEndpoint string
 
 	// Fetcher, when non-nil, allows the converter to silent-fetch
 	// missing PDFs from arxiv.org before driving MinerU. When nil the
@@ -196,7 +193,7 @@ type FetchProgress struct {
 type ConvertProgress struct {
 	StartedAt    time.Time
 	CompletedAt  time.Time
-	MinerUTaskID string
+	MinerUTaskID string // MinerU's batch id from the upload channel
 	Stage        string // "submitting" / "running" / "downloading_zip"
 	PolledCount  int
 }
@@ -259,18 +256,18 @@ type Job struct {
 // Counters is the per-process tally surfaced for the optional /metrics
 // or /api/health extras. Read via Snapshot.
 type Counters struct {
-	Submitted             atomic.Int64
-	Succeeded             atomic.Int64
-	FailedFatal           atomic.Int64
-	FailedRetryable       atomic.Int64
-	FailedDailyLimit      atomic.Int64
-	CacheHits             atomic.Int64
-	CacheMisses           atomic.Int64
-	InflightJobs          atomic.Int64
-	ArxivFetches          atomic.Int64
-	ArxivFetchSucceeded   atomic.Int64
-	ArxivFetchFailed      atomic.Int64
-	InflightArxivFetches  atomic.Int64
+	Submitted            atomic.Int64
+	Succeeded            atomic.Int64
+	FailedFatal          atomic.Int64
+	FailedRetryable      atomic.Int64
+	FailedDailyLimit     atomic.Int64
+	CacheHits            atomic.Int64
+	CacheMisses          atomic.Int64
+	InflightJobs         atomic.Int64
+	ArxivFetches         atomic.Int64
+	ArxivFetchSucceeded  atomic.Int64
+	ArxivFetchFailed     atomic.Int64
+	InflightArxivFetches atomic.Int64
 }
 
 // CountersSnapshot is a point-in-time view of the converter counters.
@@ -319,11 +316,10 @@ const FailureCooldown = 60 * time.Second
 // callers don't have to nil-check. Use Enabled() to learn whether the
 // converter will actually drive MinerU.
 //
-// When the switch is on but the deployment can't drive MinerU end-to-
-// end (no tokens or S3 public endpoint missing), a single WARN is
-// logged at construction time and Enabled() returns false. Callers
-// (the markdown handler) translate that into 503 on cache miss.
-func NewConverter(cfg ConverterConfig, store objstore.Store, catalog *papers.Store, logger *slog.Logger) *Converter {
+// When the switch is on but the deployment can't drive MinerU
+// (no API tokens configured), NewConverter leaves Enabled() false.
+// Callers (the markdown handler) translate that into 503 on cache miss.
+func NewConverter(cfg ConverterConfig, store objstore.Store, catalog *registry.Store, logger *slog.Logger) *Converter {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -357,10 +353,6 @@ func NewConverter(cfg ConverterConfig, store objstore.Store, catalog *papers.Sto
 	case c.keyRing.Size() == 0:
 		c.enabled = false
 		c.disabledMsg = "MinerU not configured (MINERU_API_TOKENS unset); cache-only mode"
-	case cfg.S3PublicEndpoint == "":
-		c.enabled = false
-		c.disabledMsg = "QATLAS_S3_PUBLIC_ENDPOINT not set; MinerU cannot reach internal RustFS — cache-only mode"
-		logger.Warn("mineru converter degraded to cache-only: QATLAS_S3_PUBLIC_ENDPOINT not set; presigned URLs would point at an unreachable internal host. Set QATLAS_S3_PUBLIC_ENDPOINT to the RustFS host MinerU can reach to enable server-side conversion.")
 	default:
 		c.enabled = true
 	}
@@ -374,8 +366,8 @@ func NewConverter(cfg ConverterConfig, store objstore.Store, catalog *papers.Sto
 func (c *Converter) KeyRingSize() int { return c.keyRing.Size() }
 
 // Enabled reports whether the converter will actually drive MinerU on
-// cache miss. False in any of: switch off, token unset, S3 public
-// endpoint unset. The handler falls back to "cache only; 503 on miss"
+// cache miss. False when the switch is off or no API token is
+// configured. The handler falls back to "cache only; 503 on miss"
 // when false.
 func (c *Converter) Enabled() bool { return c.enabled }
 
@@ -385,8 +377,8 @@ func (c *Converter) Enabled() bool { return c.enabled }
 func (c *Converter) DisabledReason() string { return c.disabledMsg }
 
 // FetchEnabled reports whether an arXiv PDF fetcher is wired in. The
-// converter can be Enabled() (token + S3 public endpoint set) yet still
-// lack a fetcher; in that case a cache-miss /pdf request cannot obtain
+// converter can be Enabled() (tokens configured) yet still lack a
+// fetcher; in that case a cache-miss /pdf request cannot obtain
 // the bytes, and the handler should answer 503 (server capability gap)
 // rather than 404 (paper gone).
 func (c *Converter) FetchEnabled() bool { return c.cfg.Fetcher != nil }
@@ -715,13 +707,10 @@ func (c *Converter) runOnce(ctx context.Context, canonical string) error {
 		}
 	})
 
-	pdfURL, supported, err := c.store.PresignGet(ctx, pdfKey, 30*time.Minute)
-	if err != nil {
-		return fmt.Errorf("presign pdf: %w", err)
-	}
-	if !supported || pdfURL == "" {
-		return &Error{Msg: "object store cannot presign PDF (LocalStore?); cannot drive MinerU", Kind: ErrFatal}
-	}
+	// File name MinerU will see: must carry a real .pdf suffix (the
+	// parser is chosen by extension) and must not contain path
+	// separators (old-style canonicals like "quant-ph/9508027v2" do).
+	uploadName := strings.ReplaceAll(canonical, "/", "_") + ".pdf"
 
 	// Try every key in the ring until one succeeds or all return
 	// daily-limit. A single key failure other than daily-limit
@@ -743,7 +732,7 @@ func (c *Converter) runOnce(ctx context.Context, canonical string) error {
 			return &Error{Msg: msg, Kind: ErrDailyLimit}
 		}
 
-		taskID, err := client.SubmitURLTask(ctx, pdfURL, SubmitOptions{
+		batchID, uploadURLs, err := client.ApplyUploadURLs(ctx, []string{uploadName}, SubmitOptions{
 			ModelVersion:  c.cfg.MinerUModelVersion,
 			Language:      c.cfg.MinerULanguage,
 			EnableFormula: c.cfg.MinerUEnableFormula,
@@ -760,14 +749,32 @@ func (c *Converter) runOnce(ctx context.Context, canonical string) error {
 			return err
 		}
 
+		// Stream the PDF out of the object store and push it to
+		// MinerU's presigned upload URL. No publicly reachable S3
+		// endpoint needed — MinerU never fetches from us.
+		rc, info, err := c.store.Get(ctx, pdfKey)
+		if err != nil {
+			return fmt.Errorf("read pdf from store: %w", err)
+		}
+		uploadErr := client.UploadFile(ctx, uploadURLs[0], rc, info.Size)
+		rc.Close()
+		if uploadErr != nil {
+			if errors.Is(uploadErr, ErrDailyLimit) {
+				c.keyRing.MarkDailyLimit(slot, c.dailyResetAt(c.now()))
+				c.logger.Warn("mineru: key exhausted on upload, rotating", "slot", slot, "remaining", c.keyRing.AvailableSlots())
+				continue
+			}
+			return uploadErr
+		}
+
 		c.transition(canonical, func(j *Job) {
 			if j.Convert != nil {
-				j.Convert.MinerUTaskID = taskID
+				j.Convert.MinerUTaskID = batchID
 				j.Convert.Stage = "running"
 			}
 		})
 
-		zipURL, err := c.pollUntilDone(ctx, client, taskID, canonical)
+		zipURL, err := c.pollUntilDone(ctx, client, batchID, canonical)
 		if err != nil {
 			if errors.Is(err, ErrDailyLimit) {
 				c.keyRing.MarkDailyLimit(slot, c.dailyResetAt(c.now()))
@@ -885,10 +892,13 @@ func (c *Converter) fetchAndStorePDF(ctx context.Context, canonical string) erro
 	})
 	c.counters.ArxivFetchSucceeded.Add(1)
 
-	// Catalog write-through is best-effort.
+	// Registry write-through is best-effort.
 	if c.catalog != nil {
-		if uErr := c.catalog.UpsertPDF(ctx, canonical, result.Sha256, result.Size); uErr != nil &&
-			!errors.Is(uErr, papers.ErrCatalogUnavailable) {
+		if _, _, uErr := c.catalog.UpsertPDF(ctx,
+			registry.PaperRef{ArxivID: canonical},
+			registry.ArxivVersionOf(canonical), result.Sha256, result.Size,
+			bucketRelKey(pdfKey)); uErr != nil &&
+			!errors.Is(uErr, registry.ErrCatalogUnavailable) {
 			c.logger.Warn("papers: UpsertPDF write-through after silent fetch failed",
 				"arxiv_id", canonical, "error", uErr)
 		}
@@ -1015,17 +1025,22 @@ func (c *Converter) runPDF(canonical string) {
 	)
 }
 
-// pollUntilDone polls MinerU at cfg.MinerUPollInterval until the task
-// transitions to done or failed, or the per-job context expires.
-// Uses the supplied client so the caller controls which token / which
-// key-ring slot the polling traffic charges against. Per-poll
-// progress (PolledCount) is folded into the Job's ConvertProgress so
-// the status handler can show movement even during long-running jobs.
-func (c *Converter) pollUntilDone(ctx context.Context, client *Client, taskID, canonical string) (string, error) {
+// pollUntilDone polls MinerU's batch-results endpoint at
+// cfg.MinerUPollInterval until the file's state transitions to done
+// or failed, or the per-job context expires. Uses the supplied client
+// so the caller controls which token / which key-ring slot the polling
+// traffic charges against. Per-poll progress (PolledCount) is folded
+// into the Job's ConvertProgress so the status handler can show
+// movement even during long-running jobs.
+//
+// The upload channel yields exactly one file per batch, so the first
+// reported entry is authoritative; DataID is checked when present as
+// a sanity guard (we submit DataID=canonical).
+func (c *Converter) pollUntilDone(ctx context.Context, client *Client, batchID, canonical string) (string, error) {
 	tick := time.NewTicker(c.cfg.MinerUPollInterval)
 	defer tick.Stop()
 	for {
-		state, err := client.GetTask(ctx, taskID)
+		results, err := client.GetBatch(ctx, batchID)
 		if err != nil {
 			return "", err
 		}
@@ -1034,14 +1049,25 @@ func (c *Converter) pollUntilDone(ctx context.Context, client *Client, taskID, c
 				j.Convert.PolledCount++
 			}
 		})
-		switch state.State {
-		case "done":
-			if state.FullZipURL == "" {
-				return "", &Error{Msg: "task done but full_zip_url empty", Kind: ErrRetryable}
+		if len(results) > 0 {
+			st := results[0]
+			for _, r := range results {
+				if r.DataID == canonical {
+					st = r
+					break
+				}
 			}
-			return state.FullZipURL, nil
-		case "failed":
-			return "", classifyAPIError("", state.ErrMsg, 0)
+			switch st.State {
+			case "done":
+				if st.FullZipURL == "" {
+					return "", &Error{Msg: "task done but full_zip_url empty", Kind: ErrRetryable}
+				}
+				return st.FullZipURL, nil
+			case "failed":
+				return "", classifyAPIError("", st.ErrMsg, 0)
+			}
+			// Anything else (waiting-file / pending / running /
+			// converting) is in-flight — keep polling.
 		}
 		select {
 		case <-ctx.Done():
@@ -1092,12 +1118,12 @@ func (c *Converter) writeResult(ctx context.Context, canonical string, result Re
 		return fmt.Errorf("put markdown: %w", err)
 	}
 
-	// Catalog write-through is best-effort.
+	// Registry write-through is best-effort.
 	if c.catalog != nil {
 		sum := sha256.Sum256(result.Markdown)
 		mdSha := hex.EncodeToString(sum[:])
-		if uErr := c.catalog.UpsertMD(ctx, canonical, mdSha, mdSize); uErr != nil &&
-			!errors.Is(uErr, papers.ErrCatalogUnavailable) {
+		if uErr := c.upsertMDWriteThrough(ctx, canonical, mdSha, mdSize, len(result.Images)); uErr != nil &&
+			!errors.Is(uErr, registry.ErrCatalogUnavailable) {
 			c.logger.Warn("papers: UpsertMD write-through failed after conversion",
 				"arxiv_id", canonical, "error", uErr)
 		}

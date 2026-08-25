@@ -1,8 +1,8 @@
 # 贡献指南
 
-欢迎给 QuantumAtlas 贡献——代码、文档、Wiki 内容、bug 报告都欢迎。
+欢迎给 QuantumAtlas 贡献——代码、文档、bug 报告都欢迎。
 
-## 四种贡献路径
+## 三种贡献路径
 
 <div class="grid cards" markdown>
 
@@ -17,12 +17,6 @@
     ---
 
     改这份你正在看的 mkdocs site。本地预览 + RTD PR preview。
-
--   :material-notebook-edit:{ .lg .middle } **[贡献 Wiki 内容](#wiki-content)**
-
-    ---
-
-    在独立的 [QuantumAtlas-Wiki](https://github.com/IAI-USTC-Quantum/QuantumAtlas-Wiki) repo 写算法 / 论文 / 原语页面。
 
 -   :material-server-network:{ .lg .middle } **[贡献 MinerU 额度](#mineru-quota)**
 
@@ -202,9 +196,6 @@ pixi run test-go
 
 # 前端 build + type check
 cd web && npm run build
-
-# Lint Wiki（如果你改了 atlas/wiki/）
-qatlas wiki lint
 ```
 
 !!! warning "Go 必须 CGO_ENABLED=1（2026-05 起）"
@@ -222,11 +213,10 @@ qatlas wiki lint
 ### 仓库结构
 
 ```
-atlas/                 Python client + Wiki + 电路工具
-internal/              Go server 内部包（route / auth / store / config）
-cmd/qatlasd/     Go server 入口 (main + cobra subcommands)
+qatlas/                Python client (CLI + contrib workflows)
+internal/              Go server 内部包（registry / search / ingest / objstore / auth / config）
+cmd/qatlasd/           Go server 入口 (main + cobra subcommands)
 web/                   React SPA (Vite + TanStack Router)
-examples/              可独立 demo
 scripts/               运维脚本
 tests/                 Python 测试
 docs/                  这份文档
@@ -274,7 +264,7 @@ uv run --with-requirements docs/requirements.txt -- mkdocs serve
 | `docs/concepts/` | 架构 / 思想（跨组件共享）|
 | `docs/client/` | Python 客户端 `qatlas`：how-to + 客户端 CLI |
 | `docs/server/` | Go 服务端 `qatlasd`：部署运维 + REST API + 服务端 CLI |
-| `docs/reference/` | 跨组件数据格式 ref（env vars / Wiki schema / arXiv ID）|
+| `docs/reference/` | 跨组件数据格式 ref（env vars / arXiv ID）|
 | `docs/about/` | 项目背景 |
 
 每个子目录有自己的 `.pages` 文件控制侧栏 nav。
@@ -302,52 +292,11 @@ uv run --with-requirements docs/requirements.txt -- mkdocs serve
 
 ---
 
-## 贡献 Wiki 内容 { #wiki-content }
-
-Wiki 在独立 repo：<https://github.com/IAI-USTC-Quantum/QuantumAtlas-Wiki>
-
-完整模板和写作指南：[写 Wiki 页面](client/write-wiki-pages.md)。
-
-简版流程：
-
-```bash
-git clone https://github.com/IAI-USTC-Quantum/QuantumAtlas-Wiki.git
-cd QuantumAtlas-Wiki
-git checkout -b add-grover
-
-# 写 wiki/entities/primitives/prim-grover.md
-qatlas wiki create prim-grover --title "Grover's Search" --type entity --category primitive
-
-# 编辑文件
-$EDITOR wiki/entities/primitives/prim-grover.md
-
-# 本地 lint
-qatlas wiki lint
-
-# 提交
-git add wiki/entities/primitives/prim-grover.md
-git commit -m "feat: add prim-grover"
-git push origin add-grover
-# 在 GitHub 发 PR
-```
-
-合并到 main 后，触发 server 端 fast-forward pull（需 `wiki:write` scope 的 PAT 或 session token）：
-
-```bash
-TOKEN=$(qatlas config get token)  # 从 client yaml 读
-curl -X POST https://quantum-atlas.ai/api/wiki/sync/pull \
-    -H "Authorization: Bearer $TOKEN"
-```
-
-即使是 fast-forward only，它仍会在服务端跑 git + 重建缓存，因此和其它写口一样需要鉴权，防匿名滥用。
-
----
-
 ## 贡献 MinerU 额度 { #mineru-quota }
 
 MinerU 给每个注册账号送 **5000 篇 / 天** 的免费 PDF→Markdown 解析配额。个人用户基本用不完，
 catalog 里却永远有几千篇 PDF 在 `/api/papers/needs-mineru` 队列里等着。
-把闲置配额挂给项目，就把这些 PDF 变成可全文搜索 / 可被 LLM 抽取 / 可被 wiki 引用的 markdown——
+把闲置配额挂给项目，就把这些 PDF 变成可被 catalog 检索 / 可被语义索引的 markdown——
 **零代码贡献路径**。
 
 完整使用指南、错误码分类、daily-limit 退避语义、claim 原子租约模型见

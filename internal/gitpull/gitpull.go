@@ -1,12 +1,12 @@
 // Package gitpull is the host-neutral `git pull --ff-only` machinery shared
 // by every builtin plugin that reads through a server-side checkout of an
-// upstream content repo (wiki, theorems). It deliberately shells out to the
+// upstream content repo. It deliberately shells out to the
 // `git` binary rather than pull in go-git: the operations needed (rev-parse,
 // fetch, pull --ff-only) are simple, and shelling out keeps operational
 // behavior easy to reason about.
 //
 // This package carries NO plugin-specific vocabulary — it knows nothing about
-// wiki pages or theorems. Plugins layer their own post-pull work (cache
+// any plugin's content. Plugins layer their own post-pull work (cache
 // refresh) via the platform's GitPullPlugin.OnPullSucceeded hook.
 package gitpull
 

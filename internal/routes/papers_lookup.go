@@ -11,7 +11,7 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/lazyload"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/openalex"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/openalexcorpus"
-	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/papers"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/registry"
 
 	"github.com/pocketbase/pocketbase/core"
 )
@@ -42,7 +42,7 @@ type lookupResult struct {
 	Resolved bool     `json:"resolved"`
 }
 
-func paperLookupHandler(re *core.RequestEvent, catalog *papers.Store, corpus *openalexcorpus.Store, corpusLoader *lazyload.Materializer[corpusValue]) error {
+func paperLookupHandler(re *core.RequestEvent, catalog *registry.Store, corpus *openalexcorpus.Store, corpusLoader *lazyload.Materializer[corpusValue]) error {
 	refs := parseLookupIDs(re.Request.URL.Query().Get("ids"))
 	if len(refs) == 0 {
 		return re.JSON(http.StatusBadRequest, map[string]string{
@@ -180,7 +180,7 @@ func corpusResolve(ctx context.Context, corpus *openalexcorpus.Store, kind, id s
 // catalogHosted reports whether a ref corresponds to a papers row (a Paper
 // QuantumAtlas hosts). Best-effort: a catalog miss or unavailability is "not
 // hosted", never an error for the batch.
-func catalogHosted(ctx context.Context, catalog *papers.Store, kind, id string) bool {
+func catalogHosted(ctx context.Context, catalog *registry.Store, kind, id string) bool {
 	if catalog == nil {
 		return false
 	}

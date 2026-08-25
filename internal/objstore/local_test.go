@@ -135,9 +135,9 @@ func TestLocalStore_ListPrefix(t *testing.T) {
 	s := newLocal(t)
 	ctx := context.Background()
 	files := map[string][]byte{
-		"pdf/24/2401.00001v1.pdf":  []byte("a"),
-		"pdf/24/2401.00002v1.pdf":  []byte("bb"),
-		"pdf/25/2501.00010v1.pdf":  []byte("ccc"),
+		"pdf/24/2401.00001v1.pdf":     []byte("a"),
+		"pdf/24/2401.00002v1.pdf":     []byte("bb"),
+		"pdf/25/2501.00010v1.pdf":     []byte("ccc"),
 		"markdown/24/2401.00001v1.md": []byte("dddd"),
 	}
 	for k, v := range files {
@@ -189,6 +189,64 @@ func TestLocalStore_ListPrefix(t *testing.T) {
 		}
 		if len(got) != 0 {
 			t.Errorf("ListPrefix unknown: got %d, want 0", len(got))
+		}
+	})
+}
+
+func TestLocalStore_ListDirs(t *testing.T) {
+	s := newLocal(t)
+	ctx := context.Background()
+	files := map[string][]byte{
+		"pdf/0001/0001001v1.pdf":   []byte("a"),
+		"pdf/0001/0001002v1.pdf":   []byte("bb"),
+		"pdf/0002/0002001v1.pdf":   []byte("ccc"),
+		"pdf/doi/10.1234/x.pdf":    []byte("dddd"),
+		"pdf/stray.pdf":            []byte("top-level object, not a dir"),
+		"markdown/0001/0001001.md": []byte("eeeee"),
+	}
+	for k, v := range files {
+		if _, err := s.Put(ctx, k, bytes.NewReader(v), int64(len(v)), ""); err != nil {
+			t.Fatalf("Put %s: %v", k, err)
+		}
+	}
+
+	t.Run("kind prefix lists shards only", func(t *testing.T) {
+		got, err := s.ListDirs(ctx, "pdf/")
+		if err != nil {
+			t.Fatalf("ListDirs: %v", err)
+		}
+		sort.Strings(got)
+		want := []string{"pdf/0001/", "pdf/0002/", "pdf/doi/"}
+		if !equalStrings(got, want) {
+			t.Errorf("ListDirs pdf/: got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("root lists kinds", func(t *testing.T) {
+		got, err := s.ListDirs(ctx, "")
+		if err != nil {
+			t.Fatalf("ListDirs: %v", err)
+		}
+		sort.Strings(got)
+		want := []string{"markdown/", "pdf/"}
+		if !equalStrings(got, want) {
+			t.Errorf("ListDirs root: got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("missing prefix returns empty", func(t *testing.T) {
+		got, err := s.ListDirs(ctx, "no/such/prefix/")
+		if err != nil {
+			t.Fatalf("ListDirs: %v", err)
+		}
+		if len(got) != 0 {
+			t.Errorf("ListDirs unknown: got %v, want empty", got)
+		}
+	})
+
+	t.Run("traversal rejected", func(t *testing.T) {
+		if _, err := s.ListDirs(ctx, "../escape"); err == nil {
+			t.Errorf("ListDirs(../escape) should fail")
 		}
 	})
 }

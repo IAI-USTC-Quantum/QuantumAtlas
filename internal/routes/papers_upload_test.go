@@ -73,6 +73,9 @@ func (f *fakeStore) Delete(_ context.Context, _ string) error {
 func (f *fakeStore) ListPrefix(_ context.Context, _ string, _ int) ([]objstore.ObjectInfo, error) {
 	panic("fakeStore.ListPrefix should not be called by uploadOne tests")
 }
+func (f *fakeStore) ListDirs(_ context.Context, _ string) ([]string, error) {
+	panic("fakeStore.ListDirs should not be called by uploadOne tests")
+}
 func (f *fakeStore) PresignGet(_ context.Context, _ string, _ time.Duration) (string, bool, error) {
 	panic("fakeStore.PresignGet should not be called by uploadOne tests")
 }

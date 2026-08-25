@@ -18,82 +18,24 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
-        "/api/graph/query": {
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Executes caller-supplied read-only Cypher. graph:read scope.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Graph"
-                ],
-                "summary": "Graph query",
-                "parameters": [
-                    {
-                        "description": "{query: string, limit: int}",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "type": "object"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "503": {
-                        "description": "Service Unavailable",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/graph/schema": {
+        "/api/admin/db/schema": {
             "get": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "Requires the graph:read scope.",
+                "description": "Read-only introspection of the QATLAS_POSTGRES_DSN database:\nevery table in schema public (goose_db_version included,\nalphabetical) with row estimate, total size, columns\n(type/nullable/default/is_pk), indexes and constraints.\nAdmin-only: session token + github_login on the\nQATLAS_ADMIN_GITHUB_LOGINS allowlist.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "Graph"
+                    "Admin"
                 ],
-                "summary": "Graph schema",
+                "summary": "Postgres schema browser",
                 "responses": {
                     "200": {
-                        "description": "OK",
+                        "description": "{database, tables:[{name, row_estimate, total_size, columns, indexes, constraints}]}",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -109,7 +51,7 @@ const docTemplate = `{
                         }
                     },
                     "403": {
-                        "description": "Forbidden",
+                        "description": "admin only",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -118,7 +60,7 @@ const docTemplate = `{
                         }
                     },
                     "503": {
-                        "description": "Service Unavailable",
+                        "description": "postgres registry unavailable",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -129,24 +71,24 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/graph/stats": {
+        "/api/admin/whoami": {
             "get": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns 200 with {\"error\":...} when Neo4j is unreachable\n(the UI renders a friendly banner rather than a crash page).\nRequires the graph:read scope.",
+                "description": "Returns {login, is_admin} for the signed-in session user.\nThe SPA uses this to decide whether to render the admin\nnav; non-admins get is_admin:false rather than a 403.\nSession-token auth only (PAT auth refused, same as /api/pat).",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "Graph"
+                    "Admin"
                 ],
-                "summary": "Graph statistics",
+                "summary": "Admin whoami",
                 "responses": {
                     "200": {
-                        "description": "OK",
+                        "description": "{login, is_admin}",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -162,16 +104,7 @@ const docTemplate = `{
                         }
                     },
                     "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "503": {
-                        "description": "Service Unavailable",
+                        "description": "PAT auth not accepted",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -184,7 +117,7 @@ const docTemplate = `{
         },
         "/api/health": {
             "get": {
-                "description": "Liveness plus parallel dependency probes (rawstore, neo4j,\nwiki). HTTP status is always 200; read data.status for the\nreal verdict (\"healthy\" | \"degraded\").",
+                "description": "Liveness plus parallel dependency probes (rawstore, postgres,\nregistry). HTTP status is always 200; read data.status for the\nreal verdict (\"healthy\" | \"degraded\").",
                 "produces": [
                     "application/json"
                 ],
@@ -483,47 +416,74 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/pages": {
+        "/api/papers": {
             "get": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "Lists wiki entries. Source pages (processed papers) are\ntreated as citations and excluded unless page_type=source.",
+                "description": "Paginated list of registry papers (merged tombstones\nexcluded). has_md filters on converted markdown present on\nthe paper's default asset (the \"converted papers\" page);\nstatus filters by lifecycle; q is a case-insensitive title\nsubstring. Sorted by created_at (default) or updated_at,\ndescending. Requires the papers:read scope.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "Wiki"
+                    "Papers"
                 ],
-                "summary": "List wiki pages",
+                "summary": "List papers",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "filter by type (concept|entity|comparison|source)",
-                        "name": "page_type",
+                        "type": "boolean",
+                        "description": "true = only papers with converted markdown on the default asset",
+                        "name": "has_md",
                         "in": "query"
                     },
                     {
                         "type": "string",
-                        "description": "filter by status",
+                        "description": "pending | ready | failed",
                         "name": "status",
                         "in": "query"
                     },
                     {
                         "type": "string",
-                        "description": "comma-separated tag filter",
-                        "name": "tags",
+                        "description": "title substring (case-insensitive)",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "1-based page (default 1)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "page size (default 20, max 100)",
+                        "name": "per_page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "created_at (default) | updated_at, descending",
+                        "name": "sort",
                         "in": "query"
                     }
                 ],
                 "responses": {
                     "200": {
-                        "description": "OK",
+                        "description": "{items:[{paper_id,arxiv_id,doi,title,status,has_pdf,has_md,image_count,created_at,updated_at}], total, page, per_page}",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "invalid query parameter",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
                         }
                     },
                     "401": {
@@ -543,52 +503,9 @@ const docTemplate = `{
                                 "type": "string"
                             }
                         }
-                    }
-                }
-            }
-        },
-        "/api/pages/{page_id}": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Wiki"
-                ],
-                "summary": "Get wiki page",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "page id",
-                        "name": "page_id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
                     },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
+                    "503": {
+                        "description": "registry unavailable",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -1445,6 +1362,148 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/papers/{paper_id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the registry paper (status, identities) plus its\nasset rows for the surrogate paper_id (\"qa_\" + ULID).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Papers"
+                ],
+                "summary": "Get paper by id",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "surrogate paper id (qa_...)",
+                        "name": "paper_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "registry unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/papers/{paper_id}/images": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Lists the image objects of every asset of the paper,\nfetched on demand from the images bucket (no separate sync\nlisting exists). Each asset reports kind \"zip\" (single\nimages zip) or \"dir\" (per-paper directory) depending on the\nlayout found, its files, and whether the 200-object cap\ntruncated the listing. Empty files when the asset has no\nimages. Requires the papers:read scope.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Papers"
+                ],
+                "summary": "List paper images",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "surrogate paper id (qa_...)",
+                        "name": "paper_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{paper_id, assets:[{asset_id, source, arxiv_version, kind, files:[{key,size}], truncated}]}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "registry unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/pat": {
             "get": {
                 "security": [
@@ -1584,44 +1643,14 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/rag/healthz": {
-            "get": {
-                "description": "Anonymous coarse status endpoint. Returns 503 when the rag plugin is disabled.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "RAG"
-                ],
-                "summary": "RAG health",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "503": {
-                        "description": "Service Unavailable",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/rag/search": {
+        "/api/search": {
             "post": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "Requires PAPER_ACCESS and papers:read. Returns 503 when the rag plugin is disabled.",
+                "description": "Fans one search entry out to the configured providers\n(catalog / arxiv / openalex / qdrant), merges hits by paper\nidentity (DOI \u003e arXiv \u003e title hash) and resolve-or-mints each\nidentity-anchored hit against the paper registry. Newly minted\npapers carry created=true and are picked up by the lazy\ningestion pipeline; title-only hits return as un-minted\ncandidates. Requires the papers:read scope.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1629,12 +1658,12 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "RAG"
+                    "Search"
                 ],
-                "summary": "RAG search",
+                "summary": "Search papers",
                 "parameters": [
                     {
-                        "description": "{query: string, top_k?: int, rerank?: bool}",
+                        "description": "search entry {text?, title?, doi?, arxiv_id?, max_results?, required_phrases?}",
                         "name": "body",
                         "in": "body",
                         "required": true,
@@ -1645,7 +1674,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "OK",
+                        "description": "{results:[{paper_id,hit,created}], candidates:[...]}",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -1678,81 +1707,8 @@ const docTemplate = `{
                             }
                         }
                     },
-                    "502": {
-                        "description": "Bad Gateway",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
                     "503": {
-                        "description": "Service Unavailable",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/search": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Wiki"
-                ],
-                "summary": "Search wiki",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "query string",
-                        "name": "q",
-                        "in": "query",
-                        "required": true
-                    },
-                    {
-                        "type": "integer",
-                        "description": "max results (default 10)",
-                        "name": "limit",
-                        "in": "query"
-                    },
-                    {
-                        "type": "boolean",
-                        "description": "include source pages (default false)",
-                        "name": "include_sources",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
+                        "description": "registry unavailable",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -1778,581 +1734,6 @@ const docTemplate = `{
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
-        "/api/stats": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Wiki"
-                ],
-                "summary": "Wiki statistics",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/theorems/families": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Theorems"
-                ],
-                "summary": "List theorem families",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/theorems/list": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Lists registry.json entries from the theorems plugin's git\ncheckout. Filterable by family_id, audit_status, kind.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Theorems"
-                ],
-                "summary": "List theorems",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "filter by family id",
-                        "name": "family_id",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "filter by audit status",
-                        "name": "audit_status",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "filter by kind (theorem|lemma|definition|bound)",
-                        "name": "kind",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/theorems/stats": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Theorems"
-                ],
-                "summary": "Theorem stats",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/theorems/sync/pull": {
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Runs ` + "`" + `git fetch --prune` + "`" + ` + ` + "`" + `git pull --ff-only` + "`" + ` on the server\ntheorems checkout, then reloads the in-memory registry cache.\nMutates server state, so it requires the theorems:write scope.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Theorems"
-                ],
-                "summary": "Theorems sync pull",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "409": {
-                        "description": "non-fast-forward / theorems dir missing",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/theorems/sync/status": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Theorems"
-                ],
-                "summary": "Theorems sync status",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/theorems/theorem-source/{fqn}": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Theorems"
-                ],
-                "summary": "Get theorem source",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "lean_fqn",
-                        "name": "fqn",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/theorems/theorem/{fqn}": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Theorems"
-                ],
-                "summary": "Get theorem",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "lean_fqn",
-                        "name": "fqn",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/graph/query": {
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Executes caller-supplied read-only Cypher. graph:read scope.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Graph"
-                ],
-                "summary": "Graph query",
-                "parameters": [
-                    {
-                        "description": "{query: string, limit: int}",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "type": "object"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "503": {
-                        "description": "Service Unavailable",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/graph/schema": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Requires the graph:read scope.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Graph"
-                ],
-                "summary": "Graph schema",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "503": {
-                        "description": "Service Unavailable",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/graph/stats": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Returns 200 with {\"error\":...} when Neo4j is unreachable\n(the UI renders a friendly banner rather than a crash page).\nRequires the graph:read scope.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Graph"
-                ],
-                "summary": "Graph statistics",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "503": {
-                        "description": "Service Unavailable",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
                         }
                     }
                 }
@@ -2672,218 +2053,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/rag/healthz": {
-            "get": {
-                "description": "Anonymous coarse status endpoint. Returns 503 when the rag plugin is disabled.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "RAG"
-                ],
-                "summary": "RAG health",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "503": {
-                        "description": "Service Unavailable",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/rag/search": {
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Requires PAPER_ACCESS and papers:read. Returns 503 when the rag plugin is disabled.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "RAG"
-                ],
-                "summary": "RAG search",
-                "parameters": [
-                    {
-                        "description": "{query: string, top_k?: int, rerank?: bool}",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "type": "object"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "502": {
-                        "description": "Bad Gateway",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "503": {
-                        "description": "Service Unavailable",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/wiki/sync/pull": {
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Runs ` + "`" + `git fetch --prune` + "`" + ` + ` + "`" + `git pull --ff-only` + "`" + ` on the server\nwiki checkout, then refreshes the in-memory cache. Mutates\nserver state, so it requires the wiki:write scope.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Wiki"
-                ],
-                "summary": "Wiki sync pull",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "409": {
-                        "description": "non-fast-forward / wiki dir missing",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/wiki/sync/status": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Branch/commit/ahead/behind of the server's wiki checkout.\nRequires the wiki:read scope (the knowledge base is not\nanonymously readable).",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Wiki"
-                ],
-                "summary": "Wiki sync status",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
         "/install-qatlasd.sh": {
             "get": {
                 "description": "Returns a POSIX sh script (text/x-shellscript) that downloads\nthe latest qatlasd release binary.",
@@ -3129,7 +2298,7 @@ const docTemplate = `{
     },
     "securityDefinitions": {
         "BearerAuth": {
-            "description": "\"Bearer \u003ctoken\u003e\" — two credential shapes\naccepted: a Personal Access Token\n(` + "`" + `Authorization: Bearer qat_...` + "`" + `, minted at\n` + "`" + `/pat` + "`" + ` after GitHub OAuth login), or the\nenv-loaded system PAT (set\n` + "`" + `QATLAS_SYSTEM_PAT` + "`" + ` on the server, send the\nplaintext as ` + "`" + `Authorization: Bearer \u003cvalue\u003e` + "`" + `).\nBrowser callers are authenticated through\npb.authStore (no copy step) — only non-browser\ncallers need an explicit bearer.",
+            "description": "\"Bearer \u003ctoken\u003e\" — two credential shapes\naccepted: a Personal Access Token\n(` + "`" + `Authorization: Bearer qat_...` + "`" + `, minted at\n` + "`" + `/pat` + "`" + ` after GitHub OAuth login), or the\nconfig-loaded system PAT (set\n` + "`" + `system_pat.token` + "`" + ` in config.yaml on the\n` + "`" + `server, send the plaintext as\n` + "`" + `Authorization: Bearer \u003cvalue\u003e` + "`" + `).\nBrowser callers are authenticated through\npb.authStore (no copy step) — only non-browser\ncallers need an explicit bearer.",
             "type": "apiKey",
             "name": "Authorization",
             "in": "header"
@@ -3144,7 +2313,7 @@ var SwaggerInfo = &swag.Spec{
 	BasePath:         "/",
 	Schemes:          []string{},
 	Title:            "QuantumAtlas API",
-	Description:      "Go + PocketBase backend for QuantumAtlas. Read endpoints\n(wiki/pages/stats/search/graph metadata/health) are public\nbecause the wiki is an open repo; write endpoints require a\nbearer token (PAT or PocketBase session) plus the matching\nscope. See the auth model docs for the scope vocabulary.",
+	Description:      "Go + PocketBase backend for QuantumAtlas: paper\ncollection + search + database. Write endpoints and\nthe search/paper read surface require a bearer token\n(PAT or PocketBase session) plus the matching scope.\nSee the auth model docs for the scope vocabulary.",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",

@@ -118,8 +118,8 @@ func TestDecodeScopes(t *testing.T) {
 			want []string
 		}{
 			{`["papers:write"]`, []string{"papers:write"}},
-			{`["papers:write","wiki:read"]`, []string{"papers:write", "wiki:read"}},
-			{`  ["graph:read"]  `, []string{"graph:read"}}, // surrounding whitespace tolerated
+			{`["papers:write","plugins:read"]`, []string{"papers:write", "plugins:read"}},
+			{`  ["plugins:read"]  `, []string{"plugins:read"}}, // surrounding whitespace tolerated
 		}
 		for _, tc := range cases {
 			got := decodeScopes(tc.raw)
@@ -167,19 +167,14 @@ func TestDecodeScopes(t *testing.T) {
 // (authSourceKey, authScopesKey) end up populated with the right
 // values so sessionGuard / scopeGuard downstream behave correctly.
 func TestSystemPAT_IntegrationViaIsAuthorized(t *testing.T) {
-	// Build a synthetic system PAT in the env, load it, mount it.
-	// t.Setenv + t.Cleanup keep this test fully isolated from any
-	// real QATLAS_SYSTEM_PAT the dev's shell might carry.
+	// Build a synthetic system PAT, load it, mount it.
 	const plaintext = "system-pat-integration-test-secret"
-	t.Setenv("QATLAS_SYSTEM_PAT", plaintext)
-	t.Setenv("QATLAS_SYSTEM_PAT_SCOPES", "wiki:read,papers:write")
-
-	sysPAT, err := pat.LoadSystemPAT()
+	sysPAT, err := pat.LoadSystemPAT(plaintext, []string{"plugins:read", "papers:write"})
 	if err != nil {
 		t.Fatalf("LoadSystemPAT: %v", err)
 	}
 	if sysPAT == nil {
-		t.Fatal("LoadSystemPAT returned nil — env wiring broken")
+		t.Fatal("LoadSystemPAT returned nil — wiring broken")
 	}
 	UseSystemPAT(sysPAT)
 	t.Cleanup(func() { UseSystemPAT(nil) })
@@ -193,8 +188,8 @@ func TestSystemPAT_IntegrationViaIsAuthorized(t *testing.T) {
 			t.Errorf("authSourceKey = %q, want %q", got, authSourceSystemPAT)
 		}
 		scopes, _ := re.Get(authScopesKey).([]string)
-		if len(scopes) != 2 || scopes[0] != "wiki:read" || scopes[1] != "papers:write" {
-			t.Errorf("authScopesKey = %v, want [wiki:read papers:write]", scopes)
+		if len(scopes) != 2 || scopes[0] != "plugins:read" || scopes[1] != "papers:write" {
+			t.Errorf("authScopesKey = %v, want [plugins:read papers:write]", scopes)
 		}
 		if re.Auth != nil {
 			t.Errorf("re.Auth must stay nil for system PAT (no users row); got %v", re.Auth)
@@ -213,8 +208,7 @@ func TestSystemPAT_IntegrationViaIsAuthorized(t *testing.T) {
 // that don't opt in don't accidentally inherit a previous test's
 // matcher. Pinned because the global-state pattern is fragile.
 func TestSystemPAT_UseNilDisables(t *testing.T) {
-	t.Setenv("QATLAS_SYSTEM_PAT", "would-have-matched-if-not-cleared-xyz")
-	sysPAT, err := pat.LoadSystemPAT()
+	sysPAT, err := pat.LoadSystemPAT("would-have-matched-if-not-cleared-xyz", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,9 +226,9 @@ func TestSystemPAT_UseNilDisables(t *testing.T) {
 // /api/health to decide between sanitised (anon) and detail (auth)
 // payloads. Three cases that matter:
 //
-//   * no bearer + no session  → false
-//   * system PAT bearer match → true (no side effects)
-//   * user-PAT-shaped bearer  → false (we deliberately don't resolve)
+//   - no bearer + no session  → false
+//   - system PAT bearer match → true (no side effects)
+//   - user-PAT-shaped bearer  → false (we deliberately don't resolve)
 //
 // Each path is one-liner; folding them into a single test keeps the
 // rationale visible alongside the assertions.
@@ -250,9 +244,7 @@ func TestIsCallerAuthenticated(t *testing.T) {
 
 	t.Run("system PAT match → true", func(t *testing.T) {
 		const secret = "iscaller-auth-test-secret-very-long"
-		t.Setenv("QATLAS_SYSTEM_PAT", secret)
-		t.Setenv("QATLAS_SYSTEM_PAT_SCOPES", "*")
-		s, err := pat.LoadSystemPAT()
+		s, err := pat.LoadSystemPAT(secret, []string{"*"})
 		if err != nil {
 			t.Fatal(err)
 		}

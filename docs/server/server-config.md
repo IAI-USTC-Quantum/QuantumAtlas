@@ -38,13 +38,13 @@ internal/config/config.go::Load(dotenv)    # 从 os.Environ 读出 Config 结构
 2. **.env 文件里的值**（通过 1.1 找到的那一个）
 3. **代码里的 default**（见 §2 各字段「默认」列）
 
-> ⚠️ **non-override 的调试陷阱**：在 shell 里 `export NEO4J_URI=bolt://test` 跑过一次后，**之后改 `.env` 里的 `NEO4J_URI=` 不会生效**——shell 残留的值赢。如果改 .env 后行为没变，先 `unset` 该 env 再启动，或开新 shell。systemd 不受影响（每次启动是干净 env）。
+> ⚠️ **non-override 的调试陷阱**：在 shell 里 `export QATLAS_POSTGRES_DSN=postgres://test` 跑过一次后，**之后改 `.env` 里的 `QATLAS_POSTGRES_DSN=` 不会生效**——shell 残留的值赢。如果改 .env 后行为没变，先 `unset` 该 env 再启动，或开新 shell。systemd 不受影响（每次启动是干净 env）。
 >
 > 我们故意选 non-override 而不是 override，理由是 CI / 容器场景里 `docker -e KEY=val` 应该胜过 image 里 baked-in 的 `.env`——这是 dotenv 生态的事实标准（python-dotenv / Node dotenv / Ruby dotenv 默认全是 non-override）。
 
 ### 1.3 .env 路径作为相对路径锚点
 
-`Config.WikiDir` 等"路径型"字段如果填的是**相对路径**（例：`WIKI_DIR=../QuantumAtlas-Wiki`），**相对 .env 文件所在的目录解析**，不是相对 CWD 或 systemd `WorkingDirectory`。
+`Config.RawDir` 等"路径型"字段如果填的是**相对路径**，**相对 .env 文件所在的目录解析**，不是相对 CWD 或 systemd `WorkingDirectory`。
 
 ```go
 // internal/config/config.go::Load
@@ -52,7 +52,8 @@ anchor := ""
 if dotenvPath != "" {
     anchor = filepath.Dir(dotenvPath)
 }
-cfg.WikiDir = expandPath(defaultIfEmpty(cfg.WikiDir, defaultWikiDir()), anchor)
+// 路径型字段都按 anchor 展开（示意）：
+// cfg.RawDir = expandPath(defaultIfEmpty(cfg.RawDir, defaultRawDir()), anchor)
 ```
 
 如果通过 OS env var 而非 .env 注入，且值是相对路径，**没有锚点** —— 行为是相对 CWD。**推荐总是用绝对路径**避免歧义。
@@ -73,7 +74,7 @@ firstEnvIntDefault(0, "SOME_INT_VAR")                // 同上但 int
 
 ## 2. 完整 env 列举
 
-按域分组。所有项目自有变量带 `QATLAS_` 前缀；第三方 SDK 标准名（`NEO4J_*` / `GITHUB_*`）保留原始命名。
+按域分组。所有项目自有变量带 `QATLAS_` 前缀；第三方 SDK 标准名（`GITHUB_*`）保留原始命名。
 
 ### 2.1 进程绑定 / 标识
 
@@ -91,10 +92,9 @@ firstEnvIntDefault(0, "SOME_INT_VAR")                // 同上但 int
 | Env | 默认 | 用途 |
 |---|---|---|
 | `QATLAS_DOTENV` | — | **显式 .env 文件路径**；查找顺序见 §1.1 |
-| `QATLAS_WIKI_DIR` (alias `WIKI_DIR`) | `<.env 目录>/../QuantumAtlas-Wiki` | wiki repo checkout（git pull / lint / search 都在这） |
-| `QATLAS_RAW_DIR` (alias `RAW_DIR`) | `${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/raw` | LocalStore 文件后端目录；S3 backend 启用时不读 |
-| `QATLAS_DATA_DIR` (alias `DATA_DIR`) | `${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/data` | 业务派生数据（claim leases 等） |
-| `QATLAS_PB_DATA_DIR` (alias `PB_DATA_DIR`) | `${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/pb_data` | PocketBase SQLite + collections + uploads。通过 `--dir=` 自动注入 PocketBase cobra 根命令 |
+| `QATLAS_RAW_DIR` | `${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/raw` | LocalStore 文件后端目录；S3 backend 启用时不读 |
+| `QATLAS_DATA_DIR` | `${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/data` | 业务派生数据（claim leases 等） |
+| `QATLAS_PB_DATA_DIR` | `${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/pb_data` | PocketBase SQLite + collections + uploads。通过 `--dir=` 自动注入 PocketBase cobra 根命令 |
 | `XDG_DATA_HOME` | `~/.local/share` | 上面 3 个 dir 默认值的 base |
 
 ### 2.3 公开 URL
@@ -124,14 +124,13 @@ firstEnvIntDefault(0, "SOME_INT_VAR")                // 同上但 int
 |---|---|
 | `QATLAS_S3_BUCKET` | v0.6.0 单桶时代名；`rejectLegacyS3Bucket` 见到这个 env 立刻 fail-fast（任何子命令，含 `qatlasd pat list`；唯一例外是 root help：`qatlasd --help` / `-h` / `help` 完全跳过 .env 加载），错误文案指引迁移到 per-kind 三字段 |
 
-### 2.5 Neo4j 图数据库
+### 2.5 PostgreSQL（paper registry + OpenAlex corpus）
 
 | Env | 默认 | 用途 |
 |---|---|---|
-| `NEO4J_URI` | — | Bolt URL（例：`bolt://neo4j.internal:7687`）。未设时 catalog 功能 disabled，相关 API endpoint 降级为 `{available:false}` |
-| `NEO4J_USERNAME` (alias `NEO4J_USER`) | — | 用户名 |
-| `NEO4J_PASSWORD` | — | 密码 |
-| `NEO4J_DATABASE` | — | DB 名（多 DB 部署用） |
+| `QATLAS_POSTGRES_DSN` | — | 连接串（例：`postgres://qatlas:secret@pg.internal:5432/qatlas?sslmode=disable`）。未设时 registry 功能 disabled，相关 API endpoint 降级为 `{available:false}`；goose migrations 在 boot 时自动 apply |
+| `QATLAS_POSTGRES_MAX_CONNS` | `10` | 连接池上限 |
+| `QATLAS_CORPUS_ENSURE_INDEXES` | `true` | OpenAlex 语料重索引门控（ADR 0013）；指向已预置索引的大型共享 corpus 时设 `false` |
 
 ### 2.6 鉴权 / 白名单
 
@@ -164,7 +163,7 @@ PocketBase + SQLite 的多写者语义是"WAL 允许多 reader / 单 writer"—�
 - 操作员子命令（`qatlasd pat mint` / `users list` 等）**不**取这个 lock —— 它们走 SQLite 自己的短读事务，可以跟 running `serve` 共存
 - 紧急绕过：`QATLAS_SKIP_PB_DATA_LOCK=1`（**仅** disaster recovery / 实验，**不要**用于生产）
 
-要真跑两个 qatlasd，必须**两份不同的 `QATLAS_PB_DATA_DIR`**（其余 `QATLAS_S3_*` / `NEO4J_URI` 等都可以共享，多边缘 active-active 本来就是这套）。
+要真跑两个 qatlasd，必须**两份不同的 `QATLAS_PB_DATA_DIR`**（其余 `QATLAS_S3_*` / `QATLAS_POSTGRES_DSN` 等都可以共享，多边缘 active-active 本来就是这套）。
 
 ### 2.9 CLI flag 接口（v0.17.0+，easytier 风格）
 
@@ -179,16 +178,13 @@ qatlasd serve --help    # 看完整列表
 --user-header string            [env: QATLAS_USER_HEADER=]
 --edge-name string              [env: QATLAS_EDGE_NAME=]
 --force-tcp4                    [env: QATLAS_FORCE_TCP4=]
---wiki-dir string               [env: QATLAS_WIKI_DIR=]
 --raw-dir string                [env: QATLAS_RAW_DIR=]
 --data-dir string               [env: QATLAS_DATA_DIR=]
 --pb-data-dir string            [env: QATLAS_PB_DATA_DIR=]
 --system-pat string             [env: QATLAS_SYSTEM_PAT=]
 --system-pat-scopes strings     [env: QATLAS_SYSTEM_PAT_SCOPES=]
---neo4j-uri string              [env: NEO4J_URI=]
---neo4j-username string         [env: NEO4J_USERNAME=]
---neo4j-password string         [env: NEO4J_PASSWORD=]
---neo4j-database string         [env: NEO4J_DATABASE=]
+--postgres-dsn string           [env: QATLAS_POSTGRES_DSN=]
+--postgres-max-conns string     [env: QATLAS_POSTGRES_MAX_CONNS=]
 --s3-endpoint string            [env: QATLAS_S3_ENDPOINT=]
 --s3-public-endpoint string     [env: QATLAS_S3_PUBLIC_ENDPOINT=]
 --s3-bucket-pdf string          [env: QATLAS_S3_BUCKET_PDF=]
@@ -210,9 +206,7 @@ docker run -it --rm \
     ghcr.io/iai-ustc-quantum/qatlasd:v0.17.0 serve \
         --http 0.0.0.0:4200 \
         --pb-data-dir /data \
-        --neo4j-uri bolt://neo4j.example:7687 \
-        --neo4j-username neo4j \
-        --neo4j-password ... \
+        --postgres-dsn postgres://qatlas:secret@pg.example:5432/qatlas?sslmode=disable \
         --s3-endpoint https://rustfs.example \
         --s3-bucket-pdf qatlas-pdf \
         --s3-bucket-md qatlas-md \
@@ -245,10 +239,7 @@ Group=qatlas
 WorkingDirectory=/home/qatlas
 
 Environment=QATLAS_PB_DATA_DIR=/home/qatlas/.local/share/qatlasd/pb_data
-Environment=QATLAS_WIKI_DIR=/home/qatlas/QuantumAtlas-Wiki
-Environment=NEO4J_URI=bolt://neo4j.internal:7687
-Environment=NEO4J_USERNAME=neo4j
-Environment=NEO4J_PASSWORD=...
+Environment=QATLAS_POSTGRES_DSN=postgres://qatlas:secret@pg.internal:5432/qatlas?sslmode=disable
 Environment=QATLAS_S3_ENDPOINT=http://s3.internal:9000
 Environment=QATLAS_S3_BUCKET_PDF=qatlas-pdf
 Environment=QATLAS_S3_BUCKET_MD=qatlas-md
@@ -283,7 +274,7 @@ EnvironmentFile=/etc/qatlasd/qatlasd.env
 
 三种方式区别：
 
-| 方式 | 相对路径锚点（如 `WIKI_DIR=../foo`） | 修改后生效需要 |
+| 方式 | 相对路径锚点（如 `QATLAS_RAW_DIR=../foo`） | 修改后生效需要 |
 |---|---|---|
 | `Environment=` inline | **无锚点**（相对 CWD） | `systemctl daemon-reload && systemctl restart qatlasd` |
 | `Environment=QATLAS_DOTENV=...` + godotenv | **.env 所在目录** 是锚点（§1.3） | 改 .env 后直接 `systemctl restart qatlasd` |
@@ -332,7 +323,7 @@ QATLAS_SERVER_PORT=8080 ./qatlasd serve
 docker run \
   -e QATLAS_HTTP_ADDR=0.0.0.0:4200 \
   -e QATLAS_S3_ENDPOINT=... \
-  -e NEO4J_URI=... \
+  -e QATLAS_POSTGRES_DSN=... \
   ghcr.io/<org>/qatlasd:v0.x.y serve
 
 # env file 注入（docker --env-file 跟 godotenv 语法兼容）
@@ -359,7 +350,7 @@ spec:
     - configMapRef:
         name: qatlasd-config        # 非密字段
     - secretRef:
-        name: qatlasd-secrets       # 含 NEO4J_PASSWORD / S3 keys 等
+        name: qatlasd-secrets       # 含 QATLAS_POSTGRES_DSN / S3 keys 等
 ```
 
 ### 3.5 `qatlasd service install` 子命令
@@ -410,7 +401,7 @@ Configure runtime fields by:
   - rerunning `qatlasd service install --dotenv-path /path/to/.env --force` to pin one
 ```
 
-适合**不想用 .env 流派**的部署（§3.1.a 的 inline `Environment=` 风格）：先 `service install` 出骨架 unit + start，再手工 `systemctl edit qatlasd` 加 `Environment=NEO4J_URI=...` 等 drop-in。
+适合**不想用 .env 流派**的部署（§3.1.a 的 inline `Environment=` 风格）：先 `service install` 出骨架 unit + start，再手工 `systemctl edit qatlasd` 加 `Environment=QATLAS_POSTGRES_DSN=...` 等 drop-in。
 
 > 想直接生成 §3.1.a（inline `Environment=` 完整 unit）形式吗？目前 `service install` 没有 `--inline-env` 选项 —— 装出 baseline unit 后用 `systemctl edit qatlasd` 手工加 drop-in `Environment=KEY=VAL`。
 
@@ -468,7 +459,7 @@ Configure runtime fields by:
 | `internal/config/config.go::firstEnv / firstEnvDefault / firstEnvIntDefault` | helper 函数 |
 | `internal/config/config.go::rejectLegacyS3Bucket` | legacy `QATLAS_S3_BUCKET` 拒（在 `Load` 内调用，所有子命令都触发） |
 | `internal/config/config.go::validatePartialS3Config` / `(*Config).ValidateForServe` | S3 quartet + 3 buckets all-or-nothing 校验。`Load` 只 `slog.Warn`（让 `--help` / `pat list` 能跑）；`serve` 在 `validateServeCfgAfterFlags` 调 `ValidateForServe` 转 fatal |
-| `internal/config/config.go::defaultXDGSubdir / defaultWikiDir` | 默认路径 |
+| `internal/config/config.go::defaultXDGSubdir` | 默认路径 |
 | `internal/pat/system_pat.go::LoadSystemPAT` | 读 `QATLAS_SYSTEM_PAT` / `_SCOPES` |
 | `cmd/qatlasd/service_cmd.go` | `qatlasd service install` 子命令；TTY 模式检测 .env |
 | `cmd/qatlasd/main.go::injectPBDataDirFlag` | `QATLAS_PB_DATA_DIR` → PocketBase `--dir=` 注入 |
@@ -481,11 +472,11 @@ Configure runtime fields by:
 
 ## 8. `qatlasd config` 子命令
 
-binary 自带三个 config 工具，复刻 code-server / kubectl / gh 的常见用法。**全部 short-circuit 在 main 早期跑**——不依赖 .env / Neo4j / S3 配置正确，即便配置半填、Neo4j 没起、S3 字段缺失也能跑（这是它存在的意义之一）。
+binary 自带三个 config 工具，复刻 code-server / kubectl / gh 的常见用法。**全部 short-circuit 在 main 早期跑**——不依赖 .env / PostgreSQL / S3 配置正确，即便配置半填、PostgreSQL 没起、S3 字段缺失也能跑（这是它存在的意义之一）。
 
 ### `qatlasd config init`
 
-写一份最小化默认 `.env` 模板（embed 在 binary 内的 [`cmd/qatlasd/templates/default.env`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/cmd/qatlasd/templates/default.env)，含 GitHub OAuth / Neo4j / S3 / SystemPAT 等最常用字段）到磁盘。完整字段参考仍是 repo 根的 `.env.example`。
+写一份最小化默认 `.env` 模板（embed 在 binary 内的 [`cmd/qatlasd/templates/default.env`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/cmd/qatlasd/templates/default.env)，含 GitHub OAuth / PostgreSQL / S3 / SystemPAT 等最常用字段）到磁盘。完整字段参考仍是 repo 根的 `.env.example`。
 
 ```bash
 # 写到 XDG 默认位置（$XDG_CONFIG_HOME/qatlasd/.env 或 ~/.config/qatlasd/.env）
@@ -515,12 +506,11 @@ qatlasd config path
 
 ### `qatlasd config show`
 
-按 KEY=VALUE 形式打印**当前进程**可见的 QuantumAtlas 相关 env vars（按 name 排序，空值跳过，前缀过滤到 `QATLAS_*` / `NEO4J_*` / `MINERU_*` / `OPENAI_*` / `ANTHROPIC_*` / `GITHUB_CLIENT_*`）。
+按 KEY=VALUE 形式打印**当前进程**可见的 QuantumAtlas 相关 env vars（按 name 排序，空值跳过，前缀过滤到 `QATLAS_*` / `MINERU_*` / `OPENAI_*` / `ANTHROPIC_*` / `GITHUB_CLIENT_*`）。
 
 ```bash
 qatlasd config show
-# NEO4J_URI=bolt://localhost:7687
-# NEO4J_PASSWORD=***
+# QATLAS_POSTGRES_DSN=***
 # QATLAS_S3_ENDPOINT=https://rustfs.example.com
 # QATLAS_S3_SECRET_ACCESS_KEY=***
 # QATLAS_PUBLIC_URL=https://atlas.example.com

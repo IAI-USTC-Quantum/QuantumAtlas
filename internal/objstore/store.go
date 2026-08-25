@@ -168,6 +168,20 @@ type Store interface {
 	// filepath.Walk both surface every nested object.
 	ListPrefix(ctx context.Context, prefix string, limit int) ([]ObjectInfo, error)
 
+	// ListDirs returns the immediate child "directories" (common
+	// prefixes) directly under prefix, each in the form
+	// "<prefix><name>/". It is the non-recursive counterpart of
+	// ListPrefix: an S3 ListObjectsV2 with Delimiter="/", or a
+	// single-level readdir on the local backend. Prefix should end in
+	// "/" ("" lists the bucket root); a prefix that matches no object
+	// yields an empty slice, not an error. Order is unspecified.
+	//
+	// Use it to shard a huge listing: whole-bucket ListPrefix calls can
+	// hang or time out on S3-compatible backends with millions of
+	// objects, while ListDirs + per-shard ListPrefix keeps each request
+	// small.
+	ListDirs(ctx context.Context, prefix string) ([]string, error)
+
 	// PresignGet returns a short-lived public URL the client can hit
 	// directly without re-authenticating against the server. When the
 	// backend doesn't support presigning (local fs), returns

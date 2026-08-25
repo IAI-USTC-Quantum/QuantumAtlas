@@ -41,12 +41,54 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/openalex"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperassets"
-	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/papers"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/registry"
 	"github.com/pocketbase/pocketbase/core"
 )
 
+// Verification statuses reported on a DOI contribution (the
+// X-QAtlas-Verification response header).
+//
+// Title is taken from OpenAlex, never the contributor; the status records
+// whether that resolution succeeded.
+const (
+	// VerifyVerified: OpenAlex returned a record for the DOI; Title /
+	// ArxivID populated from the canonical metadata.
+	VerifyVerified = "verified"
+	// VerifyDOINotFound: OpenAlex confirmed the DOI does not exist.
+	VerifyDOINotFound = "doi-not-found"
+	// VerifyUnavailable: OpenAlex was unreachable / errored.
+	VerifyUnavailable = "metadata-unavailable"
+	// VerifyUnconfigured: the server has no OpenAlex mailto configured,
+	// so DOI metadata enrichment is disabled.
+	VerifyUnconfigured = "unconfigured"
+)
+
+// DOIVerification is the outcome of upload-time DOI metadata enrichment
+// against OpenAlex. Title / Authors / ArxivID are populated only when
+// Status == VerifyVerified. The verified fields feed the registry's
+// PaperRef (ResolveOrMint uses them for identity backfill); the status
+// itself is response-only.
+type DOIVerification struct {
+	Status  string   // one of the Verify* constants
+	Title   string   // OpenAlex canonical title (only set on verified)
+	Authors []string // OpenAlex author display names
+	ArxivID string   // linked arxiv id when OpenAlex knows one, else ""
+}
+
+// verificationRef builds the registry.PaperRef a verified (or
+// unverified) DOI contribution resolves/mints through. Title / authors /
+// linked arXiv id are only present when OpenAlex verified the DOI.
+func verificationRef(doi string, v DOIVerification) registry.PaperRef {
+	return registry.PaperRef{
+		DOI:     doi,
+		ArxivID: v.ArxivID,
+		Title:   v.Title,
+		Authors: v.Authors,
+	}
+}
+
 // verifyHeader is the response header carrying the DOI verification
-// status (one of the papers.Verify* constants) on every DOI upload.
+// status (one of the Verify* constants) on every DOI upload.
 const verifyHeader = "X-QAtlas-Verification"
 
 // uploadPDFByDOIHandler stores a PDF contributed against a DOI identity.
@@ -56,7 +98,7 @@ func uploadPDFByDOIHandler(
 	re *core.RequestEvent,
 	cfg *config.Config,
 	store objstore.Store,
-	catalog *papers.Store,
+	catalog *registry.Store,
 	resolver *openalex.Resolver,
 	rawDOI string,
 ) error {
@@ -126,7 +168,7 @@ func uploadPDFByDOIHandler(
 	//   - warn resolves AFTER the write, and only when bytes actually
 	//     changed, so a no-op re-upload (sha matches) skips OpenAlex
 	//     entirely — the catalog already holds the prior metadata.
-	var verification papers.DOIVerification
+	var verification DOIVerification
 	if strict {
 		verification = verifyDOIMetadata(ctx, resolver, doi)
 		if rejErr := strictReject(verification.Status); rejErr != nil {
@@ -187,8 +229,8 @@ func uploadPDFByDOIHandler(
 	}
 
 	catalogDeferred := false
-	if err := catalog.UpsertPDFByDOI(ctx, doi, pdfSha, pdfSize, verification); err != nil {
-		if !errors.Is(err, papers.ErrCatalogUnavailable) {
+	if _, _, err := catalog.UpsertPDFByDOI(ctx, verificationRef(doi, verification), pdfSha, pdfSize, bucketRelKey(pdfKey)); err != nil {
+		if !errors.Is(err, registry.ErrCatalogUnavailable) {
 			slog.Warn("papers: UpsertPDFByDOI write-through failed", "doi", doi, "error", err)
 		}
 		catalogDeferred = true
@@ -234,7 +276,7 @@ func uploadMinerUByDOIHandler(
 	re *core.RequestEvent,
 	cfg *config.Config,
 	store objstore.Store,
-	catalog *papers.Store,
+	catalog *registry.Store,
 	resolver *openalex.Resolver,
 	rawDOI string,
 ) error {
@@ -317,7 +359,7 @@ func uploadMinerUByDOIHandler(
 	// BEFORE the writes so a doi-not-found / metadata-unavailable
 	// blocks storage; warn resolves AFTER, and only when the bundle
 	// actually changed, so a no-op re-upload skips OpenAlex.
-	var verification papers.DOIVerification
+	var verification DOIVerification
 	if strict {
 		verification = verifyDOIMetadata(ctx, resolver, doi)
 		if rejErr := strictReject(verification.Status); rejErr != nil {
@@ -403,18 +445,18 @@ func uploadMinerUByDOIHandler(
 			"doi", doi, "requester", requester, "source", source,
 			"md_sha256", mdSha, "image_count", imageCount)
 		resp := map[string]any{
-			"doi":                  doi,
-			"key":                  mdKey,
-			"markdown_path":        mdKey,
-			"markdown_bytes":       mdSize,
-			"markdown_sha256":      mdSha,
-			"markdown_unchanged":   true,
-			"image_count":          imageCount,
-			"zip_bytes":            zipSize,
-			"zip_sha256":           zipSha,
-			"source":               nil,
-			"uploaded_by":          nil,
-			"overwritten":          overwrite,
+			"doi":                doi,
+			"key":                mdKey,
+			"markdown_path":      mdKey,
+			"markdown_bytes":     mdSize,
+			"markdown_sha256":    mdSha,
+			"markdown_unchanged": true,
+			"image_count":        imageCount,
+			"zip_bytes":          zipSize,
+			"zip_sha256":         zipSha,
+			"source":             nil,
+			"uploaded_by":        nil,
+			"overwritten":        overwrite,
 		}
 		if imageCount > 0 {
 			resp["images_zip_path"] = imgZipKey
@@ -437,8 +479,10 @@ func uploadMinerUByDOIHandler(
 	}
 
 	catalogDeferred := false
-	if err := catalog.UpsertMDByDOI(ctx, doi, mdSha, mdSize, imageCount, verification); err != nil {
-		if !errors.Is(err, papers.ErrCatalogUnavailable) {
+	mdRegistryPath := bucketRelKey(paperassets.DOIAssetKey("markdown", doi))
+	jsonRegistryPath := bucketRelKey(paperassets.DOIAssetKey("json", doi))
+	if err := catalog.UpsertMDByDOI(ctx, verificationRef(doi, verification), mdSha, mdSize, mdRegistryPath, jsonRegistryPath, imageCount); err != nil {
+		if !errors.Is(err, registry.ErrCatalogUnavailable) {
 			slog.Warn("papers: UpsertMDByDOI write-through failed", "doi", doi, "error", err)
 		}
 		catalogDeferred = true
@@ -456,19 +500,19 @@ func uploadMinerUByDOIHandler(
 
 	re.Response.Header().Set(verifyHeader, verification.Status)
 	resp := map[string]any{
-		"doi":                  doi,
-		"key":                  mdKey,
-		"markdown_path":        mdKey,
-		"markdown_bytes":       mdSize,
-		"markdown_sha256":      mdSha,
-		"markdown_unchanged":   mdOutcome.kind == outcomeUnchanged,
-		"image_count":          imageCount,
-		"zip_bytes":            zipSize,
-		"zip_sha256":           zipSha,
-		"source":               nil,
-		"uploaded_by":          nil,
-		"overwritten":          overwrite,
-		"verification":         verificationBody(verification),
+		"doi":                doi,
+		"key":                mdKey,
+		"markdown_path":      mdKey,
+		"markdown_bytes":     mdSize,
+		"markdown_sha256":    mdSha,
+		"markdown_unchanged": mdOutcome.kind == outcomeUnchanged,
+		"image_count":        imageCount,
+		"zip_bytes":          zipSize,
+		"zip_sha256":         zipSha,
+		"source":             nil,
+		"uploaded_by":        nil,
+		"overwritten":        overwrite,
+		"verification":       verificationBody(verification),
 	}
 	if imageCount > 0 {
 		resp["images_zip_path"] = imgZipKey
@@ -504,19 +548,19 @@ func uploadMinerUByDOIHandler(
 //   - VerifyDOINotFound    — OpenAlex confirmed the DOI does not exist.
 //   - VerifyUnavailable    — OpenAlex was unreachable / errored.
 //   - VerifyUnconfigured   — server has no OpenAlex mailto, lookups disabled.
-func verifyDOIMetadata(ctx context.Context, resolver *openalex.Resolver, doi string) papers.DOIVerification {
+func verifyDOIMetadata(ctx context.Context, resolver *openalex.Resolver, doi string) DOIVerification {
 	if resolver == nil || !resolver.Enabled() {
-		return papers.DOIVerification{Status: papers.VerifyUnconfigured}
+		return DOIVerification{Status: VerifyUnconfigured}
 	}
 	meta, err := resolver.LookupMetadata(ctx, doi)
 	if err != nil {
 		if errors.Is(err, openalex.ErrDOINotFound) {
-			return papers.DOIVerification{Status: papers.VerifyDOINotFound}
+			return DOIVerification{Status: VerifyDOINotFound}
 		}
-		return papers.DOIVerification{Status: papers.VerifyUnavailable}
+		return DOIVerification{Status: VerifyUnavailable}
 	}
-	return papers.DOIVerification{
-		Status:  papers.VerifyVerified,
+	return DOIVerification{
+		Status:  VerifyVerified,
 		Title:   meta.Title,
 		Authors: meta.Authors,
 		ArxivID: meta.ArxivID,
@@ -536,9 +580,9 @@ func verifyDOIMetadata(ctx context.Context, resolver *openalex.Resolver, doi str
 // and makes "did we mean to reject this?" grep-able.
 func strictReject(status string) *uploadError {
 	switch status {
-	case papers.VerifyDOINotFound:
+	case VerifyDOINotFound:
 		return &uploadError{Status: http.StatusConflict, Detail: "DOI not found in OpenAlex — cannot verify the contribution under verify=strict"}
-	case papers.VerifyUnavailable, papers.VerifyUnconfigured:
+	case VerifyUnavailable, VerifyUnconfigured:
 		return &uploadError{Status: http.StatusServiceUnavailable, Detail: "DOI metadata verification unavailable (" + status + ") — required by verify=strict; retry later or drop verify=strict"}
 	default:
 		return nil
@@ -546,7 +590,7 @@ func strictReject(status string) *uploadError {
 }
 
 // verificationBody renders the verification result for the JSON response.
-func verificationBody(v papers.DOIVerification) map[string]any {
+func verificationBody(v DOIVerification) map[string]any {
 	body := map[string]any{
 		"status":   v.Status,
 		"title":    nil,
@@ -569,7 +613,7 @@ func verificationBody(v papers.DOIVerification) map[string]any {
 // rejection. We expose the DOI and the resolution status; there is no
 // "expected" anything to surface because the contributor never supplies
 // metadata — the check is purely "does OpenAlex resolve this DOI?".
-func doiVerificationRejectBody(rej *uploadError, doi string, v papers.DOIVerification) map[string]any {
+func doiVerificationRejectBody(rej *uploadError, doi string, v DOIVerification) map[string]any {
 	body := map[string]any{
 		"detail":              rej.Detail,
 		"doi":                 doi,

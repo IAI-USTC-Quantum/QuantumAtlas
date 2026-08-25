@@ -32,17 +32,54 @@ def _load(name: str) -> dict:
 
 
 class TestFullStackCompose:
-    """deploy/docker-compose.yml — the three-service all-in-one flavour."""
+    """deploy/docker-compose.yml — qatlasd-only flavour; PostgreSQL is an
+    external shared/general-purpose instance reached via QATLAS_POSTGRES_DSN."""
 
     @pytest.fixture
     def doc(self) -> dict:
         return _load("docker-compose.yml")
 
-    def test_has_three_services(self, doc: dict) -> None:
+    def test_qatlasd_only_service(self, doc: dict) -> None:
         services = doc.get("services", {})
-        assert set(services) == {"rustfs", "neo4j", "qatlasd"}, (
-            f"unexpected service set {set(services)}; full-stack template "
-            "must always include rustfs + neo4j + qatlasd together"
+        assert set(services) == {"qatlasd", "qatlas-search"}, (
+            f"unexpected service set {set(services)}; postgres is an external "
+            "shared instance and must not be defined in this template, and "
+            "qatlas-search is the only sanctioned sibling (agentic search "
+            "microservice, profile-gated)"
+        )
+
+    def test_qatlas_search_is_profile_gated_and_internal_only(self, doc: dict) -> None:
+        # qatlas-search is optional (compose --profile search) and must
+        # stay internal-only: qatlasd is its only legitimate caller (it
+        # meters and quotas every agentic search), so no host ports.
+        svc = doc["services"]["qatlas-search"]
+        assert "search" in svc.get("profiles", []), (
+            "qatlas-search must be profile-gated (profiles: [search]) so the "
+            "default `docker compose up -d` stays qatlasd-only"
+        )
+        assert "ports" not in svc, (
+            "qatlas-search must not publish host ports; only qatlasd calls it"
+        )
+
+    def test_no_neo4j_service(self, doc: dict) -> None:
+        # Neo4j was removed when the project repositioned to
+        # paper collection + search + Postgres registry. It must not
+        # creep back into the compose templates.
+        services = doc.get("services", {})
+        assert "neo4j" not in services
+
+    def test_no_depends_on_backing_services(self, doc: dict) -> None:
+        # Backing services (postgres, rustfs) are external by design;
+        # depends_on would reference services that don't exist here.
+        assert "depends_on" not in doc["services"]["qatlasd"]
+
+    def test_host_gateway_for_external_postgres(self, doc: dict) -> None:
+        # The canonical DSN targets a postgres listening on the docker
+        # host's loopback; that only works with the host-gateway mapping.
+        extra = doc["services"]["qatlasd"].get("extra_hosts", [])
+        assert any("host.docker.internal" in h for h in extra), (
+            f"extra_hosts = {extra}; must map host.docker.internal so the "
+            "external-postgres DSN keeps working from inside the container"
         )
 
     def test_qatlasd_image_is_ghcr(self, doc: dict) -> None:
@@ -55,42 +92,43 @@ class TestFullStackCompose:
             "so install docs + release.yml stay in sync"
         )
 
-    def test_qatlasd_depends_on_backing_services(self, doc: dict) -> None:
-        depends = doc["services"]["qatlasd"].get("depends_on", [])
-        assert "rustfs" in depends
-        assert "neo4j" in depends
+    def test_qatlasd_has_no_environment_block(self, doc: dict) -> None:
+        # qatlasd rejects ALL environment-variable configuration at
+        # startup (env mode was removed in favour of the YAML config
+        # file). An `environment:` block here would make the container
+        # fail to boot with an env-rejection error.
+        svc = doc["services"]["qatlasd"]
+        assert "environment" not in svc, (
+            f"qatlasd environment block crept back: {svc.get('environment')!r}; "
+            "configuration belongs in the bind-mounted config.yaml"
+        )
 
-    def test_required_env_vars_have_failure_guards(self, doc: dict) -> None:
-        # The `${VAR:?error message}` syntax makes compose fail fast at
-        # `up` time with a readable error when the operator forgets to
-        # populate .env. This guard is too easy to lose in a refactor;
-        # the test pins the set of fields that MUST stay required.
-        env = doc["services"]["qatlasd"]["environment"]
-        for required_var in [
-            "QATLAS_S3_ACCESS_KEY_ID",
-            "QATLAS_S3_SECRET_ACCESS_KEY",
-            "NEO4J_PASSWORD",
-        ]:
-            interpolation = env.get(required_var)
-            assert interpolation is not None, (
-                f"env block missing {required_var}; compose will boot with empty "
-                "value and qatlasd will fail in a more confusing way later"
-            )
-            assert ":?" in interpolation, (
-                f"{required_var} interpolation = {interpolation!r}; "
-                "use ${VAR:?error message} so compose fails fast with a readable msg"
-            )
+    def test_config_yaml_bind_mounted_readonly(self, doc: dict) -> None:
+        # The host's ~/.qatlas/config.yaml is the single source of truth,
+        # mounted read-only at the distroless nonroot user's home (the
+        # default path qatlasd resolves inside the container).
+        mounts = doc["services"]["qatlasd"]["volumes"]
+        cfg = [m for m in mounts if m.split(":")[1] == "/home/nonroot/.qatlas/config.yaml"]
+        assert cfg, (
+            f"volumes = {mounts}; must bind-mount the host config.yaml at "
+            "/home/nonroot/.qatlas/config.yaml"
+        )
+        assert cfg[0].endswith(":ro"), (
+            f"config mount = {cfg[0]!r}; must be read-only (:ro)"
+        )
+        assert cfg[0].startswith("${HOME}/.qatlas/config.yaml:"), (
+            f"config mount source = {cfg[0]!r}; must come from the host's "
+            "${HOME}/.qatlas/config.yaml"
+        )
 
     def test_volumes_match_dockerfile_volume_directive(self, doc: dict) -> None:
-        # The Dockerfile declares VOLUME ["/data/raw","/data/pb_data","/data/wiki"].
-        # The compose bind mounts here MUST target the same paths or
-        # operator data ends up in an anonymous docker volume on every
-        # `docker compose down`.
+        # The compose bind mounts here MUST target the Dockerfile VOLUME
+        # paths or operator data ends up in an anonymous docker volume
+        # on every `docker compose down`.
         mounts = doc["services"]["qatlasd"]["volumes"]
         targets = {m.split(":", 1)[1].split(":", 1)[0] for m in mounts}
         assert "/data/raw" in targets
         assert "/data/pb_data" in targets
-        assert "/data/wiki" in targets
 
     def test_qatlasd_loopback_bind(self, doc: dict) -> None:
         # Public exposure is operator-controlled (reverse proxy), so the
@@ -116,16 +154,21 @@ class TestStandaloneCompose:
             f"standalone template must not include backing services; got {set(services)}"
         )
 
-    def test_external_endpoints_required(self, doc: dict) -> None:
-        env = doc["services"]["qatlasd"]["environment"]
+    def test_no_environment_block_config_file_instead(self, doc: dict) -> None:
         # External endpoints are the whole point of the standalone
-        # flavour; if either has a default we've quietly turned this
-        # back into the all-in-one variant.
-        for var in ("QATLAS_S3_ENDPOINT", "NEO4J_URI"):
-            assert ":?" in env[var], (
-                f"{var} must be required in the standalone template (no default makes sense); "
-                f"got interpolation {env[var]!r}"
-            )
+        # flavour, and they now live in the host's config.yaml — env
+        # configuration was removed, so an environment block here would
+        # make qatlasd refuse to boot.
+        svc = doc["services"]["qatlasd"]
+        assert "environment" not in svc, (
+            f"standalone qatlasd environment block = {svc.get('environment')!r}; "
+            "connection details belong in the bind-mounted config.yaml"
+        )
+        mounts = svc["volumes"]
+        assert any(
+            m.split(":")[1] == "/home/nonroot/.qatlas/config.yaml" and m.endswith(":ro")
+            for m in mounts
+        ), f"standalone volumes = {mounts}; must bind-mount config.yaml read-only"
 
     def test_no_depends_on_backing_services(self, doc: dict) -> None:
         # Standalone explicitly defers backing services to the
@@ -135,26 +178,40 @@ class TestStandaloneCompose:
 
 
 class TestEnvDockerExampleStaysInSyncWithCompose:
-    """The .env.docker.example must mention every required compose var
-    so a fresh operator hitting `cp .env.docker.example .env` doesn't
-    immediately get a `compose: variable not set` error.
+    """The .env.docker.example exists only for compose-side variable
+    interpolation (image tag). Application config moved to the YAML
+    config file, so the example must stay minimal and must NOT
+    reintroduce app-side QATLAS_* variables (they would make qatlasd
+    refuse to boot if they ever got passed through).
     """
 
-    def test_required_vars_documented(self) -> None:
+    def test_only_compose_interpolation_vars(self) -> None:
         example = (DEPLOY_DIR / ".env.docker.example").read_text()
-        for required_var in [
-            "RUSTFS_ROOT_ACCESS_KEY",
-            "RUSTFS_ROOT_SECRET_KEY",
+        assert "QATLAS_VERSION" in example, (
+            ".env.docker.example must keep QATLAS_VERSION (image tag interpolation)"
+        )
+
+    def test_no_app_config_vars(self) -> None:
+        example = (DEPLOY_DIR / ".env.docker.example").read_text()
+        for var in [
+            "QATLAS_POSTGRES_DSN",
             "QATLAS_S3_ACCESS_KEY_ID",
             "QATLAS_S3_SECRET_ACCESS_KEY",
-            "NEO4J_PASSWORD",
             "GITHUB_CLIENT_ID",
             "GITHUB_CLIENT_SECRET",
+            "MINERU_API_TOKENS",
+            "QATLAS_SYSTEM_PAT",
         ]:
-            assert required_var in example, (
-                f".env.docker.example missing {required_var}; operators will be "
-                "surprised by a compose interpolation error on `up`"
+            assert var not in example, (
+                f".env.docker.example re-introduced {var}; app config lives in "
+                "config.yaml now, not in compose interpolation"
             )
+
+    def test_no_neo4j_leftovers(self) -> None:
+        # Neo4j is gone from the stack; the example env must not keep
+        # documenting variables nothing reads anymore.
+        example = (DEPLOY_DIR / ".env.docker.example").read_text()
+        assert "NEO4J" not in example
 
 
 class TestDockerfileSanity:
@@ -199,4 +256,5 @@ class TestDockerfileSanity:
         # volume. Don't lose them silently.
         assert "/data/raw" in dockerfile
         assert "/data/pb_data" in dockerfile
-        assert "/data/wiki" in dockerfile
+        # /data/wiki was removed together with the wiki subsystem.
+        assert "/data/wiki" not in dockerfile

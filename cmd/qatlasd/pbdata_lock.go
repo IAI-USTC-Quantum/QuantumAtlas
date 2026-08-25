@@ -22,9 +22,9 @@
 // gitea, ...) — cross-platform (Linux/macOS/BSD/Windows) and a thin
 // wrapper around the platform-native primitive.
 //
-// Disable knob: QATLAS_SKIP_PB_DATA_LOCK=1 bypasses the check. Reserved
-// for emergency recovery / multi-process diagnostic experiments — never
-// for production.
+// Disable knob: skip_pb_data_lock: true in config.yaml bypasses the
+// check. Reserved for emergency recovery / multi-process diagnostic
+// experiments — never for production.
 
 package main
 
@@ -34,7 +34,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
+
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 
 	"github.com/gofrs/flock"
 )
@@ -92,23 +93,11 @@ func (e *pbDataLockedError) Error() string {
 		"pb_data at %s is already locked by another qatlasd process "+
 			"(lock file: %s). PocketBase + SQLite do not serialize "+
 			"multiple writers safely — refusing to start. To run a "+
-			"second qatlasd alongside, point QATLAS_PB_DATA_DIR at a "+
+			"second qatlasd alongside, point paths.pb_data_dir at a "+
 			"different directory. To bypass for emergency recovery, "+
-			"set QATLAS_SKIP_PB_DATA_LOCK=1 (NOT for production).",
+			"set skip_pb_data_lock: true in config.yaml (NOT for production).",
 		e.dir, e.path,
 	)
-}
-
-// pbDataLockSkipRequested reports whether the operator opted into the
-// "skip the safety check" escape hatch. Recognises the same shape as
-// other boolean env vars in this codebase: 1/true/yes/on/y/t.
-func pbDataLockSkipRequested() bool {
-	v := strings.TrimSpace(strings.ToLower(os.Getenv("QATLAS_SKIP_PB_DATA_LOCK")))
-	switch v {
-	case "1", "true", "yes", "on", "y", "t":
-		return true
-	}
-	return false
 }
 
 // probePBDataLockAvailable returns true if the pb_data flock is currently
@@ -151,20 +140,20 @@ func probePBDataLockAvailable(pbDataDir string) bool {
 // PreRunE so the operator at least knows what's happening when they
 // fire a CLI write at a live server.
 //
-// Honors QATLAS_SKIP_PB_DATA_LOCK=1 (silent — if the operator already
-// disabled the safety net, they don't need a redundant warning).
-func warnIfServeRunning(pbDataDir string) {
-	if pbDataLockSkipRequested() {
+// Honors cfg.SkipPBDataLock (silent — if the operator already disabled
+// the safety net, they don't need a redundant warning).
+func warnIfServeRunning(cfg *config.Config) {
+	if cfg.SkipPBDataLock {
 		return
 	}
-	if !probePBDataLockAvailable(pbDataDir) {
+	if !probePBDataLockAvailable(cfg.PBDataDir) {
 		slog.Warn(
 			"another qatlasd serve appears to be running on this pb_data; "+
 				"this subcommand will write to SQLite directly while the server is running. "+
 				"PocketBase + SQLite (WAL) allows concurrent readers but only one writer at a time; "+
 				"transient busy errors may surface in the server log. Stop the server first "+
 				"for safety-critical operations (schema migrations, bulk imports).",
-			"pb_data_dir", pbDataDir,
+			"pb_data_dir", cfg.PBDataDir,
 		)
 	}
 }

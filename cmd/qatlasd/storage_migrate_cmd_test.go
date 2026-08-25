@@ -36,7 +36,7 @@ func TestLegacyOldStyleKeyRE_MatchesAndCaptures(t *testing.T) {
 		// bootstrap test fixtures, etc.).
 		{"_audit-probes/bootstrap-test.txt", false, "", ""},
 		{"0001/some-debug-upload.pdf", false, "", ""},
-		{"9508/9508027.pdf", false, "", ""}, // no version suffix → safer to skip
+		{"9508/9508027.pdf", false, "", ""},    // no version suffix → safer to skip
 		{"9508/95080278v2.pdf", false, "", ""}, // 8-digit serial — not arxiv old-style
 	}
 	for _, c := range cases {

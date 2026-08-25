@@ -13,7 +13,7 @@
 > [0011](../adr/0011-by-id-asset-reads.md) /
 > [0013](../adr/0013-corpus-schema-base-index-split.md)。
 
-一套**中心化 PostgreSQL**（挂在 mesh 上，跟 RustFS / Neo4j 同级），承载两块语义上独立、但同库
+一套**中心化 PostgreSQL**（挂在 mesh 上，跟 RustFS 同级），承载两块语义上独立、但同库
 共存（一个 `pgxpool` / 一个 `QATLAS_POSTGRES_DSN`）的数据，好让「catalog × 语料 × 向量」的深
 join 留在 SQL 里：
 

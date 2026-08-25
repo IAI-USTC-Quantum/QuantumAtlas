@@ -7,9 +7,7 @@ nav:
   - 服务端配置: server-config.md
   - 依赖服务:
     - GitHub OAuth: github-oauth.md
-    - Neo4j: neo4j.md
     - RustFS / S3: rustfs.md
-    - RAG 向量检索: rag.md
   - API:
     - REST API 总览: rest-api.md
     - Upload API 详解: upload-api.md

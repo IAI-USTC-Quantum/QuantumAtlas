@@ -7,7 +7,7 @@
 | 维度 | systemd（裸 binary） | docker compose |
 |---|---|---|
 | 单进程极简部署 | ⭐ | ✓ |
-| 一键起完整栈（含 RustFS / Neo4j） | ⨯（手动多服务） | ⭐ |
+| 一键起完整栈（含 PostgreSQL） | ⨯（手动多服务） | ⭐ |
 | 多服务隔离 / k8s / 集群 | ⨯ | ⭐ |
 | 升级 binary | `install-qatlasd.sh` 重跑 + `systemctl restart` | `docker compose pull && docker compose up -d` |
 | 配置 hot-reload | 改 `.env` + `systemctl restart` | 改 `.env` + 重建 container |
@@ -18,10 +18,10 @@
 
 简单原则：
 
-- **个人 / 实验室 / 评估**：docker compose 全家桶 — `docker compose up -d` 一行起 RustFS + Neo4j + qatlasd
-- **生产单边缘 / 多边缘 active-active**：systemd binary + 外部 RustFS / Neo4j（mesh 共享）
+- **个人 / 实验室 / 评估**：docker compose 全家桶 — `docker compose up -d` 一行起 PostgreSQL + qatlasd（对象存储留外部，如 NAS 上的 RustFS）
+- **生产单边缘 / 多边缘 active-active**：systemd binary + 外部 RustFS / PostgreSQL（mesh 共享）
 - **k8s / Nomad / Swarm**：docker image 作为 building block
-- **想随时切换**：两种流派**完全兼容数据**（同一份 `pb_data` / `wiki` / RustFS bucket 可以今天 systemd 跑明天 compose 跑），不存在 lock-in
+- **想随时切换**：两种流派**完全兼容数据**（同一份 `pb_data` / RustFS bucket / PG database 可以今天 systemd 跑明天 compose 跑），不存在 lock-in
 
 ## 镜像与标签
 
@@ -52,13 +52,13 @@ $EDITOR .env                      # 改密码 + GitHub OAuth client
 chmod 0600 .env
 
 # Distroless nonroot UID 65532 — 必须 chown 不然 server 写不了
-mkdir -p data/{raw,pb_data,wiki,rustfs,neo4j/data,neo4j/logs}
-sudo chown -R 65532:65532 data/{raw,pb_data,wiki}
+mkdir -p data/{raw,pb_data}
+sudo chown -R 65532:65532 data/{raw,pb_data}
 
 docker compose up -d
 docker compose logs -f qatlasd    # 看启动 log，Ctrl-C 退出
 curl http://localhost:4200/api/health
-# {"status":"healthy",...}  （degraded ok — Neo4j / S3 还没 bootstrap）
+# {"status":"healthy",...}  （degraded ok — S3 还没 bootstrap）
 ```
 
 ### 首次启动后：bootstrap RustFS svcacct + buckets
@@ -98,21 +98,21 @@ curl http://localhost:4200/api/health | jq .data.checks.raw_store
 
 ## B. compose standalone（qatlasd-only）
 
-适合：已有外部 RustFS（NAS、公有云 S3、R2、…）或 Neo4j（专门 VPS、内存大的工作站）的场景。
+适合：已有外部 RustFS（NAS、公有云 S3、R2、…）和外部 PostgreSQL（专门 VPS、托管 RDS）的场景。
 
 ```bash
 cd QuantumAtlas/deploy
 cp .env.docker.example .env
-$EDITOR .env                      # 填 QATLAS_S3_ENDPOINT / NEO4J_URI 等
+$EDITOR .env                      # 填 QATLAS_S3_ENDPOINT / QATLAS_POSTGRES_DSN 等
 chmod 0600 .env
 
-mkdir -p data/{pb_data,wiki,raw}
+mkdir -p data/{pb_data,raw}
 sudo chown -R 65532:65532 data/
 
 docker compose -f docker-compose.standalone.yml up -d
 ```
 
-`QATLAS_S3_ENDPOINT` / `NEO4J_URI` 在 standalone compose 里**都是必填**（没有默认会让它意外回到全家桶模式）。
+`QATLAS_S3_ENDPOINT` / `QATLAS_POSTGRES_DSN` 在 standalone compose 里**都是必填**（没有默认会让它意外回到全家桶模式）。
 
 ## C. `docker run` 单 image（k8s / Nomad / 自定义编排）
 
@@ -122,7 +122,6 @@ docker compose -f docker-compose.standalone.yml up -d
 docker run -d --name qatlasd \
     -p 127.0.0.1:4200:4200 \
     -v /srv/qatlas/pb_data:/data/pb_data \
-    -v /srv/qatlas/wiki:/data/wiki \
     -v /srv/qatlas/raw:/data/raw \
     -e QATLAS_S3_ENDPOINT=https://rustfs.example.com \
     -e QATLAS_S3_BUCKET_PDF=qatlas-pdf \
@@ -130,9 +129,7 @@ docker run -d --name qatlasd \
     -e QATLAS_S3_BUCKET_IMAGES=qatlas-images \
     -e QATLAS_S3_ACCESS_KEY_ID=... \
     -e QATLAS_S3_SECRET_ACCESS_KEY=... \
-    -e NEO4J_URI=bolt://neo4j.example.com:7687 \
-    -e NEO4J_USERNAME=neo4j \
-    -e NEO4J_PASSWORD=... \
+    -e QATLAS_POSTGRES_DSN=postgres://qatlas:secret@pg.example.com:5432/qatlas?sslmode=disable \
     -e GITHUB_CLIENT_ID=... \
     -e GITHUB_CLIENT_SECRET=... \
     -e QATLAS_ALLOWED_GITHUB_LOGINS=your-login \
@@ -207,10 +204,10 @@ tar czf qatlas-backup-$(date +%F).tgz data/
 docker compose start
 ```
 
-或者只挑 critical state（pb_data + rustfs，wiki 是从 git pull 重建的）：
+或者只挑 critical state（pb_data + postgres 的 named volume；raw 资产可从 S3 重建 registry）：
 
 ```bash
-tar czf qatlas-critical-$(date +%F).tgz data/pb_data data/rustfs data/neo4j
+tar czf qatlas-critical-$(date +%F).tgz data/pb_data   # + docker volume 里的 pgdata
 ```
 
 ### 升级 qatlasd
@@ -219,7 +216,7 @@ tar czf qatlas-critical-$(date +%F).tgz data/pb_data data/rustfs data/neo4j
 # 升 image tag
 $EDITOR .env                              # 改 QATLAS_VERSION=v0.17.0
 docker compose pull qatlasd
-docker compose up -d qatlasd              # 只重建 qatlasd，rustfs/neo4j 不重启
+docker compose up -d qatlasd              # 只重建 qatlasd，postgres 不重启
 
 # 或者跟 latest 滚动
 docker compose pull
@@ -235,9 +232,9 @@ QATLAS_VERSION=v0.15.0 docker compose up -d qatlasd
 
 由于 qatlasd 升级**不**触 pb_data schema（PocketBase migration 在 server 内部 idempotent）+ S3 数据完全跟 binary 解耦，回滚永远安全。**唯一例外**是 release notes 明确警告 "schema breaking change" 的版本，那时遵循 changelog 指引。
 
-### 升级 RustFS / Neo4j
+### 升级 RustFS / PostgreSQL
 
-各自有 changelog 看。RustFS 主要看 [`RUSTFS_DRIVE_TIMEOUT_PROFILE`](rustfs.md) 这种 hot path 兼容；Neo4j 跨 minor / major 升级前**必须**先 [database dump](neo4j.md#备份)。
+各自有 changelog 看。RustFS 主要看 [`RUSTFS_DRIVE_TIMEOUT_PROFILE`](rustfs.md) 这种 hot path 兼容；PostgreSQL 跨 major 升级前先做 `pg_dump`，并遵循官方升级指引（registry 表结构由 qatlasd 内的 goose migrations 管理，启动时自动 apply）。
 
 ## 常见坑
 
@@ -249,11 +246,11 @@ distroless `nonroot` 用户 UID 是 **65532**。`mkdir data/` 是当前用户拥
 ls -ln data/raw
 # drwxrwxr-x 2 1000 1000 ...    # 1000 = host user, not 65532
 
-sudo chown -R 65532:65532 data/{raw,pb_data,wiki}
+sudo chown -R 65532:65532 data/{raw,pb_data}
 docker compose up -d qatlasd
 ```
 
-`rustfs` / `neo4j` container 不受影响（它们用各自的 official image 内置用户）。
+`postgres` container 不受影响（official image 自己处理数据目录权限）。
 
 ### GitHub OAuth callback URL 必须是公网 URL
 

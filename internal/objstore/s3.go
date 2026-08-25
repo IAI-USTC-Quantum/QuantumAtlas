@@ -434,6 +434,34 @@ func (s *S3Store) ListPrefix(ctx context.Context, prefix string, limit int) ([]O
 	return out, nil
 }
 
+// ListDirs issues a non-recursive ListObjectsV2 (Delimiter "/") and
+// returns the common prefixes directly under prefix, each in the form
+// "<prefix><name>/". Objects sitting directly at this level (no child
+// segment) are skipped — callers use ListDirs to enumerate shard
+// prefixes before a per-shard ListPrefix, not to find objects.
+func (s *S3Store) ListDirs(ctx context.Context, prefix string) ([]string, error) {
+	if prefix != "" {
+		// Same validation rule as ListPrefix.
+		if strings.HasPrefix(prefix, "/") || strings.Contains(prefix, "..") || strings.Contains(prefix, "\\") {
+			return nil, fmt.Errorf("objstore: invalid prefix %q", prefix)
+		}
+	}
+	opts := minio.ListObjectsOptions{
+		Prefix:    prefix,
+		Recursive: false, // delimiter "/" → common prefixes as keys ending in "/"
+	}
+	var out []string
+	for obj := range s.client.ListObjects(ctx, s.bucket, opts) {
+		if obj.Err != nil {
+			return nil, fmt.Errorf("objstore: list dirs %s: %w", prefix, obj.Err)
+		}
+		if strings.HasSuffix(obj.Key, "/") {
+			out = append(out, obj.Key)
+		}
+	}
+	return out, nil
+}
+
 // PresignGet returns a time-limited GET URL valid for ttl. The URL
 // signs the entire request (host + path + query), so the caller can
 // hand it to a browser, curl, or downstream client without re-auth.

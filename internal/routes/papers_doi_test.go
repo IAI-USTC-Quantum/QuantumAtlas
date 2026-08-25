@@ -8,36 +8,35 @@ import (
 	"testing"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/openalex"
-	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/papers"
 )
 
 func TestStrictReject(t *testing.T) {
 	// strictReject is only invoked when the upload's `?verify=strict`
 	// flag is on; we drive it directly with each non-success status to
 	// pin the 4xx/5xx mapping (and confirm verified does NOT block).
-	if r := strictReject(papers.VerifyDOINotFound); r == nil || r.Status != http.StatusConflict {
+	if r := strictReject(VerifyDOINotFound); r == nil || r.Status != http.StatusConflict {
 		t.Errorf("strict doi-not-found should 409, got %v", r)
 	}
-	if r := strictReject(papers.VerifyUnavailable); r == nil || r.Status != http.StatusServiceUnavailable {
+	if r := strictReject(VerifyUnavailable); r == nil || r.Status != http.StatusServiceUnavailable {
 		t.Errorf("strict unavailable should 503, got %v", r)
 	}
-	if r := strictReject(papers.VerifyUnconfigured); r == nil || r.Status != http.StatusServiceUnavailable {
+	if r := strictReject(VerifyUnconfigured); r == nil || r.Status != http.StatusServiceUnavailable {
 		t.Errorf("strict unconfigured should 503, got %v", r)
 	}
-	if strictReject(papers.VerifyVerified) != nil {
+	if strictReject(VerifyVerified) != nil {
 		t.Error("strict verified should proceed")
 	}
 }
 
 func TestVerificationBody(t *testing.T) {
 	t.Run("verified populates fields", func(t *testing.T) {
-		got := verificationBody(papers.DOIVerification{
-			Status:  papers.VerifyVerified,
+		got := verificationBody(DOIVerification{
+			Status:  VerifyVerified,
 			Title:   "Quantum algorithm",
 			Authors: []string{"A", "B"},
 			ArxivID: "0811.3171",
 		})
-		if got["status"] != papers.VerifyVerified {
+		if got["status"] != VerifyVerified {
 			t.Errorf("status: %v", got["status"])
 		}
 		if got["title"] != "Quantum algorithm" {
@@ -51,8 +50,8 @@ func TestVerificationBody(t *testing.T) {
 		}
 	})
 	t.Run("non-verified leaves fields nil", func(t *testing.T) {
-		got := verificationBody(papers.DOIVerification{Status: papers.VerifyUnavailable})
-		if got["status"] != papers.VerifyUnavailable {
+		got := verificationBody(DOIVerification{Status: VerifyUnavailable})
+		if got["status"] != VerifyUnavailable {
 			t.Errorf("status: %v", got["status"])
 		}
 		if got["title"] != nil || got["authors"] != nil || got["arxiv_id"] != nil {
@@ -100,7 +99,7 @@ func TestVerifyDOIMetadata(t *testing.T) {
 
 	t.Run("unconfigured when resolver disabled", func(t *testing.T) {
 		v := verifyDOIMetadata(ctx, openalex.New(openalex.Config{}), doi)
-		if v.Status != papers.VerifyUnconfigured {
+		if v.Status != VerifyUnconfigured {
 			t.Errorf("got %q", v.Status)
 		}
 		if v.Title != "" || len(v.Authors) != 0 || v.ArxivID != "" {
@@ -108,13 +107,13 @@ func TestVerifyDOIMetadata(t *testing.T) {
 		}
 	})
 	t.Run("unconfigured when resolver is nil", func(t *testing.T) {
-		if v := verifyDOIMetadata(ctx, nil, doi); v.Status != papers.VerifyUnconfigured {
+		if v := verifyDOIMetadata(ctx, nil, doi); v.Status != VerifyUnconfigured {
 			t.Errorf("got %q", v.Status)
 		}
 	})
 	t.Run("verified when OpenAlex returns a record", func(t *testing.T) {
 		v := verifyDOIMetadata(ctx, stubResolver(t, hhlBody, 200, nil), doi)
-		if v.Status != papers.VerifyVerified {
+		if v.Status != VerifyVerified {
 			t.Errorf("got %q, want verified", v.Status)
 		}
 		if v.Title != "Quantum algorithm for linear systems of equations" {
@@ -130,7 +129,7 @@ func TestVerifyDOIMetadata(t *testing.T) {
 	})
 	t.Run("doi-not-found on 404", func(t *testing.T) {
 		v := verifyDOIMetadata(ctx, stubResolver(t, "", http.StatusNotFound, nil), doi)
-		if v.Status != papers.VerifyDOINotFound {
+		if v.Status != VerifyDOINotFound {
 			t.Errorf("got %q", v.Status)
 		}
 		if v.Title != "" || len(v.Authors) != 0 {
@@ -139,7 +138,7 @@ func TestVerifyDOIMetadata(t *testing.T) {
 	})
 	t.Run("unavailable on upstream error", func(t *testing.T) {
 		v := verifyDOIMetadata(ctx, stubResolver(t, "", http.StatusInternalServerError, nil), doi)
-		if v.Status != papers.VerifyUnavailable {
+		if v.Status != VerifyUnavailable {
 			t.Errorf("got %q", v.Status)
 		}
 		if v.Title != "" || len(v.Authors) != 0 {
@@ -167,7 +166,7 @@ func TestVerifyDOIMetadata(t *testing.T) {
 // OpenAlex-fetched title/authors.
 func TestDOIVerificationRejectBody(t *testing.T) {
 	rej := &uploadError{Status: http.StatusConflict, Detail: "DOI not found"}
-	v := papers.DOIVerification{Status: papers.VerifyDOINotFound}
+	v := DOIVerification{Status: VerifyDOINotFound}
 	got := doiVerificationRejectBody(rej, "10.1103/x", v)
 	if _, has := got["expected_title"]; has {
 		t.Error("response must not carry expected_title — contributor never supplies it")
@@ -178,7 +177,7 @@ func TestDOIVerificationRejectBody(t *testing.T) {
 	if got["doi"] != "10.1103/x" {
 		t.Errorf("doi: %v", got["doi"])
 	}
-	if got["verification_status"] != papers.VerifyDOINotFound {
+	if got["verification_status"] != VerifyDOINotFound {
 		t.Errorf("status: %v", got["verification_status"])
 	}
 }

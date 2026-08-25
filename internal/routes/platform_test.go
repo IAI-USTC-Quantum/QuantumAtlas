@@ -9,30 +9,29 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 )
 
-// Compile-time: the pull plugins satisfy GitPullPlugin; the non-pull plugins
-// satisfy BuiltinPlugin only.
-var (
-	_ GitPullPlugin = (*WikiPlugin)(nil)
-	_ GitPullPlugin = (*TheoremsPlugin)(nil)
-	_ BuiltinPlugin = graphBuiltin{}
-	_ BuiltinPlugin = ragBuiltin{}
-)
-
-func TestNonPullBuiltinsAreNotGitPull(t *testing.T) {
-	if _, ok := any(NewGraphPlugin()).(GitPullPlugin); ok {
-		t.Fatal("graph must not be a GitPullPlugin")
-	}
-	if _, ok := any(NewRAGPlugin()).(GitPullPlugin); ok {
-		t.Fatal("rag must not be a GitPullPlugin")
-	}
+// stubPullPlugin is a minimal GitPullPlugin used to exercise the platform's
+// uniform sync-status shape without a real content checkout.
+type stubPullPlugin struct {
+	id  string
+	dir string
 }
+
+// Compile-time: the stub satisfies GitPullPlugin.
+var _ GitPullPlugin = stubPullPlugin{}
+
+func (s stubPullPlugin) PluginID() string { return s.id }
+func (s stubPullPlugin) RegisterRoutes(_ *core.ServeEvent, _ PluginDeps) error {
+	return nil
+}
+func (s stubPullPlugin) GitRepoDir() string     { return s.dir }
+func (s stubPullPlugin) OnPullSucceeded() error { return nil }
 
 func TestGitSyncStatusShape(t *testing.T) {
 	dir := t.TempDir() // exists but not a git repo
-	tp := &TheoremsPlugin{cfg: &config.Config{TheoremsDir: dir}}
+	tp := stubPullPlugin{id: "papers", dir: dir}
 	st := gitSyncStatus(tp)
-	if st["id"] != "theorems" {
-		t.Fatalf("id = %v, want theorems", st["id"])
+	if st["id"] != "papers" {
+		t.Fatalf("id = %v, want papers", st["id"])
 	}
 	if st["exists"] != true {
 		t.Fatalf("exists = %v, want true", st["exists"])
@@ -44,22 +43,10 @@ func TestGitSyncStatusShape(t *testing.T) {
 
 func TestGitSyncStatusMissingDir(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "does-not-exist")
-	tp := &TheoremsPlugin{cfg: &config.Config{TheoremsDir: missing}}
+	tp := stubPullPlugin{id: "papers", dir: missing}
 	st := gitSyncStatus(tp)
 	if st["exists"] != false {
 		t.Fatalf("exists = %v, want false for missing dir", st["exists"])
-	}
-}
-
-func TestPluginIDsAndRepoDirs(t *testing.T) {
-	cfg := &config.Config{WikiDir: "/w", TheoremsDir: "/t"}
-	w := NewWikiPlugin(cfg, nil)
-	if w.PluginID() != "wiki" || w.GitRepoDir() != "/w" {
-		t.Fatalf("wiki id/dir = %q/%q", w.PluginID(), w.GitRepoDir())
-	}
-	tp := NewTheoremsPlugin(cfg, nil)
-	if tp.PluginID() != "theorems" || tp.GitRepoDir() != "/t" {
-		t.Fatalf("theorems id/dir = %q/%q", tp.PluginID(), tp.GitRepoDir())
 	}
 }
 
@@ -96,7 +83,7 @@ func (s spyBuiltin) RegisterRoutes(_ *core.ServeEvent, _ PluginDeps) error {
 // builtins register is decided by PluginsEnabled/PluginsDisabled, not the
 // hardcoded arg list. Default (both empty) keeps every builtin on.
 func TestRegisterBuiltinsFiltersByConfig(t *testing.T) {
-	order := []string{"graph", "rag", "wiki", "theorems"}
+	order := []string{"papers", "plugins"}
 	cases := []struct {
 		name     string
 		enabled  []string
@@ -104,9 +91,9 @@ func TestRegisterBuiltinsFiltersByConfig(t *testing.T) {
 		want     []string
 	}{
 		{"default enables all", nil, nil, order},
-		{"denylist drops theorems", nil, []string{"theorems"}, []string{"graph", "rag", "wiki"}},
-		{"allowlist keeps only graph", []string{"graph"}, nil, []string{"graph"}},
-		{"denylist wins over allowlist", []string{"graph"}, []string{"graph"}, nil},
+		{"denylist drops plugins", nil, []string{"plugins"}, []string{"papers"}},
+		{"allowlist keeps only papers", []string{"papers"}, nil, []string{"papers"}},
+		{"denylist wins over allowlist", []string{"papers"}, []string{"papers"}, nil},
 		{"unknown denylist id is ignored", nil, []string{"typo"}, order},
 	}
 	for _, tc := range cases {

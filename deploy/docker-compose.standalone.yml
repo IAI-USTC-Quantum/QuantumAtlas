@@ -1,20 +1,26 @@
 # ─────────────────────────────────────────────────────────────────────────
-# QuantumAtlas — qatlasd only (BYO rustfs + neo4j)
+# QuantumAtlas — qatlasd only (BYO rustfs + PostgreSQL)
 #
 # Use this when you already have external object storage (RustFS on a
-# NAS, AWS S3, R2, etc.) and an external Neo4j (a managed instance, a
-# beefy in-house server, or a different docker-compose). All the
-# interesting connection details come from .env so qatlasd itself can
-# stay stateless and trivially redeploy.
+# NAS, AWS S3, R2, etc.) and an external PostgreSQL (the paper registry
+# + OpenAlex corpus database). All the interesting connection details
+# come from the YAML config file on the host, so qatlasd itself can stay
+# stateless and trivially redeploy.
+#
+# qatlasd rejects ALL environment-variable configuration (QATLAS_* etc.)
+# at startup — there is deliberately no `environment:` block here. Edit
+# the config file instead:
+#
+#   qatlasd config init                      # creates ~/.qatlas/config.yaml
+#   $EDITOR ~/.qatlas/config.yaml            # fill ALL of s3.*, postgres.dsn,
+#                                            # auth.* — there's no fallback
 #
 # For the all-in-one flavour see ./docker-compose.yml.
 # Full discussion: docs/server/docker.md.
 #
 # Usage:
-#   cp .env.docker.example .env
-#   $EDITOR .env                    # fill ALL of QATLAS_S3_*, NEO4J_*,
-#                                   # GITHUB_*, etc. — there's no fallback
-#   mkdir -p data/{pb_data,wiki}
+#   $EDITOR ~/.qatlas/config.yaml
+#   mkdir -p data/pb_data
 #   chown -R 65532:65532 data/      # distroless nonroot UID
 #   docker compose -f docker-compose.standalone.yml up -d
 #   curl http://localhost:4200/api/health
@@ -29,45 +35,16 @@ services:
     #     VERSION: ${QATLAS_VERSION:-local}
     container_name: qatlasd
     restart: unless-stopped
-    environment:
-      # ── Object storage (external) ──
-      QATLAS_S3_ENDPOINT: ${QATLAS_S3_ENDPOINT:?QATLAS_S3_ENDPOINT required (e.g. https://rustfs.example.com)}
-      QATLAS_S3_PUBLIC_ENDPOINT: ${QATLAS_S3_PUBLIC_ENDPOINT:-}
-      QATLAS_S3_BUCKET_PDF: ${QATLAS_S3_BUCKET_PDF:-qatlas-pdf}
-      QATLAS_S3_BUCKET_MD: ${QATLAS_S3_BUCKET_MD:-qatlas-md}
-      QATLAS_S3_BUCKET_IMAGES: ${QATLAS_S3_BUCKET_IMAGES:-qatlas-images}
-      QATLAS_S3_ACCESS_KEY_ID: ${QATLAS_S3_ACCESS_KEY_ID:?QATLAS_S3_ACCESS_KEY_ID required (svcacct, NOT root)}
-      QATLAS_S3_SECRET_ACCESS_KEY: ${QATLAS_S3_SECRET_ACCESS_KEY:?QATLAS_S3_SECRET_ACCESS_KEY required}
-
-      # ── Neo4j (external) ──
-      NEO4J_URI: ${NEO4J_URI:?NEO4J_URI required (e.g. bolt://neo4j.example.com:7687)}
-      NEO4J_USERNAME: ${NEO4J_USERNAME:-neo4j}
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD:?NEO4J_PASSWORD required}
-
-      # ── Local persistent state ──
-      QATLAS_WIKI_DIR: /data/wiki
-      QATLAS_PB_DATA_DIR: /data/pb_data
-      # RAW_DIR is a no-op when S3 is configured (above) but the env var
-      # still has to be set for path expansion; pick a sensible default.
-      QATLAS_RAW_DIR: /data/raw
-
-      # ── GitHub OAuth ──
-      QATLAS_ALLOWED_GITHUB_LOGINS: ${QATLAS_ALLOWED_GITHUB_LOGINS:-}
-      QATLAS_ADMIN_GITHUB_LOGINS: ${QATLAS_ADMIN_GITHUB_LOGINS:-}
-      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
-      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
-
-      # ── Optional system PAT ──
-      QATLAS_SYSTEM_PAT: ${QATLAS_SYSTEM_PAT:-}
-      QATLAS_SYSTEM_PAT_SCOPES: ${QATLAS_SYSTEM_PAT_SCOPES:-*}
-
-      # ── Edge labelling (cosmetic; useful in multi-edge active-active) ──
-      QATLAS_EDGE_NAME: ${QATLAS_EDGE_NAME:-}
-
+    # PocketBase's own --dir defaults to /pb_data (unwritable under the
+    # nonroot user); point it at the mounted volume instead.
+    command: ["serve", "--http=0.0.0.0:4200", "--dir=/data/pb_data"]
     volumes:
+      # The YAML config file is the single source of truth. Mounted
+      # read-only at the distroless nonroot user's (UID 65532) home —
+      # that is where qatlasd looks by default (~/.qatlas/config.yaml).
+      - ${HOME}/.qatlas/config.yaml:/home/nonroot/.qatlas/config.yaml:ro
       - ./data/pb_data:/data/pb_data
-      - ./data/wiki:/data/wiki
-      # RAW_DIR is unused when S3 is configured but the directory still
+      # raw_dir is unused when S3 is configured but the directory still
       # has to exist so the volume mount succeeds.
       - ./data/raw:/data/raw
     ports:

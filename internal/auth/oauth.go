@@ -60,8 +60,53 @@ func Register(app core.App, cfg *config.Config) {
 			// stable; they can re-link manually later.
 			slog.Warn("oauth: failed to inject stable user id", "error", err)
 		}
-		return e.Next()
+		if err := e.Next(); err != nil {
+			return err
+		}
+		// Auth succeeded (new signup or returning login) — persist the
+		// GitHub login onto the record so the admin gate can match it
+		// against Config.AdminGitHubLogins without a network lookup.
+		stampGitHubLogin(e)
+		return nil
 	})
+}
+
+// stampGitHubLogin persists the GitHub account login onto the users
+// record after a successful OAuth sign-in. PocketBase's default OAuth2
+// mapped fields only cover name/avatar (MappedFields.Username is empty
+// on the stock users collection), so the login — the value
+// Config.AdminGitHubLogins / AllowedGitHubLogins match against — would
+// otherwise never be stored. Stamping here covers both fresh signups
+// and lazy backfill for users who registered before the github_login
+// field existed: they get it on their next login.
+//
+// Logged-not-fatal: a failed save must not break sign-in (the response
+// has already been written by e.Next() at this point anyway); the worst
+// case is the admin gate keeps denying until a later login retries.
+func stampGitHubLogin(e *core.RecordAuthWithOAuth2RequestEvent) {
+	if e == nil || e.Record == nil || e.OAuth2User == nil {
+		return
+	}
+	if e.ProviderName != auth.NameGithub {
+		return
+	}
+	login := strings.TrimSpace(e.OAuth2User.Username) // GitHub provider maps `login` here
+	if login == "" || e.Record.GetString(GitHubLoginField) == login {
+		return
+	}
+	// Defensive: only stamp when the field actually exists on the
+	// collection (it is added by this package's migration, which runs
+	// at bootstrap — but a hand-migrated pb_data could lack it).
+	if e.Record.Collection().Fields.GetByName(GitHubLoginField) == nil {
+		return
+	}
+	e.Record.Set(GitHubLoginField, login)
+	if err := e.App.Save(e.Record); err != nil {
+		slog.Warn("oauth: failed to stamp github login on users record",
+			"user_id", e.Record.Id,
+			"error", err,
+		)
+	}
 }
 
 // enforceLoginAllowlist rejects OAuth sign-in for any GitHub account whose

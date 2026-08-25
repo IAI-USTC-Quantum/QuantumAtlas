@@ -55,6 +55,9 @@ func (s *statMockStore) Delete(_ context.Context, _ string) error { panic("Delet
 func (s *statMockStore) ListPrefix(_ context.Context, _ string, _ int) ([]objstore.ObjectInfo, error) {
 	panic("ListPrefix unused")
 }
+func (s *statMockStore) ListDirs(_ context.Context, _ string) ([]string, error) {
+	panic("ListDirs unused")
+}
 func (s *statMockStore) PresignGet(_ context.Context, _ string, _ time.Duration) (string, bool, error) {
 	panic("PresignGet unused")
 }

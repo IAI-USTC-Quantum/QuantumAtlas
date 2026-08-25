@@ -6,10 +6,10 @@
 
 ??? question "QuantumAtlas 跟 X 有什么区别？"
 
-    - **跟 arXiv-sanity 比**：他们做的是 paper recommendation，我们做的是 paper → wiki → 图谱 → 可执行代码的完整链路
-    - **跟传统 wiki 比**：我们的 wiki 是结构化 + 强类型 + Neo4j 同步，不是纯叙述
-    - **跟 Qiskit Aqua / PennyLane libraries 比**：他们是 algorithm 实现库，我们是 algorithm 知识库 + 自动生成实现
-    - **跟 Notion / Obsidian 比**：我们是开源 + 自部署 + 量子算法专用 + 含 LLM extractor
+    - **跟 arXiv-sanity 比**：他们做的是 paper recommendation，我们做的是 paper 收集 + 注册 + 多路检索的完整链路
+    - **跟传统 wiki / 笔记比**：我们的论文资产是结构化 + 强类型 + PostgreSQL registry 登记，不是纯叙述
+    - **跟 Google Scholar 比**：我们是开源自部署，本地 catalog 可 SQL 直查，还能接语义向量检索
+    - **跟 Notion / Obsidian 比**：我们是开源 + 自部署 + 量子算法专用
 
 ??? question "适合什么人 / 什么场景？"
 
@@ -38,7 +38,7 @@
 
     理论可以——Go binary 可以 cross-compile 出 Windows 版（release pipeline 当前没出 Windows artifact，需要手 build）。但 systemd / Caddy 这套生态都是 Linux 一等，Windows 不建议生产。
 
-    **WSL2 可以**——按 [Neo4j 部署](../server/neo4j.md) 那段 WSL2 注意事项配 portproxy 即可。
+    **WSL2 可以**——qatlasd 在 WSL2 下直接跑即可；对外暴露时注意 Windows 防火墙与 portproxy 的常规配置。
 
 ??? question "macOS 能跑 server 吗？"
 
@@ -60,7 +60,7 @@
     CMD ["qatlasd", "serve", "--http=0.0.0.0:4200"]
     ```
 
-    pb_data / wiki / raw 用 volume mount 进容器，`.env` 用 `--env-file` 注入。pb_data 路径用 `QATLAS_PB_DATA_DIR` 控制。
+    pb_data / raw 用 volume mount 进容器，`.env` 用 `--env-file` 注入。pb_data 路径用 `QATLAS_PB_DATA_DIR` 控制。
 
 ## 客户端使用
 
@@ -109,24 +109,20 @@
 
     对。多边缘各自独立 PocketBase，**用户和 PAT 不跨节点**。需要为每条线路各建 PAT。
 
-## Wiki / Neo4j
+## Registry / 搜索
 
-??? question "Wiki 改了之后 Neo4j 多久会更新？"
+??? question "上传的论文多久能被搜到？"
 
-    不会自动更新。
+    立刻。upload / ingest 的写路径是 write-through：对象落桶后同事务登记
+    `papers` + `paper_assets`，`POST /api/search` 的 catalog provider 下一轮查询即可命中。
+    PostgreSQL 暂时不可用时上传仍成功（`X-Catalog-Sync: deferred`），事后跑
+    `qatlasd papers sync --full --from-rustfs` 从对象存储重建即可。
 
-    - 触发 `POST /api/wiki/sync/pull` → server 端 git fast-forward → in-memory cache 刷新
-    - Neo4j 图谱的派生是**服务端职责**，由 Go `qatlasd` 基于 canonical Wiki 重建；Python 客户端不直连 Neo4j
+??? question "搜索结果里 catalog / arxiv / openalex 有什么区别？"
 
-    或者你把 sync 加进 GitHub Action：每次 Wiki repo PR 合并触发 server 端 sync。
-
-??? question "Wiki 页面被删了 Neo4j 节点怎么办？"
-
-    sync 会自动删 orphan 节点（基于 page id）。但如果你 rename 了 page id，sync 把它当作 "删旧 + 加新"——会断历史关系。**避免 rename id**。
-
-??? question "lint 报 W003 孤儿页面，必须修吗？"
-
-    W003 是 INFO 级别，不强制。但孤儿页面通常意味着"没人引用它"——要么补 `related: [...]`，要么这页本来就独立（手册 / 教程性质），可以 ignore。
+    `POST /api/search` 把查询 fan-out 到 `QATLAS_SEARCH_PROVIDERS` 配置的 provider：
+    **catalog** 查本地 registry（含资产状态）；**arxiv / openalex** 是上游在线查询；
+    **qdrant**（可选）是本地 markdown 的语义向量检索。同一个 query 一次拿全，不需要逐源跑。
 
 ## 部署 / 运维
 
@@ -149,19 +145,17 @@
     - 跨大版本（migration 改 schema）：**先备份 pb_data**
     - 多边缘：**rolling restart**（一台一台，DNS 不切的话用户感知约 0）
 
-??? question "Neo4j 我不用图谱功能，能不装吗？"
+??? question "PostgreSQL 暂时没准备好，能先跑起来吗？"
 
-    可以。`NEO4J_URI` 不配 → server 启动正常，graph endpoint 返回 `{"error":...}`，`/api/health` 报 `not_configured` 不下拉等级。SPA 的 Graph tab 是空的。
+    可以。`QATLAS_POSTGRES_DSN` 不配 → server 启动正常，registry 端点（`/api/papers/stats` /
+    needs-mineru）返回 `available:false`，上传仍写对象存储并带 `X-Catalog-Sync: deferred`。
+    配好 DSN 后跑 `qatlasd papers sync --full --from-rustfs` 重建 registry 即可。
 
 ## 协议 / 法律
 
 ??? question "Apache-2.0 协议允许我把 QuantumAtlas 嵌进我的商业产品吗？"
 
     可以。Apache-2.0 是工业界最主流的 permissive 开源协议之一（Kubernetes、Docker、Terraform、Prometheus 等都用它）。需要保留 LICENSE / NOTICE 文件并显著标注改动，且额外获得 contributor 的专利使用权。详见 [LICENSE](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/LICENSE) 全文。
-
-??? question "Wiki 内容（论文摘要）的版权？"
-
-    我们的 Wiki repo Apache-2.0；但论文本身是各家出版社 / arXiv 的版权（一般是 arXiv non-exclusive license）。Wiki paper 页面**应该是用自己的话总结 + 引用关键数据**，而不是 verbatim copy abstract。
 
 ??? question "上传的 PDF 谁的版权？"
 

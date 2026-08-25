@@ -15,7 +15,7 @@ QuantumAtlas 默认只暴露**一条** MinerU 路径——**贡献者本地解�
 !!! tip "为什么这算贡献"
     MinerU 给每个注册账号送 **5000 篇 / 天** 的免费解析额度。绝大多数个人用户每天用不
     到这个量，而 catalog 里始终有几千篇 PDF 等着被解析成 markdown（解析完才能进
-    全文搜索、被 LLM 抽取、生成 wiki 引用片段）。**`qatlas contrib mineru` 把你闲置的额度
+    catalog 检索、被语义索引）。**`qatlas contrib mineru` 把你闲置的额度
     导给项目**：你贡献的不是磁盘、不是带宽（PDF 已经在 server 上），而是你那个
     MinerU 账号每天没用完的那几千篇配额。
 
@@ -343,10 +343,10 @@ server 维护 catalog 中的 lease 字段：
 # 看 server 上还有多少 PDF 没解析
 curl https://<server>/api/papers/needs-mineru?limit=5 | jq
 
-# 看具体某篇的资产清单
-qatlas wiki show paper-arxiv-2501.00010v1
+# 看 registry 的整体资产统计
+curl https://<server>/api/papers/stats | jq
 ```
 
 ## 下一步
 
-- 解析好的 markdown 想沉淀成 wiki 页面？[写 Wiki 页面](write-wiki-pages.md)
+- 想把解析好的 markdown 纳入检索？确认 `QATLAS_SEARCH_PROVIDERS` 里的 catalog provider 已启用（默认开启）。

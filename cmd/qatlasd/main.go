@@ -15,13 +15,13 @@ package main
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
 	"log"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -31,23 +31,23 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/events"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/healthz"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/hostapi"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/ingest"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineru"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/openalex"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/openalexcorpus"
-	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/papers"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/pat"
 	qplugin "github.com/IAI-USTC-Quantum/QuantumAtlas/internal/plugin"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/registry"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/routes"
-	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/theoremsplugin"
-	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/wiki"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/search"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/usage"
 	qweb "github.com/IAI-USTC-Quantum/QuantumAtlas/web"
 
 	_ "github.com/IAI-USTC-Quantum/QuantumAtlas/internal/apidocs"
 
 	"github.com/casbin/casbin/v2"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/joho/godotenv"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/apis"
 	pbcmd "github.com/pocketbase/pocketbase/cmd"
@@ -85,11 +85,11 @@ var Version = "dev"
 
 // @title          QuantumAtlas API
 // @version        1.0
-// @description    Go + PocketBase backend for QuantumAtlas. Read endpoints
-// @description    (wiki/pages/stats/search/graph metadata/health) are public
-// @description    because the wiki is an open repo; write endpoints require a
-// @description    bearer token (PAT or PocketBase session) plus the matching
-// @description    scope. See the auth model docs for the scope vocabulary.
+// @description    Go + PocketBase backend for QuantumAtlas: paper
+// @description    collection + search + database. Write endpoints and
+// @description    the search/paper read surface require a bearer token
+// @description    (PAT or PocketBase session) plus the matching scope.
+// @description    See the auth model docs for the scope vocabulary.
 //
 // @contact.name   QuantumAtlas
 // @contact.url    https://quantum-atlas.ai
@@ -103,21 +103,22 @@ var Version = "dev"
 // @description                accepted: a Personal Access Token
 // @description                (`Authorization: Bearer qat_...`, minted at
 // @description                `/pat` after GitHub OAuth login), or the
-// @description                env-loaded system PAT (set
-// @description                `QATLAS_SYSTEM_PAT` on the server, send the
-// @description                plaintext as `Authorization: Bearer <value>`).
+// @description                config-loaded system PAT (set
+// @description                `system_pat.token` in config.yaml on the
+// @description                server, send the plaintext as
+// @description                `Authorization: Bearer <value>`).
 // @description                Browser callers are authenticated through
 // @description                pb.authStore (no copy step) — only non-browser
 // @description                callers need an explicit bearer.
 func main() {
 	// Early --version / version short-circuit. Everything below
-	// (loadDotEnv, config.Load, initPostgresPool, initRawStore, ...)
-	// runs in main() body BEFORE cobra parses os.Args, so a naked
-	// `qatlasd --version` would otherwise trigger network I/O
-	// (.env load, PostgreSQL pool init, S3 client init) before
-	// printing the version. Detect the version flag at the top so the
-	// command is cheap, side-effect-free, and dependency-free (no .env
-	// required — useful in install-qatlasd.sh / CI smoke checks).
+	// (config.Load, initPostgresPool, initRawStore, ...) runs in main()
+	// body BEFORE cobra parses os.Args, so a naked `qatlasd --version`
+	// would otherwise trigger file I/O (config load, PostgreSQL pool
+	// init, S3 client init) before printing the version. Detect the
+	// version flag at the top so the command is cheap, side-effect-free,
+	// and dependency-free (no config file required — useful in
+	// install-qatlasd.sh / CI smoke checks).
 	if len(os.Args) >= 2 {
 		switch os.Args[1] {
 		case "--version", "version":
@@ -130,25 +131,22 @@ func main() {
 	// on `qatlasd --help`, `qatlasd -h`, or `qatlasd help [...]` — i.e.
 	// help requests aimed at the *root* command. Subcommand help like
 	// `qatlasd pat --help` falls through to the normal flow (no risk
-	// of fataling on broken .env because Load is now best-effort for
-	// the S3 half-set case; see internal/config/config.go::Load).
+	// of fataling on a half-configured file because Load is best-effort
+	// for the S3 half-set case; see internal/config/config.go::Load).
 	//
 	// The narrow window avoids false positives like
 	// `qatlasd pat mint --name "--help"` where `--help` is a flag value
-	// and would otherwise skip env loading just before cobra tries to
+	// and would otherwise skip config loading just before cobra tries to
 	// actually execute the command with zero config.
 	helpMode := len(os.Args) >= 2 && (os.Args[1] == "--help" || os.Args[1] == "-h" || os.Args[1] == "help")
 
-	// Early `config` subcommand short-circuit. Same reason as the
-	// --version one above, plus a critical extra: `qatlasd config
-	// show` is the operator's tool for diagnosing a half-configured
-	// .env, but config.Load() below fails fast on exactly that case
-	// (validateS3Config rejects half-set S3 fields with a fatal exit).
-	// If we let the normal main flow run first, config show could
-	// never see a broken config — it would die before getting a chance
-	// to display anything. So intercept `config` before any env
-	// validation, build a minimal cobra root, and dispatch directly.
-	if len(os.Args) >= 2 && os.Args[1] == "config" {
+	// Early `config` subcommand short-circuit. `qatlasd config init`
+	// must work when no config file exists yet (it creates one), and
+	// `config show` is the operator's tool for diagnosing a broken
+	// config — but the normal main flow below fails fast on exactly
+	// those states. So intercept `config` before any config loading,
+	// build a minimal cobra root, and dispatch directly.
+	if firstPositionalIsConfig(os.Args[1:]) {
 		root := &cobra.Command{
 			Use:     "qatlasd",
 			Version: Version,
@@ -163,31 +161,39 @@ func main() {
 		return
 	}
 
-	// Load .env BEFORE config.Load so any vars it sets win over
-	// preset systemd environment (godotenv.Load skips existing keys,
-	// which is correct for the "real env beats file" precedence we want).
-	//
-	// Why we load it ourselves instead of relying on systemd's
-	// EnvironmentFile= directive: the latter strips the file path, so
-	// the server can't know where the .env lives and therefore can't
-	// resolve relative paths like WIKI_DIR=../QuantumAtlas-Wiki against
-	// the .env directory. Loading it ourselves lets config.Load() use
-	// the .env directory as the anchor for relative paths.
+	// Load the YAML config file. The path comes from the --config flag
+	// (scanned manually here because cobra hasn't parsed os.Args yet)
+	// or the default ~/.qatlas/config.yaml. A missing file, malformed
+	// YAML, or any configuration-shaped environment variable (QATLAS_*,
+	// MINERU_*, GITHUB_CLIENT_*, ...) is a hard fatal — environment-
+	// variable configuration was removed; the file is the only source
+	// of truth.
 	//
 	// Skipped in helpMode: `qatlasd --help` / `-h` / `help` build a
 	// minimal cobra tree with a zero-value cfg just to print help text,
-	// so they don't need (and shouldn't be blocked by) a working .env.
+	// so they don't need (and shouldn't be blocked by) a config file.
 	var cfg *config.Config
 	if helpMode {
 		cfg = &config.Config{}
 	} else {
-		dotenvPath := loadDotEnv()
 		var err error
-		cfg, err = config.Load(dotenvPath)
+		cfg, err = config.Load(configPathFromArgs(os.Args))
 		if err != nil {
 			log.Fatalf("load config: %v", err)
 		}
 	}
+
+	// Inject the PocketBase runtime flags (--http / --dir) into os.Args
+	// BEFORE PocketBase reads them. Timing matters:
+	//   - --dir is consumed by PocketBase's eagerParseFlags inside
+	//     NewWithConfig (it builds BaseApp with the parsed dataDir), so
+	//     it MUST be in os.Args before the constructor below runs;
+	//   - --http is parsed by cobra at app.Execute() time, so being in
+	//     os.Args before Execute is sufficient.
+	// Both no-op when the operator already passed the flag explicitly
+	// (docker's CMD does) or when cfg carries no value (helpMode).
+	injectHTTPFlag(cfg)
+	injectPBDataDirFlag(cfg)
 
 	app := pocketbase.NewWithConfig(pocketbase.Config{
 		// Custom SQLite tuning — see sqlite_tuning.go for the rationale
@@ -205,13 +211,19 @@ func main() {
 	// field — operators running `--version` on the CLI see nothing.
 	app.RootCmd.Version = Version
 
+	// The --config flag selects the YAML config file. Config loading
+	// happens above (before cobra parses os.Args, via configPathFromArgs),
+	// so this registration exists only to make the flag show up in
+	// --help output and to keep cobra from rejecting it as unknown.
+	app.RootCmd.PersistentFlags().String("config", "",
+		"Path to the YAML config file (default: ~/.qatlas/config.yaml)")
+
 	// Register the GitHub OAuth provider hook now (it fires at
 	// PocketBase Bootstrap, which runs BEFORE cobra parses argv).
-	// This is the timing reason GITHUB_CLIENT_* / *_GITHUB_LOGINS
-	// are env-only — by the time `serve --github-client-id ...`
-	// would land in cfg, the OAuth provider has already been mounted
-	// onto the settings table. Documented in
-	// cmd/qatlasd/serve_flags.go "Known limitation".
+	// This is why OAuth credentials must come from the config file
+	// loaded in main() above — by the time any subcommand flag could
+	// land in cfg, the OAuth provider has already been mounted onto
+	// the settings table.
 	auth.Register(app, cfg)
 
 	// Mount the `pat` subcommand group. This MUST come before
@@ -246,9 +258,9 @@ func main() {
 	attachPBLockProbe(papersCmd, cfg)
 	app.RootCmd.AddCommand(papersCmd)
 
-	// Mount the `openalex` subcommand group (bootstrap / sync the
-	// OpenAlex works snapshot into the :PaperWork layer). Execution is
-	// operator-driven and decoupled from server boot — see handoff.md.
+	// Mount the `openalex` subcommand group (bootstrap / query the
+	// OpenAlex works corpus in PostgreSQL). Execution is
+	// operator-driven and decoupled from server boot.
 	openalexCmd := NewOpenAlexCommand()
 	attachPBLockProbe(openalexCmd, cfg)
 	app.RootCmd.AddCommand(openalexCmd)
@@ -294,60 +306,46 @@ func main() {
 		return nil
 	})
 
-	// Mount our wrapped `serve` subcommand: 20 qatlasd-specific flags
-	// (cmd/qatlasd/serve_flags.go) on top of PocketBase's own --http /
-	// --https / --origins / --dir / --encryptionEnv. The wrapper's
-	// RunE pre-step applies any --foo flags the operator passed onto
-	// cfg before any cfg-dependent backend init runs, so the CLI flag
-	// → env → .env → default precedence actually takes effect (vs the
-	// v0.17.0a0 design where most init ran in main() before the flag
-	// values had been read).
+	// Mount our wrapped `serve` subcommand on top of PocketBase's own
+	// --http / --https / --origins / --dir / --encryptionEnv flags —
+	// the only runtime overrides left now that the YAML config file is
+	// the single source of truth (docker's CMD uses --http / --dir).
+	// The wrapper's RunE pre-step validates cfg and wires the
+	// cfg-dependent backends before the original serve RunE starts the
+	// HTTP listener.
 	//
 	// We also mount Superuser ourselves so we can skip pb.Start()
 	// (which would mount its own Serve and clobber the wrapped one).
 	app.RootCmd.AddCommand(pbcmd.NewSuperuserCommand(app))
 
 	serveCmd := pbcmd.NewServeCommand(app, true)
-	serveFlags := registerServeFlags(serveCmd)
 	originalServeRunE := serveCmd.RunE
 	serveCmd.RunE = func(cmd *cobra.Command, args []string) error {
-		// ── STEP 1: merge CLI flags into cfg ───────────────────────
-		applyServeFlags(cmd, serveFlags, cfg)
-		// Enforce the S3 all-or-nothing invariant for the serve
-		// path. config.Load only emits a slog.Warn for half-set S3
-		// so non-serve subcommands (`qatlasd --help`, `pat list`,
-		// etc.) tolerate a broken .env; serve cannot, because the
+		// ── STEP 1: enforce the S3 all-or-nothing invariant for the
+		// serve path. config.Load only emits a slog.Warn for half-set
+		// S3 so non-serve subcommands (`qatlasd --help`, `pat list`,
+		// etc.) tolerate a broken config; serve cannot, because the
 		// HTTP handlers would silently fall back to LocalStore.
-		// This is also the first chance to catch a half-set
-		// introduced by CLI flag overrides above.
-		if err := validateServeCfgAfterFlags(cfg); err != nil {
-			return err
+		if err := cfg.ValidateForServe(); err != nil {
+			return fmt.Errorf("config validation: %w", err)
 		}
 
-		// ── STEP 2: stamp the S3 client User-Agent. cfg.EdgeName
-		// may have been touched by --edge-name. Must run before any
-		// S3Store is built (initRawStore below).
+		// ── STEP 2: stamp the S3 client User-Agent. Must run before
+		// any S3Store is built (initRawStore below).
 		uaVersion := Version
 		if cfg.EdgeName != "" {
 			uaVersion = Version + "/" + cfg.EdgeName
 		}
 		objstore.SetClientAppInfo("qatlasd", uaVersion)
 
-		// ── STEP 3: inject the PocketBase persistent flags
-		// (--http / --dir) NOW, with the final cfg values. Done
-		// post-flag-apply so --pb-data-dir / --http actually
-		// reaches PocketBase. Order matters: PocketBase reads
-		// os.Args in its eagerParseFlags routine which runs at
-		// app.Execute() entry, after this RunE has fired. So
-		// mutating os.Args here is the legal hook.
-		injectHTTPFlag(cfg)
-		injectPBDataDirFlag(cfg)
+		// ── STEP 3: the PocketBase runtime flags (--http / --dir) were
+		// already injected into os.Args in main() before PocketBase
+		// parsed them (see injectHTTPFlag / injectPBDataDirFlag); any
+		// explicit operator flags won over the cfg values there.
 
-		// ── STEP 4: load the optional system PAT. --system-pat
-		// mirrored its value into QATLAS_SYSTEM_PAT in
-		// applyServeFlags above, so LoadSystemPAT sees the CLI
-		// value here.
-		if sysPAT, err := pat.LoadSystemPAT(); err != nil {
+		// ── STEP 4: load the optional system PAT from the config
+		// file's system_pat section.
+		if sysPAT, err := pat.LoadSystemPAT(cfg.SystemPATToken, cfg.SystemPATScopes); err != nil {
 			return fmt.Errorf("system PAT: %w", err)
 		} else if sysPAT != nil {
 			routes.UseSystemPAT(sysPAT)
@@ -356,7 +354,7 @@ func main() {
 				"scopes", sysPAT.Scopes(),
 			)
 		} else {
-			slog.Info("system PAT disabled (QATLAS_SYSTEM_PAT unset)")
+			slog.Info("system PAT disabled (system_pat.token unset)")
 		}
 
 		// ── STEP 5: build the cfg-dependent backends. All closures
@@ -372,42 +370,40 @@ func main() {
 				return e.Next()
 			})
 		}
-		catalog := papers.NewStore(pgPool)
+		registryStore := registry.NewStore(pgPool)
 		// The OpenAlex corpus (ADR 0006) lives in the SAME database as the
-		// paper catalog, so it shares the catalog pool — no separate DSN. The
+		// paper registry, so it shares the registry pool — no separate DSN. The
 		// /api/papers/lookup resolver reads it by id (ADR 0007); when pgPool is
 		// nil (local dev / no DSN) the corpus reports unavailable and lookup
 		// degrades gracefully (resolved=false, corpus_available=false).
 		corpus := openalexcorpus.NewStore(pgPool)
-		if catalog.Configured() {
-			// Schema bootstrap runs in the background: it is a series of
-			// idempotent DDL round-trips to the catalog database, which can
+		if registryStore.Configured() {
+			// Schema migration runs in the background: registry.Migrate is a
+			// series of goose DDL round-trips to the registry database, which can
 			// exceed any startup-blocking budget and would otherwise delay
-			// /api/health. All statements are idempotent (IF NOT EXISTS), so we
-			// retry with a generous per-attempt timeout until every base table +
-			// constraint exists. Missing schema degrades correctness (uniqueness)
-			// + performance, so we keep retrying rather than wait for the next
-			// boot.
+			// /api/health. We retry with a generous per-attempt timeout until the
+			// schema is at the latest bundled version. One failure mode is NOT
+			// retried: a database NEWER than the binary (ErrSchemaTooNew) can
+			// never converge, so it is fatal.
 			//
 			// The OpenAlex corpus BASE schema is created here too (openalex_works
 			// + sync-state + audit; the pgvector-guarded work_embeddings is a
 			// no-op without the extension). This makes openalex_works exist at
-			// boot so (a) papers' paper_openalex_id FK can be added and (b) the
-			// corpus can be populated lazily (fetch-on-miss write-through, ADR
-			// 0006) — the bulk `openalex bootstrap-pg` is only an optional
-			// pre-warm, no longer a prerequisite.
+			// boot so the corpus can be populated lazily (fetch-on-miss
+			// write-through, ADR 0006) — the bulk `openalex bootstrap-pg` is only
+			// an optional pre-warm, no longer a prerequisite.
 			//
 			// The HEAVY openalex_works indexes are built in a second phase
 			// CONCURRENTLY (never a boot-time SHARE lock on the 353 GB table)
-			// and only when QATLAS_CORPUS_ENSURE_INDEXES is true — an edge
+			// and only when postgres.corpus_ensure_indexes is true — an edge
 			// pointing at a pre-indexed corpus sets it false (ADR 0013).
-			go ensureCatalogSchema(catalog, corpus, cfg.CorpusEnsureIndexes)
+			go ensureCatalogSchema(pgPool, corpus, cfg.CorpusEnsureIndexes)
 		} else {
-			log.Printf("papers: catalog disabled (QATLAS_POSTGRES_DSN unset); /api/papers stats+queue report available:false")
+			log.Printf("papers: registry disabled (postgres.dsn unset); /api/papers stats+queue report available:false")
 		}
 
 		// Wire the raw asset backend. S3Enabled is the documented split
-		// point: when QATLAS_S3_* are all set we route every PDF /
+		// point: when the s3 config section is fully set we route every PDF /
 		// markdown / image through three RustFS buckets behind an
 		// objstore.Router, otherwise we wrap cfg.RawDir with a single
 		// LocalStore.
@@ -451,12 +447,12 @@ func main() {
 				Mailto: contact,
 			})
 			if !doiResolver.Enabled() {
-				slog.Warn("OpenAlex DOI resolver disabled: QATLAS_OPENALEX_MAILTO is unset; DOI paths will return 503")
+				slog.Warn("OpenAlex DOI resolver disabled: paper_access.openalex_mailto is unset; DOI paths will return 503")
 			}
 		}
 
 		// Build the MinerU converter (always non-nil; behaves as a
-		// no-op when QATLAS_PAPER_ACCESS_ENABLED is false). When
+		// no-op when paper_access.enabled is false). When
 		// the operator opts in we emit ONE info line so deploy logs
 		// make it obvious which markdown surface is live. Never logs
 		// the API tokens themselves — only the COUNT.
@@ -473,11 +469,10 @@ func main() {
 				MinerUPollInterval:      cfg.MinerUPollInterval,
 				MinerUTimeout:           cfg.MinerUTimeout,
 				MinerUMaxConcurrentJobs: cfg.MinerUMaxConcurrentJobs,
-				S3PublicEndpoint:        cfg.S3PublicEndpoint,
 				Fetcher:                 arxivFetcher,
 				ArxivFetchConcurrent:    cfg.ArxivFetchConcurrent,
 			},
-			rawStore, catalog,
+			rawStore, registryStore,
 			slog.Default(),
 		)
 		if cfg.PaperAccessEnabled {
@@ -506,36 +501,71 @@ func main() {
 			)
 		}
 
+		// Daily 00:00 auto-conversion: each local midnight the scheduler
+		// walks the registry needs-mineru queue (PDF present, markdown
+		// missing) and drives Converter.Ensure per row until the queue
+		// drains, the converter is disabled, or today's MinerU quota /
+		// token pool is exhausted. Everything is re-evaluated fresh at
+		// every tick, so a quota-exhausted day retries automatically at
+		// the next midnight. Only built when paper access is on; the
+		// scheduler also self-no-ops when the converter is disabled.
+		var mineruScheduler *mineru.Scheduler
+		if cfg.PaperAccessEnabled {
+			mineruScheduler = mineru.NewScheduler(mineruConverter, registryStore, slog.Default())
+			mineruScheduler.Start(context.Background())
+			// Boot kick: don't make operators wait for the next midnight
+			// tick after a (re)deploy — if the queue has work, start
+			// today's batch immediately. Coalesced by the scheduler's
+			// own singleflight; no-ops when the converter is disabled.
+			go func() {
+				started, reason := mineruScheduler.RunNow(context.Background())
+				slog.Info("mineru scheduler boot kick", "started", started, "reason", reason)
+			}()
+			app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
+				mineruScheduler.Stop()
+				return e.Next()
+			})
+		}
+
 		// Background janitor: sweep expired MinerU leases every
 		// JanitorInterval. Idempotent and safe to run on both edges.
 		janitorCtx, janitorCancel := context.WithCancel(context.Background())
-		if catalog.Configured() {
-			go catalog.RunJanitor(janitorCtx)
+		if registryStore.Configured() {
+			go registryStore.RunJanitor(janitorCtx)
 		}
 		app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
 			janitorCancel()
 			return e.Next()
 		})
 
-		// Build the wiki in-memory cache. Walks cfg.WikiDir once at
-		// startup so the first /api/pages request hits warm data.
-		wikiCache := wiki.NewCache(cfg.WikiDir, 60*time.Second)
-		log.Printf("wiki: cache initialized (dir=%s)", cfg.WikiDir)
+		// Lazy-ingestion pipeline: every paper the search engine mints
+		// (status 'pending') is handed to the ingester, which fetches the
+		// arXiv PDF into the object store and records the asset (flipping
+		// the paper to 'ready'). A nil arxiv fetcher disables ingestion
+		// (OnMint no-op); Shutdown drains the queue on terminate.
+		ingester := ingest.New(registryStore, arxivFetcher, rawStore)
 		app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
-			wikiCache.Stop()
+			shutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := ingester.Shutdown(shutCtx); err != nil {
+				slog.Warn("ingest: shutdown drain incomplete", "error", err)
+			}
 			return e.Next()
 		})
 
-		// Build the theorems in-memory cache (proved-Theorems catalog read
-		// through a git checkout of the Lean-content repo). Loads
-		// cfg.TheoremsDir/artifacts/registry.json once at startup so the
-		// first /api/theorems request hits warm data.
-		theoremsCache := theoremsplugin.NewCache(cfg.TheoremsDir, 60*time.Second)
-		log.Printf("theorems: cache initialized (dir=%s)", cfg.TheoremsDir)
-		app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
-			theoremsCache.Stop()
-			return e.Next()
-		})
+		// Multi-provider search engine (POST /api/search). Providers come
+		// from search.providers (default catalog,arxiv,openalex);
+		// "qdrant" additionally requires the RAG qdrant + embed URLs,
+		// "remote" the qatlas-search microservice (search.remote).
+		// remoteProvider is held separately too: POST /api/search/agentic
+		// talks to it directly (metered, agent=true).
+		remoteProvider := buildRemoteProvider(cfg)
+		searchEngine := buildSearchEngine(cfg, pgPool, registryStore, ingester, remoteProvider)
+
+		// Usage metering store for the agentic-search endpoint and the
+		// /api/admin/usage|plans|quotas surface. Shares the registry
+		// Postgres pool; nil-pool → the usual 503 catalog convention.
+		usageStore := usage.NewStore(pgPool)
 
 		// ── STEP 6: register the HTTP handlers + pb_data lock as
 		// an OnServe hook. PocketBase fires the hook when
@@ -545,8 +575,8 @@ func main() {
 			// listener starts. The kernel releases the flock on exit
 			// (graceful, SIGTERM, kill -9, OOM), so a crashed qatlasd
 			// never leaves a stale lock requiring manual cleanup.
-			if pbDataLockSkipRequested() {
-				slog.Warn("QATLAS_SKIP_PB_DATA_LOCK=1 — pb_data multi-process safety bypassed; corruption risk",
+			if cfg.SkipPBDataLock {
+				slog.Warn("skip_pb_data_lock: true — pb_data multi-process safety bypassed; corruption risk",
 					"pb_data_dir", cfg.PBDataDir)
 			} else {
 				lock, lockErr := acquirePBDataLock(cfg.PBDataDir)
@@ -561,19 +591,18 @@ func main() {
 
 			serverStarted := time.Now()
 
-			// Optional: force a tcp4-native listener via
-			// QATLAS_FORCE_TCP4=1 / --force-tcp4 (WSL2 + Windows
-			// netsh portproxy escape hatch).
-			if forceTCP4() && se.Listener == nil && se.Server != nil {
+			// Optional: force a tcp4-native listener via force_tcp4: true
+			// (WSL2 + Windows netsh portproxy escape hatch).
+			if cfg.ForceTCP4 && se.Listener == nil && se.Server != nil {
 				if l, lerr := maybeIPv4Listener(se.Server.Addr); lerr == nil && l != nil {
 					se.Listener = l
-					log.Printf("QATLAS_FORCE_TCP4=1: forced tcp4 listener on %s", se.Server.Addr)
+					log.Printf("force_tcp4: forced tcp4 listener on %s", se.Server.Addr)
 				} else if lerr != nil {
-					log.Printf("QATLAS_FORCE_TCP4=1 but listener bind failed: %v (falling back to PocketBase default)", lerr)
+					log.Printf("force_tcp4 but listener bind failed: %v (falling back to PocketBase default)", lerr)
 				}
 			}
 
-			registerRoutes(se, app, cfg, rawStore, catalog, corpus, wikiCache, theoremsCache, enforcer, mineruConverter, doiResolver, arxivFetcher, serverStarted)
+			registerRoutes(se, app, cfg, rawStore, registryStore, corpus, searchEngine, remoteProvider, usageStore, enforcer, mineruConverter, mineruScheduler, doiResolver, arxivFetcher, serverStarted)
 
 			// Serve the embedded SPA last as the catch-all. apis.Static's
 			// indexFallback=true means any path that doesn't match a real
@@ -593,16 +622,49 @@ func main() {
 	}
 }
 
-// validateServeCfgAfterFlags re-runs the serve-time S3 invariants in
-// case CLI flags touched part of the connection quartet after Load
-// (where the half-set check is only a slog.Warn, so the operator can
-// run `qatlasd --help` / `pat list` on a broken .env). Delegates to
-// Config.ValidateForServe so there's one canonical implementation.
-func validateServeCfgAfterFlags(cfg *config.Config) error {
-	if err := cfg.ValidateForServe(); err != nil {
-		return fmt.Errorf("after CLI flag overrides: %w", err)
+// configPathFromArgs extracts the --config flag value from raw argv.
+// Config loading happens in main() BEFORE cobra parses os.Args (the
+// loaded cfg feeds auth.Register and every subcommand), so the flag
+// can't go through cobra's normal binding. Both spellings are
+// recognised: `--config /path` and `--config=/path`. Returns "" when
+// the flag is absent (config.Load then uses ~/.qatlas/config.yaml).
+func configPathFromArgs(args []string) string {
+	for i := 1; i < len(args); i++ {
+		a := args[i]
+		if a == "--config" && i+1 < len(args) {
+			return args[i+1]
+		}
+		if strings.HasPrefix(a, "--config=") {
+			return strings.TrimPrefix(a, "--config=")
+		}
 	}
-	return nil
+	return ""
+}
+
+// firstPositionalIsConfig reports whether the first positional argument
+// (skipping the --config flag and its value) is "config". Used for the
+// early `qatlasd config` interception, which must also fire when the
+// operator writes `qatlasd --config /x.yaml config show`.
+func firstPositionalIsConfig(args []string) bool {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--config" {
+			i++ // skip the flag's value
+			continue
+		}
+		if strings.HasPrefix(a, "--config=") {
+			continue
+		}
+		return a == "config"
+	}
+	return false
+}
+
+// loadConfig resolves the config path from os.Args (--config) and loads
+// the YAML config. Shared by the operator subcommands (papers / openalex
+// / storage) that need a *config.Config outside the main() flow.
+func loadConfig() (*config.Config, error) {
+	return config.Load(configPathFromArgs(os.Args))
 }
 
 // attachPBLockProbe wires an advisory pb_data lock-probe into every
@@ -623,7 +685,7 @@ func validateServeCfgAfterFlags(cfg *config.Config) error {
 func attachPBLockProbe(root *cobra.Command, cfg *config.Config) {
 	prev := root.PersistentPreRun
 	root.PersistentPreRun = func(cmd *cobra.Command, args []string) {
-		warnIfServeRunning(cfg.PBDataDir)
+		warnIfServeRunning(cfg)
 		if prev != nil {
 			prev(cmd, args)
 		}
@@ -663,14 +725,16 @@ func initPostgresPool(cfg *config.Config) (*pgxpool.Pool, error) {
 }
 
 // ensureCatalogSchema provisions the PostgreSQL schema in the background in
-// two phases. Phase 1 (fast, retried) applies the base tables + constraints
-// for both the paper catalog and the OpenAlex corpus; the corpus base schema
-// is applied first so openalex_works exists before the papers catalog adds
-// its paper_openalex_id FK (and so the corpus is ready for lazy fetch-on-miss
-// writes). Phase 2 (slow, gated by ensureIndexes) builds the heavy
-// openalex_works indexes CONCURRENTLY — never a boot-time SHARE lock on the
-// 353 GB table (ADR 0013).
-func ensureCatalogSchema(catalog *papers.Store, corpus *openalexcorpus.Store, ensureIndexes bool) {
+// two phases. Phase 1 (fast, retried) applies the paper-registry goose
+// migrations (registry.Migrate) and the OpenAlex corpus base schema; the
+// corpus base schema is ensured first so openalex_works exists before any
+// lazy fetch-on-miss write. Phase 2 (slow, gated by ensureIndexes) builds the
+// heavy openalex_works indexes CONCURRENTLY — never a boot-time SHARE lock on
+// the 353 GB table (ADR 0013).
+//
+// A database NEWER than this binary (registry.ErrSchemaTooNew) can never
+// converge by retrying, so it is a hard fatal instead of another attempt.
+func ensureCatalogSchema(pool *pgxpool.Pool, corpus *openalexcorpus.Store, ensureIndexes bool) {
 	const (
 		attemptTimeout = 90 * time.Second
 		retryDelay     = 30 * time.Second
@@ -680,15 +744,18 @@ func ensureCatalogSchema(catalog *papers.Store, corpus *openalexcorpus.Store, en
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		ctx, cancel := context.WithTimeout(context.Background(), attemptTimeout)
 		cErr := corpus.EnsureSchema(ctx)
-		err := catalog.EnsureSchema(ctx)
+		err := registry.Migrate(ctx, pool)
 		cancel()
+		if errors.Is(err, registry.ErrSchemaTooNew) {
+			log.Fatalf("papers: %v", err)
+		}
 		if err == nil && cErr == nil {
-			log.Printf("papers: catalog + corpus base schema ensured")
+			log.Printf("papers: registry migrated + corpus base schema ensured")
 			baseOK = true
 			break
 		}
 		slog.Warn("papers: base schema ensure attempt failed; retrying",
-			"attempt", attempt, "max", maxAttempts, "catalog_error", err, "corpus_error", cErr)
+			"attempt", attempt, "max", maxAttempts, "registry_error", err, "corpus_error", cErr)
 		time.Sleep(retryDelay)
 	}
 	if !baseOK {
@@ -697,7 +764,7 @@ func ensureCatalogSchema(catalog *papers.Store, corpus *openalexcorpus.Store, en
 	}
 
 	if !ensureIndexes {
-		slog.Info("papers: corpus index build skipped (QATLAS_CORPUS_ENSURE_INDEXES=false; operator-provisioned)")
+		slog.Info("papers: corpus index build skipped (postgres.corpus_ensure_indexes=false; operator-provisioned)")
 		return
 	}
 	// Phase 2: heavy openalex_works indexes, CONCURRENTLY, on a generous
@@ -717,6 +784,66 @@ func ensureCatalogSchema(catalog *papers.Store, corpus *openalexcorpus.Store, en
 
 // initShareStore was removed in v0.9.0 along with the /share/*
 // surface (see RegisterPapers doc comment).
+
+// buildSearchEngine constructs the multi-provider search engine behind
+// POST /api/search. The provider list comes from search.providers
+// (default "catalog,arxiv,openalex"): catalog searches the PostgreSQL
+// registry itself (needs the pool), arxiv / openalex hit their public
+// APIs with the shared http client (+ OpenAlex polite-pool mailto),
+// "qdrant" is only constructed when the RAG qdrant + embed URLs are
+// configured, and "remote" joins the fan-out only when search.remote
+// is enabled with a URL (remote == nil otherwise). Unknown or
+// unconstructible providers are logged and skipped — one bad entry must
+// not sink the whole engine. The engine resolves-or-mints every
+// identity-anchored hit through registryStore and fires
+// ingester.OnMint for freshly minted papers (lazy ingestion).
+func buildSearchEngine(cfg *config.Config, pool *pgxpool.Pool, registryStore *registry.Store, ingester *ingest.Ingester, remote *search.RemoteProvider) *search.Engine {
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+	mailto := strings.TrimSpace(cfg.OpenAlexMailto)
+	var providers []search.Provider
+	for _, name := range cfg.SearchProviders {
+		switch strings.ToLower(strings.TrimSpace(name)) {
+		case "":
+			continue
+		case "catalog":
+			providers = append(providers, search.NewCatalogProvider(pool))
+		case "arxiv":
+			providers = append(providers, search.NewArxivProvider(httpClient))
+		case "openalex":
+			providers = append(providers, search.NewOpenAlexProvider(httpClient, mailto))
+		case "qdrant":
+			if cfg.RAGQdrantURL == "" || cfg.RAGEmbedURL == "" {
+				slog.Warn("search: qdrant provider requested but rag.qdrant_url / rag.embed_url unset; skipping")
+				continue
+			}
+			qp, err := search.NewQdrantProvider(cfg.RAGQdrantURL, cfg.RAGQdrantAPIKey, cfg.RAGQdrantCollection, cfg.RAGEmbedURL, cfg.RAGEmbedToken)
+			if err != nil {
+				slog.Warn("search: qdrant provider disabled", "error", err)
+				continue
+			}
+			providers = append(providers, qp)
+		case "remote":
+			if remote == nil {
+				slog.Warn("search: remote provider requested but search.remote is disabled or has no url; skipping")
+				continue
+			}
+			providers = append(providers, remote)
+		default:
+			slog.Warn("search: unknown provider in search.providers; skipping", "provider", name)
+		}
+	}
+	return search.NewEngine(registryStore, ingester.OnMint, providers...)
+}
+
+// buildRemoteProvider constructs the qatlas-search microservice client
+// (used both as a fan-out provider and by POST /api/search/agentic).
+// Returns nil unless search.remote is enabled AND carries a URL.
+func buildRemoteProvider(cfg *config.Config) *search.RemoteProvider {
+	if !cfg.RemoteEnabled || strings.TrimSpace(cfg.RemoteURL) == "" {
+		return nil
+	}
+	return search.NewRemoteProvider(cfg.RemoteURL, cfg.RemoteToken, cfg.RemoteTimeout)
+}
 
 // initRawStore returns the objstore.Store backing raw paper assets.
 // Selects between a single LocalStore (cfg.RawDir) and the v0.7.0
@@ -800,10 +927,11 @@ func ensureBucketVersioning(rawStore objstore.Store) {
 // registerRoutes wires the QuantumAtlas /api/* surface. Most endpoints are
 // implemented under internal/routes/ and pulled in by their respective
 // Register* helpers as we migrate each module in subsequent phases.
-func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawStore objstore.Store, catalog *papers.Store, corpus *openalexcorpus.Store, wikiCache *wiki.Cache, theoremsCache *theoremsplugin.Cache, enforcer *casbin.Enforcer, mineruConverter *mineru.Converter, doiResolver *openalex.Resolver, arxivFetcher *arxiv.Fetcher, started time.Time) {
+func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawStore objstore.Store, registryStore *registry.Store, corpus *openalexcorpus.Store, searchEngine *search.Engine, remoteProvider *search.RemoteProvider, usageStore *usage.Store, enforcer *casbin.Enforcer, mineruConverter *mineru.Converter, mineruScheduler *mineru.Scheduler, doiResolver *openalex.Resolver, arxivFetcher *arxiv.Fetcher, started time.Time) {
 	probes := healthz.Probes{
 		Cfg:      cfg,
 		RawStore: rawStore,
+		PGPool:   registryStore.Pool(),
 		Version:  Version,
 		Started:  started,
 	}
@@ -880,13 +1008,26 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	se.Router.BindFunc(func(re *core.RequestEvent) error {
 		if re.Request.Method == "GET" && re.Request.URL.Path == "/api/health" {
 			result := healthz.RunPB(re.Request.Context(), probes)
-			// Inject converter counters when asset downloads are enabled.
+			// Inject converter counters + daily-scheduler state when
+			// asset downloads are enabled. The counters stay flat under
+			// `mineru` (back-compat with existing dashboards); the
+			// scheduler block nests under `mineru.scheduler`.
 			if cfg.PaperAccessEnabled {
-				result.Data.MinerU = mineruConverter.Snapshot()
+				mineruHealth := struct {
+					mineru.CountersSnapshot
+					Scheduler *mineru.SchedulerSnapshot `json:"scheduler,omitempty"`
+				}{
+					CountersSnapshot: mineruConverter.Snapshot(),
+				}
+				if mineruScheduler != nil {
+					snap := mineruScheduler.Snapshot()
+					mineruHealth.Scheduler = &snap
+				}
+				result.Data.MinerU = mineruHealth
 			}
 			// Anonymous callers get a sanitised payload: just
 			// status / version / uptime / per-check status. Strips
-			// bucket names, mesh endpoints, wiki commit info, MinerU
+			// bucket names, mesh endpoints, schema versions, MinerU
 			// counters, and other deployment-topology fingerprints.
 			// Authenticated callers (system PAT or session JWT) see
 			// the full detail useful for dashboards. See healthz
@@ -942,13 +1083,33 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// (P12 removed: /api/session/token. It was a caddy-security-era stub
 	// that returned an empty string. The SPA now reads pb.authStore.token
 	// directly; non-browser callers mint a PAT at /pat or use the
-	// QATLAS_SYSTEM_PAT env on the server.)
+	// system_pat.token from config.yaml on the server.)
 
 	eventBus := events.NewBus()
+
+	// The remote search microservice is reported through the plugin
+	// surface as a builtin manifest (it is an in-process client): its
+	// enabled state mirrors search.remote.enabled and a background
+	// healthz probe (below) keeps the connected/disconnected status
+	// honest.
+	searchRemoteManifest := qplugin.Manifest{
+		ID:         "search-remote",
+		Name:       "Remote search (qatlas-search microservice)",
+		Version:    Version,
+		ABIVersion: qplugin.HostABIVersion,
+		Kind:       qplugin.KindBuiltin,
+		Contributes: qplugin.Contributes{
+			Capabilities: []string{"search"},
+		},
+	}
+	pluginDisabled := cfg.PluginsDisabled
+	if !cfg.RemoteEnabled {
+		pluginDisabled = append(append([]string(nil), cfg.PluginsDisabled...), "search-remote")
+	}
 	pluginRegistry, err := qplugin.LoadDir(cfg.PluginsDir, qplugin.Options{
 		Enabled:  cfg.PluginsEnabled,
-		Disabled: cfg.PluginsDisabled,
-		Builtins: qplugin.BuiltinManifests(),
+		Disabled: pluginDisabled,
+		Builtins: append(qplugin.BuiltinManifests(), searchRemoteManifest),
 	})
 	if err != nil {
 		slog.Warn("plugins: failed to load plugin manifests", "dir", cfg.PluginsDir, "error", err)
@@ -959,37 +1120,47 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	}
 	routes.RegisterPlugins(se, pluginRegistry, enforcer)
 
+	// Keep the search-remote plugin summary honest: probe the
+	// microservice's /healthz immediately and then every 30s, folding
+	// the outcome into the registry (connected/disconnected + error).
+	if remoteProvider != nil {
+		probeCtx, stopProbe := context.WithCancel(context.Background())
+		app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
+			stopProbe()
+			return e.Next()
+		})
+		go probeRemoteSearch(probeCtx, pluginRegistry, remoteProvider)
+	}
+
 	// Builtin plugins register through ONE platform hook (ADR 0003): each
-	// implements routes.BuiltinPlugin; the pull plugins (wiki, theorems) also
-	// implement routes.GitPullPlugin, so the platform mounts a uniform
+	// implements routes.BuiltinPlugin; pull plugins also implement
+	// routes.GitPullPlugin, so the platform mounts a uniform
 	// POST /api/<id>/sync/pull + GET /api/<id>/sync/status for them. New
 	// builtins land by adding to this list — no host-core surgery.
-	//
-	//   - graph / rag (internal/routes/graph.go, rag.go): in-process readers
-	//     of Neo4j / Qdrant; gated by scopeGuard, plugin-availability aware.
-	//   - wiki (internal/routes/wiki.go): markdown knowledge base, read-through
-	//     a git checkout; /api/pages*, /api/stats, /api/search + sync.
-	//   - theorems (internal/routes/theorems.go): proved-Theorems catalog,
-	//     read-through a Lean-content git checkout; /api/theorems/* + sync.
+	// (The Lean-content builtin moved out of the main repo to an external
+	// plugin; the list is currently empty but the hook stays.)
 	builtinDeps := routes.PluginDeps{Cfg: cfg, Enforcer: enforcer, Registry: pluginRegistry}
-	if err := routes.RegisterBuiltins(se, builtinDeps,
-		routes.NewGraphPlugin(),
-		routes.NewRAGPlugin(),
-		routes.NewWikiPlugin(cfg, wikiCache),
-		routes.NewTheoremsPlugin(cfg, theoremsCache),
-	); err != nil {
+	if err := routes.RegisterBuiltins(se, builtinDeps); err != nil {
 		slog.Error("plugins: failed to register builtin plugins", "error", err)
 	}
 
-	startPluginRPCServer(cfg, wikiCache, rawStore, pluginRegistry, eventBus)
+	startPluginRPCServer(cfg, rawStore, pluginRegistry, eventBus)
 
-	// Papers (stats, needs-mineru, mineru-lease, uploads) — see
-	// internal/routes/papers.go. v0.9.0 dropped the byte-serving
+	// Papers (stats, needs-mineru, mineru-lease, uploads, paper detail) —
+	// see internal/routes/papers.go. v0.9.0 dropped the byte-serving
 	// endpoints (markdown / resources / shares); the server only
 	// exposes catalog metadata + the contribution flow by default.
 	// /markdown + /markdown/status come back when the operator opts
-	// in via QATLAS_PAPER_ACCESS_ENABLED=true.
-	routes.RegisterPapers(se, cfg, rawStore, catalog, corpus, enforcer, mineruConverter, doiResolver, arxivFetcher)
+	// in via paper_access.enabled: true.
+	routes.RegisterPapers(se, cfg, rawStore, registryStore, corpus, enforcer, mineruConverter, doiResolver, arxivFetcher)
+
+	// Multi-provider paper search — POST /api/search. See
+	// internal/routes/search.go.
+	routes.RegisterSearch(se, searchEngine, enforcer)
+
+	// Metered agentic search — POST /api/search/agentic, backed by the
+	// qatlas-search microservice. See internal/routes/search_agentic.go.
+	routes.RegisterSearchAgentic(se, cfg, remoteProvider, usageStore, searchEngine, enforcer)
 
 	// Personal Access Tokens — see internal/routes/pat.go.
 	// /api/pat is session-token-only (PAT auth refused by sessionGuard);
@@ -1002,11 +1173,48 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// and /token are anonymous; /lookup, /approve, /deny require a
 	// browser session (sessionGuard, same as /api/pat).
 	routes.RegisterOAuthDevice(se, app)
+
+	// Admin console API — see internal/routes/admin.go.
+	// /api/admin/whoami is session-gated (drives the SPA's admin nav);
+	// /api/admin/db/schema and the raw-row browser additionally require
+	// the GitHub admin allowlist (auth.admin_logins). The mineru
+	// scheduler endpoints 503 when paper access is off (sched == nil).
+	// The usage / plans / quotas metering surface
+	// (internal/routes/admin_usage.go) 503s when Postgres is
+	// unavailable. The plugin admin surface (admin_plugins.go) lists the
+	// plugin registry and proxies manifest/config to the qatlas-search
+	// microservice (503 when remote search is disabled).
+	routes.RegisterAdmin(se, cfg, app, registryStore.Pool(), mineruScheduler, usageStore, pluginRegistry, remoteProvider)
 }
 
-func startPluginRPCServer(cfg *config.Config, wikiCache *wiki.Cache, rawStore objstore.Store, pluginRegistry *qplugin.Registry, eventBus *events.Bus) {
+// probeRemoteSearch probes the qatlas-search microservice's /healthz
+// immediately and then every 30s, folding each outcome into the
+// search-remote plugin summary (connected/disconnected + error). Runs
+// until ctx is cancelled (server terminate).
+func probeRemoteSearch(ctx context.Context, pluginRegistry *qplugin.Registry, remote *search.RemoteProvider) {
+	const probeInterval = 30 * time.Second
+	probe := func() {
+		pctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		err := remote.Healthz(pctx)
+		cancel()
+		pluginRegistry.SetProbeResult("search-remote", err)
+	}
+	probe()
+	ticker := time.NewTicker(probeInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			probe()
+		}
+	}
+}
+
+func startPluginRPCServer(cfg *config.Config, rawStore objstore.Store, pluginRegistry *qplugin.Registry, eventBus *events.Bus) {
 	hostAPI := hostapi.NewRegistry()
-	if err := hostapi.RegisterCoreMethods(hostAPI, wikiCache, rawStore, eventBus); err != nil {
+	if err := hostapi.RegisterCoreMethods(hostAPI, rawStore, eventBus); err != nil {
 		slog.Error("plugin rpc: host capability registration failed", "error", err)
 		return
 	}
@@ -1025,14 +1233,35 @@ func startPluginRPCServer(cfg *config.Config, wikiCache *wiki.Cache, rawStore ob
 	}()
 }
 
-// injectHTTPFlag mutates os.Args to add --http=<addr> when the user invokes
-// the "serve" subcommand without supplying their own --http. This lets a
-// plain `qatlasd serve` pick up QATLAS_SERVER_HOST/PORT from .env.
+// injectHTTPFlag mutates os.Args to add --http=<addr> when the user
+// invokes the "serve" subcommand without supplying their own --http.
+// This lets a plain `qatlasd serve` pick up the http_addr from
+// config.yaml. Must run BEFORE app.Execute() (cobra parses os.Args
+// there; mutating os.Args inside the serve RunE would be too late —
+// the flag values are already bound by then).
 func injectHTTPFlag(cfg *config.Config) {
-	if len(os.Args) < 2 || os.Args[1] != "serve" {
+	if cfg.HTTPAddr == "" {
 		return
 	}
-	for _, a := range os.Args[2:] {
+	// Find the first positional arg (skipping --config and its value);
+	// only inject when that's "serve".
+	serve := false
+	for i := 1; i < len(os.Args); i++ {
+		a := os.Args[i]
+		if a == "--config" {
+			i++
+			continue
+		}
+		if strings.HasPrefix(a, "--config=") {
+			continue
+		}
+		serve = a == "serve"
+		break
+	}
+	if !serve {
+		return
+	}
+	for _, a := range os.Args[1:] {
 		if a == "--http" || strings.HasPrefix(a, "--http=") {
 			return
 		}
@@ -1058,6 +1287,12 @@ func injectHTTPFlag(cfg *config.Config) {
 //	qatlasd --dir=$HOME/.local/share/qatlasd/pb_data serve
 //
 // on a fresh box, while still respecting any operator-supplied --dir.
+//
+// CRITICAL timing: PocketBase reads --dir in its eagerParseFlags pass
+// inside NewWithConfig (the parsed value is baked into the BaseApp
+// constructor). This function MUST therefore run BEFORE
+// pocketbase.NewWithConfig — mutating os.Args any later (e.g. in the
+// serve RunE) silently has no effect on the data directory.
 //
 // Note: --dir is a **global persistent** flag on the cobra root
 // command; cobra refuses to recognise persistent flags placed after a
@@ -1089,21 +1324,6 @@ func injectPBDataDirFlag(cfg *config.Config) {
 	os.Args = newArgs
 }
 
-// forceTCP4 returns true when the operator has opted in via
-// QATLAS_FORCE_TCP4. Off by default so community deployments retain
-// PocketBase's dual-stack v6 socket and serve both v4 + v6 callers out
-// of one bind. Set to "1" / "true" / "yes" on hosts behind a v4-only
-// portproxy (notably WSL2 + Windows netsh).
-func forceTCP4() bool {
-	v := strings.ToLower(strings.TrimSpace(os.Getenv("QATLAS_FORCE_TCP4")))
-	switch v {
-	case "1", "true", "yes", "on", "y", "t":
-		return true
-	default:
-		return false
-	}
-}
-
 // maybeIPv4Listener returns a tcp4-bound listener when addr is a literal
 // IPv4 bind expression ("0.0.0.0:NNNN" or "127.0.0.1:NNNN" etc.). For
 // hostnames, empty hosts, or IPv6 literals it returns (nil, nil) so the
@@ -1114,7 +1334,7 @@ func forceTCP4() bool {
 // (even with bindv6only=0) because Windows' portproxy forwards into the
 // WSL2 NAT layer as raw v4 SYNs that need a real v4 listener.
 //
-// Only invoked when forceTCP4() returns true.
+// Only invoked when cfg.ForceTCP4 is true.
 func maybeIPv4Listener(addr string) (net.Listener, error) {
 	if addr == "" {
 		return nil, nil
@@ -1141,52 +1361,4 @@ func maybeIPv4Listener(addr string) (net.Listener, error) {
 		return nil, err
 	}
 	return net.ListenTCP("tcp4", tcpAddr)
-}
-
-// loadDotEnv finds and loads the .env file for the running server.
-// Returns the absolute path of the file loaded, or "" if none was found
-// (also OK — the operator can still set env via systemd or shell).
-//
-// Resolution order (first hit wins):
-//  1. $QATLAS_DOTENV — explicit override; required for systemd installs
-//     where CWD is not the .env-containing dir.
-//  2. ./.env — relative to CWD, for ad-hoc dev `qatlasd serve`
-//     invocations from the project directory.
-//
-// We deliberately do NOT walk up the filesystem looking for any .env —
-// that's how a stray $HOME/.env from an unrelated tool can poison the
-// process environment (anchor for relative paths, WIKI_DIR, etc.). If
-// the operator needs the server to find a .env outside CWD, they must
-// set $QATLAS_DOTENV explicitly.
-//
-// Once located, godotenv.Load is used with the "don't overwrite existing
-// vars" semantic so an env var already set in the process environment
-// (systemd, shell export, k8s ConfigMap) always wins. The .env is only
-// a fallback / convenience for dev machines.
-func loadDotEnv() string {
-	candidates := []string{}
-	if explicit := strings.TrimSpace(os.Getenv("QATLAS_DOTENV")); explicit != "" {
-		candidates = append(candidates, explicit)
-	}
-	if cwd, err := os.Getwd(); err == nil {
-		candidates = append(candidates, filepath.Join(cwd, ".env"))
-	}
-
-	for _, path := range candidates {
-		if info, err := os.Stat(path); err == nil && !info.IsDir() {
-			if err := godotenv.Load(path); err != nil {
-				slog.Warn("found .env but could not load it", "path", path, "error", err)
-				return ""
-			}
-			absPath, err := filepath.Abs(path)
-			if err != nil {
-				absPath = path
-			}
-			slog.Info("loaded .env", "path", absPath)
-			return absPath
-		}
-	}
-
-	slog.Debug("no .env located; relying on process environment alone")
-	return ""
 }

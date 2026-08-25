@@ -110,7 +110,7 @@ func (s *RPCServer) handleConn(ws *websocket.Conn) {
 				"host_abi_version":  HostABIVersion,
 				"granted_scopes":    granted,
 				"connection_token":  fmt.Sprintf("conn-%d", time.Now().UnixNano()),
-				"host_capabilities": []string{"papers", "wiki", "theorems", "verifications", "events"},
+				"host_capabilities": []string{"papers", "events"},
 			}})
 			continue
 		}
@@ -220,8 +220,6 @@ func requireScope(method string, granted []string) error {
 	switch method {
 	case "papers/getMarkdown", "papers/getMeta", "papers/getCitedRefs":
 		required = "papers:read"
-	case "pages/get", "search/query":
-		required = "wiki:read"
 	case "events/publish":
 		return nil
 	default:

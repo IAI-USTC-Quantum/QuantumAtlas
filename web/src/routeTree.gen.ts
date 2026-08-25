@@ -18,14 +18,13 @@ import { Route as LangIndexRouteImport } from './routes/$lang.index'
 import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
 import { Route as LangPatRouteImport } from './routes/$lang.pat'
 import { Route as LangDeviceRouteImport } from './routes/$lang.device'
-import { Route as LangWikiIndexRouteImport } from './routes/$lang.wiki.index'
-import { Route as LangTheoremsIndexRouteImport } from './routes/$lang.theorems.index'
-import { Route as LangGraphIndexRouteImport } from './routes/$lang.graph.index'
-import { Route as LangWikiSearchRouteImport } from './routes/$lang.wiki.search'
+import { Route as LangPapersIndexRouteImport } from './routes/$lang.papers.index'
+import { Route as LangAdminIndexRouteImport } from './routes/$lang.admin.index'
 import { Route as LangPapersSearchRouteImport } from './routes/$lang.papers.search'
-import { Route as LangWikiPageSplatRouteImport } from './routes/$lang.wiki.page.$'
-import { Route as LangTheoremsTheoremSplatRouteImport } from './routes/$lang.theorems.theorem.$'
-import { Route as LangGraphNodeSplatRouteImport } from './routes/$lang.graph.node.$'
+import { Route as LangPapersPaperIdRouteImport } from './routes/$lang.papers.$paperId'
+import { Route as LangAdminPluginsRouteImport } from './routes/$lang.admin.plugins'
+import { Route as LangAdminDocsRouteImport } from './routes/$lang.admin.docs'
+import { Route as LangAdminDbTableRouteImport } from './routes/$lang.admin.db.$table'
 
 const PatRoute = PatRouteImport.update({
   id: '/pat',
@@ -72,24 +71,14 @@ const LangDeviceRoute = LangDeviceRouteImport.update({
   path: '/device',
   getParentRoute: () => LangRoute,
 } as any)
-const LangWikiIndexRoute = LangWikiIndexRouteImport.update({
-  id: '/wiki/',
-  path: '/wiki/',
+const LangPapersIndexRoute = LangPapersIndexRouteImport.update({
+  id: '/papers/',
+  path: '/papers/',
   getParentRoute: () => LangRoute,
 } as any)
-const LangTheoremsIndexRoute = LangTheoremsIndexRouteImport.update({
-  id: '/theorems/',
-  path: '/theorems/',
-  getParentRoute: () => LangRoute,
-} as any)
-const LangGraphIndexRoute = LangGraphIndexRouteImport.update({
-  id: '/graph/',
-  path: '/graph/',
-  getParentRoute: () => LangRoute,
-} as any)
-const LangWikiSearchRoute = LangWikiSearchRouteImport.update({
-  id: '/wiki/search',
-  path: '/wiki/search',
+const LangAdminIndexRoute = LangAdminIndexRouteImport.update({
+  id: '/admin/',
+  path: '/admin/',
   getParentRoute: () => LangRoute,
 } as any)
 const LangPapersSearchRoute = LangPapersSearchRouteImport.update({
@@ -97,20 +86,24 @@ const LangPapersSearchRoute = LangPapersSearchRouteImport.update({
   path: '/papers/search',
   getParentRoute: () => LangRoute,
 } as any)
-const LangWikiPageSplatRoute = LangWikiPageSplatRouteImport.update({
-  id: '/wiki/page/$',
-  path: '/wiki/page/$',
+const LangPapersPaperIdRoute = LangPapersPaperIdRouteImport.update({
+  id: '/papers/$paperId',
+  path: '/papers/$paperId',
   getParentRoute: () => LangRoute,
 } as any)
-const LangTheoremsTheoremSplatRoute =
-  LangTheoremsTheoremSplatRouteImport.update({
-    id: '/theorems/theorem/$',
-    path: '/theorems/theorem/$',
-    getParentRoute: () => LangRoute,
-  } as any)
-const LangGraphNodeSplatRoute = LangGraphNodeSplatRouteImport.update({
-  id: '/graph/node/$',
-  path: '/graph/node/$',
+const LangAdminPluginsRoute = LangAdminPluginsRouteImport.update({
+  id: '/admin/plugins',
+  path: '/admin/plugins',
+  getParentRoute: () => LangRoute,
+} as any)
+const LangAdminDocsRoute = LangAdminDocsRouteImport.update({
+  id: '/admin/docs',
+  path: '/admin/docs',
+  getParentRoute: () => LangRoute,
+} as any)
+const LangAdminDbTableRoute = LangAdminDbTableRouteImport.update({
+  id: '/admin/db/$table',
+  path: '/admin/db/$table',
   getParentRoute: () => LangRoute,
 } as any)
 
@@ -124,14 +117,13 @@ export interface FileRoutesByFullPath {
   '/$lang/pat': typeof LangPatRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/$lang/': typeof LangIndexRoute
+  '/$lang/admin/docs': typeof LangAdminDocsRoute
+  '/$lang/admin/plugins': typeof LangAdminPluginsRoute
+  '/$lang/papers/$paperId': typeof LangPapersPaperIdRoute
   '/$lang/papers/search': typeof LangPapersSearchRoute
-  '/$lang/wiki/search': typeof LangWikiSearchRoute
-  '/$lang/graph/': typeof LangGraphIndexRoute
-  '/$lang/theorems/': typeof LangTheoremsIndexRoute
-  '/$lang/wiki/': typeof LangWikiIndexRoute
-  '/$lang/graph/node/$': typeof LangGraphNodeSplatRoute
-  '/$lang/theorems/theorem/$': typeof LangTheoremsTheoremSplatRoute
-  '/$lang/wiki/page/$': typeof LangWikiPageSplatRoute
+  '/$lang/admin/': typeof LangAdminIndexRoute
+  '/$lang/papers/': typeof LangPapersIndexRoute
+  '/$lang/admin/db/$table': typeof LangAdminDbTableRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -142,14 +134,13 @@ export interface FileRoutesByTo {
   '/$lang/pat': typeof LangPatRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/$lang': typeof LangIndexRoute
+  '/$lang/admin/docs': typeof LangAdminDocsRoute
+  '/$lang/admin/plugins': typeof LangAdminPluginsRoute
+  '/$lang/papers/$paperId': typeof LangPapersPaperIdRoute
   '/$lang/papers/search': typeof LangPapersSearchRoute
-  '/$lang/wiki/search': typeof LangWikiSearchRoute
-  '/$lang/graph': typeof LangGraphIndexRoute
-  '/$lang/theorems': typeof LangTheoremsIndexRoute
-  '/$lang/wiki': typeof LangWikiIndexRoute
-  '/$lang/graph/node/$': typeof LangGraphNodeSplatRoute
-  '/$lang/theorems/theorem/$': typeof LangTheoremsTheoremSplatRoute
-  '/$lang/wiki/page/$': typeof LangWikiPageSplatRoute
+  '/$lang/admin': typeof LangAdminIndexRoute
+  '/$lang/papers': typeof LangPapersIndexRoute
+  '/$lang/admin/db/$table': typeof LangAdminDbTableRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -162,14 +153,13 @@ export interface FileRoutesById {
   '/$lang/pat': typeof LangPatRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/$lang/': typeof LangIndexRoute
+  '/$lang/admin/docs': typeof LangAdminDocsRoute
+  '/$lang/admin/plugins': typeof LangAdminPluginsRoute
+  '/$lang/papers/$paperId': typeof LangPapersPaperIdRoute
   '/$lang/papers/search': typeof LangPapersSearchRoute
-  '/$lang/wiki/search': typeof LangWikiSearchRoute
-  '/$lang/graph/': typeof LangGraphIndexRoute
-  '/$lang/theorems/': typeof LangTheoremsIndexRoute
-  '/$lang/wiki/': typeof LangWikiIndexRoute
-  '/$lang/graph/node/$': typeof LangGraphNodeSplatRoute
-  '/$lang/theorems/theorem/$': typeof LangTheoremsTheoremSplatRoute
-  '/$lang/wiki/page/$': typeof LangWikiPageSplatRoute
+  '/$lang/admin/': typeof LangAdminIndexRoute
+  '/$lang/papers/': typeof LangPapersIndexRoute
+  '/$lang/admin/db/$table': typeof LangAdminDbTableRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -183,14 +173,13 @@ export interface FileRouteTypes {
     | '/$lang/pat'
     | '/auth/callback'
     | '/$lang/'
+    | '/$lang/admin/docs'
+    | '/$lang/admin/plugins'
+    | '/$lang/papers/$paperId'
     | '/$lang/papers/search'
-    | '/$lang/wiki/search'
-    | '/$lang/graph/'
-    | '/$lang/theorems/'
-    | '/$lang/wiki/'
-    | '/$lang/graph/node/$'
-    | '/$lang/theorems/theorem/$'
-    | '/$lang/wiki/page/$'
+    | '/$lang/admin/'
+    | '/$lang/papers/'
+    | '/$lang/admin/db/$table'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -201,14 +190,13 @@ export interface FileRouteTypes {
     | '/$lang/pat'
     | '/auth/callback'
     | '/$lang'
+    | '/$lang/admin/docs'
+    | '/$lang/admin/plugins'
+    | '/$lang/papers/$paperId'
     | '/$lang/papers/search'
-    | '/$lang/wiki/search'
-    | '/$lang/graph'
-    | '/$lang/theorems'
-    | '/$lang/wiki'
-    | '/$lang/graph/node/$'
-    | '/$lang/theorems/theorem/$'
-    | '/$lang/wiki/page/$'
+    | '/$lang/admin'
+    | '/$lang/papers'
+    | '/$lang/admin/db/$table'
   id:
     | '__root__'
     | '/'
@@ -220,14 +208,13 @@ export interface FileRouteTypes {
     | '/$lang/pat'
     | '/auth/callback'
     | '/$lang/'
+    | '/$lang/admin/docs'
+    | '/$lang/admin/plugins'
+    | '/$lang/papers/$paperId'
     | '/$lang/papers/search'
-    | '/$lang/wiki/search'
-    | '/$lang/graph/'
-    | '/$lang/theorems/'
-    | '/$lang/wiki/'
-    | '/$lang/graph/node/$'
-    | '/$lang/theorems/theorem/$'
-    | '/$lang/wiki/page/$'
+    | '/$lang/admin/'
+    | '/$lang/papers/'
+    | '/$lang/admin/db/$table'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -304,32 +291,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LangDeviceRouteImport
       parentRoute: typeof LangRoute
     }
-    '/$lang/wiki/': {
-      id: '/$lang/wiki/'
-      path: '/wiki'
-      fullPath: '/$lang/wiki/'
-      preLoaderRoute: typeof LangWikiIndexRouteImport
+    '/$lang/papers/': {
+      id: '/$lang/papers/'
+      path: '/papers'
+      fullPath: '/$lang/papers/'
+      preLoaderRoute: typeof LangPapersIndexRouteImport
       parentRoute: typeof LangRoute
     }
-    '/$lang/theorems/': {
-      id: '/$lang/theorems/'
-      path: '/theorems'
-      fullPath: '/$lang/theorems/'
-      preLoaderRoute: typeof LangTheoremsIndexRouteImport
-      parentRoute: typeof LangRoute
-    }
-    '/$lang/graph/': {
-      id: '/$lang/graph/'
-      path: '/graph'
-      fullPath: '/$lang/graph/'
-      preLoaderRoute: typeof LangGraphIndexRouteImport
-      parentRoute: typeof LangRoute
-    }
-    '/$lang/wiki/search': {
-      id: '/$lang/wiki/search'
-      path: '/wiki/search'
-      fullPath: '/$lang/wiki/search'
-      preLoaderRoute: typeof LangWikiSearchRouteImport
+    '/$lang/admin/': {
+      id: '/$lang/admin/'
+      path: '/admin'
+      fullPath: '/$lang/admin/'
+      preLoaderRoute: typeof LangAdminIndexRouteImport
       parentRoute: typeof LangRoute
     }
     '/$lang/papers/search': {
@@ -339,25 +312,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LangPapersSearchRouteImport
       parentRoute: typeof LangRoute
     }
-    '/$lang/wiki/page/$': {
-      id: '/$lang/wiki/page/$'
-      path: '/wiki/page/$'
-      fullPath: '/$lang/wiki/page/$'
-      preLoaderRoute: typeof LangWikiPageSplatRouteImport
+    '/$lang/papers/$paperId': {
+      id: '/$lang/papers/$paperId'
+      path: '/papers/$paperId'
+      fullPath: '/$lang/papers/$paperId'
+      preLoaderRoute: typeof LangPapersPaperIdRouteImport
       parentRoute: typeof LangRoute
     }
-    '/$lang/theorems/theorem/$': {
-      id: '/$lang/theorems/theorem/$'
-      path: '/theorems/theorem/$'
-      fullPath: '/$lang/theorems/theorem/$'
-      preLoaderRoute: typeof LangTheoremsTheoremSplatRouteImport
+    '/$lang/admin/plugins': {
+      id: '/$lang/admin/plugins'
+      path: '/admin/plugins'
+      fullPath: '/$lang/admin/plugins'
+      preLoaderRoute: typeof LangAdminPluginsRouteImport
       parentRoute: typeof LangRoute
     }
-    '/$lang/graph/node/$': {
-      id: '/$lang/graph/node/$'
-      path: '/graph/node/$'
-      fullPath: '/$lang/graph/node/$'
-      preLoaderRoute: typeof LangGraphNodeSplatRouteImport
+    '/$lang/admin/docs': {
+      id: '/$lang/admin/docs'
+      path: '/admin/docs'
+      fullPath: '/$lang/admin/docs'
+      preLoaderRoute: typeof LangAdminDocsRouteImport
+      parentRoute: typeof LangRoute
+    }
+    '/$lang/admin/db/$table': {
+      id: '/$lang/admin/db/$table'
+      path: '/admin/db/$table'
+      fullPath: '/$lang/admin/db/$table'
+      preLoaderRoute: typeof LangAdminDbTableRouteImport
       parentRoute: typeof LangRoute
     }
   }
@@ -367,28 +347,26 @@ interface LangRouteChildren {
   LangDeviceRoute: typeof LangDeviceRoute
   LangPatRoute: typeof LangPatRoute
   LangIndexRoute: typeof LangIndexRoute
+  LangAdminDocsRoute: typeof LangAdminDocsRoute
+  LangAdminPluginsRoute: typeof LangAdminPluginsRoute
+  LangPapersPaperIdRoute: typeof LangPapersPaperIdRoute
   LangPapersSearchRoute: typeof LangPapersSearchRoute
-  LangWikiSearchRoute: typeof LangWikiSearchRoute
-  LangGraphIndexRoute: typeof LangGraphIndexRoute
-  LangTheoremsIndexRoute: typeof LangTheoremsIndexRoute
-  LangWikiIndexRoute: typeof LangWikiIndexRoute
-  LangGraphNodeSplatRoute: typeof LangGraphNodeSplatRoute
-  LangTheoremsTheoremSplatRoute: typeof LangTheoremsTheoremSplatRoute
-  LangWikiPageSplatRoute: typeof LangWikiPageSplatRoute
+  LangAdminIndexRoute: typeof LangAdminIndexRoute
+  LangPapersIndexRoute: typeof LangPapersIndexRoute
+  LangAdminDbTableRoute: typeof LangAdminDbTableRoute
 }
 
 const LangRouteChildren: LangRouteChildren = {
   LangDeviceRoute: LangDeviceRoute,
   LangPatRoute: LangPatRoute,
   LangIndexRoute: LangIndexRoute,
+  LangAdminDocsRoute: LangAdminDocsRoute,
+  LangAdminPluginsRoute: LangAdminPluginsRoute,
+  LangPapersPaperIdRoute: LangPapersPaperIdRoute,
   LangPapersSearchRoute: LangPapersSearchRoute,
-  LangWikiSearchRoute: LangWikiSearchRoute,
-  LangGraphIndexRoute: LangGraphIndexRoute,
-  LangTheoremsIndexRoute: LangTheoremsIndexRoute,
-  LangWikiIndexRoute: LangWikiIndexRoute,
-  LangGraphNodeSplatRoute: LangGraphNodeSplatRoute,
-  LangTheoremsTheoremSplatRoute: LangTheoremsTheoremSplatRoute,
-  LangWikiPageSplatRoute: LangWikiPageSplatRoute,
+  LangAdminIndexRoute: LangAdminIndexRoute,
+  LangPapersIndexRoute: LangPapersIndexRoute,
+  LangAdminDbTableRoute: LangAdminDbTableRoute,
 }
 
 const LangRouteWithChildren = LangRoute._addFileChildren(LangRouteChildren)

@@ -16,7 +16,7 @@
 
     ---
 
-    `docker compose up -d` 一键起 qatlasd + RustFS + Neo4j 全家桶；ghcr.io 多架构 image；适合评估、k8s 友好部署。
+    `docker compose up -d` 一键起 qatlasd + PostgreSQL（对象存储留外部）；ghcr.io 多架构 image；适合评估、k8s 友好部署。
 
 -   :material-server-network:{ .lg .middle } **[反向代理模板](reverse-proxy.md)**
 
@@ -30,23 +30,11 @@
 
     OAuth App 创建、callback URL、PocketBase provider 注入、多边缘节点的多 app 策略。
 
--   :material-database:{ .lg .middle } **[Neo4j 接入](neo4j.md)**
-
-    ---
-
-    自建 / 托管 / 跨 mesh 暴露，环境变量配置，常见 WSL2 dual-stack 坑。
-
 -   :material-cloud-upload:{ .lg .middle } **[RustFS / S3 对象存储](rustfs.md)**
 
     ---
 
     bootstrap script 流程、IAM policy、bucket versioning、dual endpoint（presign 公网 + 内网传输）。
-
--   :material-magnify:{ .lg .middle } **[RAG 向量检索](rag.md)**
-
-    ---
-
-    `/api/rag/*` 接 Qdrant + embed worker 做 chunk 级语义检索；两个开关都 ON 才注册。
 
 -   :material-heart-pulse:{ .lg .middle } **[健康检查与监控](health-and-monitoring.md)**
 
@@ -58,7 +46,7 @@
 
     ---
 
-    pb_data SQLite 备份、RustFS bucket versioning + prune、Neo4j dump、binary 滚动升级。
+    pb_data SQLite 备份、RustFS bucket versioning + prune、PostgreSQL dump、binary 滚动升级。
 
 </div>
 
@@ -70,7 +58,7 @@
 
     ---
 
-    `/api/papers/*` / `/api/wiki/*` / `/api/pat/*` / `/api/graph/*` / `/api/health` 全 endpoint（method / path / auth / payload / response / status）。
+    `/api/papers/*` / `/api/search` / `/api/pat/*` / `/api/theorems/*` / `/api/health` 全 endpoint（method / path / auth / payload / response / status）。
 
 -   :material-upload:{ .lg .middle } **[Upload API 详解](upload-api.md)**
 
@@ -100,7 +88,7 @@
 
     ---
 
-    完整长文：systemd、Caddy 模板、env 完整说明、RustFS 集成、Neo4j 集成、多边缘——目前主体内容仍在这里，新页面是它的拆分版。
+    完整长文：systemd、Caddy 模板、env 完整说明、RustFS 集成、PostgreSQL、多边缘——目前主体内容仍在这里，新页面是它的拆分版。
 
 -   :material-folder-arrow-up:{ .lg .middle } **[存储布局迁移](migration-storage-layout.md)**
 
@@ -114,11 +102,11 @@
 
 | 形态 | 推荐流派 | 拓扑示意 |
 |---|---|---|
-| 个人 / 实验室（评估） | **docker compose 全家桶** | qatlasd + rustfs + neo4j 一台 |
+| 个人 / 实验室（评估） | **docker compose 全家桶** | qatlasd + postgres 一台（rustfs 外部可选）|
 | 个人 / 实验室（长期） | systemd 单机 + LocalStore | qatlasd 一台，无对象存储 |
-| 团队（数据规模 < 100k 论文） | systemd 三件套（分机） | qatlasd@A · rustfs@NAS · neo4j@内存大设备 |
-| 生产单边缘 | systemd + 公有云 S3 / 自托管 RustFS | qatlasd@VPS · rustfs@专属 VPS / R2 · neo4j@专属 VPS |
-| 多边缘 active-active | systemd × N + 共享存储 | qatlasd × N edges → 共享 rustfs + neo4j（mesh） |
+| 团队（数据规模 < 100k 论文） | systemd 三件套（分机） | qatlasd@A · rustfs@NAS · postgres@内存大设备 |
+| 生产单边缘 | systemd + 公有云 S3 / 自托管 RustFS | qatlasd@VPS · rustfs@专属 VPS / R2 · postgres@专属 VPS |
+| 多边缘 active-active | systemd × N + 共享存储 | qatlasd × N edges → 共享 rustfs + postgres（mesh） |
 | k8s / Nomad / Swarm | docker image | helm chart / nomad job — image 当 building block |
 
 后续每个具体配置页都会说哪些选项适合哪个形态。
@@ -130,7 +118,7 @@
 1. **[install](install.md)** — 装好 binary + service
 2. **[reverse-proxy](reverse-proxy.md)** — 前面挂 TLS
 3. **[github-oauth](github-oauth.md)** — 用户能登录
-4. **[neo4j](neo4j.md)** — 图谱功能（可选，但是核心；可放另一台机）
+4. **PostgreSQL** — paper registry + OpenAlex corpus 所在（生产必填；DSN 见 [server-config](server-config.md)，可放另一台机）
 5. **[rustfs](rustfs.md)** — 对象存储（生产强烈建议；可放另一台机或公有云）
 6. **[health-and-monitoring](health-and-monitoring.md)** — 接监控
 7. **[backup-and-upgrade](backup-and-upgrade.md)** — 备份策略

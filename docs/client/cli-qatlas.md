@@ -92,7 +92,7 @@ qatlas config show
 # ...
 
 # 之后任何 qatlas 子命令直接跑
-qatlas wiki list --type source
+qatlas paper get pdf 2501.00010v1 -o paper.pdf
 qatlas contrib mineru --batch-size 3
 ```
 
@@ -335,71 +335,6 @@ qatlas auth token  [-s | --server-url <URL>]
 
 ---
 
-## Wiki 工具命令
-
-### `qatlas wiki`
-
-```
-qatlas wiki <list|show|search|links|lint|sync|stats|ingest|create> [options...]
-```
-
-| 子命令 | 主要 flag | 行为 |
-|---|---|---|
-| `list` | `--type <T> --tags a,b --status published` | 列 Wiki 页面（本地 git checkout）|
-| `show <page_id>` | `--raw` | 展开页面（pretty / raw markdown）|
-| `search <query>` | `--limit 10` | 全文搜索 |
-| `links <page_id>` | `--backlinks` | 列出/反列页面间链接 |
-| `lint` | `--fix --verbose` | 运行所有 W001–W008 检查 |
-| `stats` | — | 仓库统计：页面数 / 按类型 / 按 status |
-| `ingest <arxiv_id>` | `--no-fetch --no-parse --no-extract` | 旧 monolith pipeline（开发期，新代码用 `qatlas ingest`）|
-| `create <id>` | `--title T --type entity --category primitive --tags a,b --status draft --content ... --file ... --subdir ...` | 生成页面模板文件 |
-
-详细：[写 Wiki 页面](write-wiki-pages.md) / [Lint](lint-wiki.md) / [Schema](../reference/wiki-schema.md)。
-
----
-
-## 电路工具命令
-
-### `qatlas designer`
-
-```
-qatlas designer <algorithm_id> [-o <path>] [--n-qubits N] [--params k=v,...] [--no-optimize]
-```
-
-把 algorithm Wiki page 编译成 Quantum IR。详细：[电路工具链](circuit-toolchain.md)。
-
-### `qatlas codegen`
-
-```
-qatlas codegen <ir_file> --backend qiskit|qpanda [-o <path>] [--include-imports] [--measure-all]
-```
-
-IR → 后端代码。
-
-### `qatlas validator`
-
-```
-qatlas validator <ir_file> [--compare-with <algo_id>] [--check-codegen <code_file>]
-                 [--method unitary|statevector|sampling] [--n-shots 1024]
-```
-
-验证 IR 或生成代码的正确性。
-
-### `qatlas estimator`
-
-```
-qatlas estimator <ir_file> [--format markdown|json] [-o <path>]
-                 [--hardware <name>] [--detailed]
-```
-
-资源估计（gate 计数、depth、两比特门数、wall time 估算）。
-
-### `qatlas extractor`（实验性）
-
-LLM 辅助从 paper markdown 抽取算法描述。需要 `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`。
-
----
-
 ## 运维 / 兼容性命令（不常用）
 
 | 命令 | 说明 |
@@ -411,11 +346,6 @@ LLM 辅助从 paper markdown 抽取算法描述。需要 `OPENAI_API_KEY` / `ANT
 | 别名 | 等同于 |
 |---|---|
 | `parse` | `parser` |
-| `design` | `designer` |
-| `generate` | `codegen` |
-| `validate` | `validator` |
-| `estimate` | `estimator` |
-| `extract` | `extractor` |
 
 ---
 

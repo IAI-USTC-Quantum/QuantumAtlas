@@ -88,7 +88,7 @@ func NewStorageCommand() *cobra.Command {
 		Short: "Maintenance operations on the QuantumAtlas object store (S3/RustFS backend)",
 		Long: `Storage-side maintenance commands.
 
-These commands require the QATLAS_S3_* env vars (or .env entries) and
+These commands require the s3 section of config.yaml and
 are no-ops on the LocalStore dev backend — there is no version concept
 to prune when assets live as plain files.`,
 	}
@@ -151,13 +151,12 @@ Examples:
 }
 
 func runStoragePrune(stdout, stderr io.Writer, f pruneFlags) error {
-	dotenvPath := loadDotEnv()
-	cfg, err := config.Load(dotenvPath)
+	cfg, err := loadConfig()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
 	if !cfg.S3Enabled() {
-		return errors.New("storage prune requires the S3 backend (QATLAS_S3_* env all set); LocalStore has no version concept")
+		return errors.New("storage prune requires the S3 backend (s3.* fully set in config.yaml); LocalStore has no version concept")
 	}
 
 	bucket, err := bucketForKind(cfg, f.kind)

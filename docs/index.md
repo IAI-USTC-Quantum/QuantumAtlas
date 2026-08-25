@@ -1,20 +1,19 @@
 # QuantumAtlas
 
 <div class="hero-tagline" markdown>
-**把量子算法论文从「PDF 和笔记」推进到「可查询的知识、可浏览的 Wiki、可同步的图谱，以及可生成的实现代码」。**
+**面向量子算法研究的论文收集、多路检索与注册数据库。**
 </div>
 
-QuantumAtlas 是一个面向量子算法研究的**分层知识库 + 实现工作台**。它把论文摄入、Wiki 沉淀、图谱同步、电路设计、代码生成、验证和资源估计串成一条可持续迭代的链路。
+QuantumAtlas 从 arXiv 收集量子算法论文，把 PDF 解析成结构化资产（Markdown / 图片 / 元数据 JSON），把每一篇论文、每一个身份（arXiv ID / DOI / OpenAlex ID）、每一份资产登记进 PostgreSQL registry，再通过**一个搜索端点**回答查询——本地 catalog、arXiv、OpenAlex、可选的 Qdrant 语义向量检索，多路 fan-out 一次完成。
 
-核心想法：**分类和关联是两回事**。Raw Sources 保留证据，Wiki 是被审阅后的知识 source of truth，Neo4j 图谱回答「它与什么有关」。
+核心想法：**收集一次，全部登记，到处可搜**。原始资产进对象存储，论文 registry 进 PostgreSQL（boot 时 goose 自动迁移），搜索引擎跨范式查询而不需要你事先选边。
 
 ```mermaid
 flowchart LR
-    A[论文 / 资料] -->|fetch + parse| R[Raw Sources<br/>PDF + Markdown + JSON]
-    R -->|人工 + LLM 整理| W[Wiki<br/>结构化页面]
-    W -->|sync| G[Neo4j Graph<br/>实体关系]
-    W & G -->|extract IR| C[Quantum IR / 电路代码]
-    C -->|verify + estimate| O[可运行 + 可估计的实现]
+    A[arXiv / 用户上传] -->|fetch + parse| R[对象存储<br/>PDF + Markdown + images]
+    R -->|register| P[PostgreSQL registry<br/>papers / identities / assets]
+    P & U[arXiv / OpenAlex 上游] --> S[POST /api/search<br/>多 provider fan-out]
+    Q[Qdrant 语义检索<br/>可选] --> S
 ```
 
 ---
@@ -29,7 +28,7 @@ flowchart LR
 
     ---
 
-    装 client、跑一个不依赖外部服务的 demo、5 分钟看完核心数据流。
+    装 client、指向 server、拉第一篇论文；或 5 分钟把 qatlasd + PostgreSQL 跑起来。
 
     [:octicons-arrow-right-24: 入门指南](getting-started.md)
 
@@ -37,7 +36,7 @@ flowchart LR
 
     ---
 
-    三层模型、数据流动、对象寻址、鉴权语义、多边缘部署。
+    分层模型、数据流动、对象寻址、鉴权语义、存储边界。
 
     [:octicons-arrow-right-24: 概念](concepts/index.md)
 
@@ -45,7 +44,7 @@ flowchart LR
 
     ---
 
-    上传论文、写 Wiki 页面、跑 MinerU、生成电路代码、管理凭据。
+    摄入论文、上传资产、跑 MinerU、拉取 PDF / Markdown、管理凭据。
 
     [:octicons-arrow-right-24: Python 客户端](client/index.md)
 
@@ -53,7 +52,7 @@ flowchart LR
 
     ---
 
-    安装、systemd、反向代理、OAuth、Neo4j、RustFS、REST API、健康检查、备份升级。
+    安装、systemd、反向代理、OAuth、PostgreSQL、RustFS、REST API、健康检查、备份升级。
 
     [:octicons-arrow-right-24: Go 服务端](server/index.md)
 
@@ -61,7 +60,7 @@ flowchart LR
 
     ---
 
-    环境变量、Wiki schema、arXiv ID 格式等跨组件的稳定约定。
+    环境变量、arXiv ID 格式等跨组件的稳定约定。
 
     [:octicons-arrow-right-24: 参考](reference/index.md)
 
@@ -69,7 +68,7 @@ flowchart LR
 
     ---
 
-    代码、文档、Wiki 内容、发布流程。
+    代码、文档、发布流程。
 
     [:octicons-arrow-right-24: 贡献指南](contributing.md)
 
@@ -79,19 +78,19 @@ flowchart LR
 
 ## 核心能力
 
-- **从 arXiv 摄入论文**：自动抓取 PDF + 元数据，可选用 MinerU 解析为 Markdown
-- **沉淀知识到 Wiki**：可审阅的 Markdown + YAML frontmatter，统一 `concept` 词条（按 `category` 细分）+ `source` 论文引用
-- **同步到 Neo4j 图谱**：从 Wiki 派生算法 / 原语 / 论文 / 人物的关系网
-- **从算法走到代码**：Designer → Quantum IR → Qiskit/QPanda → Validator → Estimator
-- **远程协作**：Web API + CLI + 分享链接，协作者不需要服务器登录权限
-- **多边缘 active-active**：海外 / 国内多线路部署，跨地域共享同一份知识库
+- **从 arXiv 收集论文**：自动抓取 PDF + 元数据，可选用 MinerU 解析为 Markdown
+- **PostgreSQL 论文 registry**：论文、身份（arXiv / DOI / OpenAlex）、资产状态全部入库，纯 SQL 可查；goose migrations 随 server 启动自动 apply
+- **多范式搜索**：`POST /api/search` 一个端点 fan-out 到 catalog / arXiv / OpenAlex provider，可选 Qdrant 混合向量检索（dense+sparse, RRF + rerank）
+- **懒加载摄入**：缓存未命中时 server 后台静默 fetch + 转换，LRO 状态可轮询，并发请求自动 dedupe
+- **OpenAlex 语料镜像**：works 语料灌进同一个 PG 库，引用上下文 / 批量分析直接 SQL
+- **远程协作**：Web API + CLI，协作者不需要服务器登录权限
 
 ## 当前状态
 
-!!! info "Alpha 阶段，主线已贯通"
+!!! info "Alpha 阶段，主干已贯通"
 
-    - 摄入、Wiki、图谱、设计、代码生成、验证、估计 **全链路打通**。
-    - Web API、分享链接、远程协作流程 **可用**。
+    - 论文收集、registry、多路搜索、懒加载摄入 **全链路打通**。
+    - Web API 与远程协作流程 **可用**。
     - 项目定位是「可持续扩展的研究基础设施」，而不是已经产品化的平台——意味着稳定但仍在快速演化。
 
 ## 仓库 & 包

@@ -6,8 +6,7 @@ QuantumAtlas 有三层状态，各自的备份 / 升级语义不同：
 |---|---|---|---|---|
 | **PocketBase pb_data** | 本机 SQLite | `cp` 或 PocketBase backup API | 复制回去 | 高（用户 / PAT 记录）|
 | **RustFS bucket** | 对象存储 | bucket versioning + offsite mirror | 用 noncurrent version 回滚 | 高（PDF / Markdown / 元数据）|
-| **Neo4j** | 本机 | `neo4j-admin database dump` | `neo4j-admin database load` | 中（可以从 Wiki 重 sync）|
-| **Wiki repo** | Git remote (GitHub) | 跑 git remote 就行 | `git clone` | 高（但 GitHub 已经是备份）|
+| **PostgreSQL** | 本机 / 托管 | `pg_dump` | `pg_restore` / `psql` | 高（paper registry + OpenAlex corpus；registry 可从 bucket 重建，corpus 重灌成本高）|
 
 ## pb_data 备份
 
@@ -100,36 +99,20 @@ qatlasd storage prune --older-than 90d --keep-last 5 --yes
 
 详见 [RustFS / storage prune](rustfs.md#prune)。
 
-## Neo4j 备份
+## PostgreSQL 备份
 
 ```bash
-# 停服务（保证一致性）
-sudo systemctl stop neo4j
+# 在线 dump（custom format，可并行恢复；不需要停库）
+pg_dump -Fc -d qatlas -f /var/backups/qatlas-pg-$(date +%F).dump
 
-# Dump
-sudo neo4j-admin database dump neo4j --to-path=/var/backups/neo4j-$(date +%F).dump
-
-# 起回来
-sudo systemctl start neo4j
+# 恢复
+pg_restore -d qatlas --clean /var/backups/qatlas-pg-YYYY-MM-DD.dump
 ```
 
-**优先级最低**——挂了从 canonical Wiki 由服务端重建即可，不依赖快照恢复。
-
-## Wiki repo 备份
-
-Wiki 是 [GitHub 上的独立 repo](https://github.com/IAI-USTC-Quantum/QuantumAtlas-Wiki)，GitHub 自己就是备份。
-
-如果你 paranoid：
-
-```bash
-# 异地 mirror（每天）
-git clone --mirror https://github.com/IAI-USTC-Quantum/QuantumAtlas-Wiki.git \
-                   /var/backups/wiki/QuantumAtlas-Wiki.git
-
-# 之后定期 fetch
-cd /var/backups/wiki/QuantumAtlas-Wiki.git
-git remote update
-```
+**paper registry（papers / paper_assets）是可从对象存储重建的派生索引**
+（`qatlasd papers sync --full --from-rustfs`），所以真正值钱的是 OpenAlex
+corpus（重灌 ~10⁸ 行成本高）。预算紧张时可以只 dump corpus 相关的表，或干脆
+接受"灾难后重跑 `qatlasd openalex bootstrap-pg`"。
 
 ## 滚动升级 binary
 
@@ -192,8 +175,8 @@ sudo systemctl start qatlasd
 1. 起一台新 VPS
 2. 装 binary：`curl -fsSL ... | sh`
 3. 恢复 pb_data：`tar xzf pb_data-latest.tar.gz -C <data_dir>`
-4. 恢复 wiki：`git clone <wiki-repo>`
-5. 指向同一 RustFS bucket 和 Neo4j（mesh 内网 IP）
+4. 恢复 PostgreSQL：`pg_restore` 最近的 dump（或建空库让 goose migrations 重建 schema）
+5. 指向同一 RustFS bucket 和 PostgreSQL（mesh 内网 IP）
 6. `qatlasd service install --mode system --force ...`
 7. 走 [健康检查 checklist](health-and-monitoring.md#self-check)
 
@@ -206,11 +189,10 @@ sudo systemctl start qatlasd
 | pb_data | 每天（cron）| `tar czf` | 4 周 + 月度永久 |
 | RustFS bucket | 实时（versioning）| 自带 | 永久；prune 跑 90 天 + keep-last 5 |
 | RustFS bucket（offsite）| 每周 | `rclone sync` | 4 周 |
-| Neo4j | 月度 / 大改前 | `neo4j-admin dump` | 3 个月 |
-| Wiki | 每天 git mirror | `git clone --mirror` | 永久（GitHub 已备份）|
+| PostgreSQL | 每天（cron）| `pg_dump -Fc` | 4 周 + 月度永久 |
 
 ## 不要忘了备份的东西
 
-- `.env`（含 GitHub OAuth secret / Neo4j password / RustFS svcacct）—— 存到 password manager / vault
+- `.env`（含 GitHub OAuth secret / PostgreSQL DSN / RustFS svcacct）—— 存到 password manager / vault
 - systemd unit（如果改过 default）—— commit 进运维仓库
 - Caddy / nginx 配置 —— 同上

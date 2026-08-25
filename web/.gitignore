@@ -25,3 +25,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Sphinx-built docs site (source: ../docsite, built by sphinx-build)
+public/doc/

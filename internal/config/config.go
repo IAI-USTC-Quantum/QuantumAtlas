@@ -1,14 +1,19 @@
-// Package config loads QuantumAtlas server configuration from environment
-// variables (typically populated from a .env file by the wrapper script).
+// Package config loads QuantumAtlas server configuration from a YAML
+// file (default ~/.qatlas/config.yaml).
 //
-// The Python server used pydantic-settings with AliasChoices to accept both
-// QATLAS_* names and legacy unprefixed/SERVER_* names. We preserve that
-// alias behavior here so a single .env can drive both implementations
-// during the transition period.
+// Environment-variable configuration is REJECTED by design: after
+// loading the file, Load scans os.Environ for any QATLAS_* variable
+// (and a list of legacy names from the .env era) and fails startup
+// with a message listing the offenders. The YAML file is the single
+// source of truth; docker deployments bind-mount the host's config
+// file into the container read-only.
 package config
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/url"
 	"os"
@@ -17,29 +22,36 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Config holds the resolved runtime configuration for the Go server.
 //
-// All fields are populated from environment variables. Empty / zero values
-// mean "feature disabled" unless otherwise documented.
+// All fields are populated from the YAML config file. Empty / zero
+// values mean "feature disabled" unless otherwise documented.
 type Config struct {
 	// HTTP bind address (host:port). Defaults to 127.0.0.1:4200.
 	HTTPAddr string
 
 	// Filesystem roots. Defaults are computed by Load when the
-	// corresponding env vars are unset:
-	//   - WikiDir   -> <anchor>/../QuantumAtlas-Wiki (sibling checkout)
+	// corresponding YAML keys are absent:
 	//   - RawDir    -> ${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/raw
 	//   - DataDir   -> ${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/data
 	//   - PBDataDir -> ${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/pb_data
-	// "anchor" is the directory containing the .env loaded by the caller,
-	// or the process CWD when no .env was supplied.
-	WikiDir     string // local clone of the Wiki repo (markdown + frontmatter).
-	TheoremsDir string // local clone of the Lean-content repo (proved Theorems; theorems plugin pull target).
-	RawDir      string // RAW asset store (PDFs, MinerU outputs, etc.).
-	DataDir     string // server-managed metadata (ingests/, MinerU lease state, etc.).
-	PBDataDir   string // PocketBase pb_data (SQLite + uploads); passed to --dir=.
+	// "anchor" is the directory containing the config file, used to
+	// resolve relative paths.
+	RawDir    string // RAW asset store (PDFs, MinerU outputs, etc.).
+	DataDir   string // server-managed metadata (ingests/, MinerU lease state, etc.).
+	PBDataDir string // PocketBase pb_data (SQLite + uploads); passed to --dir=.
+
+	// ForceTCP4 pins the HTTP listener to a tcp4-only socket (WSL2 +
+	// Windows netsh portproxy escape hatch). Default false.
+	ForceTCP4 bool
+
+	// SkipPBDataLock bypasses the single-process flock on pb_data.
+	// Reserved for emergency recovery / diagnostics — never production.
+	SkipPBDataLock bool
 
 	// PostgreSQL catalog (server-only, non-login state).
 	PostgresDSN      string
@@ -54,11 +66,33 @@ type Config struct {
 	// take heavy I/O on a 353 GB table — are skipped. See ADR 0013.
 	CorpusEnsureIndexes bool
 
-	// Neo4j (graph-only).
-	Neo4jURI      string
-	Neo4jUser     string
-	Neo4jPassword string
-	Neo4jDatabase string
+	// SearchProviders is the ordered list of search providers the
+	// /api/search engine fans out to (internal/search). From the
+	// search.providers YAML list; defaults to [catalog, arxiv, openalex].
+	// "qdrant" is only constructible when the RAG qdrant + embed URLs
+	// below are configured — an enabled-but-unconstructible provider is
+	// logged and skipped at boot.
+	SearchProviders []string
+
+	// Remote search microservice (qatlas-search) — an optional Provider
+	// plugged into the /api/search fan-out and the backend for the
+	// metered POST /api/search/agentic endpoint. RemoteEnabled=false
+	// (default) leaves everything off, even when a URL is set.
+	// RemoteToken must equal the microservice's search.service_token.
+	// RemoteTimeout defaults to 60s because agentic calls may drive an
+	// LLM — much longer than the per-provider fan-out budget.
+	RemoteEnabled bool
+	RemoteURL     string
+	RemoteToken   string
+	RemoteTimeout time.Duration
+
+	// Agentic search metering. AgenticDailyLimit is the fallback daily
+	// per-user limit for POST /api/search/agentic when the user has no
+	// plan/quota row in Postgres (default 10000). AgenticPricePerMtok is
+	// USD per 1M LLM tokens, used ONLY to display an approximate cost in
+	// the admin usage view — it gates nothing.
+	AgenticDailyLimit   int
+	AgenticPricePerMtok float64
 
 	// Public URL: server's own canonical https origin (scheme+host[+port])
 	// as users see it from outside any reverse proxy. Required for
@@ -78,54 +112,38 @@ type Config struct {
 
 	// GitHub login allowlist gating OAuth sign-in. Only accounts whose
 	// GitHub login appears here (or in AdminGitHubLogins) may obtain an
-	// authenticated session. Parsed from QATLAS_ALLOWED_GITHUB_LOGINS.
-	// Fail-closed: when this AND AdminGitHubLogins are both empty, NOBODY
-	// may sign in (see IsGitHubLoginAllowed). The PocketBase superuser
-	// (email+password at /_/) is unaffected and is the recovery path.
+	// authenticated session. Fail-closed: when this AND AdminGitHubLogins
+	// are both empty, NOBODY may sign in (see IsGitHubLoginAllowed). The
+	// PocketBase superuser (email+password at /_/) is unaffected and is
+	// the recovery path.
 	AllowedGitHubLogins []string
 
 	// Object storage (RustFS / S3-compatible) for the RAW asset bucket.
 	// When S3Endpoint is empty the server falls back to RawDir on the
-	// local filesystem. When set, all four required fields must be
-	// non-empty — see invariant check at the end of Load().
+	// local filesystem. When set, all required fields must be non-empty
+	// — see ValidateForServe.
 	//
 	// Endpoint must include scheme (https://raw.example.tld) so the
 	// minio-go client can decide TLS vs plaintext deterministically.
-	// We don't use AWS path-style heuristics; for vendor flexibility
-	// the bucket is always supplied as a separate parameter.
 	//
 	// S3PublicEndpoint (optional) splits the network roles:
 	//   - S3Endpoint        is used for server↔RustFS traffic (mesh,
 	//                       intranet, anything cheap & fast).
 	//   - S3PublicEndpoint  is used ONLY when minting presigned URLs
-	//                       for end users. The URL host the browser
-	//                       hits = this value. Must front the same
-	//                       bucket + credentials as S3Endpoint.
-	//
-	// Per-edge example (illustrative — concrete hosts depend on your
-	// deployment topology):
-	//   edge-A .env: S3Endpoint=http://<mesh-host>:9000
-	//                S3PublicEndpoint=https://<edge-a-public-host>
-	//   edge-B .env: S3Endpoint=http://<mesh-host>:9000
-	//                S3PublicEndpoint=https://<edge-b-public-host>
+	//                       for end users. Must front the same bucket +
+	//                       credentials as S3Endpoint.
 	//
 	// When empty (or equal to S3Endpoint), presigned URLs reuse the
-	// internal endpoint — handy for single-network dev setups but
-	// useless for any deployment where clients can't reach the
-	// internal host.
+	// internal endpoint — handy for single-network dev setups.
 	S3Endpoint       string
 	S3PublicEndpoint string
 
-	// Per-kind buckets (v0.7.0). The single qatlas-raw bucket was split
-	// into three so each asset kind has its own lifecycle / quota /
-	// access policy. S3BucketOpenAlex is reserved for the OpenAlex
-	// snapshot ingest (档 B) and is optional — the server runs without
+	// Per-kind buckets (v0.7.0). S3BucketOpenAlex is reserved for the
+	// OpenAlex snapshot ingest and is optional — the server runs without
 	// it; only `openalex` subcommands need it.
 	//
 	// All three of PDF/MD/Images are required together when S3 is
-	// enabled (ValidateForServe). The legacy single QATLAS_S3_BUCKET is
-	// REMOVED in v0.7.0 — Load fails fast if it's still set so a stale
-	// .env can't silently mis-route every object into one bucket.
+	// enabled (ValidateForServe).
 	S3BucketPDF      string
 	S3BucketMD       string
 	S3BucketImages   string
@@ -139,18 +157,7 @@ type Config struct {
 	// into the S3 client User-Agent (qatlasd/<version>/<edge>) so the
 	// RustFS audit trail can tell apart writes coming from different
 	// edges at a glance. Empty → the UA is just qatlasd/<version>.
-	// Never load-bearing for auth (UA is forgeable; the load-bearing
-	// forensic key is the SigV4 accessKey recorded by the audit trail
-	// — T10).
-	//
-	// The audit *sink* itself is NOT part of this binary: a generic,
-	// convention-free log shipper (Fluent Bit) deployed as a sidecar
-	// next to RustFS on the NAS receives the RustFS global audit webhook
-	// and writes one object per event into the qatlas-audit bucket using
-	// its own dedicated svcacct. Keeping the dumb storage layer free of
-	// our evolving backend conventions is the whole point — so none of
-	// the sink's wiring (bucket name, sink keys, listen addr, webhook
-	// token) lives in this config. See docs/server/rustfs.md.
+	// Never load-bearing for auth.
 	EdgeName string
 
 	// PaperAccessEnabled is the master switch for the opt-in
@@ -158,28 +165,21 @@ type Config struct {
 	// When false (default) the /api/papers/{id}/markdown and
 	// /markdown/status endpoints are NOT registered and the entire
 	// MinerU* block below is ignored — even garbage values are tolerated
-	// silently so existing .env files aren't penalised for stale
-	// settings.
+	// silently.
 	//
 	// When true the operator opts into:
 	//   - serving cached markdown bytes (papers:read scope)
-	//   - when MinerUAPITokens contains at least one entry, transparently triggering a
-	//     MinerU conversion on cache miss
-	//
-	// The public instance (quantum-atlas.ai) keeps this false so its
-	// "server does not redistribute PDF / markdown bytes" posture is
-	// preserved. Self-hosters in a controlled audience can flip it on
-	// and accept the resulting distribution obligation — see
-	// docs/about/license-and-attribution.md.
+	//   - when MinerUAPITokens contains at least one entry, transparently
+	//     triggering a MinerU conversion on cache miss
 	PaperAccessEnabled bool
 
 	// Server-side MinerU configuration. Only parsed (and only validated)
 	// when PaperAccessEnabled=true. When the switch is off these
-	// fields are zero values regardless of env content.
+	// fields are zero values regardless of YAML content.
 	//
-	// MinerUAPITokens is a pool — supply multiple tokens (CSV in env)
-	// and the converter automatically fails over from one to the next
-	// when a key reports daily-limit. Empty pool ⇒ cache-only mode.
+	// MinerUAPITokens is a pool — supply multiple tokens and the
+	// converter automatically fails over from one to the next when a key
+	// reports daily-limit. Empty pool ⇒ cache-only mode.
 	MinerUAPITokens         []string
 	MinerUAPIBaseURL        string
 	MinerUModelVersion      string
@@ -193,16 +193,10 @@ type Config struct {
 
 	// --- RAG (semantic search over indexed papers) -----------------
 	//
-	// In v0.20.0 the query path moved into qatlasd itself: the Go
-	// handler in internal/routes/rag.go calls Qdrant directly (via
-	// github.com/qdrant/go-client) and the embed worker over HTTP, so
-	// there's no Python sidecar anymore. /api/rag/* is registered
-	// iff PaperAccessEnabled is true AND BOTH RAGQdrantURL and
-	// RAGEmbedURL are non-empty.
-	//
-	// Gated by PaperAccessEnabled because RAG hits return chunk-text
-	// snippets — the same derivative-work bytes that
-	// /api/papers/{id}/markdown serves.
+	// The Go handler in internal/routes/rag.go calls Qdrant directly
+	// and the embed worker over HTTP. /api/rag/* is registered iff
+	// PaperAccessEnabled is true AND BOTH RAGQdrantURL and RAGEmbedURL
+	// are non-empty.
 
 	// RAGQdrantURL — Qdrant gRPC endpoint (e.g. "qdrant.internal:6334").
 	// Accepts either bare host:port or "[http|https]://host:port"; the
@@ -211,8 +205,7 @@ type Config struct {
 	RAGQdrantURL string
 
 	// RAGQdrantAPIKey — optional Qdrant API key. Read-only key is
-	// sufficient for the query path; the build/upsert path lives in
-	// the ingester (separate process / scope).
+	// sufficient for the query path.
 	RAGQdrantAPIKey string
 
 	// RAGQdrantCollection — collection name to query. Default
@@ -233,31 +226,22 @@ type Config struct {
 	// fetches. Required when PaperAccessEnabled=true AND any
 	// derivative-access endpoint that may resolve DOIs or fetch PDFs
 	// from arxiv is exercised; the DOI route returns 503 when this is
-	// empty so misconfigured deployments fail loudly instead of
-	// silently degrading. Format: any RFC 5322 address; we don't
-	// validate strictly because OpenAlex accepts anything that looks
-	// like an email — only the existence check matters.
+	// empty so misconfigured deployments fail loudly.
 	OpenAlexMailto string
 
 	// ArxivFetchConcurrent caps the number of in-flight server-side
-	// arxiv.org PDF fetches independently from MinerU job concurrency
-	// (fetches are I/O bound; MinerU jobs are API+GPU bound). Default
-	// 2 — enough to make progress without ever looking impolite to
-	// arxiv. Only consulted when PaperAccessEnabled=true; ignored
-	// otherwise.
+	// arxiv.org PDF fetches independently from MinerU job concurrency.
+	// Default 2. Only consulted when PaperAccessEnabled=true.
 	ArxivFetchConcurrent int
 
 	// ArxivFetchRPS bounds the per-process rate of arxiv.org GET
-	// requests (token bucket). arxiv asks robots to space requests
-	// "every 3 seconds"; we default to 0.33 req/s with burst 2 which
-	// satisfies that for any single edge. Operators with multiple
-	// edges sharing a public NAT should set this LOWER to stay polite
-	// in aggregate. Only consulted when PaperAccessEnabled=true.
+	// requests (token bucket). Default 0.33 req/s with burst 2, matching
+	// arxiv's published "one request every 3 seconds" guidance.
 	ArxivFetchRPS float64
 
-	// Plugin platform (Phase 1 skeleton). Plugins are optional: an empty
-	// directory or no manifests means the core server still starts with just
-	// papers/wiki/auth enabled.
+	// Plugin platform. Plugins are optional: an empty directory or no
+	// manifests means the core server still starts with just papers /
+	// auth enabled.
 	PluginsDir              string
 	PluginsEnabled          []string
 	PluginsDisabled         []string
@@ -267,6 +251,13 @@ type Config struct {
 	PluginRPCTimeout        time.Duration
 	PluginReconnectInterval time.Duration
 	DeadLetterDir           string
+
+	// System PAT — operator breakglass bearer token (see
+	// internal/pat/system_pat.go). Empty token = feature disabled.
+	// Scopes defaults to ["*"] when the token is set but the list is
+	// empty.
+	SystemPATToken  string
+	SystemPATScopes []string
 }
 
 // MinerUEnabled reports whether the server should drive MinerU itself
@@ -278,161 +269,299 @@ func (c *Config) MinerUEnabled() bool {
 	return c.PaperAccessEnabled && len(c.MinerUAPITokens) > 0
 }
 
-// Load resolves the configuration from process environment.
-//
-// dotenvPath, if non-empty, is the absolute path to the .env file from
-// which env vars were loaded by the caller. We use its parent directory
-// as the anchor for resolving relative filesystem paths (WikiDir /
-// RawDir / DataDir / PBDataDir). This way a .env entry like
-// `WIKI_DIR=../QuantumAtlas-Wiki` resolves consistently regardless of
-// the systemd WorkingDirectory or shell CWD. If dotenvPath is empty
-// (e.g. when env is provided entirely by systemd / shell), we fall back
-// to the process CWD as the anchor — preserving the previous behavior.
-//
-// Lookup order for each logical field follows the QATLAS_* alias chain
-// documented in .env.example. The first non-empty match wins.
-//
-// Filesystem defaults (applied when both alias names are unset):
-//   - WikiDir   -> "<anchor>/../QuantumAtlas-Wiki"
-//   - RawDir    -> "${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/raw"
-//   - DataDir   -> "${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/data"
-//   - PBDataDir -> "${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/pb_data"
-//
-// These defaults intentionally land *outside* the git checkout so a
-// fresh `git clone` stays clean; see docs/migration-storage-layout.md
-// for how to move existing in-repo data.
-func Load(dotenvPath string) (*Config, error) {
-	anchor := ""
-	if dotenvPath != "" {
-		anchor = filepath.Dir(dotenvPath)
-	}
+// ---------------------------------------------------------------------------
+// YAML file schema
+// ---------------------------------------------------------------------------
 
-	cfg := &Config{
-		HTTPAddr:             firstEnv("QATLAS_HTTP_ADDR"),
-		WikiDir:              firstEnv("QATLAS_WIKI_DIR", "WIKI_DIR"),
-		TheoremsDir:          firstEnv("QATLAS_THEOREMS_DIR"),
-		RawDir:               firstEnv("QATLAS_RAW_DIR", "RAW_DIR"),
-		DataDir:              firstEnv("QATLAS_DATA_DIR", "DATA_DIR"),
-		PBDataDir:            firstEnv("QATLAS_PB_DATA_DIR", "PB_DATA_DIR"),
-		PostgresDSN:          firstEnv("QATLAS_POSTGRES_DSN"),
-		PostgresMaxConns:     firstEnvIntDefault(10, "QATLAS_POSTGRES_MAX_CONNS"),
-		CorpusEnsureIndexes:  parseBoolEnv("QATLAS_CORPUS_ENSURE_INDEXES", true),
-		Neo4jURI:             firstEnv("NEO4J_URI"),
-		Neo4jUser:            firstEnv("NEO4J_USERNAME", "NEO4J_USER"),
-		Neo4jPassword:        firstEnv("NEO4J_PASSWORD"),
-		Neo4jDatabase:        firstEnv("NEO4J_DATABASE"),
-		PublicURL:            firstEnv("QATLAS_PUBLIC_URL"),
-		UserHeader:           firstEnv("QATLAS_USER_HEADER", "USER_HEADER"),
-		GitHubClientID:       firstEnv("GITHUB_CLIENT_ID"),
-		GitHubClientSecret:   firstEnv("GITHUB_CLIENT_SECRET"),
-		S3Endpoint:           firstEnv("QATLAS_S3_ENDPOINT"),
-		S3PublicEndpoint:     firstEnv("QATLAS_S3_PUBLIC_ENDPOINT"),
-		S3BucketPDF:          firstEnv("QATLAS_S3_BUCKET_PDF"),
-		S3BucketMD:           firstEnv("QATLAS_S3_BUCKET_MD"),
-		S3BucketImages:       firstEnv("QATLAS_S3_BUCKET_IMAGES"),
-		S3BucketOpenAlex:     firstEnv("QATLAS_S3_BUCKET_OPENALEX_SNAPSHOT"),
-		S3AccessKeyID:        firstEnv("QATLAS_S3_ACCESS_KEY_ID"),
-		S3SecretAccessKey:    firstEnv("QATLAS_S3_SECRET_ACCESS_KEY"),
-		EdgeName:             firstEnv("QATLAS_EDGE_NAME"),
-		PaperAccessEnabled:   parseBoolEnv("QATLAS_PAPER_ACCESS_ENABLED", false),
-		RAGQdrantURL:         firstEnv("QATLAS_RAG_QDRANT_URL"),
-		RAGQdrantAPIKey:      firstEnv("QATLAS_RAG_QDRANT_API_KEY"),
-		RAGQdrantCollection:  firstEnvDefault("qatlas_papers_v1", "QATLAS_RAG_QDRANT_COLLECTION"),
-		RAGEmbedURL:          firstEnv("QATLAS_RAG_EMBED_URL"),
-		RAGEmbedToken:        firstEnv("QATLAS_RAG_EMBED_TOKEN"),
-		OpenAlexMailto:       firstEnv("QATLAS_OPENALEX_MAILTO"),
-		ArxivFetchConcurrent: firstEnvIntDefault(2, "QATLAS_ARXIV_FETCH_CONCURRENT"),
-		ArxivFetchRPS:        firstEnvFloatDefault(0.33, "QATLAS_ARXIV_FETCH_RPS"),
-		PluginsDir:           firstEnv("QATLAS_PLUGINS_DIR"),
-		PluginsEnabled:       parseTokenList(firstEnv("QATLAS_PLUGINS_ENABLED")),
-		PluginsDisabled:      parseTokenList(firstEnv("QATLAS_PLUGINS_DISABLED")),
-		PluginConnectSecret:  firstEnv("QATLAS_PLUGIN_CONNECT_SECRET"),
-		RPCWSBind:            firstEnvDefault("127.0.0.1:8799", "QATLAS_RPC_WS_BIND"),
-	}
+// fileConfig mirrors the on-disk YAML schema. String fields map 1:1 onto
+// Config; scalar fields with non-zero defaults use pointers so Load can
+// distinguish "key absent" (apply default) from "key set to zero value"
+// (honour the operator's explicit choice). Durations are strings parsed
+// by parseDuration (Go duration syntax plus a "Nd" days extension).
+type fileConfig struct {
+	HTTPAddr       string `yaml:"http_addr"`
+	PublicURL      string `yaml:"public_url"`
+	UserHeader     string `yaml:"user_header"`
+	EdgeName       string `yaml:"edge_name"`
+	ForceTCP4      bool   `yaml:"force_tcp4"`
+	SkipPBDataLock bool   `yaml:"skip_pb_data_lock"`
 
-	var err error
-	cfg.EventRetention, err = parseDurationEnv("QATLAS_EVENT_RETENTION", 7*24*time.Hour)
-	if err != nil {
+	Paths struct {
+		RawDir    string `yaml:"raw_dir"`
+		DataDir   string `yaml:"data_dir"`
+		PBDataDir string `yaml:"pb_data_dir"`
+	} `yaml:"paths"`
+
+	Postgres struct {
+		DSN                 string `yaml:"dsn"`
+		MaxConns            *int   `yaml:"max_conns"`
+		CorpusEnsureIndexes *bool  `yaml:"corpus_ensure_indexes"`
+	} `yaml:"postgres"`
+
+	Search struct {
+		Providers []string `yaml:"providers"`
+		Remote    struct {
+			Enabled bool   `yaml:"enabled"`
+			URL     string `yaml:"url"`
+			Token   string `yaml:"token"`
+			Timeout string `yaml:"timeout"`
+		} `yaml:"remote"`
+		Agentic struct {
+			DailyLimit   *int     `yaml:"daily_limit"`
+			PricePerMtok *float64 `yaml:"price_per_mtok"`
+		} `yaml:"agentic"`
+	} `yaml:"search"`
+
+	Auth struct {
+		GitHubClientID     string   `yaml:"github_client_id"`
+		GitHubClientSecret string   `yaml:"github_client_secret"`
+		AllowedLogins      []string `yaml:"allowed_logins"`
+		AdminLogins        []string `yaml:"admin_logins"`
+	} `yaml:"auth"`
+
+	S3 struct {
+		Endpoint        string `yaml:"endpoint"`
+		PublicEndpoint  string `yaml:"public_endpoint"`
+		BucketPDF       string `yaml:"bucket_pdf"`
+		BucketMD        string `yaml:"bucket_md"`
+		BucketImages    string `yaml:"bucket_images"`
+		BucketOpenAlex  string `yaml:"bucket_openalex"`
+		AccessKeyID     string `yaml:"access_key_id"`
+		SecretAccessKey string `yaml:"secret_access_key"`
+	} `yaml:"s3"`
+
+	PaperAccess struct {
+		Enabled              bool     `yaml:"enabled"`
+		OpenAlexMailto       string   `yaml:"openalex_mailto"`
+		ArxivFetchConcurrent *int     `yaml:"arxiv_fetch_concurrent"`
+		ArxivFetchRPS        *float64 `yaml:"arxiv_fetch_rps"`
+		MinerU               struct {
+			APITokens         []string `yaml:"api_tokens"`
+			APIBaseURL        string   `yaml:"api_base_url"`
+			ModelVersion      string   `yaml:"model_version"`
+			Language          string   `yaml:"language"`
+			IsOCR             *bool    `yaml:"is_ocr"`
+			EnableFormula     *bool    `yaml:"enable_formula"`
+			EnableTable       *bool    `yaml:"enable_table"`
+			PollInterval      string   `yaml:"poll_interval"`
+			Timeout           string   `yaml:"timeout"`
+			MaxConcurrentJobs *int     `yaml:"max_concurrent_jobs"`
+		} `yaml:"mineru"`
+	} `yaml:"paper_access"`
+
+	RAG struct {
+		QdrantURL        string `yaml:"qdrant_url"`
+		QdrantAPIKey     string `yaml:"qdrant_api_key"`
+		QdrantCollection string `yaml:"qdrant_collection"`
+		EmbedURL         string `yaml:"embed_url"`
+		EmbedToken       string `yaml:"embed_token"`
+	} `yaml:"rag"`
+
+	Plugins struct {
+		Dir               string   `yaml:"dir"`
+		Enabled           []string `yaml:"enabled"`
+		Disabled          []string `yaml:"disabled"`
+		ConnectSecret     string   `yaml:"connect_secret"`
+		RPCWSBind         string   `yaml:"rpc_ws_bind"`
+		EventRetention    string   `yaml:"event_retention"`
+		RPCTimeout        string   `yaml:"rpc_timeout"`
+		ReconnectInterval string   `yaml:"reconnect_interval"`
+		DeadLetterDir     string   `yaml:"deadletter_dir"`
+	} `yaml:"plugins"`
+
+	SystemPAT struct {
+		Token  string   `yaml:"token"`
+		Scopes []string `yaml:"scopes"`
+	} `yaml:"system_pat"`
+}
+
+// ---------------------------------------------------------------------------
+// Path resolution + environment rejection
+// ---------------------------------------------------------------------------
+
+// DefaultPath returns the canonical config file location,
+// ~/.qatlas/config.yaml. Returns "" when the user home cannot be
+// determined (caller should surface that as an error).
+func DefaultPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".qatlas", "config.yaml")
+}
+
+// legacyEnvNames are unprefixed env vars from the .env era that
+// operators are likely to still have exported. They are rejected with
+// the same "move to config.yaml" error as QATLAS_* vars.
+var legacyEnvNames = []string{
+	"GITHUB_CLIENT_ID",
+	"GITHUB_CLIENT_SECRET",
+	"RAW_DIR",
+	"DATA_DIR",
+	"PB_DATA_DIR",
+	"SERVER_HOST",
+	"SERVER_PORT",
+	"USER_HEADER",
+	"PUBLIC_BASE_URL",
+}
+
+// legacyEnvPrefixes are whole prefix families that are always rejected.
+var legacyEnvPrefixes = []string{
+	"MINERU_",
+	"NEO4J_",
+	"POSTGRES_",
+}
+
+// envAllowlistPrefixes are QATLAS_* prefixes that do NOT configure the
+// server and are therefore tolerated: test-only DSN / S3 fixtures used
+// by the integration test suites.
+var envAllowlistPrefixes = []string{
+	"QATLAS_TEST_",
+	"QATLAS_S3_TEST_",
+}
+
+// envAllowlistNames are exact QATLAS_* names that configure tooling
+// AROUND qatlasd (the install script, docker-compose interpolation)
+// rather than the server itself. Operators may legitimately have these
+// exported; they must not trip the rejection.
+var envAllowlistNames = []string{
+	"QATLAS_VERSION",     // install script + compose image tag
+	"QATLAS_INSTALL_DIR", // install script target dir
+	"QATLAS_REPO",        // install script github owner/repo
+}
+
+// rejectEnvConfig fails when any configuration-shaped environment
+// variable is set. Environment-variable configuration was removed in
+// favour of the YAML file; silently ignoring stray QATLAS_* vars would
+// let operators believe a setting took effect when it didn't.
+func rejectEnvConfig() error {
+	var offenders []string
+	for _, raw := range os.Environ() {
+		eq := strings.IndexByte(raw, '=')
+		if eq <= 0 || raw[eq+1:] == "" {
+			continue // unset or empty — harmless
+		}
+		name := raw[:eq]
+		if isRejectedEnvName(name) {
+			offenders = append(offenders, name)
+		}
+	}
+	if len(offenders) == 0 {
+		return nil
+	}
+	sort.Strings(offenders)
+	return fmt.Errorf(
+		"environment-variable configuration is no longer supported — qatlasd reads %s only.\n"+
+			"Offending variables currently set: %s\n"+
+			"Move these into the YAML config file (run `qatlasd config init` to create one, "+
+			"see config.example.yaml for the full key reference), then unset them",
+		defaultPathForMessage(), strings.Join(offenders, ", "),
+	)
+}
+
+func defaultPathForMessage() string {
+	if p := DefaultPath(); p != "" {
+		return p
+	}
+	return "~/.qatlas/config.yaml"
+}
+
+func isRejectedEnvName(name string) bool {
+	for _, allow := range envAllowlistPrefixes {
+		if strings.HasPrefix(name, allow) {
+			return false
+		}
+	}
+	for _, allow := range envAllowlistNames {
+		if name == allow {
+			return false
+		}
+	}
+	if strings.HasPrefix(name, "QATLAS_") {
+		return true
+	}
+	for _, legacy := range legacyEnvNames {
+		if name == legacy {
+			return true
+		}
+	}
+	for _, prefix := range legacyEnvPrefixes {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// ---------------------------------------------------------------------------
+// Load
+// ---------------------------------------------------------------------------
+
+// Load reads the YAML config file at path and resolves the runtime
+// configuration. An empty path falls back to DefaultPath()
+// (~/.qatlas/config.yaml).
+//
+// Failure modes (all hard errors):
+//   - any QATLAS_* / legacy configuration env var is set in the process
+//     environment (env-based configuration was removed; see
+//     rejectEnvConfig);
+//   - the file does not exist (the error hints at `qatlasd config init`);
+//   - the YAML is malformed or contains unknown keys (strict decode —
+//     a typo'd key must not silently fall back to the default);
+//   - a duration / numeric field fails to parse, but only for sections
+//     that are actually active (MinerU fields are only parsed when
+//     paper_access.enabled is true, matching the historic contract).
+//
+// Defaults (applied when a key is absent) match the historic env-based
+// defaults: XDG data dirs, 127.0.0.1:4200 bind, max_conns 10,
+// corpus_ensure_indexes true, providers [catalog arxiv openalex],
+// RAG collection qatlas_papers_v1, arxiv fetch 2 concurrent / 0.33 rps,
+// plugin rpc bind 127.0.0.1:8799, event retention 7d, rpc timeout 30s,
+// reconnect 5s.
+func Load(path string) (*Config, error) {
+	if err := rejectEnvConfig(); err != nil {
 		return nil, err
 	}
-	cfg.PluginRPCTimeout, err = parseMillisEnv("QATLAS_PLUGIN_RPC_TIMEOUT_MS", 30000)
-	if err != nil {
-		return nil, err
+
+	if path == "" {
+		path = DefaultPath()
+		if path == "" {
+			return nil, errors.New("cannot determine user home directory; pass --config /path/to/config.yaml")
+		}
 	}
-	cfg.PluginReconnectInterval, err = parseMillisEnv("QATLAS_PLUGIN_RECONNECT_MS", 5000)
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf(
+				"config file not found: %s\n\nCreate one with `qatlasd config init`, "+
+					"or point at an existing file with --config /path/to/config.yaml", path)
+		}
+		return nil, fmt.Errorf("read config file %s: %w", path, err)
 	}
 
-	// MinerU* fields are only populated when the master switch is on.
-	// When the switch is off we intentionally swallow even malformed
-	// MinerU env values so a stale .env can't make a non-MinerU
-	// deployment fail to start.
-	if cfg.PaperAccessEnabled {
-		if err := loadMinerUConfig(cfg); err != nil {
-			return nil, err
+	var fc fileConfig
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&fc); err != nil {
+		// io.EOF = empty document (e.g. the all-comments template that
+		// `qatlasd config init` writes) — treat as an empty config,
+		// every default applies.
+		if !errors.Is(err, io.EOF) {
+			return nil, fmt.Errorf("parse config file %s: %w", path, err)
 		}
 	}
 
-	// HTTP bind: assemble from QATLAS_SERVER_HOST + _PORT if QATLAS_HTTP_ADDR
-	// is unset. This matches the FastAPI default (127.0.0.1:4200).
-	if cfg.HTTPAddr == "" {
-		host := firstEnvDefault("127.0.0.1", "QATLAS_SERVER_HOST", "SERVER_HOST")
-		port := firstEnvDefault("4200", "QATLAS_SERVER_PORT", "SERVER_PORT")
-		cfg.HTTPAddr = fmt.Sprintf("%s:%s", host, port)
+	anchor := filepath.Dir(path)
+	cfg, err := fc.toConfig(anchor)
+	if err != nil {
+		return nil, fmt.Errorf("config file %s: %w", path, err)
 	}
 
-	// QATLAS_ADMIN_GITHUB_LOGINS is a comma-separated list.
-	if raw := firstEnv("QATLAS_ADMIN_GITHUB_LOGINS"); raw != "" {
-		for _, login := range strings.Split(raw, ",") {
-			login = strings.TrimSpace(login)
-			if login != "" {
-				cfg.AdminGitHubLogins = append(cfg.AdminGitHubLogins, login)
-			}
-		}
-	}
-
-	// QATLAS_ALLOWED_GITHUB_LOGINS is a comma-separated GitHub login
-	// allowlist gating OAuth sign-in. See Config.IsGitHubLoginAllowed.
-	if raw := firstEnv("QATLAS_ALLOWED_GITHUB_LOGINS"); raw != "" {
-		for _, login := range strings.Split(raw, ",") {
-			login = strings.TrimSpace(login)
-			if login != "" {
-				cfg.AllowedGitHubLogins = append(cfg.AllowedGitHubLogins, login)
-			}
-		}
-	}
-
-	// Normalize filesystem paths: resolve ~ and relative-to-anchor.
-	// Apply XDG / sibling-checkout defaults when an env var is unset so
-	// stateful directories never accidentally land inside the git
-	// checkout (no more `wiki/`, `raw/`, `data/`, `pb_data/` showing up
-	// in `git status` after a clean clone).
-	cfg.WikiDir = expandPath(defaultIfEmpty(cfg.WikiDir, defaultWikiDir()), anchor)
-	cfg.TheoremsDir = expandPath(defaultIfEmpty(cfg.TheoremsDir, defaultTheoremsDir()), anchor)
-	cfg.RawDir = expandPath(defaultIfEmpty(cfg.RawDir, defaultXDGSubdir("raw")), anchor)
-	cfg.DataDir = expandPath(defaultIfEmpty(cfg.DataDir, defaultXDGSubdir("data")), anchor)
-	cfg.PBDataDir = expandPath(defaultIfEmpty(cfg.PBDataDir, defaultXDGSubdir("pb_data")), anchor)
-	cfg.PluginsDir = expandPath(defaultIfEmpty(cfg.PluginsDir, defaultXDGConfigSubdir("plugins")), anchor)
-	cfg.DeadLetterDir = expandPath(defaultIfEmpty(firstEnv("QATLAS_DEADLETTER_DIR"), defaultXDGStateSubdir("dead")), anchor)
-
-	// Legacy single-bucket var QATLAS_S3_BUCKET (gone since v0.7.0) is
-	// always a hard fail regardless of subcommand: a stale .env that
-	// still sets it would silently mis-route every object into one
-	// bucket, which is unrecoverable post-hoc — we fail fast even on
-	// `qatlasd --help` so the operator sees the migration error.
-	if err := rejectLegacyS3Bucket(); err != nil {
-		return nil, err
-	}
-
-	// Half-set S3 quartet + per-kind buckets: NOT a hard fail at Load
-	// time. Non-serve subcommands (`qatlasd --help`, `qatlasd pat list`,
-	// `qatlasd users list`, etc.) should tolerate a partially-configured
-	// .env so the operator can actually run `--help` to find out what
-	// went wrong. The strict check is enforced by ValidateForServe(),
-	// which `serve` calls after merging CLI flag overrides; we still
-	// emit a WARN here so the misconfig is visible in every log even
-	// for the soft path.
+	// Half-set S3: NOT a hard fail at Load time. Non-serve subcommands
+	// (`qatlasd --help`, `qatlasd pat list`, etc.) should tolerate a
+	// partially-configured file; the strict check is enforced by
+	// ValidateForServe(), which `serve` calls. We still emit a WARN
+	// here so the misconfig is visible in every log.
 	if err := validatePartialS3Config(cfg); err != nil {
 		slog.Warn(
 			"object storage config is incomplete; `qatlasd serve` and S3-backed subcommands will refuse to run until this is fixed",
@@ -440,57 +569,144 @@ func Load(dotenvPath string) (*Config, error) {
 		)
 	}
 
-	// Emit deprecation warnings for the legacy unprefixed env vars
-	// (WIKI_DIR / RAW_DIR / SERVER_HOST / ...). Functionally they still
-	// resolve via firstEnv() above so existing .env files keep working;
-	// the warning gives operators one minor cycle to migrate before the
-	// alias is removed in v0.19.0.
-	warnDeprecatedAliases()
+	return cfg, nil
+}
+
+// toConfig maps the decoded YAML onto a Config, applying defaults and
+// resolving filesystem paths against anchor (the config file's
+// directory).
+func (fc *fileConfig) toConfig(anchor string) (*Config, error) {
+	cfg := &Config{
+		HTTPAddr:       fc.HTTPAddr,
+		PublicURL:      fc.PublicURL,
+		UserHeader:     fc.UserHeader,
+		EdgeName:       fc.EdgeName,
+		ForceTCP4:      fc.ForceTCP4,
+		SkipPBDataLock: fc.SkipPBDataLock,
+
+		PostgresDSN:          fc.Postgres.DSN,
+		PostgresMaxConns:     intOrDefault(fc.Postgres.MaxConns, 10),
+		CorpusEnsureIndexes:  boolOrDefault(fc.Postgres.CorpusEnsureIndexes, true),
+		SearchProviders:      fc.Search.Providers,
+		GitHubClientID:       fc.Auth.GitHubClientID,
+		GitHubClientSecret:   fc.Auth.GitHubClientSecret,
+		AllowedGitHubLogins:  fc.Auth.AllowedLogins,
+		AdminGitHubLogins:    fc.Auth.AdminLogins,
+		S3Endpoint:           fc.S3.Endpoint,
+		S3PublicEndpoint:     fc.S3.PublicEndpoint,
+		S3BucketPDF:          fc.S3.BucketPDF,
+		S3BucketMD:           fc.S3.BucketMD,
+		S3BucketImages:       fc.S3.BucketImages,
+		S3BucketOpenAlex:     fc.S3.BucketOpenAlex,
+		S3AccessKeyID:        fc.S3.AccessKeyID,
+		S3SecretAccessKey:    fc.S3.SecretAccessKey,
+		PaperAccessEnabled:   fc.PaperAccess.Enabled,
+		OpenAlexMailto:       fc.PaperAccess.OpenAlexMailto,
+		ArxivFetchConcurrent: intOrDefault(fc.PaperAccess.ArxivFetchConcurrent, 2),
+		ArxivFetchRPS:        floatOrDefault(fc.PaperAccess.ArxivFetchRPS, 0.33),
+		RAGQdrantURL:         fc.RAG.QdrantURL,
+		RAGQdrantAPIKey:      fc.RAG.QdrantAPIKey,
+		RAGQdrantCollection:  defaultIfEmpty(fc.RAG.QdrantCollection, "qatlas_papers_v1"),
+		RAGEmbedURL:          fc.RAG.EmbedURL,
+		RAGEmbedToken:        fc.RAG.EmbedToken,
+		PluginsEnabled:       fc.Plugins.Enabled,
+		PluginsDisabled:      fc.Plugins.Disabled,
+		PluginConnectSecret:  fc.Plugins.ConnectSecret,
+		RPCWSBind:            defaultIfEmpty(fc.Plugins.RPCWSBind, "127.0.0.1:8799"),
+		SystemPATToken:       fc.SystemPAT.Token,
+		SystemPATScopes:      fc.SystemPAT.Scopes,
+	}
+	if len(cfg.SearchProviders) == 0 {
+		cfg.SearchProviders = []string{"catalog", "arxiv", "openalex"}
+	}
+	if cfg.HTTPAddr == "" {
+		cfg.HTTPAddr = "127.0.0.1:4200"
+	}
+
+	cfg.RemoteEnabled = fc.Search.Remote.Enabled
+	cfg.RemoteURL = fc.Search.Remote.URL
+	cfg.RemoteToken = fc.Search.Remote.Token
+	cfg.AgenticDailyLimit = intOrDefault(fc.Search.Agentic.DailyLimit, 10000)
+	cfg.AgenticPricePerMtok = floatOrDefault(fc.Search.Agentic.PricePerMtok, 0.0)
+
+	var err error
+	if cfg.RemoteTimeout, err = parseDuration(fc.Search.Remote.Timeout, 60*time.Second, "search.remote.timeout"); err != nil {
+		return nil, err
+	}
+	if cfg.EventRetention, err = parseDuration(fc.Plugins.EventRetention, 7*24*time.Hour, "plugins.event_retention"); err != nil {
+		return nil, err
+	}
+	if cfg.PluginRPCTimeout, err = parseDuration(fc.Plugins.RPCTimeout, 30*time.Second, "plugins.rpc_timeout"); err != nil {
+		return nil, err
+	}
+	if cfg.PluginReconnectInterval, err = parseDuration(fc.Plugins.ReconnectInterval, 5*time.Second, "plugins.reconnect_interval"); err != nil {
+		return nil, err
+	}
+
+	// MinerU* fields are only populated when the master switch is on.
+	// When the switch is off we intentionally skip even malformed
+	// MinerU values so a stale section can't make a non-MinerU
+	// deployment fail to start.
+	if cfg.PaperAccessEnabled {
+		if err := fc.loadMinerUConfig(cfg); err != nil {
+			return nil, err
+		}
+	}
+
+	// Normalize filesystem paths: resolve ~ and relative-to-anchor.
+	// Apply XDG defaults when a key is absent so stateful directories
+	// never accidentally land inside the git checkout.
+	cfg.RawDir = expandPath(defaultIfEmpty(fc.Paths.RawDir, defaultXDGSubdir("raw")), anchor)
+	cfg.DataDir = expandPath(defaultIfEmpty(fc.Paths.DataDir, defaultXDGSubdir("data")), anchor)
+	cfg.PBDataDir = expandPath(defaultIfEmpty(fc.Paths.PBDataDir, defaultXDGSubdir("pb_data")), anchor)
+	cfg.PluginsDir = expandPath(defaultIfEmpty(fc.Plugins.Dir, defaultXDGConfigSubdir("plugins")), anchor)
+	cfg.DeadLetterDir = expandPath(defaultIfEmpty(fc.Plugins.DeadLetterDir, defaultXDGStateSubdir("dead")), anchor)
 
 	return cfg, nil
 }
 
-// deprecatedAliases is the canonical map of legacy unprefixed env vars
-// to their QATLAS_-prefixed replacements. Kept exported via a function
-// for tests to assert against, not as a package-level var, so callers
-// can't accidentally mutate the table.
+// loadMinerUConfig populates the MinerU* fields when the paper-access
+// master switch is on. Strict-parse: malformed durations cause Load()
+// to fail rather than silently fall back to defaults — when the switch
+// is off this function is never called.
 //
-// NEO4J_USER deliberately stays out: both NEO4J_USERNAME and NEO4J_USER
-// are equally idiomatic across the Neo4j ecosystem (Python driver,
-// Go driver, neo4j-admin all accept either), so we treat them as peers
-// rather than deprecating one.
-//
-// SERVER_DEBUG is also absent because the codebase never read it — it
-// was a phantom alias referenced only in old .env.example comments.
-func deprecatedAliases() map[string]string {
-	return map[string]string{
-		"WIKI_DIR":    "QATLAS_WIKI_DIR",
-		"RAW_DIR":     "QATLAS_RAW_DIR",
-		"DATA_DIR":    "QATLAS_DATA_DIR",
-		"PB_DATA_DIR": "QATLAS_PB_DATA_DIR",
-		"SERVER_HOST": "QATLAS_SERVER_HOST",
-		"SERVER_PORT": "QATLAS_SERVER_PORT",
-		"USER_HEADER": "QATLAS_USER_HEADER",
+// Defaults match issue #8: vlm model, ch language, table+formula on,
+// OCR off, 3s poll, 1800s timeout, concurrency=4. An empty api_tokens
+// list is allowed — that enables "cache-only" mode where /markdown
+// returns 503 on cache miss.
+func (fc *fileConfig) loadMinerUConfig(cfg *Config) error {
+	m := fc.PaperAccess.MinerU
+	cfg.MinerUAPITokens = m.APITokens
+	cfg.MinerUAPIBaseURL = defaultIfEmpty(m.APIBaseURL, "https://mineru.net")
+	cfg.MinerUModelVersion = defaultIfEmpty(m.ModelVersion, "vlm")
+	cfg.MinerULanguage = defaultIfEmpty(m.Language, "ch")
+	cfg.MinerUIsOCR = boolOrDefault(m.IsOCR, false)
+	cfg.MinerUEnableFormula = boolOrDefault(m.EnableFormula, true)
+	cfg.MinerUEnableTable = boolOrDefault(m.EnableTable, true)
+
+	var err error
+	if cfg.MinerUPollInterval, err = parseDuration(m.PollInterval, 3*time.Second, "paper_access.mineru.poll_interval"); err != nil {
+		return err
 	}
+	if cfg.MinerUTimeout, err = parseDuration(m.Timeout, 1800*time.Second, "paper_access.mineru.timeout"); err != nil {
+		return err
+	}
+
+	maxConc := intOrDefault(m.MaxConcurrentJobs, 4)
+	if maxConc < 1 {
+		return fmt.Errorf("paper_access.mineru.max_concurrent_jobs must be ≥ 1, got %d", maxConc)
+	}
+	cfg.MinerUMaxConcurrentJobs = maxConc
+
+	if _, err := url.Parse(cfg.MinerUAPIBaseURL); err != nil {
+		return fmt.Errorf("paper_access.mineru.api_base_url is not a valid URL: %w", err)
+	}
+	return nil
 }
 
-// warnDeprecatedAliases emits one slog.Warn per legacy unprefixed env
-// var found in the process environment. Deterministic order (sorted by
-// old name) so journald / log diffs are stable.
-func warnDeprecatedAliases() {
-	aliases := deprecatedAliases()
-	oldNames := make([]string, 0, len(aliases))
-	for old := range aliases {
-		oldNames = append(oldNames, old)
-	}
-	sort.Strings(oldNames)
-	for _, old := range oldNames {
-		if v := strings.TrimSpace(os.Getenv(old)); v != "" {
-			slog.Warn("env var without QATLAS_ prefix is deprecated, will be removed in v0.19.0",
-				"deprecated", old, "use_instead", aliases[old])
-		}
-	}
-}
+// ---------------------------------------------------------------------------
+// Validation
+// ---------------------------------------------------------------------------
 
 // S3Enabled reports whether the object-storage backend is configured.
 // When false, callers should fall back to local-filesystem I/O under
@@ -501,57 +717,32 @@ func (c *Config) S3Enabled() bool {
 		c.S3BucketImages != "" && c.S3AccessKeyID != "" && c.S3SecretAccessKey != ""
 }
 
-// ValidateForServe enforces the serve-time S3 invariants:
+// ValidateForServe enforces the serve-time S3 invariant:
+// validatePartialS3Config — the all-or-nothing rule for the connection
+// quartet plus the three per-kind buckets.
 //
-//   - rejectLegacyS3Bucket (defense-in-depth; Load already runs this so
-//     reaching here with QATLAS_S3_BUCKET still set is unexpected, but
-//     we re-check to keep the method self-contained for tests).
-//   - validatePartialS3Config — the all-or-nothing rule for the
-//     connection quartet plus the three per-kind buckets.
-//
-// `qatlasd serve` MUST call this after `applyServeFlags` has merged any
-// CLI flag overrides into cfg, otherwise a half-configured client would
-// silently fall back to the local RawDir and quietly corrupt the
-// writer/reader symmetry across restarts. Non-serve subcommands
-// (`qatlasd --help`, `qatlasd pat list`, etc.) deliberately skip this
-// strict check so operators can still inspect help / SQLite state on a
-// half-configured host.
+// `qatlasd serve` MUST call this before wiring the object store,
+// otherwise a half-configured server would silently fall back to the
+// local RawDir and quietly corrupt the writer/reader symmetry across
+// restarts. Non-serve subcommands (`qatlasd --help`, `qatlasd pat
+// list`, etc.) deliberately skip this strict check.
 func (c *Config) ValidateForServe() error {
-	if err := rejectLegacyS3Bucket(); err != nil {
-		return err
-	}
 	return validatePartialS3Config(c)
 }
 
-// rejectLegacyS3Bucket returns an error if the v0.6.0 single-bucket var
-// QATLAS_S3_BUCKET is set (it was split into per-kind buckets in
-// v0.7.0). Always-fatal regardless of subcommand because a stale .env
-// would silently mis-route every object into one bucket, which is
-// unrecoverable post-hoc — operators must remove the var before any
-// subcommand runs, not just `serve`.
-func rejectLegacyS3Bucket() error {
-	if v := strings.TrimSpace(os.Getenv("QATLAS_S3_BUCKET")); v != "" {
-		return fmt.Errorf(
-			"QATLAS_S3_BUCKET is no longer supported in v0.7.0 — the single " +
-				"qatlas-raw bucket was split into per-kind buckets; set " +
-				"QATLAS_S3_BUCKET_PDF / _MD / _IMAGES instead and remove QATLAS_S3_BUCKET")
-	}
-	return nil
-}
-
 // validatePartialS3Config returns an error iff the S3 connection
-// quartet + 3 per-kind buckets are HALF-set (not none, not all). The
+// fields + 3 per-kind buckets are HALF-set (not none, not all). The
 // check is symmetric: no single field alone is valid; mixing some-set
 // some-unset is rejected. Returns nil for "all empty" (local-only mode)
 // and "all set" (S3 enabled).
 func validatePartialS3Config(cfg *Config) error {
 	fields := map[string]string{
-		"QATLAS_S3_ENDPOINT":          cfg.S3Endpoint,
-		"QATLAS_S3_BUCKET_PDF":        cfg.S3BucketPDF,
-		"QATLAS_S3_BUCKET_MD":         cfg.S3BucketMD,
-		"QATLAS_S3_BUCKET_IMAGES":     cfg.S3BucketImages,
-		"QATLAS_S3_ACCESS_KEY_ID":     cfg.S3AccessKeyID,
-		"QATLAS_S3_SECRET_ACCESS_KEY": cfg.S3SecretAccessKey,
+		"s3.endpoint":          cfg.S3Endpoint,
+		"s3.bucket_pdf":        cfg.S3BucketPDF,
+		"s3.bucket_md":         cfg.S3BucketMD,
+		"s3.bucket_images":     cfg.S3BucketImages,
+		"s3.access_key_id":     cfg.S3AccessKeyID,
+		"s3.secret_access_key": cfg.S3SecretAccessKey,
 	}
 	var set, unset []string
 	for name, v := range fields {
@@ -564,178 +755,55 @@ func validatePartialS3Config(cfg *Config) error {
 	if len(set) == 0 || len(unset) == 0 {
 		return nil
 	}
-	// Stable order for the error message so the test is deterministic
-	// and the operator can grep their .env without surprises.
+	// Stable order for the error message so tests are deterministic
+	// and the operator can grep their config.yaml without surprises.
 	sort.Strings(set)
 	sort.Strings(unset)
 	return fmt.Errorf(
 		"object storage half-configured: %v are set but %v are missing — "+
-			"set all S3 connection fields + the three QATLAS_S3_BUCKET_{PDF,MD,IMAGES} "+
-			"to enable RustFS/S3, or unset all to use local RawDir",
+			"set all s3 connection fields + the three s3.bucket_{pdf,md,images} "+
+			"keys to enable RustFS/S3, or remove them all to use local RawDir",
 		set, unset,
 	)
 }
 
-// firstEnv returns the first non-empty environment variable from the given
-// names. Returns "" if none are set.
-func firstEnv(names ...string) string {
-	for _, name := range names {
-		if v := strings.TrimSpace(os.Getenv(name)); v != "" {
-			return v
-		}
-	}
-	return ""
-}
+// ---------------------------------------------------------------------------
+// Scalar helpers
+// ---------------------------------------------------------------------------
 
-// firstEnvDefault is firstEnv with a fallback default value.
-func firstEnvDefault(def string, names ...string) string {
-	if v := firstEnv(names...); v != "" {
-		return v
-	}
-	return def
-}
-
-// firstEnvIntDefault parses the first non-empty env value as an int, falling
-// back to def when unset or unparseable.
-func firstEnvIntDefault(def int, names ...string) int {
-	raw := firstEnv(names...)
-	if raw == "" {
-		return def
-	}
-	v, err := strconv.Atoi(raw)
-	if err != nil {
+func defaultIfEmpty(v, def string) string {
+	if v == "" {
 		return def
 	}
 	return v
 }
 
-// firstEnvFloatDefault parses the first non-empty env value as a float64,
-// falling back to def when unset or unparseable. Used for rate-limit knobs
-// like QATLAS_ARXIV_FETCH_RPS where fractional values are meaningful (0.33
-// req/s ≈ once every 3 seconds, matching arxiv's published guidance).
-func firstEnvFloatDefault(def float64, names ...string) float64 {
-	raw := firstEnv(names...)
-	if raw == "" {
+func intOrDefault(p *int, def int) int {
+	if p == nil {
 		return def
 	}
-	v, err := strconv.ParseFloat(raw, 64)
-	if err != nil {
+	return *p
+}
+
+func floatOrDefault(p *float64, def float64) float64 {
+	if p == nil {
 		return def
 	}
-	return v
+	return *p
 }
 
-// parseBoolEnv reads a single env var and parses it as a bool with
-// strconv.ParseBool semantics (accepting 1/t/T/TRUE/true/True and
-// 0/f/F/FALSE/false/False). Unset / empty / unparseable → def. Used
-// for opt-in switches like QATLAS_FORCE_TCP4 and
-// QATLAS_PAPER_ACCESS_ENABLED.
-func parseBoolEnv(name string, def bool) bool {
-	raw := strings.TrimSpace(os.Getenv(name))
-	if raw == "" {
+func boolOrDefault(p *bool, def bool) bool {
+	if p == nil {
 		return def
 	}
-	v, err := strconv.ParseBool(raw)
-	if err != nil {
-		return def
-	}
-	return v
+	return *p
 }
 
-// loadMinerUConfig populates the MinerU* fields when the paper-access
-// master switch is on. Strict-parse: malformed numeric values cause
-// Load() to fail rather than silently fall back to defaults — when the
-// switch is off this function is never called (per the contract in
-// Config.PaperAccessEnabled), so a stale .env can never trip it.
-//
-// Defaults match issue #8: vlm model, ch language, table+formula on,
-// OCR off, 3s poll, 1800s timeout, concurrency=4. MINERU_API_TOKENS
-// itself is allowed to be empty — that enables "cache-only" mode where
-// /markdown returns 503 on cache miss.
-//
-// Compat with v0.17.x: the singular MINERU_API_TOKEN (no S) is promoted
-// to the plural-list form with a loud slog.Warn so operators who didn't
-// rename on the v0.18.0 multi-key rollout don't end up in cache-only
-// mode without noticing.
-func loadMinerUConfig(cfg *Config) error {
-	tokensEnv := firstEnv("MINERU_API_TOKENS")
-	if tokensEnv == "" {
-		if singular := strings.TrimSpace(os.Getenv("MINERU_API_TOKEN")); singular != "" {
-			slog.Warn("MINERU_API_TOKEN (singular) is deprecated as of v0.18.0, will be removed in v0.19.0; rename to MINERU_API_TOKENS (plural; CSV list)",
-				"deprecated", "MINERU_API_TOKEN", "use_instead", "MINERU_API_TOKENS")
-			tokensEnv = singular
-		}
-	}
-	cfg.MinerUAPITokens = parseTokenList(tokensEnv)
-	cfg.MinerUAPIBaseURL = firstEnvDefault("https://mineru.net", "MINERU_API_BASE_URL")
-	cfg.MinerUModelVersion = firstEnvDefault("vlm", "MINERU_MODEL_VERSION")
-	cfg.MinerULanguage = firstEnvDefault("ch", "MINERU_LANGUAGE")
-	cfg.MinerUIsOCR = parseBoolEnv("MINERU_IS_OCR", false)
-	cfg.MinerUEnableFormula = parseBoolEnv("MINERU_ENABLE_FORMULA", true)
-	cfg.MinerUEnableTable = parseBoolEnv("MINERU_ENABLE_TABLE", true)
-
-	pollSeconds, err := parseFloatEnvSeconds("MINERU_POLL_INTERVAL", 3.0)
-	if err != nil {
-		return err
-	}
-	cfg.MinerUPollInterval = pollSeconds
-
-	timeoutSeconds, err := parseFloatEnvSeconds("MINERU_TIMEOUT", 1800.0)
-	if err != nil {
-		return err
-	}
-	cfg.MinerUTimeout = timeoutSeconds
-
-	maxConc := firstEnvIntDefault(4, "MINERU_MAX_CONCURRENT_JOBS")
-	if maxConc < 1 {
-		return fmt.Errorf("MINERU_MAX_CONCURRENT_JOBS must be ≥ 1, got %d", maxConc)
-	}
-	cfg.MinerUMaxConcurrentJobs = maxConc
-
-	if _, err := url.Parse(cfg.MinerUAPIBaseURL); err != nil {
-		return fmt.Errorf("MINERU_API_BASE_URL is not a valid URL: %w", err)
-	}
-	return nil
-}
-
-// parseFloatEnvSeconds reads an env var as a float "seconds" value and
-// returns it as a time.Duration. Unset / empty falls back to def.
-// Malformed values are a hard error so misconfigurations are loud.
-func parseFloatEnvSeconds(name string, def float64) (time.Duration, error) {
-	raw := strings.TrimSpace(os.Getenv(name))
-	if raw == "" {
-		return time.Duration(def * float64(time.Second)), nil
-	}
-	v, err := strconv.ParseFloat(raw, 64)
-	if err != nil {
-		return 0, fmt.Errorf("%s must be a float (seconds), got %q: %w", name, raw, err)
-	}
-	if v <= 0 {
-		return 0, fmt.Errorf("%s must be > 0 seconds, got %v", name, v)
-	}
-	return time.Duration(v * float64(time.Second)), nil
-}
-
-// parseMillisEnv reads an env var as an integer millisecond duration.
-func parseMillisEnv(name string, def int) (time.Duration, error) {
-	raw := strings.TrimSpace(os.Getenv(name))
-	if raw == "" {
-		return time.Duration(def) * time.Millisecond, nil
-	}
-	v, err := strconv.Atoi(raw)
-	if err != nil {
-		return 0, fmt.Errorf("%s must be an integer millisecond value, got %q: %w", name, raw, err)
-	}
-	if v <= 0 {
-		return 0, fmt.Errorf("%s must be > 0 milliseconds, got %d", name, v)
-	}
-	return time.Duration(v) * time.Millisecond, nil
-}
-
-// parseDurationEnv reads a Go duration string, plus a small "Nd" days
-// extension because QATLAS_EVENT_RETENTION defaults are documented in days.
-func parseDurationEnv(name string, def time.Duration) (time.Duration, error) {
-	raw := strings.TrimSpace(os.Getenv(name))
+// parseDuration parses a Go duration string, plus a small "Nd" days
+// extension because event retention defaults are documented in days.
+// Empty input falls back to def.
+func parseDuration(raw string, def time.Duration, key string) (time.Duration, error) {
+	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return def, nil
 	}
@@ -743,46 +811,28 @@ func parseDurationEnv(name string, def time.Duration) (time.Duration, error) {
 		daysRaw := strings.TrimSuffix(raw, "d")
 		days, err := strconv.ParseFloat(daysRaw, 64)
 		if err != nil || days <= 0 {
-			return 0, fmt.Errorf("%s must be a positive duration, got %q", name, raw)
+			return 0, fmt.Errorf("%s must be a positive duration, got %q", key, raw)
 		}
 		return time.Duration(days * 24 * float64(time.Hour)), nil
 	}
 	v, err := time.ParseDuration(raw)
 	if err != nil {
-		return 0, fmt.Errorf("%s must be a duration like 168h or 7d, got %q: %w", name, raw, err)
+		return 0, fmt.Errorf("%s must be a duration like 168h or 7d, got %q: %w", key, raw, err)
 	}
 	if v <= 0 {
-		return 0, fmt.Errorf("%s must be > 0, got %s", name, raw)
+		return 0, fmt.Errorf("%s must be > 0, got %s", key, raw)
 	}
 	return v, nil
 }
 
-// parseTokenList splits a CSV-style env value into trimmed, non-empty
-// tokens. Used for MINERU_API_TOKENS where the operator supplies a
-// pool ("tok-a,tok-b,tok-c") and the converter rotates through them.
-// Returns nil for empty input so the caller can simply check len()==0.
-func parseTokenList(raw string) []string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil
-	}
-	parts := strings.Split(raw, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if t := strings.TrimSpace(p); t != "" {
-			out = append(out, t)
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
+// ---------------------------------------------------------------------------
+// Path helpers
+// ---------------------------------------------------------------------------
 
 // expandPath resolves ~ and converts relative paths to absolute.
 //
 // If anchor is non-empty, relative paths resolve against it (typically
-// the .env file's directory). Otherwise they fall back to the process
+// the config file's directory). Otherwise they fall back to the process
 // CWD. Empty input returns empty output.
 func expandPath(p, anchor string) string {
 	if p == "" {
@@ -801,34 +851,6 @@ func expandPath(p, anchor string) string {
 		}
 	}
 	return filepath.Clean(p)
-}
-
-// defaultIfEmpty returns def when v is empty, otherwise v. Trivial
-// helper but it makes the Load() default-application section read
-// linearly without nesting ternaries.
-func defaultIfEmpty(v, def string) string {
-	if v == "" {
-		return def
-	}
-	return v
-}
-
-// defaultWikiDir returns the conventional wiki location relative to the
-// .env anchor: a sibling "../QuantumAtlas-Wiki" checkout. The returned
-// path is intentionally relative so that expandPath resolves it against
-// the same anchor a user-supplied `WIKI_DIR=../QuantumAtlas-Wiki` would
-// use — guaranteeing the auto-default and the explicit override are
-// indistinguishable.
-func defaultWikiDir() string {
-	return filepath.Join("..", "QuantumAtlas-Wiki")
-}
-
-// defaultTheoremsDir returns the conventional Lean-content checkout relative to
-// the .env anchor: a sibling "../qatlas-lean" (the theorems plugin's transitional
-// pull target; eventually a content-only "../QuantumAtlas-Theorems"). Relative
-// for the same anchor-resolution reason as defaultWikiDir.
-func defaultTheoremsDir() string {
-	return filepath.Join("..", "qatlas-lean")
 }
 
 func defaultXDGConfigSubdir(name string) string {
@@ -853,17 +875,42 @@ func defaultXDGStateSubdir(name string) string {
 	return filepath.Join(base, "qatlasd", name)
 }
 
+// defaultXDGSubdir returns the XDG_DATA_HOME-rooted default location
+// for the named qatlasd subdirectory (raw / data / pb_data).
+//
+// Lookup order:
+//  1. $XDG_DATA_HOME, when set and absolute (per XDG spec — relative
+//     values are explicitly invalid).
+//  2. $HOME/.local/share, the spec's documented fallback.
+//  3. ./.qatlasd-<name>, a last-resort relative path when even
+//     $HOME is missing (e.g. minimal container).
+//
+// **App name = "qatlasd"** (matches the binary name).
+func defaultXDGSubdir(name string) string {
+	base := strings.TrimSpace(os.Getenv("XDG_DATA_HOME"))
+	if base == "" || !filepath.IsAbs(base) {
+		if home, err := os.UserHomeDir(); err == nil && home != "" {
+			base = filepath.Join(home, ".local", "share")
+		} else {
+			return filepath.Join(".qatlasd-" + name) // tiny last-resort
+		}
+	}
+	return filepath.Join(base, "qatlasd", name)
+}
+
+// ---------------------------------------------------------------------------
+// GitHub login allowlists
+// ---------------------------------------------------------------------------
+
 // IsGitHubLoginAllowed reports whether the given GitHub login (username)
 // is permitted to complete OAuth sign-in.
 //
 // Policy is fail-closed: a login is allowed iff it appears in either
 // AllowedGitHubLogins or AdminGitHubLogins. When BOTH lists are empty the
 // allowlist is unconfigured and this returns false for EVERYONE — a
-// deliberate locked-by-default posture so an operator who forgets to set
-// QATLAS_ALLOWED_GITHUB_LOGINS gets nobody-can-sign-in rather than the
-// whole internet. The PocketBase superuser (the _superusers collection,
-// email+password at /_/) is never gated by this and remains the recovery
-// path to fix a misconfigured allowlist.
+// deliberate locked-by-default posture. The PocketBase superuser (the
+// _superusers collection, email+password at /_/) is never gated by this
+// and remains the recovery path to fix a misconfigured allowlist.
 //
 // Comparison is case-insensitive because GitHub logins are.
 func (c *Config) IsGitHubLoginAllowed(login string) bool {
@@ -884,37 +931,21 @@ func (c *Config) IsGitHubLoginAllowed(login string) bool {
 	return false
 }
 
-// defaultXDGSubdir returns the XDG_DATA_HOME-rooted default location
-// for the named qatlasd subdirectory (raw / data / pb_data).
+// IsGitHubAdmin reports whether the given GitHub login belongs to the
+// admin allowlist (auth.admin_logins). Admins are a STRICT subset of
+// allowed sign-ins: AllowedGitHubLogins alone does not grant admin.
+// Fail-closed like IsGitHubLoginAllowed.
 //
-// Lookup order:
-//  1. $XDG_DATA_HOME, when set and absolute (per XDG spec — relative
-//     values are explicitly invalid).
-//  2. $HOME/.local/share, the spec's documented fallback.
-//  3. ./.qatlasd-<name>, a last-resort relative path when even
-//     $HOME is missing (e.g. minimal container). This still beats
-//     emitting an absolute root like "/qatlasd/raw" that would
-//     fail with EACCES on the first write.
-//
-// All returned values are absolute when paths #1 or #2 apply.
-//
-// **App name = "qatlasd"** (matches the binary name). Older versions
-// (< v0.17.0) used "quantum-atlas" as the XDG sub-namespace. Operators
-// upgrading from < v0.17.0 should rename their data directory:
-//
-//	mv ~/.local/share/quantum-atlas ~/.local/share/qatlasd
-//
-// or set the explicit env vars (QATLAS_RAW_DIR / _DATA_DIR /
-// _PB_DATA_DIR) to point at the old paths. See
-// docs/server/migration-storage-layout.md.
-func defaultXDGSubdir(name string) string {
-	base := strings.TrimSpace(os.Getenv("XDG_DATA_HOME"))
-	if base == "" || !filepath.IsAbs(base) {
-		if home, err := os.UserHomeDir(); err == nil && home != "" {
-			base = filepath.Join(home, ".local", "share")
-		} else {
-			return filepath.Join(".qatlasd-" + name) // tiny last-resort
+// Comparison is case-insensitive because GitHub logins are.
+func (c *Config) IsGitHubAdmin(login string) bool {
+	login = strings.ToLower(strings.TrimSpace(login))
+	if login == "" {
+		return false
+	}
+	for _, l := range c.AdminGitHubLogins {
+		if strings.ToLower(strings.TrimSpace(l)) == login {
+			return true
 		}
 	}
-	return filepath.Join(base, "qatlasd", name)
+	return false
 }

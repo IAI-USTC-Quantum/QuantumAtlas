@@ -6,7 +6,7 @@ QuantumAtlas server（Go `qatlasd` 二进制）通过三入口读配置：
 
 **CLI flag > OS env > `.env` 文件 > 内置 default**
 
-server 端项目自有变量带 `QATLAS_` 前缀；第三方 SDK 标准名（`NEO4J_*` / `GITHUB_CLIENT_*`）保留原始命名。每个字段都有等价 CLI flag（除了 OAuth 4 字段，详见 [issue #6](https://github.com/IAI-USTC-Quantum/QuantumAtlas/issues/6)），完整 flag 列见 [cli-qatlasd.md §serve](../server/cli-qatlasd.md#serve)。
+server 端项目自有变量带 `QATLAS_` 前缀；第三方 SDK 标准名（`GITHUB_CLIENT_*`）保留原始命名。每个字段都有等价 CLI flag（除了 OAuth 4 字段，详见 [issue #6](https://github.com/IAI-USTC-Quantum/QuantumAtlas/issues/6)），完整 flag 列见 [cli-qatlasd.md §serve](../server/cli-qatlasd.md#serve)。
 
 > 完整 server `.env` 模板：[`.env.example`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.env.example)
 
@@ -17,13 +17,11 @@ server 端项目自有变量带 `QATLAS_` 前缀；第三方 SDK 标准名（`NE
 | `server_url` (client `config.yaml`) — "我要联系的 server" | ✅ 必填 | — |
 | `QATLAS_PUBLIC_URL` (server env / flag) — "我对外公布的 canonical URL" | — | ✅ 必填 |
 | `insecure` (client only) | ✅ | — |
-| `wiki_dir` / `QATLAS_WIKI_DIR` | ✅（本地 wiki 命令）| ✅ |
 | `mineru_*` / `MINERU_*` | ✅（本地跑 mineru）| ✅ 仅 self-hosted + 启用论文访问开关时 |
-| `openai_api_key` / `anthropic_api_key` | ✅（本地跑 extractor）| — |
 | `QATLAS_RAW_DIR` / `DATA_DIR` / `PB_DATA_DIR` | — | ✅ |
 | `QATLAS_HTTP_ADDR` / `QATLAS_FORCE_TCP4` | — | ✅ |
 | `QATLAS_POSTGRES_DSN` / `_MAX_CONNS` | — | ✅ |
-| `NEO4J_*` | — | ✅ graph-only |
+| `QATLAS_SEARCH_PROVIDERS` | — | ✅（默认 `catalog,arxiv,openalex`）|
 | `QATLAS_S3_*` | — | ✅ |
 | `QATLAS_USER_HEADER` | — | ✅ |
 | `QATLAS_PAPER_ACCESS_ENABLED` | — | ✅ self-hosted 可选 |
@@ -47,12 +45,6 @@ server 端项目自有变量带 `QATLAS_` 前缀；第三方 SDK 标准名（`NE
 - **历史名**: `QATLAS_SERVER_URL` / `PUBLIC_BASE_URL`（v0.19.0 起服务端**不再读**）
 - **格式**: 完整 URL，带 scheme（`https://atlas.example.com`）
 - **作用**: server 自报的对外 canonical URL；用于构造 OAuth 回调、share link 等需要绝对 URL 的地方（反代场景下 server bind 在 localhost，无法从 request 推断对外 URL，必须显式告诉它）。改名是为了准确反映"我对外公布的 URL"语义
-
-### `QATLAS_WIKI_DIR`
-
-- **Alias**: `WIKI_DIR`（**⚠️ v0.17.0 移除**）
-- **默认**: `<.env 所在目录>/../QuantumAtlas-Wiki`（兄弟 Git checkout）
-- **作用**: server 的 wiki 读 endpoint 用这个路径
 
 ### `QATLAS_THEOREMS_DIR`
 
@@ -176,6 +168,14 @@ PostgreSQL；登录态仍由 PocketBase 独立管理。
 | `QATLAS_POSTGRES_MAX_CONNS` | 否 | `10` |
 | `QATLAS_CORPUS_ENSURE_INDEXES` | 否 | `true` |
 
+## Server: Search providers
+
+| 变量 | 默认 | 作用 |
+|---|---|---|
+| `QATLAS_SEARCH_PROVIDERS` | `catalog,arxiv,openalex` | `POST /api/search` 的 provider fan-out 列表（CSV）。`catalog` = 本地 Postgres paper registry；`arxiv` / `openalex` = 上游在线查询；`qdrant` = 语义向量检索（需同时配 `QATLAS_RAG_QDRANT_URL` + `QATLAS_RAG_EMBED_URL`）|
+| `QATLAS_RAG_QDRANT_URL` / `QATLAS_RAG_QDRANT_API_KEY` / `QATLAS_RAG_QDRANT_COLLECTION` | — | qdrant provider 的 Qdrant 连接（gRPC host:port 或 http(s) URL）|
+| `QATLAS_RAG_EMBED_URL` / `QATLAS_RAG_EMBED_TOKEN` | — | qdrant provider 的 embed / rerank worker（HTTP）|
+
 ## Server: plugin platform
 
 QuantumAtlas plugins share one manifest and capability model. A plugin's type
@@ -194,7 +194,7 @@ is two orthogonal axes (`kind` × `transport`):
 | 变量 | 默认 | 作用 |
 |---|---|---|
 | `QATLAS_PLUGINS_DIR` | `${XDG_CONFIG_HOME:-$HOME/.config}/qatlasd/plugins` | 插件清单目录；扫描其一级子目录的 `plugin.json` |
-| `QATLAS_PLUGINS_ENABLED` | 空 | CSV 白名单；空表示所有插件都可启用；同时门控清单插件与内置 graph/rag/wiki/theorems |
+| `QATLAS_PLUGINS_ENABLED` | 空 | CSV 白名单；空表示所有插件都可启用；同时门控清单插件与内置 theorems |
 | `QATLAS_PLUGINS_DISABLED` | 空 | CSV 黑名单；与 enabled 同时命中时 disabled 胜；同样作用于内置插件 |
 | `QATLAS_PLUGIN_CONNECT_SECRET` | 空 | 外部 `transport=socket` 插件 initialize 握手 secret；空表示仅依赖 loopback 监听 |
 | `QATLAS_RPC_WS_BIND` | `127.0.0.1:8799` | 外部 JSON-RPC WebSocket 插件拨入的监听地址 |
@@ -222,18 +222,6 @@ tsvector 三个 GIN + 若干 btree 热列）。当一台 edge 指向**已预置�
 bootstrap；base schema 无论开关如何都会在 boot 时保证。`qatlasd openalex bootstrap-pg` 批量灌完
 后也会自行建这些索引。
 
-## Server: Neo4j graph
-
-| 变量 | 必填 | 默认 |
-|---|---|---|
-| `NEO4J_URI` | Graph 启用时必填 | — |
-| `NEO4J_USERNAME` / `NEO4J_USER`（alias）| ✅ | — |
-| `NEO4J_PASSWORD` | ✅ | — |
-| `NEO4J_DATABASE` | 否 | `neo4j` |
-
-Neo4j 只服务图查询 / OpenAlex citation bootstrap；paper catalog 不再依赖它。
-未配 → graph endpoint 返回 `{"error":"..."}` 200，`/api/health` 报 `neo4j: not_configured`，**不下拉聚合等级**。
-
 ## Server: S3 / RustFS（连接字段 + 三桶 all-or-nothing）
 
 连接字段（endpoint + 双 key）**加上三个 asset bucket 必须同时填或同时不填**——半填启动直接报错。v0.7.0 起对象存储按 asset kind 拆成三个独立 bucket（`objstore.Router` 路由），旧的单桶 `QATLAS_S3_BUCKET` 已**废弃**（残留会让 server fail-loud 提示迁移）。
@@ -251,7 +239,7 @@ Neo4j 只服务图查询 / OpenAlex citation bootstrap；paper catalog 不再依
 
 启动 log 出三行 `raw store: S3 backend .../<bucket>` 各一桶确认启用；dual endpoint 模式额外有 `(presign via ...)`。`/api/health` 的 `rawstore` check 报 `backend: s3-router` + `buckets: [...]`。
 
-> 注意：v0.7.0 删除了 RustFS notification webhook（`/api/_rustfs/event` + `QATLAS_RUSTFS_EVENT_TOKEN`）。应用对 bucket 独占写，catalog 由上传写路径直接同步进 Neo4j，无需外部事件回灌。
+> 注意：v0.7.0 删除了 RustFS notification webhook（`/api/_rustfs/event` + `QATLAS_RUSTFS_EVENT_TOKEN`）。应用对 bucket 独占写，registry 由上传写路径直接同步进 PostgreSQL，无需外部事件回灌。
 
 详见 [RustFS 部署](../server/rustfs.md)。
 
@@ -270,7 +258,7 @@ Neo4j 只服务图查询 / OpenAlex citation bootstrap；paper catalog 不再依
 | 变量 | 必填 | 默认 | 含义 |
 |---|---|---|---|
 | `QATLAS_SYSTEM_PAT` | ❌ | unset（功能关闭） | 单个全局 bearer 的明文；HTTP 请求带 `Authorization: Bearer <这串>` 即过 authGuard。设了启动 log 会有 `system PAT enabled (length=N scopes=[...])` 一行（**不打明文**）|
-| `QATLAS_SYSTEM_PAT_SCOPES` | ❌ | `*`（master，等价 session）| CSV 限定该 token 能调什么；词表跟 user PAT 一致，额外允许 `*`。少数运维想 least-privilege 时用，例如 `wiki:read,papers:read,graph:read`|
+| `QATLAS_SYSTEM_PAT_SCOPES` | ❌ | `*`（master，等价 session）| CSV 限定该 token 能调什么；词表跟 user PAT 一致，额外允许 `*`。少数运维想 least-privilege 时用，例如 `papers:read,theorems:read`|
 
 启动时长度 < 16 字符**直接 fatal**——防止有人填了 `secret` / 空格 / 之类 placeholder 上 prod。生成办法：
 
@@ -280,7 +268,7 @@ python -c 'import secrets; print(secrets.token_urlsafe(32))'
 uuidgen
 ```
 
-前缀格式随意，不强制 `qats_` 之类。能读 .env 的人 = superuser-equivalent，但 .env 早就有 S3 / Neo4j / GitHub 同等敏感的 secret，新增 system PAT 不扩大现有攻击面。
+前缀格式随意，不强制 `qats_` 之类。能读 .env 的人 = superuser-equivalent，但 .env 早就有 S3 / PostgreSQL / GitHub 同等敏感的 secret，新增 system PAT 不扩大现有攻击面。
 
 ## Server: 反代审计
 
@@ -325,15 +313,6 @@ contributor 自己的 MinerU 配额。**v0.17.0+ 只能放 `~/.config/qatlas/con
 > `QATLAS_S3_PUBLIC_ENDPOINT` 的用途是给已授权的内部工具签 presigned
 > URL，与公开 MinerU 服务无关。
 
-### LLM（client-only — 仅 `qatlas extractor` 子命令读）
-
-| YAML key | 作用 |
-|---|---|
-| `openai_api_key` | client 侧 `qatlas extractor` 用 OpenAI 模型抽取算法描述（`qatlas/extractor/llm_interface.py`）；qatlasd server 不读 |
-| `anthropic_api_key` | 同上但用 Anthropic 模型 |
-
-> Extractor 是实验性 client 子命令——不跑 `qatlas extractor` 或用 `--no-extract` 时保持未设置即可。v0.17.0 起 SDK 标准 env 名（`OPENAI_API_KEY` / `ANTHROPIC_API_KEY`）**对 qatlas 不再有效**，只能写在 yaml。这是与 SDK 共享 env namespace 的取舍——qatlas 优先要"配置入口单一"，OpenAI / Anthropic SDK 自己仍读 env，但 qatlas client 不会再传 env 给它们，统一从 yaml 读 key 后显式 `api_key=` 注入。
-
 ## Client (`qatlas`) 配置（YAML-only，v0.17.0+）
 
 client 现在**完全独立于 server**：
@@ -371,9 +350,6 @@ server_url: https://atlas.example.com
 token: qat_...                          # sensitive, file is mode 0600
 insecure: false
 
-# Local Wiki repo (qatlas wiki list/show/lint/search)
-wiki_dir: ../QuantumAtlas-Wiki
-
 # MinerU (qatlas contrib mineru)
 mineru_api_tokens: [jwt-a, jwt-b]
 mineru_api_base_url: https://mineru.net
@@ -384,18 +360,14 @@ mineru_enable_table: true
 mineru_poll_interval: 3.0
 mineru_timeout: 1800
 mineru_language: ch
-
-# LLM extractor (qatlas extractor — third-party SDK names, no QATLAS_ prefix)
-openai_api_key: sk-...
-anthropic_api_key: sk-ant-...
 ```
 
 设计要点：
 
 - **扁平 schema**：所有字段在 yaml top level，不分 `server: / mineru: / extractor:` 嵌套——pydantic-settings 自带的 `YamlConfigSettingsSource` 直接 map 到 `ServerConfig` snake_case 字段，没有 hand-maintained 映射表。
-- **第三方 SDK 标准名保留**：`mineru_api_tokens`（沿用 MinerU SDK）；`openai_api_key` / `anthropic_api_key`（OpenAI / Anthropic SDK 标准 env 等价名小写化）。
+- **第三方 SDK 标准名保留**：`mineru_api_tokens`（沿用 MinerU SDK 命名）。
 - **`qatlas config set` 重写整个文件**：PyYAML round-trip 不保留注释，跟 `gh` / `kubectl config set` 一致。要永久注释直接编辑文件不用 `set`。
-- **schema 比 server `.env` 窄**：server-only 字段（`NEO4J_*` / `QATLAS_S3_*` / `GITHUB_*`）**不能**用 `qatlas config set` 设，会被 typo guard 拒绝。这些字段在 `qatlasd serve --neo4j-uri ...` flag 或 server 的 `.env` 里维护。
+- **schema 比 server `.env` 窄**：server-only 字段（`QATLAS_POSTGRES_DSN` / `QATLAS_S3_*` / `GITHUB_*`）**不能**用 `qatlas config set` 设，会被 typo guard 拒绝。这些字段在 `qatlasd serve` 的等价 flag 或 server 的 `.env` 里维护。
 
 ## 弃用的变量（不要再用）
 
@@ -407,7 +379,9 @@ anthropic_api_key: sk-ant-...
 | `QATLAS_REQUIRE_RELEASE_TAG` | 已删——旧 FastAPI 的 release-tag 启动护栏 |
 | `CLI_TOKEN_*` | 已删——更早的 token 字段族 |
 | `QATLAS_SERVER_DEBUG` | 从未被读过的幽灵字段；v0.16.0 从 `.env.example` 清理 |
-| 无 `QATLAS_` 前缀的 server alias（`WIKI_DIR` / `RAW_DIR` / `DATA_DIR` / `PB_DATA_DIR` / `SERVER_HOST` / `SERVER_PORT` / `USER_HEADER`） | **v0.17.0 移除**——用对应 `QATLAS_*` 名 |
+| 无 `QATLAS_` 前缀的 server alias（`RAW_DIR` / `DATA_DIR` / `PB_DATA_DIR` / `SERVER_HOST` / `SERVER_PORT` / `USER_HEADER`） | **v0.17.0 移除**——用对应 `QATLAS_*` 名 |
+| `QATLAS_WIKI_DIR` / `WIKI_DIR` | **已删**——wiki 子系统整体移除 |
+| `NEO4J_*` | **已删**——Neo4j 图谱子系统移除；论文关系查询走 PostgreSQL registry + `POST /api/search` |
 | `PUBLIC_BASE_URL`（服务端）| **v0.19.0 移除**——服务端的"对外 canonical URL"改用 `QATLAS_PUBLIC_URL` |
 | `QATLAS_SERVER_URL`（服务端）| **v0.19.0 重命名为 `QATLAS_PUBLIC_URL`**——服务端历史叫 `QATLAS_SERVER_URL` 但语义是"我对外公布的 canonical URL"，叫 `PUBLIC_URL` 更准确。Client 端从未读过 env，没有"client 的 QATLAS_SERVER_URL"这回事 |
 | client 侧的所有 `QATLAS_TOKEN` / `QATLAS_INSECURE` 等 env | **v0.17.0 client 完全不读 env**——搬到 `~/.config/qatlas/config.yaml` |

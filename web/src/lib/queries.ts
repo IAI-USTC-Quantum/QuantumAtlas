@@ -1,29 +1,31 @@
-import { useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query'
 import {
+  adminDBSchema,
+  adminDBTableRows,
+  adminListPlugins,
+  adminPlans,
+  adminPluginManifest,
+  adminPluginUpdateConfig,
+  adminUsage,
+  adminWhoami,
+  agenticSearch,
   getJson,
-  ragHealth,
-  ragSearch,
-  type GraphStats,
-  type PageDetail,
-  type PageListPayload,
+  listPlugins,
+  paperSearch,
+  papersList,
+  type AdminDBRows,
+  type AdminDBSchema,
+  type AdminPlansResponse,
+  type AdminPluginConfigResult,
+  type AdminPluginManifest,
+  type AdminUsageResponse,
+  type AdminWhoami,
+  type PaperDetail,
+  type PaperSearchEntry,
+  type PapersListParams,
   type PaperStats,
-  type RagSearchRequest,
-  type SearchPayload,
-  type Stats,
-  type SyncStatus,
-  type TheoremDetailPayload,
-  type TheoremFamiliesPayload,
-  type TheoremListPayload,
-  type TheoremSourcePayload,
-  type TheoremStats,
+  type PluginsResponse,
 } from './api'
-
-export function useStats() {
-  return useQuery({
-    queryKey: ['stats'],
-    queryFn: () => getJson<Stats>('/api/stats'),
-  })
-}
 
 export function usePaperStats() {
   return useQuery({
@@ -32,129 +34,145 @@ export function usePaperStats() {
   })
 }
 
-export function usePages() {
+// Multi-paradigm paper search against POST /api/search. Pass `null` to
+// keep the hook idle (e.g. while the user is still typing). The caller
+// controls the entry fields so the page UI can expose them without
+// growing the hook signature each time.
+export function usePaperSearch(entry: PaperSearchEntry | null) {
   return useQuery({
-    queryKey: ['pages'],
-    queryFn: () => getJson<PageListPayload>('/api/pages'),
-  })
-}
-
-export function usePage(pageId: string | null) {
-  return useQuery({
-    queryKey: ['page', pageId],
-    queryFn: () => getJson<PageDetail>(`/api/pages/${encodeURIComponent(pageId!)}`),
-    enabled: Boolean(pageId),
-  })
-}
-
-export function useSearch(query: string) {
-  return useQuery({
-    queryKey: ['search', query],
-    queryFn: () =>
-      getJson<SearchPayload>(`/api/search?q=${encodeURIComponent(query)}&limit=20`),
-    enabled: Boolean(query),
-  })
-}
-
-// Semantic search against /api/rag/search; only meaningful when
-// useRagSearch runs a vector search against the operator-deployed RAG
-// sidecar via the qatlasd reverse-proxy. Pass `null` to keep the hook
-// idle (e.g. while the user is still typing or RAG isn't available).
-// Caller fully controls top_k / rerank / use_sparse / filters so the
-// page UI can expose them without growing the hook signature each time.
-export function useRagSearch(req: RagSearchRequest | null) {
-  return useQuery({
-    queryKey: [
-      'rag-search',
-      req?.query ?? '',
-      req?.top_k ?? 8,
-      req?.rerank ?? true,
-      req?.use_sparse ?? true,
-      req?.rerank_pool ?? null,
-      JSON.stringify(req?.filters ?? null),
-    ],
-    queryFn: () => ragSearch(req as RagSearchRequest),
-    enabled: req !== null && Boolean(req.query),
+    queryKey: ['paper-search', JSON.stringify(entry ?? null)],
+    queryFn: () => paperSearch(entry as PaperSearchEntry),
+    enabled: entry !== null,
     retry: false,
   })
 }
 
-// Probe whether the server advertises a RAG sidecar. Cached for 5
-// minutes — operators who flip the switch will see the toggle within
-// that window. Returns `true` only when the probe returned a
-// {"status":"ok"} body; `degraded` / `down` / 404 / network error all
-// hide the toggle.
-export function useRagHealth() {
+export function usePaperDetail(paperId: string | null) {
   return useQuery({
-    queryKey: ['rag-health'],
-    queryFn: () => ragHealth(),
-    staleTime: 5 * 60 * 1000,
+    queryKey: ['paper', paperId],
+    queryFn: () =>
+      getJson<PaperDetail>(`/api/papers/${encodeURIComponent(paperId!)}`),
+    enabled: Boolean(paperId),
+  })
+}
+
+// Paginated registry list. keepPreviousData keeps the old page rendered
+// while the next page loads so the table doesn't flash a skeleton on
+// every pagination click.
+export function usePapersList(params: PapersListParams) {
+  return useQuery({
+    queryKey: ['papers-list', params],
+    queryFn: () => papersList(params),
+    placeholderData: keepPreviousData,
+  })
+}
+
+// Session-only whoami used by the sidebar (show the admin nav entry) and
+// the admin page (gate the schema fetch). Cached for a few minutes so
+// every sidebar render doesn't hit the server; retry disabled because a
+// 401/403 here just means "not a browser session" — hide, don't retry.
+export function useAdminWhoami() {
+  return useQuery({
+    queryKey: ['admin-whoami'],
+    queryFn: (): Promise<AdminWhoami> => adminWhoami(),
+    staleTime: 5 * 60_000,
     retry: false,
   })
 }
 
-export function useGraphStats() {
+export function useAdminSchema(enabled: boolean) {
   return useQuery({
-    queryKey: ['graph', 'stats'],
-    queryFn: () => getJson<GraphStats>('/api/graph/stats'),
-  })
-}
-
-// --- Theorems -------------------------------------------------------------
-
-// List the proved-Theorems catalog. family_id / audit_status are applied
-// server-side; pass '' to omit a filter.
-export function useTheorems(familyId: string, auditStatus: string) {
-  return useQuery({
-    queryKey: ['theorems', 'list', familyId, auditStatus],
-    queryFn: () => {
-      const params = new URLSearchParams()
-      if (familyId) params.set('family_id', familyId)
-      if (auditStatus) params.set('audit_status', auditStatus)
-      const qs = params.toString()
-      return getJson<TheoremListPayload>(`/api/theorems/list${qs ? `?${qs}` : ''}`)
-    },
-  })
-}
-
-export function useTheoremFamilies() {
-  return useQuery({
-    queryKey: ['theorems', 'families'],
-    queryFn: () => getJson<TheoremFamiliesPayload>('/api/theorems/families'),
-  })
-}
-
-export function useTheoremStats() {
-  return useQuery({
-    queryKey: ['theorems', 'stats'],
-    queryFn: () => getJson<TheoremStats>('/api/theorems/stats'),
-  })
-}
-
-export function useTheoremsSyncStatus() {
-  return useQuery({
-    queryKey: ['theorems', 'sync-status'],
-    queryFn: () => getJson<SyncStatus>('/api/theorems/sync/status'),
-  })
-}
-
-export function useTheoremDetail(fqn: string | null) {
-  return useQuery({
-    queryKey: ['theorems', 'detail', fqn],
-    queryFn: () =>
-      getJson<TheoremDetailPayload>(`/api/theorems/theorem/${encodeURIComponent(fqn!)}`),
-    enabled: Boolean(fqn),
-  })
-}
-
-// Source-on-demand: only fetched when `enabled` (the user clicked "Show
-// source"), so the Lean file read is not paid for on every detail view.
-export function useTheoremSource(fqn: string | null, enabled: boolean) {
-  return useQuery({
-    queryKey: ['theorems', 'source', fqn],
-    queryFn: () =>
-      getJson<TheoremSourcePayload>(`/api/theorems/theorem-source/${encodeURIComponent(fqn!)}`),
-    enabled: Boolean(fqn) && enabled,
+    queryKey: ['admin-db-schema'],
+    queryFn: (): Promise<AdminDBSchema> => adminDBSchema(),
+    enabled,
     retry: false,
+  })
+}
+
+// Plugin registry listing — the search page uses the `search-remote` entry
+// to decide whether agentic search can be enabled. Cached for a minute;
+// no retry because a failure just means "agentic unavailable".
+export function usePlugins() {
+  return useQuery({
+    queryKey: ['plugins'],
+    queryFn: (): Promise<PluginsResponse> => listPlugins(),
+    staleTime: 60_000,
+    retry: false,
+  })
+}
+
+// Agentic search against POST /api/search/agentic. Same null-to-idle
+// convention as usePaperSearch; 429 surfaces as an AgenticSearchError
+// carrying the usage block.
+export function useAgenticSearch(entry: PaperSearchEntry | null) {
+  return useQuery({
+    queryKey: ['agentic-search', JSON.stringify(entry ?? null)],
+    queryFn: () => agenticSearch(entry as PaperSearchEntry),
+    enabled: entry !== null,
+    retry: false,
+  })
+}
+
+export function useAdminUsage(day: string | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: ['admin-usage', day ?? ''],
+    queryFn: (): Promise<AdminUsageResponse> => adminUsage(day),
+    enabled,
+    retry: false,
+  })
+}
+
+export function useAdminPlans(enabled: boolean) {
+  return useQuery({
+    queryKey: ['admin-plans'],
+    queryFn: (): Promise<AdminPlansResponse> => adminPlans(),
+    enabled,
+    retry: false,
+  })
+}
+
+// Admin-guarded plugin registry listing (GET /api/admin/plugins) — same
+// PluginSummary shape as the public /api/v1/plugins endpoint.
+export function useAdminPlugins(enabled: boolean) {
+  return useQuery({
+    queryKey: ['admin-plugins'],
+    queryFn: (): Promise<PluginsResponse> => adminListPlugins(),
+    enabled,
+    retry: false,
+  })
+}
+
+// Raw rows of one registry table. keepPreviousData keeps the old page
+// rendered while the next page loads, like usePapersList.
+export function useAdminDBRows(
+  table: string,
+  page: number,
+  perPage: number,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: ['admin-db-rows', table, page, perPage],
+    queryFn: (): Promise<AdminDBRows> => adminDBTableRows(table, page, perPage),
+    enabled,
+    retry: false,
+    placeholderData: keepPreviousData,
+  })
+}
+
+// Per-plugin admin manifest. retry disabled because a 404 just means
+// "this plugin has no admin page" — render a note, don't retry.
+export function useAdminPluginManifest(id: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['admin-plugin-manifest', id],
+    queryFn: (): Promise<AdminPluginManifest> => adminPluginManifest(id),
+    enabled,
+    retry: false,
+  })
+}
+
+export function useAdminPluginSaveConfig(id: string) {
+  return useMutation({
+    mutationFn: (updates: Record<string, unknown>): Promise<AdminPluginConfigResult> =>
+      adminPluginUpdateConfig(id, updates),
   })
 }

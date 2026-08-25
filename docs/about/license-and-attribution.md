@@ -1,6 +1,6 @@
 # License & Attribution
 
-> QuantumAtlas 自己的代码 / 文档 / Wiki 内容 license 见 [致谢 · 许可证](credits.md#许可证)
+> QuantumAtlas 自己的代码 / 文档 license 见 [致谢 · 许可证](credits.md#许可证)
 > 段。本文档讲**外部上游数据源**的 license 归属和我们的合规策略。
 
 ## 我们怎么处理"PDF + metadata + 全文"三类数据
@@ -8,9 +8,8 @@
 | 数据类别 | 来源 | 我们持有 / 分发？ | 用户拿到什么 |
 |---|---|---|---|
 | **论文 PDF 字节** | arxiv.org（作者保留版权） | ⚠️ **默认不分发** | qatlasd **默认无 PDF 下载 API**（`QATLAS_PAPER_ACCESS_ENABLED=false`）；从 [arxiv.org](https://arxiv.org/) 自行下载。Self-hosted 部署可在受控范围内启用对内下载，详见下文「论文访问开关」 |
-| **论文 metadata**（标题 / 作者 / DOI / 引用 / 发表日期 等） | OpenAlex（CC0）+ Crossref（CC0） | ✅ 镜像 + Neo4j MERGE | 公开 API 返回，CC0 transitively 公开 |
+| **论文 metadata**（标题 / 作者 / DOI / 引用 / 发表日期 等） | OpenAlex（CC0）+ Crossref（CC0） | ✅ 镜像进 PostgreSQL corpus | 公开 API 返回，CC0 transitively 公开 |
 | **MinerU 解析后的 Markdown 全文** | 由部署方用自己的 MinerU quota 从 PDF 转换 | ✅ 缓存在 `qatlas-md` 桶 | 同上开关控制：默认仅供 server 内部检索；启用后可对持 `papers:read` 的客户端 serve markdown 字节 |
-| **Wiki 知识页面**（概念 / 算法 / paper 笔记） | 团队 + 贡献者撰写 | ✅ 在独立 [QuantumAtlas-Wiki repo](https://github.com/IAI-USTC-Quantum/QuantumAtlas-Wiki) | require login（同上） |
 
 **核心合规设计**：
 
@@ -71,7 +70,6 @@ X-Attribution: OpenAlex (CC0), Crossref (CC0), arXiv
 
 - **Metadata（CC0）**：随便用，**仍请**归属到 OpenAlex（公益项目，归属能帮它们拿持续资助）
 - **PDF**：公开实例不提供 PDF 下载——请自行到 [arxiv.org](https://arxiv.org/) 拉，按原作者声明使用
-- **Wiki 内容**：Apache-2.0（与 [QuantumAtlas-Wiki repo](https://github.com/IAI-USTC-Quantum/QuantumAtlas-Wiki) LICENSE 一致），归属到本项目即可
 
 ## 论文访问开关 (self-hosted)
 
@@ -127,7 +125,7 @@ X-Attribution: OpenAlex (CC0), Crossref (CC0), arXiv
 
 如果你是论文作者或权利持有人，希望我们：
 
-- 从 Neo4j catalog 移除某 paper 节点
+- 从 PostgreSQL paper registry 移除该 paper 记录
 - 从 `qatlas-md` 桶删除某 paper 的解析 markdown
 
 请提 [GitHub issue](https://github.com/IAI-USTC-Quantum/QuantumAtlas/issues) 或邮件

@@ -46,9 +46,9 @@ COPY --from=builder /out/qatlasd /qatlasd
 # Volume mount points the compose file / kubernetes spec is expected
 # to back with persistent storage. `qatlasd` will happily run without
 # them (LocalStore dev fallback) but production deployments should
-# always provide at least pb_data for PocketBase + wiki for source-of-
-# truth markdown.
-VOLUME ["/data/raw", "/data/pb_data", "/data/wiki"]
+# always provide at least pb_data for PocketBase's SQLite state; raw
+# holds PDF / Markdown assets when the S3 backend is not configured.
+VOLUME ["/data/raw", "/data/pb_data"]
 
 # 4200 = the in-binary default for `serve --http=`. Override at runtime
 # via QATLAS_HTTP_ADDR / QATLAS_SERVER_PORT or the explicit flag.

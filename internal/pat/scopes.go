@@ -42,15 +42,10 @@ import (
 // "<resource>:<action>" naming convention so future tooling (rate
 // limits, audit logs) can group by resource easily.
 const (
-	ScopeWikiRead      = "wiki:read"      // GET /api/pages*, /api/stats, /api/search, /api/wiki/sync/status
-	ScopePapersRead    = "papers:read"    // GET /api/papers/{path...} (stats / needs-mineru; also markdown when QATLAS_PAPER_ACCESS_ENABLED=true)
-	ScopePapersWrite   = "papers:write"   // upload-pdf / upload-mineru / mineru-lease CRUD (implies papers:read)
-	ScopeGraphRead     = "graph:read"     // GET /api/graph/stats, GET /api/graph/schema, POST /api/graph/query
-	ScopeWikiWrite     = "wiki:write"     // POST /api/wiki/sync/pull (server-side git fast-forward; implies wiki:read)
-	ScopePluginsRead   = "plugins:read"   // GET /api/v1/plugins
-	ScopePluginsWrite  = "plugins:write"  // enable / disable plugins (implies plugins:read)
-	ScopeTheoremsRead  = "theorems:read"  // GET /api/theorems/{list,families,stats,theorem,theorem-source}, /api/theorems/sync/status
-	ScopeTheoremsWrite = "theorems:write" // POST /api/theorems/sync/pull (server-side git fast-forward; implies theorems:read)
+	ScopePapersRead   = "papers:read"   // GET /api/papers/{path...} (stats / needs-mineru; also markdown when QATLAS_PAPER_ACCESS_ENABLED=true), POST /api/search
+	ScopePapersWrite  = "papers:write"  // upload-pdf / upload-mineru / mineru-lease CRUD (implies papers:read)
+	ScopePluginsRead  = "plugins:read"  // GET /api/v1/plugins
+	ScopePluginsWrite = "plugins:write" // enable / disable plugins (implies plugins:read)
 
 	// ScopeMaster is the wildcard internal-only scope assigned to
 	// PocketBase session tokens (browser users). Never accepted as
@@ -64,20 +59,15 @@ const (
 // ScopeDescription supplies one-line human-readable copy for the SPA
 // scope picker. Keep these short — they appear next to a checkbox.
 var ScopeDescription = map[string]string{
-	ScopeWikiRead:      "Read wiki pages, stats, search and sync status",
-	ScopePapersRead:    "Read paper catalog (stats, needs-mineru; also markdown download when the server enables asset downloads)",
-	ScopePapersWrite:   "Upload paper PDFs and submit MinerU markdown (includes read)",
-	ScopeGraphRead:     "Read the knowledge graph: stats, schema and read-only Cypher",
-	ScopeWikiWrite:     "Trigger server-side wiki git sync (fast-forward pull; includes read)",
-	ScopePluginsRead:   "Read plugin manifests and connection status",
-	ScopePluginsWrite:  "Enable or disable configured plugins (includes read)",
-	ScopeTheoremsRead:  "Read the proved-Theorems catalog (list, detail, source) and sync status",
-	ScopeTheoremsWrite: "Trigger server-side theorems git sync (fast-forward pull; includes read)",
+	ScopePapersRead:   "Read paper catalog (stats, needs-mineru, search; also markdown download when the server enables asset downloads)",
+	ScopePapersWrite:  "Upload paper PDFs and submit MinerU markdown (includes read)",
+	ScopePluginsRead:  "Read plugin manifests and connection status",
+	ScopePluginsWrite: "Enable or disable configured plugins (includes read)",
 }
 
 // AllScopes is the canonical vocabulary surfaced to clients. Keep it
 // in the order you want users to see in the SPA (most common first).
-var AllScopes = []string{ScopeWikiRead, ScopePapersRead, ScopePapersWrite, ScopeGraphRead, ScopeWikiWrite, ScopePluginsRead, ScopePluginsWrite, ScopeTheoremsRead, ScopeTheoremsWrite}
+var AllScopes = []string{ScopePapersRead, ScopePapersWrite, ScopePluginsRead, ScopePluginsWrite}
 
 // casbinModel is the in-memory casbin model. Each scope acts as its
 // own subject — the matcher just checks (scope, obj, act) equality
@@ -102,19 +92,12 @@ m = r.scope == p.scope && r.obj == p.obj && r.act == p.act
 // the policy set. Encode "write implies read" by adding two rows for
 // the write scope.
 var scopePolicies = [][3]string{
-	{ScopeWikiRead, "wiki", "read"},
 	{ScopePapersRead, "papers", "read"},
 	{ScopePapersWrite, "papers", "read"}, // write implies read
 	{ScopePapersWrite, "papers", "write"},
-	{ScopeGraphRead, "graph", "read"},
-	{ScopeWikiWrite, "wiki", "read"}, // write implies read
-	{ScopeWikiWrite, "wiki", "write"},
 	{ScopePluginsRead, "plugins", "read"},
 	{ScopePluginsWrite, "plugins", "read"}, // write implies read
 	{ScopePluginsWrite, "plugins", "write"},
-	{ScopeTheoremsRead, "theorems", "read"},
-	{ScopeTheoremsWrite, "theorems", "read"}, // write implies read
-	{ScopeTheoremsWrite, "theorems", "write"},
 }
 
 // NewEnforcer constructs a fresh in-memory casbin enforcer pre-loaded

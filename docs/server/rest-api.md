@@ -40,7 +40,7 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
 
 ## 公开端点（不需要 Authorization 头）
 
-> 仅以下"无语料数据"端点保持公开：探活 / 版本 / 安装脚本 / API 文档 / scope 词表 / SPA 外壳。**知识库本身不再匿名可读**——Wiki 页面、搜索、统计、论文资产、图谱等读口都已收敛到 `*:read` scope（见下方鉴权端点）。
+> 仅以下"无语料数据"端点保持公开：探活 / 版本 / 安装脚本 / API 文档 / scope 词表 / SPA 外壳。**论文数据本身不再匿名可读**——搜索、统计、论文资产等读口都已收敛到 `*:read` scope（见下方鉴权端点）。
 
 | Method | Path | 用途 |
 |---|---|---|
@@ -71,10 +71,6 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
 | `GET` | `/api/papers/{id_or_doi}/markdown/status` | `papers:read` | **PAPER_ACCESS** · side-effect-free 进度查询；body 含 `state` / `phase` / `pdf_ready` / `md_ready` / `fetch.*` / `convert.*` |
 | `GET` | `/api/papers/{id_or_doi}/pdf` | `papers:read` | **PAPER_ACCESS** · 默认返回 **RustFS 直链** JSON `{pdf_url, format:"link", expires_in}`（从 `QATLAS_S3_PUBLIC_ENDPOINT` presign，服务端不代理大二进制）；`?format=bytes` 改为串 `application/pdf` 字节流。未命中走 LRO：202 → 后台 silent fetch PDF → poll。**不**触发 MinerU（ADR 0011）|
 | `GET` | `/api/papers/{id_or_doi}/pdf/status` | `papers:read` | **PAPER_ACCESS** · `/pdf` 的 side-effect-free 进度查询；状态机比 markdown 少 convert 阶段 |
-| `POST` | `/api/v1/rag/search` | `papers:read` | **PAPER_ACCESS** · 仅当 `QATLAS_RAG_QDRANT_URL` + `QATLAS_RAG_EMBED_URL` 都已设。qatlasd 直接 gRPC 查 Qdrant + 调 GPU embed worker，body 形如 `{"query":"...","top_k":8,"rerank":true,"use_sparse":true}`；返回 chunk 级 hit（含 `arxiv_id`、`section_path`、`snippet`、`score`）|
-| `GET` | `/api/v1/rag/healthz` | 匿名 | **PAPER_ACCESS** · 同上注册条件。返回 `{"status":"ok"\|"degraded"\|"down"}`；SPA 用它决定是否在 `/papers/search` 显示搜索框 |
-| `POST` | `/api/rag/search` | `papers:read` | RAG 搜索 |
-| `GET` | `/api/rag/healthz` | 匿名 | RAG 健康状态 |
 
 > `papers:write` 隐式含 `papers:read`。
 >
@@ -90,41 +86,16 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
 > canonical arxiv id 后走同一套 handler；缺 `QATLAS_OPENALEX_MAILTO` 时 DOI
 > 路径返回 503，arxiv 路径不受影响。
 
-### Wiki
+### Search
 
 | Method | Path | 鉴权 | 用途 |
 |---|---|---|---|
-| `GET` | `/api/pages` | `wiki:read` | 列 Wiki 页面（支持 `?page_type=&status=&tags=`）。**默认排除 `type==source`**（Wikipedia 风格只展示 concept 词条）；显式传 `?page_type=source` 才返回 source |
-| `GET` | `/api/pages/{page_id}` | `wiki:read` | 取单页（frontmatter + content）|
-| `GET` | `/api/stats` | `wiki:read` | Wiki 统计（含 `entries`=词条数、`sources`=源文献数、`by_category`、`by_status`）|
-| `GET` | `/api/search?q=&limit=` | `wiki:read` | 全文搜索。**默认排除 source**；显式传 `?include_sources=true` 才纳入 |
-| `GET` | `/api/wiki/sync/status` | `wiki:read` | Wiki git 状态 |
-| `POST` | `/api/wiki/sync/pull` | `wiki:write` | 触发服务端 Wiki git fast-forward pull（`git fetch --prune` + `git pull --ff-only`），随后同步刷新内存缓存 |
-
-> `wiki:write` 隐式含 `wiki:read`。
-
-!!! note "内容追加不走 server"
-    QuantumAtlas **没有**在线 ingest 端点。Wiki 内容追加走离线多 subagent 流水线
-    （读 paper → 总结 concept → 去重合并 → commit 到 wiki repo），server 只读地
-    serve 生成好的词条。详见 [生成 wiki 内容](../client/generate-wiki-content.md)。
-
-### Graph（Neo4j）
-
-| Method | Path | 鉴权 | 用途 |
-|---|---|---|---|
-| `GET` | `/api/v1/graph/stats` | `graph:read` | Neo4j 节点 / 关系计数 |
-| `GET` | `/api/v1/graph/schema` | `graph:read` | Neo4j label / relationship type 清单 |
-| `POST` | `/api/v1/graph/query` | `graph:read` | 执行 Cypher（**只读**，server 端跑 `ExecuteRead`）|
-| `GET` | `/api/graph/stats` | `graph:read` | Neo4j 节点 / 关系计数 |
-| `GET` | `/api/graph/schema` | `graph:read` | Neo4j label / relationship type 清单 |
-| `POST` | `/api/graph/query` | `graph:read` | 执行 Cypher（**只读**，server 端跑 `ExecuteRead`）|
-
-> 三个 graph 读口都收敛到 `authGuard + graph:read`。session token（浏览器登录）自带 `*` 自动放行；PAT 调用方需勾选 `graph:read`。其中 `/api/graph/query` 风险最高（执行调用方提供的 Cypher、无成本上限）——见下方 query 详述。
+| `POST` | `/api/search` | `papers:read` | 多 provider 论文搜索。body 为 SearchEntry JSON，engine fan-out 到 `QATLAS_SEARCH_PROVIDERS` 列出的 provider（默认 `catalog,arxiv,openalex`；配齐 `QATLAS_RAG_QDRANT_URL` + `QATLAS_RAG_EMBED_URL` 后可加 `qdrant` 语义向量检索）|
 
 ### Plugins
 
 Plugins share one manifest/capability model with two orthogonal axes
-(`kind` × `transport`). First-party plugins such as Graph and RAG are
+(`kind` × `transport`). The first-party theorems plugin is
 `kind=builtin` (compiled into `qatlasd`, in-process); third-party plugins are
 `kind=external` and connect to the RPC listener over `transport=socket`, or are
 spawned by the host over `transport=stdio`.
@@ -138,9 +109,9 @@ spawned by the host over `transport=stdio`.
 External plugins do not call host capabilities over HTTP. They connect to the
 WebSocket JSON-RPC service at `QATLAS_RPC_WS_BIND`. `initialize` params contain
 `id`, `secret`, and `abi_version`; after the handshake the same connection can
-call the host-shared capabilities `pages/get`, `search/query`,
-`papers/getMarkdown`, `papers/getMeta`, `papers/getCitedRefs`, and
-`events/publish`. (The host core carries no plugin-domain methods — ADR 0003.)
+call the host-shared capabilities `papers/getMarkdown`, `papers/getMeta`,
+`papers/getCitedRefs`, and `events/publish`. (The host core carries no
+plugin-domain methods — ADR 0003.)
 
 ### Theorems（builtin 插件，read-through 一个 Lean-content git checkout）
 
@@ -156,11 +127,11 @@ read-through 暴露出来。它**不持有** PocketBase collection（ADR 0004：
 | `GET` | `/api/theorems/stats` | `theorems:read` | 聚合计数（by_kind / by_family / by_audit_status / sorry_free / certified）|
 | `GET` | `/api/theorems/theorem/{fqn}` | `theorems:read` | 取单个 Theorem（完整 registry 条目 + audit verdict）|
 | `GET` | `/api/theorems/theorem-source/{fqn}` | `theorems:read` | 按需取该 Theorem 的 Lean 源文件 |
-| `GET` | `/api/theorems/sync/status` | `theorems:read` | theorems git 状态（与 wiki 同形）|
+| `GET` | `/api/theorems/sync/status` | `theorems:read` | theorems git 状态|
 | `POST` | `/api/theorems/sync/pull` | `theorems:write` | 触发服务端 theorems git fast-forward pull，随后同步 reload 内存缓存 |
 
 > `theorems:write` 隐式含 `theorems:read`。`/api/<id>/sync/{pull,status}` 是平台为
-> 每个 pull 类插件（wiki、theorems）挂的**统一形状**（ADR 0002/0003）。
+> pull 类插件挂的**统一形状**（ADR 0002/0003）。
 
 ### PAT 管理（**只接受 session token**，PAT auth 被拒）
 
@@ -207,19 +178,10 @@ RFC 8628 device authorization grant。CLI 没有浏览器 / session，所以由�
         "bucket": "qatlas-raw",
         "latency_ms": 12
       },
-      "neo4j": {
+      "postgres": {
         "status": "ok",
-        "uri": "bolt://<neo4j-bolt-host>:7687",
-        "database": "neo4j",
+        "backend": "postgres",
         "latency_ms": 8
-      },
-      "wiki": {
-        "status": "ok",
-        "dir": "/home/<USER>/QuantumAtlas-Wiki",
-        "commit": "abc123de",
-        "commit_time": "2026-05-28T22:10:33Z",
-        "branch": "main",
-        "dirty": false
       }
     }
   }
@@ -230,7 +192,7 @@ RFC 8628 device authorization grant。CLI 没有浏览器 / session，所以由�
 - `code` **永远 200**（即使 degraded）—— 别让上层 LB / Caddy 把整条链路 trip 成 down
 - `message` 在 degraded 时变 `"Dependency degraded."`，方便 log scraper
 - 每个 probe 5 秒超时（`probeTimeout`），三个并行执行
-- Neo4j / wiki 不配置时返回 `"status": "not_configured"`，**不下拉聚合等级**
+- PostgreSQL / S3 不配置时返回 `"status": "not_configured"`，**不下拉聚合等级**
 
 ### `POST /api/papers/{arxiv_id}/upload-pdf`
 
@@ -244,30 +206,6 @@ RFC 8628 device authorization grant。CLI 没有浏览器 / session，所以由�
     - `409 Conflict` — sha256 不同且没 `overwrite`，body 含 `existing_sha256` + `new_sha256`
     - `400 Bad Request` — sha256 mismatch / 损坏的 multipart / PDF header 不对等
 - 并发安全（S3 conditional PUT `If-None-Match`），多 client 同字节并发只产生 1 个 201 + 其余 200
-
-### `POST /api/wiki/sync/pull`
-
-**需鉴权 + `wiki:write` scope**（session token 自动放行）。即使是 fast-forward only，它仍会在服务端跑 git 子进程并重建内存缓存，因此和其它写口一样门禁，避免被匿名滥用：
-
-```bash
-curl -X POST https://<server>/api/wiki/sync/pull \
-    -H "Authorization: Bearer $QATLAS_TOKEN"
-```
-
-响应：
-
-```json
-{
-  "status": "ok",
-  "changed": true,
-  "old_commit": "abc123",
-  "new_commit": "def456",
-  "wiki": {"exists": true, "external": true},
-  "git": {"commit": "def456", "branch": "main", "dirty": false}
-}
-```
-
-非 fast-forward / 工作树脏 / dir 不存在等情况返回 409 + detail。
 
 ### 长任务（LRO）：`/api/papers/{id_or_doi}/{markdown,pdf}`
 
@@ -535,44 +473,13 @@ DOI 路径特有错误：
 | `503` | `QATLAS_OPENALEX_MAILTO` 未配置 — 服务方需补配 |
 | `503` | arxiv version 解析 rate-limited — 稍后重试 |
 
-### `POST /api/graph/query`
-
-只读 Cypher 执行。**需鉴权 + `graph:read` scope**（session token 自动放行）。
-
-```bash
-curl -X POST https://<server>/api/graph/query \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "MATCH (a:Algorithm)-[:USES]->(p:Primitive {id: \"prim-qft\"}) RETURN a.id",
-    "limit": 50
-  }'
-```
-
-返回：
-
-```json
-{
-  "query": "...",
-  "records": [
-    {"a.id": "algo-shor"},
-    {"a.id": "algo-qpe-demo"}
-  ]
-}
-```
-
-**Neo4j 故障时返回 200 + `{"error": "..."}`**——这是有意的，让 SPA 渲染"Neo4j 不可用"banner 而不是错误页。
-
-!!! warning "已接受的风险：Cypher 无代价上限"
-    `query` 是只读的（驱动层 `ExecuteRead` 拒绝写），但**没有查询代价上限**——理论上一条病态查询（如无界笛卡尔积）能拖垮 Neo4j。**这是有意不加限制的取舍**：过了 `graph:read` 鉴权的调用方即「自己人」（登录用户或显式勾了 `graph:read` 的 PAT 持有者），同一个人本就能直连 Bolt 跑同样的查询，加应用层限制器只是徒增复杂度而挡不住真正想跑重查询的人。唯一缓解手段是**撤销出问题的凭据**（删 PAT / 登出用户）。详见 [鉴权模型](../concepts/auth-model.md) 与 [Neo4j 部署](neo4j.md)。
-
 ### `POST /api/pat`（session only）
 
 ```json
 {
   "name": "ci-upload",
   "description": "...",
-  "scopes": ["papers:write", "wiki:read"],
+  "scopes": ["papers:write"],
   "expires_in_days": 365
 }
 ```
@@ -592,7 +499,7 @@ curl -X POST https://<server>/api/graph/query \
   "prefix": "qat_AB",
   "plaintext": "qat_ABXXXXX...XXXXX",
   "description": "",
-  "scopes": ["papers:write", "wiki:read"],
+  "scopes": ["papers:write"],
   "expires_at": "2027-05-29 03:00:00.000Z",
   "created": "2026-05-29 03:00:00.000Z"
 }

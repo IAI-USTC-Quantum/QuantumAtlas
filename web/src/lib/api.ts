@@ -1,147 +1,9 @@
-export type Stats = {
-  total_pages?: number
-  entries?: number
-  sources?: number
-  by_type?: Record<string, number>
-  by_status?: Record<string, number>
-  by_category?: Record<string, number>
-}
-
 export type PaperStats = {
   available: boolean
   total?: number
-  has_pdf?: number
-  has_md?: number
-  has_json?: number
-  needs_mineru?: number
-  total_images?: number
-  loaded_at?: string
-}
-
-export type PageSummary = {
-  id: string
-  title: string
-  type: string
-  category?: string | null
-  status?: string
-  tags?: string[]
-}
-
-export type PageDetail = PageSummary & {
-  content?: string | null
-  created_at?: string | null
-  updated_at?: string | null
-}
-
-export type PageListPayload = {
-  total: number
-  pages: PageSummary[]
-}
-
-export type SearchPayload = {
-  query: string
-  total: number
-  results: PageSummary[]
-}
-
-export type GraphStats = {
-  nodes?: number
-  relationships?: number
-  labels?: string[]
-  label_counts?: Record<string, number>
-  error?: string
-  [key: string]: number | string | string[] | Record<string, number> | undefined
-}
-
-// --- Theorems (builtin plugin, read-through a Lean-content git checkout) ----
-
-export type Theorem = {
-  lean_fqn: string
-  file?: string
-  kind?: string
-  family_id?: string
-  statement_paraphrase?: string
-  unit_id?: string
-  sorry_free?: boolean
-  depends_on?: string[]
-  axioms_used?: string[]
-  audit_status?: string
-  added_ts?: string
-}
-
-export type TheoremFamily = {
-  id: string
-  name: string
-  description?: string
-}
-
-export type CertifiedEntry = {
-  unit_id?: string
-  result?: string
-  certified?: boolean
-  fqns?: string[]
-  kernel?: string
-  claim_faithfulness?: string
-  magi?: Record<string, number | string>
-  audited_ts?: string
-}
-
-export type TheoremListPayload = {
-  total: number
-  theorems: Theorem[]
-}
-
-export type TheoremFamiliesPayload = {
-  total: number
-  families: TheoremFamily[]
-}
-
-export type TheoremDetailPayload = {
-  theorem: Theorem
-  certified: CertifiedEntry | null
-}
-
-export type TheoremSourcePayload = {
-  lean_fqn: string
-  file: string
-  source: string
-}
-
-export type TheoremStats = {
-  total: number
-  sorry_free: number
-  by_kind: Record<string, number>
-  by_family: Record<string, number>
-  by_audit_status: Record<string, number>
-  families: number
-  certified: number
-  generated_ts?: string
-}
-
-export type GitInfo = {
-  enabled: boolean
-  branch?: string
-  commit?: string
-  commit_time?: string
-  upstream?: string
-  ahead?: number
-  behind?: number
-  dirty?: boolean
-  warnings?: { code: string; message: string; branch?: string }[]
-}
-
-export type SyncStatus = {
-  id: string
-  exists: boolean
-  dir_external: boolean
-  git: GitInfo
-}
-
-export type SyncPullResult = SyncStatus & {
-  status: string
-  changed: boolean
-  old_commit: string
-  new_commit: string
+  pending?: number
+  ready?: number
+  failed?: number
 }
 
 import { pb } from './pb'
@@ -158,6 +20,25 @@ export async function getJson<T>(url: string): Promise<T> {
   const response = await fetch(url, { headers: { ...authHeaders() } })
   if (!response.ok) {
     throw new Error(`${response.status} ${response.statusText}`)
+  }
+  return response.json() as Promise<T>
+}
+
+export async function putJson<T>(url: string, body: unknown): Promise<T> {
+  const response = await fetch(url, {
+    method: 'PUT',
+    headers: { ...authHeaders(), 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) {
+    let detail = ''
+    try {
+      const j = (await response.json()) as { detail?: string }
+      detail = j.detail ?? ''
+    } catch {
+      // not JSON; ignore
+    }
+    throw new Error(detail ? `${response.status}: ${detail}` : `${response.status} ${response.statusText}`)
   }
   return response.json() as Promise<T>
 }
@@ -183,93 +64,418 @@ export async function postJson<T>(url: string, body: unknown): Promise<T> {
   return response.json() as Promise<T>
 }
 
-// --- RAG semantic search -------------------------------------------------
+// --- Paper search (POST /api/search) ---------------------------------------
 //
-// Posts to /api/rag/search; qatlasd reverse-proxies to the configured
-// sidecar. Returns chunk-level hits with section path + snippet.
-//
-// The route is only registered when the operator sets both
-// QATLAS_PAPER_ACCESS_ENABLED=true and QATLAS_RAG_SIDECAR_URL; otherwise
-// the endpoint 404s. The SPA discovers availability by polling
-// /api/rag/healthz (see useRagHealth) and only renders the semantic
-// toggle when the probe returns 200.
+// Multi-paradigm paper search: the server fans the entry out to the
+// configured providers (catalog / arxiv / openalex / qdrant), merges the
+// hits, and anchors identity-anchored hits to registry papers. Results
+// carry a registry paper_id (newly minted papers have created=true);
+// candidates are title-only hits that were NOT minted.
 
-export type RagSearchRequest = {
-  query: string
-  top_k?: number
-  rerank?: boolean
-  rerank_pool?: number
-  use_sparse?: boolean
-  filters?: Record<string, string>
+export type PaperSearchEntry = {
+  text?: string
+  title?: string
+  doi?: string
+  arxiv_id?: string
+  max_results?: number
+  required_phrases?: string[]
 }
 
-export type RagSearchHit = {
-  arxiv_id: string
-  canonical: string
-  yymm: string
-  version: number
-  title?: string | null
-  authors?: string[] | null
-  categories?: string[] | null
-  section_path: string[]
-  chunk_index: number
-  snippet: string
+export type SearchHit = {
+  arxiv_id?: string
+  doi?: string
+  title?: string
+  authors?: string[]
+  year?: number
   score: number
-  md_object_key: string
-  char_start: number
-  char_end: number
-  image_refs: string[]
+  source: string
 }
 
-export type RagSearchPayload = {
-  query: string
-  took_s: number
-  reranked: boolean
-  results: RagSearchHit[]
+export type SearchResult = {
+  paper_id: string
+  hit: SearchHit
+  created: boolean
 }
 
-export type RagHealthPayload = {
-  status: 'ok' | 'degraded' | 'down'
+export type PaperSearchResponse = {
+  results: SearchResult[]
+  candidates: SearchHit[]
 }
 
-export async function ragSearch(body: RagSearchRequest): Promise<RagSearchPayload> {
-  return postJson<RagSearchPayload>('/api/rag/search', body)
+// Requires the papers:read scope (browser sessions carry ScopeMaster).
+export async function paperSearch(body: PaperSearchEntry): Promise<PaperSearchResponse> {
+  return postJson<PaperSearchResponse>('/api/search', body)
 }
 
-// Anonymous probe — does not include auth headers so it works regardless
-// of session state. Returns null when the endpoint is not registered (404
-// because either QATLAS_PAPER_ACCESS_ENABLED is off or
-// QATLAS_RAG_SIDECAR_URL is unset on the server).
-export async function ragHealth(): Promise<RagHealthPayload | null> {
-  try {
-    const r = await fetch('/api/rag/healthz')
-    if (!r.ok) return null
-    return (await r.json()) as RagHealthPayload
-  } catch {
-    return null
+// --- Agentic search (POST /api/search/agentic) ------------------------------
+//
+// LLM-backed agentic search served by the qatlas-search microservice and
+// proxied by qatlasd. On top of the classic search response it carries an
+// optional natural-language conclusion and the caller's daily usage. 429
+// means the daily quota is exhausted; the body still carries usage so the
+// UI can show "today/limit" instead of a bare error.
+
+export type SearchUsage = {
+  today: number
+  limit: number
+  llm_tokens?: number
+}
+
+export type AgenticSearchResponse = {
+  results: SearchResult[]
+  candidates: SearchHit[]
+  conclusion: string | null
+  usage: SearchUsage
+  errors?: Record<string, string>
+}
+
+// Error raised by agenticSearch. Keeps the HTTP status and the usage block
+// (present on 429) so the page can render a proper quota message.
+export class AgenticSearchError extends Error {
+  status: number
+  usage?: SearchUsage
+
+  constructor(status: number, detail: string, usage?: SearchUsage) {
+    super(detail || `${status}`)
+    this.name = 'AgenticSearchError'
+    this.status = status
+    this.usage = usage
   }
 }
 
-export function statValue(stats: Stats | null | undefined, group: keyof Stats, key: string) {
-  const value = stats?.[group]
-  if (!value || typeof value !== 'object') return 0
-  return (value as Record<string, number>)[key] ?? 0
-}
-
-export function graphLabelCounts(stats: GraphStats | null | undefined) {
-  if (!stats) return {}
-  if (stats.label_counts) return stats.label_counts
-
-  const counts: Record<string, number> = {}
-  for (const [key, value] of Object.entries(stats)) {
-    if (['nodes', 'relationships', 'labels', 'error'].includes(key)) continue
-    if (typeof value === 'number') counts[key] = value
+export async function agenticSearch(
+  body: PaperSearchEntry,
+): Promise<AgenticSearchResponse> {
+  const response = await fetch('/api/search/agentic', {
+    method: 'POST',
+    headers: { ...authHeaders(), 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) {
+    let detail = ''
+    let usage: SearchUsage | undefined
+    try {
+      const j = (await response.json()) as {
+        detail?: string
+        usage?: SearchUsage
+      }
+      detail = j.detail ?? ''
+      usage = j.usage
+    } catch {
+      // not JSON; ignore
+    }
+    throw new AgenticSearchError(
+      response.status,
+      detail || response.statusText,
+      usage,
+    )
   }
-  return counts
+  return response.json() as Promise<AgenticSearchResponse>
 }
 
-// Triggers the server-side theorems git fast-forward pull + cache reload.
-// Requires theorems:write (browser sessions carry ScopeMaster).
-export async function pullTheorems(): Promise<SyncPullResult> {
-  return postJson<SyncPullResult>('/api/theorems/sync/pull', {})
+// --- Plugins (GET /api/v1/plugins) ------------------------------------------
+//
+// Registry summaries; shape mirrors internal/plugin/registry.go Summary.
+// The `search-remote` entry represents the qatlas-search microservice —
+// the search page uses it to decide whether agentic search is available.
+
+export type PluginSummary = {
+  id: string
+  name?: string
+  version?: string
+  kind?: string
+  status: string // connected | disconnected | disabled | incompatible
+  enabled: boolean
+  error?: string
+  // Optional registry metadata, present when the plugin advertises it.
+  transport?: string
+  contributes?: {
+    capabilities?: string[]
+    subscribes?: string[]
+    publishes?: string[]
+  }
+  needs?: string[]
+}
+
+export type PluginsResponse = {
+  plugins: PluginSummary[]
+}
+
+export function listPlugins(): Promise<PluginsResponse> {
+  return getJson<PluginsResponse>('/api/v1/plugins')
+}
+
+export function isSearchRemoteAvailable(
+  plugins: PluginSummary[] | undefined,
+): boolean {
+  const entry = plugins?.find((p) => p.id === 'search-remote')
+  return Boolean(entry && entry.enabled && entry.status === 'connected')
+}
+
+// --- Paper detail (GET /api/papers/{paper_id}) ------------------------------
+
+export type PaperAsset = {
+  asset_id: number
+  source: string // 'arxiv' | 'published'
+  arxiv_version?: number // arxiv assets only
+  pdf_path?: string
+  pdf_size?: number
+  pdf_sha256?: string
+  mineru_md_path?: string
+  mineru_json_path?: string
+  image_count?: number
+  fetched_at?: string
+  lease_id?: string
+  lease_holder?: string
+  lease_expires_at?: string
+}
+
+export type PaperDetail = {
+  paper_id: string
+  status: string // pending | ready | failed | merged
+  arxiv_id?: string
+  doi?: string
+  openalex_id?: string
+  paper_ref?: string
+  title?: string
+  authors?: string[]
+  created_at?: string
+  updated_at?: string
+  assets: PaperAsset[]
+}
+
+// --- Papers list (GET /api/papers) ------------------------------------------
+//
+// Paginated registry listing backing the "converted papers" page. Filters
+// mirror the backend handler (internal/routes/papers_list.go): has_md
+// (converted markdown present), status, title substring; sorted by
+// created_at descending server-side.
+
+export type PapersListParams = {
+  has_md?: boolean
+  status?: 'pending' | 'ready' | 'failed'
+  q?: string
+  page?: number // 1-based
+  per_page?: number
+}
+
+export type PapersListItem = {
+  paper_id: string
+  arxiv_id?: string
+  doi?: string
+  title?: string
+  status: string
+  has_pdf: boolean
+  has_md: boolean
+  image_count: number
+  created_at: string
+  updated_at: string
+}
+
+export type PapersListResponse = {
+  items: PapersListItem[]
+  total: number
+  page: number
+  per_page: number
+}
+
+export async function papersList(
+  params: PapersListParams,
+): Promise<PapersListResponse> {
+  const qs = new URLSearchParams()
+  if (params.has_md !== undefined) qs.set('has_md', String(params.has_md))
+  if (params.status) qs.set('status', params.status)
+  if (params.q) qs.set('q', params.q)
+  if (params.page && params.page > 1) qs.set('page', String(params.page))
+  if (params.per_page) qs.set('per_page', String(params.per_page))
+  const suffix = qs.toString()
+  return getJson<PapersListResponse>(`/api/papers${suffix ? `?${suffix}` : ''}`)
+}
+
+// --- Admin (GET /api/admin/*) ------------------------------------------------
+//
+// whoami is session-only and always 200 for a signed-in browser user;
+// db/schema is adminGuarded (403 for non-admins). Shapes mirror
+// internal/routes/admin.go.
+
+export type AdminWhoami = {
+  login: string
+  is_admin: boolean
+}
+
+export type AdminSchemaColumn = {
+  name: string
+  data_type: string
+  nullable: boolean
+  default: string | null
+  is_pk: boolean
+}
+
+export type AdminSchemaIndex = {
+  name: string
+  definition: string
+}
+
+export type AdminSchemaConstraint = {
+  name: string
+  kind: string // PRIMARY KEY | FOREIGN KEY | UNIQUE | CHECK | EXCLUDE
+  definition: string
+}
+
+export type AdminSchemaTable = {
+  name: string
+  row_estimate: number
+  total_size: string // pg_size_pretty output, e.g. "16 kB"
+  columns: AdminSchemaColumn[]
+  indexes: AdminSchemaIndex[]
+  constraints: AdminSchemaConstraint[]
+}
+
+export type AdminDBSchema = {
+  database: string
+  tables: AdminSchemaTable[]
+}
+
+export function adminWhoami(): Promise<AdminWhoami> {
+  return getJson<AdminWhoami>('/api/admin/whoami')
+}
+
+export function adminDBSchema(): Promise<AdminDBSchema> {
+  return getJson<AdminDBSchema>('/api/admin/db/schema')
+}
+
+// Admin plugin listing: same PluginSummary shape as GET /api/v1/plugins,
+// served under the admin-guarded path.
+export function adminListPlugins(): Promise<PluginsResponse> {
+  return getJson<PluginsResponse>('/api/admin/plugins')
+}
+
+// Raw row browsing for one table (paginated). 404 = unknown table,
+// 503 = database unavailable.
+export type AdminDBRows = {
+  table: string
+  columns: string[]
+  rows: unknown[][]
+  total: number
+  page: number
+  per_page: number
+}
+
+export function adminDBTableRows(
+  table: string,
+  page: number,
+  perPage: number,
+): Promise<AdminDBRows> {
+  const qs = new URLSearchParams()
+  if (page > 1) qs.set('page', String(page))
+  qs.set('per_page', String(perPage))
+  return getJson<AdminDBRows>(
+    `/api/admin/db/tables/${encodeURIComponent(table)}/rows?${qs.toString()}`,
+  )
+}
+
+// Per-plugin admin manifest: describes the configurable sections/fields
+// the plugin exposes. Secret fields come back masked ("••••••••") or null.
+// 404 = the plugin has no admin page; 503 = plugin unreachable.
+export type AdminPluginManifestField = {
+  key: string
+  label: string
+  type: 'str' | 'int' | 'float' | 'bool'
+  description?: string
+  value: unknown // string | number | boolean | null (masked for secrets)
+  secret?: boolean
+}
+
+export type AdminPluginManifestSection = {
+  key: string
+  title: string
+  description?: string
+  fields: AdminPluginManifestField[]
+}
+
+export type AdminPluginManifest = {
+  title: string
+  version?: string
+  status?: {
+    agent_configured?: boolean
+    backends?: Record<string, boolean>
+  }
+  sections: AdminPluginManifestSection[]
+}
+
+export function adminPluginManifest(id: string): Promise<AdminPluginManifest> {
+  return getJson<AdminPluginManifest>(
+    `/api/admin/plugins/${encodeURIComponent(id)}/manifest`,
+  )
+}
+
+export type AdminPluginConfigResult = {
+  applied: string[]
+  restart_required: boolean
+}
+
+// Sends only the fields the user actually changed; the server answers
+// with the applied keys and whether a restart is needed to take effect.
+export function adminPluginUpdateConfig(
+  id: string,
+  updates: Record<string, unknown>,
+): Promise<AdminPluginConfigResult> {
+  return putJson<AdminPluginConfigResult>(
+    `/api/admin/plugins/${encodeURIComponent(id)}/config`,
+    { updates },
+  )
+}
+
+// --- Admin: search usage & quota plans --------------------------------------
+//
+// Per-user agentic-search metering and plan management. Shapes mirror the
+// qatlasd admin handlers: usage is counted per UTC day; `cost` is USD.
+
+export type AdminUsageRow = {
+  user_id: string
+  login: string
+  plan: string
+  effective_limit: number
+  count: number
+  llm_tokens: number
+  cost: number // USD
+}
+
+export type AdminUsageResponse = {
+  rows: AdminUsageRow[]
+}
+
+// `day` is YYYY-MM-DD (UTC); omit for today.
+export function adminUsage(day?: string): Promise<AdminUsageResponse> {
+  const suffix = day ? `?day=${encodeURIComponent(day)}` : ''
+  return getJson<AdminUsageResponse>(`/api/admin/usage${suffix}`)
+}
+
+export type AdminPlan = {
+  name: string
+  daily_agentic_search_limit: number
+  description?: string
+}
+
+export type AdminPlansResponse = {
+  plans: AdminPlan[]
+}
+
+export function adminPlans(): Promise<AdminPlansResponse> {
+  return getJson<AdminPlansResponse>('/api/admin/plans')
+}
+
+export function adminPutPlan(
+  name: string,
+  body: { daily_agentic_search_limit: number; description?: string },
+): Promise<unknown> {
+  return putJson(`/api/admin/plans/${encodeURIComponent(name)}`, body)
+}
+
+// daily_limit_override: number sets it, null clears it (back to plan limit).
+export function adminPutQuota(
+  userId: string,
+  body: { plan?: string; daily_limit_override?: number | null },
+): Promise<unknown> {
+  return putJson(`/api/admin/quotas/${encodeURIComponent(userId)}`, body)
 }

@@ -39,7 +39,7 @@ qatlasd serve [domain(s)] [flags]
 | `--queryTimeout <sec>` | 30 | SQL 查询超时 |
 | `--dev` | false | dev 模式（**不要在生产用**） |
 
-### qatlasd 自有 flag（v0.17.0+，20 个，easytier 风格）
+### qatlasd 自有 flag（easytier 风格）
 
 每个 flag 旁标 `[env: QATLAS_FOO=]`，等价 env var 名 = `qatlasd serve --help` 看到的标注：
 
@@ -49,16 +49,13 @@ qatlasd serve [domain(s)] [flags]
 | `--user-header <name>` | `QATLAS_USER_HEADER` | — |
 | `--edge-name <name>` | `QATLAS_EDGE_NAME` | — |
 | `--force-tcp4` | `QATLAS_FORCE_TCP4` | false |
-| `--wiki-dir <path>` | `QATLAS_WIKI_DIR` | `<.env 目录>/../QuantumAtlas-Wiki` |
 | `--raw-dir <path>` | `QATLAS_RAW_DIR` | `${XDG_DATA_HOME}/qatlasd/raw` |
 | `--data-dir <path>` | `QATLAS_DATA_DIR` | `${XDG_DATA_HOME}/qatlasd/data` |
 | `--pb-data-dir <path>` | `QATLAS_PB_DATA_DIR` | `${XDG_DATA_HOME}/qatlasd/pb_data` |
 | `--system-pat <token>` | `QATLAS_SYSTEM_PAT` | — |
 | `--system-pat-scopes <csv>` | `QATLAS_SYSTEM_PAT_SCOPES` | `*`（全 scope） |
-| `--neo4j-uri <bolt://...>` | `NEO4J_URI` | — |
-| `--neo4j-username <user>` | `NEO4J_USERNAME` | — |
-| `--neo4j-password <pw>` | `NEO4J_PASSWORD` | — |
-| `--neo4j-database <db>` | `NEO4J_DATABASE` | — |
+| `--postgres-dsn <dsn>` | `QATLAS_POSTGRES_DSN` | —（空 = registry 功能关闭）|
+| `--postgres-max-conns <n>` | `QATLAS_POSTGRES_MAX_CONNS` | `10` |
 | `--s3-endpoint <url>` | `QATLAS_S3_ENDPOINT` | — |
 | `--s3-public-endpoint <url>` | `QATLAS_S3_PUBLIC_ENDPOINT` | — |
 | `--s3-bucket-pdf <name>` | `QATLAS_S3_BUCKET_PDF` | — |
@@ -88,8 +85,7 @@ docker run --rm -p 4200:4200 \
   ghcr.io/iai-ustc-quantum/qatlasd:v0.17.0 serve \
     --http 0.0.0.0:4200 \
     --pb-data-dir /data \
-    --neo4j-uri bolt://neo4j.example:7687 \
-    --neo4j-username neo4j --neo4j-password ... \
+    --postgres-dsn postgres://qatlas:secret@pg.example:5432/qatlas?sslmode=disable \
     --s3-endpoint https://rustfs.example \
     --s3-bucket-pdf qatlas-pdf --s3-bucket-md qatlas-md \
     --s3-bucket-images qatlas-images \
@@ -157,7 +153,7 @@ ProtectSystem=full
 ProtectHome=no
 LockPersonality=true
 RestrictRealtime=true
-ReadWritePaths=<.env dir> <wiki dir> <data dir>
+ReadWritePaths=<.env dir> <data dir>
 ```
 
 !!! warning "ReadWritePaths 缺一会让 restart 失败"
@@ -204,7 +200,7 @@ qatlasd pat mint --user <email|id> --name <name>
 |---|---|---|
 | `--user` | ✅ | 目标用户（email 或 users record id）|
 | `--name` | ✅ | token 显示名（≤80 字符）|
-| `--scopes` | ✅ | 逗号分隔的 scope，如 `papers:write,wiki:read` |
+| `--scopes` | ✅ | 逗号分隔的 scope，如 `papers:write,theorems:read` |
 | `--expires-in-days` | ✅ | 1–365 |
 | `--description` | ❌ | 备注（≤200 字符）|
 
@@ -232,11 +228,9 @@ qatlasd pat revoke <id>
 
 ```bash
 qatlasd pat scopes
-# papers:read     Read paper catalog metadata (stats, needs-mineru)
+# papers:read     Read paper catalog metadata (stats, needs-mineru) + POST /api/search
 # papers:write    Upload paper PDFs / Markdown and run MinerU jobs (implies papers:read)
-# wiki:read       Read Wiki pages / search / stats
-# wiki:write      Trigger Wiki git sync (implies wiki:read)
-# graph:read      Query Neo4j (stats / schema / Cypher)
+# theorems:read   Read the theorems registry (builtin plugin)
 ```
 
 ---

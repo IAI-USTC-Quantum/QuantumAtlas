@@ -275,3 +275,10 @@ docs/server/openapi.json
 
 # Local agent/session exports
 session-recap-*.html
+
+# Sphinx doc build venv (docsite/)
+.venv-docs/
+
+# Runtime data dirs (bind-mounted into containers / produced by local runs)
+/data/
+/output/

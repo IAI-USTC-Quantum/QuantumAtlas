@@ -6,64 +6,69 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
+
+	"gopkg.in/yaml.v3"
+
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 
 	"github.com/spf13/cobra"
 )
 
-// defaultEnvTemplate is the minimal commented .env template emitted by
-// `qatlasd config init`. Lives in templates/default.env so editing it
-// is a normal text-file diff, not a Go string literal.
+// defaultConfigTemplate is the commented config.yaml template emitted by
+// `qatlasd config init`. Lives in templates/config.yaml so editing it is
+// a normal text-file diff, not a Go string literal.
 //
-//go:embed templates/default.env
-var defaultEnvTemplate []byte
-
-// envPrefixes lists the prefixes whose values `qatlasd config show`
-// considers part of "QuantumAtlas configuration" and prints. Other
-// process env vars (PATH, HOME, ...) are filtered out so the output
-// stays focused.
-var envPrefixes = []string{
-	"QATLAS_",
-	"NEO4J_",
-	"MINERU_",
-	"OPENAI_",
-	"ANTHROPIC_",
-	"GITHUB_CLIENT_",
-}
-
-// secretSubstrings are case-insensitive needles found in env-var names
-// whose VALUES should be redacted in `qatlasd config show` output. The
-// match is on the var NAME, not the value, so we don't leak by
-// accidental substring match against a long URL.
-var secretSubstrings = []string{
-	"TOKEN",
-	"SECRET",
-	"KEY",
-	"PASSWORD",
-}
+//go:embed templates/config.yaml
+var defaultConfigTemplate []byte
 
 // NewConfigCommand returns the `qatlasd config` subcommand group:
 // init / show / path. The design mirrors common CLI conventions
 // (kubectl config, gh config, code-server config) so operators don't
 // have to learn yet another vocabulary.
 func NewConfigCommand() *cobra.Command {
+	opts := &configPathOpts{}
 	root := &cobra.Command{
 		Use:   "config",
-		Short: "Manage the qatlasd .env configuration file",
-		Long: `Manage qatlasd's .env configuration file.
+		Short: "Manage the qatlasd YAML configuration file",
+		Long: `Manage qatlasd's YAML configuration file.
 
-qatlasd reads its configuration from process environment variables,
-which are typically populated from a .env file at startup (godotenv
-non-override semantics — existing env always wins over the file).
+qatlasd reads ALL of its configuration from a single YAML file
+(default: ~/.qatlas/config.yaml, override with --config). Environment
+variables are NOT consulted — any QATLAS_* variable set in the process
+environment makes startup fail with an error naming the offender.
 
-These subcommands help you bootstrap, inspect, and locate that file
-without manually copying .env.example or grepping the running unit.`,
+These subcommands help you bootstrap, inspect, and locate that file.`,
 	}
-	root.AddCommand(newConfigInitCommand())
-	root.AddCommand(newConfigPathCommand())
-	root.AddCommand(newConfigShowCommand())
+	root.PersistentFlags().StringVar(&opts.path, "config", "",
+		"Path to config.yaml (default: ~/.qatlas/config.yaml)")
+	root.AddCommand(newConfigInitCommand(opts))
+	root.AddCommand(newConfigPathCommand(opts))
+	root.AddCommand(newConfigShowCommand(opts))
 	return root
+}
+
+// configPathOpts carries the --config flag value shared by all config
+// subcommands.
+type configPathOpts struct {
+	path string
+}
+
+// resolved returns the effective config file path: the explicit
+// --config value when given, else the default ~/.qatlas/config.yaml.
+func (o *configPathOpts) resolved() (string, error) {
+	if strings.TrimSpace(o.path) != "" {
+		abs, err := filepath.Abs(o.path)
+		if err != nil {
+			return "", fmt.Errorf("resolve absolute path for %q: %w", o.path, err)
+		}
+		return abs, nil
+	}
+	def := config.DefaultPath()
+	if def == "" {
+		return "", errors.New("cannot determine user home directory; pass --config /path/to/config.yaml")
+	}
+	return def, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -71,140 +76,84 @@ without manually copying .env.example or grepping the running unit.`,
 // ---------------------------------------------------------------------------
 
 type configInitOpts struct {
-	path  string
 	force bool
 }
 
-func newConfigInitCommand() *cobra.Command {
+func newConfigInitCommand(shared *configPathOpts) *cobra.Command {
 	opts := &configInitOpts{}
 	cmd := &cobra.Command{
 		Use:   "init",
-		Short: "Write a minimal default .env to disk",
-		Long: `Write a minimal commented .env template to disk.
+		Short: "Write a commented default config.yaml to disk",
+		Long: `Write a commented default config.yaml template to disk.
 
-Default target path is $XDG_CONFIG_HOME/qatlasd/.env (or ~/.config/qatlasd/.env).
+Default target path is ~/.qatlas/config.yaml (override with --config).
 The file is created with mode 0600 so secrets don't leak via group/other read.
 
-The template is intentionally small — only the most commonly touched fields
-appear. The exhaustive reference lives in .env.example in the repository.`,
-		Example: `  # Write to the XDG default
+The template lists every supported key, commented out — uncomment + fill
+the ones you need.`,
+		Example: `  # Write to the default location
   qatlasd config init
 
-  # Write somewhere specific (e.g. /etc/quantum-atlas/.env)
-  sudo qatlasd config init --path /etc/quantum-atlas/.env
+  # Write somewhere specific (e.g. /etc/quantum-atlas/config.yaml)
+  sudo qatlasd config init --config /etc/quantum-atlas/config.yaml
 
   # Overwrite an existing file
   qatlasd config init --force`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runConfigInit(cmd, opts)
+			return runConfigInit(cmd, shared, opts)
 		},
 	}
-	cmd.Flags().StringVar(&opts.path, "path", "", "Target path (default: $XDG_CONFIG_HOME/qatlasd/.env)")
 	cmd.Flags().BoolVar(&opts.force, "force", false, "Overwrite an existing file (default: refuse with non-zero exit)")
 	return cmd
 }
 
-func runConfigInit(cmd *cobra.Command, opts *configInitOpts) error {
-	path := opts.path
-	if path == "" {
-		def, err := defaultConfigPath()
-		if err != nil {
-			return fmt.Errorf("resolve default config path: %w", err)
-		}
-		path = def
-	}
-	abs, err := filepath.Abs(path)
+func runConfigInit(cmd *cobra.Command, shared *configPathOpts, opts *configInitOpts) error {
+	path, err := shared.resolved()
 	if err != nil {
-		return fmt.Errorf("resolve absolute path for %q: %w", path, err)
+		return err
 	}
 
-	if _, err := os.Stat(abs); err == nil {
+	if _, err := os.Stat(path); err == nil {
 		if !opts.force {
-			return fmt.Errorf("%s already exists; pass --force to overwrite, or run `qatlasd config show` to inspect it", abs)
+			return fmt.Errorf("%s already exists; pass --force to overwrite, or run `qatlasd config show` to inspect it", path)
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("stat %s: %w", abs, err)
+		return fmt.Errorf("stat %s: %w", path, err)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
-		return fmt.Errorf("mkdir %s: %w", filepath.Dir(abs), err)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
 	}
-	if err := os.WriteFile(abs, defaultEnvTemplate, 0o600); err != nil {
-		return fmt.Errorf("write %s: %w", abs, err)
+	if err := os.WriteFile(path, defaultConfigTemplate, 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
 	}
 
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "Wrote default config to %s (mode 0600).\n", abs)
-	fmt.Fprintln(out, "Edit it, then start the server with one of:")
-	fmt.Fprintf(out, "  QATLAS_DOTENV=%s qatlasd serve --http=127.0.0.1:4200\n", abs)
-	fmt.Fprintf(out, "  qatlasd service install --dotenv-path %s\n", abs)
+	fmt.Fprintf(out, "Wrote default config to %s (mode 0600).\n", path)
+	fmt.Fprintln(out, "Edit it, then start the server with:")
+	fmt.Fprintln(out, "  qatlasd serve")
 	return nil
-}
-
-// defaultConfigPath returns $XDG_CONFIG_HOME/qatlasd/.env (or
-// $HOME/.config/qatlasd/.env when XDG_CONFIG_HOME is unset). This
-// matches the convention used by code-server, gh, and other modern
-// CLIs that ship a default config file.
-func defaultConfigPath() (string, error) {
-	base := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME"))
-	if base == "" || !filepath.IsAbs(base) {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", fmt.Errorf("user home dir: %w", err)
-		}
-		base = filepath.Join(home, ".config")
-	}
-	return filepath.Join(base, "qatlasd", ".env"), nil
 }
 
 // ---------------------------------------------------------------------------
 // `qatlasd config path`
 // ---------------------------------------------------------------------------
 
-func newConfigPathCommand() *cobra.Command {
+func newConfigPathCommand(shared *configPathOpts) *cobra.Command {
 	return &cobra.Command{
 		Use:   "path",
-		Short: "Print the .env path qatlasd would load",
-		Long: `Print the .env file path qatlasd would load if started now.
-
-Lookup order (first hit wins):
-  1. $QATLAS_DOTENV — explicit override (systemd / docker convention)
-  2. ./.env — relative to the current working directory
-
-Exits non-zero with no output when no file would be loaded.`,
+		Short: "Print the config.yaml path qatlasd would load",
+		Long: `Print the config file path qatlasd would load if started now:
+the --config value when given, else ~/.qatlas/config.yaml.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			path := currentDotenvPath()
-			if path == "" {
-				return errors.New("no .env located; server would rely on process environment alone")
+			path, err := shared.resolved()
+			if err != nil {
+				return err
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), path)
 			return nil
 		},
 	}
-}
-
-// currentDotenvPath returns the absolute path qatlasd would load, or
-// "" when no candidate exists. Mirrors the resolution order in
-// loadDotEnv() but without side effects (no actual godotenv.Load,
-// no slog output). Named to avoid collision with
-// service_cmd.go's resolveDotenvPath, which is the interactive
-// flavor used by `service install`.
-func currentDotenvPath() string {
-	if explicit := strings.TrimSpace(os.Getenv("QATLAS_DOTENV")); explicit != "" {
-		if info, err := os.Stat(explicit); err == nil && !info.IsDir() {
-			if abs, err := filepath.Abs(explicit); err == nil {
-				return abs
-			}
-			return explicit
-		}
-	}
-	if cwd, err := os.Getwd(); err == nil {
-		candidate := filepath.Join(cwd, ".env")
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return candidate
-		}
-	}
-	return ""
 }
 
 // ---------------------------------------------------------------------------
@@ -215,87 +164,150 @@ type configShowOpts struct {
 	noRedact bool
 }
 
-func newConfigShowCommand() *cobra.Command {
+func newConfigShowCommand(shared *configPathOpts) *cobra.Command {
 	opts := &configShowOpts{}
 	cmd := &cobra.Command{
 		Use:   "show",
-		Short: "Print the QuantumAtlas-relevant env vars currently visible to the process",
-		Long: `Print all QuantumAtlas-relevant environment variables currently set in
-the process, in KEY=VALUE form, sorted alphabetically.
+		Short: "Print the effective configuration as YAML (secrets masked)",
+		Long: `Load the config file exactly as qatlasd would and print the
+effective configuration (after defaults and path resolution) as YAML.
 
-Reflects what qatlasd would see *right now* — does NOT pre-load any
-.env file. To inspect a specific .env, run with the file pre-sourced:
-  set -a; . /path/to/.env; set +a; qatlasd config show
-
-Secret values (vars whose name contains TOKEN / SECRET / KEY / PASSWORD)
-are redacted to '***' by default. Use --no-redact to see plaintext
-(handy for debug but ONLY in private terminals).`,
+Secret values (tokens, keys, secrets) are masked to '***' by default.
+Use --no-redact to see plaintext (handy for debug but ONLY in private
+terminals).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runConfigShow(cmd, opts)
+			return runConfigShow(cmd, shared, opts)
 		},
 	}
-	cmd.Flags().BoolVar(&opts.noRedact, "no-redact", false, "Print secret values as plaintext (default: redact to '***')")
+	cmd.Flags().BoolVar(&opts.noRedact, "no-redact", false, "Print secret values as plaintext (default: mask to '***')")
 	return cmd
 }
 
-func runConfigShow(cmd *cobra.Command, opts *configShowOpts) error {
-	names := collectQATLASEnvNames()
-	sort.Strings(names)
-
-	out := cmd.OutOrStdout()
-	for _, name := range names {
-		val := os.Getenv(name)
-		if !opts.noRedact && isSecretName(name) {
-			val = "***"
-		}
-		fmt.Fprintf(out, "%s=%s\n", name, val)
+func runConfigShow(cmd *cobra.Command, shared *configPathOpts, opts *configShowOpts) error {
+	path, err := shared.resolved()
+	if err != nil {
+		return err
 	}
-	if len(names) == 0 {
-		fmt.Fprintln(cmd.ErrOrStderr(),
-			"(no QuantumAtlas-relevant env vars set; check that .env was loaded — see `qatlasd config path`)")
+	cfg, err := config.Load(path)
+	if err != nil {
+		return err
 	}
-	return nil
+	out, err := effectiveConfigYAML(cfg, !opts.noRedact)
+	if err != nil {
+		return err
+	}
+	_, err = cmd.OutOrStdout().Write(out)
+	return err
 }
 
-// collectQATLASEnvNames returns every env var name whose prefix matches
-// any of envPrefixes. Empty-value vars are skipped so an exported-but-
-// empty alias doesn't add noise.
-func collectQATLASEnvNames() []string {
-	seen := map[string]struct{}{}
-	for _, raw := range os.Environ() {
-		eq := strings.IndexByte(raw, '=')
-		if eq <= 0 {
-			continue
+// effectiveConfigYAML renders the resolved Config back into the YAML
+// schema operators edit, so `config show` output is directly diffable
+// against config.yaml. When redact is true, secret leaf values are
+// replaced with "***".
+func effectiveConfigYAML(cfg *config.Config, redact bool) ([]byte, error) {
+	mask := func(v string) string {
+		if redact && v != "" {
+			return "***"
 		}
-		name := raw[:eq]
-		val := raw[eq+1:]
-		if val == "" {
-			continue
-		}
-		for _, prefix := range envPrefixes {
-			if strings.HasPrefix(name, prefix) {
-				seen[name] = struct{}{}
-				break
-			}
-		}
+		return v
 	}
-	out := make([]string, 0, len(seen))
-	for name := range seen {
-		out = append(out, name)
+	maskList := func(vs []string) []string {
+		if !redact || len(vs) == 0 {
+			return vs
+		}
+		out := make([]string, len(vs))
+		for i := range vs {
+			out[i] = "***"
+		}
+		return out
 	}
-	return out
-}
 
-// isSecretName reports whether the env-var name should be redacted.
-// Substring match (case-insensitive on the upper-cased name, which is
-// the convention for env vars) so SECRET_ACCESS_KEY matches both
-// "SECRET" and "KEY" — either is sufficient.
-func isSecretName(name string) bool {
-	upper := strings.ToUpper(name)
-	for _, needle := range secretSubstrings {
-		if strings.Contains(upper, needle) {
-			return true
-		}
+	doc := map[string]any{
+		"http_addr":         cfg.HTTPAddr,
+		"public_url":        cfg.PublicURL,
+		"user_header":       cfg.UserHeader,
+		"edge_name":         cfg.EdgeName,
+		"force_tcp4":        cfg.ForceTCP4,
+		"skip_pb_data_lock": cfg.SkipPBDataLock,
+		"paths": map[string]any{
+			"raw_dir":     cfg.RawDir,
+			"data_dir":    cfg.DataDir,
+			"pb_data_dir": cfg.PBDataDir,
+		},
+		"postgres": map[string]any{
+			"dsn":                   cfg.PostgresDSN,
+			"max_conns":             cfg.PostgresMaxConns,
+			"corpus_ensure_indexes": cfg.CorpusEnsureIndexes,
+		},
+		"search": map[string]any{
+			"providers": cfg.SearchProviders,
+			"remote": map[string]any{
+				"enabled": cfg.RemoteEnabled,
+				"url":     cfg.RemoteURL,
+				"token":   mask(cfg.RemoteToken),
+				"timeout": cfg.RemoteTimeout.String(),
+			},
+			"agentic": map[string]any{
+				"daily_limit":    cfg.AgenticDailyLimit,
+				"price_per_mtok": cfg.AgenticPricePerMtok,
+			},
+		},
+		"auth": map[string]any{
+			"github_client_id":     cfg.GitHubClientID,
+			"github_client_secret": mask(cfg.GitHubClientSecret),
+			"allowed_logins":       cfg.AllowedGitHubLogins,
+			"admin_logins":         cfg.AdminGitHubLogins,
+		},
+		"s3": map[string]any{
+			"endpoint":          cfg.S3Endpoint,
+			"public_endpoint":   cfg.S3PublicEndpoint,
+			"bucket_pdf":        cfg.S3BucketPDF,
+			"bucket_md":         cfg.S3BucketMD,
+			"bucket_images":     cfg.S3BucketImages,
+			"bucket_openalex":   cfg.S3BucketOpenAlex,
+			"access_key_id":     mask(cfg.S3AccessKeyID),
+			"secret_access_key": mask(cfg.S3SecretAccessKey),
+		},
+		"paper_access": map[string]any{
+			"enabled":                cfg.PaperAccessEnabled,
+			"openalex_mailto":        cfg.OpenAlexMailto,
+			"arxiv_fetch_concurrent": cfg.ArxivFetchConcurrent,
+			"arxiv_fetch_rps":        cfg.ArxivFetchRPS,
+			"mineru": map[string]any{
+				"api_tokens":          maskList(cfg.MinerUAPITokens),
+				"api_base_url":        cfg.MinerUAPIBaseURL,
+				"model_version":       cfg.MinerUModelVersion,
+				"language":            cfg.MinerULanguage,
+				"is_ocr":              cfg.MinerUIsOCR,
+				"enable_formula":      cfg.MinerUEnableFormula,
+				"enable_table":        cfg.MinerUEnableTable,
+				"poll_interval":       cfg.MinerUPollInterval.String(),
+				"timeout":             cfg.MinerUTimeout.String(),
+				"max_concurrent_jobs": cfg.MinerUMaxConcurrentJobs,
+			},
+		},
+		"rag": map[string]any{
+			"qdrant_url":        cfg.RAGQdrantURL,
+			"qdrant_api_key":    mask(cfg.RAGQdrantAPIKey),
+			"qdrant_collection": cfg.RAGQdrantCollection,
+			"embed_url":         cfg.RAGEmbedURL,
+			"embed_token":       mask(cfg.RAGEmbedToken),
+		},
+		"plugins": map[string]any{
+			"dir":                cfg.PluginsDir,
+			"enabled":            cfg.PluginsEnabled,
+			"disabled":           cfg.PluginsDisabled,
+			"connect_secret":     mask(cfg.PluginConnectSecret),
+			"rpc_ws_bind":        cfg.RPCWSBind,
+			"event_retention":    cfg.EventRetention.String(),
+			"rpc_timeout":        cfg.PluginRPCTimeout.String(),
+			"reconnect_interval": cfg.PluginReconnectInterval.String(),
+			"deadletter_dir":     cfg.DeadLetterDir,
+		},
+		"system_pat": map[string]any{
+			"token":  mask(cfg.SystemPATToken),
+			"scopes": cfg.SystemPATScopes,
+		},
 	}
-	return false
+	return yaml.Marshal(doc)
 }

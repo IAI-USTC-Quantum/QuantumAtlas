@@ -4,6 +4,8 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/gitpull"
@@ -23,7 +25,7 @@ import (
 // host core stays domain-agnostic and plugins own their domain end-to-end.
 
 // PluginDeps are the host-core backends a builtin plugin's RegisterRoutes may
-// need. A plugin that also needs its own backend (wiki cache, theorems cache)
+// need. A plugin that also needs its own backend (e.g. a content cache)
 // captures it at construction and holds it on its own struct.
 type PluginDeps struct {
 	Cfg      *config.Config
@@ -43,7 +45,7 @@ type BuiltinPlugin interface {
 
 // GitPullPlugin is the optional capability a builtin implements when it reads
 // through a server-side `git pull --ff-only` checkout of an upstream content
-// repo (wiki, theorems). The platform type-asserts each builtin to this and,
+// repo. The platform type-asserts each builtin to this and,
 // for those that satisfy it, mounts the uniform POST /api/<id>/sync/pull +
 // GET /api/<id>/sync/status pair so the contract is identical across every
 // pull-style plugin.
@@ -52,8 +54,8 @@ type GitPullPlugin interface {
 	// GitRepoDir is the working-tree path the host's `git pull --ff-only`
 	// runs in.
 	GitRepoDir() string
-	// OnPullSucceeded runs plugin-specific post-pull work (wiki:
-	// cache.Refresh; theorems: registry cache reload).
+	// OnPullSucceeded runs plugin-specific post-pull work (e.g. a
+	// content-cache refresh).
 	OnPullSucceeded() error
 }
 
@@ -141,31 +143,17 @@ func dirExists(dir string) bool {
 	return err == nil && info.IsDir()
 }
 
-// --- Builtin adapters for the non-pull plugins (graph, rag) ------------------
-//
-// graph and rag construct their Neo4j/Qdrant clients per request, so they hold
-// no backend state — the platform deps carry everything they need. They are
-// NOT GitPullPlugin (no upstream git checkout), so the platform mounts no
-// /sync/* pair for them.
-
-type graphBuiltin struct{}
-
-// NewGraphPlugin returns the graph builtin adapter.
-func NewGraphPlugin() BuiltinPlugin { return graphBuiltin{} }
-
-func (graphBuiltin) PluginID() string { return "graph" }
-func (graphBuiltin) RegisterRoutes(se *core.ServeEvent, d PluginDeps) error {
-	RegisterGraph(se, d.Cfg, d.Registry, d.Enforcer)
-	return nil
-}
-
-type ragBuiltin struct{}
-
-// NewRAGPlugin returns the rag builtin adapter.
-func NewRAGPlugin() BuiltinPlugin { return ragBuiltin{} }
-
-func (ragBuiltin) PluginID() string { return "rag" }
-func (ragBuiltin) RegisterRoutes(se *core.ServeEvent, d PluginDeps) error {
-	RegisterRAG(se, d.Cfg, d.Registry, d.Enforcer)
-	return nil
+// isExternalToProject reports whether dir is outside the project working
+// directory (CWD at server start). Used by the platform sync-status payload
+// to warn operators that a content repo is non-local.
+func isExternalToProject(dir string) bool {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(cwd, dir)
+	if err != nil {
+		return true
+	}
+	return strings.HasPrefix(rel, "..")
 }

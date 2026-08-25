@@ -20,7 +20,7 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/openalex"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/openalexcorpus"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperassets"
-	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/papers"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/registry"
 
 	"github.com/casbin/casbin/v2"
 	"github.com/pocketbase/pocketbase/core"
@@ -33,8 +33,8 @@ import (
 // touched by these handlers flows through this interface — never
 // directly via os.*, so the same routes work against either backend.
 //
-// catalog is the PostgreSQL-backed papers catalog (papers.Store) that owns
-// all collection-style metadata: aggregate stats, the needs-mineru
+// catalog is the PostgreSQL-backed paper registry (registry.Store) that
+// owns all collection-style metadata: aggregate stats, the needs-mineru
 // queue, MinerU claim leases, and upload write-through. It degrades
 // gracefully (ErrCatalogUnavailable) when PostgreSQL is unreachable — read
 // endpoints report {available:false}; uploads still write the object
@@ -73,7 +73,7 @@ func RegisterPapers(
 	se *core.ServeEvent,
 	cfg *config.Config,
 	rawStore objstore.Store,
-	catalog *papers.Store,
+	catalog *registry.Store,
 	corpus *openalexcorpus.Store,
 	enforcer *casbin.Enforcer,
 	converter *mineru.Converter,
@@ -86,6 +86,14 @@ func RegisterPapers(
 	// corpus (ADR 0012). Constructed once and captured below so its singleflight
 	// coalesces concurrent /lookup misses for the same ref across requests.
 	corpusLoader := newCorpusMaterializer(corpus, doiResolver)
+
+	// Papers list (the "converted papers" page): GET /api/papers. The
+	// bare path is registered separately — the {path...} catch-all below
+	// matches sub-paths only, so this cannot shadow stats / needs-mineru /
+	// lookup / detail.
+	se.Router.GET("/api/papers", scopeGuard(enforcer, "papers", "read", func(re *core.RequestEvent) error {
+		return papersListHandler(re, catalog)
+	}))
 
 	se.Router.GET("/api/papers/{path...}", scopeGuard(enforcer, "papers", "read", func(re *core.RequestEvent) error {
 		raw := re.Request.PathValue("path")
@@ -100,6 +108,18 @@ func RegisterPapers(
 		// namespaced kind:id refs against the local OpenAlex corpus.
 		if raw == "lookup" {
 			return paperLookupHandler(re, catalog, corpus, corpusLoader)
+		}
+		// Paper detail by surrogate id: GET /api/papers/qa_<ulid>, and the
+		// on-demand image listing: GET /api/papers/qa_<ulid>/images.
+		// "qa_" never collides with an arXiv id / DOI, so it dispatches
+		// ahead of the asset-download handlers below.
+		if strings.HasPrefix(raw, "qa_") {
+			if id, ok := strings.CutSuffix(raw, "/images"); ok && !strings.Contains(id, "/") {
+				return paperImagesHandler(re, catalog, rawStore, id)
+			}
+			if !strings.Contains(raw, "/") {
+				return paperDetailHandler(re, catalog, raw)
+			}
 		}
 		// Asset-download endpoints are only registered when the
 		// operator opted in via QATLAS_PAPER_ACCESS_ENABLED. When
@@ -258,8 +278,15 @@ func RegisterPapers(
 				// behaviour as a clean "no twin" result.
 				doi, hit, _ := catalog.LookupArxivToDOI(ctx, paperassets.StripVersion(arxivPart))
 				if hit {
-					applyDOICanonicalHeaders(re, requestedID, doi, arxivPart)
-					return dispatchGETDOIHandlers(re, cfg, rawStore, converter, doi, action, statusKind, raw)
+					// Only honour the DOI-canonical redirect when the DOI
+					// paper actually has a published asset to serve. A DOI
+					// attached by metadata backfill (the common case) has
+					// none — falling through to the arxiv handlers is what
+					// the caller expects.
+					if hasPub, err := catalog.HasPublishedAsset(ctx, doi); err == nil && hasPub {
+						applyDOICanonicalHeaders(re, requestedID, doi, arxivPart)
+						return dispatchGETDOIHandlers(re, cfg, rawStore, converter, doi, action, statusKind, raw)
+					}
 				}
 				// catalog down / lookup error / no DOI twin: fall
 				// through to arxiv handlers.
@@ -321,7 +348,7 @@ func RegisterPapers(
 		case actionMineruClaim, actionMineruLease:
 			ttl, _ := strconv.Atoi(re.Request.URL.Query().Get("ttl_seconds"))
 			if ttl <= 0 {
-				ttl = papers.DefaultTTLSeconds
+				ttl = registry.DefaultTTLSeconds
 			}
 			return mineruClaimHandler(re, cfg, rawStore, catalog, arxiv, ttl)
 		}
@@ -351,7 +378,7 @@ func registerV1MineruLeaseRoutes(
 	se *core.ServeEvent,
 	cfg *config.Config,
 	rawStore objstore.Store,
-	catalog *papers.Store,
+	catalog *registry.Store,
 	enforcer *casbin.Enforcer,
 ) {
 	se.Router.POST("/api/v1/papers/{path...}", scopeGuard(enforcer, "papers", "write", func(re *core.RequestEvent) error {
@@ -365,7 +392,7 @@ func registerV1MineruLeaseRoutes(
 		}
 		ttl, _ := strconv.Atoi(re.Request.URL.Query().Get("ttl_seconds"))
 		if ttl <= 0 {
-			ttl = papers.DefaultTTLSeconds
+			ttl = registry.DefaultTTLSeconds
 		}
 		return mineruClaimHandler(re, cfg, rawStore, catalog, arxiv, ttl)
 	}))
@@ -671,35 +698,28 @@ func doiVersionErrorResponse(re *core.RequestEvent, doi, canonical string, err e
 // ---------------------------------------------------------------------------
 
 // paperStatsHandler answers GET /api/papers/stats — exposing the
-// catalog aggregate counters so the SPA can show "downloaded papers"
-// (has_pdf) and "converted markdown" (has_md) tiles on the home/wiki
-// pages.
+// registry aggregate counters by lifecycle status so the SPA can show
+// paper-collection tiles on the home page.
 //
-// When the catalog is unreachable (PostgreSQL down, or QATLAS_POSTGRES_DSN unset in
+// When the registry is unreachable (PostgreSQL down, or QATLAS_POSTGRES_DSN unset in
 // local dev) we degrade to {available:false} rather than 500 — the
 // frontend simply hides the tiles.
-func paperStatsHandler(re *core.RequestEvent, catalog *papers.Store) error {
+func paperStatsHandler(re *core.RequestEvent, catalog *registry.Store) error {
 	ctx := re.Request.Context()
 	stats, err := catalog.QueryStats(ctx)
 	if err != nil {
-		if !errors.Is(err, papers.ErrCatalogUnavailable) {
+		if !errors.Is(err, registry.ErrCatalogUnavailable) {
 			slog.Warn("papers: QueryStats failed for /api/papers/stats", "error", err)
 		}
 		return re.JSON(http.StatusOK, map[string]any{"available": false})
 	}
-	out := map[string]any{
-		"available":    true,
-		"total":        stats.Total,
-		"has_pdf":      stats.HasPDF,
-		"has_md":       stats.HasMD,
-		"has_json":     stats.HasJSON,
-		"needs_mineru": stats.NeedsMineru,
-		"total_images": stats.TotalImages,
-	}
-	if !stats.LoadedAt.IsZero() {
-		out["loaded_at"] = stats.LoadedAt.UTC().Format(time.RFC3339)
-	}
-	return re.JSON(http.StatusOK, out)
+	return re.JSON(http.StatusOK, map[string]any{
+		"available": true,
+		"total":     stats.Total,
+		"pending":   stats.Pending,
+		"ready":     stats.Ready,
+		"failed":    stats.Failed,
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -708,12 +728,11 @@ func paperStatsHandler(re *core.RequestEvent, catalog *papers.Store) error {
 
 // needsMineruHandler answers GET /api/papers/needs-mineru.
 //
-// The catalog query already filters out papers with an active claim
-// (claims are inlined on the paper_works row), so the response is the
-// list of papers with a PDF, no markdown, and no live lease — ready to
-// be claimed and converted. When the catalog is unreachable we return
-// an empty list with available:false rather than 500.
-func needsMineruHandler(re *core.RequestEvent, catalog *papers.Store) error {
+// The registry query already filters out assets with an active lease,
+// so the response is the list of papers with a PDF, no markdown, and no
+// live lease — ready to be claimed and converted. When the registry is
+// unreachable we return an empty list with available:false rather than 500.
+func needsMineruHandler(re *core.RequestEvent, catalog *registry.Store) error {
 	limit, _ := strconv.Atoi(re.Request.URL.Query().Get("limit"))
 	if limit < 1 {
 		limit = 10
@@ -723,7 +742,7 @@ func needsMineruHandler(re *core.RequestEvent, catalog *papers.Store) error {
 	ctx := re.Request.Context()
 	rows, err := catalog.NeedsMineru(ctx, limit)
 	if err != nil {
-		if errors.Is(err, papers.ErrCatalogUnavailable) {
+		if errors.Is(err, registry.ErrCatalogUnavailable) {
 			return re.JSON(http.StatusOK, map[string]any{
 				"papers": []any{}, "returned": 0, "available": false,
 			})
@@ -732,10 +751,15 @@ func needsMineruHandler(re *core.RequestEvent, catalog *papers.Store) error {
 	}
 	out := make([]map[string]any, 0, len(rows))
 	for _, r := range rows {
+		pdfKey := r.PDFPath
+		if pdfKey != "" {
+			pdfKey = "pdf/" + pdfKey
+		}
 		out = append(out, map[string]any{
+			"paper_id":         r.PaperID,
 			"arxiv_id":         r.ArxivID,
 			"key":              r.ArxivID,
-			"pdf_path":         r.PDFKey,
+			"pdf_path":         pdfKey,
 			"claimed":          false,
 			"claim_expires_at": nil,
 			"claim_requester":  nil,
@@ -782,7 +806,7 @@ func needsMineruHandler(re *core.RequestEvent, catalog *papers.Store) error {
 // The lease itself is granted atomically by the catalog (single
 // PostgreSQL row lock/update that only matches when the paper has a PDF,
 // lacks markdown, and has no live claim).
-func mineruClaimHandler(re *core.RequestEvent, cfg *config.Config, store objstore.Store, catalog *papers.Store, arxivID string, ttl int) error {
+func mineruClaimHandler(re *core.RequestEvent, cfg *config.Config, store objstore.Store, catalog *registry.Store, arxivID string, ttl int) error {
 	ctx := re.Request.Context()
 	canonical, ok := paperassets.ValidateUploadID(arxivID)
 	if !ok {
@@ -799,46 +823,76 @@ func mineruClaimHandler(re *core.RequestEvent, cfg *config.Config, store objstor
 	pdfURL := claimPDFURL(ctx, store, canonical)
 	pdfSha256 := lookupStoredPDFSha256(ctx, store, canonical)
 
-	lease, err := catalog.Lease(ctx, papers.CreateOptions{
-		ArxivID:    canonical,
-		Requester:  requester,
-		TTLSeconds: ttl,
-		PDFURL:     pdfURL,
-		PDFSha256:  pdfSha256,
-	})
+	// Routes address papers by arXiv id; the registry leases by surrogate
+	// paper_id, so resolve through the arXiv identity key first.
+	paperID, found, err := catalog.LookupByIdentity(ctx, registry.ArxivKey(registry.NormalizeArxivID(canonical)))
+	if err != nil {
+		return re.JSON(http.StatusServiceUnavailable, map[string]string{
+			"detail": "catalog unavailable (PostgreSQL unreachable); retry shortly",
+		})
+	}
+	if !found {
+		return re.JSON(http.StatusNotFound, map[string]string{
+			"detail": fmt.Sprintf("%s cannot be leased: no PDF in catalog, or markdown already exists. Upload the PDF first via /api/papers/{arxiv_id}/upload-pdf", canonical),
+		})
+	}
+
+	grant, err := catalog.Lease(ctx, paperID, requester, ttl)
 	if err != nil {
 		switch {
-		case errors.Is(err, papers.ErrCatalogUnavailable):
+		case errors.Is(err, registry.ErrCatalogUnavailable):
 			return re.JSON(http.StatusServiceUnavailable, map[string]string{
 				"detail": "catalog unavailable (PostgreSQL unreachable); retry shortly",
 			})
-		case errors.Is(err, papers.ErrNotLeasable):
+		case errors.Is(err, registry.ErrNotLeasable):
 			return re.JSON(http.StatusNotFound, map[string]string{
 				"detail": fmt.Sprintf("%s cannot be leased: no PDF in catalog, or markdown already exists. Upload the PDF first via /api/papers/{arxiv_id}/upload-pdf", canonical),
 			})
 		}
-		var dupErr *papers.ErrAlreadyLeased
+		var dupErr *registry.ErrAlreadyLeased
 		if errors.As(err, &dupErr) {
 			return re.JSON(http.StatusConflict, map[string]any{
 				"detail": map[string]any{
 					"message":          fmt.Sprintf("%s is already leased", canonical),
 					"lease_id":         dupErr.Existing.LeaseID,
-					"lease_expires_at": dupErr.Existing.ExpiresAt,
-					"lease_requester":  dupErr.Existing.Requester,
+					"lease_expires_at": dupErr.Existing.ExpiresAt.UTC().Format(time.RFC3339),
+					"lease_requester":  dupErr.Existing.Holder,
 				},
 			})
 		}
 		return re.JSON(http.StatusInternalServerError, map[string]string{"detail": err.Error()})
 	}
+	if pdfSha256 == "" {
+		pdfSha256 = grant.PDFSha256
+	}
 
 	slog.Info("mineru lease granted",
 		"arxiv_id", canonical,
+		"paper_id", grant.PaperID,
 		"requester", requester,
-		"lease_id", lease.LeaseID,
-		"ttl_seconds", lease.TTLSeconds,
+		"lease_id", grant.LeaseID,
+		"ttl_seconds", grant.TTLSeconds,
 		"pdf_sha256_known", pdfSha256 != "",
 	)
-	return re.JSON(http.StatusCreated, lease)
+	resp := map[string]any{
+		"lease_id":    grant.LeaseID,
+		"paper_id":    grant.PaperID,
+		"arxiv_id":    canonical,
+		"key":         paperassets.StorageKey(canonical),
+		"created_at":  grant.CreatedAt.UTC().Format(time.RFC3339),
+		"expires_at":  grant.ExpiresAt.UTC().Format(time.RFC3339),
+		"ttl_seconds": grant.TTLSeconds,
+	}
+	if requester != "" {
+		resp["requester"] = requester
+	}
+	if pdfURL != "" {
+		resp["pdf_url"] = pdfURL
+	}
+	if pdfSha256 != "" {
+		resp["pdf_sha256"] = pdfSha256
+	}
+	return re.JSON(http.StatusCreated, resp)
 }
 
 // claimPDFTTL is how long the PDF presigned URL stays valid. 24h gives
@@ -875,7 +929,7 @@ func claimPDFURL(ctx context.Context, store objstore.Store, canonical string) st
 	if url, ok, err := store.PresignGet(ctx, pdfKey, claimPDFTTL); err == nil && ok && url != "" {
 		return url
 	}
-	return papers.ArxivVersionedURL(canonical)
+	return arxivVersionedURL(canonical)
 }
 
 // lookupStoredPDFSha256 returns the sha256 (lowercase hex) of the
@@ -902,21 +956,33 @@ func lookupStoredPDFSha256(ctx context.Context, store objstore.Store, canonical 
 	return strings.ToLower(info.Metadata["sha256"])
 }
 
-func mineruClaimReleaseHandler(re *core.RequestEvent, catalog *papers.Store, arxivID, claimID string) error {
+func mineruClaimReleaseHandler(re *core.RequestEvent, catalog *registry.Store, arxivID, claimID string) error {
 	canonical, ok := paperassets.ValidateUploadID(arxivID)
 	if !ok {
 		return re.JSON(http.StatusBadRequest, map[string]string{
 			"detail": fmt.Sprintf("invalid arxiv_id for claim release: %q", arxivID),
 		})
 	}
-	_, err := catalog.ReleaseLease(re.Request.Context(), canonical, claimID)
+	ctx := re.Request.Context()
+	paperID, found, err := catalog.LookupByIdentity(ctx, registry.ArxivKey(registry.NormalizeArxivID(canonical)))
 	if err != nil {
-		if errors.Is(err, papers.ErrIDMismatch) {
+		return re.JSON(http.StatusServiceUnavailable, map[string]string{
+			"detail": "catalog unavailable (PostgreSQL unreachable); retry shortly",
+		})
+	}
+	if !found {
+		// Unknown paper — nothing holds a lease for it; idempotent 204.
+		re.Response.WriteHeader(http.StatusNoContent)
+		return nil
+	}
+	err = catalog.ReleaseLease(ctx, paperID, claimID)
+	if err != nil {
+		if errors.Is(err, registry.ErrIDMismatch) {
 			return re.JSON(http.StatusConflict, map[string]string{
 				"detail": "lease_id does not match the active lease",
 			})
 		}
-		if errors.Is(err, papers.ErrCatalogUnavailable) {
+		if errors.Is(err, registry.ErrCatalogUnavailable) {
 			return re.JSON(http.StatusServiceUnavailable, map[string]string{
 				"detail": "catalog unavailable (PostgreSQL unreachable); retry shortly",
 			})
@@ -931,7 +997,7 @@ func mineruClaimReleaseHandler(re *core.RequestEvent, catalog *papers.Store, arx
 // Upload handlers
 // ---------------------------------------------------------------------------
 
-func uploadPDFHandler(re *core.RequestEvent, cfg *config.Config, store objstore.Store, catalog *papers.Store, arxivID string) error {
+func uploadPDFHandler(re *core.RequestEvent, cfg *config.Config, store objstore.Store, catalog *registry.Store, arxivID string) error {
 	ctx := re.Request.Context()
 	canonical, ok := paperassets.ValidateUploadID(arxivID)
 	if !ok {
@@ -1020,13 +1086,14 @@ func uploadPDFHandler(re *core.RequestEvent, cfg *config.Config, store objstore.
 	}
 	overallUnchanged := pdfOutcome.kind == outcomeUnchanged
 
-	// Catalog write-through: flip has_pdf=true on the paper_works row
-	// (creating a minimal arxiv-fallback node if the paper predates the
-	// OpenAlex bootstrap). When PostgreSQL is down we still return success —
-	// the object is durably written; `papers sync` reconciles later.
+	// Registry write-through: resolve-or-mint the paper and record the
+	// PDF asset for this version. When PostgreSQL is down we still return
+	// success — the object is durably written; `papers sync` reconciles later.
 	catalogDeferred := false
-	if err := catalog.UpsertPDF(ctx, canonical, pdfSha, pdfSize); err != nil {
-		if errors.Is(err, papers.ErrCatalogUnavailable) {
+	if _, _, err := catalog.UpsertPDF(ctx,
+		registry.PaperRef{ArxivID: canonical},
+		registry.ArxivVersionOf(canonical), pdfSha, pdfSize, bucketRelKey(pdfKey)); err != nil {
+		if errors.Is(err, registry.ErrCatalogUnavailable) {
 			catalogDeferred = true
 		} else {
 			slog.Warn("papers: UpsertPDF write-through failed", "arxiv_id", canonical, "error", err)
@@ -1119,7 +1186,7 @@ func uploadPDFHandler(re *core.RequestEvent, cfg *config.Config, store objstore.
 // memory-tight VM (~1 GB class), concurrent contributors should keep
 // total in-flight zip volume under ~800 MB to leave headroom for
 // everything else.
-func uploadMinerUHandler(re *core.RequestEvent, cfg *config.Config, store objstore.Store, catalog *papers.Store, arxivID string) error {
+func uploadMinerUHandler(re *core.RequestEvent, cfg *config.Config, store objstore.Store, catalog *registry.Store, arxivID string) error {
 	ctx := re.Request.Context()
 	canonical, ok := paperassets.ValidateUploadID(arxivID)
 	if !ok {
@@ -1301,8 +1368,8 @@ func uploadMinerUHandler(re *core.RequestEvent, cfg *config.Config, store objsto
 	)
 
 	catalogDeferred := false
-	if err := catalog.UpsertMD(ctx, canonical, mdSha, mdSize); err != nil {
-		if !errors.Is(err, papers.ErrCatalogUnavailable) {
+	if err := upsertMDWriteThrough(ctx, catalog, canonical, mdSha, mdSize, imageCount); err != nil {
+		if !errors.Is(err, registry.ErrCatalogUnavailable) {
 			slog.Warn("papers: UpsertMD write-through failed", "arxiv_id", canonical, "error", err)
 		}
 		catalogDeferred = true

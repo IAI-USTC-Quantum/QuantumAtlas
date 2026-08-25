@@ -271,6 +271,138 @@ func (c *Client) SubmitURLBatch(ctx context.Context, files []BatchFile, opts Sub
 	return batchID, nil
 }
 
+// MaxUploadBatchSize is MinerU's per-batch file-count limit for the
+// upload channel (POST /api/v4/file-urls/batch rejects bigger batches).
+// Documented limit is 200; driver code should chunk longer queues at
+// this boundary.
+const MaxUploadBatchSize = 200
+
+// ApplyUploadURLs opens an upload-channel batch: MinerU allocates
+// presigned PUT URLs on its own OSS storage for each file name and
+// returns them alongside a batch id. The caller then pushes the raw
+// bytes to each URL with UploadFile; conversion starts automatically
+// once MinerU observes the upload. Poll the batch with GetBatch
+// (matching per-file states by DataID).
+//
+// This flow needs no publicly reachable file host — unlike
+// SubmitURLTask / SubmitURLBatch, MinerU never has to fetch from us.
+//
+// files are bare file names (e.g. "paper.pdf"); MinerU infers the
+// parser from the extension, so the name MUST carry a real suffix.
+// All files share the SubmitOptions; opts.DataID is attached only when
+// a single file is being uploaded (a one-file batch is the converter's
+// per-paper shape and DataID is how GetBatch results get matched back).
+func (c *Client) ApplyUploadURLs(ctx context.Context, files []string, opts SubmitOptions) (batchID string, uploadURLs []string, err error) {
+	if len(files) == 0 {
+		return "", nil, &Error{Msg: "ApplyUploadURLs: no files"}
+	}
+	if len(files) > MaxUploadBatchSize {
+		return "", nil, &Error{Msg: fmt.Sprintf("ApplyUploadURLs: %d files exceeds MinerU upload batch limit of %d", len(files), MaxUploadBatchSize)}
+	}
+	if opts.ModelVersion == "" {
+		opts.ModelVersion = "vlm"
+	}
+	if opts.Language == "" {
+		opts.Language = "ch"
+	}
+
+	items := make([]map[string]any, 0, len(files))
+	for i, name := range files {
+		if name == "" {
+			return "", nil, &Error{Msg: fmt.Sprintf("ApplyUploadURLs: empty file name at index %d", i)}
+		}
+		item := map[string]any{
+			"name":   name,
+			"is_ocr": opts.IsOCR,
+		}
+		if opts.DataID != "" && len(files) == 1 {
+			item["data_id"] = opts.DataID
+		}
+		items = append(items, item)
+	}
+
+	body := map[string]any{
+		"files":          items,
+		"model_version":  opts.ModelVersion,
+		"language":       opts.Language,
+		"enable_formula": opts.EnableFormula,
+		"enable_table":   opts.EnableTable,
+		"no_cache":       opts.NoCache,
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return "", nil, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.baseURL+"/api/v4/file-urls/batch", bytes.NewReader(payload))
+	if err != nil {
+		return "", nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "*/*")
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	data, err := c.doEnvelope(req)
+	if err != nil {
+		return "", nil, err
+	}
+	batchID, _ = data["batch_id"].(string)
+	if batchID == "" {
+		return "", nil, &Error{Msg: "response did not include batch_id"}
+	}
+	rawURLs, _ := data["file_urls"].([]any)
+	uploadURLs = make([]string, 0, len(rawURLs))
+	for _, u := range rawURLs {
+		if s, ok := u.(string); ok {
+			uploadURLs = append(uploadURLs, s)
+		}
+	}
+	if len(uploadURLs) != len(files) {
+		return "", nil, &Error{Msg: fmt.Sprintf("response included %d file_urls for %d files", len(uploadURLs), len(files))}
+	}
+	return batchID, uploadURLs, nil
+}
+
+// UploadFile pushes raw file bytes to a presigned URL previously
+// obtained from ApplyUploadURLs. The URL is self-authenticating
+// (OSS-style presign), so NO Authorization header is sent — adding one
+// can invalidate the presign signature. Content-Length is pinned to
+// size so the upload streams without chunking.
+//
+// Non-2xx responses are classified through classifyAPIError (5xx →
+// retryable, 403 → fatal, etc.) just like envelope calls.
+func (c *Client) UploadFile(ctx context.Context, uploadURL string, r io.Reader, size int64) error {
+	if uploadURL == "" {
+		return &Error{Msg: "UploadFile: empty upload url"}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, uploadURL, r)
+	if err != nil {
+		return err
+	}
+	if size >= 0 {
+		req.ContentLength = size
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+		msg := strings.TrimSpace(string(raw))
+		if len(msg) > 200 {
+			msg = msg[:200] + "..."
+		}
+		if msg == "" {
+			msg = "presigned upload rejected"
+		}
+		return classifyAPIError("", msg, resp.StatusCode)
+	}
+	return nil
+}
+
 // GetBatch returns per-file states for an in-flight batch. The slice has
 // one entry per file submitted; ordering is not guaranteed to match the
 // submission order, so callers should match by DataID.

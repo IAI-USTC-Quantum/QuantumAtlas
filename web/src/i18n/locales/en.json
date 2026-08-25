@@ -15,12 +15,10 @@
     },
     "nav": {
       "home": "Home",
-      "wiki": "Wiki",
-      "search": "Search",
       "papers": "Paper Search",
-      "graph": "Graph",
+      "papersList": "Papers",
       "pat": "PATs",
-      "theorems": "Theorems"
+      "admin": "Admin"
     },
     "status": {
       "loading": "Loading…",
@@ -42,10 +40,10 @@
       "revoke": "Revoke"
     },
     "search": {
-      "placeholder": "Search pages, primitives, algorithms"
+      "placeholder": "Search papers by title, DOI, arXiv id"
     },
     "topbar": {
-      "docsLink": "CLI docs",
+      "docsLink": "Docs",
       "userMenu": {
         "openLabel": "User menu",
         "patLink": "Manage PATs",
@@ -61,16 +59,10 @@
       }
     },
     "metrics": {
-      "totalPages": "Total pages",
-      "entries": "Entries",
-      "primitives": "Primitives",
-      "algorithms": "Algorithms",
-      "published": "Published",
-      "downloadedPapers": "Downloaded papers",
-      "convertedMd": "Converted markdown",
-      "nodes": "Nodes",
-      "relationships": "Relationships",
-      "labels": "Labels"
+      "papersTotal": "Registered papers",
+      "papersPending": "Pending",
+      "papersReady": "Ready",
+      "papersFailed": "Failed"
     },
     "notFound": {
       "eyebrow": "404",
@@ -79,41 +71,24 @@
     }
   },
   "home": {
-    "eyebrow": "Quantum algorithm workspace",
+    "eyebrow": "Paper registry",
     "title": "QuantumAtlas",
-    "subtitle": "Browse extracted papers, inspect primitives, and hand API-ready tokens to trusted terminals.",
-    "ctaWiki": "Browse wiki",
-    "ctaGraph": "Explore graph",
+    "subtitle": "Collect quantum-computing papers, search them across providers, and track their ingestion lifecycle.",
+    "ctaSearch": "Search papers",
+    "registryStats": "Registry stats",
+    "registryUnavailable": "The paper registry is currently unavailable (PostgreSQL unreachable or not configured).",
     "quickActions": "Quick actions",
-    "searchKnowledge": "Search knowledge",
-    "recentPages": "Recent pages"
-  },
-  "wiki": {
-    "eyebrow": "Wiki",
-    "title": "Structured knowledge base",
-    "subtitle": "Pages are read from the Wiki Git checkout and rendered by the web app.",
-    "groupTitle": "{{type}}",
-    "searchEyebrow": "Search",
-    "searchTitle": "Find wiki pages",
-    "searchSubtitle": "Search titles, tags, page ids, and extracted content.",
-    "searchInputPlaceholder": "e.g. quantum Fourier transform",
-    "popularTopics": "Popular topics",
-    "resultsFor": "Results for \"{{query}}\"",
-    "detailMeta": {
-      "draft": "draft"
-    }
+    "searchPapers": "Search papers",
+    "convertedPapers": "Converted papers",
+    "convertedPapersEmpty": "No converted papers yet.",
+    "viewAll": "View all"
   },
   "papers": {
     "eyebrow": "Paper search",
-    "title": "RAG semantic search",
-    "subtitle": "Ask in natural language; retrieves the most relevant chunks across ~89k papers / 3.2M chunks via hybrid (dense + sparse) search and reranks them.",
-    "inputPlaceholder": "e.g. What is the complexity bound for quantum phase estimation?",
+    "title": "Multi-paradigm paper search",
+    "subtitle": "One query fanned out across the local catalog, arXiv, and OpenAlex. Identity-anchored hits are minted into the registry and picked up by the ingestion pipeline.",
+    "inputPlaceholder": "e.g. fault-tolerant magic state distillation, a title, DOI, or arXiv id",
     "searchButton": "Search",
-    "topKLabel": "Top-k",
-    "rerankLabel": "Rerank",
-    "rerankHint": "Cross-encoder rerank (slower but better top-k quality)",
-    "useSparseLabel": "Sparse",
-    "useSparseHint": "Add BM25 sparse recall on top of dense retrieval (hybrid)",
     "popularQueries": "Example queries",
     "queryExamples": [
       "How does the surface code distance d affect logical error rate",
@@ -121,30 +96,72 @@
       "Convergence bottlenecks of VQE on chemistry systems",
       "fault-tolerant magic state distillation"
     ],
-    "resultsHeader": "{{count}} results · took {{took}}s{{reranked, select, true{ · reranked} other{}}}",
-    "noResults": "No matching chunks. Try rephrasing or relaxing filters.",
-    "ragScore": "score",
-    "chunkLabel": "chunk",
-    "charRange": "chars {{start}}-{{end}}",
-    "sourceLabel": "Source",
-    "viewSource": "View wiki page",
-    "unavailableTitle": "RAG unavailable",
-    "unavailableBody": "The server has no RAG sidecar configured, or the sidecar is unhealthy. For local dev see VITE_DEV_RAG_SIDECAR in web/.env.development.example; for production see QATLAS_RAG_SIDECAR_URL in .env.example.",
-    "degradedTitle": "RAG degraded",
-    "degradedBody": "The vector store or reranker is partially unavailable; results may be inaccurate."
-  },
-  "graph": {
-    "eyebrow": "Graph",
-    "title": "Knowledge graph overview",
-    "subtitle": "Neo4j-backed topology and schema health for the quantum knowledge graph.",
-    "labelsPanel": "Node labels",
-    "labelsEmpty": "No labels reported",
-    "explorerPanel": "Sample view",
-    "explorerHint": "Typical Algorithm → Primitive → Paper relationship",
-    "nodeEyebrow": "Graph node",
-    "nodeType": "Type: {{type}}",
-    "nodeDetail": "Node detail",
-    "nodeDetailCopy": "Graph node detail pages now live in the web shell. Add a dedicated JSON endpoint when richer node payloads are needed."
+    "resultsHeader": "{{count}} results",
+    "noResults": "No matching papers. Try a different query, a DOI, or an arXiv id.",
+    "scoreLabel": "score",
+    "newBadge": "new",
+    "untitled": "Untitled",
+    "candidatesTitle": "Possible matches",
+    "candidatesHint": "Title-only hits without a strong identity (no DOI or arXiv id) — these were NOT minted into the registry.",
+    "agentic": {
+      "toggle": "Agentic search",
+      "toggleHint": "LLM-assisted retrieval served by the search microservice (daily quota applies)",
+      "unavailable": "Search microservice is not online",
+      "conclusionTitle": "AI conclusion",
+      "usage": "Today {{today}}/{{limit}}",
+      "rateLimitedTitle": "Daily limit reached",
+      "rateLimited": "You have reached today's agentic-search quota ({{today}}/{{limit}}). Try again tomorrow or use classic search."
+    },
+    "detail": {
+      "back": "Back to search",
+      "eyebrow": "Paper",
+      "status": {
+        "pending": "pending",
+        "ready": "ready",
+        "failed": "failed",
+        "merged": "merged"
+      },
+      "assets": "Assets",
+      "noAssets": "No assets yet — the lazy-ingestion pipeline has not fetched this paper.",
+      "cols": {
+        "source": "Source",
+        "version": "Version",
+        "pdfSize": "PDF size",
+        "markdown": "Markdown",
+        "images": "Images",
+        "fetchedAt": "Fetched at"
+      },
+      "yes": "yes",
+      "no": "no",
+      "createdAt": "Registered",
+      "updatedAt": "Updated",
+      "paperRef": "Paper ref"
+    },
+    "list": {
+      "eyebrow": "Paper registry",
+      "title": "Papers",
+      "subtitle": "Registered papers and their conversion state. The converted-only filter shows papers whose PDF has been processed into markdown.",
+      "convertedOnly": "Converted only",
+      "statusFilter": {
+        "placeholder": "Status",
+        "all": "All statuses"
+      },
+      "searchPlaceholder": "Filter by title…",
+      "apply": "Apply",
+      "cols": {
+        "title": "Title",
+        "arxiv": "arXiv",
+        "status": "Status",
+        "converted": "Converted",
+        "images": "Images",
+        "createdAt": "Created"
+      },
+      "empty": "No papers match the current filters.",
+      "total": "{{count}} papers",
+      "pageOf": "Page {{page}} of {{pages}}",
+      "prev": "Previous",
+      "next": "Next"
+    }
   },
   "token": {
     "_removed": "Session-token page was removed; the PAT page covers all CLI bearer-token use cases."
@@ -230,6 +247,122 @@
     },
     "copied": "Copied"
   },
+  "admin": {
+    "eyebrow": "Administration",
+    "title": "Database schema",
+    "subtitle": "Read-only introspection of the Postgres paper-registry database — tables, columns, indexes, and constraints.",
+    "loginPrompt": "Sign in to view the admin console.",
+    "loginButton": "Sign in",
+    "adminOnly": "This page is restricted to server administrators.",
+    "signedInAs": "Signed in as {{login}}",
+    "database": "Database",
+    "tables": "{{count}} tables",
+    "rows": "≈ {{count}} rows",
+    "cols": {
+      "name": "Column",
+      "type": "Type",
+      "nullable": "Nullable",
+      "default": "Default"
+    },
+    "pk": "PK",
+    "indexes": "Indexes",
+    "constraints": "Constraints",
+    "noIndexes": "No indexes",
+    "noConstraints": "No constraints",
+    "usage": {
+      "title": "Usage",
+      "dateLabel": "Day (UTC)",
+      "empty": "No usage recorded for this day.",
+      "cols": {
+        "user": "User",
+        "plan": "Plan",
+        "count": "Count",
+        "limit": "Effective limit",
+        "tokens": "Tokens",
+        "cost": "Cost (USD)"
+      }
+    },
+    "plans": {
+      "title": "Limits & plans",
+      "save": "Save",
+      "saved": "Saved",
+      "cols": {
+        "name": "Name",
+        "dailyLimit": "Daily limit",
+        "description": "Description",
+        "actions": "Actions"
+      }
+    },
+    "quotas": {
+      "title": "User quotas",
+      "hint": "Switch a user's plan or set a custom daily limit (leave empty to clear the override and fall back to the plan limit). Users are listed from the selected day's usage rows.",
+      "empty": "No user rows for this day.",
+      "overridePlaceholder": "empty = clear",
+      "save": "Save",
+      "saved": "Saved",
+      "cols": {
+        "user": "User",
+        "plan": "Plan",
+        "override": "Custom limit",
+        "actions": "Actions"
+      }
+    },
+    "docs": {
+      "title": "Repository architecture",
+      "description": "Multi-repo layout (qatlasd / qatlas-cli / qatlas-search), the plugin protocol, and the deployment topology.",
+      "open": "Read the doc"
+    },
+    "plugins": {
+      "title": "Plugins",
+      "subtitle": "Loaded plugin registry entries and per-plugin configuration.",
+      "open": "Manage plugins",
+      "backToAdmin": "Back to admin",
+      "loaded": "Loaded plugins",
+      "empty": "No plugins are currently loaded.",
+      "cols": {
+        "name": "Name",
+        "id": "ID",
+        "version": "Version",
+        "kind": "Kind",
+        "transport": "Transport",
+        "status": "Status",
+        "error": "Error",
+        "capabilities": "Capabilities",
+        "needs": "Needs"
+      },
+      "status": {
+        "connected": "Connected",
+        "disconnected": "Disconnected",
+        "disabled": "Disabled",
+        "incompatible": "Incompatible"
+      },
+      "config": {
+        "heading": "Plugin configuration",
+        "noAdminPage": "This plugin does not expose an admin page.",
+        "unreachable": "The plugin is currently unreachable.",
+        "agentConfigured": "Agent configured",
+        "agentNotConfigured": "Agent not configured",
+        "secretUnset": "Not set",
+        "secretHint": "Leave empty to keep the current value.",
+        "save": "Save changes",
+        "saved": "Configuration saved",
+        "appliedTitle": "Configuration applied",
+        "applied": "Applied keys: {{keys}}",
+        "restartHint": "A plugin restart is required for the changes to take effect."
+      }
+    },
+    "dbrows": {
+      "browse": "Browse rows",
+      "backToAdmin": "Back to admin",
+      "subtitle": "Raw rows of the {{table}} table.",
+      "empty": "This table has no rows.",
+      "total": "{{count}} rows",
+      "perPage": "Rows per page",
+      "prev": "Prev",
+      "next": "Next",
+      "pageOf": "Page {{page}} of {{pages}}"
+    }
+  },
   "login": {
     "title": "QuantumAtlas",
     "subtitle": "Sign in with your GitHub account to continue.",
@@ -245,64 +378,5 @@
     "failedTitle": "Sign-in failed",
     "failedReturn": "<loginLink>Return to the sign-in page</loginLink> and try again.",
     "missingCode": "Missing code or state in OAuth callback URL."
-  },
-  "theorems": {
-    "eyebrow": "Theorems",
-    "title": "Proved theorems",
-    "subtitle": "Machine-checked Lean 4 declarations, read through a server-side git checkout of the upstream Lean-content repo.",
-    "pull": {
-      "button": "Pull now",
-      "running": "Pulling…",
-      "changed": "Synced {{from}} → {{to}}",
-      "upToDate": "Already up to date",
-      "failed": "Pull failed: {{error}}"
-    },
-    "overview": {
-      "title": "Overview",
-      "total": "Total",
-      "sorryFree": "Sorry-free",
-      "families": "Families",
-      "certified": "Certified"
-    },
-    "filters": {
-      "searchPlaceholder": "Filter by name or statement…",
-      "family": "Family",
-      "allFamilies": "All families",
-      "audit": "Audit status",
-      "allAudit": "All statuses"
-    },
-    "cols": {
-      "fqn": "Lean FQN",
-      "family": "Family",
-      "kind": "Kind",
-      "audit": "Audit",
-      "sorryFree": "Sorry-free",
-      "statement": "Statement"
-    },
-    "empty": "No theorems match these filters.",
-    "count": "Showing {{shown}} of {{total}}",
-    "detail": {
-      "back": "Back to theorems",
-      "sorryFree": "Sorry-free",
-      "dependencies": "Dependencies",
-      "noDeps": "No declared dependencies.",
-      "axioms": "Axioms used",
-      "noAxioms": "No extra axioms.",
-      "audit": "Audit verdict",
-      "result": "Result",
-      "kernel": "Kernel",
-      "faithfulness": "Claim faithfulness",
-      "auditedTs": "Audited at",
-      "magi": "Magi (faithful / unfaithful / abstain)",
-      "source": "Lean source",
-      "showSource": "Show source"
-    }
-  },
-  "admin": {
-    "docs": {
-      "title": "Repository architecture",
-      "description": "Multi-repo layout (qatlasd / qatlas-cli / qatlas-search), the plugin protocol, and the deployment topology.",
-      "open": "Read the doc"
-    }
   }
 }

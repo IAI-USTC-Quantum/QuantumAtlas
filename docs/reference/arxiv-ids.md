@@ -37,7 +37,6 @@ QuantumAtlas 以 arXiv ID 为论文的主键。文本侧支持两种 ID 格式 +
 | `qatlas contrib pdf <id>` | **必填**；对象寻址按 `<id>v<n>` 命名 |
 | `qatlas contrib mineru <id>` | **必填** |
 | `GET /api/papers/{id}/markdown` / `/pdf` | 可不带；server 取 catalog 内最新版（多版本时在响应里显式标）|
-| Wiki paper page `paper-arxiv-<id>v<n>` | **必填**（不同版本是不同页）|
 
 ## 3. 对象寻址映射（post-A1 layout）
 
@@ -117,7 +116,7 @@ dual-read 命中由 `paperassets.LegacyLayoutReads()` 计数，运维可观测 m
 | `images` | `images/<yymm>/<stem>.zip` | `images/<yymm>/<category>/<stem>.zip` | MinerU 解析出的图片 zip |
 
 `qatlas contrib pdf --pdf` 把 PDF 字节落到 `pdf/`。论文元数据（题目 / 作者 /
-摘要 / 引用）走 OpenAlex 上游同步进 Neo4j catalog，不再通过 upload 端点写
+摘要 / 引用）走 OpenAlex 上游同步进 PostgreSQL paper registry，不再通过 upload 端点写
 `json/`（v0.7.0 起；该前缀仅保留兼容历史对象的读路径）。
 
 ## 5. 规范化与结构化解析
@@ -140,7 +139,7 @@ dual-read 命中由 `paperassets.LegacyLayoutReads()` 计数，运维可观测 m
 
 - **upload 入口** (`ValidateUploadID`)：当前**仍兼容**接受 bare（issue #4 缓解）
 - **storage 入口** (`AssetKeyFor`)：bare 输入回退到 legacy layout `pdf/<yymm>/<stem>.<ext>`
-- **未来**（plan §H3 / [issue #12](https://github.com/IAI-USTC-Quantum/QuantumAtlas/issues/12)）：catalog migration 完成后 `ValidateUploadID` 拒 bare，由上层 resolver 反查 Neo4j 拿到 category 再调用
+- **未来**（plan §H3 / [issue #12](https://github.com/IAI-USTC-Quantum/QuantumAtlas/issues/12)）：catalog migration 完成后 `ValidateUploadID` 拒 bare，由上层 resolver 反查 registry 拿到 category 再调用
 
 ## 6. 常见坑
 
@@ -168,17 +167,3 @@ dual-read 命中由 `paperassets.LegacyLayoutReads()` 计数，运维可观测 m
 !!! info "DOI 入口同一个端点"
     `GET /api/papers/{id_or_doi}/markdown` 自动 detect DOI（`^10\.\d{4,9}/`），
     经 OpenAlex 反查成 arxiv_id 后走同一套 handler。详见 [REST API · DOI 寻址](../server/rest-api.md#doi-addressing)。
-
-## 7. 跟 Wiki page id 的关系
-
-Wiki paper 页面 id 规则：`paper-arxiv-<规范化 id 含 v>`，斜杠转 `-`。
-
-| arxiv_id | Wiki page id |
-|---|---|
-| `2501.00010v1` | `paper-arxiv-2501.00010v1` |
-| `quant-ph/9508027v1` | `paper-arxiv-quant-ph-9508027v1` |
-| `cs.AI/0101001v1` | `paper-arxiv-cs.AI-0101001v1` |
-| `physics.atom-ph/0001001v2` | `paper-arxiv-physics.atom-ph-0001001v2` |
-
-文件名同上，`.md` 结尾。Wiki page id 没有 dual-read 过渡期问题——它从来都按
-canonical 形态拼接（包含 category）。

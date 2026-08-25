@@ -22,12 +22,12 @@ func TestNewEnforcer(t *testing.T) {
 		want            bool
 	}{
 		{ScopePapersWrite, "papers", "write", true},
-		{ScopePapersWrite, "wiki", "write", false},
+		{ScopePapersWrite, "plugins", "write", false},
 		{ScopePapersRead, "papers", "read", true},
 		{ScopePapersRead, "papers", "write", false},
-		{ScopeGraphRead, "graph", "read", true},
-		{ScopeGraphRead, "papers", "write", false},
-		{ScopePapersWrite, "graph", "read", false},
+		{ScopePluginsRead, "plugins", "read", true},
+		{ScopePluginsRead, "papers", "write", false},
+		{ScopePapersWrite, "plugins", "read", false},
 		{"bogus", "papers", "write", false},
 	}
 	for _, tc := range cases {
@@ -62,28 +62,24 @@ func TestAllows(t *testing.T) {
 
 		// Single-scope grants.
 		{"papers:write covers papers/write", []string{ScopePapersWrite}, "papers", "write", true},
-		{"papers:write does not cover wiki", []string{ScopePapersWrite}, "wiki", "read", false},
+		{"papers:write does not cover plugins", []string{ScopePapersWrite}, "plugins", "read", false},
 
 		// Write implies read.
 		{"papers:write covers papers/read", []string{ScopePapersWrite}, "papers", "read", true},
 		{"papers:read does not cover papers/write", []string{ScopePapersRead}, "papers", "write", false},
 
 		// Multiple scopes are OR-ed together.
-		{"multi-scope covers union", []string{ScopePapersWrite, ScopeWikiRead}, "wiki", "read", true},
-		{"multi-scope still denies uncovered", []string{ScopePapersRead, ScopeWikiRead}, "papers", "write", false},
+		{"multi-scope covers union", []string{ScopePapersWrite, ScopePluginsRead}, "plugins", "read", true},
+		{"multi-scope still denies uncovered", []string{ScopePapersRead, ScopePluginsRead}, "papers", "write", false},
 
-		// Graph read is its own resource — not implied by any other scope.
-		{"graph:read covers graph/read", []string{ScopeGraphRead}, "graph", "read", true},
-		{"papers:write does not cover graph", []string{ScopePapersWrite}, "graph", "read", false},
-
-		// Wiki write is its own resource — gates POST /api/wiki/sync/pull.
-		{"wiki:write covers wiki/write", []string{ScopeWikiWrite}, "wiki", "write", true},
-		{"papers:write does not cover wiki", []string{ScopePapersWrite}, "wiki", "write", false},
+		// Plugins write is its own resource — gates plugin enable/disable.
+		{"plugins:write covers plugins/write", []string{ScopePluginsWrite}, "plugins", "write", true},
+		{"papers:write does not cover plugins write", []string{ScopePapersWrite}, "plugins", "write", false},
 
 		// Master wildcard short-circuit (session-token path).
 		{"master covers anything", []string{ScopeMaster}, "papers", "write", true},
-		{"master covers anything 2", []string{ScopeMaster}, "graph", "read", true},
-		{"master in mixed list still wins", []string{ScopePapersRead, ScopeMaster}, "wiki", "write", true},
+		{"master covers anything 2", []string{ScopeMaster}, "plugins", "read", true},
+		{"master in mixed list still wins", []string{ScopePapersRead, ScopeMaster}, "plugins", "write", true},
 
 		// Unknown scope just doesn't match — it isn't an error, it
 		// simply matches no policy. Validation is a separate concern

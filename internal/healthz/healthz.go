@@ -4,10 +4,10 @@
 // # Why a separate package
 //
 // The /api/health route used to be PocketBase's built-in one-liner.
-// Adding dependency probes (RustFS bucket existence, Neo4j Bolt
-// connectivity, wiki git HEAD commit time) blows the handler past
-// "comfortable inline size" and forces us to import minio + neo4j
-// drivers from main, which couples the binary entrypoint to backend
+// Adding dependency probes (RustFS bucket existence, PostgreSQL
+// connectivity, registry schema version) blows the handler past
+// "comfortable inline size" and forces us to import backend drivers
+// from main, which couples the binary entrypoint to backend
 // SDKs that should stay confined to the route layer. Centralising the
 // probes here keeps main.go thin and makes the checks individually
 // unit-testable.
@@ -16,8 +16,8 @@
 //
 // We deliberately return HTTP 200 with a structured payload regardless
 // of dependency state. This matches the rest of the QuantumAtlas API
-// (graph endpoints return 200 + {"error":...} when Neo4j is down) and
-// avoids the trap where a monitor flips alarms because a single
+// (paper endpoints degrade to available:false when PostgreSQL is down)
+// and avoids the trap where a monitor flips alarms because a single
 // downstream is briefly unreachable while the server itself is fully
 // up. Operators that want fail-on-degraded should match on the
 // `data.status` field in the body.
@@ -29,8 +29,8 @@
 //     failed their probe. Caller-visible APIs may still
 //     work in fallback mode (e.g. local raw store).
 //   - "not_configured" appears per-check when a dependency is optional
-//     and the operator hasn't enabled it (e.g. Neo4j
-//     without NEO4J_URI). Not_configured checks do NOT
+//     and the operator hasn't enabled it (e.g. the registry
+//     without QATLAS_POSTGRES_DSN). Not_configured checks do NOT
 //     downgrade the aggregate status.
 //
 // # Privacy tiers
@@ -45,10 +45,9 @@
 //     Enough for monitors / SDK pb.health.check()
 //     to tell "alive vs degraded vs down".
 //   - Detail (authenticated): everything above + endpoint URLs, bucket
-//     names, wiki commit SHA / branch / dirty
-//     flag, etc. Useful for operators staring at
-//     a dashboard; absolutely not useful for
-//     attackers, which is why it gates.
+//     names, schema version, etc. Useful for
+//     operators staring at a dashboard; absolutely
+//     not useful for attackers, which is why it gates.
 //
 // Sanitise() drops the detail fields and is what handlers call when
 // the request is unauthenticated. Authenticated callers get the raw
@@ -62,9 +61,8 @@ import (
 	"time"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
-	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/gitpull"
-	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/neo4j"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/registry"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/safego"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -80,17 +78,11 @@ type Check struct {
 	// Optional per-check fields. Different checks fill different
 	// subsets — we keep them on one struct so the JSON layout stays
 	// uniform and the SPA doesn't need a discriminated union.
-	Backend    string   `json:"backend,omitempty"`     // raw store: "s3" | "s3-router" | "local"
-	Endpoint   string   `json:"endpoint,omitempty"`    // s3 endpoint URL
-	Bucket     string   `json:"bucket,omitempty"`      // s3 bucket name
-	Buckets    []string `json:"buckets,omitempty"`     // s3-router: probed bucket names
-	URI        string   `json:"uri,omitempty"`         // neo4j bolt URI
-	Database   string   `json:"database,omitempty"`    // neo4j database
-	Dir        string   `json:"dir,omitempty"`         // wiki working tree path
-	Commit     string   `json:"commit,omitempty"`      // wiki HEAD short SHA
-	CommitTime string   `json:"commit_time,omitempty"` // wiki HEAD commit ISO 8601
-	Branch     string   `json:"branch,omitempty"`      // wiki branch
-	Dirty      *bool    `json:"dirty,omitempty"`       // wiki worktree dirty flag
+	Backend       string   `json:"backend,omitempty"`        // raw store: "s3" | "s3-router" | "local"
+	Endpoint      string   `json:"endpoint,omitempty"`       // s3 endpoint URL
+	Bucket        string   `json:"bucket,omitempty"`         // s3 bucket name
+	Buckets       []string `json:"buckets,omitempty"`        // s3-router: probed bucket names
+	SchemaVersion int64    `json:"schema_version,omitempty"` // registry: applied goose migration version
 }
 
 // Result is the full /api/health response payload.
@@ -140,22 +132,22 @@ type PBResult struct {
 // What survives at the top level: Status, Version, UptimeSeconds, Time.
 // What survives per check: Status.
 // What gets dropped: Error, LatencyMS, Backend, Endpoint, Bucket(s),
-// URI, Database, Dir, Commit, CommitTime, Branch, Dirty.
+// SchemaVersion.
 //
 // Note: Error is dropped on purpose. Raw error strings from SDK
-// drivers (minio-go, neo4j-go-driver) typically embed the endpoint
-// URL / bolt URI / bucket name in their default Error() output, and
+// drivers (minio-go, pgx) typically embed the endpoint
+// URL / DSN / bucket name in their default Error() output, and
 // our own probeRouter formats "bucket %s: %v" with the bucket name
 // inline — leaving Error on the public tier would defeat the whole
-// point of redacting Endpoint/Bucket/URI individually. The top-level
+// point of redacting Endpoint/Bucket individually. The top-level
 // aggregate Status ("healthy"|"degraded") + per-check Status
 // ("ok"|"error"|"not_configured") give monitors enough signal to
 // alert on degraded state without needing the underlying cause;
 // operators that need the cause must auth.
 //
 // Concretely, an attacker doing `curl /api/health` sees enough to
-// tell "this thing is alive" but not bucket names, mesh IPs, wiki
-// git layout, or any other deployment-topology fingerprint.
+// tell "this thing is alive" but not bucket names, mesh IPs,
+// or any other deployment-topology fingerprint.
 func (r Result) Sanitise() Result {
 	out := Result{
 		Status:        r.Status,
@@ -198,8 +190,12 @@ func (p PBResult) Sanitise() PBResult {
 type Probes struct {
 	Cfg      *config.Config
 	RawStore objstore.Store
-	Version  string
-	Started  time.Time
+	// PGPool is the paper-registry pool (may be nil when
+	// QATLAS_POSTGRES_DSN is unset); the registry probe reads the
+	// applied goose schema version from it.
+	PGPool  *pgxpool.Pool
+	Version string
+	Started time.Time
 }
 
 // probeTimeout caps each individual dependency probe so a slow
@@ -231,16 +227,15 @@ func RunPB(ctx context.Context, p Probes) PBResult {
 // use a derived context with probeTimeout, so a single slow probe
 // doesn't bleed into the others.
 //
-// Safe to call concurrently — each invocation builds its own neo4j
-// driver (matching the per-request lifecycle used elsewhere) and the
-// S3 / wiki probes are read-only.
+// Safe to call concurrently — the S3 / postgres / registry probes are
+// all read-only.
 func Run(ctx context.Context, p Probes) Result {
 	now := time.Now().UTC()
 	res := Result{
 		Version:       p.Version,
 		UptimeSeconds: int64(now.Sub(p.Started).Seconds()),
 		Time:          now.Format(time.RFC3339),
-		Checks:        make(map[string]Check, 4),
+		Checks:        make(map[string]Check, 3),
 	}
 
 	var (
@@ -253,7 +248,7 @@ func Run(ctx context.Context, p Probes) Result {
 		mu.Unlock()
 	}
 
-	wg.Add(4)
+	wg.Add(3)
 
 	// Each probe goroutine wraps its body in a recover() so a panic
 	// inside a probe (e.g. an SDK bug, a nil-deref) is logged and the
@@ -273,8 +268,7 @@ func Run(ctx context.Context, p Probes) Result {
 
 	go probe("rawstore", func() Check { return probeRawStore(ctx, p.RawStore) })
 	go probe("postgres", func() Check { return probePostgres(ctx, p.Cfg) })
-	go probe("neo4j", func() Check { return probeNeo4j(ctx, p.Cfg) })
-	go probe("wiki", func() Check { return probeWiki(p.Cfg) })
+	go probe("registry", func() Check { return probeRegistry(ctx, p.PGPool) })
 
 	wg.Wait()
 
@@ -415,51 +409,24 @@ func probePostgres(ctx context.Context, cfg *config.Config) Check {
 	return c
 }
 
-func probeNeo4j(ctx context.Context, cfg *config.Config) Check {
-	if cfg == nil || cfg.Neo4jURI == "" {
+// probeRegistry reports the paper registry's applied goose schema
+// version. A nil pool (QATLAS_POSTGRES_DSN unset) is not_configured.
+func probeRegistry(ctx context.Context, pool *pgxpool.Pool) Check {
+	if pool == nil {
 		return Check{Status: "not_configured"}
 	}
-	c := Check{
-		URI:      cfg.Neo4jURI,
-		Database: cfg.Neo4jDatabase,
-	}
+	c := Check{Backend: "postgres"}
 	pctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 	start := time.Now()
-	client, err := neo4j.NewClient(cfg.Neo4jURI, cfg.Neo4jUser, cfg.Neo4jPassword, cfg.Neo4jDatabase)
-	if err != nil {
-		c.LatencyMS = time.Since(start).Milliseconds()
-		c.Status = "error"
-		c.Error = err.Error()
-		return c
-	}
-	defer client.Close(pctx)
-	if err := client.Connect(pctx); err != nil {
-		c.LatencyMS = time.Since(start).Milliseconds()
-		c.Status = "error"
-		c.Error = err.Error()
-		return c
-	}
+	version, err := registry.SchemaVersion(pctx, pool)
 	c.LatencyMS = time.Since(start).Milliseconds()
-	c.Status = "ok"
-	return c
-}
-
-func probeWiki(cfg *config.Config) Check {
-	if cfg == nil || cfg.WikiDir == "" {
-		return Check{Status: "not_configured"}
-	}
-	info := gitpull.ReadGitInfo(cfg.WikiDir)
-	c := Check{Dir: cfg.WikiDir}
-	if !info.Enabled {
+	if err != nil {
 		c.Status = "error"
-		c.Error = "wiki directory is not a git repository"
+		c.Error = err.Error()
 		return c
 	}
 	c.Status = "ok"
-	c.Commit = info.Commit
-	c.CommitTime = info.CommitTime
-	c.Branch = info.Branch
-	c.Dirty = info.Dirty
+	c.SchemaVersion = version
 	return c
 }

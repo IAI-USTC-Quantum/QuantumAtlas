@@ -90,6 +90,6 @@ qatlas ingest status <task_id>
 
 ## 下一步
 
-- 解析完想看 Markdown？`qatlas wiki list --type source` → 拿 `paper-arxiv-<id>` → `qatlas wiki show ...`
+- 解析完想拉 Markdown？`qatlas paper get markdown <id> -o paper.md`（需部署方开启 PAPER_ACCESS）
 - 想用自己的 MinerU 配额？看 [用 MinerU 解析](parse-with-mineru.md)
 - 已经有本地 PDF？跳过 ingest，直接 [上传](upload-assets.md)

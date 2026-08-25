@@ -48,11 +48,8 @@ PAT 携带一组显式 scope（GitHub fine-grained PAT 同款设计）。当前�
 
 | Scope | 覆盖端点 |
 |---|---|
-| `wiki:read` | `GET /api/pages` `GET /api/pages/{id}` `GET /api/stats` `GET /api/search` `GET /api/wiki/sync/status` |
-| `papers:read` | `GET /api/papers/stats` `GET /api/papers/needs-mineru`；当部署方启用 `QATLAS_PAPER_ACCESS_ENABLED` 时还覆盖 `GET /api/papers/{id}/markdown` `GET /api/papers/{id}/markdown/status` |
+| `papers:read` | `POST /api/search` `GET /api/papers/stats` `GET /api/papers/needs-mineru`；当部署方启用 `QATLAS_PAPER_ACCESS_ENABLED` 时还覆盖 `GET /api/papers/{id}/markdown` `GET /api/papers/{id}/markdown/status` |
 | `papers:write` | `POST /api/papers/{id}/upload-pdf` `POST /api/papers/{id}/upload-mineru` `POST /api/v1/papers/{id}/mineru-lease` `DELETE /api/v1/papers/{id}/mineru-lease/{cid}`（隐式含 `papers:read`）|
-| `graph:read` | `GET /api/graph/stats` `GET /api/graph/schema` `POST /api/graph/query`（含只读 Cypher）|
-| `wiki:write` | `POST /api/wiki/sync/pull`（服务端 git fast-forward + 缓存刷新；隐式含 `wiki:read`）|
 | `plugins:read` | `GET /api/v1/plugins` |
 | `plugins:write` | `POST /api/v1/plugins/{id}/enable` `POST /api/v1/plugins/{id}/disable`（隐式含 `plugins:read`）|
 | `theorems:read` | `GET /api/theorems/list` `GET /api/theorems/families` `GET /api/theorems/stats` `GET /api/theorems/theorem/{fqn}` `GET /api/theorems/theorem-source/{fqn}` `GET /api/theorems/sync/status` |
@@ -90,20 +87,14 @@ flowchart TD
 
 | 类别 | 鉴权 |
 |---|---|
-| Wiki 读 (`/api/pages`、`/api/search`、`/api/stats`、`/api/wiki/sync/status`) | `authGuard + wiki:read` |
-| Graph 读 (`/api/graph/stats`、`/api/graph/schema`、`POST /api/graph/query`) | `authGuard + graph:read` |
+| 论文搜索 (`POST /api/search`) | `authGuard + papers:read` |
 | 论文元数据查询 (`GET /api/papers/{id}/stats`、`GET /api/papers/needs-mineru`) | `authGuard + papers:read` |
 | 论文 markdown 下载 (`GET /api/papers/{id}/markdown`、`/markdown/status`) | `authGuard + papers:read`（**仅 `QATLAS_PAPER_ACCESS_ENABLED=true` 时注册**）|
 | Health / Meta (`/api/health`、`/api/server/info`、`/api/pat/scopes`、`/install-qatlasd.sh`、`/swagger/*`、SPA `/{path...}`) | **公开**（无数据 / bootstrap / 外壳）|
 | 论文上传 / mineru 相关 | `authGuard + papers:write` |
-| Wiki 同步 (`POST /api/wiki/sync/pull`) | `authGuard + wiki:write` |
 | **PAT 管理** (`/api/pat`) | `sessionGuard`（拒 PAT）|
 
 设计原则：**凡是返回语料数据的端点（读和写）都要鉴权**；只有"无数据"的探活 / 版本 / 安装脚本 / 文档 / SPA 外壳保持公开。知识库不再匿名可读。论文 PDF / Markdown 字节在 quantum-atlas.ai 等公开实例上**默认不通过 HTTP API 对外分发**（`QATLAS_PAPER_ACCESS_ENABLED=false`）——客户端只能查询元数据（OpenAlex 同步进来的内容）与论文具备何种资产的开关位（`stats` / `needs-mineru`）。Self-hosted 部署可在受控范围内打开该开关，启用后 `papers:read` 同时覆盖 `GET /api/papers/{id}/markdown` 类端点，详见 [License & Attribution · 论文访问开关](../about/license-and-attribution.md#论文访问开关-self-hosted)。
-
-### Graph 查询：同 scope 下危害最大的那一档
-
-`graph:read` 同时覆盖 `stats` / `schema`（server 自算的固定形状聚合）和 `POST /api/graph/query`。三者都要鉴权，但 `query` 风险最高：它执行调用方提供的 Cypher。查询**只读**（驱动层 `ExecuteRead` 拒绝写），但**故意不加查询代价上限**：过了 `graph:read` 的调用方即「自己人」，同一个人本就能直连 Bolt 跑同样的重查询，应用层限制器挡不住、只增复杂度。病态查询（如无界笛卡尔积）能拖垮 Neo4j，**唯一缓解是撤销出问题的凭据**。这是明确接受的风险，不是待办——细节见 [REST API · graph/query](../server/rest-api.md) 与 [Neo4j 部署](../server/neo4j.md)。
 
 ## 怎么实操
 
@@ -115,7 +106,7 @@ flowchart TD
 
 === "CLI 长期"
 
-    上 `/pat` 创建 PAT，勾上需要的 scope（典型组合：`papers:write` + `wiki:read`），设置 30–365 天到期。
+    上 `/pat` 创建 PAT，勾上需要的 scope（典型组合：`papers:write` + `theorems:read`），设置 30–365 天到期。
 
     `qatlas auth login -s quantum-atlas.ai` 会跑 OAuth device-code flow，浏览器里 Approve 后 token 自动写进 `~/.config/qatlas/hosts.yml`。之后所有 `qatlas` 命令自动用这个 PAT。
 
@@ -187,6 +178,6 @@ QATLAS_SYSTEM_PAT_SCOPES=*    # 可选，默认 *
 
 ### 安全边界
 
-能读到 `QATLAS_SYSTEM_PAT` 的人 = superuser-equivalent。但这跟 `.env` 里早就有的 `QATLAS_S3_SECRET_ACCESS_KEY` / `NEO4J_PASSWORD` / `GITHUB_CLIENT_SECRET` 同等敏感——读到 .env 的人本来就能干很多事。新增 system PAT **不扩大现有 .env 的攻击面**。
+能读到 `QATLAS_SYSTEM_PAT` 的人 = superuser-equivalent。但这跟 `.env` 里早就有的 `QATLAS_S3_SECRET_ACCESS_KEY` / `QATLAS_POSTGRES_DSN` / `GITHUB_CLIENT_SECRET` 同等敏感——读到 .env 的人本来就能干很多事。新增 system PAT **不扩大现有 .env 的攻击面**。
 
 要求 .env 文件 mode 600 + 服务用户 owner，跟现有约定一致。**不要**把 plaintext 贴进 git / commit / issue / chat 等任何持久化位置。

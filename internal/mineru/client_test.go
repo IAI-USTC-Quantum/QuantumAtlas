@@ -6,8 +6,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -429,5 +432,164 @@ func TestBuildImagesZip_DropsTraversal(t *testing.T) {
 			names = append(names, f.Name)
 		}
 		t.Fatalf("expected only [a.jpg], got %v", names)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Upload channel: ApplyUploadURLs + UploadFile
+// ---------------------------------------------------------------------------
+
+func TestApplyUploadURLs(t *testing.T) {
+	var gotBody map[string]any
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v4/file-urls/batch" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		gotAuth = r.Header.Get("Authorization")
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":0,"msg":"ok","data":{"batch_id":"batch-9","file_urls":["https://oss.example/upload/0"]}}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient("tok", srv.URL, srv.Client())
+	batchID, urls, err := c.ApplyUploadURLs(context.Background(), []string{"paper.pdf"}, SubmitOptions{
+		ModelVersion:  "vlm",
+		Language:      "en",
+		EnableFormula: true,
+		EnableTable:   true,
+		DataID:        "2401.12345v1",
+	})
+	if err != nil {
+		t.Fatalf("ApplyUploadURLs: %v", err)
+	}
+	if batchID != "batch-9" {
+		t.Fatalf("batchID = %q, want batch-9", batchID)
+	}
+	if len(urls) != 1 || urls[0] != "https://oss.example/upload/0" {
+		t.Fatalf("urls = %v", urls)
+	}
+	if gotAuth != "Bearer tok" {
+		t.Errorf("Authorization = %q, want Bearer tok", gotAuth)
+	}
+	// Body shape per MinerU docs: files[].name + is_ocr + data_id,
+	// shared model/language/formula/table knobs at top level.
+	files, ok := gotBody["files"].([]any)
+	if !ok || len(files) != 1 {
+		t.Fatalf("body.files = %v", gotBody["files"])
+	}
+	f0 := files[0].(map[string]any)
+	if f0["name"] != "paper.pdf" || f0["data_id"] != "2401.12345v1" {
+		t.Errorf("files[0] = %v", f0)
+	}
+	if _, hasURL := f0["url"]; hasURL {
+		t.Errorf("files[0] must not carry a url field on the upload channel: %v", f0)
+	}
+	if gotBody["model_version"] != "vlm" || gotBody["language"] != "en" {
+		t.Errorf("body = %v", gotBody)
+	}
+	if gotBody["enable_formula"] != true || gotBody["enable_table"] != true {
+		t.Errorf("body knobs = %v", gotBody)
+	}
+}
+
+func TestApplyUploadURLsEmpty(t *testing.T) {
+	c := NewClient("tok", "http://nowhere.invalid", nil)
+	if _, _, err := c.ApplyUploadURLs(context.Background(), nil, SubmitOptions{}); err == nil {
+		t.Fatal("expected error for empty file list")
+	}
+	if _, _, err := c.ApplyUploadURLs(context.Background(), []string{""}, SubmitOptions{}); err == nil {
+		t.Fatal("expected error for empty file name")
+	}
+}
+
+func TestApplyUploadURLsTooBig(t *testing.T) {
+	files := make([]string, MaxUploadBatchSize+1)
+	for i := range files {
+		files[i] = "x.pdf"
+	}
+	c := NewClient("tok", "http://nowhere.invalid", nil)
+	_, _, err := c.ApplyUploadURLs(context.Background(), files, SubmitOptions{})
+	if err == nil {
+		t.Fatal("expected error for oversized batch")
+	}
+}
+
+func TestApplyUploadURLsDailyLimit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"code":-60018,"msg":"每日解析任务数量已达上限","data":null}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient("tok", srv.URL, srv.Client())
+	_, _, err := c.ApplyUploadURLs(context.Background(), []string{"paper.pdf"}, SubmitOptions{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, ErrDailyLimit) {
+		t.Fatalf("expected ErrDailyLimit, got %v", err)
+	}
+}
+
+func TestUploadFile(t *testing.T) {
+	payload := []byte("%PDF-fake-bytes")
+	var gotBody []byte
+	var gotAuth, gotContentLength string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			t.Errorf("method = %q, want PUT", r.Method)
+		}
+		gotAuth = r.Header.Get("Authorization")
+		gotContentLength = r.Header.Get("Content-Length")
+		gotBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := NewClient("tok", srv.URL, srv.Client())
+	if err := c.UploadFile(context.Background(), srv.URL+"/upload/0", bytes.NewReader(payload), int64(len(payload))); err != nil {
+		t.Fatalf("UploadFile: %v", err)
+	}
+	if !bytes.Equal(gotBody, payload) {
+		t.Errorf("uploaded body = %q, want %q", gotBody, payload)
+	}
+	// Presigned URLs are self-authenticating — the bearer token must NOT leak.
+	if gotAuth != "" {
+		t.Errorf("Authorization header on presigned upload = %q, want empty", gotAuth)
+	}
+	if gotContentLength != strconv.Itoa(len(payload)) {
+		t.Errorf("Content-Length = %q, want %d", gotContentLength, len(payload))
+	}
+}
+
+func TestUploadFileErrorMapping(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte("AccessDenied: presign expired"))
+	}))
+	defer srv.Close()
+
+	c := NewClient("tok", srv.URL, srv.Client())
+	err := c.UploadFile(context.Background(), srv.URL+"/upload/0", strings.NewReader("x"), 1)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var mErr *Error
+	if !errors.As(err, &mErr) {
+		t.Fatalf("error type = %T, want *Error", err)
+	}
+	if mErr.HTTPStatus != http.StatusForbidden {
+		t.Errorf("HTTPStatus = %d, want 403", mErr.HTTPStatus)
+	}
+	if !errors.Is(err, ErrFatal) {
+		t.Errorf("403 upload rejection should classify as ErrFatal, got %v", err)
+	}
+}
+
+func TestUploadFileEmptyURL(t *testing.T) {
+	c := NewClient("tok", "http://nowhere.invalid", nil)
+	if err := c.UploadFile(context.Background(), "", strings.NewReader("x"), 1); err == nil {
+		t.Fatal("expected error for empty upload url")
 	}
 }

@@ -20,8 +20,7 @@
 QuantumAtlas server 是单个 Go 二进制 `qatlasd`（~35MB，CGO-free，
 静态链接，自带 PocketBase + SQLite + 嵌入式 SPA 前端）。下游部署 =
 拿到 binary + 装 systemd unit + 反代。这里给出一份**单机部署模板**，
-路径都用占位变量（`<USER>` / `<APP_HOME>` / `<WIKI_DIR>` /
-`<HTTP_PORT>`），运维替换后即可。
+路径都用占位变量（`<USER>` / `<APP_HOME>` / `<HTTP_PORT>`），运维替换后即可。
 
 ### 1. 获取 binary
 
@@ -117,7 +116,7 @@ build host 上编完再传给目标 host（典型场景：目标 host 资源紧�
 
 按 XDG Base Directory（[freedesktop spec][xdg-spec]）+ FHS 拆分：git
 checkout 只放代码 + 配置；用户级状态去 `$XDG_DATA_HOME`（默认
-`$HOME/.local/share/`）；系统级状态去 `/var/lib/`。**不再**把 wiki /
+`$HOME/.local/share/`）；系统级状态去 `/var/lib/`。**不再**把
 raw / data / pb_data 默认塞进 git checkout 内。
 
 [xdg-spec]: https://specifications.freedesktop.org/basedir-spec/latest/
@@ -128,7 +127,6 @@ raw / data / pb_data 默认塞进 git checkout 内。
 /home/<USER>/
 ├── QuantumAtlas/                  # 仅保留 .env；源码 checkout 仅 B 路径需要
 │   └── .env                       # 运行配置；server 用 godotenv 读
-├── QuantumAtlas-Wiki/             # 兄弟 checkout — WIKI_DIR 默认值
 ├── .local/
 │   ├── bin/qatlasd           # binary（user-writable，sudoless deploy）
 │   └── share/qatlasd/             # XDG_DATA_HOME 下，所有 stateful 状态（v0.17.0+；老 install 是 quantum-atlas/，参见 migration-storage-layout.md）
@@ -145,8 +143,7 @@ raw / data / pb_data 默认塞进 git checkout 内。
 /var/lib/quantum-atlas/            # FHS 状态根
 ├── raw/
 ├── data/
-├── pb_data/
-└── QuantumAtlas-Wiki/             # 也可以放别处，用 QATLAS_WIKI_DIR 指
+└── pb_data/
 ```
 
 两种布局都不要求显式覆盖 `.env`：server 会按 `$XDG_DATA_HOME` /
@@ -218,11 +215,10 @@ flag 含义：
 
 生成的 unit **跟 §3.C 手写模板字段语义完全一致**——含全部 7 条 hardening、
 `Environment=QATLAS_DOTENV=`、`RestartSec=5` / `KillSignal=SIGINT` /
-`TimeoutStopSec=15`、ReadWritePaths 自动从 .env 目录 + `$XDG_DATA_HOME` +
-（如存在）`~/QuantumAtlas-Wiki` 推导。
+`TimeoutStopSec=15`、ReadWritePaths 自动从 .env 目录 + `$XDG_DATA_HOME` 推导。
 
 **自动检测 ReadWritePaths** 仅覆盖默认布局；如果你的 .env 显式覆盖
-`QATLAS_RAW_DIR` / `QATLAS_DATA_DIR` / `QATLAS_PB_DATA_DIR` / `QATLAS_WIKI_DIR`
+`QATLAS_RAW_DIR` / `QATLAS_DATA_DIR` / `QATLAS_PB_DATA_DIR`
 到非默认目录，install 之后用 `systemctl edit qatlasd` 加 drop-in
 追加 `ReadWritePaths=...` 即可（systemd 会合并）。
 
@@ -258,8 +254,7 @@ Wants=network-online.target
 Type=simple
 
 # Server 用 github.com/joho/godotenv 加载 .env。把绝对路径作为
-# QATLAS_DOTENV 传进来，server 会用它的所在目录作为相对路径 anchor
-# （WIKI_DIR=../QuantumAtlas-Wiki 因此能解析到 %h/QuantumAtlas-Wiki）。
+# QATLAS_DOTENV 传进来，server 会用它的所在目录作为相对路径 anchor。
 # 不要用 systemd 的 EnvironmentFile= 指令 —— 那个只把内容注入 env，
 # 拿不到文件路径，server 就没办法做相对路径 anchor。
 # %h 在 user-mode unit 里展开成 $HOME。
@@ -322,12 +317,12 @@ TimeoutStopSec=15
 
 # Hardening：read-only 系统目录 + 只把 stateful 路径打开写权限。
 # ReadWritePaths 必须覆盖 .env 里所有非默认目录（RAW_DIR / DATA_DIR /
-# PBDataDir / WikiDir），按实际部署调整。下面示例对应"全部走 XDG 默认"：
+# PBDataDir），按实际部署调整。下面示例对应"全部走 XDG 默认"：
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=no
-ReadWritePaths=/home/<USER>/QuantumAtlas /home/<USER>/.local/share/qatlasd /home/<USER>/QuantumAtlas-Wiki
+ReadWritePaths=/home/<USER>/QuantumAtlas /home/<USER>/.local/share/qatlasd
 LockPersonality=true
 RestrictRealtime=true
 
@@ -381,15 +376,15 @@ qatlasd`，都不需要 sudo。
 ### 5. .env 必填字段
 
 参考 `.env.example`。Server 侧最小集（**只有真正想覆盖默认时才写**
-`WIKI_DIR` / `RAW_DIR` / `DATA_DIR` / `PB_DATA_DIR`）：
+`RAW_DIR` / `DATA_DIR` / `PB_DATA_DIR`）：
 
 ```env
 QATLAS_PUBLIC_URL=https://your-domain.tld
 QATLAS_SERVER_HOST=0.0.0.0
 QATLAS_SERVER_PORT=4200
+QATLAS_POSTGRES_DSN=postgres://qatlas:secret@127.0.0.1:5432/qatlas?sslmode=disable
 
-# 显式覆盖示例（不写就走 XDG / sibling 默认）：
-# QATLAS_WIKI_DIR=../QuantumAtlas-Wiki
+# 显式覆盖示例（不写就走 XDG 默认）：
 # QATLAS_RAW_DIR=/srv/quantum-atlas/raw
 # QATLAS_DATA_DIR=/srv/quantum-atlas/data
 # QATLAS_PB_DATA_DIR=/var/lib/quantum-atlas/pb_data
@@ -405,11 +400,11 @@ GitHub OAuth App callback URL 配 `https://your-domain.tld/api/oauth2-redirect`�
 ### 6. 从旧部署迁移到当前布局
 
 如果之前 binary 装在 `/usr/local/bin/`、unit 写死 system-wide 路径、或
-wiki / raw / data / pb_data 直接放在 git checkout 里——一次性迁移思路
+raw / data / pb_data 直接放在 git checkout 里——一次性迁移思路
 见 [docs/migration-storage-layout.md](migration-storage-layout.md)，
 该文档覆盖：
 
-- 把 wiki / raw / data / pb_data 从仓库内搬到 `$XDG_DATA_HOME/qatlasd/`
+- 把 raw / data / pb_data 从仓库内搬到 `$XDG_DATA_HOME/qatlasd/`
 - binary 从 `/usr/local/bin/` 挪到 `~/.local/bin/`
 - systemd unit 调整 + 启动验证
 
@@ -466,26 +461,21 @@ bash scripts/rustfs_bootstrap.sh
 QATLAS_PUBLIC_URL=https://atlas.example.com
 QATLAS_SERVER_HOST=127.0.0.1
 QATLAS_SERVER_PORT=4200
-NEO4J_URI=bolt://127.0.0.1:7687
+QATLAS_POSTGRES_DSN=postgres://qatlas:secret@127.0.0.1:5432/qatlas?sslmode=disable
 
 # 想覆盖默认时：
-# QATLAS_WIKI_DIR=../QuantumAtlas-Wiki                # 默认就是这个
 # QATLAS_RAW_DIR=/srv/quantum-atlas/raw               # 默认 XDG，FHS 覆盖
 # QATLAS_DATA_DIR=/srv/quantum-atlas/data
 # QATLAS_PB_DATA_DIR=/var/lib/quantum-atlas/pb_data
 ```
 
-> 旧名（`WIKI_DIR` / `RAW_DIR` / `DATA_DIR` / `PB_DATA_DIR` / `SERVER_HOST` / `SERVER_PORT` / `USER_HEADER`）仍作 alias 保留，新部署推荐用 `QATLAS_*` 前缀。`NEO4J_*` / `OPENAI_*` / `ANTHROPIC_*` / `MINERU_*` 等第三方 SDK 标准名保持原样。v0.19.0 起 `QATLAS_SERVER_URL` 已重命名为 `QATLAS_PUBLIC_URL`（旧名 `QATLAS_SERVER_URL` / `PUBLIC_BASE_URL` 在服务端**不再读**——名字改成 `QATLAS_PUBLIC_URL` 是为了准确反映"我对外公布的 canonical URL"语义；client 完全不读 env，跟这一项无关）。
+> 无 `QATLAS_` 前缀的旧 alias（`RAW_DIR` / `DATA_DIR` / `PB_DATA_DIR` / `SERVER_HOST` / `SERVER_PORT` / `USER_HEADER`）已在 v0.17.0 移除，新部署统一用 `QATLAS_*` 前缀。`MINERU_*` 等第三方 SDK 标准名保持原样。v0.19.0 起 `QATLAS_SERVER_URL` 已重命名为 `QATLAS_PUBLIC_URL`（旧名 `QATLAS_SERVER_URL` / `PUBLIC_BASE_URL` 在服务端**不再读**——名字改成 `QATLAS_PUBLIC_URL` 是为了准确反映"我对外公布的 canonical URL"语义；client 完全不读 env，跟这一项无关）。
 
 建议：
 
 - 应用仓库按 release tag 或受控分支部署。
-- Wiki 仓库单独 checkout，并允许更高频更新；server 侧 checkout 应保持干净，只通过 `git pull --ff-only` 消费远端内容。
-- 运行 QuantumAtlas 的服务用户默认只需要读取 `WIKI_DIR`；如果启用 `/api/wiki/sync/pull`，还需要对该 Git checkout 有 fast-forward 更新权限。服务端不会生成或修改 Wiki 页面，Wiki 内容修改应在用户端或独立的 `QuantumAtlas-Wiki` checkout 中完成。
 - 运行 QuantumAtlas 的服务用户应对 `RAW_DIR` / `DATA_DIR` / `PB_DATA_DIR` 有写权限。三者默认都落在 `$XDG_DATA_HOME/qatlasd/`（即 `$HOME/.local/share/qatlasd/`）下，正常的 systemd `User=<svc>` 已经自动满足；只在显式覆盖到 FHS / 独立分区时检查权限。
-- 内容生产、LLM 生成、人工编辑和审阅走 `QuantumAtlas-Wiki` 的普通 Git 流程；QuantumAtlas server 不提供 push API，也不通过 Web UI 直接写 Wiki 页面。
-- 若 `/api/wiki/sync/status` 提示 Wiki checkout 不在 `main` 或 `master`，应检查部署分支是否符合预期。
-- Neo4j 仅对后端服务暴露，不直接开放到公网。
+- PostgreSQL 仅对后端服务暴露，不直接开放到公网。
 - 公开访问统一走 `QATLAS_PUBLIC_URL`。
 
 ## 核心环境变量
@@ -499,13 +489,14 @@ NEO4J_URI=bolt://127.0.0.1:7687
 |---|---|---|
 | `QATLAS_PUBLIC_URL` | 必填 | server 自报的对外 canonical URL；用于构造 OAuth 回调、外链等需要绝对 URL 的地方（反代场景必备——server bind 在 localhost，必须显式告诉它"我对外是谁"）。v0.19.0 改名（旧名 `QATLAS_SERVER_URL`），跟 client 侧的 `server_url:` YAML 字段（"我要联系的 server"）在概念上独立 |
 | `QATLAS_SERVER_HOST` / `QATLAS_SERVER_PORT` | 默认 `127.0.0.1:4200` | 直接面向公网通常改 `0.0.0.0:<port>`，反代场景保留 `127.0.0.1` |
-| `NEO4J_URI` / `NEO4J_USER` / `NEO4J_PASSWORD` | 启用图谱时必填 | 不连图库可留空 |
+| `QATLAS_POSTGRES_DSN` | 生产必填 | paper registry + OpenAlex corpus；留空时 registry 功能降级 |
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | 启用 GitHub OAuth 登录时必填 | 启动时由 `internal/auth/oauth.go` 注入 users collection |
 | `QATLAS_USER_HEADER` | 上游反代/SSO 注入审计身份头时设 | 不参与鉴权，仅用于日志 |
 | `QATLAS_FORCE_TCP4` | WSL2 + Windows netsh portproxy 场景设 | 普通 Linux VPS 不要打开 |
 
-其余字段（`QATLAS_WIKI_DIR` / `QATLAS_RAW_DIR` / `QATLAS_DATA_DIR` /
-`QATLAS_PB_DATA_DIR` / `QATLAS_S3_*` / `MINERU_*` / `OPENAI_*` 等）都在
+其余字段（`QATLAS_POSTGRES_MAX_CONNS` / `QATLAS_SEARCH_PROVIDERS` /
+`QATLAS_RAW_DIR` / `QATLAS_DATA_DIR` /
+`QATLAS_PB_DATA_DIR` / `QATLAS_S3_*` / `MINERU_*` 等）都在
 `.env.example` 里有详细注释，按需取消注释即可。
 
 ## 反向代理与鉴权边界
@@ -522,7 +513,7 @@ caddy-security / oauth2-proxy 这类身份代理；反代只承担 SNI 选路 + 
   根据前缀分发——`qat_*` 走 `internal/pat` 包做 prefix lookup + bcrypt
   校验并查 scope；其余走 PocketBase session token 验证。
 - 写口分两层：`scopeGuard(enforcer, obj, act, handler)` 给"PAT 可调"
-  的写口（papers / wiki sync），强制 scope opt-in；`sessionGuard` 给"PAT
+  的写口（papers），强制 scope opt-in；`sessionGuard` 给"PAT
   不可调"的写口（PAT 自管理本身、admin 操作），只接受 session token。
 
 如需在边缘补一层 IP/路径 ACL、按域名分流多服务、或做 raw 对象存储反代
@@ -532,10 +523,10 @@ caddy-security / oauth2-proxy 这类身份代理；反代只承担 SNI 选路 + 
 
 | 路径 | 鉴权层 | 反代怎么写 |
 |---|---|---|
-| `/api/health` | open | 直接 reverse_proxy；监控可读（返回 `{code, message, data:{status, version, uptime_seconds, checks{rawstore, neo4j, wiki}}}`） |
+| `/api/health` | open | 直接 reverse_proxy；监控可读（返回 `{code, message, data:{status, version, uptime_seconds, checks{rawstore, postgres}}}`） |
 | `/install-qatlasd.sh` | open | 直接 reverse_proxy；公开的 `curl \| sh` 安装脚本 |
 | `/{path...}`、`/_/`、`/auth-with-oauth2` 等 SPA + PocketBase 内置 | open / 自管 | 直接 reverse_proxy；OAuth 由 server 自己处理 |
-| `/api/wiki/...`、`/api/pages`、`/api/search`、`/api/stats`、`/api/graph/*` | server 内 `authGuard + scope:read` | 直接 reverse_proxy |
+| `/api/search`、`/api/papers/stats` 等读口 | server 内 `authGuard + papers:read` | 直接 reverse_proxy |
 | `/api/papers/...`、`/api/pat/...` | server 内的 `authGuard` / `scopeGuard` / `sessionGuard` | 直接 reverse_proxy；**不要**剥 `Authorization` header（server 要拿来鉴权） |
 | `raw.your-domain.tld/*`（启用 S3/RustFS 时） | RustFS 自管（presigned URL） | 反代到 RustFS `:9000` |
 

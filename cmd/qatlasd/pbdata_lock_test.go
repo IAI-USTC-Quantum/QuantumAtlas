@@ -65,12 +65,12 @@ func TestAcquirePBDataLock_SecondCallerRejectedWithTypedError(t *testing.T) {
 	}
 	// Error message should give the operator everything they need to
 	// diagnose without consulting docs: pb_data path, lock path,
-	// escape hatch (env var name).
+	// escape hatch (config key name).
 	if !strings.Contains(err.Error(), dir) {
 		t.Errorf("error %q should mention pb_data dir %q", err.Error(), dir)
 	}
-	if !strings.Contains(err.Error(), "QATLAS_SKIP_PB_DATA_LOCK") {
-		t.Errorf("error %q should document the bypass env var", err.Error())
+	if !strings.Contains(err.Error(), "skip_pb_data_lock") {
+		t.Errorf("error %q should document the bypass config key", err.Error())
 	}
 }
 
@@ -118,32 +118,6 @@ func TestAcquirePBDataLock_RejectsEmptyDir(t *testing.T) {
 	}
 }
 
-func TestPBDataLockSkipRequested_RecognisesTruthyValues(t *testing.T) {
-	cases := map[string]bool{
-		"1":     true,
-		"true":  true,
-		"True":  true, // case-insensitive
-		"YES":   true,
-		"on":    true,
-		"y":     true,
-		"t":     true,
-		"":      false,
-		"0":     false,
-		"false": false,
-		"no":    false,
-		"off":   false,
-		// Unrecognised non-empty strings default to false — never
-		// silently treat ambiguous values as opt-in.
-		"please-skip": false,
-	}
-	for input, want := range cases {
-		t.Setenv("QATLAS_SKIP_PB_DATA_LOCK", input)
-		if got := pbDataLockSkipRequested(); got != want {
-			t.Errorf("pbDataLockSkipRequested() with %q = %v, want %v", input, got, want)
-		}
-	}
-}
-
 func TestPBDataLockedError_MessageSurfacesEscapeHatch(t *testing.T) {
 	// Defensive guard: the error message is the operator's primary
 	// debugging surface. If a future refactor strips the escape-hatch
@@ -151,11 +125,11 @@ func TestPBDataLockedError_MessageSurfacesEscapeHatch(t *testing.T) {
 	err := &pbDataLockedError{path: "/tmp/x/qatlasd.lock", dir: "/tmp/x"}
 	msg := err.Error()
 	for _, expected := range []string{
-		"/tmp/x",                       // pb_data dir
-		"/tmp/x/qatlasd.lock",          // lock file path
-		"QATLAS_SKIP_PB_DATA_LOCK",     // escape hatch
-		"QATLAS_PB_DATA_DIR",           // "use a different dir" hint
-		"NOT for production",           // explicit warning on escape hatch
+		"/tmp/x",              // pb_data dir
+		"/tmp/x/qatlasd.lock", // lock file path
+		"skip_pb_data_lock",   // escape hatch
+		"paths.pb_data_dir",   // "use a different dir" hint
+		"NOT for production",  // explicit warning on escape hatch
 	} {
 		if !strings.Contains(msg, expected) {
 			t.Errorf("error message missing %q; got: %s", expected, msg)

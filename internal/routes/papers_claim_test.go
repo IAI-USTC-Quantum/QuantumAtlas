@@ -45,6 +45,9 @@ func (f *fakeClaimStore) ListPrefix(_ context.Context, _ string, _ int) ([]objst
 	// alternate keys.
 	return nil, nil
 }
+func (f *fakeClaimStore) ListDirs(_ context.Context, _ string) ([]string, error) {
+	return nil, nil
+}
 func (f *fakeClaimStore) PresignGet(ctx context.Context, key string, ttl time.Duration) (string, bool, error) {
 	if f.presignFn == nil {
 		return "", false, nil

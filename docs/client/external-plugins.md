@@ -11,11 +11,11 @@ orthogonal axes (ADR `0001`):
   or `stdio` (the host spawns the plugin executable from `spawn.command` and
   talks JSON-RPC over its stdin/stdout, the LSP/DAP model).
 
-The four first-party plugins — **graph**, **rag**, **wiki**, **theorems** — are
-all `kind=builtin`. They need **no integration steps**: they are compiled into
-`qatlasd` and appear in `/api/v1/plugins` as `connected` on boot. The wiki and
-theorems plugins read through a server-side `git pull --ff-only` checkout and
-expose a uniform `POST /api/<id>/sync/pull` + `GET /api/<id>/sync/status` pair.
+The first-party **theorems** plugin is `kind=builtin`. It needs **no
+integration steps**: it is compiled into `qatlasd` and appears in
+`/api/v1/plugins` as `connected` on boot. It reads through a server-side
+`git pull --ff-only` checkout and exposes a uniform
+`POST /api/<id>/sync/pull` + `GET /api/<id>/sync/status` pair.
 
 This guide covers connecting a **third-party `external` plugin**. (The
 `external` transports are retained for genuine third-party plugins; no
@@ -59,7 +59,7 @@ Place the manifest at `$QATLAS_PLUGINS_DIR/<id>/plugin.json`:
     "subscribes": [],
     "publishes": ["myplugin.completed"]
   },
-  "needs": ["papers:read", "wiki:read"]
+  "needs": ["papers:read"]
 }
 ```
 
@@ -74,8 +74,6 @@ host core carries no plugin-domain methods — ADR `0003`):
 
 | Method | Purpose | Scope |
 |---|---|---|
-| `pages/get` | Return wiki frontmatter and body for a page id | `wiki:read` |
-| `search/query` | Search cached wiki pages | `wiki:read` |
 | `papers/getMarkdown` | Return cached paper markdown bytes | `papers:read` |
 | `papers/getMeta` | Return minimal paper metadata | `papers:read` |
 | `papers/getCitedRefs` | Return the works a paper cites (currently a stub; resolvable via `/api/papers/lookup`) | `papers:read` |

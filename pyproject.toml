@@ -1,12 +1,12 @@
 [project]
 name = "quantum-atlas"
 version = "0.21.0a3"
-description = "AI 驱动的量子算法开发辅助系统"
+description = "Paper collection, multi-paradigm search, and registry database for quantum research"
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.11"
 authors = [{ name = "IAI-USTC-Quantum" }]
-keywords = ["quantum", "algorithm", "llm", "knowledge-graph", "code-generation"]
+keywords = ["quantum", "papers", "search", "registry", "arxiv"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
@@ -16,14 +16,9 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Physics",
 ]
 dependencies = [
-    "jinja2>=3.1.0,<4",
     "requests>=2.31.0,<3",
     "pydantic>=2.5.0,<3",
     "pydantic-settings>=2.0.0,<3",
-    "numpy>=1.26.0,<3",
-    "click>=8.1.0,<9",
-    "openai>=1.0.0,<2",
-    "anthropic>=0.21.0,<0.22",
     "pyyaml>=6.0.1,<7",
 ]
 
@@ -35,15 +30,6 @@ dev = [
     "isort>=5.13.0",
     "mypy>=1.7.0",
     "ruff>=0.8.0",
-]
-# --- qatlas contrib claim WebUI (registerable-but-unregistered plugin) --
-# The claim plugin was unregistered (ADR 0008 moved the maintained flow to
-# qatlas-lean) but its files are KEPT as a valid, re-registerable plugin. Its
-# localhost FastAPI WebUI (qatlas/client/claim/server.py) + test still need these,
-# so keep them as an opt-in extra core client users (upload / mineru) don't pull.
-contrib = [
-    "fastapi>=0.115",
-    "uvicorn[standard]>=0.32",
 ]
 # --- qatlas_rag embed worker -------------------------------------------
 # Since v0.20.0 the only Python role left is the GPU embed worker:
@@ -64,20 +50,18 @@ embed = [
 
 [project.scripts]
 qatlas-rag = "qatlas_rag.cli:main"
-qatlas-search = "qatlas_search.cli:main"
 
 [build-system]
 requires = ["hatchling>=1.24"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["qatlas", "rag/qatlas_rag", "search/qatlas_search"]
+packages = ["qatlas", "rag/qatlas_rag"]
 
 # Map source path to package name so `import qatlas_rag` resolves to
 # the rag/ subdirectory without exposing `rag` as a namespace.
 [tool.hatch.build.targets.wheel.sources]
 "rag/qatlas_rag" = "qatlas_rag"
-"search/qatlas_search" = "qatlas_search"
 
 # --- PyTorch cu128 wheel (sm_120 / Blackwell) ---
 # torch>=2.7 + CUDA 12.8 is the first combo that supports sm_120
@@ -102,7 +86,7 @@ annotated_tag = true
 
 # Pytest
 [tool.pytest.ini_options]
-testpaths = ["tests", "rag/tests", "search/tests"]
+testpaths = ["tests", "rag/tests"]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]

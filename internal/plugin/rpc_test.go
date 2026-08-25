@@ -25,8 +25,8 @@ func TestRPCInitializeAndHostCall(t *testing.T) {
 	  "kind": "external",
 	  "transport": "socket",
 	  "spawn": null,
-	  "contributes": {"capabilities": ["theorem.verify"], "subscribes": [], "publishes": []},
-	  "needs": ["wiki:read"]
+	  "contributes": {"capabilities": ["lean.verify"], "subscribes": [], "publishes": []},
+	  "needs": ["papers:read"]
 	}`)
 	registry, err := LoadDir(dir, Options{})
 	if err != nil {
@@ -102,7 +102,7 @@ func TestRPCEventsPublishAllowedWithoutPluginWriteScope(t *testing.T) {
 	}
 	host := hostapi.NewRegistry()
 	bus := events.NewBus()
-	if err := hostapi.RegisterCoreMethods(host, nil, nil, bus); err != nil {
+	if err := hostapi.RegisterCoreMethods(host, nil, bus); err != nil {
 		t.Fatalf("RegisterCoreMethods: %v", err)
 	}
 	s := httptest.NewServer((&RPCServer{
@@ -132,7 +132,7 @@ func TestRPCEventsPublishAllowedWithoutPluginWriteScope(t *testing.T) {
 		"jsonrpc": "2.0",
 		"id":      2,
 		"method":  "events/publish",
-		"params":  map[string]any{"type": "lean.verification.completed", "payload": map[string]any{"theorem_id": "thm-1"}},
+		"params":  map[string]any{"type": "lean.verification.completed", "payload": map[string]any{"lemma_id": "lem-1"}},
 	})
 	if resp := readJSON(t, ws); resp["error"] != nil {
 		t.Fatalf("events/publish error: %v", resp["error"])
@@ -149,8 +149,8 @@ func TestRPCPushesSubscribedEvents(t *testing.T) {
 	  "kind": "external",
 	  "transport": "socket",
 	  "spawn": null,
-	  "contributes": {"capabilities": [], "subscribes": ["theorem.added"], "publishes": []},
-	  "needs": ["wiki:read"]
+	  "contributes": {"capabilities": [], "subscribes": ["lean.added"], "publishes": []},
+	  "needs": ["papers:read"]
 	}`)
 	registry, err := LoadDir(dir, Options{})
 	if err != nil {
@@ -181,10 +181,10 @@ func TestRPCPushesSubscribedEvents(t *testing.T) {
 	}
 	bus.Publish(context.Background(), events.Event{
 		ID:   "evt-1",
-		Type: "theorem.added",
+		Type: "lean.added",
 		Time: time.Now().UTC(),
 		Payload: map[string]any{
-			"theorem_id": "thm-1",
+			"lemma_id": "lem-1",
 		},
 	})
 	_ = ws.SetReadDeadline(time.Now().Add(2 * time.Second))

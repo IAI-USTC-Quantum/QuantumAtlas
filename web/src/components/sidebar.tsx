@@ -1,27 +1,25 @@
 import { Link, useRouterState } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 import {
-  BookOpen,
+  Database,
   FileSearch,
   Home,
   Key,
-  Search,
-  Sigma,
+  Library,
   Sparkles,
   type LucideIcon,
 } from 'lucide-react'
 
 import { useLang } from '@/hooks/use-lang'
+import { useAdminWhoami } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 
 type NavLink = {
   to:
     | '/$lang'
-    | '/$lang/wiki'
-    | '/$lang/wiki/search'
     | '/$lang/papers/search'
-    | '/$lang/theorems'
-    | '/$lang/graph'
+    | '/$lang/papers'
+    | '/$lang/admin'
     | '/$lang/pat'
   labelKey: string
   icon: LucideIcon
@@ -31,16 +29,17 @@ type NavLink = {
    * pathname matches exactly.
    */
   matchPrefix?: string
+  /**
+   * Suppresses matchPrefix hits under this sub-prefix. Lets /papers and
+   * /papers/search coexist without both highlighting at once.
+   */
+  excludePrefix?: string
 }
 
-// Graph is intentionally omitted from nav until it's ready; the route file
-// and /api/graph backend are kept so it can be re-enabled later.
 const links: NavLink[] = [
   { to: '/$lang', labelKey: 'nav.home', icon: Home },
-  { to: '/$lang/wiki', labelKey: 'nav.wiki', icon: BookOpen, matchPrefix: '/wiki' },
-  { to: '/$lang/wiki/search', labelKey: 'nav.search', icon: Search },
-  { to: '/$lang/papers/search', labelKey: 'nav.papers', icon: FileSearch, matchPrefix: '/papers' },
-  { to: '/$lang/theorems', labelKey: 'nav.theorems', icon: Sigma, matchPrefix: '/theorems' },
+  { to: '/$lang/papers/search', labelKey: 'nav.papers', icon: FileSearch, matchPrefix: '/papers/search' },
+  { to: '/$lang/papers', labelKey: 'nav.papersList', icon: Library, matchPrefix: '/papers', excludePrefix: '/papers/search' },
   { to: '/$lang/pat', labelKey: 'nav.pat', icon: Key },
 ]
 
@@ -56,6 +55,11 @@ export function Sidebar({
   const lang = useLang()
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const homePath = `/${lang}`
+  // Session-only whoami; cached for a few minutes in the query cache.
+  // Hidden (not errored) for non-admins / non-sessions.
+  const whoami = useAdminWhoami()
+  const showAdmin = whoami.data?.is_admin === true
+  const adminPath = `${homePath}/admin`
 
   return (
     <aside
@@ -85,7 +89,9 @@ export function Sidebar({
             ? homePath
             : `${homePath}${link.to.slice('/$lang'.length)}`
           const active = link.matchPrefix
-            ? pathname.startsWith(`${homePath}${link.matchPrefix}`)
+            ? pathname.startsWith(`${homePath}${link.matchPrefix}`) &&
+              !(link.excludePrefix &&
+                pathname.startsWith(`${homePath}${link.excludePrefix}`))
             : pathname === targetPath
           return (
             <Link
@@ -107,6 +113,24 @@ export function Sidebar({
             </Link>
           )
         })}
+        {showAdmin && (
+          <Link
+            to="/$lang/admin"
+            params={{ lang }}
+            onClick={onNavigate}
+            className={cn(
+              'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+              'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
+              'focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-sidebar-ring/50',
+              pathname.startsWith(adminPath)
+                ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                : 'text-sidebar-foreground/80',
+            )}
+          >
+            <Database className="size-4 shrink-0" />
+            {t('nav.admin')}
+          </Link>
+        )}
       </nav>
     </aside>
   )

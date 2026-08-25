@@ -2,8 +2,8 @@ package routes
 
 // OpenAPI / Swagger annotations.
 //
-// PocketBase registers routes as closures on se.Router (see RegisterWiki,
-// RegisterGraph, RegisterPAT, RegisterPapers and the
+// PocketBase registers routes as closures on se.Router (see RegisterSearch,
+// RegisterPAT, RegisterPapers and the
 // closures in cmd/qatlasd/main.go). swaggo/swag can only attach an
 // operation to a Go function's doc comment, and most of our handlers are
 // anonymous closures with no addressable declaration. Rather than refactor
@@ -27,8 +27,8 @@ package routes
 // healthCheck reports server liveness plus dependency probes.
 //
 // @Summary     Health check
-// @Description Liveness plus parallel dependency probes (rawstore, neo4j,
-// @Description wiki). HTTP status is always 200; read data.status for the
+// @Description Liveness plus parallel dependency probes (rawstore, postgres,
+// @Description registry). HTTP status is always 200; read data.status for the
 // @Description real verdict ("healthy" | "degraded").
 // @Tags        System
 // @Produce     json
@@ -96,194 +96,95 @@ func docDisablePlugin() {}
 // @Router      /install-qatlasd.sh [get]
 func docInstallScript() {}
 
-// --- Wiki --------------------------------------------------------------------
+// --- Search ------------------------------------------------------------------
 
-// listPages lists browsable wiki entries (source pages excluded by default).
+// searchPapers runs a multi-provider paper search.
 //
-// @Summary     List wiki pages
-// @Description Lists wiki entries. Source pages (processed papers) are
-// @Description treated as citations and excluded unless page_type=source.
-// @Tags        Wiki
+// @Summary     Search papers
+// @Description Fans one search entry out to the configured providers
+// @Description (catalog / arxiv / openalex / qdrant), merges hits by paper
+// @Description identity (DOI > arXiv > title hash) and resolve-or-mints each
+// @Description identity-anchored hit against the paper registry. Newly minted
+// @Description papers carry created=true and are picked up by the lazy
+// @Description ingestion pipeline; title-only hits return as un-minted
+// @Description candidates. Requires the papers:read scope.
+// @Tags        Search
+// @Accept      json
 // @Produce     json
-// @Param       page_type query string false "filter by type (concept|entity|comparison|source)"
-// @Param       status    query string false "filter by status"
-// @Param       tags      query string false "comma-separated tag filter"
-// @Success     200 {object} map[string]interface{}
 // @Security    BearerAuth
+// @Param       body body object true "search entry {text?, title?, doi?, arxiv_id?, max_results?, required_phrases?}"
+// @Success     200 {object} map[string]interface{} "{results:[{paper_id,hit,created}], candidates:[...]}"
+// @Failure     400 {object} map[string]string
 // @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string
-// @Router      /api/pages [get]
-func docListPages() {}
+// @Failure     503 {object} map[string]string "registry unavailable"
+// @Router      /api/search [post]
+func docSearchPapers() {}
 
-// getPage returns a single wiki page including its markdown content.
+// papersList returns the paginated registry paper list.
 //
-// @Summary     Get wiki page
-// @Tags        Wiki
+// @Summary     List papers
+// @Description Paginated list of registry papers (merged tombstones
+// @Description excluded). has_md filters on converted markdown present on
+// @Description the paper's default asset (the "converted papers" page);
+// @Description status filters by lifecycle; q is a case-insensitive title
+// @Description substring. Sorted by created_at (default) or updated_at,
+// @Description descending. Requires the papers:read scope.
+// @Tags        Papers
 // @Produce     json
-// @Param       page_id path string true "page id"
-// @Success     200 {object} map[string]interface{}
-// @Failure     404 {object} map[string]string
 // @Security    BearerAuth
-// @Failure     401 {object} map[string]string
-// @Router      /api/pages/{page_id} [get]
-func docGetPage() {}
-
-// wikiStats returns aggregate counts over the wiki corpus.
-//
-// @Summary     Wiki statistics
-// @Tags        Wiki
-// @Produce     json
-// @Success     200 {object} map[string]interface{}
-// @Security    BearerAuth
-// @Failure     401 {object} map[string]string
-// @Failure     403 {object} map[string]string
-// @Router      /api/stats [get]
-func docWikiStats() {}
-
-// searchWiki does a full-text search over wiki entries.
-//
-// @Summary     Search wiki
-// @Tags        Wiki
-// @Produce     json
-// @Param       q               query string true  "query string"
-// @Param       limit           query int    false "max results (default 10)"
-// @Param       include_sources query bool   false "include source pages (default false)"
-// @Success     200 {object} map[string]interface{}
-// @Security    BearerAuth
+// @Param       has_md   query bool   false "true = only papers with converted markdown on the default asset"
+// @Param       status   query string false "pending | ready | failed"
+// @Param       q        query string false "title substring (case-insensitive)"
+// @Param       page     query int    false "1-based page (default 1)"
+// @Param       per_page query int    false "page size (default 20, max 100)"
+// @Param       sort     query string false "created_at (default) | updated_at, descending"
+// @Success     200 {object} map[string]interface{} "{items:[{paper_id,arxiv_id,doi,title,status,has_pdf,has_md,image_count,created_at,updated_at}], total, page, per_page}"
+// @Failure     400 {object} map[string]string "invalid query parameter"
 // @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string
-// @Router      /api/search [get]
-func docSearchWiki() {}
+// @Failure     503 {object} map[string]string "registry unavailable"
+// @Router      /api/papers [get]
+func docPapersList() {}
 
-// wikiSyncStatusOp reports the wiki git HEAD / ahead / behind.
+// paperDetail returns one registry paper with its assets.
 //
-// @Summary     Wiki sync status
-// @Description Branch/commit/ahead/behind of the server's wiki checkout.
-// @Description Requires the wiki:read scope (the knowledge base is not
-// @Description anonymously readable).
-// @Tags        Wiki
+// @Summary     Get paper by id
+// @Description Returns the registry paper (status, identities) plus its
+// @Description asset rows for the surrogate paper_id ("qa_" + ULID).
+// @Tags        Papers
 // @Produce     json
 // @Security    BearerAuth
-// @Success     200 {object} map[string]interface{}
-// @Failure     401 {object} map[string]string
-// @Failure     403 {object} map[string]string
-// @Router      /api/wiki/sync/status [get]
-func docWikiSyncStatus() {}
-
-// wikiSyncPull fast-forwards the server's wiki checkout and refreshes cache.
-//
-// @Summary     Wiki sync pull
-// @Description Runs `git fetch --prune` + `git pull --ff-only` on the server
-// @Description wiki checkout, then refreshes the in-memory cache. Mutates
-// @Description server state, so it requires the wiki:write scope.
-// @Tags        Wiki
-// @Produce     json
-// @Security    BearerAuth
-// @Success     200 {object} map[string]interface{}
-// @Failure     401 {object} map[string]string
-// @Failure     403 {object} map[string]string
-// @Failure     409 {object} map[string]string "non-fast-forward / wiki dir missing"
-// @Router      /api/wiki/sync/pull [post]
-func docWikiSyncPull() {}
-
-// --- Theorems (builtin plugin, read-through a Lean-content git checkout) ------
-
-// listTheorems lists the proved-Theorems catalog.
-//
-// @Summary     List theorems
-// @Description Lists registry.json entries from the theorems plugin's git
-// @Description checkout. Filterable by family_id, audit_status, kind.
-// @Tags        Theorems
-// @Produce     json
-// @Security    BearerAuth
-// @Param       family_id query string false "filter by family id"
-// @Param       audit_status query string false "filter by audit status"
-// @Param       kind query string false "filter by kind (theorem|lemma|definition|bound)"
-// @Success     200 {object} map[string]interface{}
-// @Failure     401 {object} map[string]string
-// @Failure     403 {object} map[string]string
-// @Router      /api/theorems/list [get]
-func docListTheorems() {}
-
-// listTheoremFamilies lists the theorem family definitions.
-//
-// @Summary     List theorem families
-// @Tags        Theorems
-// @Produce     json
-// @Security    BearerAuth
-// @Success     200 {object} map[string]interface{}
-// @Failure     401 {object} map[string]string
-// @Failure     403 {object} map[string]string
-// @Router      /api/theorems/families [get]
-func docTheoremFamilies() {}
-
-// theoremStats returns aggregate counts over the proved-Theorems catalog.
-//
-// @Summary     Theorem stats
-// @Tags        Theorems
-// @Produce     json
-// @Security    BearerAuth
-// @Success     200 {object} map[string]interface{}
-// @Failure     401 {object} map[string]string
-// @Failure     403 {object} map[string]string
-// @Router      /api/theorems/stats [get]
-func docTheoremStats() {}
-
-// getTheorem returns one theorem's full registry entry + audit verdict.
-//
-// @Summary     Get theorem
-// @Tags        Theorems
-// @Produce     json
-// @Security    BearerAuth
-// @Param       fqn path string true "lean_fqn"
+// @Param       paper_id path string true "surrogate paper id (qa_...)"
 // @Success     200 {object} map[string]interface{}
 // @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string
 // @Failure     404 {object} map[string]string
-// @Router      /api/theorems/theorem/{fqn} [get]
-func docGetTheorem() {}
+// @Failure     503 {object} map[string]string "registry unavailable"
+// @Router      /api/papers/{paper_id} [get]
+func docPaperDetail() {}
 
-// getTheoremSource returns the Lean source file backing a theorem.
+// paperImages lists one paper's image files from the object store, on demand.
 //
-// @Summary     Get theorem source
-// @Tags        Theorems
+// @Summary     List paper images
+// @Description Lists the image objects of every asset of the paper,
+// @Description fetched on demand from the images bucket (no separate sync
+// @Description listing exists). Each asset reports kind "zip" (single
+// @Description images zip) or "dir" (per-paper directory) depending on the
+// @Description layout found, its files, and whether the 200-object cap
+// @Description truncated the listing. Empty files when the asset has no
+// @Description images. Requires the papers:read scope.
+// @Tags        Papers
 // @Produce     json
 // @Security    BearerAuth
-// @Param       fqn path string true "lean_fqn"
-// @Success     200 {object} map[string]interface{}
+// @Param       paper_id path string true "surrogate paper id (qa_...)"
+// @Success     200 {object} map[string]interface{} "{paper_id, assets:[{asset_id, source, arxiv_version, kind, files:[{key,size}], truncated}]}"
 // @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string
 // @Failure     404 {object} map[string]string
-// @Router      /api/theorems/theorem-source/{fqn} [get]
-func docGetTheoremSource() {}
-
-// theoremsSyncStatus reports the theorems checkout git HEAD / ahead / behind.
-//
-// @Summary     Theorems sync status
-// @Tags        Theorems
-// @Produce     json
-// @Security    BearerAuth
-// @Success     200 {object} map[string]interface{}
-// @Failure     401 {object} map[string]string
-// @Failure     403 {object} map[string]string
-// @Router      /api/theorems/sync/status [get]
-func docTheoremsSyncStatus() {}
-
-// theoremsSyncPull fast-forwards the theorems checkout and reloads the cache.
-//
-// @Summary     Theorems sync pull
-// @Description Runs `git fetch --prune` + `git pull --ff-only` on the server
-// @Description theorems checkout, then reloads the in-memory registry cache.
-// @Description Mutates server state, so it requires the theorems:write scope.
-// @Tags        Theorems
-// @Produce     json
-// @Security    BearerAuth
-// @Success     200 {object} map[string]interface{}
-// @Failure     401 {object} map[string]string
-// @Failure     403 {object} map[string]string
-// @Failure     409 {object} map[string]string "non-fast-forward / theorems dir missing"
-// @Router      /api/theorems/sync/pull [post]
-func docTheoremsSyncPull() {}
+// @Failure     503 {object} map[string]string "registry unavailable"
+// @Router      /api/papers/{paper_id}/images [get]
+func docPaperImages() {}
 
 // --- Papers ------------------------------------------------------------------
 
@@ -611,89 +512,6 @@ func docMineruClaimRelease() {}
 // @Router      /api/v1/papers/{arxiv_id}/mineru-lease/{claim_id} [delete]
 func docMineruLeaseRelease() {}
 
-// --- Graph -------------------------------------------------------------------
-
-// graphStats returns node/relationship counts from Neo4j.
-//
-// @Summary     Graph statistics
-// @Description Returns 200 with {"error":...} when Neo4j is unreachable
-// @Description (the UI renders a friendly banner rather than a crash page).
-// @Description Requires the graph:read scope.
-// @Tags        Graph
-// @Produce     json
-// @Security    BearerAuth
-// @Success     200 {object} map[string]interface{}
-// @Failure     401 {object} map[string]string
-// @Failure     403 {object} map[string]string
-// @Failure     503 {object} map[string]string
-// @Router      /api/v1/graph/stats [get]
-// @Router      /api/graph/stats [get]
-func docGraphStats() {}
-
-// graphQuery runs a read-only Cypher query.
-//
-// @Summary     Graph query
-// @Description Executes caller-supplied read-only Cypher. graph:read scope.
-// @Tags        Graph
-// @Accept      json
-// @Produce     json
-// @Security    BearerAuth
-// @Param       body body object true "{query: string, limit: int}"
-// @Success     200 {object} map[string]interface{}
-// @Failure     400 {object} map[string]string
-// @Failure     503 {object} map[string]string
-// @Router      /api/v1/graph/query [post]
-// @Router      /api/graph/query [post]
-func docGraphQuery() {}
-
-// graphSchema returns the Neo4j labels and relationship types.
-//
-// @Summary     Graph schema
-// @Description Requires the graph:read scope.
-// @Tags        Graph
-// @Produce     json
-// @Security    BearerAuth
-// @Success     200 {object} map[string]interface{}
-// @Failure     401 {object} map[string]string
-// @Failure     403 {object} map[string]string
-// @Failure     503 {object} map[string]string
-// @Router      /api/v1/graph/schema [get]
-// @Router      /api/graph/schema [get]
-func docGraphSchema() {}
-
-// --- RAG ----------------------------------------------------------------------
-
-// ragSearch returns semantic search hits from the configured RAG backend.
-//
-// @Summary     RAG search
-// @Description Requires PAPER_ACCESS and papers:read. Returns 503 when the rag plugin is disabled.
-// @Tags        RAG
-// @Accept      json
-// @Produce     json
-// @Security    BearerAuth
-// @Param       body body object true "{query: string, top_k?: int, rerank?: bool}"
-// @Success     200 {object} map[string]interface{}
-// @Failure     400 {object} map[string]string
-// @Failure     401 {object} map[string]string
-// @Failure     403 {object} map[string]string
-// @Failure     502 {object} map[string]string
-// @Failure     503 {object} map[string]string
-// @Router      /api/v1/rag/search [post]
-// @Router      /api/rag/search [post]
-func docRAGSearch() {}
-
-// ragHealth returns coarse RAG backend health.
-//
-// @Summary     RAG health
-// @Description Anonymous coarse status endpoint. Returns 503 when the rag plugin is disabled.
-// @Tags        RAG
-// @Produce     json
-// @Success     200 {object} map[string]interface{}
-// @Failure     503 {object} map[string]string
-// @Router      /api/v1/rag/healthz [get]
-// @Router      /api/rag/healthz [get]
-func docRAGHealth() {}
-
 // --- PAT ---------------------------------------------------------------------
 
 // createPAT mints a personal access token. Session-token auth only.
@@ -744,6 +562,47 @@ func docDeletePAT() {}
 // @Success     200 {object} map[string]interface{}
 // @Router      /api/pat/scopes [get]
 func docPATScopes() {}
+
+// --- Admin -------------------------------------------------------------------
+//
+// Admin console API. Session-token auth only (PATs rejected); the db
+// schema endpoint additionally requires the caller's github_login to be
+// on the QATLAS_ADMIN_GITHUB_LOGINS allowlist. See internal/routes/admin.go.
+
+// adminWhoami reports the caller's GitHub login and admin status.
+//
+// @Summary     Admin whoami
+// @Description Returns {login, is_admin} for the signed-in session user.
+// @Description The SPA uses this to decide whether to render the admin
+// @Description nav; non-admins get is_admin:false rather than a 403.
+// @Description Session-token auth only (PAT auth refused, same as /api/pat).
+// @Tags        Admin
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200 {object} map[string]interface{} "{login, is_admin}"
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string "PAT auth not accepted"
+// @Router      /api/admin/whoami [get]
+func docAdminWhoami() {}
+
+// adminDBSchema introspects the Postgres paper-registry database structure.
+//
+// @Summary     Postgres schema browser
+// @Description Read-only introspection of the QATLAS_POSTGRES_DSN database:
+// @Description every table in schema public (goose_db_version included,
+// @Description alphabetical) with row estimate, total size, columns
+// @Description (type/nullable/default/is_pk), indexes and constraints.
+// @Description Admin-only: session token + github_login on the
+// @Description QATLAS_ADMIN_GITHUB_LOGINS allowlist.
+// @Tags        Admin
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200 {object} map[string]interface{} "{database, tables:[{name, row_estimate, total_size, columns, indexes, constraints}]}"
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string "admin only"
+// @Failure     503 {object} map[string]string "postgres registry unavailable"
+// @Router      /api/admin/db/schema [get]
+func docAdminDBSchema() {}
 
 // --- OAuth Device Flow -------------------------------------------------------
 //

@@ -18,19 +18,17 @@ import (
 )
 
 // fakeStore is a minimal in-memory objstore.Store sufficient for
-// converter tests. PresignGet returns a placeholder URL so the
-// converter happily submits to MinerU; the test harness inspects
-// what arrived at the stub MinerU server, not the actual fetch.
+// converter tests. The converter reads PDF bytes via Get and pushes
+// them to the stub MinerU server's upload URL; the test harness
+// inspects what arrived at the stub, not the actual fetch.
 type fakeStore struct {
 	mu      sync.Mutex
 	objects map[string][]byte
-	presign string
 }
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
 		objects: map[string][]byte{},
-		presign: "http://fake.invalid/pdf",
 	}
 }
 
@@ -103,28 +101,55 @@ func (s *fakeStore) ListPrefix(_ context.Context, prefix string, _ int) ([]objst
 	}
 	return out, nil
 }
-func (s *fakeStore) PresignGet(_ context.Context, key string, _ time.Duration) (string, bool, error) {
-	if s.presign == "" {
-		return "", false, nil
+func (s *fakeStore) ListDirs(_ context.Context, prefix string) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	seen := map[string]bool{}
+	var out []string
+	for k := range s.objects {
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(k, prefix)
+		i := strings.IndexByte(rest, '/')
+		if i < 0 {
+			continue
+		}
+		dir := prefix + rest[:i+1]
+		if !seen[dir] {
+			seen[dir] = true
+			out = append(out, dir)
+		}
 	}
-	return s.presign + "?key=" + key, true, nil
+	return out, nil
+}
+func (s *fakeStore) PresignGet(_ context.Context, key string, _ time.Duration) (string, bool, error) {
+	return "", false, nil
 }
 
 // minerUStub is a configurable MinerU+result-zip backend used by the
-// converter tests. It accepts a SubmitURLTask, returns a fixed task_id,
-// reports state="done" with a result URL on the second GetTask call,
-// then serves the result zip from /result.
+// converter tests. It serves the upload channel: ApplyUploadURLs
+// (POST /api/v4/file-urls/batch) returns a fixed batch_id and an
+// upload URL pointing back at the stub, the PUT accepts the file
+// bytes, and the batch-results poll reports state="done" with a
+// result URL (or state="failed" when configured).
 type minerUStub struct {
 	t           *testing.T
 	server      *httptest.Server
 	submissions atomic64
 	pollCalls   atomic64
+	uploads     atomic64
 
 	// Configurable behaviour
-	taskFailWithMsg string // when non-empty, GetTask returns state=failed with this msg
-	submitFailCode  string // when non-empty, SubmitURLTask returns this envelope code
+	taskFailWithMsg string // when non-empty, batch poll returns state=failed with this msg
+	submitFailCode  string // when non-empty, ApplyUploadURLs returns this envelope code
 	submitFailMsg   string
 	zipBody         []byte
+
+	// lastDataID echoes the data_id of the most recent ApplyUploadURLs
+	// call back in the batch-result entry, like the real API does.
+	mu         sync.Mutex
+	lastDataID string
 }
 
 type atomic64 struct {
@@ -149,29 +174,50 @@ func newMinerUStub(t *testing.T) *minerUStub {
 	return stub
 }
 
-func (s *minerUStub) close() { s.server.Close() }
+func (s *minerUStub) close()      { s.server.Close() }
 func (s *minerUStub) url() string { return s.server.URL }
 
 func (s *minerUStub) handle(w http.ResponseWriter, r *http.Request) {
 	switch {
-	case r.URL.Path == "/api/v4/extract/task" && r.Method == http.MethodPost:
+	case r.URL.Path == "/api/v4/file-urls/batch" && r.Method == http.MethodPost:
 		s.submissions.inc()
+		var body struct {
+			Files []struct {
+				Name   string `json:"name"`
+				DataID string `json:"data_id"`
+			} `json:"files"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		s.mu.Lock()
+		if len(body.Files) > 0 {
+			s.lastDataID = body.Files[0].DataID
+		}
+		s.mu.Unlock()
 		if s.submitFailCode != "" {
 			writeEnvelope(w, s.submitFailCode, s.submitFailMsg, nil)
 			return
 		}
-		writeEnvelope(w, "0", "", map[string]any{"task_id": "tsk-1"})
-	case strings.HasPrefix(r.URL.Path, "/api/v4/extract/task/") && r.Method == http.MethodGet:
-		s.pollCalls.inc()
-		if s.taskFailWithMsg != "" {
-			writeEnvelope(w, "0", "", map[string]any{
-				"state": "failed", "err_msg": s.taskFailWithMsg,
-			})
-			return
-		}
 		writeEnvelope(w, "0", "", map[string]any{
-			"state": "done", "full_zip_url": s.server.URL + "/result",
+			"batch_id":  "batch-1",
+			"file_urls": []string{s.server.URL + "/upload/0"},
 		})
+	case r.URL.Path == "/upload/0" && r.Method == http.MethodPut:
+		s.uploads.inc()
+		_, _ = io.Copy(io.Discard, r.Body)
+	case strings.HasPrefix(r.URL.Path, "/api/v4/extract-results/batch/") && r.Method == http.MethodGet:
+		s.pollCalls.inc()
+		s.mu.Lock()
+		dataID := s.lastDataID
+		s.mu.Unlock()
+		entry := map[string]any{"file_name": "paper.pdf", "data_id": dataID}
+		if s.taskFailWithMsg != "" {
+			entry["state"] = "failed"
+			entry["err_msg"] = s.taskFailWithMsg
+		} else {
+			entry["state"] = "done"
+			entry["full_zip_url"] = s.server.URL + "/result"
+		}
+		writeEnvelope(w, "0", "", map[string]any{"extract_result": []any{entry}})
 	case r.URL.Path == "/result":
 		_, _ = w.Write(s.zipBody)
 	default:
@@ -194,7 +240,7 @@ func makeConverter(t *testing.T, store objstore.Store, stubURL string, tokens ..
 		tokens = []string{"test-token"}
 	}
 	cfg := ConverterConfig{
-		PaperAccessEnabled:   true,
+		PaperAccessEnabled:      true,
 		MinerUAPITokens:         tokens,
 		MinerUAPIBaseURL:        stubURL,
 		MinerUModelVersion:      "vlm",
@@ -205,7 +251,6 @@ func makeConverter(t *testing.T, store objstore.Store, stubURL string, tokens ..
 		MinerUPollInterval:      5 * time.Millisecond,
 		MinerUTimeout:           5 * time.Second,
 		MinerUMaxConcurrentJobs: 2,
-		S3PublicEndpoint:        "http://public.invalid",
 	}
 	return NewConverter(cfg, store, nil, nil)
 }
@@ -225,7 +270,6 @@ func TestConverter_DisabledWhenTokenMissing(t *testing.T) {
 	store := newFakeStore()
 	c := NewConverter(ConverterConfig{
 		PaperAccessEnabled: true,
-		S3PublicEndpoint:      "http://public.invalid",
 	}, store, nil, nil)
 	if c.Enabled() {
 		t.Fatal("converter should be disabled when token missing")
@@ -235,14 +279,14 @@ func TestConverter_DisabledWhenTokenMissing(t *testing.T) {
 	}
 }
 
-func TestConverter_DisabledWhenPublicEndpointMissing(t *testing.T) {
+func TestConverter_EnabledWithSwitchAndTokensOnly(t *testing.T) {
 	store := newFakeStore()
 	c := NewConverter(ConverterConfig{
 		PaperAccessEnabled: true,
-		MinerUAPITokens:       []string{"tok"},
+		MinerUAPITokens:    []string{"tok"},
 	}, store, nil, nil)
-	if c.Enabled() {
-		t.Fatal("converter should be disabled when public endpoint missing")
+	if !c.Enabled() {
+		t.Fatal("converter should be enabled with switch + tokens (upload channel needs no public S3 endpoint)")
 	}
 }
 
@@ -303,6 +347,10 @@ func TestConverter_EnsureSubmitsAndWrites(t *testing.T) {
 	snap := c.Snapshot()
 	if snap.Submitted != 1 || snap.Succeeded != 1 {
 		t.Errorf("counters = %+v, want submitted=succeeded=1", snap)
+	}
+	// The upload channel must have received the PDF bytes exactly once.
+	if got := stub.uploads.load(); got != 1 {
+		t.Errorf("stub.uploads = %d, want 1", got)
 	}
 }
 
@@ -433,7 +481,7 @@ type tokenAwareStub struct {
 	submissions atomic64
 
 	// keyState maps token → daily-limit behavior:
-	//   "quota" → SubmitURLTask returns daily-limit (-60018)
+	//   "quota" → ApplyUploadURLs returns daily-limit (-60018)
 	//   ""      → normal happy path
 	keyStateMu sync.Mutex
 	keyState   map[string]string
@@ -453,16 +501,18 @@ func newTokenAwareStub(t *testing.T) *tokenAwareStub {
 	return stub
 }
 
-func (s *tokenAwareStub) close() { s.server.Close() }
+func (s *tokenAwareStub) close()      { s.server.Close() }
 func (s *tokenAwareStub) url() string { return s.server.URL }
 
 func (s *tokenAwareStub) markQuotaExhausted(token string) {
-	s.keyStateMu.Lock(); defer s.keyStateMu.Unlock()
+	s.keyStateMu.Lock()
+	defer s.keyStateMu.Unlock()
 	s.keyState[token] = "quota"
 }
 
 func (s *tokenAwareStub) seen() []string {
-	s.tokensSeenMu.Lock(); defer s.tokensSeenMu.Unlock()
+	s.tokensSeenMu.Lock()
+	defer s.tokensSeenMu.Unlock()
 	out := make([]string, len(s.tokensSeen))
 	copy(out, s.tokensSeen)
 	return out
@@ -470,25 +520,34 @@ func (s *tokenAwareStub) seen() []string {
 
 func (s *tokenAwareStub) handle(w http.ResponseWriter, r *http.Request) {
 	auth := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	s.tokensSeenMu.Lock(); s.tokensSeen = append(s.tokensSeen, auth); s.tokensSeenMu.Unlock()
+	s.tokensSeenMu.Lock()
+	s.tokensSeen = append(s.tokensSeen, auth)
+	s.tokensSeenMu.Unlock()
 
 	s.keyStateMu.Lock()
 	state := s.keyState[auth]
 	s.keyStateMu.Unlock()
 
 	switch {
-	case r.URL.Path == "/api/v4/extract/task" && r.Method == http.MethodPost:
+	case r.URL.Path == "/api/v4/file-urls/batch" && r.Method == http.MethodPost:
 		s.submissions.inc()
+		_, _ = io.Copy(io.Discard, r.Body)
 		if state == "quota" {
 			// MinerU daily-limit code -60018 — matches errors.go::dailyLimitErrorCodes
 			writeEnvelope(w, "-60018", "每日解析任务数量已达上限", nil)
 			return
 		}
-		writeEnvelope(w, "0", "", map[string]any{"task_id": "tsk-1"})
-	case strings.HasPrefix(r.URL.Path, "/api/v4/extract/task/") && r.Method == http.MethodGet:
 		writeEnvelope(w, "0", "", map[string]any{
-			"state": "done", "full_zip_url": s.server.URL + "/result",
+			"batch_id":  "batch-1",
+			"file_urls": []string{s.server.URL + "/upload/0"},
 		})
+	case r.URL.Path == "/upload/0" && r.Method == http.MethodPut:
+		_, _ = io.Copy(io.Discard, r.Body)
+	case strings.HasPrefix(r.URL.Path, "/api/v4/extract-results/batch/") && r.Method == http.MethodGet:
+		writeEnvelope(w, "0", "", map[string]any{"extract_result": []any{map[string]any{
+			"file_name": "paper.pdf", "state": "done",
+			"full_zip_url": s.server.URL + "/result",
+		}}})
 	case r.URL.Path == "/result":
 		_, _ = w.Write(s.zipBody)
 	default:
@@ -629,9 +688,9 @@ type atomicInt64 struct {
 	val int64
 }
 
-func newAtomicInt64() *atomicInt64                  { return &atomicInt64{} }
-func (a *atomicInt64) add(n int64)                  { a.mu.Lock(); a.val += n; a.mu.Unlock() }
-func (a *atomicInt64) load() int64                  { a.mu.Lock(); defer a.mu.Unlock(); return a.val }
+func newAtomicInt64() *atomicInt64 { return &atomicInt64{} }
+func (a *atomicInt64) add(n int64) { a.mu.Lock(); a.val += n; a.mu.Unlock() }
+func (a *atomicInt64) load() int64 { a.mu.Lock(); defer a.mu.Unlock(); return a.val }
 
 func makeFetcher(t *testing.T, baseURL string) *arxiv.Fetcher {
 	t.Helper()
@@ -665,7 +724,6 @@ func makeConverterWithFetcher(t *testing.T, store objstore.Store, stubURL, arxiv
 		MinerUPollInterval:      5 * time.Millisecond,
 		MinerUTimeout:           5 * time.Second,
 		MinerUMaxConcurrentJobs: 2,
-		S3PublicEndpoint:        "http://public.invalid",
 		Fetcher:                 makeFetcher(t, arxivURL),
 		ArxivFetchConcurrent:    2,
 	}

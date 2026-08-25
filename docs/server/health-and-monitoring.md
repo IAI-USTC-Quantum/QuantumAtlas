@@ -21,19 +21,10 @@
         "bucket": "qatlas-raw",
         "latency_ms": 12
       },
-      "neo4j": {
+      "postgres": {
         "status": "ok",
-        "uri": "bolt://<neo4j-bolt-host>:7687",
-        "database": "neo4j",
+        "backend": "postgres",
         "latency_ms": 8
-      },
-      "wiki": {
-        "status": "ok",
-        "dir": "/home/<USER>/QuantumAtlas-Wiki",
-        "commit": "abc12345",
-        "commit_time": "2026-05-28T22:10:33Z",
-        "branch": "main",
-        "dirty": false
       }
     }
   }
@@ -54,8 +45,7 @@
 | Probe | 检查什么 | 失败的含义 |
 |---|---|---|
 | `rawstore` | S3 backend 时 `BucketExists` HEAD；LocalStore 时直接 ok | bucket 不存在 / svcacct 失权 / 网络 |
-| `neo4j` | `NewClient + Connect + VerifyConnectivity` | URI 不通 / 密码错 / Neo4j 挂了 |
-| `wiki` | `git rev-parse HEAD`、读 commit time | wiki dir 不存在 / 不是 git repo |
+| `postgres` | `pgxpool.Ping` | DSN 不通 / 密码错 / PostgreSQL 挂了 |
 
 每个 probe 5s 硬超时（`probeTimeout`），三个**并行**执行，互不阻塞。
 
@@ -66,7 +56,7 @@ status = healthy    iff 所有 check 是 "ok" 或 "not_configured"
 status = degraded   iff 任一 check 是 "error"
 ```
 
-`not_configured`（例如 `NEO4J_URI` 没设）**不下拉聚合等级**——它是"刻意没启用"，跟"配置了但挂了"是两回事。
+`not_configured`（例如 `QATLAS_POSTGRES_DSN` 没设）**不下拉聚合等级**——它是"刻意没启用"，跟"配置了但挂了"是两回事。
 
 ## 接监控告警
 
@@ -130,10 +120,9 @@ cron 每分钟跑一下，输出有 ALERT 就邮件/Slack。
 | `rawstore: error: bucket does not exist` | bucket 名错或 RustFS 重启丢了 bucket | 跑 [`scripts/rustfs_bootstrap.sh`](rustfs.md#bootstrap) 重建 |
 | `rawstore: error: SignatureDoesNotMatch` | svcacct 凭据错 | 校验 `.env` 里 `QATLAS_S3_ACCESS_KEY_ID/SECRET` |
 | `rawstore: error: connection refused` | RustFS 挂了 / mesh 断了 | `systemctl status rustfs` / `ping <mesh-host>` |
-| `neo4j: error: connection refused` | Neo4j 没起 | `systemctl status neo4j` |
-| `neo4j: error: authentication failure` | 密码改了 | 校验 `.env` 里 `NEO4J_PASSWORD` |
-| `neo4j: error: context deadline exceeded` | mesh 不通 / portproxy 失效 | [Neo4j 部署](neo4j.md) 的连通性章节 |
-| `wiki: error: wiki directory is not a git repository` | `WIKI_DIR` 指错了 / dir 被删了 | 重新 `git clone QuantumAtlas-Wiki` 到该路径 |
+| `postgres: error: connection refused` | PostgreSQL 没起 / DSN host 不通 | `systemctl status postgresql` / 校验 `QATLAS_POSTGRES_DSN` |
+| `postgres: error: password authentication failed` | 密码改了 | 校验 `.env` 里 `QATLAS_POSTGRES_DSN` |
+| `postgres: error: context deadline exceeded` | mesh 不通 / pg 过载 | 检查网络连通性与 pg 负载 |
 
 ## SLO 推荐
 
@@ -142,7 +131,7 @@ cron 每分钟跑一下，输出有 ALERT 就邮件/Slack。
 - **`data.status == healthy`** 在 99.5%/月 时间内为真 → 4 小时 downtime/月 余量
 - **依赖单独**没有强 SLO（research infra，不是 OLTP）
 
-如果某 probe 长期 error，**先看是不是 not_configured 的边界条件**——多边缘节点可能不全都有 Neo4j。
+如果某 probe 长期 error，**先看是不是 not_configured 的边界条件**——dev 环境可能刻意不配 PostgreSQL。
 
 ## 日志
 
@@ -153,8 +142,8 @@ cron 每分钟跑一下，输出有 ALERT 就邮件/Slack。
 | `raw store: S3 backend ...` | S3 backend 启动成功 |
 | `raw store: local backend ...` | LocalStore 启动成功 |
 | `bucket versioning: enabled` | versioning 自管成功 |
-| `paperindex: catalog ready (N rows)` | parquet 索引启动成功 |
-| `wiki: cache initialized` | Wiki cache 启动成功 |
+| `registry: migrations applied` | goose migrations 启动时自动 apply 成功 |
+| `search: providers=[...]` | 搜索引擎 provider 列表加载成功 |
 | `pat: built scope enforcer` | scope enforcer 启动成功 |
 | `pocketbase: serving on ...` | HTTP server 就绪 |
 
@@ -173,11 +162,14 @@ curl -X POST https://<server>/api/pat \
   -H "Content-Type: application/json" \
   -d '{"name":"smoke-test","scopes":[],"expires_in_days":1}' | jq
 
-# 3. Wiki cache 有数据
-curl -fsS https://<server>/api/stats | jq
+# 3. Registry 有数据
+curl -fsS https://<server>/api/papers/stats | jq
 
-# 4. 图谱通了
-curl -fsS https://<server>/api/graph/stats | jq
+# 4. 搜索通了（带 papers:read 的 PAT）
+curl -X POST https://<server>/api/search \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"query":"quantum fourier transform"}' | jq
 ```
 
 任何一步红了就照对应章节 fix。

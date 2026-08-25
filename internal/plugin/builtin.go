@@ -1,48 +1,9 @@
 package plugin
 
+// BuiltinManifests lists the manifests for first-party (kind=builtin)
+// plugins compiled into qatlasd. Currently empty — the Lean-content
+// builtin moved out of the main repo to live as an external plugin;
+// new builtins land by appending to this slice.
 func BuiltinManifests() []Manifest {
-	return []Manifest{
-		{
-			ID:         "graph",
-			Name:       "QuantumAtlas Graph",
-			Version:    "1.0.0",
-			ABIVersion: HostABIVersion,
-			Kind:       KindBuiltin,
-			Contributes: Contributes{
-				Capabilities: []string{"graph.query", "graph.schema", "graph.stats"},
-			},
-			Needs: []string{"wiki:read", "papers:read"},
-		},
-		{
-			ID:         "rag",
-			Name:       "QuantumAtlas RAG",
-			Version:    "1.0.0",
-			ABIVersion: HostABIVersion,
-			Kind:       KindBuiltin,
-			Contributes: Contributes{
-				Capabilities: []string{"rag.search"},
-			},
-			Needs: []string{"papers:read"},
-		},
-		{
-			ID:         "wiki",
-			Name:       "QuantumAtlas Wiki",
-			Version:    "1.0.0",
-			ABIVersion: HostABIVersion,
-			Kind:       KindBuiltin,
-			Contributes: Contributes{
-				Capabilities: []string{"wiki.pages", "wiki.search", "wiki.stats", "wiki.sync"},
-			},
-		},
-		{
-			ID:         "theorems",
-			Name:       "QuantumAtlas Theorems",
-			Version:    "1.0.0",
-			ABIVersion: HostABIVersion,
-			Kind:       KindBuiltin,
-			Contributes: Contributes{
-				Capabilities: []string{"theorems.list", "theorems.get", "theorems.source", "theorems.sync"},
-			},
-		},
-	}
+	return []Manifest{}
 }

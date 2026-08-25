@@ -7,7 +7,6 @@
 - **名字**：QuantumAtlas
 - **PyPI**：[`quantum-atlas`](https://pypi.org/project/quantum-atlas/)
 - **GitHub**：<https://github.com/IAI-USTC-Quantum/QuantumAtlas>
-- **Wiki repo**：<https://github.com/IAI-USTC-Quantum/QuantumAtlas-Wiki>
 - **生产入口**：<https://quantum-atlas.ai>
 - **协议**：[Apache-2.0](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/LICENSE)
 - **维护方**：[IAI-USTC-Quantum](https://github.com/IAI-USTC-Quantum)
@@ -16,19 +15,13 @@
 
 ```text
 QuantumAtlas/
-├── atlas/                 Python 客户端 + Wiki / 电路工具
+├── qatlas/                Python 客户端
 │   ├── cli.py             qatlas CLI 分发器
-│   ├── client/            HTTP client（ingest / upload / mineru / auth）
-│   ├── wiki/              wiki 引擎 + lint + sync
-│   ├── designer/          算法 → Quantum IR
-│   ├── codegen/           IR → Qiskit / QPanda
-│   ├── validator/         电路等价 / 仿真验证
-│   ├── estimator/         资源估计
+│   ├── client/            HTTP client（ingest / upload / mineru / auth / paper）
 │   └── parser/            arXiv fetch + MinerU 解析
-├── cmd/qatlasd/     Go server 入口（main + 各 cobra 子命令）
-├── internal/              Go server 内部包（路由 / auth / 存储 / config 等）
+├── cmd/qatlasd/           Go server 入口（main + 各 cobra 子命令）
+├── internal/              Go server 内部包（registry / search / ingest / auth / objstore / config 等）
 ├── web/                   React SPA 前端（Vite + TanStack Router）
-├── examples/              可独立运行的 demo
 ├── scripts/               初始化与维护脚本（rustfs_bootstrap.sh 等）
 ├── tests/                 测试套件
 ├── docs/                  本文档（你正在看的）
@@ -38,7 +31,7 @@ QuantumAtlas/
 ```
 
 !!! info "状态目录不在仓库里"
-    `wiki/`、`raw/`、`data/`、`pb_data/` 已**不在**仓库内——`raw` / `data` / `pb_data` 默认落到 `${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/` 之下，`wiki` 默认是兄弟目录 `../QuantumAtlas-Wiki`，都可通过 `.env` 显式覆盖。详见 [存储布局迁移](../server/migration-storage-layout.md)。
+    `raw/`、`data/`、`pb_data/` 已**不在**仓库内——默认落到 `${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/` 之下，可通过 `.env` 显式覆盖。详见 [存储布局迁移](../server/migration-storage-layout.md)。
 
 ## 这一节的内容
 
@@ -48,7 +41,7 @@ QuantumAtlas/
 
     ---
 
-    为什么分三层、为什么 Wiki 是 source of truth、为什么图谱不是。
+    项目的设计取舍与演化史（含早期 wiki / 图谱时代的决策记录）。
 
 -   :material-help-circle:{ .lg .middle } **[FAQ](faq.md)**
 
@@ -61,12 +54,6 @@ QuantumAtlas/
     ---
 
     灵感、生态依赖、维护者名单。
-
--   :material-chart-tree:{ .lg .middle } **[图谱可视化调研](graph-visualization-research.md)**
-
-    ---
-
-    Neo4j 图谱前端选型调研（仍待实现）。
 
 </div>
 

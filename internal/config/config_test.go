@@ -1,14 +1,61 @@
 package config
 
 import (
-	"bytes"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+// clearConfigEnv unsets every env var that the env-rejection scan
+// would flag (plus the XDG/HOME vars that influence path defaults), so
+// each test sees the same starting state regardless of how the
+// developer's own shell is configured.
+func clearConfigEnv(t *testing.T) {
+	t.Helper()
+	for _, raw := range os.Environ() {
+		eq := strings.IndexByte(raw, '=')
+		if eq <= 0 {
+			continue
+		}
+		name := raw[:eq]
+		if isRejectedEnvName(name) {
+			t.Setenv(name, "")
+		}
+	}
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_STATE_HOME", "")
+}
+
+// writeConfig writes content as a YAML config file inside t.TempDir()
+// and returns its path.
+func writeConfig(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return path
+}
+
+func mustLoad(t *testing.T, path string) *Config {
+	t.Helper()
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load(%s): %v", path, err)
+	}
+	return cfg
+}
+
+// ---------------------------------------------------------------------------
+// expandPath (unchanged semantics from the env era)
+// ---------------------------------------------------------------------------
 
 func TestExpandPath_RelativeUsesAnchor(t *testing.T) {
 	anchor := "/srv/quantum/checkout"
@@ -56,633 +103,566 @@ func TestExpandPath_Empty(t *testing.T) {
 	}
 }
 
-func TestLoad_RelativeWikiDirResolvesAgainstDotenv(t *testing.T) {
-	// Simulate the production layout:
-	//   /home/foo/QuantumAtlas/.env       (anchor)
-	//   /home/foo/QuantumAtlas-Wiki/      (target)
-	tmp := t.TempDir()
-	checkout := filepath.Join(tmp, "QuantumAtlas")
-	if err := os.MkdirAll(checkout, 0o755); err != nil {
-		t.Fatalf("mkdir checkout: %v", err)
-	}
-	dotenvPath := filepath.Join(checkout, ".env")
-	if err := os.WriteFile(dotenvPath, []byte("ignored=ignored\n"), 0o600); err != nil {
-		t.Fatalf("write .env: %v", err)
-	}
-	t.Setenv("WIKI_DIR", "../QuantumAtlas-Wiki")
+// ---------------------------------------------------------------------------
+// Missing / malformed file
+// ---------------------------------------------------------------------------
 
-	cfg, err := Load(dotenvPath)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
+func TestLoad_MissingFileHintsConfigInit(t *testing.T) {
+	clearConfigEnv(t)
+	missing := filepath.Join(t.TempDir(), "nope", "config.yaml")
+	_, err := Load(missing)
+	if err == nil {
+		t.Fatal("Load on missing file succeeded; want error")
 	}
-	want := filepath.Join(tmp, "QuantumAtlas-Wiki")
-	if cfg.WikiDir != want {
-		t.Errorf("cfg.WikiDir = %q, want %q", cfg.WikiDir, want)
+	if !strings.Contains(err.Error(), missing) {
+		t.Errorf("error should mention the missing path; got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "qatlasd config init") {
+		t.Errorf("error should hint at `qatlasd config init`; got: %v", err)
 	}
 }
 
-func TestLoad_EmptyDotenvPathFallsBackToCWD(t *testing.T) {
-	tmp := t.TempDir()
-	if err := os.Chdir(tmp); err != nil {
-		t.Fatalf("chdir: %v", err)
+func TestLoad_AllCommentsFileYieldsDefaults(t *testing.T) {
+	// `qatlasd config init` writes an all-comments template; loading it
+	// must behave like an empty document (defaults everywhere), not a
+	// YAML EOF error.
+	clearConfigEnv(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := writeConfig(t, "# nothing but comments\n# http_addr: 127.0.0.1:4200\n")
+	cfg := mustLoad(t, path)
+	if cfg.HTTPAddr != "127.0.0.1:4200" {
+		t.Errorf("HTTPAddr = %q, want default", cfg.HTTPAddr)
 	}
-	t.Setenv("WIKI_DIR", "wiki-here")
-	cfg, err := Load("")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
+}
+
+func TestLoad_MalformedYAML(t *testing.T) {
+	clearConfigEnv(t)
+	path := writeConfig(t, "http_addr: [unclosed")
+	if _, err := Load(path); err == nil {
+		t.Fatal("Load with malformed YAML succeeded; want error")
 	}
-	want := filepath.Join(tmp, "wiki-here")
-	if cfg.WikiDir != want {
-		t.Errorf("cfg.WikiDir = %q, want %q", cfg.WikiDir, want)
+}
+
+func TestLoad_UnknownKeyRejected(t *testing.T) {
+	// Strict decode: a typo'd key must not silently fall back to the
+	// default — that's how "I set s3.endpiont and nothing happened"
+	// bugs are born.
+	clearConfigEnv(t)
+	path := writeConfig(t, "s3:\n  endpiont: https://typo.example\n")
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("Load with unknown key succeeded; want strict-decode error")
+	}
+	if !strings.Contains(err.Error(), "endpiont") {
+		t.Errorf("error should name the unknown key; got: %v", err)
 	}
 }
 
 // ---------------------------------------------------------------------------
-// Default-application tests (storage path refactor).
-//
-// All four storage dirs (WikiDir / RawDir / DataDir / PBDataDir) get
-// inferred defaults when both alias env names are unset. These tests
-// pin down the exact defaults so future refactors can't silently move
-// data into the git checkout again.
+// Environment rejection
 // ---------------------------------------------------------------------------
 
-// clearStorageEnv unsets every env var that influences a storage path,
-// so the test sees the same starting state regardless of how the
-// developer's own shell is configured.
-func clearStorageEnv(t *testing.T) {
-	t.Helper()
-	for _, k := range []string{
-		"QATLAS_WIKI_DIR", "WIKI_DIR",
-		"QATLAS_RAW_DIR", "RAW_DIR",
-		"QATLAS_DATA_DIR", "DATA_DIR",
-		"QATLAS_PB_DATA_DIR", "PB_DATA_DIR",
-	} {
-		t.Setenv(k, "")
+func TestLoad_RejectsEnvConfig(t *testing.T) {
+	clearConfigEnv(t)
+	path := writeConfig(t, "http_addr: 127.0.0.1:4200\n")
+	t.Setenv("QATLAS_POSTGRES_DSN", "postgres://x/y")
+	t.Setenv("MINERU_API_TOKENS", "tok-a")
+	t.Setenv("GITHUB_CLIENT_ID", "ghid")
+	t.Setenv("QATLAS_S3_BUCKET", "qatlas-raw") // legacy single-bucket var
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("Load with config env vars set succeeded; want rejection error")
+	}
+	msg := err.Error()
+	for _, name := range []string{"GITHUB_CLIENT_ID", "MINERU_API_TOKENS", "QATLAS_POSTGRES_DSN", "QATLAS_S3_BUCKET"} {
+		if !strings.Contains(msg, name) {
+			t.Errorf("rejection error should list offending var %s; got: %v", name, err)
+		}
+	}
+	if !strings.Contains(msg, "config.yaml") {
+		t.Errorf("rejection error should point at the YAML config file; got: %v", err)
 	}
 }
 
-func TestLoad_DefaultWikiDirIsSiblingOfAnchor(t *testing.T) {
-	clearStorageEnv(t)
-	tmp := t.TempDir()
-	checkout := filepath.Join(tmp, "QuantumAtlas")
-	if err := os.MkdirAll(checkout, 0o755); err != nil {
-		t.Fatalf("mkdir checkout: %v", err)
+func TestLoad_RejectsLegacyPrefixFamilies(t *testing.T) {
+	clearConfigEnv(t)
+	path := writeConfig(t, "{}\n")
+	for _, name := range []string{"NEO4J_URI", "POSTGRES_PASSWORD", "MINERU_MODEL_VERSION"} {
+		t.Setenv(name, "x")
 	}
-	dotenvPath := filepath.Join(checkout, ".env")
-	if err := os.WriteFile(dotenvPath, []byte("# empty\n"), 0o600); err != nil {
-		t.Fatalf("write .env: %v", err)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("Load with legacy prefix env vars succeeded; want rejection")
 	}
-
-	cfg, err := Load(dotenvPath)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	want := filepath.Join(tmp, "QuantumAtlas-Wiki")
-	if cfg.WikiDir != want {
-		t.Errorf("cfg.WikiDir default = %q, want %q", cfg.WikiDir, want)
-	}
-}
-
-func TestLoad_DefaultsResolveXDGDataHome(t *testing.T) {
-	clearStorageEnv(t)
-	xdg := t.TempDir()
-	t.Setenv("XDG_DATA_HOME", xdg)
-	// HOME is irrelevant when XDG_DATA_HOME is set and absolute, but
-	// pin it anyway so the test doesn't depend on the developer's $HOME.
-	t.Setenv("HOME", t.TempDir())
-
-	cfg, err := Load("")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	cases := []struct {
-		name, got, want string
-	}{
-		{"RawDir", cfg.RawDir, filepath.Join(xdg, "qatlasd", "raw")},
-		{"DataDir", cfg.DataDir, filepath.Join(xdg, "qatlasd", "data")},
-		{"PBDataDir", cfg.PBDataDir, filepath.Join(xdg, "qatlasd", "pb_data")},
-	}
-	for _, c := range cases {
-		if c.got != c.want {
-			t.Errorf("%s default = %q, want %q", c.name, c.got, c.want)
+	for _, name := range []string{"NEO4J_URI", "POSTGRES_PASSWORD", "MINERU_MODEL_VERSION"} {
+		if !strings.Contains(err.Error(), name) {
+			t.Errorf("rejection error should list %s; got: %v", name, err)
 		}
 	}
 }
 
-func TestLoad_DefaultsFallBackToHomeWhenXDGUnset(t *testing.T) {
-	clearStorageEnv(t)
-	t.Setenv("XDG_DATA_HOME", "")
+func TestLoad_AllowlistTestVarsTolerated(t *testing.T) {
+	// Integration-test fixtures (QATLAS_TEST_PG_DSN, QATLAS_S3_TEST_*)
+	// don't configure the server and must not trip the rejection.
+	clearConfigEnv(t)
+	t.Setenv("QATLAS_TEST_PG_DSN", "postgres://x/y")
+	t.Setenv("QATLAS_S3_TEST_ENDPOINT", "http://x")
+	path := writeConfig(t, "{}\n")
+	if _, err := Load(path); err != nil {
+		t.Fatalf("Load with allowlisted test env vars failed: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Full example: every key maps onto the right Config field
+// ---------------------------------------------------------------------------
+
+func TestLoad_FullExample(t *testing.T) {
+	clearConfigEnv(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `
+http_addr: 0.0.0.0:4200
+public_url: https://atlas.example.com
+user_header: X-Token-Subject
+edge_name: us-east
+force_tcp4: true
+skip_pb_data_lock: true
+paths:
+  raw_dir: /srv/raw
+  data_dir: /srv/data
+  pb_data_dir: /srv/pb_data
+postgres:
+  dsn: postgres://qatlas:secret@pg:5432/qatlas?sslmode=disable
+  max_conns: 25
+  corpus_ensure_indexes: false
+search:
+  providers: [catalog, qdrant]
+auth:
+  github_client_id: gh-client
+  github_client_secret: gh-secret
+  allowed_logins: [alice, bob]
+  admin_logins: [alice]
+s3:
+  endpoint: http://10.0.0.1:9000
+  public_endpoint: https://raw.example.com
+  bucket_pdf: qatlas-pdf
+  bucket_md: qatlas-md
+  bucket_images: qatlas-images
+  bucket_openalex: qatlas-openalex
+  access_key_id: AKID
+  secret_access_key: SK
+paper_access:
+  enabled: true
+  openalex_mailto: ops@example.com
+  arxiv_fetch_concurrent: 3
+  arxiv_fetch_rps: 0.5
+  mineru:
+    api_tokens: [tok-a, tok-b]
+    api_base_url: https://mineru.example
+    model_version: pipeline
+    language: en
+    is_ocr: true
+    enable_formula: false
+    enable_table: false
+    poll_interval: 5s
+    timeout: 30m
+    max_concurrent_jobs: 8
+rag:
+  qdrant_url: qdrant.internal:6334
+  qdrant_api_key: qk
+  qdrant_collection: my_collection
+  embed_url: http://embed.internal:8801
+  embed_token: et
+plugins:
+  dir: /srv/plugins
+  enabled: [graph, lean]
+  disabled: [rag]
+  connect_secret: cs
+  rpc_ws_bind: 127.0.0.1:9999
+  event_retention: 2d
+  rpc_timeout: 45s
+  reconnect_interval: 2500ms
+  deadletter_dir: /srv/dead
+system_pat:
+  token: breakglass-token-123456
+  scopes: [papers:read, plugins:read]
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg := mustLoad(t, path)
+
+	checks := []struct {
+		name string
+		got  any
+		want any
+	}{
+		{"HTTPAddr", cfg.HTTPAddr, "0.0.0.0:4200"},
+		{"PublicURL", cfg.PublicURL, "https://atlas.example.com"},
+		{"UserHeader", cfg.UserHeader, "X-Token-Subject"},
+		{"EdgeName", cfg.EdgeName, "us-east"},
+		{"ForceTCP4", cfg.ForceTCP4, true},
+		{"SkipPBDataLock", cfg.SkipPBDataLock, true},
+		{"RawDir", cfg.RawDir, "/srv/raw"},
+		{"DataDir", cfg.DataDir, "/srv/data"},
+		{"PBDataDir", cfg.PBDataDir, "/srv/pb_data"},
+		{"PostgresDSN", cfg.PostgresDSN, "postgres://qatlas:secret@pg:5432/qatlas?sslmode=disable"},
+		{"PostgresMaxConns", cfg.PostgresMaxConns, 25},
+		{"CorpusEnsureIndexes", cfg.CorpusEnsureIndexes, false},
+		{"SearchProviders", strings.Join(cfg.SearchProviders, ","), "catalog,qdrant"},
+		{"GitHubClientID", cfg.GitHubClientID, "gh-client"},
+		{"GitHubClientSecret", cfg.GitHubClientSecret, "gh-secret"},
+		{"AllowedGitHubLogins", strings.Join(cfg.AllowedGitHubLogins, ","), "alice,bob"},
+		{"AdminGitHubLogins", strings.Join(cfg.AdminGitHubLogins, ","), "alice"},
+		{"S3Endpoint", cfg.S3Endpoint, "http://10.0.0.1:9000"},
+		{"S3PublicEndpoint", cfg.S3PublicEndpoint, "https://raw.example.com"},
+		{"S3BucketPDF", cfg.S3BucketPDF, "qatlas-pdf"},
+		{"S3BucketMD", cfg.S3BucketMD, "qatlas-md"},
+		{"S3BucketImages", cfg.S3BucketImages, "qatlas-images"},
+		{"S3BucketOpenAlex", cfg.S3BucketOpenAlex, "qatlas-openalex"},
+		{"S3AccessKeyID", cfg.S3AccessKeyID, "AKID"},
+		{"S3SecretAccessKey", cfg.S3SecretAccessKey, "SK"},
+		{"PaperAccessEnabled", cfg.PaperAccessEnabled, true},
+		{"OpenAlexMailto", cfg.OpenAlexMailto, "ops@example.com"},
+		{"ArxivFetchConcurrent", cfg.ArxivFetchConcurrent, 3},
+		{"ArxivFetchRPS", cfg.ArxivFetchRPS, 0.5},
+		{"MinerUAPITokens", strings.Join(cfg.MinerUAPITokens, ","), "tok-a,tok-b"},
+		{"MinerUAPIBaseURL", cfg.MinerUAPIBaseURL, "https://mineru.example"},
+		{"MinerUModelVersion", cfg.MinerUModelVersion, "pipeline"},
+		{"MinerULanguage", cfg.MinerULanguage, "en"},
+		{"MinerUIsOCR", cfg.MinerUIsOCR, true},
+		{"MinerUEnableFormula", cfg.MinerUEnableFormula, false},
+		{"MinerUEnableTable", cfg.MinerUEnableTable, false},
+		{"MinerUPollInterval", cfg.MinerUPollInterval, 5 * time.Second},
+		{"MinerUTimeout", cfg.MinerUTimeout, 30 * time.Minute},
+		{"MinerUMaxConcurrentJobs", cfg.MinerUMaxConcurrentJobs, 8},
+		{"RAGQdrantURL", cfg.RAGQdrantURL, "qdrant.internal:6334"},
+		{"RAGQdrantAPIKey", cfg.RAGQdrantAPIKey, "qk"},
+		{"RAGQdrantCollection", cfg.RAGQdrantCollection, "my_collection"},
+		{"RAGEmbedURL", cfg.RAGEmbedURL, "http://embed.internal:8801"},
+		{"RAGEmbedToken", cfg.RAGEmbedToken, "et"},
+		{"PluginsDir", cfg.PluginsDir, "/srv/plugins"},
+		{"PluginsEnabled", strings.Join(cfg.PluginsEnabled, ","), "graph,lean"},
+		{"PluginsDisabled", strings.Join(cfg.PluginsDisabled, ","), "rag"},
+		{"PluginConnectSecret", cfg.PluginConnectSecret, "cs"},
+		{"RPCWSBind", cfg.RPCWSBind, "127.0.0.1:9999"},
+		{"EventRetention", cfg.EventRetention, 48 * time.Hour},
+		{"PluginRPCTimeout", cfg.PluginRPCTimeout, 45 * time.Second},
+		{"PluginReconnectInterval", cfg.PluginReconnectInterval, 2500 * time.Millisecond},
+		{"DeadLetterDir", cfg.DeadLetterDir, "/srv/dead"},
+		{"SystemPATToken", cfg.SystemPATToken, "breakglass-token-123456"},
+		{"SystemPATScopes", strings.Join(cfg.SystemPATScopes, ","), "papers:read,plugins:read"},
+	}
+	for _, c := range checks {
+		if c.got != c.want {
+			t.Errorf("%s = %v, want %v", c.name, c.got, c.want)
+		}
+	}
+	if !cfg.S3Enabled() {
+		t.Error("S3Enabled() = false with full s3 section; want true")
+	}
+	if !cfg.MinerUEnabled() {
+		t.Error("MinerUEnabled() = false with tokens + switch on; want true")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// search.remote / search.agentic
+// ---------------------------------------------------------------------------
+
+func TestLoad_SearchRemoteAgentic(t *testing.T) {
+	clearConfigEnv(t)
+	path := writeConfig(t, `
+search:
+  providers: [catalog, remote]
+  remote:
+    enabled: true
+    url: http://qatlas-search:8600
+    token: svc-token-123
+    timeout: 90s
+  agentic:
+    daily_limit: 500
+    price_per_mtok: 2.5
+`)
+	cfg := mustLoad(t, path)
+
+	if !cfg.RemoteEnabled {
+		t.Error("RemoteEnabled = false, want true")
+	}
+	if cfg.RemoteURL != "http://qatlas-search:8600" {
+		t.Errorf("RemoteURL = %q", cfg.RemoteURL)
+	}
+	if cfg.RemoteToken != "svc-token-123" {
+		t.Errorf("RemoteToken = %q", cfg.RemoteToken)
+	}
+	if cfg.RemoteTimeout != 90*time.Second {
+		t.Errorf("RemoteTimeout = %v, want 90s", cfg.RemoteTimeout)
+	}
+	if cfg.AgenticDailyLimit != 500 {
+		t.Errorf("AgenticDailyLimit = %d, want 500", cfg.AgenticDailyLimit)
+	}
+	if cfg.AgenticPricePerMtok != 2.5 {
+		t.Errorf("AgenticPricePerMtok = %v, want 2.5", cfg.AgenticPricePerMtok)
+	}
+	if got := strings.Join(cfg.SearchProviders, ","); got != "catalog,remote" {
+		t.Errorf("SearchProviders = %q", got)
+	}
+}
+
+func TestLoad_SearchRemoteAgenticDefaults(t *testing.T) {
+	clearConfigEnv(t)
+	path := writeConfig(t, "{}\n")
+	cfg := mustLoad(t, path)
+
+	if cfg.RemoteEnabled {
+		t.Error("RemoteEnabled = true by default, want false")
+	}
+	if cfg.RemoteTimeout != 60*time.Second {
+		t.Errorf("RemoteTimeout = %v, want 60s default", cfg.RemoteTimeout)
+	}
+	if cfg.AgenticDailyLimit != 10000 {
+		t.Errorf("AgenticDailyLimit = %d, want 10000 default", cfg.AgenticDailyLimit)
+	}
+	if cfg.AgenticPricePerMtok != 0.0 {
+		t.Errorf("AgenticPricePerMtok = %v, want 0 default", cfg.AgenticPricePerMtok)
+	}
+}
+
+func TestLoad_SearchRemoteRejectsMalformedTimeout(t *testing.T) {
+	clearConfigEnv(t)
+	path := writeConfig(t, "search:\n  remote:\n    timeout: banana\n")
+	if _, err := Load(path); err == nil {
+		t.Fatal("Load succeeded with malformed search.remote.timeout, want error")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Defaults
+// ---------------------------------------------------------------------------
+
+func TestLoad_Defaults(t *testing.T) {
+	clearConfigEnv(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	path := writeConfig(t, "{}\n")
+	cfg := mustLoad(t, path)
 
-	cfg, err := Load("")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
 	base := filepath.Join(home, ".local", "share", "qatlasd")
-	cases := []struct {
-		name, got, want string
+	checks := []struct {
+		name string
+		got  any
+		want any
 	}{
+		{"HTTPAddr", cfg.HTTPAddr, "127.0.0.1:4200"},
 		{"RawDir", cfg.RawDir, filepath.Join(base, "raw")},
 		{"DataDir", cfg.DataDir, filepath.Join(base, "data")},
 		{"PBDataDir", cfg.PBDataDir, filepath.Join(base, "pb_data")},
+		{"PostgresMaxConns", cfg.PostgresMaxConns, 10},
+		{"CorpusEnsureIndexes", cfg.CorpusEnsureIndexes, true},
+		{"SearchProviders", strings.Join(cfg.SearchProviders, ","), "catalog,arxiv,openalex"},
+		{"RAGQdrantCollection", cfg.RAGQdrantCollection, "qatlas_papers_v1"},
+		{"ArxivFetchConcurrent", cfg.ArxivFetchConcurrent, 2},
+		{"ArxivFetchRPS", cfg.ArxivFetchRPS, 0.33},
+		{"PaperAccessEnabled", cfg.PaperAccessEnabled, false},
+		{"RPCWSBind", cfg.RPCWSBind, "127.0.0.1:8799"},
+		{"EventRetention", cfg.EventRetention, 7 * 24 * time.Hour},
+		{"PluginRPCTimeout", cfg.PluginRPCTimeout, 30 * time.Second},
+		{"PluginReconnectInterval", cfg.PluginReconnectInterval, 5 * time.Second},
+		{"PluginsDir", cfg.PluginsDir, filepath.Join(home, ".config", "qatlasd", "plugins")},
+		{"DeadLetterDir", cfg.DeadLetterDir, filepath.Join(home, ".local", "state", "qatlasd", "dead")},
+		{"S3Enabled", cfg.S3Enabled(), false},
+		{"MinerUEnabled", cfg.MinerUEnabled(), false},
+		{"SystemPATToken", cfg.SystemPATToken, ""},
 	}
-	for _, c := range cases {
+	for _, c := range checks {
 		if c.got != c.want {
-			t.Errorf("%s default = %q, want %q", c.name, c.got, c.want)
+			t.Errorf("default %s = %v, want %v", c.name, c.got, c.want)
 		}
 	}
 }
 
-func TestLoad_DefaultsRejectRelativeXDGDataHome(t *testing.T) {
-	// Per XDG spec, $XDG_DATA_HOME MUST be an absolute path; relative
-	// values are invalid. Make sure we fall back to $HOME/.local/share
-	// rather than silently leak a relative path into config.
-	clearStorageEnv(t)
-	t.Setenv("XDG_DATA_HOME", "not-absolute")
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+func TestLoad_RelativePathsAnchorToConfigDir(t *testing.T) {
+	clearConfigEnv(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `
+paths:
+  raw_dir: ../raw
+  pb_data_dir: pb_data
+plugins:
+  dir: plugins
+  deadletter_dir: dead
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg := mustLoad(t, path)
 
-	cfg, err := Load("")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
+	if want := filepath.Join(filepath.Dir(dir), "raw"); cfg.RawDir != want {
+		t.Errorf("RawDir = %q, want %q (relative to config dir)", cfg.RawDir, want)
 	}
-	want := filepath.Join(home, ".local", "share", "qatlasd", "raw")
-	if cfg.RawDir != want {
-		t.Errorf("RawDir = %q, want %q (relative XDG_DATA_HOME must be rejected)",
-			cfg.RawDir, want)
+	if want := filepath.Join(dir, "pb_data"); cfg.PBDataDir != want {
+		t.Errorf("PBDataDir = %q, want %q", cfg.PBDataDir, want)
 	}
-}
-
-func TestLoad_ExplicitEnvOverridesDefaults(t *testing.T) {
-	clearStorageEnv(t)
-	xdg := t.TempDir()
-	t.Setenv("XDG_DATA_HOME", xdg)
-	t.Setenv("HOME", t.TempDir())
-
-	override := t.TempDir()
-	t.Setenv("QATLAS_RAW_DIR", filepath.Join(override, "raw-explicit"))
-	t.Setenv("QATLAS_DATA_DIR", filepath.Join(override, "data-explicit"))
-	t.Setenv("QATLAS_PB_DATA_DIR", filepath.Join(override, "pb-explicit"))
-	t.Setenv("QATLAS_WIKI_DIR", filepath.Join(override, "wiki-explicit"))
-
-	cfg, err := Load("")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
+	if want := filepath.Join(dir, "plugins"); cfg.PluginsDir != want {
+		t.Errorf("PluginsDir = %q, want %q", cfg.PluginsDir, want)
 	}
-	cases := []struct {
-		name, got, want string
-	}{
-		{"WikiDir", cfg.WikiDir, filepath.Join(override, "wiki-explicit")},
-		{"RawDir", cfg.RawDir, filepath.Join(override, "raw-explicit")},
-		{"DataDir", cfg.DataDir, filepath.Join(override, "data-explicit")},
-		{"PBDataDir", cfg.PBDataDir, filepath.Join(override, "pb-explicit")},
-	}
-	for _, c := range cases {
-		if c.got != c.want {
-			t.Errorf("%s = %q, want %q (explicit env must beat default)",
-				c.name, c.got, c.want)
-		}
-	}
-}
-
-func TestLoad_LegacyAliasesStillRecognized(t *testing.T) {
-	// `WIKI_DIR` etc. (no QATLAS_ prefix) are documented .env aliases
-	// from the FastAPI era. Make sure they still beat the auto-default
-	// so users who haven't updated their .env keep working.
-	clearStorageEnv(t)
-	t.Setenv("XDG_DATA_HOME", t.TempDir())
-	t.Setenv("HOME", t.TempDir())
-
-	legacy := t.TempDir()
-	t.Setenv("RAW_DIR", filepath.Join(legacy, "raw"))
-	t.Setenv("DATA_DIR", filepath.Join(legacy, "data"))
-	t.Setenv("PB_DATA_DIR", filepath.Join(legacy, "pb_data"))
-	t.Setenv("WIKI_DIR", filepath.Join(legacy, "wiki"))
-
-	cfg, err := Load("")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	cases := []struct {
-		name, got, want string
-	}{
-		{"WikiDir", cfg.WikiDir, filepath.Join(legacy, "wiki")},
-		{"RawDir", cfg.RawDir, filepath.Join(legacy, "raw")},
-		{"DataDir", cfg.DataDir, filepath.Join(legacy, "data")},
-		{"PBDataDir", cfg.PBDataDir, filepath.Join(legacy, "pb_data")},
-	}
-	for _, c := range cases {
-		if c.got != c.want {
-			t.Errorf("%s legacy alias = %q, want %q", c.name, c.got, c.want)
-		}
-	}
-}
-
-func TestDefaultXDGSubdir_Unit(t *testing.T) {
-	t.Setenv("XDG_DATA_HOME", "/srv/xdg")
-	if got := defaultXDGSubdir("raw"); got != "/srv/xdg/qatlasd/raw" {
-		t.Errorf("absolute XDG_DATA_HOME: got %q", got)
-	}
-
-	t.Setenv("XDG_DATA_HOME", "")
-	t.Setenv("HOME", "/home/test")
-	if got := defaultXDGSubdir("data"); got != "/home/test/.local/share/qatlasd/data" {
-		t.Errorf("HOME fallback: got %q", got)
-	}
-
-	t.Setenv("XDG_DATA_HOME", "relative-path-rejected")
-	t.Setenv("HOME", "/home/test")
-	if got := defaultXDGSubdir("pb_data"); got != "/home/test/.local/share/qatlasd/pb_data" {
-		t.Errorf("relative XDG should be rejected: got %q", got)
-	}
-}
-
-func TestLoad_PluginDefaults(t *testing.T) {
-	clearStorageEnv(t)
-	t.Setenv("XDG_CONFIG_HOME", "")
-	t.Setenv("XDG_STATE_HOME", "")
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	cfg, err := Load("")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-
-	if cfg.PluginsDir != filepath.Join(home, ".config", "qatlasd", "plugins") {
-		t.Errorf("PluginsDir = %q", cfg.PluginsDir)
-	}
-	if cfg.DeadLetterDir != filepath.Join(home, ".local", "state", "qatlasd", "dead") {
-		t.Errorf("DeadLetterDir = %q", cfg.DeadLetterDir)
-	}
-	if cfg.RPCWSBind != "127.0.0.1:8799" {
-		t.Errorf("RPCWSBind = %q", cfg.RPCWSBind)
-	}
-	if cfg.EventRetention.String() != (7 * 24 * time.Hour).String() {
-		t.Errorf("EventRetention = %s", cfg.EventRetention)
-	}
-	if cfg.PluginRPCTimeout.String() != (30 * time.Second).String() {
-		t.Errorf("PluginRPCTimeout = %s", cfg.PluginRPCTimeout)
-	}
-	if cfg.PluginReconnectInterval.String() != (5 * time.Second).String() {
-		t.Errorf("PluginReconnectInterval = %s", cfg.PluginReconnectInterval)
-	}
-}
-
-func TestLoad_PluginEnvOverrides(t *testing.T) {
-	clearStorageEnv(t)
-	tmp := t.TempDir()
-	t.Setenv("QATLAS_PLUGINS_DIR", "plugins")
-	t.Setenv("QATLAS_PLUGINS_ENABLED", "graph, lean")
-	t.Setenv("QATLAS_PLUGINS_DISABLED", "rag")
-	t.Setenv("QATLAS_PLUGIN_CONNECT_SECRET", "secret")
-	t.Setenv("QATLAS_RPC_WS_BIND", "127.0.0.1:9999")
-	t.Setenv("QATLAS_EVENT_RETENTION", "2d")
-	t.Setenv("QATLAS_PLUGIN_RPC_TIMEOUT_MS", "1234")
-	t.Setenv("QATLAS_PLUGIN_RECONNECT_MS", "250")
-	t.Setenv("QATLAS_DEADLETTER_DIR", "dead")
-
-	cfg, err := Load(filepath.Join(tmp, ".env"))
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-
-	if cfg.PluginsDir != filepath.Join(tmp, "plugins") {
-		t.Errorf("PluginsDir = %q", cfg.PluginsDir)
-	}
-	if cfg.DeadLetterDir != filepath.Join(tmp, "dead") {
-		t.Errorf("DeadLetterDir = %q", cfg.DeadLetterDir)
-	}
-	if strings.Join(cfg.PluginsEnabled, ",") != "graph,lean" {
-		t.Errorf("PluginsEnabled = %v", cfg.PluginsEnabled)
-	}
-	if strings.Join(cfg.PluginsDisabled, ",") != "rag" {
-		t.Errorf("PluginsDisabled = %v", cfg.PluginsDisabled)
-	}
-	if cfg.PluginConnectSecret != "secret" {
-		t.Errorf("PluginConnectSecret = %q", cfg.PluginConnectSecret)
-	}
-	if cfg.RPCWSBind != "127.0.0.1:9999" {
-		t.Errorf("RPCWSBind = %q", cfg.RPCWSBind)
-	}
-	if cfg.EventRetention != 48*time.Hour {
-		t.Errorf("EventRetention = %s", cfg.EventRetention)
-	}
-	if cfg.PluginRPCTimeout != 1234*time.Millisecond {
-		t.Errorf("PluginRPCTimeout = %s", cfg.PluginRPCTimeout)
-	}
-	if cfg.PluginReconnectInterval != 250*time.Millisecond {
-		t.Errorf("PluginReconnectInterval = %s", cfg.PluginReconnectInterval)
+	if want := filepath.Join(dir, "dead"); cfg.DeadLetterDir != want {
+		t.Errorf("DeadLetterDir = %q, want %q", cfg.DeadLetterDir, want)
 	}
 }
 
 // ---------------------------------------------------------------------------
-// S3 / object storage invariant tests (Phase 3).
-//
-// The four QATLAS_S3_* fields must be set as a group: either all four
-// non-empty (S3 backend enabled), or all four empty (local RawDir
-// fallback). A partial config is a boot-time error rather than a silent
-// behaviour change.
+// S3 / object storage invariants
 // ---------------------------------------------------------------------------
 
-// clearS3Env unsets every env var that influences S3 wiring so the test
-// sees a clean baseline regardless of the developer's shell.
-func clearS3Env(t *testing.T) {
-	t.Helper()
-	for _, k := range []string{
-		"QATLAS_S3_ENDPOINT",
-		"QATLAS_S3_BUCKET",
-		"QATLAS_S3_BUCKET_PDF",
-		"QATLAS_S3_BUCKET_MD",
-		"QATLAS_S3_BUCKET_IMAGES",
-		"QATLAS_S3_BUCKET_OPENALEX_SNAPSHOT",
-		"QATLAS_S3_ACCESS_KEY_ID",
-		"QATLAS_S3_SECRET_ACCESS_KEY",
-	} {
-		t.Setenv(k, "")
-	}
-}
-
-// clearMinerUEnv unsets every env var that influences MinerU + asset
-// download wiring so each test sees a deterministic baseline.
-func clearMinerUEnv(t *testing.T) {
-	t.Helper()
-	for _, k := range []string{
-		"QATLAS_PAPER_ACCESS_ENABLED",
-		"MINERU_API_TOKENS",
-		"MINERU_API_BASE_URL",
-		"MINERU_MODEL_VERSION",
-		"MINERU_LANGUAGE",
-		"MINERU_IS_OCR",
-		"MINERU_ENABLE_FORMULA",
-		"MINERU_ENABLE_TABLE",
-		"MINERU_POLL_INTERVAL",
-		"MINERU_TIMEOUT",
-		"MINERU_MAX_CONCURRENT_JOBS",
-	} {
-		t.Setenv(k, "")
-	}
-}
-
-func TestLoad_S3Disabled_AllFieldsEmpty(t *testing.T) {
-	clearStorageEnv(t)
-	clearS3Env(t)
-	cfg, err := Load("")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.S3Enabled() {
-		t.Errorf("S3Enabled() = true with all env empty; want false")
-	}
-}
-
-func TestLoad_S3Enabled_AllFieldsSet(t *testing.T) {
-	clearStorageEnv(t)
-	clearS3Env(t)
-	t.Setenv("QATLAS_S3_ENDPOINT", "https://raw.example.tld")
-	t.Setenv("QATLAS_S3_BUCKET_PDF", "qatlas-pdf")
-	t.Setenv("QATLAS_S3_BUCKET_MD", "qatlas-md")
-	t.Setenv("QATLAS_S3_BUCKET_IMAGES", "qatlas-images")
-	t.Setenv("QATLAS_S3_ACCESS_KEY_ID", "AKID")
-	t.Setenv("QATLAS_S3_SECRET_ACCESS_KEY", "SK")
-
-	cfg, err := Load("")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if !cfg.S3Enabled() {
-		t.Errorf("S3Enabled() = false with all env set; want true")
-	}
-	if cfg.S3Endpoint != "https://raw.example.tld" {
-		t.Errorf("S3Endpoint = %q", cfg.S3Endpoint)
-	}
-	if cfg.S3BucketPDF != "qatlas-pdf" {
-		t.Errorf("S3BucketPDF = %q", cfg.S3BucketPDF)
-	}
-	if cfg.S3BucketMD != "qatlas-md" {
-		t.Errorf("S3BucketMD = %q", cfg.S3BucketMD)
-	}
-	if cfg.S3BucketImages != "qatlas-images" {
-		t.Errorf("S3BucketImages = %q", cfg.S3BucketImages)
-	}
-	if cfg.S3AccessKeyID != "AKID" {
-		t.Errorf("S3AccessKeyID = %q", cfg.S3AccessKeyID)
-	}
-	if cfg.S3SecretAccessKey != "SK" {
-		t.Errorf("S3SecretAccessKey = %q", cfg.S3SecretAccessKey)
-	}
-}
-
-// TestLoad_S3LegacyBucketRejected verifies the v0.6.0 single-bucket var
-// is a hard boot error in v0.7.0 (a stale .env would otherwise silently
-// mis-route every object into one bucket). This check stays in Load()
-// even after the partial-config check was split out into
-// ValidateForServe, because the legacy var corrupts data regardless of
-// which subcommand is running and must fail-fast on every invocation.
-func TestLoad_S3LegacyBucketRejected(t *testing.T) {
-	clearStorageEnv(t)
-	clearS3Env(t)
-	t.Setenv("QATLAS_S3_BUCKET", "qatlas-raw")
-	_, err := Load("")
-	if err == nil {
-		t.Fatalf("Load returned nil; expected legacy QATLAS_S3_BUCKET rejection")
-	}
-	if !strings.Contains(err.Error(), "QATLAS_S3_BUCKET") {
-		t.Errorf("error %q does not mention QATLAS_S3_BUCKET", err.Error())
-	}
-}
-
-// TestValidateForServe_S3PartialConfigRejected verifies the half-set
-// S3 invariant. This used to be enforced by Load() but was split into
-// ValidateForServe so non-serve subcommands (`qatlasd --help`,
-// `qatlasd pat list`, etc.) tolerate a half-configured .env without
-// fataling on every invocation.
 func TestValidateForServe_S3PartialConfigRejected(t *testing.T) {
-	// Each of these subtests sets a *strict subset* of the required
-	// fields; Load() must succeed (with a slog.Warn) but ValidateForServe
-	// must refuse. The check is symmetric — no single field
-	// (endpoint / a bucket / a credential) alone is valid.
 	cases := []struct {
-		name string
-		set  map[string]string
+		name    string
+		content string
 	}{
-		{"only endpoint", map[string]string{"QATLAS_S3_ENDPOINT": "https://x"}},
-		{"only pdf bucket", map[string]string{"QATLAS_S3_BUCKET_PDF": "b"}},
-		{"only access key", map[string]string{"QATLAS_S3_ACCESS_KEY_ID": "a"}},
-		{"only secret", map[string]string{"QATLAS_S3_SECRET_ACCESS_KEY": "s"}},
-		{"endpoint + buckets, no creds", map[string]string{
-			"QATLAS_S3_ENDPOINT":      "https://x",
-			"QATLAS_S3_BUCKET_PDF":    "p",
-			"QATLAS_S3_BUCKET_MD":     "m",
-			"QATLAS_S3_BUCKET_IMAGES": "i",
-		}},
-		{"two of three buckets", map[string]string{
-			"QATLAS_S3_ENDPOINT":          "https://x",
-			"QATLAS_S3_BUCKET_PDF":        "p",
-			"QATLAS_S3_BUCKET_MD":         "m",
-			"QATLAS_S3_ACCESS_KEY_ID":     "a",
-			"QATLAS_S3_SECRET_ACCESS_KEY": "s",
-		}},
-		{"creds, no endpoint", map[string]string{
-			"QATLAS_S3_ACCESS_KEY_ID":     "a",
-			"QATLAS_S3_SECRET_ACCESS_KEY": "s",
-		}},
+		{"only endpoint", "s3:\n  endpoint: https://x\n"},
+		{"only pdf bucket", "s3:\n  bucket_pdf: b\n"},
+		{"only access key", "s3:\n  access_key_id: a\n"},
+		{"endpoint + buckets, no creds", `s3:
+  endpoint: https://x
+  bucket_pdf: p
+  bucket_md: m
+  bucket_images: i
+`},
+		{"two of three buckets", `s3:
+  endpoint: https://x
+  bucket_pdf: p
+  bucket_md: m
+  access_key_id: a
+  secret_access_key: s
+`},
+		{"creds, no endpoint", `s3:
+  access_key_id: a
+  secret_access_key: s
+`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			clearStorageEnv(t)
-			clearS3Env(t)
-			for k, v := range c.set {
-				t.Setenv(k, v)
-			}
-			cfg, err := Load("")
-			if err != nil {
-				t.Fatalf("Load returned error %q; expected Load to be best-effort for half-set S3 (only ValidateForServe should reject)", err)
-			}
-			err = cfg.ValidateForServe()
+			clearConfigEnv(t)
+			path := writeConfig(t, c.content)
+			cfg := mustLoad(t, path) // Load is best-effort for half-set S3
+			err := cfg.ValidateForServe()
 			if err == nil {
-				t.Fatalf("ValidateForServe returned nil; expected partial-config failure")
+				t.Fatal("ValidateForServe returned nil; expected partial-config failure")
 			}
-			// Sanity: error message lists at least one missing field name
-			// so an operator can fix it from the log line.
-			if !strings.Contains(err.Error(), "QATLAS_S3_") {
-				t.Errorf("error %q does not mention any QATLAS_S3_* field name", err.Error())
+			if !strings.Contains(err.Error(), "s3.") {
+				t.Errorf("error %q does not mention any s3.* key", err.Error())
 			}
 		})
 	}
 }
 
-// TestLoad_S3PartialEmitsWarn verifies that Load is best-effort for the
-// half-set S3 case but still emits a visible slog.Warn so the operator
-// sees the misconfig in every log (not just serve's fatal exit).
-func TestLoad_S3PartialEmitsWarn(t *testing.T) {
-	clearStorageEnv(t)
-	clearS3Env(t)
-	t.Setenv("XDG_DATA_HOME", t.TempDir())
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("QATLAS_S3_ENDPOINT", "https://x")
-
-	buf := captureSlog(t)
-	cfg, err := Load("")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
+func TestValidateForServe_S3FullConfigAccepted(t *testing.T) {
+	clearConfigEnv(t)
+	path := writeConfig(t, `s3:
+  endpoint: https://x
+  bucket_pdf: p
+  bucket_md: m
+  bucket_images: i
+  access_key_id: a
+  secret_access_key: s
+`)
+	cfg := mustLoad(t, path)
+	if err := cfg.ValidateForServe(); err != nil {
+		t.Fatalf("ValidateForServe on full s3 config: %v", err)
 	}
-	if got := buf.String(); !strings.Contains(got, "object storage config is incomplete") {
-		t.Errorf("expected slog.Warn about incomplete object storage config; got %q", got)
-	}
-	if err := cfg.ValidateForServe(); err == nil {
-		t.Errorf("ValidateForServe returned nil after half-set Load; expected error")
+	if !cfg.S3Enabled() {
+		t.Error("S3Enabled() = false; want true")
 	}
 }
 
 // ---------------------------------------------------------------------------
-// Deprecation warnings for unprefixed legacy aliases (Phase 1).
-//
-// The aliases still resolve via firstEnv() so existing .env files keep
-// working, but Load() now emits a slog.Warn per legacy var found. This
-// gives operators one minor cycle to migrate before removal in v0.19.0.
+// MinerU gating (paper_access.enabled master switch)
 // ---------------------------------------------------------------------------
 
-// captureSlog redirects the default slog logger to an in-memory buffer
-// for the duration of the calling test and returns the buffer. The
-// previous default is restored when the test ends.
-func captureSlog(t *testing.T) *bytes.Buffer {
-	t.Helper()
-	buf := &bytes.Buffer{}
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
-	return buf
-}
-
-func TestLoad_DeprecatedAliasesEmitWarn(t *testing.T) {
-	clearStorageEnv(t)
-	clearS3Env(t)
-	t.Setenv("XDG_DATA_HOME", t.TempDir())
-	t.Setenv("HOME", t.TempDir())
-
-	legacy := t.TempDir()
-	t.Setenv("WIKI_DIR", filepath.Join(legacy, "wiki"))
-	t.Setenv("SERVER_HOST", "0.0.0.0")
-
-	buf := captureSlog(t)
-
-	if _, err := Load(""); err != nil {
-		t.Fatalf("Load: %v", err)
+func TestLoad_PaperAccessIgnoresMinerUWhenSwitchOff(t *testing.T) {
+	// Switch OFF but MinerU keys set — must be silently ignored so a
+	// stale section doesn't accidentally re-enable the surface.
+	clearConfigEnv(t)
+	path := writeConfig(t, `paper_access:
+  enabled: false
+  mineru:
+    api_tokens: [stale-token]
+    poll_interval: not-a-duration
+`)
+	cfg := mustLoad(t, path)
+	if cfg.PaperAccessEnabled {
+		t.Error("switch off but PaperAccessEnabled = true")
 	}
-
-	out := buf.String()
-	for _, expected := range []string{"WIKI_DIR", "SERVER_HOST"} {
-		if !strings.Contains(out, expected) {
-			t.Errorf("expected slog output to mention %q for deprecated alias; got:\n%s", expected, out)
-		}
-	}
-	if !strings.Contains(out, "without QATLAS_ prefix is deprecated") {
-		t.Errorf("expected deprecation message stem in slog output; got:\n%s", out)
-	}
-	for _, notExpected := range []string{"RAW_DIR", "DATA_DIR", "USER_HEADER"} {
-		// Match structured field (deprecated=NAME) so we don't false-positive
-		// on the canonical name appearing in the message body.
-		if strings.Contains(out, "deprecated="+notExpected) {
-			t.Errorf("unset alias %q must not produce a deprecation warn; got:\n%s", notExpected, out)
-		}
+	if len(cfg.MinerUAPITokens) != 0 {
+		t.Errorf("MinerUAPITokens = %v; want empty when switch off", cfg.MinerUAPITokens)
 	}
 }
 
-func TestLoad_DeprecatedAliasesQuietWhenAbsent(t *testing.T) {
-	clearStorageEnv(t)
-	clearS3Env(t)
-	t.Setenv("XDG_DATA_HOME", t.TempDir())
-	t.Setenv("HOME", t.TempDir())
-	for old := range deprecatedAliases() {
-		t.Setenv(old, "")
+func TestLoad_PaperAccessEnabledAppliesMinerUDefaults(t *testing.T) {
+	clearConfigEnv(t)
+	path := writeConfig(t, "paper_access:\n  enabled: true\n")
+	cfg := mustLoad(t, path)
+	if !cfg.PaperAccessEnabled {
+		t.Error("PaperAccessEnabled = false; want true")
 	}
-
-	buf := captureSlog(t)
-
-	if _, err := Load(""); err != nil {
-		t.Fatalf("Load: %v", err)
+	if cfg.MinerUEnabled() {
+		t.Error("MinerUEnabled() = true with no tokens; want false (cache-only mode)")
 	}
-
-	if strings.Contains(buf.String(), "deprecated") {
-		t.Errorf("no aliases set, but Load emitted a deprecation warn:\n%s", buf.String())
+	if cfg.MinerUAPIBaseURL != "https://mineru.net" {
+		t.Errorf("MinerUAPIBaseURL = %q; want default https://mineru.net", cfg.MinerUAPIBaseURL)
+	}
+	if cfg.MinerUModelVersion != "vlm" {
+		t.Errorf("MinerUModelVersion = %q; want vlm", cfg.MinerUModelVersion)
+	}
+	if cfg.MinerULanguage != "ch" {
+		t.Errorf("MinerULanguage = %q; want ch", cfg.MinerULanguage)
+	}
+	if !cfg.MinerUEnableFormula || !cfg.MinerUEnableTable || cfg.MinerUIsOCR {
+		t.Errorf("formula/table/ocr defaults wrong: formula=%v table=%v ocr=%v",
+			cfg.MinerUEnableFormula, cfg.MinerUEnableTable, cfg.MinerUIsOCR)
+	}
+	if cfg.MinerUPollInterval != 3*time.Second {
+		t.Errorf("MinerUPollInterval = %s; want 3s", cfg.MinerUPollInterval)
+	}
+	if cfg.MinerUTimeout != 1800*time.Second {
+		t.Errorf("MinerUTimeout = %s; want 1800s", cfg.MinerUTimeout)
+	}
+	if cfg.MinerUMaxConcurrentJobs != 4 {
+		t.Errorf("MinerUMaxConcurrentJobs = %d; want 4", cfg.MinerUMaxConcurrentJobs)
 	}
 }
 
-func TestDeprecatedAliasesMapCoversAllReaders(t *testing.T) {
-	// Guard: every legacy alias we still read in Load() must appear in
-	// deprecatedAliases(). If a future refactor adds a new alias to
-	// firstEnv() without registering it here, operators silently lose
-	// the deprecation signal. Keep this list in sync with the
-	// firstEnv("...", "<alias>") calls in Load(). NEO4J_USER and
-	// SERVER_DEBUG intentionally excluded (see deprecatedAliases doc).
-	expected := []string{
-		"WIKI_DIR", "RAW_DIR", "DATA_DIR", "PB_DATA_DIR",
-		"SERVER_HOST", "SERVER_PORT",
-		"USER_HEADER",
+func TestLoad_PaperAccessEnabledRejectsMalformedMinerU(t *testing.T) {
+	clearConfigEnv(t)
+	path := writeConfig(t, `paper_access:
+  enabled: true
+  mineru:
+    poll_interval: not-a-duration
+`)
+	if _, err := Load(path); err == nil {
+		t.Error("Load with malformed mineru.poll_interval succeeded; want error")
 	}
-	got := deprecatedAliases()
-	for _, name := range expected {
-		if _, ok := got[name]; !ok {
-			t.Errorf("deprecatedAliases() missing entry for %q", name)
-		}
-	}
-	if len(got) != len(expected) {
-		t.Errorf("deprecatedAliases() size = %d, want %d; check whether a new alias was added without registering",
-			len(got), len(expected))
+}
+
+func TestLoad_PaperAccessEnabledRejectsZeroConcurrency(t *testing.T) {
+	clearConfigEnv(t)
+	path := writeConfig(t, `paper_access:
+  enabled: true
+  mineru:
+    max_concurrent_jobs: 0
+`)
+	if _, err := Load(path); err == nil {
+		t.Error("Load with max_concurrent_jobs=0 succeeded; want error")
 	}
 }
 
 // ---------------------------------------------------------------------------
-// v0.17.0 XDG rename: quantum-atlas/ → qatlasd/
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// (v0.17.0 XDG rename guard tests removed; the legacy quantum-atlas/ check
-// itself is gone now that we're still on 0.x and free to make breaking
-// changes without a soft-fallback. See git log for the previous
-// validateLegacyQuantumAtlasDir implementation if you ever need it back.)
+// GitHub login allowlists (unchanged policy)
 // ---------------------------------------------------------------------------
 
 func TestIsGitHubLoginAllowed_FailClosedWhenEmpty(t *testing.T) {
@@ -715,132 +695,24 @@ func TestIsGitHubLoginAllowed_AllowedAndAdminUnion(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// QATLAS_PAPER_ACCESS_ENABLED master switch + MinerU* opt-in block
-// (issue #8).
-// ---------------------------------------------------------------------------
-
-func TestLoad_PaperAccessDisabledByDefault(t *testing.T) {
-	clearStorageEnv(t)
-	clearS3Env(t)
-	clearMinerUEnv(t)
-	cfg, err := Load("")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
+func TestIsGitHubAdmin_AdminListOnly(t *testing.T) {
+	c := &Config{
+		AllowedGitHubLogins: []string{"Alice"},
+		AdminGitHubLogins:   []string{"carol"},
 	}
-	if cfg.PaperAccessEnabled {
-		t.Error("PaperAccessEnabled = true; want false (default off)")
+	cases := map[string]bool{
+		"CAROL": true, // case-insensitive
+		"carol": true,
+		"alice": false, // allowed sign-in but NOT admin
+		"":      false,
 	}
-	if cfg.MinerUEnabled() {
-		t.Error("MinerUEnabled() = true; want false when switch off")
+	for login, want := range cases {
+		if got := c.IsGitHubAdmin(login); got != want {
+			t.Errorf("IsGitHubAdmin(%q) = %v, want %v", login, got, want)
+		}
 	}
-}
-
-// QATLAS_CORPUS_ENSURE_INDEXES gates the boot-time heavy openalex_works
-// index build (ADR 0013). Default true; set false to point an edge at a
-// pre-provisioned corpus without rebuilding its indexes.
-func TestLoad_CorpusEnsureIndexesDefaultsTrue(t *testing.T) {
-	clearStorageEnv(t)
-	clearS3Env(t)
-	clearMinerUEnv(t)
-	t.Setenv("QATLAS_CORPUS_ENSURE_INDEXES", "")
-	cfg, err := Load("")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if !cfg.CorpusEnsureIndexes {
-		t.Error("CorpusEnsureIndexes = false; want true (default)")
-	}
-}
-
-func TestLoad_CorpusEnsureIndexesDisabled(t *testing.T) {
-	clearStorageEnv(t)
-	clearS3Env(t)
-	clearMinerUEnv(t)
-	t.Setenv("QATLAS_CORPUS_ENSURE_INDEXES", "false")
-	cfg, err := Load("")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.CorpusEnsureIndexes {
-		t.Error("CorpusEnsureIndexes = true; want false when QATLAS_CORPUS_ENSURE_INDEXES=false")
-	}
-}
-
-func TestLoad_PaperAccessIgnoresMinerUWhenSwitchOff(t *testing.T) {
-	clearStorageEnv(t)
-	clearS3Env(t)
-	clearMinerUEnv(t)
-	// Switch OFF but MinerU envs set — must be silently ignored so a
-	// stale .env doesn't accidentally re-enable the surface.
-	t.Setenv("QATLAS_PAPER_ACCESS_ENABLED", "false")
-	t.Setenv("MINERU_API_TOKENS", "stale-token")
-	t.Setenv("MINERU_POLL_INTERVAL", "not-a-number") // would error if parsed
-
-	cfg, err := Load("")
-	if err != nil {
-		t.Fatalf("Load: %v (malformed MinerU env should be ignored when switch off)", err)
-	}
-	if cfg.PaperAccessEnabled {
-		t.Error("switch off but PaperAccessEnabled = true")
-	}
-	if len(cfg.MinerUAPITokens) != 0 {
-		t.Errorf("MinerUAPITokens = %v; want empty when switch off", cfg.MinerUAPITokens)
-	}
-}
-
-func TestLoad_PaperAccessEnabledLoadsMinerU(t *testing.T) {
-	clearStorageEnv(t)
-	clearS3Env(t)
-	clearMinerUEnv(t)
-	t.Setenv("QATLAS_PAPER_ACCESS_ENABLED", "true")
-	t.Setenv("MINERU_API_TOKENS", "tok-abc")
-	t.Setenv("MINERU_MAX_CONCURRENT_JOBS", "8")
-
-	cfg, err := Load("")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if !cfg.PaperAccessEnabled {
-		t.Error("PaperAccessEnabled = false; want true")
-	}
-	if !cfg.MinerUEnabled() {
-		t.Error("MinerUEnabled() = false; want true with token + switch on")
-	}
-	if cfg.MinerUMaxConcurrentJobs != 8 {
-		t.Errorf("MinerUMaxConcurrentJobs = %d; want 8", cfg.MinerUMaxConcurrentJobs)
-	}
-	if cfg.MinerUAPIBaseURL != "https://mineru.net" {
-		t.Errorf("MinerUAPIBaseURL = %q; want default https://mineru.net", cfg.MinerUAPIBaseURL)
-	}
-}
-
-func TestLoad_PaperAccessEnabledRejectsMalformedMinerU(t *testing.T) {
-	clearStorageEnv(t)
-	clearS3Env(t)
-	clearMinerUEnv(t)
-	t.Setenv("QATLAS_PAPER_ACCESS_ENABLED", "true")
-	t.Setenv("MINERU_POLL_INTERVAL", "not-a-number")
-
-	if _, err := Load(""); err == nil {
-		t.Error("Load with malformed MINERU_POLL_INTERVAL succeeded; want error")
-	}
-}
-
-func TestLoad_PaperAccessEnabledNoTokenCacheOnlyMode(t *testing.T) {
-	clearStorageEnv(t)
-	clearS3Env(t)
-	clearMinerUEnv(t)
-	t.Setenv("QATLAS_PAPER_ACCESS_ENABLED", "true")
-
-	cfg, err := Load("")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if !cfg.PaperAccessEnabled {
-		t.Error("PaperAccessEnabled = false; want true")
-	}
-	if cfg.MinerUEnabled() {
-		t.Error("MinerUEnabled() = true with no token; want false (cache-only mode)")
+	// Fail-closed when the admin list is empty.
+	if (&Config{}).IsGitHubAdmin("carol") {
+		t.Error("empty admin allowlist must reject everyone (fail-closed)")
 	}
 }

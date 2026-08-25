@@ -4,7 +4,7 @@
 
 === ":material-account-search: 我是研究者"
 
-    我想用 QuantumAtlas 查论文 / 看 Wiki / 浏览图谱。**不需要装 server**。
+    我想用 QuantumAtlas 查论文 / 拉论文资产。**不需要装 server**。
 
     **1. 装 client：**
 
@@ -28,30 +28,30 @@
     qatlas config show                                    # 看当前所有解析值（敏感字段自动遮罩）
     ```
 
-    **不需要 token** —— 所有读接口都是公开的（Wiki 是公开仓库）。token 仅在写操作时需要，参见下面 §「贡献内容 / 上传论文」段。
-
     **3. 跑起来：**
 
+    论文数据不匿名可读——先在浏览器里用 GitHub 登录 server，然后：
+
     ```bash
-    # 列出最近摄入的论文
-    qatlas wiki list --type source
+    # OAuth device-code 登录（拿到 papers:read PAT 写进 hosts.yml）
+    qatlas auth login -s <your-server>
 
-    # 查一个具体页面（algorithm / primitive / paper）
-    qatlas wiki show prim-qft
-
-    # 模糊搜索
-    qatlas wiki search "quantum fourier"
+    # 拉一篇论文的 markdown / PDF（server 缓存未命中会自动 silent fetch）
+    qatlas paper get markdown 2501.00010v1 -o paper.md
+    qatlas paper get pdf quant-ph/9508027 -o shor.pdf
     ```
+
+    多 provider 搜索（本地 catalog + arXiv + OpenAlex，可选 Qdrant 语义检索）
+    走 SPA 的搜索页，或直接 `POST /api/search`（`papers:read` scope）。
 
     **下一步：**
 
-    - [写作 Wiki 页面](client/write-wiki-pages.md) — 贡献内容
-    - [浏览图谱](client/circuit-toolchain.md#explore-graph) — 用图查询关系
+    - [拉取论文资产](client/cli-qatlas.md#qatlas-paper) — `qatlas paper` 的 ID 形态与 LRO 行为
     - [CLI 参考](client/cli-qatlas.md) — 看全 CLI 命令
 
 === ":material-upload: 我是贡献者"
 
-    我想上传论文 / 写 Wiki / 跑 MinerU。**需要装 client + 申请一个 PAT**。
+    我想上传论文 / 跑 MinerU。**需要装 client + 申请一个 PAT**。
 
     **1. 装 client（同上）**
 
@@ -97,7 +97,6 @@
 
     - [上传论文资产](client/upload-assets.md) — sha256 dedup、冲突处理、`--overwrite`
     - [用 MinerU 解析](client/parse-with-mineru.md) — 单篇 / 队列模式 / 并发协作
-    - [写 Wiki 页面](client/write-wiki-pages.md) — 把论文沉淀成 Concept / Paper / Algo
     - [管理 PAT](client/manage-credentials.md) — 撤销、轮换、scope 升降
 
 === ":material-server-network: 我是运维者"
@@ -117,9 +116,7 @@
 
     ```bash
     QATLAS_PUBLIC_URL=https://your-domain.tld
-    NEO4J_URI=bolt://localhost:7687
-    NEO4J_USER=neo4j
-    NEO4J_PASSWORD=<set-this>
+    QATLAS_POSTGRES_DSN=postgres://qatlas:<password>@localhost:5432/qatlas?sslmode=disable
     GITHUB_CLIENT_ID=<from-github-oauth-app>
     GITHUB_CLIENT_SECRET=<from-github-oauth-app>
     ```
@@ -144,7 +141,7 @@
 
     **下一步：**
 
-    - [Go 服务端总览](server/index.md) — 反代、TLS、OAuth、Neo4j、RustFS 全过完一遍
+    - [Go 服务端总览](server/index.md) — 反代、TLS、OAuth、PostgreSQL、RustFS 全过完一遍
     - [GitHub OAuth 接入](server/github-oauth.md)
     - [反向代理模板](server/reverse-proxy.md) — Caddy 和 nginx 配置
     - [健康检查 + 监控](server/health-and-monitoring.md)
@@ -163,21 +160,13 @@
     pixi run build
     ```
 
-    **2. 跑一个不依赖远端的 demo：**
-
-    ```bash
-    uv sync
-    uv run --script examples/demo_pipeline.py \
-        --algorithm qft --backend qiskit --save-code
-    ```
-
-    这个 demo 不需要 LLM API key 也不需要 Neo4j。完整走完「设计 → 生成代码 → 验证 → 资源估计」主流程。
-
-    **3. 起本地 Web 服务：**
+    **2. 起本地 Web 服务：**
 
     ```bash
     cp .env.example .env
-    # 编辑 .env：填 NEO4J_* 指向你自己起的 Neo4j
+    # 编辑 .env：填 QATLAS_POSTGRES_DSN 指向你自己的 PostgreSQL
+    # （goose migrations 会在 server 启动时自动建表）
+    # 可选：QATLAS_SEARCH_PROVIDERS 默认 catalog,arxiv,openalex
 
     ./build/qatlasd serve --http=0.0.0.0:4200
     ```

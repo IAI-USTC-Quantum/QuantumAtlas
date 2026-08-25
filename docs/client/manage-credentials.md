@@ -47,7 +47,7 @@ QuantumAtlas 用 **PocketBase session token (JWT)** 和 **Personal Access Token 
     ✓ Logged in to quantum-atlas.ai
       Token:   qat_abcd********
       Name:    qatlas-cli-laptop-2026-06-03
-      Scopes:  wiki:read, papers:read, papers:write, graph:read, wiki:write
+      Scopes:  papers:read, papers:write, theorems:read
       Expires: 2026-09-01
     ```
 
@@ -112,7 +112,7 @@ QuantumAtlas 用 **PocketBase session token (JWT)** 和 **Personal Access Token 
     qatlasd pat mint \
         --user user@example.com \
         --name "emergency-fix" \
-        --scopes papers:write,wiki:read \
+        --scopes papers:write,papers:read \
         --expires-in-days 7
     ```
 
@@ -222,7 +222,7 @@ qatlas auth status
 qatlas auth login -s quantum-atlas.ai --scopes papers:write --expires-days 90
 
 # 验证新 PAT
-qatlas wiki list --limit 1   # 应该正常返回
+qatlas paper status 2501.00010v1 --kind pdf   # 应该正常返回
 # 旧 PAT 上 /pat 页面 revoke
 ```
 

@@ -1,84 +1,48 @@
 # ─────────────────────────────────────────────────────────────────────────
-# QuantumAtlas full-stack docker-compose
+# QuantumAtlas docker-compose
 #
-# Three services that, between them, give you a working QuantumAtlas
-# install on one host:
+# One service: qatlasd — the Go server. Listens on 127.0.0.1:4200; put a
+# TLS reverse proxy in front of it for the public hostname (see
+# docs/server/reverse-proxy.md or add a Caddy service block below).
 #
-#   * rustfs   — S3-compatible object storage for PDF / MD / images.
-#                Internal-only (9000), admin console on 127.0.0.1:9001.
-#   * neo4j    — graph database for the algorithm/primitive/paper KG.
-#                Browser UI on 127.0.0.1:7474, Bolt on internal 7687.
-#   * qatlasd  — the Go server. Listens on 127.0.0.1:4200; put a TLS
-#                reverse proxy in front of it for the public hostname
-#                (see docs/server/reverse-proxy.md or add a Caddy
-#                service block below).
+# Configuration comes from a YAML file on the HOST, bind-mounted into the
+# container read-only (see volumes below). qatlasd rejects ALL
+# environment-variable configuration (QATLAS_* etc.) at startup — don't
+# add an `environment:` block here; edit the config file instead:
 #
-# This file is intended for single-host evaluation / lab / personal
-# setups. For production multi-edge use the systemd flavour
-# (qatlasd installed via install-qatlasd.sh + service install) plus an
-# external rustfs / neo4j — see docs/server/docker.md for the full
-# decision matrix.
+#   qatlasd config init                      # creates ~/.qatlas/config.yaml
+#   $EDITOR ~/.qatlas/config.yaml
+#
+# PostgreSQL is deliberately NOT part of this file: the paper registry +
+# OpenAlex corpus live in ONE database (default `qatlas`) on a shared /
+# general-purpose PostgreSQL instance. Point qatlasd at it with
+# postgres.dsn in config.yaml — goose migrations auto-apply at boot. To
+# reach a postgres listening on the HOST's 127.0.0.1:5432 from inside the
+# container, use host.docker.internal (the extra_hosts mapping below
+# enables it):
+#
+#   postgres:
+#     dsn: postgres://qatlas:<pw>@host.docker.internal:5432/qatlas?sslmode=disable
+#
+# Object storage (RustFS / S3) is likewise external: production RustFS
+# typically lives on a NAS, reached over the network via the s3 section.
+# Leave s3 empty for the local RawDir dev fallback.
+#
+# In-container paths: the container command pins --dir=/data/pb_data, so
+# set `paths.raw_dir: /data/raw` in config.yaml when using the local
+# store (S3 deployments don't read raw_dir).
 #
 # Usage:
-#   cp .env.docker.example .env
-#   $EDITOR .env                    # fill secrets + GitHub OAuth
-#   mkdir -p data/{raw,pb_data,wiki,rustfs,neo4j/data,neo4j/logs}
-#   chown -R 65532:65532 data/{raw,pb_data,wiki}    # distroless nonroot UID
+#   qatlasd config init               # on the host, then edit
+#   $EDITOR ~/.qatlas/config.yaml     # fill postgres.dsn + s3 + GitHub OAuth
+#   mkdir -p ../data/{raw,pb_data}  # repo-root data/ (bind-mounted)
+#   chown -R 65532:65532 ../data/{raw,pb_data}    # distroless nonroot UID
 #   docker compose up -d
-#   docker compose logs -f qatlasd  # watch startup
+#   docker compose logs -f qatlasd  # watch startup (migrations apply here)
 #   curl http://localhost:4200/api/health
-#
-# After rustfs comes up you'll need to create a service account + the
-# three buckets (qatlas-pdf, qatlas-md, qatlas-images) before qatlasd
-# can write to them. The docs/server/docker.md page walks through
-# the mc commands; the included scripts/rustfs_bootstrap.sh also works
-# (point it at http://localhost:9000).
 # ─────────────────────────────────────────────────────────────────────────
 
 services:
-  rustfs:
-    image: docker.io/rustfs/rustfs:latest
-    container_name: qatlas-rustfs
-    restart: unless-stopped
-    environment:
-      # Root credentials seed the rustfs admin user — used by mc / the
-      # bootstrap script to mint per-service svcaccts. Real workloads
-      # MUST then use the svcacct keys (QATLAS_S3_ACCESS_KEY_ID below),
-      # not these root creds.
-      RUSTFS_ACCESS_KEY: ${RUSTFS_ROOT_ACCESS_KEY:?RUSTFS_ROOT_ACCESS_KEY required in .env}
-      RUSTFS_SECRET_KEY: ${RUSTFS_ROOT_SECRET_KEY:?RUSTFS_ROOT_SECRET_KEY required in .env}
-    volumes:
-      - ./data/rustfs:/data
-    expose:
-      - "9000"
-    ports:
-      # admin console — keep on loopback only; expose publicly via the
-      # reverse proxy if you really need it accessible.
-      - "127.0.0.1:9001:9001"
-
-  neo4j:
-    image: neo4j:5.26-community
-    container_name: qatlas-neo4j
-    restart: unless-stopped
-    environment:
-      # NEO4J_AUTH=<user>/<password> is the official way to seed the
-      # initial password on first boot. Subsequent password changes
-      # require `cypher-shell` against an unauth'd state, so set this
-      # once and don't change it after data exists.
-      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?NEO4J_PASSWORD required in .env}
-      # JVM heap caps — Neo4j is memory-sensitive. 1G suits the dev /
-      # 10k-node regime; bump to 2-4G once the graph grows past 100k
-      # nodes. See docs/server/neo4j.md "Hardware sizing".
-      NEO4J_server_memory_heap_max__size: ${NEO4J_HEAP:-1G}
-    volumes:
-      - ./data/neo4j/data:/data
-      - ./data/neo4j/logs:/logs
-    expose:
-      - "7687"
-    ports:
-      # browser UI — keep loopback-only.
-      - "127.0.0.1:7474:7474"
-
   qatlasd:
     # Pulled from GitHub Container Registry by default. Replace with a
     # local build by uncommenting the `build:` line and removing the
@@ -90,54 +54,27 @@ services:
     #     VERSION: ${QATLAS_VERSION:-local}
     container_name: qatlasd
     restart: unless-stopped
-    depends_on:
-      - rustfs
-      - neo4j
-    environment:
-      # ── Object storage (talks to the in-compose rustfs over the
-      #    docker network — internal hostname `rustfs` is the service
-      #    name) ──
-      QATLAS_S3_ENDPOINT: http://rustfs:9000
-      # Empty when not split (single-host eval). Set to a public-facing
-      # HTTPS URL when clients sit outside the docker network and need
-      # presigned-URL access. See docs/server/rustfs.md#dual-endpoint.
-      QATLAS_S3_PUBLIC_ENDPOINT: ${QATLAS_S3_PUBLIC_ENDPOINT:-}
-      QATLAS_S3_BUCKET_PDF: qatlas-pdf
-      QATLAS_S3_BUCKET_MD: qatlas-md
-      QATLAS_S3_BUCKET_IMAGES: qatlas-images
-      QATLAS_S3_ACCESS_KEY_ID: ${QATLAS_S3_ACCESS_KEY_ID:?QATLAS_S3_ACCESS_KEY_ID required (svcacct, NOT root); see rustfs_bootstrap.sh}
-      QATLAS_S3_SECRET_ACCESS_KEY: ${QATLAS_S3_SECRET_ACCESS_KEY:?QATLAS_S3_SECRET_ACCESS_KEY required (svcacct, NOT root)}
-
-      # ── Neo4j (in-compose, hostname `neo4j`) ──
-      NEO4J_URI: bolt://neo4j:7687
-      NEO4J_USERNAME: neo4j
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD:?NEO4J_PASSWORD required in .env}
-
-      # ── On-disk paths inside the container (must match volumes below) ──
-      QATLAS_WIKI_DIR: /data/wiki
-      QATLAS_PB_DATA_DIR: /data/pb_data
-      QATLAS_RAW_DIR: /data/raw
-
-      # ── GitHub OAuth (browser login) ──
-      QATLAS_ALLOWED_GITHUB_LOGINS: ${QATLAS_ALLOWED_GITHUB_LOGINS:-}
-      QATLAS_ADMIN_GITHUB_LOGINS: ${QATLAS_ADMIN_GITHUB_LOGINS:-}
-      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
-      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
-
-      # ── Optional system PAT for breakglass / CI ──
-      QATLAS_SYSTEM_PAT: ${QATLAS_SYSTEM_PAT:-}
-      QATLAS_SYSTEM_PAT_SCOPES: ${QATLAS_SYSTEM_PAT_SCOPES:-*}
-
-      # ── Multi-edge labelling (cosmetic; folded into S3 client UA) ──
-      QATLAS_EDGE_NAME: ${QATLAS_EDGE_NAME:-}
-
+    # PocketBase's own --dir defaults to /pb_data (unwritable under the
+    # nonroot user); point it at the mounted volume instead.
+    command: ["serve", "--http=0.0.0.0:4200", "--dir=/data/pb_data"]
+    extra_hosts:
+      # Lets postgres.dsn (and S3 endpoints, if any) refer to services
+      # listening on the docker host's non-loopback addresses.
+      - "host.docker.internal:host-gateway"
+    networks:
+      - default
+      - shared-infra
     volumes:
-      # Bind mounts to host ./data/* so backups are `tar czf data.tgz
-      # data/` and there's no `docker volume export` ceremony. Replace
-      # with named volumes (see bottom of file) if you prefer.
-      - ./data/raw:/data/raw
-      - ./data/pb_data:/data/pb_data
-      - ./data/wiki:/data/wiki
+      # The YAML config file is the single source of truth. Mounted
+      # read-only at the distroless nonroot user's (UID 65532) home —
+      # that is where qatlasd looks by default (~/.qatlas/config.yaml).
+      - ${HOME}/.qatlas/config.yaml:/home/nonroot/.qatlas/config.yaml:ro
+      # Bind mounts to the repo-root ./data/* (relative to this file:
+      # ../data) so backups are `tar czf data.tgz data/` and there's no
+      # `docker volume export` ceremony. Replace with named volumes (see
+      # bottom of file) if you prefer.
+      - ../data/raw:/data/raw
+      - ../data/pb_data:/data/pb_data
     ports:
       # Loopback only by default — put a reverse proxy in front for
       # public access (see Caddy / nginx snippets in
@@ -145,16 +82,51 @@ services:
       # to "4200:4200" — only safe on a private network.
       - "127.0.0.1:4200:4200"
 
+  # ── qatlas-search: agentic multi-source search microservice ─────────────
+  # Optional. Lives in the separate repository IAI-USTC-Quantum/qatlas-search;
+  # build the image there (`docker build -t qatlas-search:local .`).
+  # Bring it online with:  docker compose --profile search up -d
+  #
+  # Deliberately NO ports mapping: the only legitimate caller is qatlasd
+  # (which meters and quotas every agentic search), so the service is
+  # reachable only inside the shared-infra network. Point qatlasd at it
+  # via ~/.qatlas/config.yaml:
+  #   search:
+  #     remote: { enabled: true, url: "http://qatlas-search:8600", token: "..." }
+  # The token must match `search.service_token` in the microservice's own
+  # config file (~/.qatlas/search.yaml, mounted below).
+  qatlas-search:
+    image: qatlas-search:local
+    container_name: qatlas-search
+    restart: unless-stopped
+    profiles: ["search"]
+    networks:
+      - shared-infra
+    volumes:
+      # The microservice has its OWN config file (qatlasd strictly rejects
+      # unknown keys, so the two cannot share config.yaml). Only the
+      # `search:` section of this file is consumed (backend keys, agent LLM
+      # settings, service_token — which must match qatlasd's
+      # search.remote.token).
+      # Mounted read-write (no :ro) so the admin config endpoint
+      # (PUT /v1/admin/config, proxied through qatlasd's admin page) can
+      # persist updates back to this file.
+      - ${HOME}/.qatlas/search.yaml:/etc/qatlas-search/config.yaml
+
+# Shared network for reaching sibling infrastructure containers (e.g. the
+# standalone general-purpose `postgres` container) by name. Create once:
+#   docker network create shared-infra
+#   docker network connect shared-infra postgres
+networks:
+  shared-infra:
+    external: true
+
 # ── Alternative storage: docker named volumes ─────────────────────────────
 # Uncomment this block + delete the `./data/*` host paths above if you
-# prefer docker-managed volumes over bind mounts. Bind mounts give
-# easier backups + direct file inspection; named volumes give cleaner
-# uninstall (one `docker compose down -v` and everything's gone).
+# prefer docker-managed volumes over bind mounts. Note the docker data
+# root on this host already lives on the large /data disk, so named
+# volumes land there too.
 #
 # volumes:
-#   rustfs_data: {}
-#   neo4j_data: {}
-#   neo4j_logs: {}
 #   qatlas_raw: {}
 #   qatlas_pb_data: {}
-#   qatlas_wiki: {}

@@ -20,11 +20,11 @@ QuantumAtlas 拆分为三个仓库，依赖方向为单向：CLI / search →（
 
 ### 独立私有仓 qatlas-cli
 
-`github.com/Agony5757/qatlas-cli`。`qatlas` 命令行客户端，src 布局（`src/qatlas/`），保留 `qatlas` 包名以兼容插件协议与 qatlas-search 的惰性 import。通过 HTTP API 访问 qatlasd（`qatlas.client._common` 里的 `ServerConfig` + `requests`）。
+`github.com/IAI-USTC-Quantum/qatlas-cli`。`qatlas` 命令行客户端，src 布局（`src/qatlas/`），保留 `qatlas` 包名以兼容插件协议与 qatlas-search 的惰性 import。通过 HTTP API 访问 qatlasd（`qatlas.client._common` 里的 `ServerConfig` + `requests`）。
 
 ### 独立私有仓 qatlas-search
 
-`github.com/Agony5757/qatlas-search`。Agentic 搜索微服务 + `qatlas-search` CLI（`qatlas_search.cli:main`）。两个角色：
+`github.com/IAI-USTC-Quantum/qatlas-search`。Agentic 搜索微服务 + `qatlas-search` CLI（`qatlas_search.cli:main`）。两个角色：
 
 1. 作为 Docker 服务运行（镜像 `qatlas-search:local`），被 qatlasd 通过 HTTP 调用；
 2. 作为 Python 包通过 entry point `qatlas.plugins` 挂载进 qatlas CLI，贡献 `qatlas search` 命令。
@@ -74,10 +74,10 @@ search = "qatlas_search.qatlas_plugin:plugin"
 
 ```bash
 # qatlas CLI（独立私有仓，需要 SSH 访问权限）
-uv tool install --from git+ssh://git@github.com/Agony5757/qatlas-cli.git qatlas-cli
+uv tool install --from git+ssh://git@github.com/IAI-USTC-Quantum/qatlas-cli.git qatlas-cli
 
 # qatlas-search（可选；安装后自动通过 entry point 挂载 `qatlas search`）
-uv tool install --from git+ssh://git@github.com/Agony5757/qatlas-search.git qatlas-search
+uv tool install --from git+ssh://git@github.com/IAI-USTC-Quantum/qatlas-search.git qatlas-search
 
 # 主仓开发环境
 pixi install        # Go 工具链 + 构建缓存（.gocache/）

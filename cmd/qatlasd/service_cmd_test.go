@@ -8,26 +8,26 @@ import (
 	"testing"
 )
 
-// fakeHomeForTest plants a writable HOME with a placeholder .env so
-// buildServiceConfig / computeReadWritePaths produce deterministic
+// fakeHomeForTest plants a writable HOME with a placeholder config.yaml
+// so buildServiceConfig / computeReadWritePaths produce deterministic
 // output regardless of the real test runner's environment.
 //
-// Returns the fake home path and the absolute .env path under it.
-func fakeHomeForTest(t *testing.T) (home, dotenvPath string) {
+// Returns the fake home path and the absolute config path under it.
+func fakeHomeForTest(t *testing.T) (home, configPath string) {
 	t.Helper()
 	home = t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_DATA_HOME", "")
 	t.Setenv("SUDO_USER", "")
-	repoDir := filepath.Join(home, "QuantumAtlas")
-	if err := os.MkdirAll(repoDir, 0o755); err != nil {
-		t.Fatalf("mkdir repoDir: %v", err)
+	cfgDir := filepath.Join(home, ".qatlas")
+	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+		t.Fatalf("mkdir cfgDir: %v", err)
 	}
-	dotenvPath = filepath.Join(repoDir, ".env")
-	if err := os.WriteFile(dotenvPath, []byte("# fixture\n"), 0o600); err != nil {
-		t.Fatalf("write .env: %v", err)
+	configPath = filepath.Join(cfgDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("# fixture\n"), 0o600); err != nil {
+		t.Fatalf("write config.yaml: %v", err)
 	}
-	return home, dotenvPath
+	return home, configPath
 }
 
 // TestRenderSystemdUnitUserMode pins the exact user-mode unit content.
@@ -38,12 +38,12 @@ func fakeHomeForTest(t *testing.T) (home, dotenvPath string) {
 // to keep templateFuncs in sync with the library's tf var, this
 // snapshot fails and forces a deliberate review.
 func TestRenderSystemdUnitUserMode(t *testing.T) {
-	home, dotenvPath := fakeHomeForTest(t)
+	home, configPath := fakeHomeForTest(t)
 
 	cfg, err := buildServiceConfig(serviceInstallOpts{
 		Name:       "qatlasd",
 		Mode:       "user",
-		DotenvPath: dotenvPath,
+		ConfigPath: configPath,
 		Bind:       "127.0.0.1:4200",
 	})
 	if err != nil {
@@ -62,9 +62,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=` + filepath.Join(home, "QuantumAtlas") + `
-Environment=QATLAS_DOTENV=` + dotenvPath + `
-ExecStart=/fixed/bin/qatlasd "serve" "--http=127.0.0.1:4200"
+WorkingDirectory=` + filepath.Join(home, ".qatlas") + `
+ExecStart=/fixed/bin/qatlasd "--config" "` + configPath + `" "serve" "--http=127.0.0.1:4200"
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGINT
@@ -72,12 +71,12 @@ TimeoutStopSec=15
 
 # systemd sandboxing — defense-in-depth hardening; see systemd.exec(5).
 # ReadWritePaths must cover every directory the server writes to
-# (PB_DATA_DIR, DATA_DIR, the wiki checkout, and the .env directory).
+# (pb_data_dir, data_dir, the wiki checkout, and the config file's dir).
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=no
-ReadWritePaths=` + filepath.Join(home, "QuantumAtlas") + ` ` + filepath.Join(home, ".local/share/qatlasd") + `
+ReadWritePaths=` + filepath.Join(home, ".qatlas") + ` ` + filepath.Join(home, ".local/share/qatlasd") + `
 LockPersonality=true
 RestrictRealtime=true
 
@@ -92,13 +91,13 @@ WantedBy=default.target
 // TestRenderSystemdUnitSystemMode mirrors the user-mode snapshot for
 // system mode: expects User= line + WantedBy=multi-user.target.
 func TestRenderSystemdUnitSystemMode(t *testing.T) {
-	home, dotenvPath := fakeHomeForTest(t)
+	home, configPath := fakeHomeForTest(t)
 	t.Setenv("SUDO_USER", "deployer")
 
 	cfg, err := buildServiceConfig(serviceInstallOpts{
 		Name:       "qatlasd",
 		Mode:       "system",
-		DotenvPath: dotenvPath,
+		ConfigPath: configPath,
 		Bind:       "0.0.0.0:4200",
 	})
 	if err != nil {
@@ -118,9 +117,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=deployer
-WorkingDirectory=` + filepath.Join(home, "QuantumAtlas") + `
-Environment=QATLAS_DOTENV=` + dotenvPath + `
-ExecStart=/usr/local/bin/qatlasd "serve" "--http=0.0.0.0:4200"
+WorkingDirectory=` + filepath.Join(home, ".qatlas") + `
+ExecStart=/usr/local/bin/qatlasd "--config" "` + configPath + `" "serve" "--http=0.0.0.0:4200"
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGINT
@@ -128,12 +126,12 @@ TimeoutStopSec=15
 
 # systemd sandboxing — defense-in-depth hardening; see systemd.exec(5).
 # ReadWritePaths must cover every directory the server writes to
-# (PB_DATA_DIR, DATA_DIR, the wiki checkout, and the .env directory).
+# (pb_data_dir, data_dir, the wiki checkout, and the config file's dir).
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=no
-ReadWritePaths=` + filepath.Join(home, "QuantumAtlas") + ` ` + filepath.Join(home, ".local/share/qatlasd") + `
+ReadWritePaths=` + filepath.Join(home, ".qatlas") + ` ` + filepath.Join(home, ".local/share/qatlasd") + `
 LockPersonality=true
 RestrictRealtime=true
 
@@ -149,13 +147,13 @@ WantedBy=multi-user.target
 // appended only when ~/QuantumAtlas-Wiki exists, since server-side
 // git fetch needs write access to it.
 func TestComputeReadWritePathsIncludesWiki(t *testing.T) {
-	home, dotenvPath := fakeHomeForTest(t)
+	home, configPath := fakeHomeForTest(t)
 	wikiDir := filepath.Join(home, "QuantumAtlas-Wiki")
 	if err := os.MkdirAll(wikiDir, 0o755); err != nil {
 		t.Fatalf("mkdir wiki: %v", err)
 	}
 
-	paths := computeReadWritePaths(dotenvPath)
+	paths := computeReadWritePaths(configPath)
 	joined := strings.Join(paths, " ")
 	if !strings.Contains(joined, wikiDir) {
 		t.Errorf("expected ReadWritePaths to include %s; got: %s", wikiDir, joined)
@@ -166,11 +164,11 @@ func TestComputeReadWritePathsIncludesWiki(t *testing.T) {
 // the share path when set, so installs on FHS-style hosts don't get
 // pinned to ~/.local/share.
 func TestComputeReadWritePathsHonoursXDG(t *testing.T) {
-	home, dotenvPath := fakeHomeForTest(t)
+	home, configPath := fakeHomeForTest(t)
 	customShare := filepath.Join(home, "custom-xdg")
 	t.Setenv("XDG_DATA_HOME", customShare)
 
-	paths := computeReadWritePaths(dotenvPath)
+	paths := computeReadWritePaths(configPath)
 	want := filepath.Join(customShare, "qatlasd")
 	found := false
 	for _, p := range paths {
@@ -209,11 +207,11 @@ func TestResolveModeRequiresExplicitInNonTTY(t *testing.T) {
 	}
 }
 
-// TestValidateDotenvPathRejectsDirectory pins one of the few validations
-// applied to the user-supplied dotenv path.
-func TestValidateDotenvPathRejectsDirectory(t *testing.T) {
+// TestValidateConfigPathRejectsDirectory pins one of the few validations
+// applied to the user-supplied config path.
+func TestValidateConfigPathRejectsDirectory(t *testing.T) {
 	dir := t.TempDir()
-	err := validateDotenvPath(dir)
+	err := validateConfigPath(dir)
 	if err == nil {
 		t.Fatal("expected error for directory path")
 	}
@@ -287,17 +285,17 @@ func TestComputeReadWritePathsUnderSimulatedSudo(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", "")
 	t.Setenv("SUDO_USER", current.Username)
 
-	// Use a .env under junkHome (a "wrong" dir) — the dotenv directory
-	// is computed straight from absDotenv, not from $HOME, so it should
+	// Use a config under junkHome (a "wrong" dir) — the config directory
+	// is computed straight from absConfig, not from $HOME, so it should
 	// still appear correctly. What matters is the *share-derived* path:
 	// it should resolve under the SUDO_USER's real home, not under
 	// junkHome.
-	dotenvPath := filepath.Join(junkHome, ".env")
-	if err := os.WriteFile(dotenvPath, []byte("# fixture\n"), 0o600); err != nil {
-		t.Fatalf("write .env: %v", err)
+	configPath := filepath.Join(junkHome, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("# fixture\n"), 0o600); err != nil {
+		t.Fatalf("write config.yaml: %v", err)
 	}
 
-	paths := computeReadWritePaths(dotenvPath)
+	paths := computeReadWritePaths(configPath)
 	joined := strings.Join(paths, " ")
 
 	wantShare := filepath.Join(current.HomeDir, ".local/share/qatlasd")
@@ -362,38 +360,44 @@ func TestGuardSudoUserModeMismatchAllowsRealRootUserMode(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// No-dotenv install path (v0.17.0a1+)
+// No-config install path
 // ---------------------------------------------------------------------------
 //
-// When no .env can be auto-detected and the operator didn't pass
-// --dotenv-path, the install should still succeed and generate a unit
-// that DOES NOT pin a QATLAS_DOTENV. Operator then supplies config via
-// inline `Environment=KEY=VAL` or systemd `EnvironmentFile=`. This was a
-// hard fatal pre-v0.17.0a1, but that ergonomics-trapped first-time
-// installers who wanted a clean unit and would inject env elsewhere.
+// When no ~/.qatlas/config.yaml exists and the operator didn't pass
+// --config, the install should still succeed and generate a unit that
+// DOES NOT pin a --config argument; qatlasd falls back to its default
+// path at runtime (and fails with a clear "run config init" error if
+// the file is genuinely absent).
 
-func TestResolveDotenvPath_NoFileNoEnvNonTTY_OmitsPath(t *testing.T) {
-	// Fresh empty home, no QATLAS_DOTENV, non-TTY → resolveDotenvPath
-	// must leave opts.DotenvPath empty AND return nil (not a fatal).
+func TestResolveConfigPath_NoFileNonTTY_OmitsPath(t *testing.T) {
+	// Fresh empty home, no config.yaml, non-TTY → resolveConfigPath
+	// must leave opts.ConfigPath empty AND return nil (not a fatal).
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("QATLAS_DOTENV", "")
 	t.Setenv("SUDO_USER", "")
-	// Make sure cwd has no .env either — chdir into the temp home.
-	if err := os.Chdir(home); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
 
 	opts := &serviceInstallOpts{}
-	if err := resolveDotenvPath(opts, false /* not a TTY */); err != nil {
-		t.Fatalf("expected nil (no fatal) when no .env discoverable; got: %v", err)
+	if err := resolveConfigPath(opts, false /* not a TTY */); err != nil {
+		t.Fatalf("expected nil (no fatal) when no config.yaml discoverable; got: %v", err)
 	}
-	if opts.DotenvPath != "" {
-		t.Errorf("expected opts.DotenvPath empty (no .env); got: %q", opts.DotenvPath)
+	if opts.ConfigPath != "" {
+		t.Errorf("expected opts.ConfigPath empty (no config.yaml); got: %q", opts.ConfigPath)
 	}
 }
 
-func TestBuildServiceConfig_EmptyDotenvOmitsEnvVar(t *testing.T) {
+func TestResolveConfigPath_PicksUpDefaultWhenPresent(t *testing.T) {
+	_, configPath := fakeHomeForTest(t)
+
+	opts := &serviceInstallOpts{}
+	if err := resolveConfigPath(opts, false /* not a TTY */); err != nil {
+		t.Fatalf("resolveConfigPath: %v", err)
+	}
+	if opts.ConfigPath != configPath {
+		t.Errorf("expected opts.ConfigPath = %q; got %q", configPath, opts.ConfigPath)
+	}
+}
+
+func TestBuildServiceConfig_EmptyConfigOmitsConfigArg(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_DATA_HOME", "")
@@ -402,14 +406,19 @@ func TestBuildServiceConfig_EmptyDotenvOmitsEnvVar(t *testing.T) {
 	cfg, err := buildServiceConfig(serviceInstallOpts{
 		Name:       "qatlasd",
 		Mode:       "user",
-		DotenvPath: "",
+		ConfigPath: "",
 		Bind:       "127.0.0.1:4200",
 	})
 	if err != nil {
 		t.Fatalf("buildServiceConfig: %v", err)
 	}
-	if _, ok := cfg.EnvVars["QATLAS_DOTENV"]; ok {
-		t.Errorf("EnvVars must NOT contain QATLAS_DOTENV when DotenvPath is empty; got: %v", cfg.EnvVars)
+	for _, arg := range cfg.Arguments {
+		if arg == "--config" {
+			t.Errorf("Arguments must NOT contain --config when ConfigPath is empty; got: %v", cfg.Arguments)
+		}
+	}
+	if len(cfg.EnvVars) != 0 {
+		t.Errorf("EnvVars must be empty (env-based configuration was removed); got: %v", cfg.EnvVars)
 	}
 	// WorkingDirectory should fall back to $HOME (not crash, not "")
 	if cfg.WorkingDirectory != home {
@@ -418,7 +427,7 @@ func TestBuildServiceConfig_EmptyDotenvOmitsEnvVar(t *testing.T) {
 	}
 }
 
-func TestRenderSystemdUnit_NoDotenvHasNoEnvironmentLine(t *testing.T) {
+func TestRenderSystemdUnit_NoConfigHasNoConfigArg(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_DATA_HOME", "")
@@ -427,7 +436,7 @@ func TestRenderSystemdUnit_NoDotenvHasNoEnvironmentLine(t *testing.T) {
 	cfg, err := buildServiceConfig(serviceInstallOpts{
 		Name:       "qatlasd",
 		Mode:       "user",
-		DotenvPath: "",
+		ConfigPath: "",
 		Bind:       "127.0.0.1:4200",
 	})
 	if err != nil {
@@ -437,8 +446,12 @@ func TestRenderSystemdUnit_NoDotenvHasNoEnvironmentLine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("renderSystemdUnit: %v", err)
 	}
-	if strings.Contains(rendered, "QATLAS_DOTENV") {
-		t.Errorf("rendered unit should not mention QATLAS_DOTENV when DotenvPath is empty; got:\n%s",
+	if strings.Contains(rendered, "--config") {
+		t.Errorf("rendered unit should not pass --config when ConfigPath is empty; got:\n%s",
+			rendered)
+	}
+	if strings.Contains(rendered, "Environment=") {
+		t.Errorf("rendered unit should not set any Environment= lines; got:\n%s",
 			rendered)
 	}
 	if !strings.Contains(rendered, "ExecStart=/fixed/bin/qatlasd") {
@@ -446,13 +459,13 @@ func TestRenderSystemdUnit_NoDotenvHasNoEnvironmentLine(t *testing.T) {
 	}
 }
 
-func TestComputeReadWritePaths_NoDotenvSkipsEnvDir(t *testing.T) {
+func TestComputeReadWritePaths_NoConfigSkipsConfigDir(t *testing.T) {
 	home, _ := fakeHomeForTest(t)
 
 	paths := computeReadWritePaths("")
-	// Should NOT include any path from a hypothetical .env directory
-	// — there is no .env. Should still include the XDG share path so
-	// pb_data writes work.
+	// Should NOT include any path from a hypothetical config directory
+	// — there is none pinned. Should still include the XDG share path
+	// so pb_data writes work.
 	wantShare := filepath.Join(home, ".local/share/qatlasd")
 	found := false
 	for _, p := range paths {
@@ -461,14 +474,14 @@ func TestComputeReadWritePaths_NoDotenvSkipsEnvDir(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Errorf("expected ReadWritePaths to include %q even without a .env; got: %v",
+		t.Errorf("expected ReadWritePaths to include %q even without a pinned config; got: %v",
 			wantShare, paths)
 	}
-	// The .env dir wouldn't be filepath.Dir("") = "."; sanity-check we
+	// The config dir wouldn't be filepath.Dir("") = "."; sanity-check we
 	// haven't accidentally appended that as a writable path.
 	for _, p := range paths {
 		if p == "." {
-			t.Errorf("ReadWritePaths should not contain '.' when DotenvPath is empty; got: %v", paths)
+			t.Errorf("ReadWritePaths should not contain '.' when ConfigPath is empty; got: %v", paths)
 		}
 	}
 }

@@ -120,6 +120,21 @@ func (r *Router) ListPrefix(ctx context.Context, prefix string, limit int) ([]Ob
 	return infos, nil
 }
 
+func (r *Router) ListDirs(ctx context.Context, prefix string) ([]string, error) {
+	kind, rest, b := r.split(prefix)
+	if b == nil {
+		return nil, nil // unknown kind → empty listing
+	}
+	dirs, err := b.ListDirs(ctx, rest)
+	if err != nil {
+		return nil, err
+	}
+	for i := range dirs {
+		dirs[i] = kind + "/" + dirs[i]
+	}
+	return dirs, nil
+}
+
 func (r *Router) PresignGet(ctx context.Context, key string, ttl time.Duration) (string, bool, error) {
 	_, rest, b := r.split(key)
 	if b == nil {

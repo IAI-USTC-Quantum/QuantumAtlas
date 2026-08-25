@@ -1,9 +1,7 @@
 # 贡献工作流
 
-这份文档描述如何把内容贡献到 QuantumAtlas，包括两条并列的协作路径：
-
-- **Raw 资产贡献**：把论文 PDF、解析 Markdown、元数据落到 `RAW_DIR`。
-- **Wiki 协作**：在独立 Git 仓库里编辑知识页面，按需触发服务器拉取。
+这份文档描述如何把内容贡献到 QuantumAtlas：把论文 PDF、解析 Markdown、元数据
+落到对象存储，并登记进 PostgreSQL paper registry。
 
 如果你想理解项目分层和设计动机，先看 [architecture.md](../concepts/architecture.md)。如果你只想跑起来一个服务，看 [deployment.md](../server/operations.md)。本文档定位是「内容贡献的 how-to」。
 
@@ -13,7 +11,7 @@
 
 **v0.17.0 起 client 和 server 配置完全分离**：
 
-- **Server (`qatlasd`)**: 三入口 CLI flag > OS env > `.env` 文件 > default（godotenv non-override）；项目自有字段带 `QATLAS_` 前缀，第三方 SDK 标准名（`NEO4J_*` / `GITHUB_CLIENT_*` 等）原样保留
+- **Server (`qatlasd`)**: 三入口 CLI flag > OS env > `.env` 文件 > default（godotenv non-override）；项目自有字段带 `QATLAS_` 前缀，第三方 SDK 标准名（`GITHUB_CLIENT_*` 等）原样保留
 - **Client (`qatlas`)**: 单入口 YAML，**首次跑任何 `qatlas <cmd>` 自动创建**模板到 [`platformdirs`](https://platformdirs.readthedocs.io/) 解析的位置（Linux `~/.config/qatlas/`、macOS `~/Library/Application Support/qatlas/`、Windows `%APPDATA%\qatlas\`）；**不读** 任何 CLI flag / OS env / `QATLAS_DOTENV`
 
 **贡献者通常只需要配 client**（不跑 server）：
@@ -40,7 +38,7 @@ echo mn_xxxxx | qatlas config set mineru_api_token   # 从 stdin 读，不进 hi
 
 完整字段映射 + YAML schema 见 [client config reference](cli-qatlas.md#qatlas-config) 与 [env-vars.md §Client](../reference/env-vars.md#client-qatlas-配置yaml-onlyv0170)。
 
-**服务端的 `.env`**（含 `NEO4J_*` / `QATLAS_S3_*` / `GITHUB_CLIENT_*` / `QATLAS_SYSTEM_PAT` 等）见 [server-config.md](../server/server-config.md) 与 [operations.md](../server/operations.md) 的「推荐的单机生产目录」段。
+**服务端的 `.env`**（含 `QATLAS_POSTGRES_DSN` / `QATLAS_S3_*` / `GITHUB_CLIENT_*` / `QATLAS_SYSTEM_PAT` 等）见 [server-config.md](../server/server-config.md) 与 [operations.md](../server/operations.md) 的「推荐的单机生产目录」段。
 
 ---
 
@@ -59,7 +57,7 @@ echo mn_xxxxx | qatlas config set mineru_api_token   # 从 stdin 读，不进 hi
 
 ### Path A：服务器侧按 arXiv ID 抓取
 
-最轻量。贡献者只需要给一个 arXiv ID，服务端负责抓 PDF 并解析（fetch + parse）。**服务端严格 ff-only，不会自动跑 LLM 抽取，也不会写 wiki 或 Neo4j**——抽取/wiki 这两步走人工 PR 流程。
+最轻量。贡献者只需要给一个 arXiv ID，服务端负责抓 PDF 并解析（fetch + parse），产物落对象存储并登记进 PostgreSQL registry。
 
 ```bash
 qatlas ingest quant-ph/9508027              # 默认走 MinerU 解析
@@ -117,7 +115,7 @@ qatlas contrib pdf 2501.00010v1     --pdf paper.pdf --overwrite
 - 对 PDF 做最基本的 `%PDF-` magic 校验，不通过 400 并清理临时文件。
 - 默认拒绝覆盖（409）；显式 `--overwrite` 才允许替换。
 - 单文件大小上限：PDF 100 MiB。
-- 论文 metadata（题目 / 作者 / 摘要 / 引用）由服务器从 OpenAlex 上游同步进 Neo4j catalog，不再走 upload 端点（v0.7.0 起）。
+- 论文 metadata（题目 / 作者 / 摘要 / 引用）由服务器从 OpenAlex 上游同步进 PostgreSQL paper registry，不再走 upload 端点（v0.7.0 起）。
 
 MinerU 结果（markdown + 图片）通过 [Path C](#path-c本地跑-mineru-后把解析结果推回云端) 的 `qatlas contrib mineru` 推送——它跑完 MinerU 后把整包推给 server 的 `upload-mineru` 端点：
 
@@ -238,7 +236,7 @@ agent 决策三元组（state / pdf_ready / md_ready）见
 
 ## 2. 鉴权与审计
 
-服务器使用 PocketBase 内嵌的 GitHub OAuth 流程做浏览器登录，并通过 `authGuard`（`internal/routes/auth.go`）门禁写操作。读口（wiki / pages / stats / search / graph）保持公开（因为 wiki 仓库本身就是公开的）。
+服务器使用 PocketBase 内嵌的 GitHub OAuth 流程做浏览器登录，并通过 `authGuard`（`internal/routes/auth.go`）门禁数据端点。论文搜索、统计与资产读口收敛到 `papers:read` scope，写口收敛到 `papers:write`。
 
 `authGuard` 接受**三种**凭据，按到达顺序检查：
 
@@ -256,8 +254,7 @@ agent 决策三元组（state / pdf_ready / md_ready）见
 |---|---|---|
 | `papers:write` | `POST /api/papers/.../upload-pdf` / `upload-mineru` / `POST /api/v1/papers/.../mineru-lease`，`DELETE .../mineru-lease/{id}` | 上传 PDF / MinerU 结果包、跑 MinerU 任务 |
 | `papers:read` | `GET /api/papers/...` 各只读 endpoint（stats / needs-mineru）；以及 PAPER_ACCESS 启用后的 `GET …/markdown[/status]` / `GET …/pdf[/status]` | 读取 paper catalog 元数据；可触发 server 端 silent fetch + MinerU convert（需要部署方知情）|
-| `wiki:read` / `wiki:write` | `/api/wiki/*` | wiki 内容只读 / 同步 |
-| `graph:read` | `/api/graph/*` | Neo4j 查询 |
+| `theorems:read` | `/api/theorems/*` 读口 | theorems builtin 插件（Lean 证明 registry 的 read-through）|
 
 scope 的 obj/act 在 `scopeGuard` 抛 403 时会回显在 `detail` 里——CLI 报错能直接告诉你"该 PAT 缺 `papers:write` scope，去 /pat 重发一条"。
 
@@ -341,50 +338,11 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 
 ---
 
-## 3. Wiki 协作：以 Git 仓库为主边界
-
-Wiki 内容**不必经过服务器**就能更新。推荐做法是把 Wiki 仓库作为应用仓库的兄弟目录 checkout，所有人都直接对它 clone / branch / push / PR：
-
-```text
-~/work/
-├── QuantumAtlas/          # 应用代码仓库
-└── QuantumAtlas-Wiki/     # Wiki 内容仓库（任意人都可以 clone 编辑）
-```
-
-应用侧只需要在 `.env` 里指向这个 checkout：
-
-```env
-QATLAS_WIKI_DIR=../QuantumAtlas-Wiki
-```
-
-服务器上的 Wiki checkout 应当保持干净——它**只读**，且只接受 fast-forward 更新。当 Wiki 仓库有新 commit 被合入主分支后，任何能访问服务器 API 的客户端都可以触发服务器拉取，无需登录服务器 shell：
-
-```bash
-curl -X POST -H "Authorization: Bearer $TOKEN" \
-  https://atlas.example/api/wiki/sync/pull
-```
-
-对应端点 `POST /api/wiki/sync/pull` 的动作是 `git fetch --prune` + `git pull --ff-only`：
-
-- 本地有未提交改动 → 409。
-- 不是 Git 仓库 → 409。
-- 不能 fast-forward（远端有 force-push 或本地领先）→ 409。
-- 远端不可达 / git 命令失败 → 502。
-
-成功响应里会带 `old_commit` / `new_commit` / `changed` 字段。
-
-当前状态可以通过 `GET /api/wiki/sync/status` 查看（只读本地 Git 信息，不访问远端）。如果服务器 checkout 不在 `main` / `master` 分支，状态会带 warning。
-
-Wiki 页面本身的格式规范（页面类型、frontmatter schema、命名前缀、lint 错误码）见 [wiki-conventions.md](../reference/wiki-schema.md)。
-
----
-
-## 4. 推荐协作节奏
+## 3. 推荐协作节奏
 
 1. **摄入论文或资料**：按 Path A / B / C 之一把 raw 资产入库，保留证据链。
-2. **整理 Wiki 页面**：在 `QuantumAtlas-Wiki` 仓库里 commit / PR / review，让分类、摘要、引用和状态可审阅。
-3. **触发服务器同步**：调用 `POST /api/wiki/sync/pull`，再让稳定的 Wiki 页面同步到 Neo4j，用关系图做依赖发现和路径查询。Graph 始终是派生视图，不是另一份手工维护的 truth。
-4. **下游使用**：从算法或原语继续生成实现，经过验证和资源估计后再进入下游。
+2. **确认 registry 状态**：`/api/papers/stats` 看整体资产覆盖；缺 metadata 的由 server 从 OpenAlex 上游补齐。
+3. **下游使用**：用 `POST /api/search` 多 provider 检索，或按 id / DOI 拉取论文资产（self-hosted PAPER_ACCESS 部署）。
 
 ---
 

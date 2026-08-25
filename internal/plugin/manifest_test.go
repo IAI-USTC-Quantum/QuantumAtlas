@@ -48,19 +48,14 @@ func TestManifestValidateKindTransport(t *testing.T) {
 }
 
 func TestBuiltinManifestsValid(t *testing.T) {
-	got := map[string]bool{}
+	// Currently no builtins ship in-repo; keep the validation loop so any
+	// future builtin manifest is still checked for validity + kind.
 	for _, m := range BuiltinManifests() {
 		if err := m.Validate(); err != nil {
 			t.Fatalf("builtin %q invalid: %v", m.ID, err)
 		}
 		if m.Kind != KindBuiltin {
 			t.Fatalf("builtin %q kind = %q, want builtin", m.ID, m.Kind)
-		}
-		got[m.ID] = true
-	}
-	for _, id := range []string{"graph", "rag", "wiki", "theorems"} {
-		if !got[id] {
-			t.Fatalf("missing builtin manifest %q", id)
 		}
 	}
 }

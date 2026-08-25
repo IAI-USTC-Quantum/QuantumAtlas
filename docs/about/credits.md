@@ -38,7 +38,7 @@ header、以及 [README.md](https://github.com/IAI-USTC-Quantum/QuantumAtlas#数
 - [Go](https://go.dev/) 1.23+ — 主语言
 - [PocketBase](https://pocketbase.io/) v0.38 — 内嵌 BaaS (SQLite + Auth + Realtime + Admin UI)
 - [PostgreSQL](https://www.postgresql.org/) + [pgx](https://github.com/jackc/pgx) — paper catalog / claim / DOI 状态
-- [Neo4j Go driver](https://github.com/neo4j/neo4j-go-driver) v5 — 图数据库 client
+- [jackc/pgx](https://github.com/jackc/pgx) v5 — PostgreSQL driver（paper registry + OpenAlex corpus）
 - [minio-go](https://github.com/minio/minio-go) v7 — S3 兼容存储 client
 - [casbin/v2](https://github.com/casbin/casbin) — PAT scope enforcer
 - [godotenv](https://github.com/joho/godotenv) — .env 加载

@@ -1,43 +1,45 @@
-// System PAT — a single, optional, env-configured bearer token that
-// authenticates the caller WITHOUT any reference to PocketBase users
-// or pb_data. Designed for ops paths where a user record may not
-// exist (or may not exist YET): bootstrapping a fresh edge before
-// anyone has OAuth'd, scripted disaster recovery after pb_data is
-// wiped, CI nightlies that should not depend on a particular human
-// account, etc.
+// System PAT — a single, optional, config-file-configured bearer
+// token that authenticates the caller WITHOUT any reference to
+// PocketBase users or pb_data. Designed for ops paths where a user
+// record may not exist (or may not exist YET): bootstrapping a fresh
+// edge before anyone has OAuth'd, scripted disaster recovery after
+// pb_data is wiped, CI nightlies that should not depend on a
+// particular human account, etc.
 //
 // # Threat model
 //
-// Anyone who can read the server's environment (or the .env file
-// loaded into it) can authenticate as the system PAT. This is the
-// same blast radius as the existing S3 / GitHub OAuth / Neo4j
-// credentials already living in the .env: a process with read
-// access to those secrets can already do most of what the system
-// PAT enables. Putting the PAT alongside them adds no new exfil
-// surface, and gains us "no DB required for breaking-glass access".
+// Anyone who can read the server's config.yaml can authenticate as
+// the system PAT. This is the same blast radius as the existing S3 /
+// GitHub OAuth credentials already living in that file: a process
+// with read access to those secrets can already do most of what the
+// system PAT enables. Putting the PAT alongside them adds no new
+// exfil surface, and gains us "no DB required for breaking-glass
+// access".
 //
 // # Storage
 //
-// Loaded once at server startup from QATLAS_SYSTEM_PAT. Held as
-// raw bytes for constant-time comparison. Never written to disk by
-// the server, never logged in plaintext, never echoed back over the
-// wire. The plaintext only lives in (1) the operator's env source
-// of truth and (2) this process's memory.
+// Loaded once at server startup from the system_pat section of
+// config.yaml. Held as raw bytes for constant-time comparison. Never
+// written to disk by the server, never logged in plaintext, never
+// echoed back over the wire. The plaintext only lives in (1) the
+// operator's config file and (2) this process's memory.
 //
 // # Scope semantics
 //
-// QATLAS_SYSTEM_PAT_SCOPES (optional CSV) determines what the
-// system PAT can call. Defaults to ScopeMaster ("*") which mirrors
-// a browser session: scopeGuard short-circuits and the PAT can hit
-// every gated endpoint. Operators who want a less-privileged ops
-// token (e.g. "ci can read but not write") set the env explicitly:
+// system_pat.scopes (optional list) determines what the system PAT
+// can call. Defaults to ScopeMaster ("*") which mirrors a browser
+// session: scopeGuard short-circuits and the PAT can hit every gated
+// endpoint. Operators who want a less-privileged ops token (e.g. "ci
+// can read but not write") set the list explicitly:
 //
-//	QATLAS_SYSTEM_PAT_SCOPES=wiki:read,papers:read,graph:read
+//	system_pat:
+//	  token: <long random string>
+//	  scopes: [papers:read, plugins:read]
 //
 // Unlike user-minted PATs (which go through the REST API and have
 // ScopeMaster forbidden by pat.ValidateScopes), the system PAT may
-// include ScopeMaster — the operator who set the env var is already
-// trusted to write to the DB directly, so further gatekeeping
+// include ScopeMaster — the operator who wrote the config file is
+// already trusted to write to the DB directly, so further gatekeeping
 // would be theatre.
 //
 // # Why not a PocketBase record with user=null
@@ -54,11 +56,11 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 )
 
-// minSystemPATLength is the floor for QATLAS_SYSTEM_PAT plaintext.
+// minSystemPATLength is the floor for the system PAT plaintext (the
+// system_pat.token key in config.yaml).
 // The number is small enough not to inconvenience reasonable random
 // strings (openssl rand -base64 32 ≈ 44 chars, uuidgen ≈ 36 chars,
 // hex32 = 32 chars) but large enough to reject obvious placeholders
@@ -67,18 +69,6 @@ import (
 // users actually pick and produce friction without commensurate
 // safety; loosening it would let "hunter2"-class accidents through.
 const minSystemPATLength = 16
-
-// systemPATEnv is the env var holding the plaintext token. Empty
-// (or unset) means the feature is disabled — authGuard falls
-// through to the normal PocketBase PAT / session paths.
-const systemPATEnv = "QATLAS_SYSTEM_PAT"
-
-// systemPATScopesEnv is the optional CSV of scopes granted to the
-// system PAT. Unset → default to ScopeMaster (one-line breaking-
-// glass setup). When set, the value is validated via
-// ValidateScopesIncludingMaster — same vocabulary as user PATs,
-// plus the master wildcard.
-const systemPATScopesEnv = "QATLAS_SYSTEM_PAT_SCOPES"
 
 // SystemPAT is the in-memory representation of the env-loaded
 // bearer token. Construct via LoadSystemPAT; a nil receiver behaves
@@ -90,66 +80,65 @@ type SystemPAT struct {
 	length int
 }
 
-// LoadSystemPAT reads QATLAS_SYSTEM_PAT and (optionally)
-// QATLAS_SYSTEM_PAT_SCOPES from the process environment and returns
-// the corresponding SystemPAT. Three outcomes:
+// LoadSystemPAT builds a SystemPAT from the system_pat section of
+// config.yaml: token is the plaintext token (empty = feature disabled,
+// authGuard falls through to the normal PocketBase PAT / session
+// paths), scopes is the optional grant list (empty → ScopeMaster,
+// validated via ValidateScopesIncludingMaster). Three outcomes:
 //
-//   - env unset / empty → (nil, nil): feature disabled. The caller
-//     should still call routes.UseSystemPAT(nil) (or skip it) so
-//     the runtime path treats the absence consistently.
-//   - env set but too short or scopes malformed → (nil, error):
-//     caller MUST treat as fatal (log.Fatal). A misconfigured
-//     system PAT shouldn't silently fall through to "no token",
-//     because the operator's intent was clearly to enable it.
-//   - env set and valid → (*SystemPAT, nil): mounted on routes
-//     via UseSystemPAT.
-func LoadSystemPAT() (*SystemPAT, error) {
-	secret := strings.TrimSpace(os.Getenv(systemPATEnv))
+//   - token empty → (nil, nil): feature disabled. The caller should
+//     still call routes.UseSystemPAT(nil) (or skip it) so the runtime
+//     path treats the absence consistently.
+//   - token set but too short or scopes malformed → (nil, error):
+//     caller MUST treat as fatal (log.Fatal). A misconfigured system
+//     PAT shouldn't silently fall through to "no token", because the
+//     operator's intent was clearly to enable it.
+//   - token set and valid → (*SystemPAT, nil): mounted on routes via
+//     UseSystemPAT.
+func LoadSystemPAT(token string, scopes []string) (*SystemPAT, error) {
+	secret := strings.TrimSpace(token)
 	if secret == "" {
 		return nil, nil
 	}
 	if len(secret) < minSystemPATLength {
 		return nil, fmt.Errorf(
-			"%s is too short (%d chars; minimum %d). Set a stronger value, "+
+			"system_pat.token is too short (%d chars; minimum %d). Set a stronger value, "+
 				"e.g. `openssl rand -base64 32`",
-			systemPATEnv, len(secret), minSystemPATLength,
+			len(secret), minSystemPATLength,
 		)
 	}
 
-	scopes, err := parseSystemPATScopes(os.Getenv(systemPATScopesEnv))
+	parsed, err := parseSystemPATScopes(scopes)
 	if err != nil {
 		return nil, err
 	}
 
 	return &SystemPAT{
 		secret: []byte(secret),
-		scopes: scopes,
+		scopes: parsed,
 		length: len(secret),
 	}, nil
 }
 
 // parseSystemPATScopes resolves the scopes field. Empty / unset
-// defaults to []{ScopeMaster}, mirroring "the system PAT acts
-// like a session by default". Any other value is split on commas,
-// trimmed, dropped if empty, then validated against
-// ValidateScopesIncludingMaster.
-func parseSystemPATScopes(raw string) ([]string, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return []string{ScopeMaster}, nil
-	}
-	parts := strings.Split(raw, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if t := strings.TrimSpace(p); t != "" {
+// defaults to []{ScopeMaster}, mirroring "the system PAT acts like a
+// session by default". Entries are trimmed, blanks dropped, then
+// validated against ValidateScopesIncludingMaster.
+func parseSystemPATScopes(scopes []string) ([]string, error) {
+	out := make([]string, 0, len(scopes))
+	for _, s := range scopes {
+		if t := strings.TrimSpace(s); t != "" {
 			out = append(out, t)
 		}
 	}
 	if len(out) == 0 {
-		return nil, errors.New(systemPATScopesEnv + " is set but parses to zero scopes")
+		if len(scopes) == 0 {
+			return []string{ScopeMaster}, nil
+		}
+		return nil, errors.New("system_pat.scopes is set but parses to zero scopes")
 	}
 	if err := ValidateScopesIncludingMaster(out); err != nil {
-		return nil, fmt.Errorf("%s: %w", systemPATScopesEnv, err)
+		return nil, fmt.Errorf("system_pat.scopes: %w", err)
 	}
 	return out, nil
 }

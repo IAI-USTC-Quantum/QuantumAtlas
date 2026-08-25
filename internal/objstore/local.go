@@ -421,6 +421,44 @@ func (s *LocalStore) ListPrefix(_ context.Context, prefix string, limit int) ([]
 	return out, nil
 }
 
+// ListDirs reads the single directory BaseDir/<prefix> and returns its
+// subdirectories in the same "<prefix><name>/" form the S3 backend
+// produces for common prefixes. A missing directory yields an empty
+// slice (matching S3's "prefix matches nothing" behaviour), not an
+// error.
+func (s *LocalStore) ListDirs(_ context.Context, prefix string) ([]string, error) {
+	prefix = strings.TrimRight(prefix, "/")
+	if prefix != "" {
+		// Same traversal-rejection rules as resolve().
+		if strings.HasPrefix(prefix, "/") || strings.Contains(prefix, "..") || strings.Contains(prefix, "\\") {
+			return nil, fmt.Errorf("objstore: invalid prefix %q", prefix)
+		}
+	}
+	dir := s.BaseDir
+	if prefix != "" {
+		dir = filepath.Join(s.BaseDir, filepath.FromSlash(prefix))
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var out []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		if prefix == "" {
+			out = append(out, e.Name()+"/")
+		} else {
+			out = append(out, prefix+"/"+e.Name()+"/")
+		}
+	}
+	return out, nil
+}
+
 // errStopWalk is a sentinel used to abort filepath.Walk from inside
 // the visitor without surfacing an error to the caller.
 var errStopWalk = errors.New("objstore: stop walk")

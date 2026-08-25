@@ -178,7 +178,7 @@ func TestPATMint_RejectsPerpetual(t *testing.T) {
 		expiryFlag string
 		wantInErr  string
 	}{
-		{"missing", "0", "expires-in-days"},        // default of 0 trips "required"
+		{"missing", "0", "expires-in-days"}, // default of 0 trips "required"
 		{"negative", "-1", "expires-in-days"},
 		{"over max", "999", "365"},
 	}
