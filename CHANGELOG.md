@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## Unreleased
+
+### BREAKING CHANGE
+
+- **qatlas CLI split into a standalone private repo.** The `qatlas` command-line client now lives at `Agony5757/qatlas-cli` (`uv tool install --from git+ssh://git@github.com/Agony5757/qatlas-cli.git qatlas-cli`); this repo no longer ships the `qatlas` command. The `qatlas.cli` / `qatlas.client` / `qatlas.config` / `qatlas.config_yaml` / `qatlas.paths` modules and the MinerU / arXiv fetch helpers (`qatlas.parser.{mineru_client,keyring,arxiv_fetcher}`) are removed from the main package.
+
 ## v0.21.0a3 (2026-07-03)
 
 ### Fix
