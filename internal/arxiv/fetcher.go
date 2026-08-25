@@ -19,8 +19,10 @@
 //   - retry queueing across converter restarts — caller manages job state
 //   - DOI / metadata lookup — see internal/openalex
 //
-// The fetcher only ever issues GET against arxiv.org/pdf/<id>; it does
-// NOT crawl the abs page or follow redirects to mirrors.
+// The arxiv path only ever issues GET against arxiv.org/pdf/<id>; it
+// does NOT crawl the abs page or follow redirects to mirrors. The DOI
+// open-access path (Fetcher.FetchURL) reuses the same retry/validation
+// machinery against arbitrary publisher / repository URLs.
 
 package arxiv
 
@@ -33,6 +35,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -199,8 +202,27 @@ func (f *Fetcher) Fetch(ctx context.Context, p paperassets.ParsedArxivID) (*Resu
 	if p.Version == "" {
 		return nil, fmt.Errorf("arxiv: fetch requires versioned id, got %q", p.Canonical)
 	}
+	return f.fetch(ctx, f.cfg.BaseURL+p.Canonical)
+}
 
-	url := f.cfg.BaseURL + p.Canonical
+// FetchURL downloads a PDF from an arbitrary absolute http(s) URL —
+// the DOI open-access fetch path uses it for publisher / repository
+// PDFs that OpenAlex surfaces via best_oa_location.pdf_url. It reuses
+// the same machinery as Fetch: the shared rate limiter (conservative —
+// OA hosts share the arxiv.org request budget), the 429/5xx retry loop
+// with Retry-After, the MaxBytes cap, and the %PDF- magic check, and it
+// returns the same error sentinels. Redirects are followed by the
+// http.Client default (publisher PDF links commonly 302 to a CDN).
+func (f *Fetcher) FetchURL(ctx context.Context, rawURL string) (*Result, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+		return nil, fmt.Errorf("arxiv: fetch url %q: not an absolute http(s) URL", rawURL)
+	}
+	return f.fetch(ctx, rawURL)
+}
+
+// fetch runs the retry/validate loop against a fully-built URL.
+func (f *Fetcher) fetch(ctx context.Context, url string) (*Result, error) {
 	var lastErr error
 	for attempt := 1; attempt <= f.cfg.RetryMax+1; attempt++ {
 		if err := f.limiter.Wait(ctx); err != nil {

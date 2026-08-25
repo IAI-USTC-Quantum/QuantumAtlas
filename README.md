@@ -209,7 +209,7 @@ Contributions welcome in these areas:
 - Improving parsing, ingestion, search providers, and the API.
 - Tests, documentation fixes, and collaboration UX.
 
-Please use Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`). Releases are managed with Commitizen — see [docs/contributing.md](docs/contributing.md).
+Please use Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`). qatlasd releases are driven by the root `VERSION` file + a pushed `v<version>` tag; Commitizen only manages the `quantum-atlas` PyPI package version — see [docs/contributing.md](docs/contributing.md).
 
 ## Acknowledgements
 

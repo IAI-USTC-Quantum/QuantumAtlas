@@ -1,6 +1,6 @@
 package routes
 
-// papers_doi.go: DOI-indexed contribution handlers.
+// papers_doi.go: DOI-indexed contribution + fetch handlers.
 //
 // upload-pdf and upload-mineru accept EITHER an arxiv id OR a DOI in the
 // {arxiv_id} path slot. When the id matches the DOI shape (10.<reg>/...)
@@ -8,6 +8,14 @@ package routes
 // version (which may have no arXiv preprint) under the disjoint
 // "<kind>/doi/..." namespace and records it in the catalog under a
 // "doi:<doi>" node.
+//
+// The GET side (getMarkdownByDOIHandler / markdownStatusByDOIHandler)
+// additionally implements the plan §A fetch semantics: any DOI can be
+// completed server-side — a stored contributed PDF is converted on
+// demand, and when OpenAlex surfaced an OA PDF URL for a published-only
+// work the converter fetches it first (mineru.Converter.EnsureByDOI).
+// Cache misses on /markdown therefore return a 202 LRO instead of a
+// bare 404; 404 remains for DOIs with no stored PDF and no OA source.
 //
 // Verification (the contributor's safety net against a typo'd DOI):
 // the server resolves the DOI against OpenAlex and records the canonical
@@ -35,6 +43,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineru"
@@ -642,17 +651,23 @@ func storedSha256AtKey(ctx context.Context, store objstore.Store, key string) st
 }
 
 // getMarkdownByDOIHandler answers GET /api/papers/<doi>/markdown for
-// a DOI-only contribution (published paper with no arxiv presence).
-// Resolved to this handler when the OpenAlex resolver returns
-// ErrDOINotFound but the local catalog has a DOI node — meaning the
-// stored bytes are the only source of truth. Streams the markdown
-// object directly from the "<kind>/doi/<reg>/<suffix>" bucket layout.
+// a DOI-indexed paper. Reached from the dispatcher either because the
+// local catalog has a DOI node, or because OpenAlex resolved the DOI to
+// a published-only OA work (no arxiv twin) with a direct OA PDF URL
+// (oaPdfURL non-empty).
+//
+// Cache hit streams the markdown object directly from the
+// "<kind>/doi/<reg>/<suffix>" bucket layout. On cache miss the server
+// completes the paper itself (plan §A): EnsureByDOI converts a stored
+// contributed PDF, or fetches the OA PDF first when oaPdfURL is known —
+// the caller gets a 202 LRO and polls /markdown/status. A miss with no
+// stored PDF and no OA source stays a 404 with a contrib-upload hint.
 func getMarkdownByDOIHandler(
 	re *core.RequestEvent,
 	cfg *config.Config,
 	store objstore.Store,
 	converter *mineru.Converter,
-	rawDOI string,
+	rawDOI, oaPdfURL string,
 ) error {
 	doi, ok := paperassets.ValidateDOI(rawDOI)
 	if !ok {
@@ -668,16 +683,75 @@ func getMarkdownByDOIHandler(
 		})
 	}
 	rc, info, err := store.Get(ctx, mdKey)
-	if err != nil {
-		if errors.Is(err, objstore.ErrNotFound) {
-			return re.JSON(http.StatusNotFound, map[string]string{
-				"detail": fmt.Sprintf("markdown not found for DOI %s", doi),
-				"doi":    doi,
-			})
-		}
+	if err != nil && !errors.Is(err, objstore.ErrNotFound) {
 		return re.JSON(http.StatusInternalServerError, map[string]string{
 			"detail": "fetch markdown: " + err.Error(),
 		})
+	}
+	if errors.Is(err, objstore.ErrNotFound) {
+		// Cache miss — drive (or join) the fetch+convert LRO.
+		if converter == nil || !converter.Enabled() {
+			reason := "converter not configured"
+			if converter != nil {
+				reason = converter.DisabledReason()
+			}
+			return re.JSON(http.StatusNotFound, map[string]string{
+				"detail": fmt.Sprintf("markdown not found for DOI %s and server-side conversion is unavailable (%s)", doi, reason),
+				"doi":    doi,
+			})
+		}
+		job := converter.EnsureByDOI(ctx, doi, oaPdfURL)
+		switch job.State {
+		case mineru.JobStateDone:
+			// Won a race with a concurrent writer / a job that finished
+			// between our Get and EnsureByDOI — re-read and stream.
+			rc, info, err = store.Get(ctx, mdKey)
+			if err != nil {
+				return re.JSON(http.StatusInternalServerError, map[string]string{
+					"detail": "fetch markdown after job completion: " + err.Error(),
+				})
+			}
+		case mineru.JobStateQueued, mineru.JobStateRunning:
+			re.Response.Header().Set("Operation-Location", "/api/papers/"+doi+"/markdown/status")
+			re.Response.Header().Set("Retry-After", "5")
+			re.Response.Header().Set("X-QAtlas-DOI", doi)
+			body := doiSnapshotBody(doi, job)
+			body["detail"] = "fetch + conversion in progress"
+			body["operation"] = map[string]any{
+				"status_url":          "/api/papers/" + doi + "/markdown/status",
+				"next_poll_after_iso": time.Now().Add(5 * time.Second).UTC().Format(time.RFC3339),
+			}
+			return re.JSON(http.StatusAccepted, body)
+		case mineru.JobStateFailed:
+			re.Response.Header().Set("X-QAtlas-DOI", doi)
+			if errors.Is(job.Err, mineru.ErrNoDOISource) {
+				return re.JSON(http.StatusNotFound, map[string]any{
+					"detail": fmt.Sprintf("markdown not found for DOI %s: no stored PDF and no open-access PDF known to OpenAlex; contribute one via POST /api/papers/%s/upload-pdf", doi, doi),
+					"doi":    doi,
+				})
+			}
+			status := http.StatusBadGateway
+			detail := "conversion failed: " + errString(job.Err)
+			if errors.Is(job.ErrKind, mineru.ErrDailyLimit) {
+				status = http.StatusServiceUnavailable
+				detail = errString(job.Err)
+			}
+			body := map[string]any{
+				"detail": detail,
+				"doi":    doi,
+				"kind":   jobKindLabel(job.ErrKind),
+			}
+			if !job.CooldownUntil.IsZero() {
+				body["retry_after"] = job.CooldownUntil.Unix()
+				body["retry_after_iso"] = job.CooldownUntil.UTC().Format(time.RFC3339)
+				secs := int(time.Until(job.CooldownUntil).Seconds()) + 1
+				if secs < 1 {
+					secs = 1
+				}
+				re.Response.Header().Set("Retry-After", strconv.Itoa(secs))
+			}
+			return re.JSON(status, body)
+		}
 	}
 	defer rc.Close()
 	re.Response.Header().Set("Content-Type", "text/markdown; charset=utf-8")
@@ -692,10 +766,22 @@ func getMarkdownByDOIHandler(
 	return nil
 }
 
+// doiSnapshotBody renders a converter Job for the DOI markdown/status
+// endpoints: the same shape as snapshotBody (state / phase / fetch /
+// convert / queue sub-objects) but keyed by `doi` instead of
+// `arxiv_id`, so the two poll surfaces stay symmetric.
+func doiSnapshotBody(doi string, job *mineru.Job) map[string]any {
+	body := snapshotBody(doi, job)
+	delete(body, "arxiv_id")
+	body["doi"] = doi
+	return body
+}
+
 // getPDFByDOIHandler answers GET /api/papers/<doi>/pdf for a DOI-only
-// contribution. Same dispatch rationale as getMarkdownByDOIHandler.
-// Streams the PDF bytes directly from the "<kind>/doi/<reg>/<suffix>"
-// bucket layout.
+// contribution. PDF delivery is disabled (plan §B): same 410 Gone
+// contract as the arxiv pdfHandler — the DOI PDF bytes stay in the
+// object store as an internal asset for the conversion pipeline, they
+// are just no longer served outbound.
 func getPDFByDOIHandler(
 	re *core.RequestEvent,
 	cfg *config.Config,
@@ -703,42 +789,14 @@ func getPDFByDOIHandler(
 	converter *mineru.Converter,
 	rawDOI string,
 ) error {
-	doi, ok := paperassets.ValidateDOI(rawDOI)
-	if !ok {
+	if _, ok := paperassets.ValidateDOI(rawDOI); !ok {
 		return re.JSON(http.StatusBadRequest, map[string]string{
 			"detail": fmt.Sprintf("invalid DOI for pdf: %q", rawDOI),
 		})
 	}
-	ctx := re.Request.Context()
-	pdfKey := paperassets.DOIAssetKey("pdf", doi)
-	if pdfKey == "" {
-		return re.JSON(http.StatusInternalServerError, map[string]string{
-			"detail": "could not compute pdf key for DOI",
-		})
-	}
-	rc, info, err := store.Get(ctx, pdfKey)
-	if err != nil {
-		if errors.Is(err, objstore.ErrNotFound) {
-			return re.JSON(http.StatusNotFound, map[string]string{
-				"detail": fmt.Sprintf("pdf not found for DOI %s", doi),
-				"doi":    doi,
-			})
-		}
-		return re.JSON(http.StatusInternalServerError, map[string]string{
-			"detail": "fetch pdf: " + err.Error(),
-		})
-	}
-	defer rc.Close()
-	re.Response.Header().Set("Content-Type", "application/pdf")
-	if info.Size > 0 {
-		re.Response.Header().Set("Content-Length", strconv.FormatInt(info.Size, 10))
-	}
-	re.Response.Header().Set("X-QAtlas-DOI", doi)
-	re.Response.WriteHeader(http.StatusOK)
-	if _, err := io.Copy(re.Response, rc); err != nil {
-		slog.Warn("doi pdf: stream copy failed", "doi", doi, "error", err)
-	}
-	return nil
+	return re.JSON(http.StatusGone, map[string]string{
+		"detail": pdfGoneDetail,
+	})
 }
 
 // probeDOIAssetReadiness mirrors probeAssetReadiness for the DOI bucket
@@ -770,14 +828,17 @@ func probeDOIAssetReadiness(ctx context.Context, store objstore.Store, doi strin
 }
 
 // markdownStatusByDOIHandler answers GET /api/papers/<doi>/markdown/status
-// for a DOI-indexed contribution. It mirrors markdownStatusHandler's
-// arxiv contract — same JSON shape with `doi` replacing `arxiv_id` —
-// so a generic client that swaps an arxiv id for a DOI in the same URL
-// template gets symmetric behaviour. There is no MinerU job state to
-// report (DOI uploads arrive pre-converted), so the response is a
-// straightforward "cached" / "missing" snapshot derived from the
-// bucket layout.
-func markdownStatusByDOIHandler(re *core.RequestEvent, store objstore.Store, rawDOI string) error {
+// for a DOI-indexed paper. It mirrors markdownStatusHandler's arxiv
+// contract — same JSON shape with `doi` replacing `arxiv_id` — so a
+// generic client that swaps an arxiv id for a DOI in the same URL
+// template gets symmetric behaviour.
+//
+// Since plan §A the DOI path has real MinerU job state: a 202 from
+// GET <doi>/markdown means a fetch+convert job is in flight, and this
+// endpoint is its poll surface (state=queued|running|failed|cooldown
+// with fetch/convert sub-objects). converter may be nil (tests); the
+// job-lookup branch is skipped then.
+func markdownStatusByDOIHandler(re *core.RequestEvent, store objstore.Store, converter *mineru.Converter, rawDOI string) error {
 	doi, ok := paperassets.ValidateDOI(rawDOI)
 	if !ok {
 		return re.JSON(http.StatusBadRequest, map[string]string{
@@ -797,14 +858,34 @@ func markdownStatusByDOIHandler(re *core.RequestEvent, store objstore.Store, raw
 			"markdown_url": "/api/papers/" + doi + "/markdown",
 		})
 	}
-	// No markdown bytes: this DOI hasn't had a MinerU bundle uploaded
-	// yet. Distinct from arxiv, the server can't kick off a fetch
-	// itself (no PDF source URL and no autoconvert path for DOIs).
+
+	// In-flight / recently-failed fetch+convert job?
+	if converter != nil {
+		if job, ok := converter.LookupDOI(doi); ok {
+			body := doiSnapshotBody(doi, job)
+			body["pdf_ready"] = pdfReady || job.Phase == mineru.PhaseConvertingMD || job.State == mineru.JobStateDone
+			body["md_ready"] = false
+			// For Done state, double-check stat says no md (race with delete?)
+			if job.State == mineru.JobStateDone {
+				body["state"] = "cached"
+				body["phase"] = string(mineru.PhaseReady)
+				body["md_ready"] = true
+				body["markdown_url"] = "/api/papers/" + doi + "/markdown"
+			}
+			return re.JSON(http.StatusOK, body)
+		}
+	}
+
+	// No markdown bytes and no job: this DOI hasn't been fetched or
+	// converted yet. Unlike the pre-§A behaviour the server CAN kick a
+	// fetch off itself — GET /api/papers/<doi>/markdown starts the LRO
+	// when OpenAlex knows an OA PDF (or a contributed PDF is stored).
 	return re.JSON(http.StatusOK, map[string]any{
 		"doi":       doi,
 		"state":     "missing",
 		"pdf_ready": pdfReady,
 		"md_ready":  false,
+		"detail":    "no markdown yet; GET /api/papers/" + doi + "/markdown triggers fetch + conversion when an OA source is available",
 	})
 }
 
@@ -829,7 +910,6 @@ func pdfStatusByDOIHandler(re *core.RequestEvent, store objstore.Store, rawDOI s
 			"phase":     string(mineru.PhaseReady),
 			"pdf_ready": true,
 			"md_ready":  mdReady,
-			"pdf_url":   "/api/papers/" + doi + "/pdf",
 		})
 	}
 	return re.JSON(http.StatusOK, map[string]any{

@@ -104,6 +104,9 @@ func streamAssetBytes(re *core.RequestEvent, store objstore.Store, kind, canonic
 		re.Response.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 	case "json":
 		re.Response.Header().Set("Content-Type", "application/json; charset=utf-8")
+	case "images":
+		re.Response.Header().Set("Content-Type", "application/zip")
+		re.Response.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s-images.zip"`, sanitizeFilename(canonical)))
 	}
 	if info.Size > 0 {
 		re.Response.Header().Set("Content-Length", strconv.FormatInt(info.Size, 10))

@@ -324,14 +324,21 @@ qatlas contrib mineru --watch
 
 仅 maintainer 关心。
 
+> **版本解耦（0.22.0 起）**：`qatlasd` 的版本唯一来源是仓库根目录的
+> `VERSION` 文件 + 手动推送的 `v<version>` tag（release.yml prep 强校验
+> 二者一致）。`cz bump` 只管理 `pyproject.toml` 里 `quantum-atlas`
+> PyPI 包的版本，两者互不挂钩。与 `qatlas-cli` 的兼容契约见
+> [版本与兼容策略](https://quantum-atlas.readthedocs.io/zh-cn/latest/dev/versioning.html)：
+> `(major, minor)` 相同即兼容，兼容性修复只 bump patch。
+
 1. 确认 CI 全绿（pytest + go test + 前端 build）
-2. `uv run cz bump` 算下版本 + 改 pyproject + 改 CHANGELOG + tag
-3. Review：`git show HEAD` / `git show --stat <tag>`
-4. `git push --follow-tags`
+2. 编辑根目录 `VERSION` 为目标版本号，更新 `CHANGELOG.md`，commit
+3. `git tag v<version>`（与 VERSION 完全一致）并 Review：`git show --stat <tag>`
+4. `git push && git push origin v<version>`
 5. [`release.yml`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.github/workflows/release.yml) 自动：
     - Cross-compile 3 平台 binary（`linux/{amd64,arm64}` + `darwin/arm64`；Intel Mac 故意不发，`macos-13` runner 太慢，详见 `release.yml::binary-build` 注释）
     - 发到 GitHub Release（含 SHA256 checksum）
-    - PyPI 发 Python wheel + sdist
+    - PyPI 发 `quantum-atlas` wheel + sdist（版本取 pyproject.toml，与 qatlasd 版本无关；`skip-existing` 保证重复发同版本是 no-op）
 6. 验证：
     ```bash
     pip install --upgrade quantum-atlas

@@ -1000,6 +1000,102 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/papers/{id_or_doi}/images/zip": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the images zip (application/zip) for the given\narxiv id or DOI — the bundle the MinerU conversion\nproduced alongside the markdown. Only registered when\nQATLAS_PAPER_ACCESS_ENABLED=true on the server.\n\nCanonical resolution: same DOI-wins rule as\n/api/papers/{id_or_doi}/markdown; pass ` + "`" + `?force_arxiv=1` + "`" + `\nto opt out per request.\n\nThis endpoint has no long-running-operation semantics:\nwhen no images zip is stored it answers 404 (fetch\n/markdown first to trigger the conversion that produces\nthe images).\n\nTransport (ADR 0011): defaults to a byte stream\n(application/zip). Pass ` + "`" + `?format=link` + "`" + ` to instead\nreceive a JSON body with a short-lived RustFS direct\nlink (` + "`" + `{images_url, format:\"link\", expires_in}` + "`" + `); on a\nbackend that cannot presign (dev LocalStore) a link\nrequest transparently falls back to bytes. Any other\n?format= value is a 400.",
+                "produces": [
+                    "application/zip"
+                ],
+                "tags": [
+                    "Papers"
+                ],
+                "summary": "Get paper images zip",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "arXiv canonical id with vN suffix, or a DOI",
+                        "name": "id_or_doi",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "1/true: bypass DOI-canonical default; return 409 if DOI has no arxiv twin",
+                        "name": "force_arxiv",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "link|bytes — override the default transport (images zip defaults to bytes)",
+                        "name": "format",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "images zip bytes (application/zip), or a JSON {images_url} when ?format=link",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid arxiv_id or DOI, or invalid ?format= value",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "no images available (fetch /markdown first to trigger conversion)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "force_arxiv requested but DOI has no arxiv twin",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "DOI resolution unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/api/papers/{id_or_doi}/markdown": {
             "get": {
                 "security": [
@@ -1007,7 +1103,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns the cached MinerU markdown for the given arxiv id\n(or DOI — the id_or_doi path component is auto-detected\nagainst the IANA prefix ` + "`" + `10.\u003cregistrant\u003e/...` + "`" + `). Only\nregistered when QATLAS_PAPER_ACCESS_ENABLED=true on the\nserver (default off).\n\nCanonical resolution: a ` + "`" + `:PaperWork` + "`" + ` node with\n` + "`" + `identifier_scheme='doi'` + "`" + ` ALWAYS wins over its arxiv\ntwin when both exist — DOI is the canonical identity of\nthe published version. The dispatcher serves DOI bytes\nfor either id form when a DOI contribution is on file;\npass ` + "`" + `?force_arxiv=1` + "`" + ` to opt out per request (DOI input\nwith force_arxiv + no arxiv twin returns 409). See\ndocs/server/upload-api.md §Canonical resolution.\n\nLong-running operation semantics: on cache miss the\nserver may transparently fetch the PDF from arxiv.org\n(silent_fetch) and trigger a MinerU conversion. The\nfirst call returns 202 with ` + "`" + `Operation-Location:\n/api/papers/{id}/markdown/status` + "`" + ` and ` + "`" + `Retry-After: 5` + "`" + `;\nclients poll the status endpoint until state=cached then\nre-GET this resource for the bytes.\n\nTransport (ADR 0011): markdown DEFAULTS to a byte stream\n(text/markdown). Pass ` + "`" + `?format=link` + "`" + ` to instead receive a\nJSON body with a short-lived RustFS direct link\n(` + "`" + `{markdown_url, format:\"link\", expires_in}` + "`" + `); on a backend\nthat cannot presign (dev LocalStore) a link request\ntransparently falls back to bytes.",
+                "description": "Returns the cached MinerU markdown for the given arxiv id\n(or DOI — the id_or_doi path component is auto-detected\nagainst the IANA prefix ` + "`" + `10.\u003cregistrant\u003e/...` + "`" + `). Only\nregistered when QATLAS_PAPER_ACCESS_ENABLED=true on the\nserver (default off).\n\nCanonical resolution: a ` + "`" + `:PaperWork` + "`" + ` node with\n` + "`" + `identifier_scheme='doi'` + "`" + ` ALWAYS wins over its arxiv\ntwin when both exist — DOI is the canonical identity of\nthe published version. The dispatcher serves DOI bytes\nfor either id form when a DOI contribution is on file;\npass ` + "`" + `?force_arxiv=1` + "`" + ` to opt out per request (DOI input\nwith force_arxiv + no arxiv twin returns 409). See\ndocs/server/upload-api.md §Canonical resolution.\n\nLong-running operation semantics: on cache miss the\nserver may transparently fetch the PDF from arxiv.org\n(silent_fetch) — or, for a DOI without an arXiv twin,\nfrom the open-access PDF URL OpenAlex surfaces\n(best_oa_location.pdf_url) — and trigger a MinerU\nconversion. The first call returns 202 with\n` + "`" + `Operation-Location:\n/api/papers/{id}/markdown/status` + "`" + ` and ` + "`" + `Retry-After: 5` + "`" + `;\nclients poll the status endpoint until state=cached then\nre-GET this resource for the bytes. A DOI with no arXiv\ntwin and no OA PDF stays 404 (contribute the PDF via\nPOST /api/papers/{doi}/upload-pdf).\n\nTransport (ADR 0011): markdown DEFAULTS to a byte stream\n(text/markdown). Pass ` + "`" + `?format=link` + "`" + ` to instead receive a\nJSON body with a short-lived RustFS direct link\n(` + "`" + `{markdown_url, format:\"link\", expires_in}` + "`" + `); on a backend\nthat cannot presign (dev LocalStore) a link request\ntransparently falls back to bytes.",
                 "produces": [
                     "text/plain"
                 ],
@@ -1078,7 +1174,7 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "DOI not in OpenAlex / not on arxiv; or paper unknown and silent fetch unavailable",
+                        "description": "DOI unknown to OpenAlex / no arXiv twin and no OA PDF (contrib upload possible); or paper unknown and silent fetch unavailable",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -1192,14 +1288,14 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns the cached PDF (application/pdf) for the given\narxiv id or DOI. Only registered when\nQATLAS_PAPER_ACCESS_ENABLED=true on the server.\n\nCanonical resolution: a DOI contribution ALWAYS wins\nover its arxiv twin when both exist — the dispatcher\nserves the DOI PDF for either id form. Pass\n` + "`" + `?force_arxiv=1` + "`" + ` to opt out per request (DOI input\nwithout an arxiv twin then returns 409). See\ndocs/server/upload-api.md §Canonical resolution.\n\nLong-running operation semantics mirror /markdown: cache\nmiss returns 202 with Operation-Location pointing at\n/pdf/status. The fetch path uses a separate semaphore\nfrom MinerU conversion (QATLAS_ARXIV_FETCH_CONCURRENT)\nand a polite-pool rate limiter (QATLAS_ARXIV_FETCH_RPS).\n\nTransport (ADR 0011): the PDF is the original paper, so it\nDEFAULTS to a RustFS direct link — a JSON body with a\nshort-lived presigned URL (` + "`" + `{pdf_url, format:\"link\",\nexpires_in}` + "`" + `) served from the configured RustFS public\nendpoint, keeping qatlasd out of the large-binary path.\nPass ` + "`" + `?format=bytes` + "`" + ` to stream application/pdf through the\nserver instead; on a backend that cannot presign (dev\nLocalStore) the link default falls back to bytes.",
+                "description": "PDF delivery is disabled. This endpoint no longer\nserves PDF bytes (or direct links) in any state: it\nvalidates the id and always returns 410 Gone with\n` + "`" + `{\"detail\": \"PDF delivery is disabled; use the markdown\nendpoint instead\"}` + "`" + `. Use\n/api/papers/{id_or_doi}/markdown instead. Only\nregistered when QATLAS_PAPER_ACCESS_ENABLED=true on the\nserver.",
                 "produces": [
-                    "application/pdf"
+                    "application/json"
                 ],
                 "tags": [
                     "Papers"
                 ],
-                "summary": "Get paper PDF",
+                "summary": "Get paper PDF (disabled — 410 Gone)",
                 "parameters": [
                     {
                         "type": "string",
@@ -1213,29 +1309,9 @@ const docTemplate = `{
                         "description": "1/true: bypass DOI-canonical default; return 409 if DOI has no arxiv twin",
                         "name": "force_arxiv",
                         "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "link|bytes — override the default transport (PDF defaults to link)",
-                        "name": "format",
-                        "in": "query"
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "a JSON {pdf_url} RustFS direct link by default, or PDF bytes (application/pdf) when ?format=bytes",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "202": {
-                        "description": "silent fetch started; poll status_url",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
                     "400": {
                         "description": "invalid arxiv_id or DOI",
                         "schema": {
@@ -1263,13 +1339,6 @@ const docTemplate = `{
                             }
                         }
                     },
-                    "404": {
-                        "description": "arxiv 404 or DOI not on arxiv",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
                     "409": {
                         "description": "force_arxiv requested but DOI has no arxiv twin",
                         "schema": {
@@ -1277,15 +1346,24 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
+                    "410": {
+                        "description": "PDF delivery is disabled; use the markdown endpoint instead",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
                     "502": {
-                        "description": "arxiv upstream error / OpenAlex upstream error",
+                        "description": "OpenAlex upstream error (DOI dispatch)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
                     },
                     "503": {
-                        "description": "silent fetch disabled (no fetcher), DOI resolution unavailable",
+                        "description": "DOI resolution unavailable",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -1301,7 +1379,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Side-effect-free poll surface for /pdf. Same shape as\n/markdown/status but states are restricted to the\nfetch-only flow — no convert phase. Only registered when\nQATLAS_PAPER_ACCESS_ENABLED=true.\n\nCanonical resolution: same DOI-wins rule as\n/api/papers/{id_or_doi}/pdf. Pass ` + "`" + `?force_arxiv=1` + "`" + ` to\nquery the arxiv-side status instead.",
+                "description": "Side-effect-free probe reporting the pdf_ready /\nmd_ready booleans for a paper. Retained for debugging\nafter PDF delivery was disabled (GET .../pdf answers\n410 Gone); the body no longer carries a pdf_url. Only\nregistered when QATLAS_PAPER_ACCESS_ENABLED=true.\n\nCanonical resolution: same DOI-wins rule as\n/api/papers/{id_or_doi}/markdown. Pass ` + "`" + `?force_arxiv=1` + "`" + `\nto query the arxiv-side status instead.",
                 "produces": [
                     "application/json"
                 ],

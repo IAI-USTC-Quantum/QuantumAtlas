@@ -69,8 +69,9 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
 | `DELETE` | `/api/papers/{arxiv_id}/mineru-claim/{claim_id}` | `papers:write` | 释放 MinerU lease |
 | `GET` | `/api/papers/{id_or_doi}/markdown` | `papers:read` | **PAPER_ACCESS** · 默认返回缓存的 markdown **字节流**（`text/markdown`）；`?format=link` 改为返回 JSON `{markdown_url}` RustFS 直链。未命中走 LRO：202 → 后台 silent fetch PDF + MinerU convert → poll 后再 GET 200 |
 | `GET` | `/api/papers/{id_or_doi}/markdown/status` | `papers:read` | **PAPER_ACCESS** · side-effect-free 进度查询；body 含 `state` / `phase` / `pdf_ready` / `md_ready` / `fetch.*` / `convert.*` |
-| `GET` | `/api/papers/{id_or_doi}/pdf` | `papers:read` | **PAPER_ACCESS** · 默认返回 **RustFS 直链** JSON `{pdf_url, format:"link", expires_in}`（从 `QATLAS_S3_PUBLIC_ENDPOINT` presign，服务端不代理大二进制）；`?format=bytes` 改为串 `application/pdf` 字节流。未命中走 LRO：202 → 后台 silent fetch PDF → poll。**不**触发 MinerU（ADR 0011）|
-| `GET` | `/api/papers/{id_or_doi}/pdf/status` | `papers:read` | **PAPER_ACCESS** · `/pdf` 的 side-effect-free 进度查询；状态机比 markdown 少 convert 阶段 |
+| `GET` | `/api/papers/{id_or_doi}/pdf` | `papers:read` | **已停用（410 Gone）** · PDF 不再对终端用户交付；请改用 `/markdown`。PDF 仍作为内部资产为 MinerU 转换与贡献者 lease 保留 |
+| `GET` | `/api/papers/{id_or_doi}/pdf/status` | `papers:read` | **PAPER_ACCESS** · 内部抓取管线的 side-effect-free 进度查询；状态机比 markdown 少 convert 阶段；body 不再含 `pdf_url` |
+| `GET` | `/api/papers/{id_or_doi}/images/zip` | `papers:read` | **PAPER_ACCESS** · 显式获取 MinerU 产出的图片 zip：默认流 `application/zip` 字节；`?format=link` 返回 JSON `{images_url, format:"link", expires_in}` 直链。无 LRO——图片由 `/markdown` 端点的转换流程产生，无资产时 404 并提示先取 markdown |
 
 > `papers:write` 隐式含 `papers:read`。
 >
@@ -229,10 +230,8 @@ GET /md ── miss ──┬→ queued ──→ fetching ──→ converting 
                          phase ∈ {error_fetching, error_converting})              │
                   └→ not_in_arxiv (404)                                            │
 
-GET /pdf ── miss ──┬→ queued ──→ fetching ──→ done ───────────────────────────────┤
-                  │   (silent fetch only; no MinerU)                              │
-                  └→ failed(retryable | fatal, phase=error_fetching)              │
-                  └→ not_in_arxiv (404)                                            │
+注：PDF 抓取仍是上述管线的第一阶段（内部资产）；对外的 GET /pdf 已停用
+（410 Gone），不再有独立的 PDF 状态机对外暴露。
 ```
 
 #### 触发 GET（202 / 200 / 404）
@@ -281,22 +280,22 @@ Retry-After: 5
 
 | 资产 | 默认 | 复写 | 说明 |
 |---|---|---|---|
-| `pdf` | **直链** | `?format=bytes` | PDF 是大二进制，默认给 `QATLAS_S3_PUBLIC_ENDPOINT` presign 出的 RustFS 直链，服务端不代理字节 |
 | `markdown` | **字节流** | `?format=link` | MinerU 派生的小文本，默认内联串出 |
+| `images/zip` | **字节流** | `?format=link` | MinerU 产出的图片打包 zip，显式请求才返回 |
 
 后端无法 presign（dev 的 `LocalStore`）时，`link` 请求自动回落字节流。直链响应形如：
 
 ```bash
-curl -i https://<server>/api/papers/quant-ph/9508027v2/pdf \
+curl -i "https://<server>/api/papers/quant-ph/9508027v2/markdown?format=link" \
      -H "Authorization: ******"
 
 HTTP/1.1 200 OK
 Content-Type: application/json
 {
-  "arxiv_id":   "quant-ph/9508027v2",
-  "format":     "link",
-  "pdf_url":    "https://raw.quantum-atlas.ai/qatlas-pdf/9508/9508027v2.pdf?X-Amz-…",
-  "expires_in": 86400
+  "arxiv_id":     "quant-ph/9508027v2",
+  "format":       "link",
+  "markdown_url": "https://raw.quantum-atlas.ai/qatlas-pdf/9508/9508027v2.md?X-Amz-…",
+  "expires_in":   86400
 }
 ```
 
@@ -368,7 +367,7 @@ curl https://<server>/api/papers/quant-ph/9508027v2/markdown/status \
   }
 }
 
-// MinerU 配额耗尽（PDF 还在！agent 可改请 /pdf 拿原文）
+// MinerU 配额耗尽（PDF 已抓取但不再对外交付；等配额恢复后取 markdown）
 {
   "arxiv_id": "quant-ph/9508027v2",
   "state":   "cooldown",
@@ -396,14 +395,14 @@ curl https://<server>/api/papers/quant-ph/9508027v2/markdown/status \
 #### Agent 决策三元组
 
 任何 status 响应都带 `state` + `pdf_ready` + `md_ready`，从这三个字段即可
-判断「该不该等」「等什么」「能不能改要 /pdf 兜底」：
+判断「该不该等」「等什么」：
 
 | `state` | `pdf_ready` | `md_ready` | agent 行动 |
 |---|---|---|---|
 | `cached` | ✅ | ✅ | 直接 GET 资源拿字节 |
 | `queued` / `running` | ✗ | ✗ | 等 `Retry-After`，再 poll |
-| `running` | ✅ | ✗ | 等 MinerU 收尾；如需立即用 PDF 可改 GET `/pdf`（命中即返 200）|
-| `cooldown` | ✅ | ✗ | 到 `retry_after_iso` 之前不再 poll；改 GET `/pdf` 仍能拿到原文 |
+| `running` | ✅ | ✗ | 等 MinerU 收尾，之后 GET `/markdown` |
+| `cooldown` | ✅ | ✗ | 到 `retry_after_iso` 之前不再 poll |
 | `failed` `kind=fatal` | ✗ | ✗ | 永久失败，放弃 |
 | `failed` `kind=retryable` | ✗ / ✅ | ✗ | 到 `retry_after_iso` 后重试 |
 

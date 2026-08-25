@@ -23,10 +23,20 @@ type Work struct {
 	DOI             string       `json:"doi"` // "https://doi.org/10.7717/peerj.4375"
 	Title           string       `json:"title"`
 	PublicationDate string       `json:"publication_date"`
+	OpenAccess      OpenAccess   `json:"open_access"`
+	BestOALocation  *Location    `json:"best_oa_location"`
 	Locations       []Location   `json:"locations"`
 	Authorships     []Authorship `json:"authorships"`
 	ReferencedWorks []string     `json:"referenced_works"`
 	CitedByCount    int          `json:"cited_by_count"`
+}
+
+// OpenAccess is the Work's open_access block. OAURL is the best free
+// full-text URL OpenAlex knows (often a landing page, not necessarily a
+// PDF); BestOALocation.PDFURL is the direct PDF when one exists.
+type OpenAccess struct {
+	IsOA  bool   `json:"is_oa"`
+	OAURL string `json:"oa_url"`
 }
 
 // Location is one OpenAlex location (landing page / pdf host). arxiv ids
@@ -102,6 +112,29 @@ func arxivIDFromURL(u string) string {
 	// m[1] is the id body, m[2] the optional version — drop version for
 	// the canonical id (matches paperassets.StripVersion semantics).
 	return paperassets.StripVersion(m[1])
+}
+
+// ExtractOAPdfURL returns the best direct open-access PDF URL for a
+// Work, or "" when OpenAlex knows none. Preference order:
+//
+//  1. best_oa_location.pdf_url — OpenAlex's curated pick (publisher or
+//     repository PDF for the Version of Record);
+//  2. the first non-empty locations[*].pdf_url.
+//
+// The URL is NOT guaranteed to be a PDF byte stream (a publisher may
+// gate or interstitial it); the fetch layer's %PDF- magic check is the
+// final arbiter. Used by the DOI fetch pipeline when the work has no
+// arXiv twin.
+func ExtractOAPdfURL(w Work) string {
+	if w.BestOALocation != nil && w.BestOALocation.PDFURL != "" {
+		return w.BestOALocation.PDFURL
+	}
+	for _, loc := range w.Locations {
+		if loc.PDFURL != "" {
+			return loc.PDFURL
+		}
+	}
+	return ""
 }
 
 // shortID strips the OpenAlex URL prefix from a W/A/S/T id, leaving the

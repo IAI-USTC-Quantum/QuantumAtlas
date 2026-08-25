@@ -116,7 +116,7 @@ func TestActionLabel(t *testing.T) {
 		{"markdown", "", "markdown"},
 		{"status", "pdf", "pdf/status"},
 		{"status", "markdown", "markdown/status"},
-		{"", "", "pdf"}, // fallback when caller passed neither
+		{"", "", "markdown"}, // fallback when caller passed neither (never the disabled /pdf endpoint)
 	}
 	for _, c := range cases {
 		got := actionLabel(c.action, c.statusKind)
@@ -170,7 +170,7 @@ func TestDispatchGETDOIHandlersStatusAction(t *testing.T) {
 	)
 
 	cfg := &config.Config{}
-	if err := dispatchGETDOIHandlers(re, cfg, canonicalNoopStore{}, nil, doi, "status", "", doi+"/status"); err != nil {
+	if err := dispatchGETDOIHandlers(re, cfg, canonicalNoopStore{}, nil, doi, "status", "", doi+"/status", ""); err != nil {
 		t.Fatalf("handler: %v", err)
 	}
 	if rec.Code != http.StatusOK {
@@ -190,7 +190,7 @@ func TestDispatchGETDOIHandlersUnknownAction(t *testing.T) {
 	)
 
 	cfg := &config.Config{}
-	if err := dispatchGETDOIHandlers(re, cfg, canonicalNoopStore{}, nil, doi, "totally-unknown", "", doi+"/totally-unknown"); err != nil {
+	if err := dispatchGETDOIHandlers(re, cfg, canonicalNoopStore{}, nil, doi, "totally-unknown", "", doi+"/totally-unknown", ""); err != nil {
 		t.Fatalf("handler: %v", err)
 	}
 	if rec.Code != http.StatusNotFound {

@@ -28,6 +28,11 @@ var (
 	ErrDailyLimit = errors.New("mineru: daily submission limit reached")
 	// ErrFatal is the sentinel for non-retryable failures (bad token, bad PDF, etc.).
 	ErrFatal = errors.New("mineru: fatal non-retryable error")
+	// ErrNoDOISource marks the DOI fetch path's "nothing to fetch"
+	// outcome: no PDF bytes in the store for the DOI and no open-access
+	// PDF URL from OpenAlex. The handler maps it to 404 (with a contrib
+	// upload hint) rather than 502. classifyFailure treats it as fatal.
+	ErrNoDOISource = errors.New("no PDF in store for DOI and no open-access PDF URL to fetch")
 )
 
 // retryableErrorCodes are MinerU `code` values that indicate a transient

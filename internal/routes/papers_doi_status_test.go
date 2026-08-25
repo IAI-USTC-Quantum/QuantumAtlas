@@ -128,7 +128,7 @@ func TestMarkdownStatusByDOIHandler_Cached(t *testing.T) {
 	store := &statMockStore{present: map[string]bool{mdKey: true, pdfKey: true}}
 
 	re, rec := mustDOIStatusReq(t, doi, "markdown")
-	if err := markdownStatusByDOIHandler(re, store, doi); err != nil {
+	if err := markdownStatusByDOIHandler(re, store, nil, doi); err != nil {
 		t.Fatalf("handler: %v", err)
 	}
 	if rec.Code != http.StatusOK {
@@ -167,7 +167,7 @@ func TestMarkdownStatusByDOIHandler_Missing(t *testing.T) {
 	store := &statMockStore{present: map[string]bool{pdfKey: true}}
 
 	re, rec := mustDOIStatusReq(t, doi, "markdown")
-	if err := markdownStatusByDOIHandler(re, store, doi); err != nil {
+	if err := markdownStatusByDOIHandler(re, store, nil, doi); err != nil {
 		t.Fatalf("handler: %v", err)
 	}
 	if rec.Code != http.StatusOK {
@@ -207,8 +207,13 @@ func TestPDFStatusByDOIHandler_Cached(t *testing.T) {
 	if body["state"] != "cached" {
 		t.Errorf("body.state = %v, want cached", body["state"])
 	}
-	if got := body["pdf_url"]; got != "/api/papers/"+doi+"/pdf" {
-		t.Errorf("body.pdf_url = %v, want /api/papers/<doi>/pdf", got)
+	// PDF delivery is disabled (plan §B): the status probe keeps only
+	// the pdf_ready/md_ready booleans — no pdf_url pointer.
+	if _, has := body["pdf_url"]; has {
+		t.Errorf("body.pdf_url must be absent (PDF delivery disabled); body = %+v", body)
+	}
+	if pdfReady, _ := body["pdf_ready"].(bool); !pdfReady {
+		t.Errorf("body.pdf_ready = %v, want true", body["pdf_ready"])
 	}
 }
 
@@ -222,7 +227,7 @@ func TestStatusByDOIHandlerRejectsBadDOI(t *testing.T) {
 		re.Response = rec
 		var err error
 		if kind == "markdown" {
-			err = markdownStatusByDOIHandler(re, store, "not-a-doi")
+			err = markdownStatusByDOIHandler(re, store, nil, "not-a-doi")
 		} else {
 			err = pdfStatusByDOIHandler(re, store, "not-a-doi")
 		}

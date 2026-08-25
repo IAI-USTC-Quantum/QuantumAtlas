@@ -92,7 +92,7 @@ qatlas config show
 # ...
 
 # 之后任何 qatlas 子命令直接跑
-qatlas paper get pdf 2501.00010v1 -o paper.pdf
+qatlas paper get markdown 2501.00010v1 -o paper.md
 qatlas contrib mineru --batch-size 3
 ```
 
@@ -192,8 +192,10 @@ qatlas contrib mineru --watch [--watch-interval N]  # 守护循环
 
 ```
 qatlas paper get markdown ID_OR_DOI [--output FILE | --no-wait]
-qatlas paper get pdf      ID_OR_DOI [--output FILE | --no-wait]
-qatlas paper status       ID_OR_DOI [--kind markdown|pdf]
+qatlas paper get images   ID_OR_DOI [--output FILE]   # MinerU 图片 zip（显式获取）
+qatlas paper status       ID_OR_DOI [--kind markdown]
+
+# 注：PDF 交付已在服务端停用（GET /pdf → 410），用户侧始终拿 MinerU markdown
 ```
 
 #### ID 形态（server 自动归一）

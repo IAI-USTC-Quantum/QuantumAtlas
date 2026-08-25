@@ -238,9 +238,11 @@ func docPaperLookup() {}
 
 // paperResources stanzas were removed in v0.9.0 — the server no longer
 // serves PDF or image bytes outbound by default. paperMarkdown /
-// paperMarkdownStatus / paperPDF / paperPDFStatus are conditional on
-// QATLAS_PAPER_ACCESS_ENABLED=true (default off). See the
-// RegisterPapers doc comment for the compliance rationale.
+// paperMarkdownStatus / paperPDF / paperPDFStatus / paperImagesZip are
+// conditional on QATLAS_PAPER_ACCESS_ENABLED=true (default off). The
+// /pdf endpoint itself now always answers 410 Gone (PDF delivery
+// disabled, plan §B); only its side-effect-free status probe remains.
+// See the RegisterPapers doc comment for the compliance rationale.
 
 // paperMarkdown serves the cached markdown bytes for a paper.
 //
@@ -262,11 +264,16 @@ func docPaperLookup() {}
 // @Description
 // @Description Long-running operation semantics: on cache miss the
 // @Description server may transparently fetch the PDF from arxiv.org
-// @Description (silent_fetch) and trigger a MinerU conversion. The
-// @Description first call returns 202 with `Operation-Location:
+// @Description (silent_fetch) — or, for a DOI without an arXiv twin,
+// @Description from the open-access PDF URL OpenAlex surfaces
+// @Description (best_oa_location.pdf_url) — and trigger a MinerU
+// @Description conversion. The first call returns 202 with
+// @Description `Operation-Location:
 // @Description /api/papers/{id}/markdown/status` and `Retry-After: 5`;
 // @Description clients poll the status endpoint until state=cached then
-// @Description re-GET this resource for the bytes.
+// @Description re-GET this resource for the bytes. A DOI with no arXiv
+// @Description twin and no OA PDF stays 404 (contribute the PDF via
+// @Description POST /api/papers/{doi}/upload-pdf).
 // @Description
 // @Description Transport (ADR 0011): markdown DEFAULTS to a byte stream
 // @Description (text/markdown). Pass `?format=link` to instead receive a
@@ -285,7 +292,7 @@ func docPaperLookup() {}
 // @Failure     400 {object} map[string]string "invalid arxiv_id or DOI"
 // @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string
-// @Failure     404 {object} map[string]interface{} "DOI not in OpenAlex / not on arxiv; or paper unknown and silent fetch unavailable"
+// @Failure     404 {object} map[string]interface{} "DOI unknown to OpenAlex / no arXiv twin and no OA PDF (contrib upload possible); or paper unknown and silent fetch unavailable"
 // @Failure     409 {object} map[string]interface{} "force_arxiv requested but DOI has no arxiv twin"
 // @Failure     502 {object} map[string]interface{} "prior conversion failed inside the cooldown window, or OpenAlex upstream error"
 // @Failure     503 {object} map[string]interface{} "cache-only mode (no MinerU keys), or DOI resolution unavailable (QATLAS_OPENALEX_MAILTO unset)"
@@ -322,64 +329,45 @@ func docPaperMarkdown() {}
 // @Router      /api/papers/{id_or_doi}/markdown/status [get]
 func docPaperMarkdownStatus() {}
 
-// paperPDF serves the cached PDF bytes for a paper, with silent
-// fetch from arxiv.org on cache miss.
+// paperPDF is disabled: PDF delivery was turned off in favour of the
+// markdown endpoint, so the route now always answers 410 Gone.
 //
-// @Summary     Get paper PDF
-// @Description Returns the cached PDF (application/pdf) for the given
-// @Description arxiv id or DOI. Only registered when
-// @Description QATLAS_PAPER_ACCESS_ENABLED=true on the server.
-// @Description
-// @Description Canonical resolution: a DOI contribution ALWAYS wins
-// @Description over its arxiv twin when both exist — the dispatcher
-// @Description serves the DOI PDF for either id form. Pass
-// @Description `?force_arxiv=1` to opt out per request (DOI input
-// @Description without an arxiv twin then returns 409). See
-// @Description docs/server/upload-api.md §Canonical resolution.
-// @Description
-// @Description Long-running operation semantics mirror /markdown: cache
-// @Description miss returns 202 with Operation-Location pointing at
-// @Description /pdf/status. The fetch path uses a separate semaphore
-// @Description from MinerU conversion (QATLAS_ARXIV_FETCH_CONCURRENT)
-// @Description and a polite-pool rate limiter (QATLAS_ARXIV_FETCH_RPS).
-// @Description
-// @Description Transport (ADR 0011): the PDF is the original paper, so it
-// @Description DEFAULTS to a RustFS direct link — a JSON body with a
-// @Description short-lived presigned URL (`{pdf_url, format:"link",
-// @Description expires_in}`) served from the configured RustFS public
-// @Description endpoint, keeping qatlasd out of the large-binary path.
-// @Description Pass `?format=bytes` to stream application/pdf through the
-// @Description server instead; on a backend that cannot presign (dev
-// @Description LocalStore) the link default falls back to bytes.
+// @Summary     Get paper PDF (disabled — 410 Gone)
+// @Description PDF delivery is disabled. This endpoint no longer
+// @Description serves PDF bytes (or direct links) in any state: it
+// @Description validates the id and always returns 410 Gone with
+// @Description `{"detail": "PDF delivery is disabled; use the markdown
+// @Description endpoint instead"}`. Use
+// @Description /api/papers/{id_or_doi}/markdown instead. Only
+// @Description registered when QATLAS_PAPER_ACCESS_ENABLED=true on the
+// @Description server.
 // @Tags        Papers
-// @Produce     application/pdf
+// @Produce     json
 // @Security    BearerAuth
 // @Param       id_or_doi path string true "arXiv canonical id with vN suffix, or a DOI"
 // @Param       force_arxiv query string false "1/true: bypass DOI-canonical default; return 409 if DOI has no arxiv twin"
-// @Param       format query string false "link|bytes — override the default transport (PDF defaults to link)"
-// @Success     200 {object} map[string]interface{} "a JSON {pdf_url} RustFS direct link by default, or PDF bytes (application/pdf) when ?format=bytes"
-// @Success     202 {object} map[string]interface{} "silent fetch started; poll status_url"
+// @Success     410 {object} map[string]string "PDF delivery is disabled; use the markdown endpoint instead"
 // @Failure     400 {object} map[string]string "invalid arxiv_id or DOI"
 // @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string
-// @Failure     404 {object} map[string]interface{} "arxiv 404 or DOI not on arxiv"
 // @Failure     409 {object} map[string]interface{} "force_arxiv requested but DOI has no arxiv twin"
-// @Failure     502 {object} map[string]interface{} "arxiv upstream error / OpenAlex upstream error"
-// @Failure     503 {object} map[string]interface{} "silent fetch disabled (no fetcher), DOI resolution unavailable"
+// @Failure     502 {object} map[string]interface{} "OpenAlex upstream error (DOI dispatch)"
+// @Failure     503 {object} map[string]interface{} "DOI resolution unavailable"
 // @Router      /api/papers/{id_or_doi}/pdf [get]
 func docPaperPDF() {}
 
 // paperPDFStatus reports current PDF / fetch state.
 //
 // @Summary     Get PDF fetch status
-// @Description Side-effect-free poll surface for /pdf. Same shape as
-// @Description /markdown/status but states are restricted to the
-// @Description fetch-only flow — no convert phase. Only registered when
-// @Description QATLAS_PAPER_ACCESS_ENABLED=true.
+// @Description Side-effect-free probe reporting the pdf_ready /
+// @Description md_ready booleans for a paper. Retained for debugging
+// @Description after PDF delivery was disabled (GET .../pdf answers
+// @Description 410 Gone); the body no longer carries a pdf_url. Only
+// @Description registered when QATLAS_PAPER_ACCESS_ENABLED=true.
 // @Description
 // @Description Canonical resolution: same DOI-wins rule as
-// @Description /api/papers/{id_or_doi}/pdf. Pass `?force_arxiv=1` to
-// @Description query the arxiv-side status instead.
+// @Description /api/papers/{id_or_doi}/markdown. Pass `?force_arxiv=1`
+// @Description to query the arxiv-side status instead.
 // @Tags        Papers
 // @Produce     json
 // @Security    BearerAuth
@@ -391,6 +379,47 @@ func docPaperPDF() {}
 // @Failure     403 {object} map[string]string
 // @Router      /api/papers/{id_or_doi}/pdf/status [get]
 func docPaperPDFStatus() {}
+
+// paperImagesZip downloads the paper's images bundle (one zip produced
+// by the MinerU conversion).
+//
+// @Summary     Get paper images zip
+// @Description Returns the images zip (application/zip) for the given
+// @Description arxiv id or DOI — the bundle the MinerU conversion
+// @Description produced alongside the markdown. Only registered when
+// @Description QATLAS_PAPER_ACCESS_ENABLED=true on the server.
+// @Description
+// @Description Canonical resolution: same DOI-wins rule as
+// @Description /api/papers/{id_or_doi}/markdown; pass `?force_arxiv=1`
+// @Description to opt out per request.
+// @Description
+// @Description This endpoint has no long-running-operation semantics:
+// @Description when no images zip is stored it answers 404 (fetch
+// @Description /markdown first to trigger the conversion that produces
+// @Description the images).
+// @Description
+// @Description Transport (ADR 0011): defaults to a byte stream
+// @Description (application/zip). Pass `?format=link` to instead
+// @Description receive a JSON body with a short-lived RustFS direct
+// @Description link (`{images_url, format:"link", expires_in}`); on a
+// @Description backend that cannot presign (dev LocalStore) a link
+// @Description request transparently falls back to bytes. Any other
+// @Description ?format= value is a 400.
+// @Tags        Papers
+// @Produce     application/zip
+// @Security    BearerAuth
+// @Param       id_or_doi path string true "arXiv canonical id with vN suffix, or a DOI"
+// @Param       force_arxiv query string false "1/true: bypass DOI-canonical default; return 409 if DOI has no arxiv twin"
+// @Param       format query string false "link|bytes — override the default transport (images zip defaults to bytes)"
+// @Success     200 {string} string "images zip bytes (application/zip), or a JSON {images_url} when ?format=link"
+// @Failure     400 {object} map[string]string "invalid arxiv_id or DOI, or invalid ?format= value"
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Failure     404 {object} map[string]string "no images available (fetch /markdown first to trigger conversion)"
+// @Failure     409 {object} map[string]interface{} "force_arxiv requested but DOI has no arxiv twin"
+// @Failure     503 {object} map[string]interface{} "DOI resolution unavailable"
+// @Router      /api/papers/{id_or_doi}/images/zip [get]
+func docPaperImagesZip() {}
 
 // uploadPDF stores a paper PDF.
 //

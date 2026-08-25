@@ -222,7 +222,7 @@ qatlas auth status
 qatlas auth login -s quantum-atlas.ai --scopes papers:write --expires-days 90
 
 # 验证新 PAT
-qatlas paper status 2501.00010v1 --kind pdf   # 应该正常返回
+qatlas paper status 2501.00010v1 --kind markdown   # 应该正常返回
 # 旧 PAT 上 /pat 页面 revoke
 ```
 

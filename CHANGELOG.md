@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### BREAKING CHANGE
 
+- **PDF delivery to end users is disabled.** `GET /api/papers/{id_or_doi}/pdf` now returns `410 Gone` for both arXiv and DOI forms; users always receive the MinerU-converted markdown (`/markdown`). Status payloads no longer embed `pdf_url` (the `pdf_ready` flag stays). PDFs remain as internal assets for the MinerU pipeline and the contributor lease. Images are delivered only on explicit request via the new `GET /api/papers/{id_or_doi}/images/zip` endpoint.
 - **Project repositioned to "paper collection + multi-paradigm search + registry database".** The wiki, Neo4j knowledge-graph, and circuit toolchain subsystems are removed, and PostgreSQL is now a core requirement for the paper registry.
 - **Removed: wiki subsystem.** Wiki pages, `QATLAS_WIKI_DIR`, `qatlas wiki` CLI, `/api/wiki/*`, `/api/pages`, wiki PAT scopes (`wiki:read` / `wiki:write`), and the QuantumAtlas-Wiki git sync flow are gone.
 - **Removed: Neo4j knowledge graph.** All `NEO4J_*` env vars, `/api/graph/*` endpoints, `graph:read` scope, and the graph plugin are gone. Relationship queries are served by the PostgreSQL paper registry + OpenAlex corpus instead.
@@ -20,6 +21,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Feat
 
+- **papers**: DOI fetch for papers outside the system — OpenAlex resolution now falls back to `best_oa_location` / OA location PDFs when no arXiv twin exists; `GET /api/papers/{doi}/markdown` silently fetches the OA PDF and drives MinerU (202 LRO), with `QATLAS_TEST_LIVE=1`-gated live tests covering in-system / arXiv-twin / publisher-only-OA / invalid DOI cases.
+- **papers**: `GET /api/papers/{id_or_doi}/images/zip` — explicit delivery of the MinerU images zip (`?format=bytes|link`).
 - **search**: multi-provider search engine behind `POST /api/search`; provider fan-out list via `QATLAS_SEARCH_PROVIDERS` (default `catalog,arxiv,openalex`, optional `qdrant` semantic retrieval).
 - **search**: local agentic backend for `POST /api/search/agentic` — `search.agentic.backend: local` drives the host's OAuth-logged-in `claude` CLI (headless `claude -p`) inside per-request sandbox directories (raw hits in, standardized `RemoteResponse` out; janitor reaps sandboxes after `search.agentic.local.retention`, default 24h). `agent: false` reuses the same endpoint and response shape without invoking claude.
 - **ingest**: lazy ingestion — cache misses on paper assets are fetched/converted asynchronously server-side with dedupe and LRO status polling.
@@ -28,6 +31,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Refactor
 
 - **deploy/docs**: compose templates, Dockerfile (dropped `/data/wiki` volume), `.env` templates, README, and the docs site updated to the new positioning; wiki / graph / codegen / RAG-endpoint documentation pages deleted.
+- **release**: decoupled qatlasd versioning from the `quantum-atlas` PyPI package. The root `VERSION` file plus the pushed `v*` tag is now qatlasd's single source of truth — `release.yml` prep validates the tag against `VERSION` instead of `pyproject.toml`. `qatlas-cli` (separate repo) versions independently; the client/server compatibility contract is "same `(major, minor)` ⇒ compatible" with compatibility fixes only ever bumping the patch component. The `quantum-atlas` PyPI package keeps its own commitizen-driven cadence.
 
 ## v0.21.0a3 (2026-07-03)
 

@@ -55,8 +55,8 @@ func TestResolveDOI_Success(t *testing.T) {
 	}
 	// ExtractArxivID strips version → "0811.3171" (the test stub uses
 	// the abs URL without vN). The router accepts work-level granularity.
-	if got != "0811.3171" {
-		t.Errorf("got %q, want %q", got, "0811.3171")
+	if got.ArxivID != "0811.3171" {
+		t.Errorf("got %q, want %q", got.ArxivID, "0811.3171")
 	}
 }
 
@@ -89,7 +89,7 @@ func TestResolveDOI_NotFound(t *testing.T) {
 }
 
 // TestResolveDOI_NoArxivPresence: OpenAlex 200 but no arxiv landing
-// URL → ErrDOINotFound (caller treats as "no arxiv version").
+// URL and no OA PDF → ErrDOINotFound (nothing fetchable).
 func TestResolveDOI_NoArxivPresence(t *testing.T) {
 	t.Parallel()
 	srv := stubOpenAlex(t, func(w http.ResponseWriter, r *http.Request) {
@@ -102,6 +102,129 @@ func TestResolveDOI_NoArxivPresence(t *testing.T) {
 	_, err := r.ResolveDOI(context.Background(), "10.1000/foo")
 	if !errors.Is(err, ErrDOINotFound) {
 		t.Fatalf("err: got %v, want ErrDOINotFound", err)
+	}
+}
+
+// stubBodyOAPdfOnly is a published-only OA work: no arxiv location, but
+// best_oa_location carries a direct publisher PDF. ResolveDOI must NOT
+// fail with ErrDOINotFound — the DOI fetch pipeline uses the OA URL.
+const stubBodyOAPdfOnly = `{
+  "id": "https://openalex.org/W77777",
+  "doi": "https://doi.org/10.1038/s41534-020-00001-0",
+  "title": "An open-access published-only result",
+  "open_access": {"is_oa": true, "oa_url": "https://www.nature.com/articles/s41534-020-00001-0"},
+  "best_oa_location": {
+    "landing_page_url": "https://www.nature.com/articles/s41534-020-00001-0",
+    "pdf_url": "https://www.nature.com/articles/s41534-020-00001-0.pdf"
+  },
+  "locations": [
+    {"landing_page_url": "https://www.nature.com/articles/s41534-020-00001-0", "pdf_url": "https://www.nature.com/articles/s41534-020-00001-0.pdf"}
+  ]
+}`
+
+// TestResolveDOI_OAPdfWithoutArxiv: no arxiv twin but an OA PDF URL →
+// success with ArxivID empty and OAPdfURL populated.
+func TestResolveDOI_OAPdfWithoutArxiv(t *testing.T) {
+	t.Parallel()
+	srv := stubOpenAlex(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(stubBodyOAPdfOnly))
+	})
+	defer srv.Close()
+
+	r := New(Config{Mailto: "ops@example.com", BaseURL: srv.URL + "/works/doi:"})
+	res, err := r.ResolveDOI(context.Background(), "10.1038/s41534-020-00001-0")
+	if err != nil {
+		t.Fatalf("ResolveDOI: %v", err)
+	}
+	if res.ArxivID != "" {
+		t.Errorf("ArxivID = %q, want empty (no arxiv location)", res.ArxivID)
+	}
+	if res.OAPdfURL != "https://www.nature.com/articles/s41534-020-00001-0.pdf" {
+		t.Errorf("OAPdfURL = %q, want the best_oa_location pdf_url", res.OAPdfURL)
+	}
+
+	// Positive cache: a second call must not re-hit upstream and must
+	// return the same resolution (regression guard for the cacheEntry
+	// struct change).
+	res2, err := r.ResolveDOI(context.Background(), "10.1038/s41534-020-00001-0")
+	if err != nil || res2 != res {
+		t.Errorf("cached resolve = %+v, %v; want %+v, nil", res2, err, res)
+	}
+}
+
+// TestResolveDOI_ArxivTwinWins: both an arxiv location AND an OA PDF →
+// both fields populated; the dispatcher prefers the arxiv path.
+func TestResolveDOI_ArxivTwinWins(t *testing.T) {
+	t.Parallel()
+	srv := stubOpenAlex(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+		  "id": "https://openalex.org/W88888",
+		  "doi": "https://doi.org/10.1000/both",
+		  "best_oa_location": {"pdf_url": "https://example.com/oa.pdf"},
+		  "locations": [
+		    {"landing_page_url": "https://arxiv.org/abs/2401.12345", "pdf_url": ""},
+		    {"landing_page_url": "https://example.com/article", "pdf_url": "https://example.com/oa.pdf"}
+		  ]
+		}`))
+	})
+	defer srv.Close()
+
+	r := New(Config{Mailto: "ops@example.com", BaseURL: srv.URL + "/works/doi:"})
+	res, err := r.ResolveDOI(context.Background(), "10.1000/both")
+	if err != nil {
+		t.Fatalf("ResolveDOI: %v", err)
+	}
+	if res.ArxivID != "2401.12345" {
+		t.Errorf("ArxivID = %q, want 2401.12345", res.ArxivID)
+	}
+	if res.OAPdfURL != "https://example.com/oa.pdf" {
+		t.Errorf("OAPdfURL = %q, want https://example.com/oa.pdf", res.OAPdfURL)
+	}
+}
+
+// TestExtractOAPdfURL: preference order and fallbacks of the Work-level
+// helper. best_oa_location wins; locations[*].pdf_url is the fallback;
+// no PDF anywhere → "".
+func TestExtractOAPdfURL(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		work Work
+		want string
+	}{
+		{
+			name: "best_oa_location preferred",
+			work: Work{
+				BestOALocation: &Location{PDFURL: "https://best/oa.pdf"},
+				Locations:      []Location{{PDFURL: "https://other/x.pdf"}},
+			},
+			want: "https://best/oa.pdf",
+		},
+		{
+			name: "locations fallback",
+			work: Work{Locations: []Location{{PDFURL: ""}, {PDFURL: "https://loc/y.pdf"}}},
+			want: "https://loc/y.pdf",
+		},
+		{
+			name: "best_oa_location without pdf falls back",
+			work: Work{
+				BestOALocation: &Location{LandingPageURL: "https://best/landing"},
+				Locations:      []Location{{PDFURL: "https://loc/z.pdf"}},
+			},
+			want: "https://loc/z.pdf",
+		},
+		{
+			name: "none",
+			work: Work{Locations: []Location{{LandingPageURL: "https://closed/access"}}},
+			want: "",
+		},
+	}
+	for _, tc := range cases {
+		if got := ExtractOAPdfURL(tc.work); got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }
 
@@ -303,7 +426,7 @@ func TestResolveDOI_CancellationDoesNotPoisonWaiters(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	errB := make(chan error, 1)
-	resB := make(chan string, 1)
+	resB := make(chan Resolution, 1)
 	go func() {
 		got, e := r.ResolveDOI(context.Background(), "10.1103/poison-check")
 		resB <- got
@@ -324,8 +447,8 @@ func TestResolveDOI_CancellationDoesNotPoisonWaiters(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("caller B never returned")
 	}
-	if got := <-resB; got != "0811.3171" {
-		t.Errorf("caller B got %q; want %q", got, "0811.3171")
+	if got := <-resB; got.ArxivID != "0811.3171" {
+		t.Errorf("caller B got %q; want %q", got.ArxivID, "0811.3171")
 	}
 	// Drain A's result (either nil from cache hit on the in-flight
 	// result, or context.Canceled — both are acceptable for A itself).

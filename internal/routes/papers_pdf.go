@@ -1,11 +1,8 @@
 package routes
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
-	"time"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineru"
@@ -15,63 +12,35 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 )
 
+// pdfGoneDetail is the 410 Gone body shared by the arxiv and DOI pdf
+// handlers.
+const pdfGoneDetail = "PDF delivery is disabled; use the markdown endpoint instead"
+
 // pdfHandler answers GET /api/papers/{arxiv_id}/pdf.
 //
-// Mirrors markdownHandler's long-running-operation shape but skips the
-// MinerU pipeline — this endpoint serves the PDF bytes directly, and
-// on cache miss delegates to converter.EnsurePDF which silent-fetches
-// from arxiv.org (when the operator wired a fetcher) and writes the
-// bytes to the object store under the canonical key.
+// PDF delivery is disabled (plan §B): the endpoint validates the id and
+// always answers 410 Gone, pointing callers at the markdown endpoint.
+// The fetch machinery that used to back this handler
+// (converter.EnsurePDF, retained as an internal asset-preparation path
+// for the conversion pipeline) is no longer reachable from here, and
+// pdfStatusHandler below keeps only the pdf_ready/md_ready debug
+// booleans — no pdf_url.
 //
 // Response codes:
 //
-//   200  ready — default: a RustFS direct-link JSON {pdf_url}; ?format=bytes streams application/pdf
-//   202  fetch in progress — Operation-Location + Retry-After, body
-//        contains decision triple + Phase + Fetch sub-state
 //   400  malformed arxiv id
-//   404  paper not on arxiv (arxiv.ErrNotFound)
-//   500  store read failure
-//   502  fetch failed (upstream / transport / non-PDF body)
-//   503  silent fetch unavailable (converter disabled)
+//   410  always (PDF delivery disabled)
 //
 // Routing: only registered when cfg.PaperAccessEnabled is true. Auth:
 // gated by scopeGuard("papers", "read") at the route layer.
 func pdfHandler(re *core.RequestEvent, cfg *config.Config, store objstore.Store, converter *mineru.Converter, arxivID string) error {
-	canonical, ok := paperassets.ValidateUploadID(arxivID)
-	if !ok {
+	if _, ok := paperassets.ValidateUploadID(arxivID); !ok {
 		return re.JSON(http.StatusBadRequest, map[string]string{
 			"detail": fmt.Sprintf("invalid arxiv_id for pdf: %q (version suffix vN required)", arxivID),
 		})
 	}
-
-	ctx := re.Request.Context()
-	resolution := resolutionFromContext(ctx)
-	applyResolutionHeaders(re.Response, resolution)
-	job := converter.EnsurePDF(ctx, canonical)
-
-	switch job.State {
-	case mineru.JobStateDone:
-		// ADR 0011: PDF defaults to a RustFS direct link (?format=bytes to
-		// stream the bytes through qatlasd instead).
-		return serveReadyAsset(re, store, "pdf", canonical, "link")
-	case mineru.JobStateQueued, mineru.JobStateRunning:
-		re.Response.Header().Set("Operation-Location", fmt.Sprintf("/api/papers/%s/pdf/status", canonical))
-		re.Response.Header().Set("Retry-After", "5")
-		body := snapshotBody(canonical, job)
-		body["detail"] = "PDF not in store; fetching from arxiv.org"
-		body["pdf_ready"] = false
-		body["md_ready"] = false
-		body["operation"] = map[string]any{
-			"status_url":          "/api/papers/" + canonical + "/pdf/status",
-			"next_poll_after_iso": time.Now().Add(5 * time.Second).UTC().Format(time.RFC3339),
-		}
-		embedResolutionInBody(body, resolution)
-		return re.JSON(http.StatusAccepted, body)
-	case mineru.JobStateFailed:
-		return failedPDFResponse(re, converter, canonical, job)
-	}
-	return re.JSON(http.StatusInternalServerError, map[string]string{
-		"detail": "unknown converter job state: " + string(job.State),
+	return re.JSON(http.StatusGone, map[string]string{
+		"detail": pdfGoneDetail,
 	})
 }
 
@@ -99,7 +68,6 @@ func pdfStatusHandler(re *core.RequestEvent, cfg *config.Config, store objstore.
 			"phase":     string(mineru.PhaseReady),
 			"pdf_ready": true,
 			"md_ready":  mdReady,
-			"pdf_url":   "/api/papers/" + canonical + "/pdf",
 		}
 		embedResolutionInBody(body, resolution)
 		return re.JSON(http.StatusOK, body)
@@ -109,19 +77,20 @@ func pdfStatusHandler(re *core.RequestEvent, cfg *config.Config, store objstore.
 		body := snapshotBody(canonical, job)
 		body["pdf_ready"] = job.State == mineru.JobStateDone
 		body["md_ready"] = false
-		// PDF endpoint reports cached only on Done+pdf-present.
+		// PDF status reports cached only on Done+pdf-present.
 		if job.State == mineru.JobStateDone {
 			body["state"] = "cached"
 			body["phase"] = string(mineru.PhaseReady)
-			body["pdf_url"] = "/api/papers/" + canonical + "/pdf"
 		}
 		embedResolutionInBody(body, resolution)
 		return re.JSON(http.StatusOK, body)
 	}
 
-	// No cache, no job — describe whether silent fetch is on the table.
+	// No cache, no job — the /pdf endpoint itself is disabled (410), so
+	// this branch is a pure debug probe: it reports whether the PDF bytes
+	// happen to be in the store, nothing more.
 	state := "none"
-	detail := "no PDF in store, no fetch in flight; GET /api/papers/{id}/pdf will trigger a silent fetch"
+	detail := "no PDF in store; PDF delivery is disabled (GET /api/papers/{id}/pdf returns 410) — use /markdown instead"
 	if !converter.Enabled() {
 		state = "unavailable"
 		detail = converter.DisabledReason()
@@ -136,58 +105,6 @@ func pdfStatusHandler(re *core.RequestEvent, cfg *config.Config, store objstore.
 	}
 	embedResolutionInBody(body, resolution)
 	return re.JSON(http.StatusOK, body)
-}
-
-// failedPDFResponse renders a JSON 4xx/5xx from a failed PDF-fetch
-// Job. Maps the converter's typed errors onto the appropriate HTTP
-// status: not_in_arxiv (ErrNotFound chain) → 404, fetch_disabled
-// (converter disabled / no fetcher) → 503, anything else → 502.
-func failedPDFResponse(re *core.RequestEvent, converter *mineru.Converter, canonical string, job *mineru.Job) error {
-	if !converter.Enabled() || (job.Phase == mineru.PhaseErrorFetching && !converter.FetchEnabled()) {
-		// Two "fetch capability unavailable" cases: converter wholly
-		// disabled, or enabled-but-no-fetcher (token+S3 set, but no
-		// arxiv fetcher). Hint 503 so the agent gives up vs retries,
-		// and distinguishes this from a real 404 "paper gone".
-		detail := converter.DisabledReason()
-		if detail == "" {
-			detail = errString(job.Err)
-		}
-		return re.JSON(http.StatusServiceUnavailable, map[string]any{
-			"arxiv_id":  canonical,
-			"state":     "unavailable",
-			"phase":     string(job.Phase),
-			"pdf_ready": false,
-			"md_ready":  false,
-			"detail":    detail,
-		})
-	}
-
-	status := http.StatusBadGateway
-	detail := "fetch failed: " + errString(job.Err)
-	if errors.Is(job.ErrKind, mineru.ErrFatal) {
-		// Fatal in fetch phase usually means arxiv.ErrNotFound.
-		// Convert to 404 so agents know to give up.
-		status = http.StatusNotFound
-	}
-	body := map[string]any{
-		"arxiv_id":  canonical,
-		"state":     "failed",
-		"phase":     string(job.Phase),
-		"pdf_ready": false,
-		"md_ready":  false,
-		"kind":      jobKindLabel(job.ErrKind),
-		"detail":    detail,
-	}
-	if !job.CooldownUntil.IsZero() {
-		body["retry_after"] = job.CooldownUntil.Unix()
-		body["retry_after_iso"] = job.CooldownUntil.UTC().Format(time.RFC3339)
-		secs := int(time.Until(job.CooldownUntil).Seconds()) + 1
-		if secs < 1 {
-			secs = 1
-		}
-		re.Response.Header().Set("Retry-After", strconv.Itoa(secs))
-	}
-	return re.JSON(status, body)
 }
 
 // sanitizeFilename converts a canonical arxiv id (which may contain

@@ -1,11 +1,12 @@
-// DOI → arxiv_id resolver via OpenAlex's public API.
+// DOI → fetchable-paper resolver via OpenAlex's public API.
 //
 // Used by the paper-access router to accept DOIs in the same
 // `/api/papers/{id_or_doi}/markdown` URL path that already accepts
 // arxiv ids — when the path matches the DOI shape `10.<reg>/<suffix>`
-// the router calls Resolver.ResolveDOI to get the canonical arxiv id
-// and then dispatches to the existing handler. The handler itself
-// stays DOI-agnostic.
+// the router calls Resolver.ResolveDOI and then dispatches on the
+// Resolution: an arXiv twin goes to the arxiv pipeline; a published-only
+// OA work (best_oa_location.pdf_url) goes to the DOI fetch pipeline
+// (mineru.Converter.EnsureByDOI). The handler itself stays DOI-agnostic.
 //
 // This is the v1 implementation per plan §2.3: hit the OpenAlex public
 // API at runtime. A follow-up (issue #11) will swap this for a Neo4j
@@ -72,10 +73,11 @@ var (
 	// control chars). Surfaces as 400 to the client.
 	ErrInvalidDOI = errors.New("openalex: invalid DOI")
 	// ErrDOINotFound is returned when OpenAlex responds 404 OR when
-	// the work has no arxiv presence (locations[*].landing_page_url
-	// contains no arxiv.org link). Fatal — won't change on retry.
-	// Surfaces as 404 to the client.
-	ErrDOINotFound = errors.New("openalex: DOI not found or has no arxiv presence")
+	// the work offers no fetchable full text: no arxiv presence
+	// (locations[*].landing_page_url contains no arxiv.org link) AND no
+	// open-access PDF URL (best_oa_location.pdf_url empty). Fatal —
+	// won't change on retry. Surfaces as 404 to the client.
+	ErrDOINotFound = errors.New("openalex: DOI not found or has no fetchable full text (no arxiv twin, no OA PDF)")
 	// ErrUpstream wraps any transport / 5xx / 429 error after retries
 	// (or zero retries; the resolver doesn't retry by default because
 	// it's blocking the user's request). Surfaces as 502 to the
@@ -146,7 +148,7 @@ type Resolver struct {
 }
 
 type cacheEntry struct {
-	canonical string // empty for negative cache
+	res       Resolution // zero value for negative cache
 	meta      Metadata
 	err       error // ErrDOINotFound when negative
 	expiresAt time.Time
@@ -196,25 +198,43 @@ func New(cfg Config) *Resolver {
 // → every ResolveDOI returns ErrNotConfigured.
 func (r *Resolver) Enabled() bool { return r.enabled }
 
-// ResolveDOI returns the canonical arxiv id (e.g.
-// "quant-ph/0811.3171" or "0811.3171") that OpenAlex associates with
-// doi. Returns ErrDOINotFound when OpenAlex doesn't know the DOI or
-// when the work has no arxiv presence in its locations[]. The
-// returned id has the version suffix STRIPPED (work-level granularity
-// — OpenAlex doesn't track per-version arxiv ids) so callers that
-// need a specific version must resolve "latest" via another path.
-func (r *Resolver) ResolveDOI(ctx context.Context, doi string) (string, error) {
+// Resolution is what a successful ResolveDOI returns. Exactly one of the
+// two fields may be empty:
+//
+//   - ArxivID non-empty: the work has an arXiv twin; the caller dispatches
+//     to the arxiv pipeline (resolve latest version → fetch → convert).
+//   - ArxivID empty, OAPdfURL non-empty: published-only OA work; the
+//     caller drives the DOI fetch pipeline (EnsureByDOI) instead.
+//
+// When both are empty ResolveDOI fails with ErrDOINotFound, so a nil
+// error guarantees at least one fetch path exists. Both fields may be
+// non-empty (arXiv twin AND a publisher OA PDF); the arXiv path wins.
+type Resolution struct {
+	// ArxivID is the canonical arxiv id (e.g. "quant-ph/0811.3171" or
+	// "0811.3171") OpenAlex associates with the DOI, version-stripped
+	// (work-level granularity — OpenAlex doesn't track per-version arxiv
+	// ids). Empty when the work has no arxiv presence.
+	ArxivID string
+	// OAPdfURL is the best open-access PDF URL (see ExtractOAPdfURL).
+	// Empty when OpenAlex knows no direct OA PDF.
+	OAPdfURL string
+}
+
+// ResolveDOI resolves doi via OpenAlex. Returns ErrDOINotFound when
+// OpenAlex doesn't know the DOI or when the work has neither an arxiv
+// presence nor an OA PDF URL in its record.
+func (r *Resolver) ResolveDOI(ctx context.Context, doi string) (Resolution, error) {
 	if !r.enabled {
-		return "", ErrNotConfigured
+		return Resolution{}, ErrNotConfigured
 	}
 
 	norm, err := normalizeDOI(doi, r.cfg.MaxDOILen)
 	if err != nil {
-		return "", err
+		return Resolution{}, err
 	}
 
 	if v, ok := r.cacheGet(norm); ok {
-		return v.canonical, v.err
+		return v.res, v.err
 	}
 
 	// Singleflight: collapse concurrent ResolveDOI(same-doi) calls to
@@ -229,7 +249,7 @@ func (r *Resolver) ResolveDOI(ctx context.Context, doi string) (string, error) {
 	// via cfg.HTTPTimeout.
 	detachedCtx := context.WithoutCancel(ctx)
 	result, err, _ := r.sf.Do(norm, func() (any, error) {
-		canonical, lookupErr := r.lookup(detachedCtx, norm)
+		res, lookupErr := r.lookup(detachedCtx, norm)
 		// Cache both positive and negative answers (the negative-cache
 		// case is the most important — protects against flood of
 		// unknown-DOI hits).
@@ -237,21 +257,21 @@ func (r *Resolver) ResolveDOI(ctx context.Context, doi string) (string, error) {
 		if lookupErr != nil {
 			if !errors.Is(lookupErr, ErrDOINotFound) {
 				// Transient upstream — don't cache (next caller might succeed).
-				return canonical, lookupErr
+				return res, lookupErr
 			}
 			ttl = r.cfg.NegativeTTL
 		}
 		r.cachePut(norm, cacheEntry{
-			canonical: canonical,
+			res:       res,
 			err:       lookupErr,
 			expiresAt: r.now().Add(ttl),
 		})
-		return canonical, lookupErr
+		return res, lookupErr
 	})
 	if err != nil {
-		return "", err
+		return Resolution{}, err
 	}
-	return result.(string), nil
+	return result.(Resolution), nil
 }
 
 // Metadata is the subset of a DOI's OpenAlex record used for upload-time
@@ -373,18 +393,21 @@ func normalizeDOI(in string, maxLen int) (string, error) {
 }
 
 // lookup does the actual HTTP round-trip without any caching or
-// dedup, then extracts the canonical arxiv id. Pure function of
-// (doi, http client, config).
-func (r *Resolver) lookup(ctx context.Context, doi string) (string, error) {
+// dedup, then extracts the arxiv twin and/or OA PDF URL. Pure function
+// of (doi, http client, config).
+func (r *Resolver) lookup(ctx context.Context, doi string) (Resolution, error) {
 	work, err := r.fetchWork(ctx, doi)
 	if err != nil {
-		return "", err
+		return Resolution{}, err
 	}
-	id := ExtractArxivID(work)
-	if id == "" {
-		return "", ErrDOINotFound
+	res := Resolution{
+		ArxivID:  ExtractArxivID(work),
+		OAPdfURL: ExtractOAPdfURL(work),
 	}
-	return id, nil
+	if res.ArxivID == "" && res.OAPdfURL == "" {
+		return Resolution{}, ErrDOINotFound
+	}
+	return res, nil
 }
 
 // fetchWork performs the OpenAlex `/works/doi:<doi>` round-trip and

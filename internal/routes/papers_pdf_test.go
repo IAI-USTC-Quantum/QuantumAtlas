@@ -2,7 +2,10 @@ package routes
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -10,6 +13,8 @@ import (
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineru"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
+
+	"github.com/pocketbase/pocketbase/core"
 )
 
 // ---------------------------------------------------------------------------
@@ -122,6 +127,77 @@ func TestSnapshotBody_DoneIncludesMarkdownURL(t *testing.T) {
 	body := snapshotBody("quant-ph/9508027v2", job)
 	if body["markdown_url"] != "/api/papers/quant-ph/9508027v2/markdown" {
 		t.Errorf("markdown_url = %v, want canonical /markdown link", body["markdown_url"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// pdfHandler / getPDFByDOIHandler: PDF delivery disabled (plan §B, 410 Gone)
+// ---------------------------------------------------------------------------
+
+func newGetReq(t *testing.T, url string) (*core.RequestEvent, *httptest.ResponseRecorder) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, url, nil)
+	rec := httptest.NewRecorder()
+	re := &core.RequestEvent{}
+	re.Request = req
+	re.Response = rec
+	return re, rec
+}
+
+func TestPDFHandler_Gone(t *testing.T) {
+	// pdfHandler takes cfg/store/converter but the 410 path touches none
+	// of them — nil is safe by construction.
+	re, rec := newGetReq(t, "/api/papers/2501.00010v1/pdf")
+	if err := pdfHandler(re, nil, nil, nil, "2501.00010v1"); err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if rec.Code != http.StatusGone {
+		t.Fatalf("status = %d, want 410", rec.Code)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got := body["detail"]; got != "PDF delivery is disabled; use the markdown endpoint instead" {
+		t.Errorf("body.detail = %v", got)
+	}
+}
+
+func TestPDFHandler_BadIDStill400(t *testing.T) {
+	re, rec := newGetReq(t, "/api/papers/2501.00010/pdf")
+	if err := pdfHandler(re, nil, nil, nil, "2501.00010"); err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 for unversioned arxiv id", rec.Code)
+	}
+}
+
+func TestGetPDFByDOIHandler_Gone(t *testing.T) {
+	doi := "10.1103/physrevlett.123.070501"
+	re, rec := newGetReq(t, "/api/papers/"+doi+"/pdf")
+	if err := getPDFByDOIHandler(re, nil, nil, nil, doi); err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if rec.Code != http.StatusGone {
+		t.Fatalf("status = %d, want 410", rec.Code)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got := body["detail"]; got != "PDF delivery is disabled; use the markdown endpoint instead" {
+		t.Errorf("body.detail = %v", got)
+	}
+}
+
+func TestGetPDFByDOIHandler_BadDOIStill400(t *testing.T) {
+	re, rec := newGetReq(t, "/api/papers/not-a-doi/pdf")
+	if err := getPDFByDOIHandler(re, nil, nil, nil, "not-a-doi"); err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 for invalid DOI", rec.Code)
 	}
 }
 

@@ -152,6 +152,11 @@ func RegisterPapers(
 					statusKind = "pdf"
 				}
 			}
+			// Peel the 2-segment images-download action
+			// (.../images/zip) the same way: splitPapersPath's
+			// last-slash rule leaves action="zip" with "/images"
+			// glued onto the id.
+			arxivPart, action = peelImagesZipAction(arxivPart, action)
 			requestedID := arxivPart
 			bareIDPostDOI := arxivPart
 			forceArxiv := parseForceArxivQuery(re)
@@ -206,7 +211,7 @@ func RegisterPapers(
 					}
 					if hit {
 						applyDOICanonicalHeaders(re, requestedID, doi, "")
-						return dispatchGETDOIHandlers(re, cfg, rawStore, converter, doi, action, statusKind, raw)
+						return dispatchGETDOIHandlers(re, cfg, rawStore, converter, doi, action, statusKind, raw, "")
 					}
 					// Genuine miss (or catalog unconfigured): don't
 					// 503 here — OpenAlex may still resolve an arxiv
@@ -214,12 +219,12 @@ func RegisterPapers(
 					// The ErrDOINotFound branch below re-probes the
 					// local catalog for the definitive 404 / 503.
 				}
-				canonical, err := resolveDOIToCanonical(ctx, doiResolver, doi)
+				res, err := resolveDOIToCanonical(ctx, doiResolver, doi)
 				if err != nil {
 					if errors.Is(err, openalex.ErrDOINotFound) {
-						// No arxiv twin. Under force_arxiv this is a
-						// hard 409 (caller asked for arxiv, we have
-						// none).
+						// No fetchable full text known. Under force_arxiv
+						// this is a hard 409 (caller asked for arxiv, we
+						// have none).
 						if forceArxiv {
 							return re.JSON(http.StatusConflict, map[string]any{
 								"detail": "DOI has no arxiv presence in OpenAlex; remove ?force_arxiv to fetch the DOI version",
@@ -239,11 +244,11 @@ func RegisterPapers(
 						}
 						if hit {
 							applyDOICanonicalHeaders(re, requestedID, doi, "")
-							return dispatchGETDOIHandlers(re, cfg, rawStore, converter, doi, action, statusKind, raw)
+							return dispatchGETDOIHandlers(re, cfg, rawStore, converter, doi, action, statusKind, raw, "")
 						}
 						// Catalog reachable + no local DOI node + no
-						// OpenAlex arxiv twin → genuine 404. If the
-						// catalog has never been configured (ensure
+						// OpenAlex arxiv twin + no OA PDF → genuine 404.
+						// If the catalog has never been configured (ensure
 						// short-circuits, no err), Available() will
 						// be false and 503 is the more honest answer.
 						if !catalog.Available(ctx) {
@@ -253,14 +258,29 @@ func RegisterPapers(
 							})
 						}
 						return re.JSON(http.StatusNotFound, map[string]any{
-							"detail": "DOI not found in OpenAlex and no local DOI contribution exists",
+							"detail": "DOI unknown to OpenAlex (or no arXiv twin and no open-access PDF) and no local DOI contribution exists; if you hold the PDF, contribute it via POST /api/papers/" + doi + "/upload-pdf",
 							"doi":    doi,
 						})
 					}
 					return doiErrorResponse(re, doi, err)
 				}
-				bareIDPostDOI = canonical
-				arxivPart = canonical
+				if res.ArxivID == "" {
+					// Published-only OA work: no arxiv twin, but OpenAlex
+					// surfaced a direct OA PDF URL — serve through the
+					// DOI pipeline, which fetches + converts on demand
+					// (202 LRO on the markdown endpoint).
+					if forceArxiv {
+						return re.JSON(http.StatusConflict, map[string]any{
+							"detail": "DOI has no arxiv presence in OpenAlex; remove ?force_arxiv to fetch the DOI version",
+							"doi":    doi,
+							"hint":   "GET /api/papers/" + doi + "/" + actionLabel(action, statusKind),
+						})
+					}
+					applyDOICanonicalHeaders(re, requestedID, doi, "")
+					return dispatchGETDOIHandlers(re, cfg, rawStore, converter, doi, action, statusKind, raw, res.OAPdfURL)
+				}
+				bareIDPostDOI = res.ArxivID
+				arxivPart = res.ArxivID
 			} else if !forceArxiv {
 				// Shape (b): arxiv input. Honour DOI canonical by
 				// looking up whether any DOI node has this arxiv id as
@@ -285,7 +305,7 @@ func RegisterPapers(
 					// the caller expects.
 					if hasPub, err := catalog.HasPublishedAsset(ctx, doi); err == nil && hasPub {
 						applyDOICanonicalHeaders(re, requestedID, doi, arxivPart)
-						return dispatchGETDOIHandlers(re, cfg, rawStore, converter, doi, action, statusKind, raw)
+						return dispatchGETDOIHandlers(re, cfg, rawStore, converter, doi, action, statusKind, raw, "")
 					}
 				}
 				// catalog down / lookup error / no DOI twin: fall
@@ -321,6 +341,8 @@ func RegisterPapers(
 				return markdownHandler(re, cfg, rawStore, converter, arxivPart)
 			case action == "pdf":
 				return pdfHandler(re, cfg, rawStore, converter, arxivPart)
+			case action == "images/zip":
+				return imagesZipHandler(re, rawStore, arxivPart)
 			}
 		}
 		return re.JSON(http.StatusNotFound, map[string]string{
@@ -424,6 +446,18 @@ func splitPapersPath(raw string) (arxivID, action string) {
 	return raw[:idx], raw[idx+1:]
 }
 
+// peelImagesZipAction rewrites the "<id>/images/zip" path parse into a
+// single action: splitPapersPath anchors on the last slash, so it
+// returns ("<id>/images", "zip") — glue the trailing "/images" back
+// off the id and report action "images/zip". Anything else passes
+// through unchanged.
+func peelImagesZipAction(arxivID, action string) (string, string) {
+	if action == "zip" && strings.HasSuffix(arxivID, "/images") {
+		return strings.TrimSuffix(arxivID, "/images"), "images/zip"
+	}
+	return arxivID, action
+}
+
 // splitMineruClaimRelease parses MinerU lease release paths and returns
 // arxiv_id, claim_id, ok.
 func splitMineruClaimRelease(raw string) (arxivID, claimID string, ok bool) {
@@ -522,22 +556,29 @@ func applyDOICanonicalHeaders(re *core.RequestEvent, requestedID, doi, arxivTwin
 // rawPath is the original "{id}/{action}" path component, used solely
 // for the 404 fallback message when an unknown action sneaks through
 // (shouldn't happen in practice but the parser leaves it observable).
+//
+// oaPdfURL is the OpenAlex open-access PDF URL for the DOI when the
+// dispatcher resolved one (published-only OA work with no arxiv twin);
+// "" for local-contribution dispatch. The markdown handler uses it to
+// kick off a fetch + convert LRO on cache miss.
 func dispatchGETDOIHandlers(
 	re *core.RequestEvent,
 	cfg *config.Config,
 	store objstore.Store,
 	converter *mineru.Converter,
-	doi, action, statusKind, rawPath string,
+	doi, action, statusKind, rawPath, oaPdfURL string,
 ) error {
 	switch {
 	case statusKind == "markdown":
-		return markdownStatusByDOIHandler(re, store, doi)
+		return markdownStatusByDOIHandler(re, store, converter, doi)
 	case statusKind == "pdf":
 		return pdfStatusByDOIHandler(re, store, doi)
 	case action == "markdown":
-		return getMarkdownByDOIHandler(re, cfg, store, converter, doi)
+		return getMarkdownByDOIHandler(re, cfg, store, converter, doi, oaPdfURL)
 	case action == "pdf":
 		return getPDFByDOIHandler(re, cfg, store, converter, doi)
+	case action == "images/zip":
+		return imagesZipByDOIHandler(re, store, doi)
 	case action == "status":
 		return re.JSON(http.StatusOK, map[string]any{
 			"status": "available",
@@ -552,12 +593,14 @@ func dispatchGETDOIHandlers(
 // actionLabel renders the path-tail piece of /api/papers/<id>/<...>
 // for messages that suggest a retry without force_arxiv. Mirrors the
 // dispatcher's statusKind/action split so the hint URL is accurate.
+// The empty-action default is "markdown" — PDF delivery is disabled
+// (plan §B), so we never hint at the 410 /pdf endpoint.
 func actionLabel(action, statusKind string) string {
 	if statusKind != "" {
 		return statusKind + "/status"
 	}
 	if action == "" {
-		return "pdf"
+		return "markdown"
 	}
 	return action
 }
@@ -597,9 +640,9 @@ func normalizeIDForDispatch(s string) string {
 // resolveDOIToCanonical wraps Resolver.ResolveDOI with the additional
 // safety: when no resolver is configured at all (cfg/main.go didn't
 // build one), treat that as not-configured rather than panic.
-func resolveDOIToCanonical(ctx context.Context, resolver *openalex.Resolver, doi string) (string, error) {
+func resolveDOIToCanonical(ctx context.Context, resolver *openalex.Resolver, doi string) (openalex.Resolution, error) {
 	if resolver == nil {
-		return "", openalex.ErrNotConfigured
+		return openalex.Resolution{}, openalex.ErrNotConfigured
 	}
 	return resolver.ResolveDOI(ctx, doi)
 }
@@ -621,7 +664,7 @@ func doiErrorResponse(re *core.RequestEvent, doi string, err error) error {
 		})
 	case errors.Is(err, openalex.ErrDOINotFound):
 		return re.JSON(http.StatusNotFound, map[string]any{
-			"detail": "DOI not found in OpenAlex, or the resolved work has no arxiv presence",
+			"detail": "DOI not found in OpenAlex, or the resolved work has no fetchable full text (no arxiv twin, no OA PDF); contribute the PDF via POST /api/papers/{doi}/upload-pdf",
 			"doi":    doi,
 		})
 	case errors.Is(err, openalex.ErrUpstream):

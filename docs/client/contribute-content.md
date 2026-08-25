@@ -183,15 +183,16 @@ qatlas contrib mineru 2501.00010v1 --no-push
 # Markdown（缓存命中即拿；未命中自动等 silent fetch + MinerU convert）
 qatlas paper get markdown quant-ph/9508027v2 -o paper.md
 
-# PDF（不带 vN → server 自动补 latest；bare old-style → 自动加 quant-ph/）
-qatlas paper get pdf 0811.3171 -o hhl.pdf
-qatlas paper get pdf 9508027   -o shor.pdf
+# 图片 zip（MinerU 转换产物；不带 vN → server 自动补 latest）
+qatlas paper get images 0811.3171 -o hhl-images.zip
+
+# 注：PDF 交付已停用（410）；用户侧只拿 markdown / 图片 zip
 
 # DOI 入口
 qatlas paper get markdown 10.1103/PhysRevLett.103.150502 -o hhl.md
 
 # 只查不触发（poll 状态用）
-qatlas paper status 0811.3171v3 --kind pdf
+qatlas paper status 0811.3171v3 --kind markdown
 ```
 
 详细 flag 与退出码见 [CLI · qatlas paper](cli-qatlas.md#qatlas-paper)。

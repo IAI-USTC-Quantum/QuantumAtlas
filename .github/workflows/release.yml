@@ -32,8 +32,8 @@ permissions:
 jobs:
   # --------------------------------------------------------------------
   # 1. prep — single ubuntu job: parse version from the just-pushed tag,
-  #    sanity-check it matches pyproject.toml, and emit it as an output
-  #    other jobs depend on.
+  #    sanity-check it matches the root VERSION file (qatlasd's single
+  #    source of truth), and emit it as an output other jobs depend on.
   # --------------------------------------------------------------------
   prep:
     runs-on: ubuntu-latest
@@ -66,16 +66,22 @@ jobs:
           # filenames / Python wheel metadata.
           VERSION="${TAG#v}"
 
-          # Cross-check: pyproject.toml's version must match the tag.
-          # cz bump always keeps them in lock-step; if they're out of
-          # sync the operator forgot a step (cz bump but didn't push
-          # the right tag, or pushed a hand-typed tag that doesn't
-          # match the committed version).
-          PYPROJECT_VERSION="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
-          if [ "$VERSION" != "$PYPROJECT_VERSION" ]; then
-            echo "tag $TAG (version=$VERSION) does not match pyproject.toml version $PYPROJECT_VERSION" >&2
+          # Cross-check: the root VERSION file (qatlasd's single source
+          # of truth) must match the tag. The release flow is: edit
+          # VERSION, commit, `git tag v<version>`, push the tag. If they
+          # disagree the operator pushed a tag that doesn't match the
+          # committed VERSION (hand-typed tag, or forgot to commit the
+          # VERSION bump).
+          VERSION_FILE="$(tr -d '[:space:]' < VERSION)"
+          if [ "$VERSION" != "$VERSION_FILE" ]; then
+            echo "tag $TAG (version=$VERSION) does not match VERSION file ($VERSION_FILE)" >&2
             exit 1
           fi
+
+          # NOTE: pyproject.toml's `quantum-atlas` package version is
+          # deliberately NOT checked here — the PyPI package is decoupled
+          # from qatlasd and evolves on its own cadence (bumped via
+          # commitizen); only the VERSION file gates a qatlasd release.
 
           # PEP 440 / SemVer pre-release detection. Anything containing
           # a, b, rc, alpha, beta, pre, or '-' in the version segment is
@@ -368,6 +374,12 @@ jobs:
 
   # --------------------------------------------------------------------
   # 5. pypi-publish — Trusted Publishing via OIDC.
+  #
+  # This job ships the `quantum-atlas` PyPI package (currently the rag
+  # embed worker code). Its version comes from pyproject.toml (bumped via
+  # commitizen) and is DECOUPLED from qatlasd's version: qatlasd's single
+  # source of truth is the root VERSION file + the pushed v* tag. The two
+  # version numbers are not expected to match.
   #
   # No API token stored anywhere; PyPI verifies the GitHub OIDC token
   # against a per-project Trusted Publisher config that must match:

@@ -36,9 +36,10 @@
     # OAuth device-code 登录（拿到 papers:read PAT 写进 hosts.yml）
     qatlas auth login -s <your-server>
 
-    # 拉一篇论文的 markdown / PDF（server 缓存未命中会自动 silent fetch）
+    # 拉一篇论文的 MinerU markdown（server 缓存未命中会自动 silent fetch + 转换）
+    # PDF 交付已停用；图片用 get images 显式获取
     qatlas paper get markdown 2501.00010v1 -o paper.md
-    qatlas paper get pdf quant-ph/9508027 -o shor.pdf
+    qatlas paper get images quant-ph/9508027 -o shor-images.zip
     ```
 
     多 provider 搜索（本地 catalog + arXiv + OpenAlex，可选 Qdrant 语义检索）
