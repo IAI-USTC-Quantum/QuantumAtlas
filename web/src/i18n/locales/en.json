@@ -297,5 +297,12 @@
       "source": "Lean source",
       "showSource": "Show source"
     }
+  },
+  "admin": {
+    "docs": {
+      "title": "Repository architecture",
+      "description": "Multi-repo layout (qatlasd / qatlas-cli / qatlas-search), the plugin protocol, and the deployment topology.",
+      "open": "Read the doc"
+    }
   }
 }

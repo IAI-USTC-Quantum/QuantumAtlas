@@ -297,5 +297,12 @@
       "source": "Lean 源码",
       "showSource": "显示源码"
     }
+  },
+  "admin": {
+    "docs": {
+      "title": "仓库架构",
+      "description": "多仓库结构（qatlasd / qatlas-cli / qatlas-search）、插件协议与部署拓扑。",
+      "open": "阅读文档"
+    }
   }
 }
