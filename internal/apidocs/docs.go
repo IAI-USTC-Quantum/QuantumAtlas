@@ -2298,7 +2298,7 @@ const docTemplate = `{
     },
     "securityDefinitions": {
         "BearerAuth": {
-            "description": "\"Bearer \u003ctoken\u003e\" — two credential shapes\naccepted: a Personal Access Token\n(` + "`" + `Authorization: Bearer qat_...` + "`" + `, minted at\n` + "`" + `/pat` + "`" + ` after GitHub OAuth login), or the\nconfig-loaded system PAT (set\n` + "`" + `system_pat.token` + "`" + ` in config.yaml on the\n` + "`" + `server, send the plaintext as\n` + "`" + `Authorization: Bearer \u003cvalue\u003e` + "`" + `).\nBrowser callers are authenticated through\npb.authStore (no copy step) — only non-browser\ncallers need an explicit bearer.",
+            "description": "\"Bearer \u003ctoken\u003e\" — two credential shapes\naccepted: a Personal Access Token\n(` + "`" + `Authorization: Bearer qat_...` + "`" + `, minted at\n` + "`" + `/pat` + "`" + ` after GitHub OAuth login), or the\nconfig-loaded system PAT (set\n` + "`" + `system_pat.token` + "`" + ` in config.yaml on the\nserver, send the plaintext as\n` + "`" + `Authorization: Bearer \u003cvalue\u003e` + "`" + `).\nBrowser callers are authenticated through\npb.authStore (no copy step) — only non-browser\ncallers need an explicit bearer.",
             "type": "apiKey",
             "name": "Authorization",
             "in": "header"

@@ -1678,7 +1678,7 @@ securityDefinitions:
       `/pat` after GitHub OAuth login), or the
       config-loaded system PAT (set
       `system_pat.token` in config.yaml on the
-      `server, send the plaintext as
+      server, send the plaintext as
       `Authorization: Bearer <value>`).
       Browser callers are authenticated through
       pb.authStore (no copy step) — only non-browser
