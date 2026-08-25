@@ -94,6 +94,25 @@ type Config struct {
 	AgenticDailyLimit   int
 	AgenticPricePerMtok float64
 
+	// AgenticBackend selects the backend behind POST /api/search/agentic:
+	// "remote" (default, the qatlas-search microservice via search.remote)
+	// or "local" (the internal/agentic runner driving the local claude
+	// CLI inside a per-request sandbox). The AgenticLocal* fields configure
+	// the local backend: ClaudeBin (default "claude", PATH lookup), Model
+	// (empty = claude's own default), SandboxDir (empty =
+	// paths.data_dir/agentic), Timeout per claude call (default 5m),
+	// Retention for sandbox directories before the janitor sweeps them
+	// (default 24h), MaxBudgetUSD per call (0 = no --max-budget-usd flag),
+	// PromptTemplate overriding the embedded prompt (empty = embedded).
+	AgenticBackend            string
+	AgenticLocalClaudeBin     string
+	AgenticLocalModel         string
+	AgenticLocalSandboxDir    string
+	AgenticLocalTimeout       time.Duration
+	AgenticLocalRetention     time.Duration
+	AgenticLocalMaxBudgetUSD  float64
+	AgenticLocalPromptTpl     string
+
 	// Public URL: server's own canonical https origin (scheme+host[+port])
 	// as users see it from outside any reverse proxy. Required for
 	// constructing absolute redirect URLs (OAuth callbacks, OpenAlex
@@ -309,6 +328,16 @@ type fileConfig struct {
 		Agentic struct {
 			DailyLimit   *int     `yaml:"daily_limit"`
 			PricePerMtok *float64 `yaml:"price_per_mtok"`
+			Backend      string   `yaml:"backend"`
+			Local        struct {
+				ClaudeBin      string   `yaml:"claude_bin"`
+				Model          string   `yaml:"model"`
+				SandboxDir     string   `yaml:"sandbox_dir"`
+				Timeout        string   `yaml:"timeout"`
+				Retention      string   `yaml:"retention"`
+				MaxBudgetUSD   *float64 `yaml:"max_budget_usd"`
+				PromptTemplate string   `yaml:"prompt_template"`
+			} `yaml:"local"`
 		} `yaml:"agentic"`
 	} `yaml:"search"`
 
@@ -629,8 +658,26 @@ func (fc *fileConfig) toConfig(anchor string) (*Config, error) {
 	cfg.AgenticDailyLimit = intOrDefault(fc.Search.Agentic.DailyLimit, 10000)
 	cfg.AgenticPricePerMtok = floatOrDefault(fc.Search.Agentic.PricePerMtok, 0.0)
 
+	cfg.AgenticBackend = defaultIfEmpty(strings.TrimSpace(fc.Search.Agentic.Backend), "remote")
+	if cfg.AgenticBackend != "remote" && cfg.AgenticBackend != "local" {
+		return nil, fmt.Errorf("search.agentic.backend must be \"remote\" or \"local\", got %q", cfg.AgenticBackend)
+	}
+	cfg.AgenticLocalClaudeBin = defaultIfEmpty(strings.TrimSpace(fc.Search.Agentic.Local.ClaudeBin), "claude")
+	cfg.AgenticLocalModel = strings.TrimSpace(fc.Search.Agentic.Local.Model)
+	cfg.AgenticLocalPromptTpl = fc.Search.Agentic.Local.PromptTemplate
+	cfg.AgenticLocalMaxBudgetUSD = floatOrDefault(fc.Search.Agentic.Local.MaxBudgetUSD, 0.0)
+	if cfg.AgenticLocalMaxBudgetUSD < 0 {
+		return nil, fmt.Errorf("search.agentic.local.max_budget_usd must be >= 0, got %v", cfg.AgenticLocalMaxBudgetUSD)
+	}
+
 	var err error
 	if cfg.RemoteTimeout, err = parseDuration(fc.Search.Remote.Timeout, 60*time.Second, "search.remote.timeout"); err != nil {
+		return nil, err
+	}
+	if cfg.AgenticLocalTimeout, err = parseDuration(fc.Search.Agentic.Local.Timeout, 5*time.Minute, "search.agentic.local.timeout"); err != nil {
+		return nil, err
+	}
+	if cfg.AgenticLocalRetention, err = parseDuration(fc.Search.Agentic.Local.Retention, 24*time.Hour, "search.agentic.local.retention"); err != nil {
 		return nil, err
 	}
 	if cfg.EventRetention, err = parseDuration(fc.Plugins.EventRetention, 7*24*time.Hour, "plugins.event_retention"); err != nil {
@@ -661,6 +708,11 @@ func (fc *fileConfig) toConfig(anchor string) (*Config, error) {
 	cfg.PBDataDir = expandPath(defaultIfEmpty(fc.Paths.PBDataDir, defaultXDGSubdir("pb_data")), anchor)
 	cfg.PluginsDir = expandPath(defaultIfEmpty(fc.Plugins.Dir, defaultXDGConfigSubdir("plugins")), anchor)
 	cfg.DeadLetterDir = expandPath(defaultIfEmpty(fc.Plugins.DeadLetterDir, defaultXDGStateSubdir("dead")), anchor)
+
+	// The local agentic backend's sandbox root defaults to a subdirectory
+	// of data_dir; an explicit path resolves like every other path key.
+	cfg.AgenticLocalSandboxDir = expandPath(defaultIfEmpty(fc.Search.Agentic.Local.SandboxDir,
+		filepath.Join(cfg.DataDir, "agentic")), anchor)
 
 	return cfg, nil
 }

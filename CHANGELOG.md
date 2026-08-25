@@ -21,6 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Feat
 
 - **search**: multi-provider search engine behind `POST /api/search`; provider fan-out list via `QATLAS_SEARCH_PROVIDERS` (default `catalog,arxiv,openalex`, optional `qdrant` semantic retrieval).
+- **search**: local agentic backend for `POST /api/search/agentic` — `search.agentic.backend: local` drives the host's OAuth-logged-in `claude` CLI (headless `claude -p`) inside per-request sandbox directories (raw hits in, standardized `RemoteResponse` out; janitor reaps sandboxes after `search.agentic.local.retention`, default 24h). `agent: false` reuses the same endpoint and response shape without invoking claude.
 - **ingest**: lazy ingestion — cache misses on paper assets are fetched/converted asynchronously server-side with dedupe and LRO status polling.
 - **registry**: PostgreSQL paper registry (papers / paper_assets / paper_identities) with boot-time goose migrations; `QATLAS_POSTGRES_MAX_CONNS` tunes the pool.
 

@@ -439,6 +439,98 @@ func TestLoad_SearchRemoteRejectsMalformedTimeout(t *testing.T) {
 	}
 }
 
+func TestLoad_SearchAgenticLocal(t *testing.T) {
+	clearConfigEnv(t)
+	path := writeConfig(t, `
+search:
+  agentic:
+    backend: local
+    local:
+      claude_bin: /usr/local/bin/claude
+      model: claude-sonnet-4-5
+      sandbox_dir: /var/tmp/agentic-sandboxes
+      timeout: 10m
+      retention: 48h
+      max_budget_usd: 1.5
+      prompt_template: "custom prompt {{.Query}}"
+`)
+	cfg := mustLoad(t, path)
+
+	if cfg.AgenticBackend != "local" {
+		t.Errorf("AgenticBackend = %q, want local", cfg.AgenticBackend)
+	}
+	if cfg.AgenticLocalClaudeBin != "/usr/local/bin/claude" {
+		t.Errorf("AgenticLocalClaudeBin = %q", cfg.AgenticLocalClaudeBin)
+	}
+	if cfg.AgenticLocalModel != "claude-sonnet-4-5" {
+		t.Errorf("AgenticLocalModel = %q", cfg.AgenticLocalModel)
+	}
+	if cfg.AgenticLocalSandboxDir != "/var/tmp/agentic-sandboxes" {
+		t.Errorf("AgenticLocalSandboxDir = %q", cfg.AgenticLocalSandboxDir)
+	}
+	if cfg.AgenticLocalTimeout != 10*time.Minute {
+		t.Errorf("AgenticLocalTimeout = %v, want 10m", cfg.AgenticLocalTimeout)
+	}
+	if cfg.AgenticLocalRetention != 48*time.Hour {
+		t.Errorf("AgenticLocalRetention = %v, want 48h", cfg.AgenticLocalRetention)
+	}
+	if cfg.AgenticLocalMaxBudgetUSD != 1.5 {
+		t.Errorf("AgenticLocalMaxBudgetUSD = %v, want 1.5", cfg.AgenticLocalMaxBudgetUSD)
+	}
+	if cfg.AgenticLocalPromptTpl != "custom prompt {{.Query}}" {
+		t.Errorf("AgenticLocalPromptTpl = %q", cfg.AgenticLocalPromptTpl)
+	}
+}
+
+func TestLoad_SearchAgenticLocalDefaults(t *testing.T) {
+	clearConfigEnv(t)
+	path := writeConfig(t, "{}\n")
+	cfg := mustLoad(t, path)
+
+	if cfg.AgenticBackend != "remote" {
+		t.Errorf("AgenticBackend = %q, want remote default", cfg.AgenticBackend)
+	}
+	if cfg.AgenticLocalClaudeBin != "claude" {
+		t.Errorf("AgenticLocalClaudeBin = %q, want claude default", cfg.AgenticLocalClaudeBin)
+	}
+	if cfg.AgenticLocalTimeout != 5*time.Minute {
+		t.Errorf("AgenticLocalTimeout = %v, want 5m default", cfg.AgenticLocalTimeout)
+	}
+	if cfg.AgenticLocalRetention != 24*time.Hour {
+		t.Errorf("AgenticLocalRetention = %v, want 24h default", cfg.AgenticLocalRetention)
+	}
+	if cfg.AgenticLocalMaxBudgetUSD != 0 {
+		t.Errorf("AgenticLocalMaxBudgetUSD = %v, want 0 default", cfg.AgenticLocalMaxBudgetUSD)
+	}
+	if !strings.HasSuffix(cfg.AgenticLocalSandboxDir, filepath.Join("data", "agentic")) {
+		t.Errorf("AgenticLocalSandboxDir = %q, want <data_dir>/agentic default", cfg.AgenticLocalSandboxDir)
+	}
+}
+
+func TestLoad_SearchAgenticRejectsUnknownBackend(t *testing.T) {
+	clearConfigEnv(t)
+	path := writeConfig(t, "search:\n  agentic:\n    backend: sideways\n")
+	if _, err := Load(path); err == nil {
+		t.Fatal("Load succeeded with unknown search.agentic.backend, want error")
+	}
+}
+
+func TestLoad_SearchAgenticRejectsNegativeBudget(t *testing.T) {
+	clearConfigEnv(t)
+	path := writeConfig(t, "search:\n  agentic:\n    local:\n      max_budget_usd: -1\n")
+	if _, err := Load(path); err == nil {
+		t.Fatal("Load succeeded with negative max_budget_usd, want error")
+	}
+}
+
+func TestLoad_SearchAgenticRejectsMalformedLocalTimeout(t *testing.T) {
+	clearConfigEnv(t)
+	path := writeConfig(t, "search:\n  agentic:\n    local:\n      timeout: banana\n")
+	if _, err := Load(path); err == nil {
+		t.Fatal("Load succeeded with malformed search.agentic.local.timeout, want error")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Defaults
 // ---------------------------------------------------------------------------

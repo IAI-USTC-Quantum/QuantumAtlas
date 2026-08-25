@@ -77,11 +77,23 @@ type providerResult struct {
 // minting is returned as the error.
 func (e *Engine) Search(ctx context.Context, entry SearchEntry) (Response, error) {
 	entry.Normalize()
-	hits := e.fanOut(ctx, entry)
+	hits, _ := e.fanOut(ctx, entry)
 	merged := mergeHits(hits)
 
 	results, candidates, err := e.MintHits(ctx, merged, entry.MaxResults)
 	return Response{Results: results, Candidates: candidates}, err
+}
+
+// Collect runs the fan-out and returns the merged hits together with the
+// per-provider failure table (provider name → error). Unlike Search it
+// performs no minting — the local agentic backend (internal/agentic) uses
+// it to build the raw result set handed to the claude CLI and the
+// agent=false response, where provider failures must surface in the
+// response's errors map instead of being swallowed.
+func (e *Engine) Collect(ctx context.Context, entry SearchEntry) ([]Hit, map[string]error) {
+	entry.Normalize()
+	hits, errs := e.fanOut(ctx, entry)
+	return mergeHits(hits), errs
 }
 
 // MintHits runs the resolve-or-mint half of the pipeline over already-
@@ -143,13 +155,23 @@ func MintHits(ctx context.Context, reg minter, onMint func(ctx context.Context, 
 // fanOut runs every provider concurrently, each under its own timeout and
 // panic-safe (the WaitGroup awaits the goroutines, so it uses the
 // safego.LogPanic pattern rather than safego.Go). A provider that errors,
-// panics, or times out contributes zero hits.
-func (e *Engine) fanOut(ctx context.Context, entry SearchEntry) []Hit {
+// panics, or times out contributes zero hits; the returned map carries
+// the per-provider failures (name → error) for callers that surface them
+// (the local agentic backend). Search ignores the map.
+//
+// Providers honor the failure contract by returning (nil, nil) and
+// recording internally (BaseProvider), so the table is filled from the
+// recorded LastError when a provider came back empty-handed. Caveat:
+// LastError is sticky across calls — an empty-but-successful result can
+// inherit a stale failure from an earlier call.
+func (e *Engine) fanOut(ctx context.Context, entry SearchEntry) ([]Hit, map[string]error) {
 	timeout := e.ProviderTimeout
 	if timeout <= 0 {
 		timeout = DefaultProviderTimeout
 	}
 	results := make([]providerResult, len(e.providers))
+	errs := map[string]error{}
+	var mu sync.Mutex
 	var wg sync.WaitGroup
 	for i, p := range e.providers {
 		wg.Add(1)
@@ -163,9 +185,17 @@ func (e *Engine) fanOut(ctx context.Context, entry SearchEntry) []Hit {
 			pctx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
 			hits, err := p.Search(pctx, entry)
+			if err == nil && len(hits) == 0 {
+				if ep, ok := p.(interface{ LastError() error }); ok {
+					err = ep.LastError()
+				}
+			}
 			if err != nil {
-				// Contract violation — providers should record internally
-				// and return (nil, nil). Isolate it anyway.
+				// Contract violation (or recorded backend failure) —
+				// isolate the provider, note the failure.
+				mu.Lock()
+				errs[p.Name()] = err
+				mu.Unlock()
 				return
 			}
 			results[i] = providerResult{hits: hits}
@@ -177,7 +207,10 @@ func (e *Engine) fanOut(ctx context.Context, entry SearchEntry) []Hit {
 	for _, r := range results {
 		all = append(all, r.hits...)
 	}
-	return all
+	if len(errs) == 0 {
+		errs = nil
+	}
+	return all, errs
 }
 
 // identityKey reduces a hit to its dedup identity: DOI (normalized,

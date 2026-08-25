@@ -96,6 +96,18 @@
 #   agentic:
 #     daily_limit: 10000   # default per-user daily limit (users with no plan row)
 #     price_per_mtok: 0.0  # USD / 1M LLM tokens; admin cost display only
+#     backend: remote      # remote = qatlas-search microservice (above);
+#                          # local = in-process claude CLI (headless `claude -p`)
+#     local:               # only used when backend: local
+#       claude_bin: claude   # PATH lookup; must be OAuth-logged-in on this host
+#       model: ""            # empty = claude's default model
+#       sandbox_dir: ""      # empty = <paths.data_dir>/agentic; per-request
+#                            # sandboxes land here and are reaped after `retention`
+#       timeout: 5m          # per claude call
+#       retention: 24h       # sandbox audit retention (janitor sweep)
+#       max_budget_usd: 0    # 0 = no --max-budget-usd flag
+#       prompt_template: ""  # empty = embedded template; placeholders:
+#                            # {{.Query}} {{.MaxResults}} {{.ResultsFile}}
 
 # ─── RAG (semantic search; needs paper_access.enabled: true) ───────────
 # rag:

@@ -22,9 +22,11 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/agentic"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/arxiv"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/auth"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
@@ -562,6 +564,13 @@ func main() {
 		remoteProvider := buildRemoteProvider(cfg)
 		searchEngine := buildSearchEngine(cfg, pgPool, registryStore, ingester, remoteProvider)
 
+		// Optional local agentic backend (search.agentic.backend: local) —
+		// the claude-CLI runner behind POST /api/search/agentic, replacing
+		// the remote microservice when configured. nil when disabled or
+		// when the claude binary is unusable (endpoint then 503s unless
+		// remote stays the selected backend).
+		localAgentic := buildLocalAgentic(cfg, searchEngine)
+
 		// Usage metering store for the agentic-search endpoint and the
 		// /api/admin/usage|plans|quotas surface. Shares the registry
 		// Postgres pool; nil-pool → the usual 503 catalog convention.
@@ -602,7 +611,7 @@ func main() {
 				}
 			}
 
-			registerRoutes(se, app, cfg, rawStore, registryStore, corpus, searchEngine, remoteProvider, usageStore, enforcer, mineruConverter, mineruScheduler, doiResolver, arxivFetcher, serverStarted)
+			registerRoutes(se, app, cfg, rawStore, registryStore, corpus, searchEngine, remoteProvider, localAgentic, usageStore, enforcer, mineruConverter, mineruScheduler, doiResolver, arxivFetcher, serverStarted)
 
 			// Serve the embedded SPA last as the catch-all. apis.Static's
 			// indexFallback=true means any path that doesn't match a real
@@ -845,6 +854,42 @@ func buildRemoteProvider(cfg *config.Config) *search.RemoteProvider {
 	return search.NewRemoteProvider(cfg.RemoteURL, cfg.RemoteToken, cfg.RemoteTimeout)
 }
 
+// compile-time check: the local runner is an agentic backend.
+var _ routes.AgenticBackend = (*agentic.Runner)(nil)
+
+// buildLocalAgentic constructs the local claude-CLI agentic backend
+// (internal/agentic) when search.agentic.backend: local. Returns nil —
+// with a WARN, never a fatal — when the backend is not selected or the
+// claude binary cannot be resolved, leaving the endpoint to 503 unless
+// the remote backend is configured.
+func buildLocalAgentic(cfg *config.Config, engine *search.Engine) *agentic.Runner {
+	if cfg.AgenticBackend != "local" {
+		return nil
+	}
+	if _, err := exec.LookPath(cfg.AgenticLocalClaudeBin); err != nil {
+		slog.Warn("agentic local backend: claude binary not usable; POST /api/search/agentic will 503",
+			"claude_bin", cfg.AgenticLocalClaudeBin, "error", err)
+		return nil
+	}
+	runner, err := agentic.NewRunner(agentic.Options{
+		Engine:         engine,
+		ClaudeBin:      cfg.AgenticLocalClaudeBin,
+		Model:          cfg.AgenticLocalModel,
+		SandboxRoot:    cfg.AgenticLocalSandboxDir,
+		Timeout:        cfg.AgenticLocalTimeout,
+		MaxBudgetUSD:   cfg.AgenticLocalMaxBudgetUSD,
+		PromptTemplate: cfg.AgenticLocalPromptTpl,
+	})
+	if err != nil {
+		slog.Warn("agentic local backend: runner construction failed; POST /api/search/agentic will 503",
+			"error", err)
+		return nil
+	}
+	slog.Info("agentic local backend enabled",
+		"claude_bin", cfg.AgenticLocalClaudeBin, "sandbox_dir", cfg.AgenticLocalSandboxDir)
+	return runner
+}
+
 // initRawStore returns the objstore.Store backing raw paper assets.
 // Selects between a single LocalStore (cfg.RawDir) and the v0.7.0
 // three-bucket S3 split (qatlas-pdf / qatlas-md / qatlas-images behind
@@ -927,7 +972,7 @@ func ensureBucketVersioning(rawStore objstore.Store) {
 // registerRoutes wires the QuantumAtlas /api/* surface. Most endpoints are
 // implemented under internal/routes/ and pulled in by their respective
 // Register* helpers as we migrate each module in subsequent phases.
-func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawStore objstore.Store, registryStore *registry.Store, corpus *openalexcorpus.Store, searchEngine *search.Engine, remoteProvider *search.RemoteProvider, usageStore *usage.Store, enforcer *casbin.Enforcer, mineruConverter *mineru.Converter, mineruScheduler *mineru.Scheduler, doiResolver *openalex.Resolver, arxivFetcher *arxiv.Fetcher, started time.Time) {
+func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawStore objstore.Store, registryStore *registry.Store, corpus *openalexcorpus.Store, searchEngine *search.Engine, remoteProvider *search.RemoteProvider, localAgentic *agentic.Runner, usageStore *usage.Store, enforcer *casbin.Enforcer, mineruConverter *mineru.Converter, mineruScheduler *mineru.Scheduler, doiResolver *openalex.Resolver, arxivFetcher *arxiv.Fetcher, started time.Time) {
 	probes := healthz.Probes{
 		Cfg:      cfg,
 		RawStore: rawStore,
@@ -1158,9 +1203,27 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// internal/routes/search.go.
 	routes.RegisterSearch(se, searchEngine, enforcer)
 
-	// Metered agentic search — POST /api/search/agentic, backed by the
-	// qatlas-search microservice. See internal/routes/search_agentic.go.
-	routes.RegisterSearchAgentic(se, cfg, remoteProvider, usageStore, searchEngine, enforcer)
+	// Metered agentic search — POST /api/search/agentic. The backend is
+	// the remote qatlas-search microservice by default, or the local
+	// claude-CLI runner when search.agentic.backend: local; both satisfy
+	// routes.AgenticBackend. See internal/routes/search_agentic.go.
+	var agenticBackend routes.AgenticBackend
+	if remoteProvider != nil {
+		agenticBackend = remoteProvider
+	}
+	if localAgentic != nil {
+		agenticBackend = localAgentic
+
+		// Reap expired per-request sandboxes (startup sweep + 1min tick),
+		// same lifecycle pattern as the remote-search probe above.
+		janCtx, stopJanitor := context.WithCancel(context.Background())
+		app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
+			stopJanitor()
+			return e.Next()
+		})
+		go agentic.RunJanitor(janCtx, cfg.AgenticLocalSandboxDir, cfg.AgenticLocalRetention)
+	}
+	routes.RegisterSearchAgentic(se, cfg, agenticBackend, usageStore, searchEngine, enforcer)
 
 	// Personal Access Tokens — see internal/routes/pat.go.
 	// /api/pat is session-token-only (PAT auth refused by sessionGuard);

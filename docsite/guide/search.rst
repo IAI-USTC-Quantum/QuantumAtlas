@@ -70,3 +70,38 @@ cost）、编辑套餐限额、为单个用户指定套餐或自定义上限。�
 微服务部署见 :doc:`插件化架构与路线图 </dev/plugins>`——它以 docker 微服务
 形式接入（``docker compose --profile search up -d``），只在内网可达，
 全部终端用户流量由 qatlasd 代理并计量。
+
+本地 agentic 后端（claude CLI）
+-------------------------------
+
+除远程微服务外，agentic 搜索还可以切换为 **本地后端**：qatlasd 进程内调用
+本机已登录的 `claude <https://claude.com/claude-code>`_ CLI（headless
+``claude -p``）对引擎 fan-out 的原始命中做精炼/去重/排序，并产出学术总结。
+两种后端走同一端点、同一响应形状（``results``/``candidates``/``conclusion``/
+``usage``/``errors``），由配置切换：
+
+.. code-block:: yaml
+
+   search:
+     agentic:
+       backend: local        # 默认 remote（qatlas-search 微服务）
+       local:
+         claude_bin: claude  # 需在本机完成 OAuth 登录
+         model: ""           # 空 = claude 默认模型
+         sandbox_dir: ""     # 空 = <paths.data_dir>/agentic
+         timeout: 5m         # 单次 claude 调用超时
+         retention: 24h      # 沙箱审计保留时长
+         max_budget_usd: 0   # 0 = 不传 --max-budget-usd
+         prompt_template: "" # 空 = 内嵌模板
+
+**沙箱机制**：每个请求在 ``sandbox_dir`` 下建一个独立目录
+（``<时间戳>-<随机后缀>/``），写入 ``query.json``（规范化后的查询）、
+``results.json``（fan-out 原始命中）、``prompt.txt``（渲染后的 prompt）、
+``run/``（claude 的工作目录，唯一可写区）、``response.json``（标准化输出）
+与 ``meta.json``（耗时/exit code/token 用量/错误）。后台 janitor 每分钟
+清扫超过 ``retention`` 的沙箱，启动时先兜底清扫一次崩溃残留。沙箱是
+文件系统级隔离（cwd + 工具白名单 Read/Write/Glob/Grep），不是容器级隔离。
+
+``agent: false`` 的请求同样可用：本地后端只做引擎 fan-out，不调 claude，
+``conclusion`` 为 null、``errors`` 携带各 provider 失败表，响应形状与
+``agent: true`` 完全一致。

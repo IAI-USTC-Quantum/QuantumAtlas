@@ -1,20 +1,24 @@
 package routes
 
 // search_agentic.go: POST /api/search/agentic — the metered agentic
-// search endpoint backed by the external qatlas-search microservice.
+// search endpoint. The backend is selected by search.agentic.backend:
+// "remote" talks to the external qatlas-search microservice, "local"
+// drives the in-process claude-CLI runner (internal/agentic); both
+// answer with the same standardized search.RemoteResponse.
 //
 // Unlike POST /api/search (fan-out over local providers) this endpoint
-// calls the microservice with agent=true, which may drive an LLM and
-// costs real tokens. Every call is metered per user per day
-// (usage_daily, enforced atomically by usage.Store.CheckAndReserve)
-// against the caller's effective limit (per-user override > plan >
-// search.agentic.daily_limit). A failed upstream call is refunded.
+// may drive an LLM and costs real tokens. Every call is metered per
+// user per day (usage_daily, enforced atomically by
+// usage.Store.CheckAndReserve) against the caller's effective limit
+// (per-user override > plan > search.agentic.daily_limit). A failed
+// upstream call is refunded.
 //
 // Auth: papers:read scope (same as /api/search) PLUS a user-bound
 // credential — system PATs (re.Auth == nil) get 403 because there is
 // no user to meter against.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -51,14 +55,27 @@ type agenticResponseJSON struct {
 	Errors     map[string]string  `json:"errors"`
 }
 
-// RegisterSearchAgentic mounts POST /api/search/agentic. remote is nil
-// when search.remote is disabled — the route still registers (so the
-// surface is stable) but every call gets a 503. usageStore meters
-// against the registry Postgres; engine is used only for its
-// resolve-or-mint half (registry anchoring of the returned hits).
-func RegisterSearchAgentic(se *core.ServeEvent, cfg *config.Config, remote *search.RemoteProvider, usageStore *usage.Store, engine *search.Engine, enforcer *casbin.Enforcer) {
+// AgenticBackend is the backend behind POST /api/search/agentic: either
+// the remote qatlas-search microservice (*search.RemoteProvider) or the
+// local claude-CLI runner (*agentic.Runner), selected by
+// search.agentic.backend. Both return the same standardized
+// search.RemoteResponse, so the handler below is backend-agnostic.
+type AgenticBackend interface {
+	SearchAgentic(ctx context.Context, entry search.SearchEntry, agent bool) (search.RemoteResponse, error)
+}
+
+// compile-time check: the remote microservice client is a backend.
+var _ AgenticBackend = (*search.RemoteProvider)(nil)
+
+// RegisterSearchAgentic mounts POST /api/search/agentic. backend is nil
+// when neither search.remote nor the local backend is configured — the
+// route still registers (so the surface is stable) but every call gets a
+// 503. usageStore meters against the registry Postgres; engine is used
+// only for its resolve-or-mint half (registry anchoring of the returned
+// hits).
+func RegisterSearchAgentic(se *core.ServeEvent, cfg *config.Config, backend AgenticBackend, usageStore *usage.Store, engine *search.Engine, enforcer *casbin.Enforcer) {
 	se.Router.POST("/api/search/agentic", scopeGuard(enforcer, "papers", "read", func(re *core.RequestEvent) error {
-		if remote == nil {
+		if backend == nil {
 			return re.JSON(http.StatusServiceUnavailable, map[string]string{
 				"detail": "agentic search service not configured",
 			})
@@ -111,7 +128,7 @@ func RegisterSearchAgentic(se *core.ServeEvent, cfg *config.Config, remote *sear
 			})
 		}
 
-		resp, err := remote.SearchAgentic(ctx, entry, agent)
+		resp, err := backend.SearchAgentic(ctx, entry, agent)
 		if err != nil {
 			// Upstream failed: the user must not pay for a call we could
 			// not fulfil — refund the reserved slot.
