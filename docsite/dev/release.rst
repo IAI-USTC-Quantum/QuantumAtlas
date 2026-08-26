@@ -1,8 +1,8 @@
 发布与部署工作流（标准化方案）
 ==============================
 
-QuantumAtlas 的线上形态由三类组件构成：**服务端 qatlasd**（本仓库）、
-**命令行客户端 qatlas-cli**（独立仓库）、**app 微服务**（以 qatlas-search
+QuantumAtlas 的线上形态由三类组件构成：**服务端 qatlasd**\ （本仓库）、
+**命令行客户端 qatlas-cli**\ （独立仓库）、**app 微服务**\ （以 qatlas-search
 为代表，每个 app 一个独立仓库，见 :doc:`apps`）。三者独立版本、独立发布，
 靠两条契约协作：qatlasd ↔ qatlas-cli 的 ``(major, minor)`` 兼容契约
 （见 :doc:`versioning`），以及 qatlasd ↔ app 微服务的 HTTP wire 契约。
@@ -19,15 +19,15 @@ QuantumAtlas 的线上形态由三类组件构成：**服务端 qatlasd**（本�
      - 版本唯一来源
      - 发布触发
      - 产物
-   * - ``qatlasd``（本仓库）
+   * - ``qatlasd``\ （本仓库）
      - 根目录 ``VERSION`` + ``v*`` tag（release.yml prep 强校验一致）
      - push tag ``v*.*.*``
      - ghcr 镜像 ``:{vX.Y.Z, X.Y.Z, latest}`` + 三平台二进制 +
        GitHub Release + PyPI ``quantum-atlas``
    * - ``qatlas-cli``
-     - 其仓库 ``pyproject.toml``（commitizen）
+     - 其仓库 ``pyproject.toml``\ （commitizen）
      - ``cz bump`` 打 tag ``v*``
-     - PyPI ``qatlas-cli``（trusted publishing）
+     - PyPI ``qatlas-cli``\ （trusted publishing）
    * - app 微服务（qatlas-search 等）
      - 现状：无版本来源（无 tag）
      - 现状：无 CI，镜像在部署机本地 build
