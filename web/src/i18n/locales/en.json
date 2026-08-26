@@ -15,6 +15,7 @@
     },
     "nav": {
       "home": "Home",
+      "dashboard": "Dashboard",
       "papers": "Paper Search",
       "papersList": "Papers",
       "pat": "PATs",
@@ -378,5 +379,33 @@
     "failedTitle": "Sign-in failed",
     "failedReturn": "<loginLink>Return to the sign-in page</loginLink> and try again.",
     "missingCode": "Missing code or state in OAuth callback URL."
+  },
+  "dashboard": {
+    "eyebrow": "Account",
+    "title": "Dashboard",
+    "subtitle": "Your account profile, usage quota and access shortcuts.",
+    "profile": {
+      "title": "Profile",
+      "githubLogin": "GitHub account",
+      "name": "Display name",
+      "email": "Email",
+      "userId": "User ID",
+      "role": "Role",
+      "admin": "Admin",
+      "member": "Member",
+      "created": "Joined"
+    },
+    "usage": {
+      "title": "Today's usage",
+      "agenticSearch": "Agentic search",
+      "todayOfLimit": "{{today}} used today / limit {{limit}}",
+      "llmTokens": "LLM tokens consumed today: {{count}}",
+      "unavailable": "Usage data is unavailable (metering store not configured)."
+    },
+    "pat": {
+      "title": "Access tokens",
+      "copy": "Manage personal access tokens (PATs) for CLI and API access.",
+      "manage": "Manage tokens"
+    }
   }
 }

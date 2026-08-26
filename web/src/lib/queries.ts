@@ -11,6 +11,8 @@ import {
   agenticSearch,
   getJson,
   listPlugins,
+  meProfile,
+  myUsage,
   paperSearch,
   papersList,
   type AdminDBRows,
@@ -20,6 +22,8 @@ import {
   type AdminPluginManifest,
   type AdminUsageResponse,
   type AdminWhoami,
+  type MeProfile,
+  type MyUsage,
   type PaperDetail,
   type PaperSearchEntry,
   type PapersListParams,
@@ -113,8 +117,30 @@ export function useAgenticSearch(entry: PaperSearchEntry | null) {
   })
 }
 
-export function useAdminUsage(day: string | undefined, enabled: boolean) {
+// Dashboard profile (GET /api/me). Session-only; retry disabled because
+// a 401/403 just means "not a browser session".
+export function useMe() {
   return useQuery({
+    queryKey: ['me'],
+    queryFn: (): Promise<MeProfile> => meProfile(),
+    staleTime: 5 * 60_000,
+    retry: false,
+  })
+}
+
+// Dashboard usage (GET /api/me/usage). Short staleTime — the number
+// changes with every agentic search call. retry disabled: a 503 just
+// means the metering store is unavailable, the panel degrades instead.
+export function useMyUsage() {
+  return useQuery({
+    queryKey: ['me-usage'],
+    queryFn: (): Promise<MyUsage> => myUsage(),
+    staleTime: 30_000,
+    retry: false,
+  })
+}
+
+export function useAdminUsage(day: string | undefined, enabled: boolean) {  return useQuery({
     queryKey: ['admin-usage', day ?? ''],
     queryFn: (): Promise<AdminUsageResponse> => adminUsage(day),
     enabled,

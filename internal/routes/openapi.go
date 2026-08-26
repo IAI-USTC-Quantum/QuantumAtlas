@@ -592,6 +592,47 @@ func docDeletePAT() {}
 // @Router      /api/pat/scopes [get]
 func docPATScopes() {}
 
+// --- Me (user dashboard) -----------------------------------------------------
+//
+// Read-only self-service surface behind the SPA's user dashboard.
+// Session-token auth only (PAT auth refused, same as /api/pat). See
+// internal/routes/me.go.
+
+// meProfile returns the caller's own profile.
+//
+// @Summary     My profile
+// @Description Returns the signed-in user's profile:
+// @Description {id, email, name, avatar, github_login, is_admin, created}.
+// @Description avatar is the PocketBase file name — build the URL via the
+// @Description PocketBase files API.
+// @Tags        Me
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200 {object} map[string]interface{} "{id, email, name, avatar, github_login, is_admin, created}"
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string "PAT auth not accepted"
+// @Router      /api/me [get]
+func docMeProfile() {}
+
+// meUsage returns the caller's agentic-search metering state for today.
+//
+// @Summary     My usage
+// @Description Returns {metric, today, limit, llm_tokens} for the
+// @Description agentic-search surface: today's call count, the caller's
+// @Description effective daily limit (per-user override > plan >
+// @Description search.agentic.daily_limit) and the LLM tokens consumed
+// @Description today. Same metering shape as the agentic response's usage
+// @Description block.
+// @Tags        Me
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200 {object} meUsageResponse
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string "PAT auth not accepted"
+// @Failure     503 {object} map[string]string "postgres registry unavailable"
+// @Router      /api/me/usage [get]
+func docMeUsage() {}
+
 // --- Admin -------------------------------------------------------------------
 //
 // Admin console API. Session-token auth only (PATs rejected); the db

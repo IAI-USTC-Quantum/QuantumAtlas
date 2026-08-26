@@ -1230,6 +1230,10 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// no enforcer needed because there's no scope-gated endpoint here.
 	routes.RegisterPAT(se, app)
 
+	// "Me" self-service API (user dashboard) — see internal/routes/me.go.
+	// Session-token-only; /api/me/usage 503s when Postgres is unavailable.
+	routes.RegisterMe(se, cfg, usageStore)
+
 	// OAuth 2.0 Device Authorization Grant (RFC 8628) — see
 	// internal/routes/oauthdevice.go. Lets `qatlas auth login --device`
 	// mint a PAT without a local browser (poll-based flow). /code

@@ -336,6 +336,37 @@ export type AdminDBSchema = {
   tables: AdminSchemaTable[]
 }
 
+// --- Me (user dashboard) -----------------------------------------------------
+
+// GET /api/me — the signed-in user's own profile. avatar is the raw
+// PocketBase file name; build the display URL via pb.files.getURL.
+export type MeProfile = {
+  id: string
+  email: string
+  name: string
+  avatar: string
+  github_login: string
+  is_admin: boolean
+  created: string
+}
+
+// GET /api/me/usage — agentic-search metering state for today; mirrors
+// the usage block of the agentic search response.
+export type MyUsage = {
+  metric: string
+  today: number
+  limit: number
+  llm_tokens: number
+}
+
+export function meProfile(): Promise<MeProfile> {
+  return getJson<MeProfile>('/api/me')
+}
+
+export function myUsage(): Promise<MyUsage> {
+  return getJson<MyUsage>('/api/me/usage')
+}
+
 export function adminWhoami(): Promise<AdminWhoami> {
   return getJson<AdminWhoami>('/api/admin/whoami')
 }

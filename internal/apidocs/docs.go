@@ -136,6 +136,102 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/me": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the signed-in user's profile:\n{id, email, name, avatar, github_login, is_admin, created}.\navatar is the PocketBase file name — build the URL via the\nPocketBase files API.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Me"
+                ],
+                "summary": "My profile",
+                "responses": {
+                    "200": {
+                        "description": "{id, email, name, avatar, github_login, is_admin, created}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "PAT auth not accepted",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/me/usage": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns {metric, today, limit, llm_tokens} for the\nagentic-search surface: today's call count, the caller's\neffective daily limit (per-user override \u003e plan \u003e\nsearch.agentic.daily_limit) and the LLM tokens consumed\ntoday. Same metering shape as the agentic response's usage\nblock.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Me"
+                ],
+                "summary": "My usage",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/routes.meUsageResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "PAT auth not accepted",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "postgres registry unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/oauth/device/approve": {
             "post": {
                 "security": [
@@ -2153,6 +2249,23 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "routes.meUsageResponse": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer"
+                },
+                "llm_tokens": {
+                    "type": "integer"
+                },
+                "metric": {
+                    "type": "string"
+                },
+                "today": {
+                    "type": "integer"
+                }
+            }
+        },
         "routes.oauthDeviceCodeRequest": {
             "type": "object",
             "properties": {

@@ -1,5 +1,16 @@
 basePath: /
 definitions:
+  routes.meUsageResponse:
+    properties:
+      limit:
+        type: integer
+      llm_tokens:
+        type: integer
+      metric:
+        type: string
+      today:
+        type: integer
+    type: object
   routes.oauthDeviceCodeRequest:
     properties:
       description:
@@ -247,6 +258,77 @@ paths:
       summary: Health check
       tags:
       - System
+  /api/me:
+    get:
+      description: |-
+        Returns the signed-in user's profile:
+        {id, email, name, avatar, github_login, is_admin, created}.
+        avatar is the PocketBase file name — build the URL via the
+        PocketBase files API.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{id, email, name, avatar, github_login, is_admin, created}'
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: PAT auth not accepted
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: My profile
+      tags:
+      - Me
+  /api/me/usage:
+    get:
+      description: |-
+        Returns {metric, today, limit, llm_tokens} for the
+        agentic-search surface: today's call count, the caller's
+        effective daily limit (per-user override > plan >
+        search.agentic.daily_limit) and the LLM tokens consumed
+        today. Same metering shape as the agentic response's usage
+        block.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/routes.meUsageResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: PAT auth not accepted
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: postgres registry unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: My usage
+      tags:
+      - Me
   /api/oauth/device/approve:
     post:
       consumes:

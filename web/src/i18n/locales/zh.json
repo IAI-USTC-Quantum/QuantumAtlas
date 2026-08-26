@@ -15,6 +15,7 @@
     },
     "nav": {
       "home": "首页",
+      "dashboard": "控制台",
       "papers": "文章搜索",
       "papersList": "论文列表",
       "pat": "访问令牌",
@@ -378,5 +379,33 @@
     "failedTitle": "登录失败",
     "failedReturn": "<loginLink>返回登录页</loginLink>重试。",
     "missingCode": "OAuth 回调缺失 code 或 state。"
+  },
+  "dashboard": {
+    "eyebrow": "个人中心",
+    "title": "控制台",
+    "subtitle": "你的账号信息、用量配额与访问入口。",
+    "profile": {
+      "title": "个人信息",
+      "githubLogin": "GitHub 账号",
+      "name": "昵称",
+      "email": "邮箱",
+      "userId": "用户 ID",
+      "role": "角色",
+      "admin": "管理员",
+      "member": "普通用户",
+      "created": "注册时间"
+    },
+    "usage": {
+      "title": "今日用量",
+      "agenticSearch": "智能搜索",
+      "todayOfLimit": "今日已用 {{today}} / 限额 {{limit}}",
+      "llmTokens": "今日消耗 LLM tokens：{{count}}",
+      "unavailable": "用量数据暂不可用（计量服务未配置）。"
+    },
+    "pat": {
+      "title": "访问令牌",
+      "copy": "管理用于 CLI 与 API 访问的个人访问令牌（PAT）。",
+      "manage": "管理令牌"
+    }
   }
 }

@@ -198,6 +198,22 @@ func (s *Store) DailyUsage(ctx context.Context, day string, configDefault int) (
 	return out, rows.Err()
 }
 
+// UserDailyUsage returns today's (count, llm_tokens) bucket for one
+// (userID, metric) pair — the per-user read behind GET /api/me/usage.
+// A missing bucket means zero usage today, not an error.
+func (s *Store) UserDailyUsage(ctx context.Context, userID, metric string) (count int, llmTokens int64, err error) {
+	if s.pool == nil {
+		return 0, 0, registry.ErrCatalogUnavailable
+	}
+	err = s.pool.QueryRow(ctx, `
+		SELECT count, llm_tokens FROM usage_daily
+		WHERE user_id = $1 AND day = CURRENT_DATE AND metric = $2`, userID, metric).Scan(&count, &llmTokens)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, 0, nil
+	}
+	return count, llmTokens, err
+}
+
 // ListPlans returns all plans ordered by name.
 func (s *Store) ListPlans(ctx context.Context) ([]Plan, error) {
 	if s.pool == nil {

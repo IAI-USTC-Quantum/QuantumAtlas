@@ -5,6 +5,7 @@ import {
   FileSearch,
   Home,
   Key,
+  LayoutDashboard,
   Library,
   Sparkles,
   type LucideIcon,
@@ -17,6 +18,7 @@ import { cn } from '@/lib/utils'
 type NavLink = {
   to:
     | '/$lang'
+    | '/$lang/dashboard'
     | '/$lang/papers/search'
     | '/$lang/papers'
     | '/$lang/admin'
@@ -38,6 +40,7 @@ type NavLink = {
 
 const links: NavLink[] = [
   { to: '/$lang', labelKey: 'nav.home', icon: Home },
+  { to: '/$lang/dashboard', labelKey: 'nav.dashboard', icon: LayoutDashboard },
   { to: '/$lang/papers/search', labelKey: 'nav.papers', icon: FileSearch, matchPrefix: '/papers/search' },
   { to: '/$lang/papers', labelKey: 'nav.papersList', icon: Library, matchPrefix: '/papers', excludePrefix: '/papers/search' },
   { to: '/$lang/pat', labelKey: 'nav.pat', icon: Key },
