@@ -37,4 +37,5 @@ QuantumAtlas 是一个聚焦论文资产的框架，只做三件事：
 
    dev/layout
    dev/plugins
+   dev/apps
    dev/versioning
