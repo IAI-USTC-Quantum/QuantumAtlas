@@ -22,6 +22,36 @@
    * - ``qdrant``
      - 向量语义检索（需配置 RAG embedding 服务后启用）
 
+渠道原理与用量限制
+------------------
+
+各渠道的接入方式与上游限制如下。引擎层面另有统一约束：每个 provider
+调用超时 15 秒，``max_results`` 默认 10、上限 50；单个渠道失败只记入
+响应的 ``errors``，不影响其他渠道的结果。
+
+- **catalog**：本地 PostgreSQL 论文注册表（需 ``QATLAS_POSTGRES_DSN``）。
+  DOI / arXiv ID 精确命中（评分 1.0），否则按标题分词 ``ILIKE`` 匹配
+  （评分 0.5，按时间倒序）。纯内部 SQL 查询，无外部配额。
+- **arxiv**：arXiv 官方 Atom API（``export.arxiv.org/api/query``），无需
+  API key。查询优先级：``id_list``（arXiv ID 直达）> ``doi:"…"`` >
+  ``ti:"…"`` > 全文 ``all:``。arXiv 对匿名客户端限流激进，qatlasd 以
+  固定 UA 标识自己；搜索调用单次超时 10 秒、不自动重试（被限流时记为
+  该渠道失败）。论文抓取（非搜索路径）另有独立的令牌桶限流：
+  ``arxiv_fetch_rps`` 默认 0.33（约每 3 秒一次，遵循 arXiv 官方建议）、
+  burst 2、最多重试 3 次并遵守上游 ``Retry-After``。
+- **openalex**：OpenAlex works API（``api.openalex.org/works``），无需
+  API key。DOI 查询走 ``filter=doi:``，其余走 ``search=``，单页至多 25
+  条。配置 ``paper_access.openalex_mailto``（``QATLAS_OPENALEX_MAILTO``）
+  后进入 polite pool——每 IP 约 10 req/s，远稳于匿名池，生产环境建议
+  必配。仅含 arXiv ID 的条目在 OpenAlex 无对应查询方式，直接返回空。
+- **qdrant**：自建向量语义检索：内网 embedding / rerank 服务
+  （bge-m3 + bge-reranker-v2-m3）+ Qdrant gRPC，稠密 + 稀疏混合检索，
+  RRF 融合后重排，chunk 折叠回论文。无上游配额，吞吐上限取决于自建
+  基础设施。
+
+agentic 搜索另有一套服务端计量：按用户统计调用次数与 LLM tokens，
+每日限额默认 10000 次，超限返回 429，详见下文「Agentic 搜索」一节。
+
 Search Entry 格式
 -----------------
 
