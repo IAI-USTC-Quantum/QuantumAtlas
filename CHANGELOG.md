@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.22.1 (2026-08-26)
+
+### Feat
+
+- **me**: user dashboard at `/{lang}/dashboard` — profile panel (avatar, GitHub login, email, role badge, joined date), today's agentic-search usage (count/limit progress + LLM tokens, degrading gracefully when the metering store is unavailable), and a PAT shortcut panel. Backed by new session-only endpoints `GET /api/me` and `GET /api/me/usage`, with `usage.Store.UserDailyUsage` for per-user daily reads.
+
+### Docs
+
+- **dev**: new `docsite/dev/apps.rst` — how to develop a new app against the main repo (wire contract, server-side wiring, compose deployment), using qatlas-search as the worked example.
+
 ## v0.22.0 (2026-08-26)
 
 ### BREAKING CHANGE
