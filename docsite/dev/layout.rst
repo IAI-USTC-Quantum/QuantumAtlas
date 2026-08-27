@@ -81,5 +81,7 @@ React + TanStack Router 的 SPA，路由带语言前缀（``/zh``、``/en``）�
   ``~/.qatlas/config.yaml``；两侧都拒绝环境变量配置；
 - Python 测试：``uv run --extra dev pytest tests/ search/tests rag/tests``；
   Go 测试：``go test ./internal/... ./cmd/...``（或 ``pixi run test-go``）；
-- 文档站改动：编辑 ``docsite/*.rst`` 后
-  ``sphinx-build -b html docsite web/public/doc``，再重新构建前端与镜像。
+- 文档站改动：编辑 ``docsite/`` 后运行两套构建——公开站
+  ``sphinx-build -b html docsite web/public/doc``（``/doc``），开发站
+  ``sphinx-build -b html -t devdocs -D root_doc=dev/index docsite web/public/devdoc``
+  （``/devdoc``，管理员票据鉴权），再重新构建前端与镜像；

@@ -28,3 +28,4 @@ dist-ssr
 
 # Sphinx-built docs site (source: ../docsite, built by sphinx-build)
 public/doc/
+public/devdoc/

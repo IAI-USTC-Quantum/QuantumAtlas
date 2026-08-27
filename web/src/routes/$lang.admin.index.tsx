@@ -73,7 +73,8 @@ function AdminPage() {
         copy={t('subtitle')}
       />
 
-      {/* Dev docs entry: static content, no admin gate. */}
+      {/* Dev docs entry: sphinx-hosted at /devdoc behind a server-side
+          admin ticket gate; the target page mints the ticket. */}
       <Panel title={t('docs.title')} icon={BookOpenText}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="text-sm text-muted-foreground">

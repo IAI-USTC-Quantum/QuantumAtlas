@@ -64,6 +64,61 @@
                 }
             }
         },
+        "/api/admin/devdoc/ticket": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns {url} — a short-lived signed link into the admin-only\ndev-docs site (/devdoc). Opening it sets an HttpOnly cookie and\nredirects to the ticket-free URL; the cookie authorizes the\ndocs for 12h. Admin-only: session token + github_login on the\nQATLAS_ADMIN_GITHUB_LOGINS allowlist.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin"
+                ],
+                "summary": "Dev-docs ticket",
+                "responses": {
+                    "200": {
+                        "description": "{url}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "admin only",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "dev docs not bundled",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/admin/whoami": {
             "get": {
                 "security": [

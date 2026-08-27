@@ -309,9 +309,10 @@
       }
     },
     "docs": {
-      "title": "仓库架构",
-      "description": "多仓库结构（qatlasd / qatlas-cli / qatlas-search）、插件协议与部署拓扑。",
-      "open": "阅读文档"
+      "title": "开发文档",
+      "description": "代码组织、插件化架构、外围 app 对接、版本兼容契约与发布部署工作流。sphinx 托管，仅管理员可访问。",
+      "open": "打开开发文档",
+      "opening": "正在打开…"
     },
     "plugins": {
       "title": "插件",

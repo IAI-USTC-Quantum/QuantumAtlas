@@ -674,6 +674,24 @@ func docAdminWhoami() {}
 // @Router      /api/admin/db/schema [get]
 func docAdminDBSchema() {}
 
+// adminDevdocTicket mints a signed one-shot URL into the gated dev-docs site.
+//
+// @Summary     Dev-docs ticket
+// @Description Returns {url} — a short-lived signed link into the admin-only
+// @Description dev-docs site (/devdoc). Opening it sets an HttpOnly cookie and
+// @Description redirects to the ticket-free URL; the cookie authorizes the
+// @Description docs for 12h. Admin-only: session token + github_login on the
+// @Description QATLAS_ADMIN_GITHUB_LOGINS allowlist.
+// @Tags        Admin
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200 {object} map[string]string "{url}"
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string "admin only"
+// @Failure     404 {object} map[string]string "dev docs not bundled"
+// @Router      /api/admin/devdoc/ticket [post]
+func docAdminDevdocTicket() {}
+
 // --- OAuth Device Flow -------------------------------------------------------
 //
 // RFC 8628 device authorization grant used by `qatlas auth login --device`.

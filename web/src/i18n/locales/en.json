@@ -309,9 +309,10 @@
       }
     },
     "docs": {
-      "title": "Repository architecture",
-      "description": "Multi-repo layout (qatlasd / qatlas-cli / qatlas-search), the plugin protocol, and the deployment topology.",
-      "open": "Read the doc"
+      "title": "Developer docs",
+      "description": "Code layout, plugin architecture, app integration, version compatibility and the release workflow. Sphinx-hosted, admin-only.",
+      "open": "Open dev docs",
+      "opening": "Opening…"
     },
     "plugins": {
       "title": "Plugins",

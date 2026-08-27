@@ -209,6 +209,46 @@ paths:
       summary: Postgres schema browser
       tags:
       - Admin
+  /api/admin/devdoc/ticket:
+    post:
+      description: |-
+        Returns {url} — a short-lived signed link into the admin-only
+        dev-docs site (/devdoc). Opening it sets an HttpOnly cookie and
+        redirects to the ticket-free URL; the cookie authorizes the
+        docs for 12h. Admin-only: session token + github_login on the
+        QATLAS_ADMIN_GITHUB_LOGINS allowlist.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{url}'
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: admin only
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: dev docs not bundled
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Dev-docs ticket
+      tags:
+      - Admin
   /api/admin/whoami:
     get:
       description: |-

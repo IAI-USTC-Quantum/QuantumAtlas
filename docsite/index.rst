@@ -11,8 +11,9 @@ QuantumAtlas 是一个聚焦论文资产的框架，只做三件事：
 
 收录的论文会经由 MinerU（VLM 模型）批量转换为带图片的 Markdown，供后续阅读与检索使用。
 
-本文档分两部分：**用户指南** 面向使用者，从 Web 界面、命令行（CLI）和 HTTP API
-三个角度讲解如何使用；**开发指南** 面向贡献者，介绍代码组织与插件化架构路线。
+本文档是**用户指南**，面向使用者，从 Web 界面、命令行（CLI）和 HTTP API
+三个角度讲解如何使用。开发文档（代码组织、插件架构、发布流程）单独托管，
+仅管理员可见。
 
 .. note::
 
@@ -30,13 +31,3 @@ QuantumAtlas 是一个聚焦论文资产的框架，只做三件事：
    guide/search
    guide/mineru
    guide/admin
-
-.. toctree::
-   :maxdepth: 1
-   :caption: 开发指南
-
-   dev/layout
-   dev/plugins
-   dev/apps
-   dev/versioning
-   dev/release

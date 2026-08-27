@@ -190,6 +190,25 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
+      # Docs sites must exist under web/public/ BEFORE `npm run build`:
+      # vite copies web/public/* into dist/, and web/embed.go embeds
+      # dist/ into the binary. Without this step the shipped image has no
+      # /doc (the SPA fallback answers instead) and no /devdoc.
+      - name: Set up Python (docs build)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build docs sites (public /doc + admin /devdoc)
+        run: |
+          set -euo pipefail
+          python -m pip install -r docsite/requirements.txt
+          # Public user docs → served at /doc.
+          sphinx-build -b html docsite web/public/doc
+          # Admin-only dev docs → served at /devdoc behind the ticket gate.
+          sphinx-build -b html -t devdocs -D root_doc=dev/index \
+            -D html_title="QuantumAtlas 开发文档" docsite web/public/devdoc
+
       # web/embed.go does //go:embed all:dist — need web/dist/ before
       # the Go compile. Cheap (~30 s), simpler to rebuild per matrix
       # entry than to ferry a prebuilt bundle across jobs.
@@ -454,6 +473,23 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.ref }}
+
+      # Build the docs sites into web/public/ so the Docker build
+      # context (and the Dockerfile's `COPY web/ ./` + vite build)
+      # bundles /doc and /devdoc into the image — see the binary-build
+      # job for details.
+      - name: Set up Python (docs build)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build docs sites (public /doc + admin /devdoc)
+        run: |
+          set -euo pipefail
+          python -m pip install -r docsite/requirements.txt
+          sphinx-build -b html docsite web/public/doc
+          sphinx-build -b html -t devdocs -D root_doc=dev/index \
+            -D html_title="QuantumAtlas 开发文档" docsite web/public/devdoc
 
       # QEMU lets us cross-build linux/arm64 from amd64 runners. Slower
       # than native, but free + reliable + matches the platform set the

@@ -1,0 +1,4 @@
+# Pinned docs-build toolchain for CI (release.yml) and local rebuilds.
+# Mirrors .venv-docs at the time of writing; bump deliberately.
+sphinx==9.1.0
+furo==2025.12.19

@@ -613,6 +613,12 @@ func main() {
 
 			registerRoutes(se, app, cfg, rawStore, registryStore, corpus, searchEngine, remoteProvider, localAgentic, usageStore, enforcer, mineruConverter, mineruScheduler, doiResolver, arxivFetcher, serverStarted)
 
+			// Dev-docs hosting (/devdoc/*) behind the admin ticket gate —
+			// see internal/routes/devdoc.go. Registered before the SPA
+			// catch-all so the more specific pattern wins and the static
+			// devdoc tree is never served unauthenticated.
+			routes.RegisterDevdoc(se, cfg, qweb.MustFS())
+
 			// Serve the embedded SPA last as the catch-all. apis.Static's
 			// indexFallback=true means any path that doesn't match a real
 			// file falls back to /index.html — exactly the SPA-client-router
