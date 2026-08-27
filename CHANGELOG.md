@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.22.2 (2026-08-27)
+
+### Fix
+
+- **docs**: `/doc` actually ships in release builds — CI never ran the sphinx build (`web/public/doc` is gitignored), so `/doc` fell back to the SPA shell. release.yml now installs `docsite/requirements.txt` and builds both sphinx flavours before the web / binary / docker builds.
+
+### Feat
+
+- **admin**: dev docs are now a sphinx-built site at `/devdoc` behind a server-side admin gate — `POST /api/admin/devdoc/ticket` (adminGuard) mints a short-lived HMAC-signed URL; opening it sets an HttpOnly cookie (12h) that authorizes the static host. The dev docs are removed from the public `/doc` site, and the SPA's bundled plain-markdown admin page is replaced by an entry point to the gated site.
+
 ## v0.22.1 (2026-08-26)
 
 ### Feat
