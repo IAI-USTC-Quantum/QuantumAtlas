@@ -137,6 +137,51 @@ jobs:
           retention-days: 7
 
   # --------------------------------------------------------------------
+  # 2b. docs-build — both sphinx flavours (public /doc + admin /devdoc),
+  #     built ONCE on ubuntu-latest and handed to binary-build /
+  #     docker-image as an artifact.
+  #
+  #     Why a separate job instead of building in each consumer:
+  #     binary-build's linux targets run inside manylinux_2_28 containers
+  #     (glibc 2.28), where setup-python's standalone Python refuses to
+  #     start (needs ≥ 2.34). Building here avoids per-matrix duplication
+  #     AND the container glibc trap.
+  # --------------------------------------------------------------------
+  docs-build:
+    runs-on: ubuntu-latest
+    needs: prep
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build docs sites (public /doc + admin /devdoc)
+        run: |
+          set -euo pipefail
+          python -m pip install -r docsite/requirements.txt
+          # Public user docs → served at /doc.
+          sphinx-build -b html docsite web/public/doc
+          # Admin-only dev docs → served at /devdoc behind the ticket gate.
+          sphinx-build -b html -t devdocs -D root_doc=dev/index \
+            -D html_title="QuantumAtlas 开发文档" docsite web/public/devdoc
+
+      - name: Upload docs sites
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs-sites
+          path: |
+            web/public/doc
+            web/public/devdoc
+          retention-days: 7
+
+  # --------------------------------------------------------------------
   # 3. binary-build — matrix over (OS, arch). Each runner is native to
   #    its target so we don't juggle cross-toolchains. CGO_ENABLED=0
   #    so the output is a pure-Go binary with no libc / libstdc++
@@ -166,7 +211,7 @@ jobs:
   #    queue 10–40 min on the free tier.
   # --------------------------------------------------------------------
   binary-build:
-    needs: prep
+    needs: [prep, docs-build]
     strategy:
       fail-fast: false
       matrix:
@@ -192,22 +237,14 @@ jobs:
 
       # Docs sites must exist under web/public/ BEFORE `npm run build`:
       # vite copies web/public/* into dist/, and web/embed.go embeds
-      # dist/ into the binary. Without this step the shipped image has no
-      # /doc (the SPA fallback answers instead) and no /devdoc.
-      - name: Set up Python (docs build)
-        uses: actions/setup-python@v5
+      # dist/ into the binary. Built once in the docs-build job
+      # (setup-python's standalone Python can't start inside the
+      # manylinux_2_28 containers this matrix uses).
+      - name: Download docs sites
+        uses: actions/download-artifact@v4
         with:
-          python-version: "3.12"
-
-      - name: Build docs sites (public /doc + admin /devdoc)
-        run: |
-          set -euo pipefail
-          python -m pip install -r docsite/requirements.txt
-          # Public user docs → served at /doc.
-          sphinx-build -b html docsite web/public/doc
-          # Admin-only dev docs → served at /devdoc behind the ticket gate.
-          sphinx-build -b html -t devdocs -D root_doc=dev/index \
-            -D html_title="QuantumAtlas 开发文档" docsite web/public/devdoc
+          name: docs-sites
+          path: web/public/
 
       # web/embed.go does //go:embed all:dist — need web/dist/ before
       # the Go compile. Cheap (~30 s), simpler to rebuild per matrix
@@ -449,9 +486,8 @@ jobs:
   #    ghcr.io/iai-ustc-quantum/qatlasd and attest its build provenance.
   #
   #    Runs in parallel with create-release / pypi-publish: it consumes
-  #    only the source tree (which it Dockerfile-builds), not any
-  #    upstream artifacts, so the only dependency is `prep` for the
-  #    resolved version string.
+  #    the source tree (which it Dockerfile-builds) plus the docs-build
+  #    artifact, not any binary/wheel artifacts.
   #
   #    Why this exists at all: docker-compose templates in deploy/ point
   #    at `ghcr.io/iai-ustc-quantum/qatlasd:<tag>`. Without this job
@@ -462,7 +498,7 @@ jobs:
   # --------------------------------------------------------------------
   docker-image:
     runs-on: ubuntu-latest
-    needs: prep
+    needs: [prep, docs-build]
     permissions:
       contents: read
       packages: write       # ghcr.io push
@@ -474,22 +510,15 @@ jobs:
         with:
           ref: ${{ github.ref }}
 
-      # Build the docs sites into web/public/ so the Docker build
-      # context (and the Dockerfile's `COPY web/ ./` + vite build)
-      # bundles /doc and /devdoc into the image — see the binary-build
-      # job for details.
-      - name: Set up Python (docs build)
-        uses: actions/setup-python@v5
+      # Download the docs sites into web/public/ so the Docker build
+      # context (the Dockerfile's `COPY web/ ./` + vite build) bundles
+      # /doc and /devdoc into the image. Built once in the docs-build
+      # job.
+      - name: Download docs sites
+        uses: actions/download-artifact@v4
         with:
-          python-version: "3.12"
-
-      - name: Build docs sites (public /doc + admin /devdoc)
-        run: |
-          set -euo pipefail
-          python -m pip install -r docsite/requirements.txt
-          sphinx-build -b html docsite web/public/doc
-          sphinx-build -b html -t devdocs -D root_doc=dev/index \
-            -D html_title="QuantumAtlas 开发文档" docsite web/public/devdoc
+          name: docs-sites
+          path: web/public/
 
       # QEMU lets us cross-build linux/arm64 from amd64 runners. Slower
       # than native, but free + reliable + matches the platform set the
