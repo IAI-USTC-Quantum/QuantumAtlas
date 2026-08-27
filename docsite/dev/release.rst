@@ -29,9 +29,10 @@ QuantumAtlas 的线上形态由三类组件构成：**服务端 qatlasd**\ （�
      - ``cz bump`` 打 tag ``v*``
      - PyPI ``qatlas-cli``\ （trusted publishing）
    * - app 微服务（qatlas-search 等）
-     - 现状：无版本来源（无 tag）
-     - 现状：无 CI，镜像在部署机本地 build
-     - 现状：仅本地镜像 ``qatlas-search:local``
+     - 其仓库根目录 ``VERSION`` + ``v*`` tag（release.yml prep 强校验一致）
+     - push tag ``v*.*.*``
+     - ghcr 镜像 ``ghcr.io/iai-ustc-quantum/<app>:{vX.Y.Z, X.Y.Z, latest}``
+       + GitHub Release
 
 标准化原则
 ----------
@@ -48,23 +49,28 @@ QuantumAtlas 的线上形态由三类组件构成：**服务端 qatlasd**\ （�
    ——只有"新 qatlasd 依赖 app 的新契约字段"这一种情况反过来，且这种
    情况应在契约设计阶段就用 expand 步骤消除。
 
-补齐 qatlas-search 的发布基建
-------------------------------
+app 微服务的发布基建（已在 qatlas-search 落地）
+------------------------------------------------
 
-qatlas-search 目前无 tag、无 CI、镜像靠部署机本地 build，是不可回滚、
-不可审计、无法多机部署的状态。补齐步骤（后续 app 仓以此为模板）：
+qatlas-search 已按本方案接入标准化发布（首个 release：``v0.1.0``）：
 
-1. 仓库根加 ``VERSION`` 文件，发布改为 push tag ``v*.*.*`` 触发；
-2. 新增 ``.github/workflows/release.yml``——可整体复用主仓 release.yml
-   的 prep + docker 两个 job：校验 tag == ``VERSION``，构建多架构镜像推到
-   ``ghcr.io/iai-ustc-quantum/qatlas-search:{vX.Y.Z, X.Y.Z, latest}``；
-3. 主仓 ``deploy/docker-compose.yml`` 的 qatlas-search 服务从
-   ``image: qatlas-search:local`` 改为
-   ``image: ghcr.io/iai-ustc-quantum/qatlas-search:${QATLAS_SEARCH_VERSION}``，
-   并在 ``deploy/.env.docker.example`` 增加 ``QATLAS_SEARCH_VERSION``；
-   同步放宽/更新 ``tests/test_docker_compose.py`` 的相关断言；
+1. 仓库根的 ``VERSION`` 文件是版本唯一来源，发布由 push tag ``v*.*.*``
+   触发；
+2. ``.github/workflows/release.yml`` 复用主仓的 prep + docker 模式：
+   校验 tag == ``VERSION``，构建多架构镜像推到
+   ``ghcr.io/iai-ustc-quantum/qatlas-search:{vX.Y.Z, X.Y.Z, latest}``，
+   并创建 GitHub Release。注意：**私有仓库的 SLSA attestation 是付费
+   组织功能**，attest 步骤已标 ``continue-on-error``，仓库转公开或组织
+   升级后自动生效；
+3. 主仓 ``deploy/docker-compose.yml`` 的 qatlas-search 服务引用
+   ``ghcr.io/iai-ustc-quantum/qatlas-search:${QATLAS_SEARCH_VERSION}``，
+   版本在 ``deploy/.env`` 显式 pin（样例见 ``.env.docker.example``）；
+   ``tests/test_docker_compose.py`` 有结构测试锁定 ghcr 来源与插值约定；
 4. app 仓 README 记录 wire 契约的版本化说明（哪个 app 版本起提供哪个
    端点/字段）。
+
+后续新 app 仓库直接复制 qatlas-search 的 ``VERSION`` + ``release.yml``
+模式即可接入同一套流程。
 
 线上升级标准流程
 ----------------
@@ -83,7 +89,7 @@ qatlas-search 目前无 tag、无 CI、镜像靠部署机本地 build，是不�
 
    # 1. pin 目标版本（qatlasd 与 app 微服务各自的版本变量）
    $EDITOR deploy/.env            # QATLAS_VERSION=v0.22.1
-                                  # QATLAS_SEARCH_VERSION=v0.x.y（基建补齐后）
+                                  # QATLAS_SEARCH_VERSION=v0.1.0
 
    # 2. 先 app 后 core
    docker compose --profile search pull qatlas-search
