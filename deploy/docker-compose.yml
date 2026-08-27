@@ -84,7 +84,8 @@ services:
 
   # ── qatlas-search: agentic multi-source search microservice ─────────────
   # Optional. Lives in the separate repository IAI-USTC-Quantum/qatlas-search;
-  # build the image there (`docker build -t qatlas-search:local .`).
+  # its release workflow publishes the image to ghcr (deploy hosts pull,
+  # never build). Pin the version via QATLAS_SEARCH_VERSION in .env.
   # Bring it online with:  docker compose --profile search up -d
   #
   # Deliberately NO ports mapping: the only legitimate caller is qatlasd
@@ -96,7 +97,7 @@ services:
   # The token must match `search.service_token` in the microservice's own
   # config file (~/.qatlas/search.yaml, mounted below).
   qatlas-search:
-    image: qatlas-search:local
+    image: ghcr.io/iai-ustc-quantum/qatlas-search:${QATLAS_SEARCH_VERSION:-latest}
     container_name: qatlas-search
     restart: unless-stopped
     profiles: ["search"]

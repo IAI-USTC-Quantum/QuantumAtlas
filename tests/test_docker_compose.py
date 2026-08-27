@@ -61,6 +61,21 @@ class TestFullStackCompose:
             "qatlas-search must not publish host ports; only qatlasd calls it"
         )
 
+    def test_qatlas_search_image_is_ghcr(self, doc: dict) -> None:
+        # Deploy hosts pull the image published by the qatlas-search
+        # repo's release workflow — they never `docker build` locally.
+        # The tag is pinned via QATLAS_SEARCH_VERSION (same interpolation
+        # pattern as QATLAS_VERSION for qatlasd).
+        image = doc["services"]["qatlas-search"]["image"]
+        assert image.startswith("ghcr.io/iai-ustc-quantum/qatlas-search:"), (
+            f"qatlas-search image = {image!r}; must come from ghcr "
+            "(release-built), not a local build tag"
+        )
+        assert "QATLAS_SEARCH_VERSION" in image, (
+            f"qatlas-search image = {image!r}; tag must interpolate "
+            "QATLAS_SEARCH_VERSION so deploys can pin the version"
+        )
+
     def test_no_neo4j_service(self, doc: dict) -> None:
         # Neo4j was removed when the project repositioned to
         # paper collection + search + Postgres registry. It must not
