@@ -4,7 +4,7 @@ package routes
 // plus the registry paper-detail endpoint (GET /api/papers/{paper_id}).
 //
 // POST /api/search takes a search.SearchEntry JSON body, fans it out to
-// the configured providers (catalog / arxiv / openalex / qdrant) via the
+// the configured providers (catalog / arxiv / openalex / remote) via the
 // search.Engine, and returns the engine's merged response: results are
 // identity-anchored hits with their registry paper_id (newly minted
 // papers carry created=true and are picked up by the lazy-ingestion

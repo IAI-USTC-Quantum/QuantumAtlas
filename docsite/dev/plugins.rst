@@ -24,8 +24,13 @@ QuantumAtlas 主仓库正在收敛为**核心的论文基础设施**：主仓库
    * - 插件点
      - 机制
    * - 搜索 provider（服务端）
-     - ``internal/search`` 的 Provider 接口；catalog / arxiv / openalex /
-       qdrant 均为可插拔实现，配置启用，故障互相隔离
+     - ``internal/search`` 的 Provider 接口；catalog / arxiv / openalex
+       均为可插拔实现，配置启用，故障互相隔离
+   * - 检索微服务 qatlas-rag（服务端，独立仓库）
+     - qatlasd 经 ``rag.remote`` 配置段接入：论文置 ready 时推送索引
+       （``POST /v1/index``），启动后探测 ``/healthz`` 登记状态；
+       qatlas-search 经自己的 ``rag`` 配置段调用 ``POST /v1/retrieve``，
+       把语义检索作为 fan-out 的一个 backend
    * - 服务插件平台（服务端）
      - ``internal/hostapi`` 宿主 API + 配置驱动的启用开关
        （当前内置插件为空）

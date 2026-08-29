@@ -121,8 +121,9 @@
 ??? question "搜索结果里 catalog / arxiv / openalex 有什么区别？"
 
     `POST /api/search` 把查询 fan-out 到 `QATLAS_SEARCH_PROVIDERS` 配置的 provider：
-    **catalog** 查本地 registry（含资产状态）；**arxiv / openalex** 是上游在线查询；
-    **qdrant**（可选）是本地 markdown 的语义向量检索。同一个 query 一次拿全，不需要逐源跑。
+    **catalog** 查本地 registry（含资产状态）；**arxiv / openalex** 是上游在线查询。
+    同一个 query 一次拿全，不需要逐源跑。语义向量检索由独立的 qatlas-search /
+    qatlas-rag 微服务提供，不经由 `/api/search`。
 
 ## 部署 / 运维
 

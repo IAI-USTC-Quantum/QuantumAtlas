@@ -38,6 +38,11 @@ app 微服务之间的 HTTP 接口协议。本文介绍从代码到线上的标�
      - push main 且 ``docsite/**`` 变更（或手动触发 docs.yml）
      - ghcr 镜像 ``ghcr.io/iai-ustc-quantum/qatlas-docs:{<sha>, latest}``
        （只含静态文件，见下文"文档的独立更新"）
+   * - ``qatlas-rag``
+     - 其仓库根目录 ``VERSION`` + ``v*`` tag（release.yml prep 强校验一致）
+     - push tag ``v*.*.*``
+     - ghcr 镜像 ``ghcr.io/iai-ustc-quantum/qatlas-rag:{vX.Y.Z, X.Y.Z, latest}``
+       + GitHub Release（GPU 镜像）
 
 标准化原则
 ----------
@@ -52,9 +57,10 @@ app 微服务之间的 HTTP 接口协议。本文介绍从代码到线上的标�
 4. **接口协议的演进采用 expand-contract 方式**：先增加字段或端点
    （旧版本仍可工作），待所有部署升级后再删除旧形态。qatlasd 对 app
    故障做了隔离（provider 降级 + 插件探测标记 disconnected），因此
-   **升级顺序默认先升级 app，后升级 qatlasd**。只有"新 qatlasd 依赖
-   app 的新协议字段"这一种情况需要反过来，而开发者应在协议设计阶段
-   就用 expand 步骤消除这种情况。
+   **升级顺序默认先升级 app，后升级 qatlasd**；app 之间存在依赖时
+   同样先下游后上游（例如先 qatlas-rag，再 qatlas-search，最后
+   qatlasd）。只有"新 qatlasd 依赖 app 的新协议字段"这一种情况需要
+   反过来，而开发者应在协议设计阶段就用 expand 步骤消除这种情况。
 
 app 微服务的发布基建（以 qatlas-search 为例）
 ---------------------------------------------

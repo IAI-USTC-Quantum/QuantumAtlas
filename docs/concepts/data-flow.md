@@ -22,7 +22,7 @@ flowchart TB
     end
 
     subgraph SEARCH ["搜索引擎"]
-        ENG[POST /api/search<br/>catalog / arxiv / openalex / qdrant]
+        ENG[POST /api/search<br/>catalog / arxiv / openalex]
     end
 
     ARX -->|qatlas ingest| PDF
@@ -101,9 +101,12 @@ dedupe 成 1 次 fetch + 1 次 convert。完整协议见
 `QATLAS_SEARCH_PROVIDERS`（默认 `catalog,arxiv,openalex`）fan-out：
 
 - **catalog**：本地 PostgreSQL registry 的元数据 + 资产状态；
-- **arxiv / openalex**：上游在线查询（建议配 `QATLAS_OPENALEX_MAILTO` 进 polite pool）；
-- **qdrant**（可选）：配齐 `QATLAS_RAG_QDRANT_URL` + `QATLAS_RAG_EMBED_URL` 后，
-  qatlasd 直接 gRPC 查 Qdrant 混合向量检索（dense+sparse, RRF + rerank）。
+- **arxiv / openalex**：上游在线查询（建议配 `QATLAS_OPENALEX_MAILTO` 进 polite pool）。
+
+语义向量检索不在 `/api/search` 的 provider 列表里：它由独立的 qatlas-rag
+微服务提供（dense+sparse 混合检索，RRF + rerank），经 qatlas-search 作为
+fan-out 的一个 backend 接入；qatlasd 在论文 ready 时向 qatlas-rag 推送
+索引（config.yaml 的 `rag.remote` 段）。
 
 ## 关键不变量
 

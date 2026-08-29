@@ -41,11 +41,11 @@ class TestFullStackCompose:
 
     def test_qatlasd_only_service(self, doc: dict) -> None:
         services = doc.get("services", {})
-        assert set(services) == {"qatlasd", "qatlas-search"}, (
+        assert set(services) == {"qatlasd", "qatlas-search", "qatlas-rag"}, (
             f"unexpected service set {set(services)}; postgres is an external "
             "shared instance and must not be defined in this template, and "
-            "qatlas-search is the only sanctioned sibling (agentic search "
-            "microservice, profile-gated)"
+            "qatlas-search / qatlas-rag are the only sanctioned siblings "
+            "(profile-gated microservices)"
         )
 
     def test_qatlas_search_is_profile_gated_and_internal_only(self, doc: dict) -> None:
@@ -59,6 +59,35 @@ class TestFullStackCompose:
         )
         assert "ports" not in svc, (
             "qatlas-search must not publish host ports; only qatlasd calls it"
+        )
+
+    def test_qatlas_rag_is_profile_gated_and_internal_only(self, doc: dict) -> None:
+        # qatlas-rag is optional (compose --profile rag) and must stay
+        # internal-only: the only legitimate callers are qatlasd (index
+        # push) and qatlas-search (retrieval backend), both on shared-infra.
+        svc = doc["services"]["qatlas-rag"]
+        assert "rag" in svc.get("profiles", []), (
+            "qatlas-rag must be profile-gated (profiles: [rag]) so the "
+            "default `docker compose up -d` stays qatlasd-only"
+        )
+        assert "ports" not in svc, (
+            "qatlas-rag must not publish host ports; only qatlasd and "
+            "qatlas-search call it"
+        )
+
+    def test_qatlas_rag_image_is_ghcr(self, doc: dict) -> None:
+        # Deploy hosts pull the image published by the qatlas-rag repo's
+        # release workflow — they never `docker build` locally. The tag is
+        # pinned via QATLAS_RAG_VERSION (same interpolation pattern as
+        # QATLAS_VERSION for qatlasd).
+        image = doc["services"]["qatlas-rag"]["image"]
+        assert image.startswith("ghcr.io/iai-ustc-quantum/qatlas-rag:"), (
+            f"qatlas-rag image = {image!r}; must come from ghcr "
+            "(release-built), not a local build tag"
+        )
+        assert "QATLAS_RAG_VERSION" in image, (
+            f"qatlas-rag image = {image!r}; tag must interpolate "
+            "QATLAS_RAG_VERSION so deploys can pin the version"
         )
 
     def test_qatlas_search_image_is_ghcr(self, doc: dict) -> None:

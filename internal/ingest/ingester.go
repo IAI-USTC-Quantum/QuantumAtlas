@@ -60,6 +60,13 @@ type assetPutter interface {
 	Put(ctx context.Context, key string, r io.Reader, size int64, contentType string) (int64, error)
 }
 
+// IndexPusher is the slice of the qatlas-rag client (internal/rag) the
+// ingester needs, factored out so tests can fake the push.
+// *rag.RemoteClient satisfies it implicitly.
+type IndexPusher interface {
+	PushIndex(ctx context.Context, paperID string) error
+}
+
 // Option configures an Ingester.
 type Option func(*Ingester)
 
@@ -82,12 +89,25 @@ func WithLogger(l *slog.Logger) Option {
 	}
 }
 
+// WithIndexPusher installs the qatlas-rag index-push client. After a
+// paper flips to 'ready' the ingester pushes an index build for it;
+// the push is best-effort (failures are logged, never fatal). nil
+// (the default) disables the push.
+func WithIndexPusher(p IndexPusher) Option {
+	return func(i *Ingester) {
+		if p != nil {
+			i.pusher = p
+		}
+	}
+}
+
 // Ingester is the lazy-ingestion pipeline. Construct with New; the
 // worker pool starts immediately. Safe for concurrent use.
 type Ingester struct {
 	reg         registryWriter
 	fetcher     *arxiv.Fetcher
 	store       assetPutter
+	pusher      IndexPusher
 	log         *slog.Logger
 	concurrency int
 
@@ -268,6 +288,14 @@ func (i *Ingester) process(j job) {
 	if _, _, err := i.reg.UpsertPDF(ctx, ref, version, res.Sha256, res.Size, bucketRelKey(assetKey)); err != nil {
 		i.fail(ctx, log, j.paperID, "upsert-pdf", err)
 		return
+	}
+
+	// The paper is 'ready' now: push the index build to qatlas-rag.
+	// Best-effort — a push failure must not retro-fail the ingest.
+	if i.pusher != nil {
+		if err := i.pusher.PushIndex(ctx, parsed.Canonical); err != nil {
+			log.Warn("ingest: rag index push failed", "arxiv_id", parsed.Canonical, "error", err)
+		}
 	}
 
 	i.fetched.Add(1)

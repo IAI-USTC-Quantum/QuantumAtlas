@@ -90,9 +90,10 @@
 
 # ─── Search providers ──────────────────────────────────────────────────
 # Providers fanned out to by POST /api/search. Default: [catalog, arxiv,
-# openalex]. Add "qdrant" only when the rag URLs below are configured.
-# Add "remote" to fan out to the external qatlas-search microservice
-# (requires search.remote below to be enabled).
+# openalex]. Add "remote" to fan out to the external qatlas-search
+# microservice (requires search.remote below to be enabled). Semantic
+# retrieval is served by qatlas-search (backed by qatlas-rag), never by
+# qatlasd itself.
 # search:
 #   providers: [catalog, arxiv, openalex]
 #   remote:
@@ -116,13 +117,17 @@
 #       prompt_template: ""  # empty = embedded template; placeholders:
 #                            # {{.Query}} {{.MaxResults}} {{.ResultsFile}}
 
-# ─── RAG (semantic search; needs paper_access.enabled: true) ───────────
+# ─── RAG index push (qatlas-rag microservice; optional) ────────────────
+# Semantic retrieval moved out of qatlasd into the standalone qatlas-rag
+# microservice. When enabled, qatlasd POSTs {url}/v1/index whenever a
+# paper flips to 'ready' (ingest / MinerU completion points); the push
+# is idempotent and best-effort — failures are logged, never fatal.
 # rag:
-#   qdrant_url: qdrant.internal:6334
-#   qdrant_api_key: ""
-#   qdrant_collection: qatlas_papers_v1
-#   embed_url: http://embed.internal:8801
-#   embed_token: ""
+#   remote:
+#     enabled: false
+#     url: ""            # e.g. http://qatlas-rag:8700
+#     token: ""          # must equal the microservice's service_token
+#     timeout: 30s
 
 # ─── Paper access + server-side MinerU (self-hosted opt-in) ────────────
 # Default off: qatlasd does not serve PDF / markdown bytes. Flipping on

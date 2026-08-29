@@ -69,8 +69,8 @@ type Config struct {
 	// SearchProviders is the ordered list of search providers the
 	// /api/search engine fans out to (internal/search). From the
 	// search.providers YAML list; defaults to [catalog, arxiv, openalex].
-	// "qdrant" is only constructible when the RAG qdrant + embed URLs
-	// below are configured — an enabled-but-unconstructible provider is
+	// "remote" is only constructible when search.remote below is
+	// enabled with a URL — an enabled-but-unconstructible provider is
 	// logged and skipped at boot.
 	SearchProviders []string
 
@@ -210,35 +210,30 @@ type Config struct {
 	MinerUTimeout           time.Duration
 	MinerUMaxConcurrentJobs int
 
-	// --- RAG (semantic search over indexed papers) -----------------
+	// --- RAG index push (qatlas-rag microservice) ------------------
 	//
-	// The Go handler in internal/routes/rag.go calls Qdrant directly
-	// and the embed worker over HTTP. /api/rag/* is registered iff
-	// PaperAccessEnabled is true AND BOTH RAGQdrantURL and RAGEmbedURL
-	// are non-empty.
+	// Semantic retrieval has moved out of qatlasd: the standalone
+	// qatlas-rag microservice owns the vector index. When rag.remote
+	// is enabled, qatlasd pushes an index-build task to qatlas-rag
+	// (POST {url}/v1/index) whenever a paper flips to 'ready'
+	// (ingest pipeline and MinerU conversion completion points).
 
-	// RAGQdrantURL — Qdrant gRPC endpoint (e.g. "qdrant.internal:6334").
-	// Accepts either bare host:port or "[http|https]://host:port"; the
-	// scheme is stripped because the qdrant-go-client takes host/port
-	// separately. TLS is auto-enabled when the URL is https://.
-	RAGQdrantURL string
+	// RAGRemoteEnabled is the master switch for the qatlas-rag index
+	// push. False (default) leaves everything off, even when a URL is
+	// set.
+	RAGRemoteEnabled bool
 
-	// RAGQdrantAPIKey — optional Qdrant API key. Read-only key is
-	// sufficient for the query path.
-	RAGQdrantAPIKey string
+	// RAGRemoteURL — qatlas-rag base URL (e.g.
+	// "http://qatlas-rag:8700"). qatlasd calls /v1/index here; the
+	// /healthz probe is anonymous.
+	RAGRemoteURL string
 
-	// RAGQdrantCollection — collection name to query. Default
-	// "qatlas_papers_v1".
-	RAGQdrantCollection string
+	// RAGRemoteToken — bearer the microservice requires on /v1/index.
+	// Must equal the microservice's service_token.
+	RAGRemoteToken string
 
-	// RAGEmbedURL — embed worker base URL (e.g.
-	// "http://embed.internal:8801"). qatlasd calls /embed and /rerank
-	// here.
-	RAGEmbedURL string
-
-	// RAGEmbedToken — bearer the embed worker requires on /embed and
-	// /rerank. /healthz is anonymous so we can probe it cheaply.
-	RAGEmbedToken string
+	// RAGRemoteTimeout bounds each /v1/index call. Default 30s.
+	RAGRemoteTimeout time.Duration
 
 	// OpenAlexMailto is the contact email folded into the polite-pool
 	// User-Agent for OpenAlex API calls and outbound arxiv.org PDF
@@ -379,11 +374,12 @@ type fileConfig struct {
 	} `yaml:"paper_access"`
 
 	RAG struct {
-		QdrantURL        string `yaml:"qdrant_url"`
-		QdrantAPIKey     string `yaml:"qdrant_api_key"`
-		QdrantCollection string `yaml:"qdrant_collection"`
-		EmbedURL         string `yaml:"embed_url"`
-		EmbedToken       string `yaml:"embed_token"`
+		Remote struct {
+			Enabled bool   `yaml:"enabled"`
+			URL     string `yaml:"url"`
+			Token   string `yaml:"token"`
+			Timeout string `yaml:"timeout"`
+		} `yaml:"remote"`
 	} `yaml:"rag"`
 
 	Plugins struct {
@@ -544,7 +540,7 @@ func isRejectedEnvName(name string) bool {
 // Defaults (applied when a key is absent) match the historic env-based
 // defaults: XDG data dirs, 127.0.0.1:4200 bind, max_conns 10,
 // corpus_ensure_indexes true, providers [catalog arxiv openalex],
-// RAG collection qatlas_papers_v1, arxiv fetch 2 concurrent / 0.33 rps,
+// arxiv fetch 2 concurrent / 0.33 rps,
 // plugin rpc bind 127.0.0.1:8799, event retention 7d, rpc timeout 30s,
 // reconnect 5s.
 func Load(path string) (*Config, error) {
@@ -633,11 +629,9 @@ func (fc *fileConfig) toConfig(anchor string) (*Config, error) {
 		OpenAlexMailto:       fc.PaperAccess.OpenAlexMailto,
 		ArxivFetchConcurrent: intOrDefault(fc.PaperAccess.ArxivFetchConcurrent, 2),
 		ArxivFetchRPS:        floatOrDefault(fc.PaperAccess.ArxivFetchRPS, 0.33),
-		RAGQdrantURL:         fc.RAG.QdrantURL,
-		RAGQdrantAPIKey:      fc.RAG.QdrantAPIKey,
-		RAGQdrantCollection:  defaultIfEmpty(fc.RAG.QdrantCollection, "qatlas_papers_v1"),
-		RAGEmbedURL:          fc.RAG.EmbedURL,
-		RAGEmbedToken:        fc.RAG.EmbedToken,
+		RAGRemoteEnabled:     fc.RAG.Remote.Enabled,
+		RAGRemoteURL:         fc.RAG.Remote.URL,
+		RAGRemoteToken:       fc.RAG.Remote.Token,
 		PluginsEnabled:       fc.Plugins.Enabled,
 		PluginsDisabled:      fc.Plugins.Disabled,
 		PluginConnectSecret:  fc.Plugins.ConnectSecret,
@@ -672,6 +666,9 @@ func (fc *fileConfig) toConfig(anchor string) (*Config, error) {
 
 	var err error
 	if cfg.RemoteTimeout, err = parseDuration(fc.Search.Remote.Timeout, 60*time.Second, "search.remote.timeout"); err != nil {
+		return nil, err
+	}
+	if cfg.RAGRemoteTimeout, err = parseDuration(fc.RAG.Remote.Timeout, 30*time.Second, "rag.remote.timeout"); err != nil {
 		return nil, err
 	}
 	if cfg.AgenticLocalTimeout, err = parseDuration(fc.Search.Agentic.Local.Timeout, 5*time.Minute, "search.agentic.local.timeout"); err != nil {

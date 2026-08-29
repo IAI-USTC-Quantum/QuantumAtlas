@@ -1065,3 +1065,44 @@ func TestConverter_QueueSnapshotFor_RunningOmitsPosition(t *testing.T) {
 		t.Errorf("EtaSeconds = %d, want 0 for running job", qs.EtaSeconds)
 	}
 }
+
+// fakeIndexPusher records PushIndex calls (the qatlas-rag index push).
+type fakeIndexPusher struct {
+	mu     sync.Mutex
+	pushed []string
+}
+
+func (f *fakeIndexPusher) PushIndex(_ context.Context, paperID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.pushed = append(f.pushed, paperID)
+	return nil
+}
+
+func (f *fakeIndexPusher) snapshot() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.pushed...)
+}
+
+func TestConverter_PushesIndexAfterConversion(t *testing.T) {
+	store := newFakeStore()
+	store.put("pdf/2401/2401.12345v1.pdf", []byte("%PDF-fake"))
+
+	stub := newMinerUStub(t)
+	defer stub.close()
+	pusher := &fakeIndexPusher{}
+	c := makeConverter(t, store, stub.url())
+	c.cfg.IndexPusher = pusher
+
+	c.Ensure(context.Background(), "2401.12345v1")
+	if !waitForJobState(c, "2401.12345v1", JobStateDone, 2*time.Second) {
+		final, _ := c.Lookup("2401.12345v1")
+		t.Fatalf("job did not reach Done; final = %+v", final)
+	}
+
+	pushed := pusher.snapshot()
+	if len(pushed) != 1 || pushed[0] != "2401.12345v1" {
+		t.Fatalf("pushed = %v, want [2401.12345v1]", pushed)
+	}
+}

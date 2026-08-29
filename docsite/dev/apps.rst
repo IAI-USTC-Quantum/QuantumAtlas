@@ -176,18 +176,43 @@ group ``qatlas.plugins`` 声明该命令。用户安装 app 的包之后，
 CLI 会给出安装提示（详见 :doc:`plugins`）。qatlas-search 就是采用这种
 方式提供 ``qatlas search`` 命令的。
 
-对照：monorepo 内嵌形态
------------------------
+对照：qatlas-rag 已拆为独立仓库
+-------------------------------
 
-并非所有 app 都必须拆成独立仓库。``rag/``（``qatlas_rag``）是另一种
-形态：它的 Python 包仍随主仓库的 ``quantum-atlas`` wheel 一起构建
-（见根目录的 ``pyproject.toml``），但它对 qatlasd 暴露的同样是 HTTP
-微服务（embed worker，启动命令为
-``uvicorn qatlas_rag.embed.worker:app --port 8801``，见
-``rag/README.md``）。也就是说：**代码放在 monorepo 目录里还是独立仓库
-里，只影响发行节奏；app 接入 qatlasd 的方式一律是 HTTP + Bearer
+早期版本的主仓库曾以 monorepo 内嵌形态携带 ``rag/`` 目录
+（``qatlas_rag`` 包，embed worker），该包的发行节奏与主仓库绑定。
+目前 qatlas-rag 已拆分为独立仓库，它遵循本文介绍的接入方式：
+它对外提供 HTTP 接口协议（``POST /v1/index`` 触发论文索引构建，
+``GET /healthz`` 供健康探测），qatlasd 通过 ``rag.remote`` 配置段
+（``{enabled, url, token, timeout}``）接入它，并在论文置 ready 时
+向它推送索引构建任务。也就是说：**代码放在 monorepo 目录里还是独立
+仓库里，只影响发行节奏；app 接入 qatlasd 的方式一律是 HTTP + Bearer
 token**。开发者选择独立仓库的判据是：app 需要独立的发行节奏、独立的
-依赖栈（如依赖 LLM），或者开发者希望核心仓库永远不携带这部分代码。
+依赖栈（如依赖 GPU 或 LLM），或者开发者希望核心仓库永远不携带这部分
+代码。
+
+app 之间的依赖
+--------------
+
+qatlas-search 依赖 qatlas-rag（语义检索是搜索 fan-out 的一个 backend），
+这是生态里第一对 app→app 依赖。依赖机制保持轻量，qatlasd 不参与：
+
+- 依赖在**调用方的配置**里声明。qatlas-search 的配置文件增加
+  ``rag: {enabled, url, token, timeout}`` 段后，它即可按 qatlas-rag 的
+  接口协议（``POST /v1/retrieve``）调用下游；被依赖方不需要知道自己
+  有哪些调用方；
+- 依赖检查复用既有机制：调用方的 ``GET /healthz`` 在 ``backends`` 里
+  报告下游的就绪状态（qatlas-search 的 healthz 已是这个格式），
+  qatlasd 的插件探测逻辑不需要任何改动；
+- 故障隔离复用既有模式：下游故障只记入响应的 ``errors`` 段，调用方的
+  其余功能不受影响；
+- 调用链上的协议各自独立版本化、按 expand-contract 演进；升级顺序
+  是先下游后上游（先 qatlas-rag，再 qatlas-search，最后 qatlasd），
+  详见 :doc:`release`。
+
+开发者设计新的 app→app 依赖时，应把被依赖方的协议全文写进被依赖方
+仓库的 README，并在调用方仓库的 README 里记录该依赖（从哪个版本起
+需要下游的哪个协议字段）。
 
 检查清单
 --------

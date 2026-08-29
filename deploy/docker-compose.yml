@@ -121,6 +121,51 @@ services:
       # persist updates back to this file.
       - ${HOME}/.qatlas/search.yaml:/etc/qatlas-search/config.yaml
 
+  # ── qatlas-rag: GPU semantic-retrieval microservice ───────────────────
+  # Optional. Lives in the separate repository IAI-USTC-Quantum/qatlas-rag;
+  # its release workflow publishes the image to ghcr (deploy hosts pull,
+  # never build). Pin the version via QATLAS_RAG_VERSION in .env.
+  # Bring it online with:  docker compose --profile rag up -d
+  #
+  # GPU note: the service needs an NVIDIA GPU (bge-m3 + reranker). If THIS
+  # host has none, run qatlas-rag on the GPU host instead (compose example
+  # in the qatlas-rag repo, deploy/docker-compose.example.yaml) and point
+  # qatlasd's rag.remote.url at it over the mesh / shared-infra network.
+  #
+  # Deliberately NO ports mapping: the only legitimate callers are qatlasd
+  # (index push on paper-ready, plus /healthz probing) and qatlas-search
+  # (retrieval backend). Point qatlasd at it via ~/.qatlas/config.yaml:
+  #   rag:
+  #     remote: { enabled: true, url: "http://qatlas-rag:8801", token: "..." }
+  # and qatlas-search via its own ~/.qatlas/search.yaml:
+  #   search:
+  #     rag: { enabled: true, url: "http://qatlas-rag:8801", token: "..." }
+  # Both tokens must match `rag.service_token` in the microservice's own
+  # config file (~/.qatlas/rag.yaml, mounted below).
+  qatlas-rag:
+    image: ghcr.io/iai-ustc-quantum/qatlas-rag:${QATLAS_RAG_VERSION:-latest}
+    container_name: qatlas-rag
+    restart: unless-stopped
+    profiles: ["rag"]
+    networks:
+      - shared-infra
+    volumes:
+      # Own config file (same reasoning as qatlas-search above). Mounted
+      # read-write so PUT /v1/admin/config can persist updates.
+      - ${HOME}/.qatlas/rag.yaml:/etc/qatlas-rag/config.yaml
+      # Hugging Face model cache: avoids re-downloading the bge-m3 /
+      # reranker weights on container rebuilds.
+      - hf-cache:/home/qatlas/.cache/huggingface
+    # Requires nvidia-container-toolkit on the host; drop this block only
+    # if you know the models should run on CPU (not supported).
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
 # Shared network for reaching sibling infrastructure containers (e.g. the
 # standalone general-purpose `postgres` container) by name. Create once:
 #   docker network create shared-infra
@@ -128,6 +173,10 @@ services:
 networks:
   shared-infra:
     external: true
+
+volumes:
+  # Model-weight cache for the qatlas-rag service (see above).
+  hf-cache:
 
 # ── Alternative storage: docker named volumes ─────────────────────────────
 # Uncomment this block + delete the `./data/*` host paths above if you

@@ -102,7 +102,7 @@ func docInstallScript() {}
 //
 // @Summary     Search papers
 // @Description Fans one search entry out to the configured providers
-// @Description (catalog / arxiv / openalex / qdrant), merges hits by paper
+// @Description (catalog / arxiv / openalex / remote), merges hits by paper
 // @Description identity (DOI > arXiv > title hash) and resolve-or-mints each
 // @Description identity-anchored hit against the paper registry. Newly minted
 // @Description papers carry created=true and are picked up by the lazy

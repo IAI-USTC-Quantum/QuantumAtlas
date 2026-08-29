@@ -172,9 +172,7 @@ PostgreSQL；登录态仍由 PocketBase 独立管理。
 
 | 变量 | 默认 | 作用 |
 |---|---|---|
-| `QATLAS_SEARCH_PROVIDERS` | `catalog,arxiv,openalex` | `POST /api/search` 的 provider fan-out 列表（CSV）。`catalog` = 本地 Postgres paper registry；`arxiv` / `openalex` = 上游在线查询；`qdrant` = 语义向量检索（需同时配 `QATLAS_RAG_QDRANT_URL` + `QATLAS_RAG_EMBED_URL`）|
-| `QATLAS_RAG_QDRANT_URL` / `QATLAS_RAG_QDRANT_API_KEY` / `QATLAS_RAG_QDRANT_COLLECTION` | — | qdrant provider 的 Qdrant 连接（gRPC host:port 或 http(s) URL）|
-| `QATLAS_RAG_EMBED_URL` / `QATLAS_RAG_EMBED_TOKEN` | — | qdrant provider 的 embed / rerank worker（HTTP）|
+| `QATLAS_SEARCH_PROVIDERS` | `catalog,arxiv,openalex` | `POST /api/search` 的 provider fan-out 列表（CSV）。`catalog` = 本地 Postgres paper registry；`arxiv` / `openalex` = 上游在线查询。语义向量检索由独立的 qatlas-rag 微服务提供（config.yaml 的 `rag.remote` 段接入），不再是本服务的 provider |
 
 ## Server: plugin platform
 

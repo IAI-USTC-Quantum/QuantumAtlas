@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## Unreleased
+
+### BREAKING CHANGE
+
+- **Removed: builtin `qdrant` search provider.** Semantic retrieval moved out of qatlasd into the standalone `qatlas-rag` microservice (separate repository, HTTP + Bearer `service_token`, same style as qatlas-search). Semantic search is now served by qatlas-search (backed by qatlas-rag); `internal/search/qdrant.go`, the in-process embed client, and the `github.com/qdrant/go-client` dependency are gone.
+- **Removed: monorepo `rag/` directory.** The `qatlas_rag` embed worker now lives in the `qatlas-rag` repository. The Python `embed` extra (torch / transformers / FlagEmbedding pins), the `qatlas-rag` console script, and the `rag/tests` pytest path are removed from `pyproject.toml` (run `uv lock` to regenerate `uv.lock`).
+- **Config key migration.** Removed keys: the `qdrant` option in `search.providers`, and the whole direct-Qdrant `rag` section — `rag.qdrant_url`, `rag.qdrant_api_key`, `rag.qdrant_collection`, `rag.embed_url`, `rag.embed_token`. New section: `rag.remote` with `{enabled, url, token, timeout}` (timeout default `30s`) — when enabled, qatlasd pushes an idempotent index-build task (`POST {url}/v1/index`, Bearer auth) to qatlas-rag whenever a paper flips to `ready` (ingest pipeline + MinerU conversion completion points). The push is best-effort: failures are logged and never fail the enclosing pipeline, and qatlas-rag is registered in the plugin registry with a `/healthz` probe (`rag-remote`).
+
 ## v0.22.3 (2026-08-29)
 
 ### Feat

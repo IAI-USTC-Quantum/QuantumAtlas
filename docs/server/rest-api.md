@@ -91,7 +91,7 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
 
 | Method | Path | 鉴权 | 用途 |
 |---|---|---|---|
-| `POST` | `/api/search` | `papers:read` | 多 provider 论文搜索。body 为 SearchEntry JSON，engine fan-out 到 `QATLAS_SEARCH_PROVIDERS` 列出的 provider（默认 `catalog,arxiv,openalex`；配齐 `QATLAS_RAG_QDRANT_URL` + `QATLAS_RAG_EMBED_URL` 后可加 `qdrant` 语义向量检索）|
+| `POST` | `/api/search` | `papers:read` | 多 provider 论文搜索。body 为 SearchEntry JSON，engine fan-out 到 `QATLAS_SEARCH_PROVIDERS` 列出的 provider（默认 `catalog,arxiv,openalex`）|
 
 ### Plugins
 

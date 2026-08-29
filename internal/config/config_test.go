@@ -239,7 +239,7 @@ postgres:
   max_conns: 25
   corpus_ensure_indexes: false
 search:
-  providers: [catalog, qdrant]
+  providers: [catalog, remote]
 auth:
   github_client_id: gh-client
   github_client_secret: gh-secret
@@ -271,11 +271,11 @@ paper_access:
     timeout: 30m
     max_concurrent_jobs: 8
 rag:
-  qdrant_url: qdrant.internal:6334
-  qdrant_api_key: qk
-  qdrant_collection: my_collection
-  embed_url: http://embed.internal:8801
-  embed_token: et
+  remote:
+    enabled: true
+    url: http://qatlas-rag:8700
+    token: rt
+    timeout: 45s
 plugins:
   dir: /srv/plugins
   enabled: [graph, lean]
@@ -312,7 +312,7 @@ system_pat:
 		{"PostgresDSN", cfg.PostgresDSN, "postgres://qatlas:secret@pg:5432/qatlas?sslmode=disable"},
 		{"PostgresMaxConns", cfg.PostgresMaxConns, 25},
 		{"CorpusEnsureIndexes", cfg.CorpusEnsureIndexes, false},
-		{"SearchProviders", strings.Join(cfg.SearchProviders, ","), "catalog,qdrant"},
+		{"SearchProviders", strings.Join(cfg.SearchProviders, ","), "catalog,remote"},
 		{"GitHubClientID", cfg.GitHubClientID, "gh-client"},
 		{"GitHubClientSecret", cfg.GitHubClientSecret, "gh-secret"},
 		{"AllowedGitHubLogins", strings.Join(cfg.AllowedGitHubLogins, ","), "alice,bob"},
@@ -339,11 +339,10 @@ system_pat:
 		{"MinerUPollInterval", cfg.MinerUPollInterval, 5 * time.Second},
 		{"MinerUTimeout", cfg.MinerUTimeout, 30 * time.Minute},
 		{"MinerUMaxConcurrentJobs", cfg.MinerUMaxConcurrentJobs, 8},
-		{"RAGQdrantURL", cfg.RAGQdrantURL, "qdrant.internal:6334"},
-		{"RAGQdrantAPIKey", cfg.RAGQdrantAPIKey, "qk"},
-		{"RAGQdrantCollection", cfg.RAGQdrantCollection, "my_collection"},
-		{"RAGEmbedURL", cfg.RAGEmbedURL, "http://embed.internal:8801"},
-		{"RAGEmbedToken", cfg.RAGEmbedToken, "et"},
+		{"RAGRemoteEnabled", cfg.RAGRemoteEnabled, true},
+		{"RAGRemoteURL", cfg.RAGRemoteURL, "http://qatlas-rag:8700"},
+		{"RAGRemoteToken", cfg.RAGRemoteToken, "rt"},
+		{"RAGRemoteTimeout", cfg.RAGRemoteTimeout, 45 * time.Second},
 		{"PluginsDir", cfg.PluginsDir, "/srv/plugins"},
 		{"PluginsEnabled", strings.Join(cfg.PluginsEnabled, ","), "graph,lean"},
 		{"PluginsDisabled", strings.Join(cfg.PluginsDisabled, ","), "rag"},
@@ -436,6 +435,57 @@ func TestLoad_SearchRemoteRejectsMalformedTimeout(t *testing.T) {
 	path := writeConfig(t, "search:\n  remote:\n    timeout: banana\n")
 	if _, err := Load(path); err == nil {
 		t.Fatal("Load succeeded with malformed search.remote.timeout, want error")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// rag.remote (qatlas-rag index push)
+// ---------------------------------------------------------------------------
+
+func TestLoad_RAGRemote(t *testing.T) {
+	clearConfigEnv(t)
+	path := writeConfig(t, `
+rag:
+  remote:
+    enabled: true
+    url: http://qatlas-rag:8700
+    token: rag-svc-token
+    timeout: 10s
+`)
+	cfg := mustLoad(t, path)
+
+	if !cfg.RAGRemoteEnabled {
+		t.Error("RAGRemoteEnabled = false, want true")
+	}
+	if cfg.RAGRemoteURL != "http://qatlas-rag:8700" {
+		t.Errorf("RAGRemoteURL = %q", cfg.RAGRemoteURL)
+	}
+	if cfg.RAGRemoteToken != "rag-svc-token" {
+		t.Errorf("RAGRemoteToken = %q", cfg.RAGRemoteToken)
+	}
+	if cfg.RAGRemoteTimeout != 10*time.Second {
+		t.Errorf("RAGRemoteTimeout = %v, want 10s", cfg.RAGRemoteTimeout)
+	}
+}
+
+func TestLoad_RAGRemoteDefaults(t *testing.T) {
+	clearConfigEnv(t)
+	path := writeConfig(t, "{}\n")
+	cfg := mustLoad(t, path)
+
+	if cfg.RAGRemoteEnabled {
+		t.Error("RAGRemoteEnabled = true by default, want false")
+	}
+	if cfg.RAGRemoteTimeout != 30*time.Second {
+		t.Errorf("RAGRemoteTimeout = %v, want 30s default", cfg.RAGRemoteTimeout)
+	}
+}
+
+func TestLoad_RAGRemoteRejectsMalformedTimeout(t *testing.T) {
+	clearConfigEnv(t)
+	path := writeConfig(t, "rag:\n  remote:\n    timeout: banana\n")
+	if _, err := Load(path); err == nil {
+		t.Fatal("Load succeeded with malformed rag.remote.timeout, want error")
 	}
 }
 
@@ -555,7 +605,7 @@ func TestLoad_Defaults(t *testing.T) {
 		{"PostgresMaxConns", cfg.PostgresMaxConns, 10},
 		{"CorpusEnsureIndexes", cfg.CorpusEnsureIndexes, true},
 		{"SearchProviders", strings.Join(cfg.SearchProviders, ","), "catalog,arxiv,openalex"},
-		{"RAGQdrantCollection", cfg.RAGQdrantCollection, "qatlas_papers_v1"},
+		{"RAGRemoteTimeout", cfg.RAGRemoteTimeout, 30 * time.Second},
 		{"ArxivFetchConcurrent", cfg.ArxivFetchConcurrent, 2},
 		{"ArxivFetchRPS", cfg.ArxivFetchRPS, 0.33},
 		{"PaperAccessEnabled", cfg.PaperAccessEnabled, false},

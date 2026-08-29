@@ -40,6 +40,7 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/openalexcorpus"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/pat"
 	qplugin "github.com/IAI-USTC-Quantum/QuantumAtlas/internal/plugin"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/rag"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/registry"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/routes"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/search"
@@ -453,6 +454,11 @@ func main() {
 			}
 		}
 
+		// qatlas-rag index-push client (rag.remote). nil when disabled;
+		// the converter and the ingester treat a nil pusher as "no push"
+		// and a push failure as best-effort (log only, never fatal).
+		ragClient := buildRAGRemoteClient(cfg)
+
 		// Build the MinerU converter (always non-nil; behaves as a
 		// no-op when paper_access.enabled is false). When
 		// the operator opts in we emit ONE info line so deploy logs
@@ -473,6 +479,7 @@ func main() {
 				MinerUMaxConcurrentJobs: cfg.MinerUMaxConcurrentJobs,
 				Fetcher:                 arxivFetcher,
 				ArxivFetchConcurrent:    cfg.ArxivFetchConcurrent,
+				IndexPusher:             ragClient,
 			},
 			rawStore, registryStore,
 			slog.Default(),
@@ -543,9 +550,10 @@ func main() {
 		// Lazy-ingestion pipeline: every paper the search engine mints
 		// (status 'pending') is handed to the ingester, which fetches the
 		// arXiv PDF into the object store and records the asset (flipping
-		// the paper to 'ready'). A nil arxiv fetcher disables ingestion
-		// (OnMint no-op); Shutdown drains the queue on terminate.
-		ingester := ingest.New(registryStore, arxivFetcher, rawStore)
+		// the paper to 'ready', then pushing the index build to
+		// qatlas-rag when configured). A nil arxiv fetcher disables
+		// ingestion (OnMint no-op); Shutdown drains the queue on terminate.
+		ingester := ingest.New(registryStore, arxivFetcher, rawStore, ingest.WithIndexPusher(ragClient))
 		app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
 			shutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
@@ -557,10 +565,10 @@ func main() {
 
 		// Multi-provider search engine (POST /api/search). Providers come
 		// from search.providers (default catalog,arxiv,openalex);
-		// "qdrant" additionally requires the RAG qdrant + embed URLs,
-		// "remote" the qatlas-search microservice (search.remote).
-		// remoteProvider is held separately too: POST /api/search/agentic
-		// talks to it directly (metered, agent=true).
+		// "remote" additionally requires the qatlas-search microservice
+		// (search.remote). remoteProvider is held separately too:
+		// POST /api/search/agentic talks to it directly (metered,
+		// agent=true).
 		remoteProvider := buildRemoteProvider(cfg)
 		searchEngine := buildSearchEngine(cfg, pgPool, registryStore, ingester, remoteProvider)
 
@@ -611,7 +619,7 @@ func main() {
 				}
 			}
 
-			registerRoutes(se, app, cfg, rawStore, registryStore, corpus, searchEngine, remoteProvider, localAgentic, usageStore, enforcer, mineruConverter, mineruScheduler, doiResolver, arxivFetcher, serverStarted)
+			registerRoutes(se, app, cfg, rawStore, registryStore, corpus, searchEngine, remoteProvider, ragClient, localAgentic, usageStore, enforcer, mineruConverter, mineruScheduler, doiResolver, arxivFetcher, serverStarted)
 
 			// Docs sites (/doc public, /devdoc behind the admin ticket
 			// gate): disk override under ~/.qatlas/docs first, embedded
@@ -814,9 +822,8 @@ func ensureCatalogSchema(pool *pgxpool.Pool, corpus *openalexcorpus.Store, ensur
 // POST /api/search. The provider list comes from search.providers
 // (default "catalog,arxiv,openalex"): catalog searches the PostgreSQL
 // registry itself (needs the pool), arxiv / openalex hit their public
-// APIs with the shared http client (+ OpenAlex polite-pool mailto),
-// "qdrant" is only constructed when the RAG qdrant + embed URLs are
-// configured, and "remote" joins the fan-out only when search.remote
+// APIs with the shared http client (+ OpenAlex polite-pool mailto), and
+// "remote" joins the fan-out only when search.remote
 // is enabled with a URL (remote == nil otherwise). Unknown or
 // unconstructible providers are logged and skipped — one bad entry must
 // not sink the whole engine. The engine resolves-or-mints every
@@ -836,17 +843,6 @@ func buildSearchEngine(cfg *config.Config, pool *pgxpool.Pool, registryStore *re
 			providers = append(providers, search.NewArxivProvider(httpClient))
 		case "openalex":
 			providers = append(providers, search.NewOpenAlexProvider(httpClient, mailto))
-		case "qdrant":
-			if cfg.RAGQdrantURL == "" || cfg.RAGEmbedURL == "" {
-				slog.Warn("search: qdrant provider requested but rag.qdrant_url / rag.embed_url unset; skipping")
-				continue
-			}
-			qp, err := search.NewQdrantProvider(cfg.RAGQdrantURL, cfg.RAGQdrantAPIKey, cfg.RAGQdrantCollection, cfg.RAGEmbedURL, cfg.RAGEmbedToken)
-			if err != nil {
-				slog.Warn("search: qdrant provider disabled", "error", err)
-				continue
-			}
-			providers = append(providers, qp)
 		case "remote":
 			if remote == nil {
 				slog.Warn("search: remote provider requested but search.remote is disabled or has no url; skipping")
@@ -868,6 +864,16 @@ func buildRemoteProvider(cfg *config.Config) *search.RemoteProvider {
 		return nil
 	}
 	return search.NewRemoteProvider(cfg.RemoteURL, cfg.RemoteToken, cfg.RemoteTimeout)
+}
+
+// buildRAGRemoteClient constructs the qatlas-rag microservice client
+// (index-push only: qatlasd POSTs /v1/index when a paper flips to
+// 'ready'). Returns nil unless rag.remote is enabled AND carries a URL.
+func buildRAGRemoteClient(cfg *config.Config) *rag.RemoteClient {
+	if !cfg.RAGRemoteEnabled || strings.TrimSpace(cfg.RAGRemoteURL) == "" {
+		return nil
+	}
+	return rag.NewRemoteClient(cfg.RAGRemoteURL, cfg.RAGRemoteToken, cfg.RAGRemoteTimeout)
 }
 
 // compile-time check: the local runner is an agentic backend.
@@ -988,7 +994,7 @@ func ensureBucketVersioning(rawStore objstore.Store) {
 // registerRoutes wires the QuantumAtlas /api/* surface. Most endpoints are
 // implemented under internal/routes/ and pulled in by their respective
 // Register* helpers as we migrate each module in subsequent phases.
-func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawStore objstore.Store, registryStore *registry.Store, corpus *openalexcorpus.Store, searchEngine *search.Engine, remoteProvider *search.RemoteProvider, localAgentic *agentic.Runner, usageStore *usage.Store, enforcer *casbin.Enforcer, mineruConverter *mineru.Converter, mineruScheduler *mineru.Scheduler, doiResolver *openalex.Resolver, arxivFetcher *arxiv.Fetcher, started time.Time) {
+func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawStore objstore.Store, registryStore *registry.Store, corpus *openalexcorpus.Store, searchEngine *search.Engine, remoteProvider *search.RemoteProvider, ragClient *rag.RemoteClient, localAgentic *agentic.Runner, usageStore *usage.Store, enforcer *casbin.Enforcer, mineruConverter *mineru.Converter, mineruScheduler *mineru.Scheduler, doiResolver *openalex.Resolver, arxivFetcher *arxiv.Fetcher, started time.Time) {
 	probes := healthz.Probes{
 		Cfg:      cfg,
 		RawStore: rawStore,
@@ -1163,14 +1169,30 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 			Capabilities: []string{"search"},
 		},
 	}
+	// The qatlas-rag microservice (index-push target) gets the same
+	// treatment: builtin manifest whose enabled state mirrors
+	// rag.remote.enabled, kept honest by the healthz probe below.
+	ragRemoteManifest := qplugin.Manifest{
+		ID:         "rag-remote",
+		Name:       "RAG indexing (qatlas-rag microservice)",
+		Version:    Version,
+		ABIVersion: qplugin.HostABIVersion,
+		Kind:       qplugin.KindBuiltin,
+		Contributes: qplugin.Contributes{
+			Capabilities: []string{"rag"},
+		},
+	}
 	pluginDisabled := cfg.PluginsDisabled
 	if !cfg.RemoteEnabled {
-		pluginDisabled = append(append([]string(nil), cfg.PluginsDisabled...), "search-remote")
+		pluginDisabled = append(append([]string(nil), pluginDisabled...), "search-remote")
+	}
+	if !cfg.RAGRemoteEnabled {
+		pluginDisabled = append(append([]string(nil), pluginDisabled...), "rag-remote")
 	}
 	pluginRegistry, err := qplugin.LoadDir(cfg.PluginsDir, qplugin.Options{
 		Enabled:  cfg.PluginsEnabled,
 		Disabled: pluginDisabled,
-		Builtins: append(qplugin.BuiltinManifests(), searchRemoteManifest),
+		Builtins: append(qplugin.BuiltinManifests(), searchRemoteManifest, ragRemoteManifest),
 	})
 	if err != nil {
 		slog.Warn("plugins: failed to load plugin manifests", "dir", cfg.PluginsDir, "error", err)
@@ -1191,6 +1213,19 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 			return e.Next()
 		})
 		go probeRemoteSearch(probeCtx, pluginRegistry, remoteProvider)
+	}
+
+	// Same probe loop for the qatlas-rag microservice (rag-remote
+	// plugin summary). Never load-bearing: a disconnected qatlas-rag
+	// only means index pushes fail (logged best-effort at the call
+	// sites), never that qatlasd refuses to start.
+	if ragClient != nil {
+		probeCtx, stopProbe := context.WithCancel(context.Background())
+		app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
+			stopProbe()
+			return e.Next()
+		})
+		go probeRAGRemote(probeCtx, pluginRegistry, ragClient)
 	}
 
 	// Builtin plugins register through ONE platform hook (ADR 0003): each
@@ -1275,12 +1310,27 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 // search-remote plugin summary (connected/disconnected + error). Runs
 // until ctx is cancelled (server terminate).
 func probeRemoteSearch(ctx context.Context, pluginRegistry *qplugin.Registry, remote *search.RemoteProvider) {
+	probeHealthz(ctx, pluginRegistry, "search-remote", remote.Healthz)
+}
+
+// probeRAGRemote probes the qatlas-rag microservice's /healthz
+// immediately and then every 30s, folding each outcome into the
+// rag-remote plugin summary (connected/disconnected + error). Runs
+// until ctx is cancelled (server terminate).
+func probeRAGRemote(ctx context.Context, pluginRegistry *qplugin.Registry, ragClient *rag.RemoteClient) {
+	probeHealthz(ctx, pluginRegistry, "rag-remote", ragClient.Healthz)
+}
+
+// probeHealthz is the shared 30s healthz probe loop behind
+// probeRemoteSearch / probeRAGRemote: probe once immediately, then on
+// every tick, folding each outcome into the named plugin summary.
+func probeHealthz(ctx context.Context, pluginRegistry *qplugin.Registry, pluginID string, healthz func(context.Context) error) {
 	const probeInterval = 30 * time.Second
 	probe := func() {
 		pctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		err := remote.Healthz(pctx)
+		err := healthz(pctx)
 		cancel()
-		pluginRegistry.SetProbeResult("search-remote", err)
+		pluginRegistry.SetProbeResult(pluginID, err)
 	}
 	probe()
 	ticker := time.NewTicker(probeInterval)

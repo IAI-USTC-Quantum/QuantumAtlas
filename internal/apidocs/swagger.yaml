@@ -1569,7 +1569,7 @@ paths:
       - application/json
       description: |-
         Fans one search entry out to the configured providers
-        (catalog / arxiv / openalex / qdrant), merges hits by paper
+        (catalog / arxiv / openalex / remote), merges hits by paper
         identity (DOI > arXiv > title hash) and resolve-or-mints each
         identity-anchored hit against the paper registry. Newly minted
         papers carry created=true and are picked up by the lazy

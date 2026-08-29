@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -339,5 +340,64 @@ func TestLocalStoreKeyLayout(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "pdf", "2401", "2401.12345v3.pdf")); err != nil {
 		t.Fatalf("expected object at %s: %v", key, err)
+	}
+}
+
+// fakePusher records PushIndex calls (the qatlas-rag index push).
+type fakePusher struct {
+	mu     sync.Mutex
+	pushed []string
+	err    error
+}
+
+func (f *fakePusher) PushIndex(_ context.Context, paperID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.pushed = append(f.pushed, paperID)
+	return f.err
+}
+
+func (f *fakePusher) snapshot() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.pushed...)
+}
+
+func TestIngestPushesIndexOnReady(t *testing.T) {
+	stub := &arxivStub{
+		pdfBytes: map[string][]byte{"2401.12345v1": testPDF},
+	}
+	reg := &fakeReg{}
+	pusher := &fakePusher{}
+	ing, _ := newTestIngester(t, stub, reg, WithIndexPusher(pusher))
+
+	ing.OnMint(context.Background(), "qa_push1", registry.PaperRef{ArxivID: "2401.12345v1"})
+
+	waitFor(t, "fetched==1", func() bool { return ing.Snapshot()["fetched"] == 1 })
+	pushed := pusher.snapshot()
+	if len(pushed) != 1 || pushed[0] != "2401.12345v1" {
+		t.Fatalf("pushed = %v, want [2401.12345v1]", pushed)
+	}
+}
+
+func TestIngestPushFailureDoesNotFailIngest(t *testing.T) {
+	stub := &arxivStub{
+		pdfBytes: map[string][]byte{"2401.12345v1": testPDF},
+	}
+	reg := &fakeReg{}
+	pusher := &fakePusher{err: errors.New("qatlas-rag down")}
+	ing, _ := newTestIngester(t, stub, reg, WithIndexPusher(pusher))
+
+	ing.OnMint(context.Background(), "qa_push2", registry.PaperRef{ArxivID: "2401.12345v1"})
+
+	// Best-effort: the paper still flips to ready and nothing is marked
+	// failed when the push errors.
+	waitFor(t, "fetched==1", func() bool { return ing.Snapshot()["fetched"] == 1 })
+	if got := ing.Snapshot()["failed"]; got != 0 {
+		t.Fatalf("failed = %d, want 0 (push failure is best-effort)", got)
+	}
+	_, statuses := reg.snapshot()
+	if len(statuses) != 0 {
+		t.Fatalf("expected no UpdateStatus calls, got %v", statuses)
 	}
 }

@@ -1872,7 +1872,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Fans one search entry out to the configured providers\n(catalog / arxiv / openalex / qdrant), merges hits by paper\nidentity (DOI \u003e arXiv \u003e title hash) and resolve-or-mints each\nidentity-anchored hit against the paper registry. Newly minted\npapers carry created=true and are picked up by the lazy\ningestion pipeline; title-only hits return as un-minted\ncandidates. Requires the papers:read scope.",
+                "description": "Fans one search entry out to the configured providers\n(catalog / arxiv / openalex / remote), merges hits by paper\nidentity (DOI \u003e arXiv \u003e title hash) and resolve-or-mints each\nidentity-anchored hit against the paper registry. Newly minted\npapers carry created=true and are picked up by the lazy\ningestion pipeline; title-only hits return as un-minted\ncandidates. Requires the papers:read scope.",
                 "consumes": [
                     "application/json"
                 ],

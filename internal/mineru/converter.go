@@ -145,6 +145,19 @@ type ConverterConfig struct {
 	// can't open 100 sockets to arxiv. Default 2; ignored when
 	// Fetcher is nil.
 	ArxivFetchConcurrent int
+
+	// IndexPusher, when non-nil, receives a qatlas-rag index-build
+	// push after each successful conversion write-through (the paper
+	// now has markdown, i.e. is ready for indexing). The push is
+	// best-effort: failures are logged, never propagated.
+	// *rag.RemoteClient satisfies the interface implicitly.
+	IndexPusher IndexPusher
+}
+
+// IndexPusher is the slice of the qatlas-rag client (internal/rag)
+// the converter needs, factored out so tests can fake the push.
+type IndexPusher interface {
+	PushIndex(ctx context.Context, paperID string) error
 }
 
 // JobState is the lifecycle state of one paper's conversion job.
@@ -1194,6 +1207,14 @@ func (c *Converter) writeResultTo(ctx context.Context, imgKey, mdKey string, res
 			!errors.Is(uErr, registry.ErrCatalogUnavailable) {
 			c.logger.Warn("papers: UpsertMD write-through failed after conversion",
 				logKey, logVal, "error", uErr)
+		}
+	}
+
+	// The paper has markdown now: push the index build to qatlas-rag.
+	// Best-effort — a push failure must not fail the conversion.
+	if c.cfg.IndexPusher != nil {
+		if err := c.cfg.IndexPusher.PushIndex(ctx, logVal); err != nil {
+			c.logger.Warn("mineru: rag index push failed", logKey, logVal, "error", err)
 		}
 	}
 

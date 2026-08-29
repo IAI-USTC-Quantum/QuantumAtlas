@@ -287,11 +287,12 @@ func effectiveConfigYAML(cfg *config.Config, redact bool) ([]byte, error) {
 			},
 		},
 		"rag": map[string]any{
-			"qdrant_url":        cfg.RAGQdrantURL,
-			"qdrant_api_key":    mask(cfg.RAGQdrantAPIKey),
-			"qdrant_collection": cfg.RAGQdrantCollection,
-			"embed_url":         cfg.RAGEmbedURL,
-			"embed_token":       mask(cfg.RAGEmbedToken),
+			"remote": map[string]any{
+				"enabled": cfg.RAGRemoteEnabled,
+				"url":     cfg.RAGRemoteURL,
+				"token":   mask(cfg.RAGRemoteToken),
+				"timeout": cfg.RAGRemoteTimeout.String(),
+			},
 		},
 		"plugins": map[string]any{
 			"dir":                cfg.PluginsDir,

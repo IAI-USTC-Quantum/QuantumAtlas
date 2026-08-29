@@ -33,8 +33,12 @@ Python 客户端、React 前端与部署模板。顶层布局：
        ``paper_identities`` 三表，goose 迁移内嵌、启动时自动升级；
        去重唯一入口 ``ResolveOrMint``
    * - ``internal/search``
-     - 多范式搜索引擎：Provider 接口 + 内置 catalog / arxiv / openalex /
-       qdrant 四个 provider，并发 fan-out、按 DOI > arXiv > 标题归并去重
+     - 多范式搜索引擎：Provider 接口 + 内置 catalog / arxiv / openalex
+       三个 provider（可选叠加 qatlas-search 微服务的 remote provider），
+       并发 fan-out、按 DOI > arXiv > 标题归并去重
+   * - ``internal/rag``
+     - qatlas-rag 微服务的索引推送客户端：论文置 ready 后 qatlasd 调用
+       它向 qatlas-rag 推送索引构建任务（语义检索已由 qatlas-rag 承担）
    * - ``internal/ingest``
      - 惰性收录管线：singleflight 去抖 → arXiv 抓取 → 对象存储 →
        注册表置 ready
@@ -80,7 +84,7 @@ React + TanStack Router 的 SPA，路由带语言前缀（``/zh``、``/en``）�
 
 - 配置一律 YAML：客户端 ``~/.config/qatlas/config.yaml``，服务端
   ``~/.qatlas/config.yaml``；两侧都拒绝环境变量配置；
-- Python 测试：``uv run --extra dev pytest tests/ search/tests rag/tests``；
+- Python 测试：``uv run --extra dev pytest tests/``；
   Go 测试：``go test ./internal/... ./cmd/...``（或 ``pixi run test-go``）；
 - 文档站：公开站 ``/doc`` 与开发站 ``/devdoc``（管理员票据鉴权）由
   ``.github/workflows/docs.yml`` 独立构建并发布为 ghcr 上的

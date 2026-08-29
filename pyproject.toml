@@ -31,49 +31,13 @@ dev = [
     "mypy>=1.7.0",
     "ruff>=0.8.0",
 ]
-# --- qatlas_rag embed worker -------------------------------------------
-# Since v0.20.0 the only Python role left is the GPU embed worker:
-# qatlasd (Go) is now itself the Qdrant client + caller of /embed /rerank
-# (was Python sidecar + ingester before). See ./rag/README.md.
-#
-# Pins below verified on RTX 5080 / sm_120 Blackwell, Python 3.12.13
-# (see rag/scripts/spike/phase1_gpu_smoke.py). Loosen the `==` pins only
-# after re-running the spike with the new combo.
-embed = [
-    "torch==2.11.0+cu128",
-    "transformers==4.57.6",
-    "FlagEmbedding==1.4.0",
-    "fastapi>=0.115",
-    "uvicorn[standard]>=0.32",
-    "pydantic-settings>=2.6",
-]
-
-[project.scripts]
-qatlas-rag = "qatlas_rag.cli:main"
 
 [build-system]
 requires = ["hatchling>=1.24"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["qatlas", "rag/qatlas_rag"]
-
-# Map source path to package name so `import qatlas_rag` resolves to
-# the rag/ subdirectory without exposing `rag` as a namespace.
-[tool.hatch.build.targets.wheel.sources]
-"rag/qatlas_rag" = "qatlas_rag"
-
-# --- PyTorch cu128 wheel (sm_120 / Blackwell) ---
-# torch>=2.7 + CUDA 12.8 is the first combo that supports sm_120
-# (RTX 5080). Scoped only to `torch` so other deps still resolve from
-# PyPI normally. Only consumed when installing the `embed` extra.
-[tool.uv.sources]
-torch = [{ index = "pytorch-cu128" }]
-
-[[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
-explicit = true
+packages = ["qatlas"]
 
 [tool.commitizen]
 name = "cz_conventional_commits"
@@ -86,7 +50,7 @@ annotated_tag = true
 
 # Pytest
 [tool.pytest.ini_options]
-testpaths = ["tests", "rag/tests"]
+testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
