@@ -53,8 +53,9 @@ Python 客户端、React 前端与部署模板。顶层布局：
 
 React + TanStack Router 的 SPA，路由带语言前缀（``/zh``、``/en``），
 ``npm run build`` 产物（``web/dist``）通过 ``web/embed.go`` 内嵌进 Go
-二进制；``web/public/doc`` 是本文档站的构建产物，作为静态文件随 SPA 一起
-服务，免鉴权。
+二进制；``web/public/doc`` 是本文档站的构建产物，随 dist 一起内嵌，
+作为文档的基线副本（免鉴权）；运行时 qatlasd 优先从
+``~/.qatlas/docs`` 目录取材，详见"约定"一节。
 
 客户端（Python，qatlas/）
 -------------------------
@@ -81,7 +82,12 @@ React + TanStack Router 的 SPA，路由带语言前缀（``/zh``、``/en``）�
   ``~/.qatlas/config.yaml``；两侧都拒绝环境变量配置；
 - Python 测试：``uv run --extra dev pytest tests/ search/tests rag/tests``；
   Go 测试：``go test ./internal/... ./cmd/...``（或 ``pixi run test-go``）；
-- 文档站改动：编辑 ``docsite/`` 后运行两套构建——公开站
-  ``sphinx-build -b html docsite web/public/doc``（``/doc``），开发站
-  ``sphinx-build -b html -t devdocs -D root_doc=dev/index docsite web/public/devdoc``
-  （``/devdoc``，管理员票据鉴权），再重新构建前端与镜像；
+- 文档站：公开站 ``/doc`` 与开发站 ``/devdoc``（管理员票据鉴权）由
+  ``.github/workflows/docs.yml`` 独立构建并发布为 ghcr 上的
+  ``qatlas-docs`` 镜像；部署机运行 ``deploy/update-docs.sh`` 把新文档写入
+  ``~/.qatlas/docs``，qatlasd 从该目录取材（目录缺失或为空时回落到
+  二进制内嵌的副本，见 ``internal/routes/docs.go``），更新文档不需要
+  重启服务。本地预览时开发者仍可直接运行两套 sphinx 构建：
+  公开站 ``sphinx-build -b html docsite web/public/doc``，开发站
+  ``sphinx-build -b html -t devdocs -D root_doc=dev/index docsite
+  web/public/devdoc``；

@@ -1,0 +1,72 @@
+name: docs
+
+# Builds the two sphinx sites (public /doc + admin /devdoc) and ships
+# them as a content-only ghcr image, INDEPENDENT of the qatlasd release
+# cycle. qatlasd serves whatever lives in its docs override directory
+# (~/.qatlas/docs, see internal/routes/docs.go); deploy/update-docs.sh
+# on the deploy host pulls this image and refreshes that directory —
+# no server restart, no qatlasd redeploy.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'docsite/**'
+      - '.github/workflows/docs.yml'
+      - 'deploy/docs.Dockerfile'
+  workflow_dispatch:
+
+# Top-level permissions are read-only; the job opts in to packages:write
+# for the ghcr push (same convention as release.yml).
+permissions:
+  contents: read
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write       # ghcr.io push
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build docs sites (public /doc + admin /devdoc)
+        run: |
+          set -euo pipefail
+          python -m pip install -r docsite/requirements.txt
+          mkdir -p docs-dist
+          # Public user docs → served at /doc.
+          sphinx-build -b html docsite docs-dist/doc
+          # Admin-only dev docs → served at /devdoc behind the ticket gate.
+          sphinx-build -b html -t devdocs -D root_doc=dev/index \
+            -D html_title="QuantumAtlas 开发文档" docsite docs-dist/devdoc
+          git rev-parse --short HEAD | tee docs-dist/VERSION
+          echo "SHORT_SHA=$(cat docs-dist/VERSION)" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          # GITHUB_TOKEN has push access to ghcr.io for the same repo
+          # when `permissions: packages: write` is set above.
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push the content-only docs image
+        uses: docker/build-push-action@v6
+        with:
+          context: docs-dist
+          file: deploy/docs.Dockerfile
+          push: true
+          tags: |
+            ghcr.io/iai-ustc-quantum/qatlas-docs:latest
+            ghcr.io/iai-ustc-quantum/qatlas-docs:${{ env.SHORT_SHA }}

@@ -15,8 +15,11 @@ package routes
 
 import (
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -39,6 +42,22 @@ type devdocHarness struct {
 
 func newDevdocHarness(t testing.TB) *devdocHarness {
 	t.Helper()
+	dist := fstest.MapFS{
+		"devdoc/dev/index.html": &fstest.MapFile{Data: []byte("<h1>dev docs marker</h1>")},
+		"devdoc/_static/x.css":  &fstest.MapFile{Data: []byte("body{}")},
+	}
+	sub, err := fs.Sub(dist, "devdoc")
+	if err != nil {
+		t.Fatalf("fs.Sub: %v", err)
+	}
+	return newDevdocHarnessWithFS(t, sub)
+}
+
+// newDevdocHarnessWithFS builds the harness around an already-resolved
+// dev-docs filesystem — tests pass either the embedded stand-in above or
+// a disk-override fs produced by ResolveDocsFS.
+func newDevdocHarnessWithFS(t testing.TB, devdocFS fs.FS) *devdocHarness {
+	t.Helper()
 	h := &devdocHarness{
 		patHarness: &patHarness{t: t},
 		cfg:        &config.Config{AdminGitHubLogins: []string{adminTestLogin}},
@@ -51,11 +70,6 @@ func newDevdocHarness(t testing.TB) *devdocHarness {
 	t.Cleanup(app.Cleanup)
 	h.app = app
 
-	dist := fstest.MapFS{
-		"devdoc/dev/index.html": &fstest.MapFile{Data: []byte("<h1>dev docs marker</h1>")},
-		"devdoc/_static/x.css":  &fstest.MapFile{Data: []byte("body{}")},
-	}
-
 	baseRouter, err := apis.NewRouter(app)
 	if err != nil {
 		t.Fatalf("NewRouter: %v", err)
@@ -66,7 +80,7 @@ func newDevdocHarness(t testing.TB) *devdocHarness {
 
 	var built http.Handler
 	err = app.OnServe().Trigger(se, func(e *core.ServeEvent) error {
-		RegisterDevdoc(e, h.cfg, dist)
+		RegisterDevdoc(e, h.cfg, devdocFS)
 		m, mErr := e.Router.BuildMux()
 		if mErr != nil {
 			return mErr
@@ -235,5 +249,61 @@ func TestAPI_Devdoc_RejectsBadCredentials(t *testing.T) {
 	req.AddCookie(&http.Cookie{Name: devdocCookieName, Value: ticket})
 	if rec := h.doRaw(req); rec.Code != http.StatusForbidden {
 		t.Errorf("ticket-as-cookie: status = %d, want 403 (purpose mismatch)", rec.Code)
+	}
+}
+
+// TestAPI_Devdoc_DiskOverrideServed: when ResolveDocsFS resolves the
+// devdoc site from the disk override directory, the ticket gate serves
+// THAT tree (and still gates it) — the embedded bundle is bypassed.
+func TestAPI_Devdoc_DiskOverrideServed(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "devdoc", "dev"), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "devdoc", "dev", "index.html"),
+		[]byte("<h1>disk dev docs marker</h1>"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	dist := fstest.MapFS{
+		"devdoc/dev/index.html": &fstest.MapFile{Data: []byte("<h1>embedded marker</h1>")},
+	}
+	devdocFS, src := ResolveDocsFS(dist, root, "devdoc")
+	if src != "disk" {
+		t.Fatalf("ResolveDocsFS source = %q, want disk", src)
+	}
+
+	h := newDevdocHarnessWithFS(t, devdocFS)
+
+	// Still gated without credentials.
+	req := httptest.NewRequest(http.MethodGet, "/devdoc/dev/index.html", nil)
+	if rec := h.doRaw(req); rec.Code != http.StatusForbidden {
+		t.Errorf("no auth: status = %d, want 403", rec.Code)
+	}
+
+	// Full ticket → cookie flow against the disk tree.
+	req = httptest.NewRequest(http.MethodPost, "/api/admin/devdoc/ticket", nil)
+	req.Header.Set("Authorization", h.adminToken())
+	rec := h.doRaw(req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ticket: status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	url := strings.Trim(strings.Split(rec.Body.String(), `"`)[3], " ")
+	req = httptest.NewRequest(http.MethodGet, url, nil)
+	rec = h.doRaw(req)
+	cookies := rec.Result().Cookies()
+	if rec.Code != http.StatusFound || len(cookies) != 1 {
+		t.Fatalf("signed open: status = %d cookies = %v", rec.Code, cookies)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/devdoc/dev/index.html", nil)
+	req.AddCookie(cookies[0])
+	rec = h.doRaw(req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("cookie fetch: status = %d, want 200", rec.Code)
+	}
+	body, _ := io.ReadAll(rec.Result().Body)
+	if !strings.Contains(string(body), "disk dev docs marker") {
+		t.Errorf("cookie fetch did not serve the disk override: %s", body)
 	}
 }

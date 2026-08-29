@@ -69,6 +69,13 @@ services:
       # read-only at the distroless nonroot user's (UID 65532) home —
       # that is where qatlasd looks by default (~/.qatlas/config.yaml).
       - ${HOME}/.qatlas/config.yaml:/home/nonroot/.qatlas/config.yaml:ro
+      # Docs override directory: when populated (deploy/update-docs.sh
+      # refreshes it from the CI-built qatlas-docs image), qatlasd serves
+      # /doc and /devdoc from here instead of the copies embedded in the
+      # binary — docs updates need NO qatlasd restart. Read-only; when
+      # the host directory does not exist, docker creates an empty one
+      # and qatlasd simply falls back to the embedded docs.
+      - ${HOME}/.qatlas/docs:/home/nonroot/.qatlas/docs:ro
       # Bind mounts to the repo-root ./data/* (relative to this file:
       # ../data) so backups are `tar czf data.tgz data/` and there's no
       # `docker volume export` ceremony. Replace with named volumes (see

@@ -613,11 +613,21 @@ func main() {
 
 			registerRoutes(se, app, cfg, rawStore, registryStore, corpus, searchEngine, remoteProvider, localAgentic, usageStore, enforcer, mineruConverter, mineruScheduler, doiResolver, arxivFetcher, serverStarted)
 
-			// Dev-docs hosting (/devdoc/*) behind the admin ticket gate —
-			// see internal/routes/devdoc.go. Registered before the SPA
-			// catch-all so the more specific pattern wins and the static
-			// devdoc tree is never served unauthenticated.
-			routes.RegisterDevdoc(se, cfg, qweb.MustFS())
+			// Docs sites (/doc public, /devdoc behind the admin ticket
+			// gate): disk override under ~/.qatlas/docs first, embedded
+			// bundle as the baseline — see internal/routes/docs.go. A
+			// docs refresh via deploy/update-docs.sh needs NO restart.
+			// Registered before the SPA catch-all so the more specific
+			// patterns win and the static devdoc tree is never served
+			// unauthenticated.
+			distFS := qweb.MustFS()
+			docsRoot := routes.DefaultDocsRoot()
+			docFS, docSrc := routes.ResolveDocsFS(distFS, docsRoot, "doc")
+			devdocFS, devdocSrc := routes.ResolveDocsFS(distFS, docsRoot, "devdoc")
+			log.Printf("docs: serving /doc from %s, /devdoc from %s (override dir %s)",
+				docSrc, devdocSrc, docsRoot)
+			routes.RegisterDoc(se, docFS)
+			routes.RegisterDevdoc(se, cfg, devdocFS)
 
 			// Serve the embedded SPA last as the catch-all. apis.Static's
 			// indexFallback=true means any path that doesn't match a real

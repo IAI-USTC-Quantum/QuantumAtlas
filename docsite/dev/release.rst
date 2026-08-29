@@ -2,11 +2,11 @@
 ==============================
 
 QuantumAtlas 的线上形态由三类组件构成：**服务端 qatlasd**\ （本仓库）、
-**命令行客户端 qatlas-cli**\ （独立仓库）、**app 微服务**\ （以 qatlas-search
-为代表，每个 app 一个独立仓库，见 :doc:`apps`）。三者独立版本、独立发布，
-靠两条契约协作：qatlasd ↔ qatlas-cli 的 ``(major, minor)`` 兼容契约
-（见 :doc:`versioning`），以及 qatlasd ↔ app 微服务的 HTTP wire 契约。
-本文给出从代码到线上的标准化流程。
+**命令行客户端 qatlas-cli**\ （独立仓库）、**app 微服务**\ （以
+qatlas-search 为代表，每个 app 一个独立仓库，见 :doc:`apps`）。三者
+独立编号、独立发布，它们靠两条协议协作：qatlasd 与 qatlas-cli 之间的
+``(major, minor)`` 兼容协议（见 :doc:`versioning`），以及 qatlasd 与
+app 微服务之间的 HTTP 接口协议。本文介绍从代码到线上的标准化流程。
 
 组件与发布通道
 --------------
@@ -33,55 +33,98 @@ QuantumAtlas 的线上形态由三类组件构成：**服务端 qatlasd**\ （�
      - push tag ``v*.*.*``
      - ghcr 镜像 ``ghcr.io/iai-ustc-quantum/<app>:{vX.Y.Z, X.Y.Z, latest}``
        + GitHub Release
+   * - 文档站（qatlas-docs 镜像）
+     - 构建时的 commit sha（docs.yml 写入镜像内的 ``VERSION`` 文件）
+     - push main 且 ``docsite/**`` 变更（或手动触发 docs.yml）
+     - ghcr 镜像 ``ghcr.io/iai-ustc-quantum/qatlas-docs:{<sha>, latest}``
+       （只含静态文件，见下文"文档的独立更新"）
 
 标准化原则
 ----------
 
-1. **每个组件有且只有一个版本唯一来源**，发布只由 tag 触发，不允许
-   "部署机上现 build" 成为发布路径；
-2. **产物一律进 registry**——Docker 镜像进 ghcr，Python 包进 PyPI；
-   部署机只 ``pull``，不 ``build``；
-3. **部署机的版本一律显式 pin** 在 ``deploy/.env``（如
-   ``QATLAS_VERSION=v0.22.1``），不用 ``latest``，保证可回滚、可审计；
-4. **wire 契约演进走 expand-contract**：先加字段/端点（旧版仍可工作），
-   待所有部署升级后再删旧形态；qatlasd 对 app 故障隔离（provider 降级 +
-   插件探测标 disconnected），因此**升级顺序默认先 app 后 qatlasd**
-   ——只有"新 qatlasd 依赖 app 的新契约字段"这一种情况反过来，且这种
-   情况应在契约设计阶段就用 expand 步骤消除。
+1. **每个组件有且只有一个版本唯一来源**；发布只由 tag 触发，不允许
+   "在部署机上现场 build"成为发布路径；
+2. **产物一律进入 registry**：Docker 镜像推送到 ghcr，Python 包发布到
+   PyPI；部署机只执行 ``pull``，不执行 ``build``；
+3. **部署机的版本一律显式 pin 在** ``deploy/.env`` 中（如
+   ``QATLAS_VERSION=v0.22.1``），不使用 ``latest``，这样保证部署
+   可回滚、可审计；
+4. **接口协议的演进采用 expand-contract 方式**：先增加字段或端点
+   （旧版本仍可工作），待所有部署升级后再删除旧形态。qatlasd 对 app
+   故障做了隔离（provider 降级 + 插件探测标记 disconnected），因此
+   **升级顺序默认先升级 app，后升级 qatlasd**。只有"新 qatlasd 依赖
+   app 的新协议字段"这一种情况需要反过来，而开发者应在协议设计阶段
+   就用 expand 步骤消除这种情况。
 
-app 微服务的发布基建（已在 qatlas-search 落地）
-------------------------------------------------
+app 微服务的发布基建（以 qatlas-search 为例）
+---------------------------------------------
 
-qatlas-search 已按本方案接入标准化发布（首个 release：``v0.1.0``）：
+qatlas-search 已按本方案接入标准化发布流程（首个 release：``v0.1.0``）：
 
-1. 仓库根的 ``VERSION`` 文件是版本唯一来源，发布由 push tag ``v*.*.*``
-   触发；
+1. 仓库根目录的 ``VERSION`` 文件是版本唯一来源，发布由 push tag
+   ``v*.*.*`` 触发；
 2. ``.github/workflows/release.yml`` 复用主仓的 prep + docker 模式：
-   校验 tag == ``VERSION``，构建多架构镜像推到
+   workflow 先校验 tag == ``VERSION``，然后构建多架构镜像并推送到
    ``ghcr.io/iai-ustc-quantum/qatlas-search:{vX.Y.Z, X.Y.Z, latest}``，
-   并创建 GitHub Release。注意：**私有仓库的 SLSA attestation 是付费
-   组织功能**，attest 步骤已标 ``continue-on-error``，仓库转公开或组织
-   升级后自动生效；
+   最后创建 GitHub Release。注意：**私有仓库的 SLSA attestation 是
+   付费的组织功能**，因此 attest 步骤已标记 ``continue-on-error``，
+   仓库转为公开或组织升级后该步骤会自动生效；
 3. 主仓 ``deploy/docker-compose.yml`` 的 qatlas-search 服务引用
    ``ghcr.io/iai-ustc-quantum/qatlas-search:${QATLAS_SEARCH_VERSION}``，
-   版本在 ``deploy/.env`` 显式 pin（样例见 ``.env.docker.example``）；
-   ``tests/test_docker_compose.py`` 有结构测试锁定 ghcr 来源与插值约定；
-4. app 仓 README 记录 wire 契约的版本化说明（哪个 app 版本起提供哪个
-   端点/字段）。
+   版本在 ``deploy/.env`` 中显式 pin（样例见 ``.env.docker.example``）；
+   ``tests/test_docker_compose.py`` 中的结构测试锁定了 ghcr 来源与
+   插值约定；
+4. app 仓库的 README 记录了接口协议的版本化说明（从哪个 app 版本
+   开始提供哪个端点或字段）。
 
-后续新 app 仓库直接复制 qatlas-search 的 ``VERSION`` + ``release.yml``
-模式即可接入同一套流程。
+后续的新 app 仓库只需直接复制 qatlas-search 的 ``VERSION`` +
+``release.yml`` 模式，即可接入同一套流程。
+
+文档的独立更新
+--------------
+
+文档站（公开站 ``/doc`` 与开发站 ``/devdoc``）的更新与 qatlasd 的发布
+相互独立，更新文档不需要重新部署服务。qatlasd 启动时检查文档目录
+``~/.qatlas/docs``：目录中存在非空的 ``doc/`` 或 ``devdoc/`` 子目录时，
+qatlasd 从磁盘的目录取材；目录缺失或为空时，qatlasd 回落到二进制
+内嵌的文档副本（实现见 ``internal/routes/docs.go``，compose 模板把
+该目录以只读方式挂载进容器）。
+
+文档产物由 ``.github/workflows/docs.yml`` 独立构建：main 分支上
+``docsite/`` 发生变更时，workflow 构建两个 sphinx 站点，并把它们打成
+一个只含静态文件的镜像推送到
+``ghcr.io/iai-ustc-quantum/qatlas-docs:{<sha>, latest}``（镜像内的
+``VERSION`` 文件记录文档出自哪个 commit）。
+
+部署机更新文档（qatlasd 全程运行）：
+
+.. code-block:: bash
+
+   ./deploy/update-docs.sh                  # 拉取 latest 并写入 ~/.qatlas/docs
+   DOCS_REF=<sha> ./deploy/update-docs.sh   # pin 到指定 commit，可回滚
+
+开发者验证尚未推送的文档改动时，在仓库 checkout 内运行
+``./deploy/update-docs.sh --build-local``，脚本在一次性容器中构建
+sphinx 站点并直接写入文档目录。
+
+两点注意：
+
+- 文档来源在 qatlasd 启动时确定一次。``~/.qatlas/docs`` 从空变为有内容
+  （或反向清空）后，需要重启一次 qatlasd 才能切换来源；磁盘目录**内部**
+  的内容更新则实时生效，这正是 ``update-docs.sh`` 的路径；
+- 回滚到内嵌版本：清空 ``~/.qatlas/docs`` 下的对应子目录并重启 qatlasd
+  即可。
 
 线上升级标准流程
 ----------------
 
 前置检查（每次必做）：
 
-- 阅读目标版本的 CHANGELOG / Release notes，确认有无 BREAKING CHANGE
-  及前置条件（如 v0.22.0 要求 PostgreSQL 先行就绪）；
-- 备份数据目录（``data/``，即 ``pb_data`` + ``raw``）；
-- 确认当前版本与目标版本的兼容契约允许直跳（qatlasd 跨 minor 时逐段
-  检查 changelog）。
+- 运维方应阅读目标版本的 CHANGELOG / Release notes，确认是否有
+  BREAKING CHANGE 以及前置条件（如 v0.22.0 要求 PostgreSQL 先行就绪）；
+- 运维方应备份数据目录（``data/``，即 ``pb_data`` 和 ``raw``）；
+- 运维方应确认当前版本与目标版本之间的兼容协议允许直接跳到目标版本
+  （qatlasd 跨 minor 升级时应逐段检查 changelog）。
 
 升级（在部署机上执行）：
 
@@ -104,10 +147,10 @@ qatlas-search 已按本方案接入标准化发布（首个 release：``v0.1.0``
 
    # 4. 冒烟：SPA 关键页面（dashboard、search）+ 一次 agentic 搜索
 
-回滚：把 ``deploy/.env`` 的版本 pin 改回旧值，
-``docker compose up -d <service>`` 即可——PocketBase 与 goose 迁移都是
-启动时幂等 apply，patch 级回滚总是安全；跨 minor 回滚须先查对应版本的
-release notes 是否声明 schema breaking。
+回滚时，运维方把 ``deploy/.env`` 中的版本 pin 改回旧值，再执行
+``docker compose up -d <service>`` 即可。PocketBase 与 goose 迁移都会
+在启动时幂等 apply，因此 patch 级回滚总是安全的；跨 minor 回滚前，
+运维方必须先查看对应版本的 release notes 是否声明了 schema breaking。
 
 客户端（qatlas-cli）升级：
 
@@ -119,12 +162,13 @@ release notes 是否声明 schema breaking。
 版本 bump 决策
 --------------
 
-- **patch**：兼容修复、文档、内部重构。qatlasd 与 qatlas-cli 的兼容性
-  修复只走 patch（契约保证同 ``x.y`` 线内自由漂移）；
-- **minor**：新功能、wire 契约 expand（新增端点/可选字段）、依赖大版本；
-- **pre-1.0 的 breaking change 也走 minor**，但必须在 CHANGELOG 的
-  ``BREAKING CHANGE`` 小节写明前置条件与迁移步骤，部署侧按上文前置
-  检查执行。
+- **patch**：兼容修复、文档更新、内部重构。qatlasd 与 qatlas-cli 的
+  兼容性修复只发布 patch 版本（协议保证同一 ``x.y`` 线内可以自由漂移）；
+- **minor**：新功能、接口协议的 expand（新增端点或可选字段）、依赖的
+  大版本升级；
+- **pre-1.0 阶段的 breaking change 也发布 minor 版本**，但开发者必须在
+  CHANGELOG 的 ``BREAKING CHANGE`` 小节中写明前置条件与迁移步骤，
+  部署方按上文的前置检查执行。
 
 发版 checklist
 --------------

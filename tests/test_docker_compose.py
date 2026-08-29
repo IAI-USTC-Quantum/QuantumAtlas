@@ -136,6 +136,24 @@ class TestFullStackCompose:
             "${HOME}/.qatlas/config.yaml"
         )
 
+    def test_docs_override_dir_bind_mounted_readonly(self, doc: dict) -> None:
+        # ~/.qatlas/docs is the docs override directory: populated by
+        # deploy/update-docs.sh, it lets qatlasd serve refreshed /doc and
+        # /devdoc content without a restart (see internal/routes/docs.go).
+        mounts = doc["services"]["qatlasd"]["volumes"]
+        docs = [m for m in mounts if m.split(":")[1] == "/home/nonroot/.qatlas/docs"]
+        assert docs, (
+            f"volumes = {mounts}; must bind-mount the host docs override dir at "
+            "/home/nonroot/.qatlas/docs"
+        )
+        assert docs[0].endswith(":ro"), (
+            f"docs mount = {docs[0]!r}; qatlasd only reads it — must be :ro"
+        )
+        assert docs[0].startswith("${HOME}/.qatlas/docs:"), (
+            f"docs mount source = {docs[0]!r}; must come from the host's "
+            "${HOME}/.qatlas/docs"
+        )
+
     def test_volumes_match_dockerfile_volume_directive(self, doc: dict) -> None:
         # The compose bind mounts here MUST target the Dockerfile VOLUME
         # paths or operator data ends up in an anonymous docker volume
@@ -190,6 +208,15 @@ class TestStandaloneCompose:
         # operator; depends_on would mean "wait for an internal service
         # that doesn't exist", which compose interprets as a config error.
         assert "depends_on" not in doc["services"]["qatlasd"]
+
+    def test_docs_override_dir_bind_mounted_readonly(self, doc: dict) -> None:
+        # Same docs-override contract as the full-stack template (see
+        # TestFullStackCompose.test_docs_override_dir_bind_mounted_readonly).
+        mounts = doc["services"]["qatlasd"]["volumes"]
+        assert any(
+            m.split(":")[1] == "/home/nonroot/.qatlas/docs" and m.endswith(":ro")
+            for m in mounts
+        ), f"standalone volumes = {mounts}; must bind-mount the docs override dir read-only"
 
 
 class TestEnvDockerExampleStaysInSyncWithCompose:

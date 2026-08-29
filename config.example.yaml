@@ -73,6 +73,13 @@
 #   data_dir: ""
 #   pb_data_dir: ""
 
+# ─── Docs override directory (not a config key) ────────────────────────
+# ~/.qatlas/docs is NOT configured here — it is a fixed location. When it
+# holds doc/ and/or devdoc/ subdirectories (populated by
+# deploy/update-docs.sh), qatlasd serves /doc and /devdoc from disk
+# instead of the docs embedded in the binary, so docs updates need no
+# restart. Leave it empty/absent to keep serving the embedded copies.
+
 # ─── System PAT (operator breakglass; optional) ────────────────────────
 # Single bearer token, never lands in pb_data. Send as
 # `Authorization: Bearer <token>`. Must be ≥16 chars or boot fails.

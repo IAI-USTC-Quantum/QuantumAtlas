@@ -53,22 +53,17 @@ type devdocGate struct {
 }
 
 // RegisterDevdoc wires the dev-docs ticket endpoint and the gated static
-// host. distFS is the embedded web/dist filesystem; the dev site lives in
-// its devdoc/ subtree (web/public/devdoc → dist/devdoc at build time).
-func RegisterDevdoc(se *core.ServeEvent, cfg *config.Config, distFS fs.FS) {
-	sub, err := fs.Sub(distFS, "devdoc")
-	if err != nil {
-		// The devdocs build is missing (e.g. a local build without the
-		// sphinx step): register nothing rather than crash boot — the SPA
-		// entry point surfaces the 404 on use.
-		sub = nil
-	}
+// host. devdocFS is the resolved dev-docs filesystem (see ResolveDocsFS
+// in docs.go: disk override first, embedded bundle as the baseline);
+// nil means this build has no dev docs at all — both endpoints then
+// answer 404 on use instead of crashing boot.
+func RegisterDevdoc(se *core.ServeEvent, cfg *config.Config, devdocFS fs.FS) {
 	g := &devdocGate{key: make([]byte, 32)}
 	if _, err := rand.Read(g.key); err != nil {
 		panic("devdoc: read random key: " + err.Error())
 	}
-	if sub != nil {
-		g.static = http.FileServer(http.FS(sub))
+	if devdocFS != nil {
+		g.static = http.FileServer(http.FS(devdocFS))
 	}
 
 	se.Router.POST("/api/admin/devdoc/ticket", adminGuard(cfg, func(re *core.RequestEvent) error {

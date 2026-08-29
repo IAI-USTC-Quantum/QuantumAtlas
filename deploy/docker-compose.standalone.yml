@@ -43,6 +43,11 @@ services:
       # read-only at the distroless nonroot user's (UID 65532) home —
       # that is where qatlasd looks by default (~/.qatlas/config.yaml).
       - ${HOME}/.qatlas/config.yaml:/home/nonroot/.qatlas/config.yaml:ro
+      # Docs override directory — same contract as docker-compose.yml:
+      # when populated (deploy/update-docs.sh), qatlasd serves /doc and
+      # /devdoc from here instead of the embedded copies, so docs
+      # updates need no restart. Read-only.
+      - ${HOME}/.qatlas/docs:/home/nonroot/.qatlas/docs:ro
       - ./data/pb_data:/data/pb_data
       # raw_dir is unused when S3 is configured but the directory still
       # has to exist so the volume mount succeeds.
