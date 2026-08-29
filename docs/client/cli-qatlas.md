@@ -337,6 +337,21 @@ qatlas auth token  [-s | --server-url <URL>]
 
 ---
 
+## 插件命令（独立仓库提供）
+
+`qatlas` 的部分顶层命令由独立插件包提供（entry-point 组 `qatlas.plugins`
+发现，安装插件包后命令自动出现，未安装时 CLI 会给出安装提示）：
+
+| 命令 | 插件包 | 说明 |
+|---|---|---|
+| `qatlas search` | qatlas-search | 多源论文搜索（agentic 微服务，含本地语义检索 backend）|
+| `qatlas rag` | qatlas-rag | 直接查询 qatlas-rag 语义检索服务（`POST /v1/retrieve`），支持 `--server` / `--token` / `--max-results` / `--json` |
+
+两个插件仓库均为私有仓（IAI-USTC-Quantum/qatlas-search、
+IAI-USTC-Quantum/qatlas-rag），按提示中的 `uv tool install --from git+ssh://...`
+方式安装。`qatlas rag` 需要能访问 qatlas-rag 服务（默认 `127.0.0.1:8801`，
+即部署该服务的主机或可达的内网地址）。
+
 ## 运维 / 兼容性命令（不常用）
 
 | 命令 | 说明 |

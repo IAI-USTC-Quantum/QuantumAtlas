@@ -66,6 +66,7 @@
 
 .. note::
 
-   下一轮开发中，``qatlas search`` 将以独立插件的形式提供（安装后自动
-   出现在 CLI 中，未安装时会提示安装方法），详见
-   :doc:`插件化架构与路线图 </dev/plugins>`。
+   ``qatlas search`` 与 ``qatlas rag`` 都由独立插件提供（entry-point
+   发现，安装对应的插件包后命令自动出现在 CLI 中，未安装时会提示
+   安装方法）：前者由 qatlas-search 仓库提供，后者由 qatlas-rag 仓库
+   提供，详见 :doc:`插件化架构与路线图 </dev/plugins>`。

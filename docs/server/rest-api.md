@@ -93,6 +93,10 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
 |---|---|---|---|
 | `POST` | `/api/search` | `papers:read` | 多 provider 论文搜索。body 为 SearchEntry JSON，engine fan-out 到 `QATLAS_SEARCH_PROVIDERS` 列出的 provider（默认 `catalog,arxiv,openalex`）|
 
+语义向量检索不在本端点的 provider 列表里：它由独立的 qatlas-rag 微服务
+提供，经 qatlas-search 的 fan-out 接入（`POST /api/search/agentic` 路径），
+qatlasd 在论文 ready 时通过 `rag.remote` 配置段向 qatlas-rag 推送索引构建。
+
 ### Plugins
 
 Plugins share one manifest/capability model with two orthogonal axes
@@ -106,6 +110,10 @@ spawned by the host over `transport=stdio`.
 | `GET` | `/api/v1/plugins` | `plugins:read` | 列出发现的插件清单与状态（`connected` / `disconnected` / `disabled` / `incompatible`）|
 | `POST` | `/api/v1/plugins/{id}/enable` | `plugins:write` | 运行时启用已配置插件 |
 | `POST` | `/api/v1/plugins/{id}/disable` | `plugins:write` | 运行时禁用已配置插件 |
+
+配置驱动的远程微服务也会出现在插件清单里：``search-remote``（qatlas-search）
+与 ``rag-remote``（qatlas-rag）在各自配置段启用后注册，qatlasd 启动后探测
+它们的 ``/healthz`` 并标记 ``connected`` / ``disconnected``。
 
 External plugins do not call host capabilities over HTTP. They connect to the
 WebSocket JSON-RPC service at `QATLAS_RPC_WS_BIND`. `initialize` params contain

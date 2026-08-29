@@ -19,8 +19,9 @@
      - arXiv 官方 API
    * - ``openalex``
      - OpenAlex 学术图谱
-   * - ``qdrant``
-     - 向量语义检索（需配置 RAG embedding 服务后启用）
+
+语义向量检索不在内置 provider 之列：它由独立的 qatlas-rag 微服务提供，
+经 qatlas-search 接入（见下文「Agentic 搜索」一节）。
 
 渠道原理与用量限制
 ------------------
@@ -44,10 +45,6 @@
   条。配置 ``paper_access.openalex_mailto``（``QATLAS_OPENALEX_MAILTO``）
   后进入 polite pool——每 IP 约 10 req/s，远稳于匿名池，生产环境建议
   必配。仅含 arXiv ID 的条目在 OpenAlex 无对应查询方式，直接返回空。
-- **qdrant**：自建向量语义检索：内网 embedding / rerank 服务
-  （bge-m3 + bge-reranker-v2-m3）+ Qdrant gRPC，稠密 + 稀疏混合检索，
-  RRF 融合后重排，chunk 折叠回论文。无上游配额，吞吐上限取决于自建
-  基础设施。
 
 agentic 搜索另有一套服务端计量：按用户统计调用次数与 LLM tokens，
 每日限额默认 10000 次，超限返回 429，详见下文「Agentic 搜索」一节。
@@ -81,14 +78,19 @@ Agentic 搜索（独立微服务）
 --------------------------
 
 除内置 provider 外，QuantumAtlas 还支持 **agentic 搜索**：由独立仓库
-`qatlas-search <https://github.com/Agony5757/qatlas-search>`_（私有）提供的
+`qatlas-search <https://github.com/Agony5757/qatlas-search>`_ （私有）提供的
 搜索微服务，在服务端做多源检索（arXiv / OpenAlex / Semantic Scholar /
-Crossref / catalog），并可选用 LLM 对结果生成一段学术总结。
+Crossref / catalog / 本地语义检索），并可选用 LLM 对结果生成一段学术总结。
+其中本地语义检索由另一个独立微服务 qatlas-rag 提供（GPU 上的 bge-m3
+稠密 + 稀疏混合检索，RRF 融合后重排）：qatlas-search 把它作为 fan-out
+的一个 backend 调用，qatlasd 在论文收录或转换完成时向 qatlas-rag 推送
+索引构建任务。
 
 - **网页**：搜索页打开「agentic 搜索」开关（微服务未上线时开关禁用）；
   结果上方显示 agent 总结，右上角显示「今日用量 x/限额」。
 - **CLI**：安装插件包后 ``qatlas search "query"`` 自动可用（entry-point
-  发现，无需改主仓库配置）；未安装时会提示安装方法。
+  发现，无需改主仓库配置）；安装 qatlas-rag 包后 ``qatlas rag "query"``
+  可直接查询语义检索服务；两个插件未安装时都会提示安装方法。
 - **API**：``POST /api/search/agentic``，body 为 Search Entry，响应在普通
   搜索的 ``results``/``candidates`` 之上增加 ``conclusion`` 与 ``usage``。
 
