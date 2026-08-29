@@ -4,11 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
-## Unreleased
+## v0.22.3 (2026-08-29)
 
 ### Feat
 
 - **docs**: docs sites (`/doc` + `/devdoc`) are decoupled from the qatlasd release cycle. qatlasd resolves each site at boot from `~/.qatlas/docs/<site>` on disk when populated, falling back to the copies embedded in the binary (`internal/routes/docs.go`); `/doc` is now an explicit route instead of relying on the SPA catch-all. A new `docs.yml` workflow builds both sphinx flavours on every `docsite/**` change on main and pushes them as a content-only `ghcr.io/iai-ustc-quantum/qatlas-docs` image; `deploy/update-docs.sh` on the deploy host refreshes `~/.qatlas/docs` from that image (or builds locally with `--build-local`) — docs updates take effect with no qatlasd restart.
+
+### Docs
+
+- **docs**: unified wording across the dev docsite, public docs and ADRs — "wire 契约"→"接口协议", "兼容契约"→"兼容协议", "接线"→"接入", "落地"→"实施", telegraphic fragments rewritten as full sentences.
 
 ## v0.22.2 (2026-08-27)
 
