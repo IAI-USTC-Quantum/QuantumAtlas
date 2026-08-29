@@ -95,7 +95,7 @@ Reference 显示 warning；人来删除 / 编辑 / 保留它。保留下来的 u
 
 ## 影响
 
-- `GET /api/papers/lookup` 作为 `/api/papers/{path...}` 下的仅 path 特例落地。
+- `GET /api/papers/lookup` 作为 `/api/papers/{path...}` 下的仅 path 特例实施。
   `papers/getCitedRefs` stub 的角色被澄清为以 paper 为中心的 “paper X cite 了哪些 works” query，
   其结果 items 自身也可通过 `lookup` 解析。
 - `claims.json` 和 gitea issue body 增加一个 `references` list，元素为 `kind:id`（加一个

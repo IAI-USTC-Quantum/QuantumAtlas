@@ -30,7 +30,7 @@ QuantumAtlas 处理论文图谱的本质问题是：
 
 ??? note "为什么现在用 PostgreSQL，而不是把索引放进 RustFS"
     RustFS 的职责收窄为纯 S3 后端：只保存 PDF / Markdown / 图片 / OpenAlex snapshot
-    等对象字节，不再承载应用级索引对象（例如 Parquet manifest）。
+    等对象字节，不再保存应用级索引对象（例如 Parquet manifest）。
 
     PostgreSQL 承担非登录态 catalog：paper 元数据、PDF/MD/DOI 状态、MinerU lease
     租约。登录态仍由 PocketBase 管理。

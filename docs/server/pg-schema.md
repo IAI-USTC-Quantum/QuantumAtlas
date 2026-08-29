@@ -13,7 +13,7 @@
 > [0011](../adr/0011-by-id-asset-reads.md) /
 > [0013](../adr/0013-corpus-schema-base-index-split.md)。
 
-一套**中心化 PostgreSQL**（挂在 mesh 上，跟 RustFS 同级），承载两块语义上独立、但同库
+一套**中心化 PostgreSQL**（挂在 mesh 上，跟 RustFS 同级），保存两块语义上独立、但同库
 共存（一个 `pgxpool` / 一个 `QATLAS_POSTGRES_DSN`）的数据，好让「catalog × 语料 × 向量」的深
 join 留在 SQL 里：
 
@@ -64,7 +64,7 @@ UNIQUE 允许多 NULL）。
 | `arxiv_version` | `int` | arxiv 非空（如 `2`）/ published 为 NULL |
 | `pdf_path` | `text NOT NULL` | PDF 对象 key（不是 URL） |
 | `pdf_size` | `bigint` | PDF 字节数 |
-| `pdf_sha256` | `char(64)` | PDF sha256（MinerU 校验契约用） |
+| `pdf_sha256` | `char(64)` | PDF sha256（MinerU 校验用） |
 | `mineru_md_path` | `text` | MinerU markdown 对象 key |
 | `mineru_json_path` | `text` | MinerU JSON 对象 key（见 [3. 尚未落代码](#3-已设计尚未落代码)） |
 | `image_count` | `int` | 图片数 |

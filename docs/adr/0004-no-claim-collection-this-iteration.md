@@ -16,7 +16,7 @@ Theorem、落入上游 Lean-content 仓库，并被 **theorems 插件**拉取之
 
 交接说明把 `papers / claims / units` 列为 WebUI 的权威界面，但用户已经澄清：
 这是一个**终态**愿景。在终态里，localhost contrib WebUI 会吸收所有 Lean 侧 agent（scout、
-statement、enricher、issue-raiser、solver、repair、the three Magi），上游会拆出一个只承载内容的
+statement、enricher、issue-raiser、solver、repair、the three Magi），上游会拆出一个只存放内容的
 `QuantumAtlas-Theorems` 仓库，届时 Claims 也可能从另一个底座暴露出来。我们拒绝把
 QA 侧 Claim 存储设计两遍。
 

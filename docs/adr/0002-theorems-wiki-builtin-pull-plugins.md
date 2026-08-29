@@ -46,7 +46,7 @@ Lean 源文件）；wiki 插件读取 markdown wiki 缓存。wiki 已经按这�
 theorems 插件在本迭代中**刻意不** own 一个 PocketBase collection。已证明 Theorems 是从 git
 透传读取，不持久化进 PocketBase；Claims（上游 `qatlas-lean` 仓库作为 gitea
 issues 提交的证明前自然语言陈述）在本迭代不进入 WebUI 范围——见 ADR
-`0004-no-claim-collection-this-iteration.md`。以后如果需要一个 PocketBase 持久化视图，再以单独 ADR 落地。
+`0004-no-claim-collection-this-iteration.md`。以后如果需要一个 PocketBase 持久化视图，再以单独 ADR 实施。
 
 ## 参考，不移植
 

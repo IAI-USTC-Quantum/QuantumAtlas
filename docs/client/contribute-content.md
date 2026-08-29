@@ -75,7 +75,7 @@ qatlas ingest --help
 
 | 选项 | 行为 |
 |---|---|
-| `--parser mineru` | 可省略；保留为显式 flag 是为了将来 wire 协议扩展（万一以后又加了新 parser，签名不动）。`mineru` 需要客户端配置 `mineru_api_token`（yaml 字段）|
+| `--parser mineru` | 可省略；保留为显式 flag 是为了将来接口协议扩展（万一以后又加了新 parser，签名不动）。`mineru` 需要客户端配置 `mineru_api_token`（yaml 字段）|
 | `--stop-after fetch` / `--stop-after parse` | 在指定阶段后停止（`parse` 是末尾阶段，等价于跑完） |
 | `--stages a,b` | 只跑明确列出的阶段（`fetch` / `parse`），跳过的阶段如果有本地资产会被复用 |
 | `--force-fetch` / `--force-parse` | 即使本地已有 PDF/Markdown 也强制重做 |
@@ -407,7 +407,7 @@ qatlas lean contrib claim 10.22331/q-2023-03-20-955 --no-browser --port 8731
 3. 每条 Claim 编辑：近似逐字的自然语言陈述、LaTeX、假设、`source-md` 行号、**references**
    （命名空间无版本 `kind:id`，如 `arxiv:2208.06941` / `openalex:W…` / `doi:10.x/y`）。
 4. "Resolve references" 走 QA 的 `GET /api/papers/lookup` 解析 references 元数据；语料库不可达时
-   自动回落公共 OpenAlex API（ADR 0007 的契约不变，只是改由 qatlas-lean 调）。
+   自动回落公共 OpenAlex API（ADR 0007 的协议不变，只是改由 qatlas-lean 调用）。
 5. **"Confirm claim / 确认 claim"** → 提**一个** `type/theorem` + `status/ready` issue。
    **幂等**：如果已有一个 open issue 带相同 `claim_id`，直接拒绝并给出已存在 issue 的 URL
    （不重复提、不自动更新——daemon 可能正在证它）。

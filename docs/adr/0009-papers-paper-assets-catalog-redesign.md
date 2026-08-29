@@ -82,7 +82,7 @@ catalog 和一个子表 **`paper_assets`**（grill Q1–Q21）。
   不是一次性完成。
 - **ADR `0007` 被细化。** 其中的"记录用 paper `paper.id`，由 QA 的 asset pipeline 版本化"现在更精确：
   记录用 paper 是**代理主键 `papers.paper_id`**（永不版本化）；PDF **版本存在于每个 asset**
-  的 `paper_assets.arxiv_version` 中。只读 SQL 契约的表清单变为 `papers` + `paper_assets`
+  的 `paper_assets.arxiv_version` 中。只读 SQL 协议的表清单变为 `papers` + `paper_assets`
   （+ `openalex_works`）。
 - **读取路径（ADR `0011`）。** by-id 解析沿 `papers`（三个 UNIQUE 列）→
   `paper_default_asset_id` → asset 的存储 key。服务由 `QATLAS_PAPER_ACCESS_ENABLED` 门控（compliance）；

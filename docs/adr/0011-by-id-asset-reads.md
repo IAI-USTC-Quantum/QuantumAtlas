@@ -89,7 +89,7 @@ References 和 reads 的目标是 *works*；QA 在 OpenAlex corpus 中持有某�
   streaming bytes，并获得一个 sibling `/json` byte endpoint（现在已有
   `paper_assets.mineru_json_path`），二者都支持 `?format=link`。`docs/server/rest-api.md` +
   OpenAPI 规范会重新生成。
-- **依赖 ADR `0009`。** handlers 读取 `papers`/`paper_assets`；它们随 Phase A 一起落地，不会早于
+- **依赖 ADR `0009`。** handlers 读取 `papers`/`paper_assets`；它们随 Phase A 一起实施，不会早于
   Phase A。
 - **没有新的 write path。** 这些是 `papers:read` 下的读取能力，符合 QA/lean 边界（ADR `0007`/`0008`）：
   QA 暴露只读 paper substrate；它永远不 author lean content。

@@ -237,7 +237,7 @@ docs/                  这份文档
 ### 添加新功能注意
 
 - **client 新命令** → 在 `atlas/cli.py::COMMANDS` 加条目，新建 `atlas/client/<name>.py`
-- **server 新 endpoint** → 在 `internal/routes/` 加 handler，wire 在 `cmd/qatlasd/main.go::registerRoutes`
+- **server 新 endpoint** → 在 `internal/routes/` 加 handler，并在 `cmd/qatlasd/main.go::registerRoutes` 中注册
 - **加 PAT scope** → 改 `internal/pat/scopes.go`（必须重新部署，**不可热加载**）
 - **新 PocketBase migration** → 放 `pb_migrations/`，下次启动自动跑
 - **前端新页面** → 在 `web/src/routes/` 加 file，TanStack Router 自动生成路由
@@ -327,7 +327,7 @@ qatlas contrib mineru --watch
 > **版本解耦（0.22.0 起）**：`qatlasd` 的版本唯一来源是仓库根目录的
 > `VERSION` 文件 + 手动推送的 `v<version>` tag（release.yml prep 强校验
 > 二者一致）。`cz bump` 只管理 `pyproject.toml` 里 `quantum-atlas`
-> PyPI 包的版本，两者互不挂钩。与 `qatlas-cli` 的兼容契约见
+> PyPI 包的版本，两者互不挂钩。与 `qatlas-cli` 的兼容协议见
 > [版本与兼容策略](https://quantum-atlas.readthedocs.io/zh-cn/latest/dev/versioning.html)：
 > `(major, minor)` 相同即兼容，兼容性修复只 bump patch。
 

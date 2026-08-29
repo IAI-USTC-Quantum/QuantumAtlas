@@ -84,7 +84,7 @@ Wiki 是**公开仓库**（GitHub 上人人可见）。论文本身也是公开�
 - 服务端在 GitHub Release 滚 `v0.2.x` binary
 - 同一份代码 repo（QuantumAtlas）出，version 同步 bump
 
-但是**API 是稳定的契约**——升级一个不强制升级另一个。CI / 长跑 agent 可以钉死 server 用 `v0.2.7`，client 用 `0.2.9`，照样工作。
+但是**API 是稳定的协议**：升级其中一个组件不强制升级另一个组件。CI / 长跑 agent 可以钉死 server 用 `v0.2.7`，client 用 `0.2.9`，照样工作。
 
 ## 决定 7：多边缘 active-active
 

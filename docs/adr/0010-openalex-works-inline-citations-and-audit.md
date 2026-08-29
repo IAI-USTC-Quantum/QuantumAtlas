@@ -73,4 +73,4 @@ ADR `0006` 将引用边作为独立的 `work_referenced(work_id, referenced_id)`
   和 `cmd/qatlasd/openalex_cmd.go` 删除 `work_referenced`，添加生成列 + GIN + `strip_openalex_prefix()`
   函数、`openalex_sync_state` 和 `openalex_audit`；被引查询变为 `?` 反向查询。测试随之迁移。
 - **新增审计脚本 + 视图。** 运维人员运行的采样器抓取 OpenAlex 并写入 `openalex_audit` 行；
-  结构性视图随模式发布。只读 SQL 契约（ADR `0007`）从其可读子集中移除 `work_referenced`。
+  结构性视图随模式发布。只读 SQL 协议（ADR `0007`）从其可读子集中移除 `work_referenced`。

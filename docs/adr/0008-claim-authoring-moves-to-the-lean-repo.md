@@ -7,7 +7,7 @@ Claim 起草和 `type/theorem` issue 提交 **从 QuantumAtlas client 迁出，�
 claim` —— 位于 `qatlas/client/claim/` 下的 Copilot/anthropic/openai-SDK 起草器 + WebUI）
 **退役：保留为随包分发的一方 builtin 插件，但默认关闭，只能通过配置驱动的 `plugins` 列表启用**
 （见下文"插件平台如何保持通用"）；qatlas-lean 现在以自己的 `qatlas-lean contrib claim
-<paper>` localhost WebUI 承载等价流程，由 **qatlas-lean 的 CLI flat-agent runner**（`copilot -p
+<paper>` localhost WebUI 提供等价流程，由 **qatlas-lean 的 CLI flat-agent runner**（`copilot -p
 --agent claim-drafter`）驱动，**不是 SDK**。
 
 QuantumAtlas 只保留它已经承担的角色：**文献托管方**（通过 `GET /api/papers/{id}/markdown`
@@ -20,7 +20,7 @@ Theorems 的 **theorems 拉取插件**消费者（ADR `0002`）。qatlas-lean �
 - **一个仓库拥有完整的 prover 侧界面。** Claim 起草 → 证明（solver）→ 审计（三贤者）→
   注册表/账本现在全部在 `qatlas-lean`。贡献者只需阅读一个仓库，"所有 Lean 相关内容"有唯一归宿
   ——这与 ADR `0005` 设想的终态相反（当时让 QA 的 contrib WebUI *吸收*所有 lean agent，并把
-  qatlas-lean 拆成仅承载内容的 `QuantumAtlas-Theorems` 仓）。该设想已**放弃**；本 ADR 是新的边界终态。
+  qatlas-lean 拆成仅存放内容的 `QuantumAtlas-Theorems` 仓）。该设想已**放弃**；本 ADR 是新的边界终态。
 - **contrib 路径不使用 SDK。** ADR `0005` 在 QA client 中放了一个
   Copilot/anthropic/openai-SDK 起草器。qatlas-lean 已经把每个 agent 都作为扁平的 `copilot -p
   --agent <name>` CLI 进程运行；Claim 起草器只是其中一个（`claim-drafter`）。不引入第二套 LLM
@@ -64,7 +64,7 @@ builtin；无需改代码。一方插件（`lean`、`claim`）随包分发，并
 - **ADR `0004` —— QA 侧没有 Claim 集合 / 没有 `/claims` 页面。** 仍然成立；事实上被进一步强化——
   QA 不持久化任何 Claims 相关内容。只更新 `0004` 中指向起草*机制*的交叉引用（它现在位于 qatlas-lean，
   而不是 QA 的 Copilot-SDK 插件）。
-- **ADR `0007` —— references 是 `kind:id`，由服务端通过 `/api/papers/lookup` 解析。** 契约
+- **ADR `0007` —— references 是 `kind:id`，由服务端通过 `/api/papers/lookup` 解析。** 协议
   完全相同；只有*调用者*变化（从 QA 的 contrib agent 改为 qatlas-lean 的 claim 流程）。`0007`
   已经记录了这个 prover-as-client 边界。
 - **ADR `0002` —— theorems 插件从 git 拉取已证明 Theorems。** 不变。

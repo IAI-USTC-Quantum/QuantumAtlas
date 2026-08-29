@@ -15,8 +15,8 @@ QA server 不参与（见 ADR `0004`）。
 
 这个模式是计划中一组 localhost contrib WebUIs 的**第一个**。终态会把所有 Lean 侧 agent
 （`scout`、`statement`、`enricher`、`issue-raiser`、`solver`、`repair`、`melchior`、
-`balthasar`、`casper`）合并进同一个 contrib WebUI 界面，同时用一个只承载内容的
-`QuantumAtlas-Theorems` 仓库替代今天 `qatlas-lean` 仓库中承载代码的部分。本轮只交付 Claim 起草工作流；
+`balthasar`、`casper`）合并进同一个 contrib WebUI 界面，同时用一个只存放内容的
+`QuantumAtlas-Theorems` 仓库替代今天 `qatlas-lean` 仓库中存放代码的部分。本轮只交付 Claim 起草工作流；
 其余命名是为了向前保持一致。
 
 ## 为什么用 localhost agent + WebUI，而不是 CLI one-shot
@@ -57,7 +57,7 @@ QA server 不参与（见 ADR `0004`）。
 
 - CLI：`qatlas contrib claim`（单数——命令名指的是**贡献一个 Claim 这件事**；一个 webui session
   可以产出多个 Claim 草稿并提交多个 gitea issues，但命令名反映的是贡献类型，不是每个 session
-  的数量）。现有 `qatlas contrib` 组已经承载“贡献者工作流”（今天是 PDF / MinerU uploads）；
+  的数量）。现有 `qatlas contrib` 组已经承担“贡献者工作流”（今天是 PDF / MinerU uploads）；
   这个命令作为第一个由 agent 驱动的贡献者工作流放进去。
 - 按钮文本：英文 **"Confirm claim"** / 中文 **"确认 claim"**——每次点击都确认恰好一个 Claim，
   并提交恰好一个 gitea issue（因此按钮文本用单数，匹配每次点击的语义）。

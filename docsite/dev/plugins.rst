@@ -4,14 +4,15 @@
 设计方向
 --------
 
-QuantumAtlas 主仓库正在收敛为 **核心的论文基础设施**——论文收集、注册表
-数据库、基础检索，其余一切外源功能（semantic scholar、向量检索、wiki、
-定理库等已经移除或计划移出的能力）都将以 **微服务 / 插件 / 独立模块**
-的形态存在：
+QuantumAtlas 主仓库正在收敛为**核心的论文基础设施**：主仓库只负责论文
+收集、注册表数据库和基础检索，其余外源功能（semantic scholar、向量
+检索、wiki、定理库等已经移除或计划移出的能力）都将以**微服务 / 插件 /
+独立模块**的形态存在：
 
-- 独立仓库、独立发行节奏、独立部署；
-- 主仓库只定义稳定的 **插件接口** 与发现机制；
-- 装了就有，没装就提示怎么装——核心永远不会因为缺插件而启动失败。
+- 每个外源功能都有独立的仓库、独立的发行节奏和独立的部署方式；
+- 主仓库只定义稳定的**插件接口**与发现机制；
+- 用户安装了插件就能使用对应功能，未安装时程序会提示安装方法；
+  核心仓库永远不会因为缺少插件而启动失败。
 
 现有插件点
 ----------
@@ -32,27 +33,31 @@ QuantumAtlas 主仓库正在收敛为 **核心的论文基础设施**——论�
      - ``qatlas.plugins`` Python entry-point group：第三方包安装后即可
        贡献 ``qatlas <name>`` 顶层命令或 ``qatlas contrib <name>`` 子命令
 
-qatlas search 插件化（已落地）
+qatlas search 插件化（已实施）
 ------------------------------
 
-search 已按插件式设计拆出主仓库，独立仓库
-`qatlas-search <https://github.com/Agony5757/qatlas-search>`_（私有）承载：
+search 已按插件式设计从主仓库拆出，它的代码放在独立仓库
+`qatlas-search <https://github.com/Agony5757/qatlas-search>`_ （私有）
+中维护：
 
-- **独立仓库**——搜索引擎在独立仓库演进：多源 backend（arXiv / OpenAlex /
-  Semantic Scholar / Crossref / catalog）、排序、FastAPI 服务、CLI 插件；
-- **即装即用**——安装插件包后，qatlas CLI 通过 ``qatlas.plugins`` entry-point
-  自动出现 ``qatlas search`` 命令，无需修改主仓库任何配置或代码；
-- **未安装时友好提示**——执行 ``qatlas search`` 会提示该功能由独立插件提供
-  并给出安装方法；
-- **服务端对称接入**——qatlasd 通过通用 ``remote`` provider
-  （``internal/search/remote.go``）按 wire 契约调用微服务：配置
-  ``search.remote: {enabled, url, token, timeout}`` 即可插入任何符合契约的
-  搜索微服务；provider 故障与其余源互相隔离；
-- **微服务部署**——``deploy/docker-compose.yml`` 的 ``search`` profile
-  （``docker compose --profile search up -d``），服务只接 ``shared-infra``
-  内网、不暴露端口；终端用户的 agentic 请求一律经 qatlasd
-  ``/api/search/agentic`` 代理，完成认证、每日限额计量与论文锚定。
+- **独立仓库**：搜索引擎在独立仓库中演进，包括多源 backend（arXiv /
+  OpenAlex / Semantic Scholar / Crossref / catalog）、排序、FastAPI
+  服务和 CLI 插件；
+- **即装即用**：用户安装插件包后，``qatlas search`` 命令会通过
+  ``qatlas.plugins`` entry-point 自动出现在 qatlas CLI 中，用户不需要
+  修改主仓库的任何配置或代码；
+- **未安装时友好提示**：用户执行 ``qatlas search`` 时，CLI 会提示该
+  功能由独立插件提供，并给出安装方法；
+- **服务端接入**：qatlasd 通过通用 ``remote`` provider
+  （``internal/search/remote.go``）按接口协议调用微服务；运维方配置
+  ``search.remote: {enabled, url, token, timeout}`` 后，qatlasd 即可
+  接入任何符合协议的搜索微服务；provider 发生故障时不影响其余搜索源；
+- **微服务部署**：微服务通过 ``deploy/docker-compose.yml`` 的
+  ``search`` profile 部署（``docker compose --profile search up -d``），
+  服务只接入 ``shared-infra`` 内网，不暴露端口；终端用户的 agentic
+  请求一律经过 qatlasd 的 ``/api/search/agentic`` 代理，qatlasd 在
+  代理层完成认证、每日限额计量与论文锚定。
 
-wire 契约（``POST /v1/search``、``GET /healthz``）见 qatlas-search 仓库的
-README。再往后，同样的模式会推广到其余外源能力：主仓库保持小而稳，
-功能生态在外围生长。
+接口协议（``POST /v1/search``、``GET /healthz``）的完整内容见
+qatlas-search 仓库的 README。后续同样的模式会推广到其余外源能力：
+主仓库保持小而稳，功能生态在外围生长。

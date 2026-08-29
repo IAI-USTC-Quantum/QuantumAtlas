@@ -7,7 +7,7 @@ host 核心（qatlasd 中与插件无关的主干）不应携带任何单个插�
 
 ## 为什么
 
-早期接线（commits `b79e622` + `160f806`）把 lean-domain 制品直接放进了 host 核心：
+早期接入（commits `b79e622` + `160f806`）把 lean-domain 制品直接放进了 host 核心：
 `internal/theorems/`, `internal/verifications/`, `internal/routes/theorems.go`,
 `internal/routes/verifications.go`，再加上 `hostapi/core.go` 把 `theorems/get`,
 `theorems/create`, `verifications/submit` 暴露成通用 host 方法。这是领域泄露——host

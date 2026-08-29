@@ -38,7 +38,7 @@ dogpile.cache（Python）、foyer（Rust）、cache-manager（Node）、JCache/C
     singleflight **给不了**可查询进度、失败冷却、非阻塞轮询——一旦需要这些就越界了，所以
     converter 的 `c.jobs`（＝singleflight + 状态机）保持独立，不硬套 `Materializer`。
 
-- **先进精炼分阶段落地，按实测需求解锁**（避免过度设计）：
+- **先进精炼分阶段实施，按实测需求解锁**（避免过度设计）：
   - **阶段 1（本 ADR 已实现）**：抽出 `lazyload.Materializer`，把 OpenAlex 语料路径接上——
     整个读穿统一进一个 singleflight（含语料 SELECT + 写回），**行为不变**，只是命名 + 复用 +
     去掉并发 miss 时的冗余 SELECT / 冗余 upsert。

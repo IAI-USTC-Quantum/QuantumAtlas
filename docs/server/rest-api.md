@@ -336,7 +336,7 @@ curl https://<server>/api/papers/quant-ph/9508027v2/markdown/status \
   }
 }
 
-// PDF 已落地，MinerU 在跑（pdf_ready=true 告诉 agent: PDF 没白下）
+// PDF 已保存，MinerU 在跑（pdf_ready=true 告诉 agent: PDF 没白下）
 {
   "arxiv_id": "quant-ph/9508027v2",
   "state":   "running",

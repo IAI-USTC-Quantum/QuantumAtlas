@@ -24,7 +24,7 @@ catalog 与 OpenAlex 语料位于**同一个数据库的不同表**中，因此 
 MySQL 的真实优势——极高写吞吐（InnoDB / MyRocks）、高并发下 thread-per-connection、Vitess
 horizontal sharding、更平缓的运维学习曲线——都面向高并发 OLTP 服务和 sharded scale-out。
 这个 store 是**内部的、读多写少的、单实例的、永远不作为 outbound API 暴露的，并且明确不分片**
-（catalog ≈ 10⁵ rows；OpenAlex works ≈ 2.87 × 10⁸ rows / ~1–2 TB，单节点完全可承载）。
+（catalog ≈ 10⁵ rows；OpenAlex works ≈ 2.87 × 10⁸ rows / ~1–2 TB，单节点完全够用）。
 MySQL 的这些优势都不适用；而它的 sharding 王牌又与“一个数据库，对 catalog + corpus + vectors
 做 deep joins”这个驱动整套设计的要求互斥。
 
