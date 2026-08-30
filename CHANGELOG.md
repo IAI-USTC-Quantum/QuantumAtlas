@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.23.4 (2026-08-30)
+
+### Fix
+
+- **search**: merged hits now backfill empty authors and year from later providers (for example, a metadata-rich OpenAlex hit following a catalog hit), so search cards consistently render title, authors and abstract and the registry receives the enriched byline.
+
 ## v0.23.3 (2026-08-30)
 
 ### Fix
