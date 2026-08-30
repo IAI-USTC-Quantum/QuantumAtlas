@@ -90,7 +90,7 @@ func TestFanOutMergeAndIsolation(t *testing.T) {
 		{ArxivID: "2401.12345v2", Title: "Paper B", Score: 0.6, Source: "p1"},
 	}}
 	good2 := &fakeProvider{name: "p2", hits: []Hit{
-		{DOI: "10.1000/abc", Title: "Paper A (dup)", Score: 0.9, Source: "p2"},
+		{DOI: "10.1000/abc", Title: "Paper A (dup)", Abstract: "Merged abstract", Authors: []string{"Alice"}, Year: 2024, Score: 0.9, Source: "p2"},
 		{Title: "Title Only", Score: 0.3, Source: "p2"},
 	}}
 	failing := &fakeProvider{name: "p3", err: errors.New("backend down")}
@@ -116,6 +116,9 @@ func TestFanOutMergeAndIsolation(t *testing.T) {
 	}
 	if top.Hit.Title != "Paper A" {
 		t.Fatalf("first non-empty title should win, got %q", top.Hit.Title)
+	}
+	if top.Hit.Abstract != "Merged abstract" || len(top.Hit.Authors) != 1 || top.Hit.Authors[0] != "Alice" || top.Hit.Year != 2024 {
+		t.Fatalf("merged enrichment missing: %+v", top.Hit)
 	}
 	// arXiv version suffix normalized away.
 	second := resp.Results[1]

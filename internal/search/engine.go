@@ -270,6 +270,12 @@ func mergeHits(hits []Hit) []Hit {
 		if m.Abstract == "" {
 			m.Abstract = h.Abstract
 		}
+		if len(m.Authors) == 0 && len(h.Authors) > 0 {
+			m.Authors = append([]string(nil), h.Authors...)
+		}
+		if m.Year == 0 {
+			m.Year = h.Year
+		}
 		if h.Source != "" && !sourceListed(m.Source, h.Source) {
 			if m.Source == "" {
 				m.Source = h.Source
