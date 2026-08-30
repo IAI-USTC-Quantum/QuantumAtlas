@@ -458,6 +458,18 @@ func main() {
 		// the converter and the ingester treat a nil pusher as "no push"
 		// and a push failure as best-effort (log only, never fatal).
 		ragClient := buildRAGRemoteClient(cfg)
+		// Go typed-nil trap: a nil *rag.RemoteClient assigned to an
+		// interface yields a NON-nil interface, defeating the nil
+		// checks at both call sites and turning the best-effort push
+		// into a SIGSEGV. Keep the interfaces genuinely nil.
+		var (
+			mineruPusher mineru.IndexPusher
+			ingestPusher ingest.IndexPusher
+		)
+		if ragClient != nil {
+			mineruPusher = ragClient
+			ingestPusher = ragClient
+		}
 
 		// Build the MinerU converter (always non-nil; behaves as a
 		// no-op when paper_access.enabled is false). When
@@ -479,7 +491,7 @@ func main() {
 				MinerUMaxConcurrentJobs: cfg.MinerUMaxConcurrentJobs,
 				Fetcher:                 arxivFetcher,
 				ArxivFetchConcurrent:    cfg.ArxivFetchConcurrent,
-				IndexPusher:             ragClient,
+				IndexPusher:             mineruPusher,
 			},
 			rawStore, registryStore,
 			slog.Default(),
@@ -553,7 +565,7 @@ func main() {
 		// the paper to 'ready', then pushing the index build to
 		// qatlas-rag when configured). A nil arxiv fetcher disables
 		// ingestion (OnMint no-op); Shutdown drains the queue on terminate.
-		ingester := ingest.New(registryStore, arxivFetcher, rawStore, ingest.WithIndexPusher(ragClient))
+		ingester := ingest.New(registryStore, arxivFetcher, rawStore, ingest.WithIndexPusher(ingestPusher))
 		app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
 			shutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()

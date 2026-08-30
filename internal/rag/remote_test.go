@@ -95,6 +95,21 @@ func TestPushIndexNoBaseURL(t *testing.T) {
 	}
 }
 
+// Regression for the v0.23.0 crash: with rag.remote disabled,
+// cmd/qatlasd stored a nil *RemoteClient in the IndexPusher interface
+// (typed-nil — the interface itself is non-nil), and the first
+// PushIndex on the nil receiver SIGSEGV'd the process. The nil guard
+// must return an error instead.
+func TestNilReceiverReturnsError(t *testing.T) {
+	var c *RemoteClient
+	if err := c.PushIndex(context.Background(), "2401.12345"); err == nil {
+		t.Fatal("PushIndex on nil receiver returned nil error")
+	}
+	if err := c.Healthz(context.Background()); err == nil {
+		t.Fatal("Healthz on nil receiver returned nil error")
+	}
+}
+
 func TestHealthz(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/healthz" {

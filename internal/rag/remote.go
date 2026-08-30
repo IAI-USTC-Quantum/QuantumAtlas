@@ -58,7 +58,10 @@ func NewRemoteClient(baseURL, token string, timeout time.Duration) *RemoteClient
 // Healthz probes the microservice's GET /healthz; a 200 means healthy.
 // Used by the plugin-status probe, never on the push path.
 func (c *RemoteClient) Healthz(ctx context.Context) error {
-	if c.baseURL == "" {
+	// Nil receiver: a disabled rag.remote yields a nil *RemoteClient
+	// which may still reach here through an interface (typed-nil) —
+	// return an error instead of panicking.
+	if c == nil || c.baseURL == "" {
 		return fmt.Errorf("rag remote: no base URL configured")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/healthz", nil)
@@ -85,7 +88,10 @@ func (c *RemoteClient) Healthz(ctx context.Context) error {
 // so the caller can log them — push is best-effort and must never fail
 // the enclosing pipeline.
 func (c *RemoteClient) PushIndex(ctx context.Context, paperID string) error {
-	if c.baseURL == "" {
+	// Nil receiver: same typed-nil guard as Healthz — the mineru and
+	// ingest call sites hold the client in an interface and nil-check
+	// the interface, which a typed nil defeats.
+	if c == nil || c.baseURL == "" {
 		return fmt.Errorf("rag remote: no base URL configured")
 	}
 	body, err := json.Marshal(indexRequest{PaperID: paperID})
