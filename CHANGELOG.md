@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.23.3 (2026-08-30)
+
+### Fix
+
+- **ingest**: qatlasd now keyset-scans and re-enqueues every persisted `pending` paper at startup, preserving singleflight dedupe and bounded workers; newly registered PDFs immediately start an idempotent MinerU conversion.
+- **progress**: paper detail responses expose a unified acquisition timeline across source resolution, PDF download/storage/registration, MinerU queue position and conversion; search and detail pages poll active jobs and render animated phase/history cards.
+- **search metadata**: arXiv, OpenAlex and remote search hits now carry abstracts; registry resolution also backfills authors/year metadata, so result cards can show title, authors and a three-line abstract.
+- **OpenAlex**: stable Researching PDF mirrors now cover CJL, LOP, COL and AOS DOI families with strict path validation.
+- **build**: exclude `.gocache` and local virtual environments from Docker context (about 1.23 GB → 320 KB in the verified development checkout).
+
 ## v0.23.2 (2026-08-30)
 
 ### Fix
