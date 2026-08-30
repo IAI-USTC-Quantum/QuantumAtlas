@@ -12,3 +12,4 @@ QuantumAtlas 开发文档
    apps
    versioning
    release
+   prod-deploy
