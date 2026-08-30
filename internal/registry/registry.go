@@ -413,9 +413,14 @@ func backfillColumns(ctx context.Context, tx pgx.Tx, paperID string, n normalize
 		UPDATE papers SET
 			title = COALESCE(title, $1),
 			title_hash = COALESCE(title_hash, $2),
+			authors = CASE
+				WHEN coalesce(cardinality(authors), 0) = 0
+				 AND coalesce(cardinality($3::text[]), 0) > 0 THEN $3
+				ELSE authors
+			END,
 			updated_at = now()
-		WHERE paper_id = $3`,
-		nullStr(n.title), nullStr(n.titleHash()), paperID); err != nil {
+		WHERE paper_id = $4`,
+		nullStr(n.title), nullStr(n.titleHash()), n.authors, paperID); err != nil {
 		return fmt.Errorf("registry: backfill title on %s: %w", paperID, err)
 	}
 	return nil
