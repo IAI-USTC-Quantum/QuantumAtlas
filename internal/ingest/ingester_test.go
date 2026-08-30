@@ -29,6 +29,23 @@ type fakeReg struct {
 	mu       sync.Mutex
 	upserts  []upsertCall
 	statuses []string
+	pending  []registry.PendingPaper
+}
+
+func (f *fakeReg) PendingPapers(_ context.Context, after string, limit int) ([]registry.PendingPaper, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]registry.PendingPaper, 0, limit)
+	for _, row := range f.pending {
+		if row.PaperID <= after {
+			continue
+		}
+		out = append(out, row)
+		if len(out) == limit {
+			break
+		}
+	}
+	return out, nil
 }
 
 type upsertCall struct {
@@ -284,6 +301,54 @@ func TestOnMintDOIOnlyFetchesOpenAccessPDF(t *testing.T) {
 		t.Fatalf("Get DOI PDF: %v", err)
 	}
 	defer r.Close()
+}
+
+func TestRecoverPendingReplaysAndTracksProgress(t *testing.T) {
+	stub := &arxivStub{pdfBytes: map[string][]byte{
+		"2401.00001v1": testPDF,
+		"2401.00002v1": testPDF,
+	}}
+	reg := &fakeReg{pending: []registry.PendingPaper{
+		{PaperID: "qa_a", Ref: registry.PaperRef{ArxivID: "2401.00001v1", Title: "First"}},
+		{PaperID: "qa_b", Ref: registry.PaperRef{ArxivID: "2401.00002v1", Title: "Second"}},
+	}}
+	var hookMu sync.Mutex
+	var hooked []string
+	ing, _ := newTestIngester(t, stub, reg, WithPDFReadyHook(func(_ context.Context, canonical string, isDOI bool) {
+		if isDOI {
+			t.Errorf("arxiv recovery hook marked DOI: %s", canonical)
+		}
+		hookMu.Lock()
+		hooked = append(hooked, canonical)
+		hookMu.Unlock()
+	}))
+
+	recovered, err := ing.RecoverPending(context.Background())
+	if err != nil {
+		t.Fatalf("RecoverPending: %v", err)
+	}
+	if recovered != 2 {
+		t.Fatalf("recovered = %d, want 2", recovered)
+	}
+	waitFor(t, "both recovered PDFs", func() bool { return ing.Snapshot()["fetched"] == 2 })
+
+	for _, paperID := range []string{"qa_a", "qa_b"} {
+		progress, ok := ing.SnapshotFor(paperID)
+		if !ok {
+			t.Fatalf("missing progress for %s", paperID)
+		}
+		if progress.Active || progress.State != "done" || progress.Phase != "pdf_ready" {
+			t.Errorf("progress[%s] = %+v", paperID, progress)
+		}
+		if len(progress.Events) < 4 {
+			t.Errorf("progress[%s] events = %v", paperID, progress.Events)
+		}
+	}
+	hookMu.Lock()
+	defer hookMu.Unlock()
+	if len(hooked) != 2 {
+		t.Errorf("PDF-ready hooks = %v", hooked)
+	}
 }
 
 func TestOnMintDOIResolverFailureMarksFailed(t *testing.T) {

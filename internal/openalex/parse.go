@@ -153,8 +153,8 @@ func ExtractOAPdfURL(w Work) string {
 // researchingPDFURL derives the official researching.cn static PDF
 // mirror for journals whose DOI family and mirror code are known. All
 // path fields are restricted to decimal digits so untrusted OpenAlex
-// metadata cannot inject path segments. Chinese Journal of Lasers uses
-// DOI suffix prefix CJL and mirror collection m00001.
+// metadata cannot inject path segments. Known Researching journals use
+// the DOI-prefix-to-collection mapping below.
 var decimalPathPartRE = regexp.MustCompile(`^[0-9]+$`)
 
 func researchingPDFURL(w Work) string {
@@ -165,8 +165,15 @@ func researchingPDFURL(w Work) string {
 	}
 	suffix := strings.ToLower(doi[slash+1:])
 	journalCode := ""
-	if strings.HasPrefix(suffix, "cjl") {
-		journalCode = "m00001"
+	switch {
+	case strings.HasPrefix(suffix, "cjl"):
+		journalCode = "m00001" // Chinese Journal of Lasers
+	case strings.HasPrefix(suffix, "lop"):
+		journalCode = "m00002" // Laser & Optoelectronics Progress
+	case strings.HasPrefix(suffix, "col"):
+		journalCode = "m00005" // Chinese Optics Letters
+	case strings.HasPrefix(suffix, "aos"):
+		journalCode = "m00006" // Acta Optica Sinica
 	}
 	if journalCode == "" {
 		return ""

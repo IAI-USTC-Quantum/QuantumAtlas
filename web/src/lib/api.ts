@@ -85,6 +85,7 @@ export type SearchHit = {
   arxiv_id?: string
   doi?: string
   title?: string
+  abstract?: string
   authors?: string[]
   year?: number
   score: number
@@ -242,6 +243,30 @@ export type PaperDetail = {
   created_at?: string
   updated_at?: string
   assets: PaperAsset[]
+  acquisition: AcquisitionStatus
+}
+
+export type AcquisitionEvent = {
+  phase: string
+  state: string
+  at: string
+  detail?: string
+}
+
+export type AcquisitionStatus = {
+  state: string
+  phase: string
+  active: boolean
+  updated_at?: string
+  error?: string
+  events: AcquisitionEvent[]
+  queue?: {
+    position: number
+    ahead_of_me: number
+    running_count: number
+    max_concurrent: number
+    eta_seconds: number
+  }
 }
 
 // --- Papers list (GET /api/papers) ------------------------------------------

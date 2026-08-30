@@ -207,6 +207,27 @@ func TestExtractOAPdfURL(t *testing.T) {
 			want: "https://www.researching.cn/ArticlePdf/m00001/2023/50/5/0500001.pdf",
 		},
 		{
+			name: "Laser and Optoelectronics Progress mirror",
+			work: Work{DOI: "10.3788/LOP230457", PublicationDate: "2024-01-01", Biblio: Biblio{
+				Volume: "61", Issue: "12", FirstPage: "1200001",
+			}},
+			want: "https://www.researching.cn/ArticlePdf/m00002/2024/61/12/1200001.pdf",
+		},
+		{
+			name: "Chinese Optics Letters mirror",
+			work: Work{DOI: "10.3788/COL202018.100001", PublicationDate: "2020-01-01", Biblio: Biblio{
+				Volume: "18", Issue: "10", FirstPage: "100001",
+			}},
+			want: "https://www.researching.cn/ArticlePdf/m00005/2020/18/10/100001.pdf",
+		},
+		{
+			name: "Acta Optica Sinica mirror",
+			work: Work{DOI: "10.3788/AOS250789", PublicationDate: "2025-01-01", Biblio: Biblio{
+				Volume: "45", Issue: "9", FirstPage: "0900001",
+			}},
+			want: "https://www.researching.cn/ArticlePdf/m00006/2025/45/9/0900001.pdf",
+		},
+		{
 			name: "mirror rejects unsafe path metadata",
 			work: Work{
 				DOI:             "10.3788/cjl221209",

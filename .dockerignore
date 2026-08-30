@@ -20,6 +20,9 @@ web/node_modules
 web/dist
 build
 .pixi
+.gocache
+.venv
+.venv-*
 
 # Runtime data the dev / prod machine has but the image must not capture.
 pb_data

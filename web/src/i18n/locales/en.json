@@ -113,6 +113,30 @@
       "rateLimitedTitle": "Daily limit reached",
       "rateLimited": "You have reached today's agentic-search quota ({{today}}/{{limit}}). Try again tomorrow or use classic search."
     },
+    "acquisition": {
+      "title": "Acquisition & conversion",
+      "queue": "Queue #{{position}} · {{ahead}} ahead",
+      "phase": {
+        "idle": "Waiting",
+        "queued": "Queued for acquisition",
+        "resolving_source": "Resolving paper source",
+        "resolving_version": "Resolving arXiv version",
+        "downloading_pdf": "Downloading PDF",
+        "storing_pdf": "Saving PDF",
+        "registering_asset": "Registering paper asset",
+        "pdf_ready": "PDF ready",
+        "waiting_mineru": "Waiting for MinerU",
+        "mineru_queued": "Queued for MinerU",
+        "mineru_started": "MinerU conversion started",
+        "mineru_running": "MinerU processing",
+        "fetching_pdf": "Downloading PDF",
+        "converting_md": "MinerU converting Markdown",
+        "ready": "Paper acquired and converted",
+        "failed": "Acquisition failed",
+        "error_fetching": "PDF download failed",
+        "error_converting": "MinerU conversion failed"
+      }
+    },
     "detail": {
       "back": "Back to search",
       "eyebrow": "Paper",

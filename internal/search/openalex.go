@@ -115,13 +115,14 @@ func (p *OpenAlexProvider) Search(ctx context.Context, e SearchEntry) ([]Hit, er
 			continue
 		}
 		hits = append(hits, Hit{
-			ArxivID: openalex.ExtractArxivID(openalex.Work{Locations: w.Locations}),
-			DOI:     registry.NormalizeDOI(w.DOI),
-			Title:   title,
-			Authors: openalex.AuthorNames(openalex.Work{Authorships: w.Authorships}),
-			Year:    w.PublicationYear,
-			Score:   w.score(),
-			Source:  p.Name(),
+			ArxivID:  openalex.ExtractArxivID(openalex.Work{Locations: w.Locations}),
+			DOI:      registry.NormalizeDOI(w.DOI),
+			Title:    title,
+			Abstract: w.abstract(),
+			Authors:  openalex.AuthorNames(openalex.Work{Authorships: w.Authorships}),
+			Year:     w.PublicationYear,
+			Score:    w.score(),
+			Source:   p.Name(),
 		})
 	}
 	return hits, nil
@@ -142,6 +143,30 @@ type oaWork struct {
 	RelevanceScore  float64               `json:"relevance_score"`
 	Authorships     []openalex.Authorship `json:"authorships"`
 	Locations       []openalex.Location   `json:"locations"`
+	AbstractIndex   map[string][]int      `json:"abstract_inverted_index"`
+}
+
+func (w oaWork) abstract() string {
+	max := -1
+	for _, positions := range w.AbstractIndex {
+		for _, pos := range positions {
+			if pos > max {
+				max = pos
+			}
+		}
+	}
+	if max < 0 {
+		return ""
+	}
+	words := make([]string, max+1)
+	for word, positions := range w.AbstractIndex {
+		for _, pos := range positions {
+			if pos >= 0 && pos < len(words) {
+				words[pos] = word
+			}
+		}
+	}
+	return strings.TrimSpace(strings.Join(words, " "))
 }
 
 // score normalizes the OpenAlex relevance score (roughly 0–100) to

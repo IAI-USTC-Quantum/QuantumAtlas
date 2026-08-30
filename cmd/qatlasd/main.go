@@ -568,7 +568,24 @@ func main() {
 		ingester := ingest.New(registryStore, arxivFetcher, rawStore,
 			ingest.WithIndexPusher(ingestPusher),
 			ingest.WithDOIResolver(doiResolver),
+			ingest.WithPDFReadyHook(func(ctx context.Context, canonical string, isDOI bool) {
+				if isDOI {
+					mineruConverter.EnsureByDOI(ctx, canonical, "")
+					return
+				}
+				mineruConverter.Ensure(ctx, canonical)
+			}),
 		)
+		if cfg.PaperAccessEnabled && registryStore.Configured() {
+			go func() {
+				recovered, recoverErr := ingester.RecoverPending(context.Background())
+				if recoverErr != nil {
+					slog.Warn("ingest: pending recovery failed", "recovered", recovered, "error", recoverErr)
+					return
+				}
+				slog.Info("ingest: pending recovery queued", "papers", recovered)
+			}()
+		}
 		app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
 			shutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
@@ -634,7 +651,7 @@ func main() {
 				}
 			}
 
-			registerRoutes(se, app, cfg, rawStore, registryStore, corpus, searchEngine, remoteProvider, ragClient, localAgentic, usageStore, enforcer, mineruConverter, mineruScheduler, doiResolver, arxivFetcher, serverStarted)
+			registerRoutes(se, app, cfg, rawStore, registryStore, corpus, searchEngine, remoteProvider, ragClient, localAgentic, usageStore, enforcer, mineruConverter, mineruScheduler, ingester, doiResolver, arxivFetcher, serverStarted)
 
 			// Docs sites (/doc public, /devdoc behind the admin ticket
 			// gate): disk override under ~/.qatlas/docs first, embedded
@@ -1009,7 +1026,7 @@ func ensureBucketVersioning(rawStore objstore.Store) {
 // registerRoutes wires the QuantumAtlas /api/* surface. Most endpoints are
 // implemented under internal/routes/ and pulled in by their respective
 // Register* helpers as we migrate each module in subsequent phases.
-func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawStore objstore.Store, registryStore *registry.Store, corpus *openalexcorpus.Store, searchEngine *search.Engine, remoteProvider *search.RemoteProvider, ragClient *rag.RemoteClient, localAgentic *agentic.Runner, usageStore *usage.Store, enforcer *casbin.Enforcer, mineruConverter *mineru.Converter, mineruScheduler *mineru.Scheduler, doiResolver *openalex.Resolver, arxivFetcher *arxiv.Fetcher, started time.Time) {
+func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawStore objstore.Store, registryStore *registry.Store, corpus *openalexcorpus.Store, searchEngine *search.Engine, remoteProvider *search.RemoteProvider, ragClient *rag.RemoteClient, localAgentic *agentic.Runner, usageStore *usage.Store, enforcer *casbin.Enforcer, mineruConverter *mineru.Converter, mineruScheduler *mineru.Scheduler, ingester *ingest.Ingester, doiResolver *openalex.Resolver, arxivFetcher *arxiv.Fetcher, started time.Time) {
 	probes := healthz.Probes{
 		Cfg:      cfg,
 		RawStore: rawStore,
@@ -1263,7 +1280,7 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// exposes catalog metadata + the contribution flow by default.
 	// /markdown + /markdown/status come back when the operator opts
 	// in via paper_access.enabled: true.
-	routes.RegisterPapers(se, cfg, rawStore, registryStore, corpus, enforcer, mineruConverter, doiResolver, arxivFetcher)
+	routes.RegisterPapers(se, cfg, rawStore, registryStore, corpus, enforcer, mineruConverter, ingester, doiResolver, arxivFetcher)
 
 	// Multi-provider paper search — POST /api/search. See
 	// internal/routes/search.go.

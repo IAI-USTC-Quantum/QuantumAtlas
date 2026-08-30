@@ -18,6 +18,7 @@ const arxivFixture = `<?xml version="1.0" encoding="UTF-8"?>
     <title>  Quantum   Error
  Correction  </title>
     <published>2024-01-23T00:00:00Z</published>
+    <summary>  Error correction   abstract. </summary>
     <author><name>Alice Smith</name></author>
     <author><name>Bob Jones</name></author>
     <arxiv:doi>10.1234/QEC.2024</arxiv:doi>
@@ -71,6 +72,9 @@ func TestArxivSearchByID(t *testing.T) {
 	}
 	if h.Title != "Quantum Error Correction" {
 		t.Errorf("Title = %q, want single-space normalized", h.Title)
+	}
+	if h.Abstract != "Error correction abstract." {
+		t.Errorf("Abstract = %q", h.Abstract)
 	}
 	if h.Year != 2024 {
 		t.Errorf("Year = %d, want 2024", h.Year)
@@ -160,6 +164,7 @@ const openalexFixture = `{
       "publication_year": 2024,
       "doi": "https://doi.org/10.1234/QEC.2024",
       "relevance_score": 75.5,
+      "abstract_inverted_index": {"Quantum": [0], "abstract": [1]},
       "authorships": [
         {"author": {"display_name": "Alice Smith"}},
         {"author": {}, "raw_author_name": "Bob Jones"}
@@ -219,6 +224,9 @@ func TestOpenAlexSearchByText(t *testing.T) {
 	}
 	if h.ArxivID != "2401.12345" {
 		t.Errorf("ArxivID = %q, want mined from locations", h.ArxivID)
+	}
+	if h.Abstract != "Quantum abstract" {
+		t.Errorf("Abstract = %q", h.Abstract)
 	}
 	if h.Year != 2024 {
 		t.Errorf("Year = %d, want 2024", h.Year)

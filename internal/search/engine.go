@@ -129,7 +129,7 @@ func MintHits(ctx context.Context, reg minter, onMint func(ctx context.Context, 
 		}
 		res := Result{Hit: h}
 		if reg != nil {
-			ref := registry.PaperRef{DOI: h.DOI, ArxivID: h.ArxivID, Title: h.Title}
+			ref := registry.PaperRef{DOI: h.DOI, ArxivID: h.ArxivID, Title: h.Title, Authors: h.Authors, Year: h.Year}
 			paperID, created, err := reg.ResolveOrMint(ctx, ref)
 			if err != nil {
 				return results, candidates, fmt.Errorf("search: resolve-or-mint %s: %w", identityKey(h), err)
@@ -266,6 +266,9 @@ func mergeHits(hits []Hit) []Hit {
 		}
 		if m.Title == "" {
 			m.Title = h.Title
+		}
+		if m.Abstract == "" {
+			m.Abstract = h.Abstract
 		}
 		if h.Source != "" && !sourceListed(m.Source, h.Source) {
 			if m.Source == "" {

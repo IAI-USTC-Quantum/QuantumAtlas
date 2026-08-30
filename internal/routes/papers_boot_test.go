@@ -28,5 +28,5 @@ func TestRegisterPapersBootNoPanic(t *testing.T) {
 			return event, nil
 		}),
 	}
-	RegisterPapers(se, &config.Config{}, nil, nil, nil, nil, nil, nil, nil)
+	RegisterPapers(se, &config.Config{}, nil, nil, nil, nil, nil, nil, nil, nil)
 }

@@ -15,6 +15,7 @@ import (
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/arxiv"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/ingest"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineru"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/openalex"
@@ -77,6 +78,7 @@ func RegisterPapers(
 	corpus *openalexcorpus.Store,
 	enforcer *casbin.Enforcer,
 	converter *mineru.Converter,
+	ingester *ingest.Ingester,
 	doiResolver *openalex.Resolver,
 	arxivFetcher *arxiv.Fetcher,
 ) {
@@ -118,7 +120,7 @@ func RegisterPapers(
 				return paperImagesHandler(re, catalog, rawStore, id)
 			}
 			if !strings.Contains(raw, "/") {
-				return paperDetailHandler(re, catalog, raw)
+				return paperDetailHandler(re, catalog, raw, ingester, converter)
 			}
 		}
 		// Asset-download endpoints are only registered when the

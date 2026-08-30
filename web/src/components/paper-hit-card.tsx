@@ -5,6 +5,8 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import type { SearchHit } from '@/lib/api'
 import { useLang } from '@/hooks/use-lang'
+import { usePaperDetail } from '@/lib/queries'
+import { PaperAcquisition } from '@/components/paper-acquisition'
 
 type Props = {
   hit: SearchHit
@@ -22,6 +24,7 @@ type Props = {
 export function PaperHitCard({ hit, rank, paperId, created }: Props) {
   const { t } = useTranslation('papers')
   const lang = useLang()
+  const detail = usePaperDetail(paperId ?? null)
   const title = hit.title || hit.arxiv_id || hit.doi || t('untitled')
 
   return (
@@ -76,6 +79,16 @@ export function PaperHitCard({ hit, rank, paperId, created }: Props) {
           <p className="truncate text-sm text-muted-foreground" title={hit.authors.join(', ')}>
             {hit.authors.join(', ')}
           </p>
+        )}
+
+        {hit.abstract && (
+          <p className="line-clamp-3 text-sm leading-6 text-muted-foreground">
+            {hit.abstract}
+          </p>
+        )}
+
+        {paperId && (
+          <PaperAcquisition acquisition={detail.data?.acquisition} compact />
         )}
       </CardContent>
     </Card>

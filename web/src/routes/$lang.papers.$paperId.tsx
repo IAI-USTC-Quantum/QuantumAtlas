@@ -8,6 +8,7 @@ import { Panel } from '@/components/panel'
 import { StatusBlock } from '@/components/status-block'
 import { useLang } from '@/hooks/use-lang'
 import { usePaperDetail } from '@/lib/queries'
+import { PaperAcquisition } from '@/components/paper-acquisition'
 
 export const Route = createFileRoute('/$lang/papers/$paperId')({
   component: PaperDetailPage,
@@ -72,6 +73,10 @@ function PaperDetailPage() {
                 {paper.paper_id}
               </Badge>
             </div>
+
+            <Panel title={t('acquisition.title')} icon={FileText}>
+              <PaperAcquisition acquisition={paper.acquisition} />
+            </Panel>
 
             <Panel
               title={t('detail.assets')}

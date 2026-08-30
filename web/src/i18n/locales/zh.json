@@ -113,6 +113,30 @@
       "rateLimitedTitle": "已达今日限额",
       "rateLimited": "今日 Agentic 搜索用量已达上限（{{today}}/{{limit}}）。请明天再试，或改用普通搜索。"
     },
+    "acquisition": {
+      "title": "获取与转换进度",
+      "queue": "队列第 {{position}} 位 · 前方 {{ahead}} 个",
+      "phase": {
+        "idle": "等待处理",
+        "queued": "已进入获取队列",
+        "resolving_source": "正在解析论文来源",
+        "resolving_version": "正在解析 arXiv 版本",
+        "downloading_pdf": "正在下载 PDF",
+        "storing_pdf": "正在保存 PDF",
+        "registering_asset": "正在登记论文资产",
+        "pdf_ready": "PDF 已就绪",
+        "waiting_mineru": "等待 MinerU 转换",
+        "mineru_queued": "已进入 MinerU 队列",
+        "mineru_started": "MinerU 转换已开始",
+        "mineru_running": "MinerU 正在处理",
+        "fetching_pdf": "正在下载 PDF",
+        "converting_md": "MinerU 正在转换 Markdown",
+        "ready": "论文已获取并转换完成",
+        "failed": "获取失败",
+        "error_fetching": "PDF 下载失败",
+        "error_converting": "MinerU 转换失败"
+      }
+    },
     "detail": {
       "back": "返回搜索",
       "eyebrow": "论文",

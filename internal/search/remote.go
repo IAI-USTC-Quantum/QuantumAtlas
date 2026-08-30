@@ -40,6 +40,7 @@ type RemoteProvider struct {
 // responses can forward them to the caller untouched.
 type RemoteHit struct {
 	Title     string   `json:"title"`
+	Abstract  string   `json:"abstract,omitempty"`
 	Authors   []string `json:"authors,omitempty"`
 	Year      int      `json:"year,omitempty"`
 	DOI       string   `json:"doi,omitempty"`
@@ -228,12 +229,13 @@ func (rh RemoteHit) ToHit() Hit {
 		source = "remote"
 	}
 	return Hit{
-		ArxivID: rh.ArxivID,
-		DOI:     rh.DOI,
-		Title:   rh.Title,
-		Authors: rh.Authors,
-		Year:    rh.Year,
-		Score:   rh.Score,
-		Source:  source,
+		ArxivID:  rh.ArxivID,
+		DOI:      rh.DOI,
+		Title:    rh.Title,
+		Abstract: rh.Abstract,
+		Authors:  rh.Authors,
+		Year:     rh.Year,
+		Score:    rh.Score,
+		Source:   source,
 	}
 }

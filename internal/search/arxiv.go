@@ -109,13 +109,14 @@ func (p *ArxivProvider) Search(ctx context.Context, e SearchEntry) ([]Hit, error
 			continue
 		}
 		hits = append(hits, Hit{
-			ArxivID: arxivIDFromAtomURL(entry.ID),
-			DOI:     registry.NormalizeDOI(strings.TrimSpace(entry.DOI)),
-			Title:   title,
-			Authors: entry.AuthorNames(),
-			Year:    atomYear(entry.Published),
-			Score:   arxivScore(rank, exact),
-			Source:  p.Name(),
+			ArxivID:  arxivIDFromAtomURL(entry.ID),
+			DOI:      registry.NormalizeDOI(strings.TrimSpace(entry.DOI)),
+			Title:    title,
+			Abstract: strings.Join(strings.Fields(entry.Summary), " "),
+			Authors:  entry.AuthorNames(),
+			Year:     atomYear(entry.Published),
+			Score:    arxivScore(rank, exact),
+			Source:   p.Name(),
 		})
 	}
 	return hits, nil
@@ -131,6 +132,7 @@ type atomEntry struct {
 	ID        string     `xml:"id"`
 	Title     string     `xml:"title"`
 	Published string     `xml:"published"`
+	Summary   string     `xml:"summary"`
 	DOI       string     `xml:"doi"`
 	Authors   []atomName `xml:"author"`
 }

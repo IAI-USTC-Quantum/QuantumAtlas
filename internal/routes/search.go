@@ -17,6 +17,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/ingest"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineru"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/registry"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/search"
 
@@ -84,7 +86,7 @@ func RegisterSearch(se *core.ServeEvent, engine *search.Engine, enforcer *casbin
 // paperDetailHandler answers GET /api/papers/{paper_id} (dispatched from
 // the /api/papers/{path...} catch-all for "qa_"-prefixed single-segment
 // paths): the registry paper — status, identities, and its assets.
-func paperDetailHandler(re *core.RequestEvent, catalog *registry.Store, paperID string) error {
+func paperDetailHandler(re *core.RequestEvent, catalog *registry.Store, paperID string, ingester *ingest.Ingester, converter *mineru.Converter) error {
 	ctx := re.Request.Context()
 	detail, found, err := catalog.GetWithAssets(ctx, paperID)
 	if err != nil {
@@ -138,5 +140,6 @@ func paperDetailHandler(re *core.RequestEvent, catalog *registry.Store, paperID 
 		"created_at":  p.CreatedAt.UTC().Format(time.RFC3339),
 		"updated_at":  p.UpdatedAt.UTC().Format(time.RFC3339),
 		"assets":      assets,
+		"acquisition": paperAcquisition(ctx, p, detail.Assets, ingester, converter),
 	})
 }
