@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.23.1 (2026-08-30)
+
+### Fix
+
+- **rag**: 修复 `rag.remote` 未启用时 qatlasd 反复崩溃（SIGSEGV nil pointer dereference）的严重缺陷：`buildRAGRemoteClient` 返回的 nil `*rag.RemoteClient` 被直接赋给 `IndexPusher` 接口形成 typed-nil，绕过了 mineru 转换完成与 ingest 落库两处消费方的非空检查，首篇论文翻为 ready 时进程崩溃并进入重启循环。修复在接口赋值源头保证真 nil，并为 `PushIndex`/`Healthz` 增加 nil receiver 防御与回归测试。
+
 ## v0.23.0 (2026-08-30)
 
 ### BREAKING CHANGE
