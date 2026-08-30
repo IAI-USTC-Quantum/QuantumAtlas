@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.23.5 (2026-08-30)
+
+### Fix
+
+- **registry**: resolving an existing paper now backfills an empty `authors` array from a metadata-rich search hit without overwriting an existing byline, so paper detail and search views converge on the same author metadata.
+
 ## v0.23.4 (2026-08-30)
 
 ### Fix
