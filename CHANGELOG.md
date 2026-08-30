@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.23.6 (2026-08-30)
+
+### Feat
+
+- **admin**: persist paper acquisition state transitions in PostgreSQL and show failed PDF fetches, stages, reasons and retry counts in the admin dashboard; the raw event table remains available for full-log inspection.
+- **metrics**: show the number of papers with converted MinerU markdown on the homepage.
+
 ## v0.23.5 (2026-08-30)
 
 ### Fix
