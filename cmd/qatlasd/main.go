@@ -559,13 +559,16 @@ func main() {
 			return e.Next()
 		})
 
-		// Lazy-ingestion pipeline: every paper the search engine mints
-		// (status 'pending') is handed to the ingester, which fetches the
-		// arXiv PDF into the object store and records the asset (flipping
-		// the paper to 'ready', then pushing the index build to
-		// qatlas-rag when configured). A nil arxiv fetcher disables
-		// ingestion (OnMint no-op); Shutdown drains the queue on terminate.
-		ingester := ingest.New(registryStore, arxivFetcher, rawStore, ingest.WithIndexPusher(ingestPusher))
+		// Lazy-ingestion pipeline: every pending paper is handed to the
+		// ingester, which fetches an arXiv PDF directly or resolves a
+		// DOI-only hit through OpenAlex to an arXiv twin / open-access PDF.
+		// Recording the asset flips the paper to 'ready', then pushes an
+		// index build to qatlas-rag when configured. A nil arxiv fetcher
+		// disables ingestion; Shutdown drains the queue on terminate.
+		ingester := ingest.New(registryStore, arxivFetcher, rawStore,
+			ingest.WithIndexPusher(ingestPusher),
+			ingest.WithDOIResolver(doiResolver),
+		)
 		app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
 			shutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()

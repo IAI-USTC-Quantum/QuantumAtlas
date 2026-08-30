@@ -22,6 +22,7 @@ const DefaultProviderTimeout = 15 * time.Second
 type minter interface {
 	ResolveOrMint(ctx context.Context, ref registry.PaperRef) (paperID string, created bool, err error)
 	UpdateStatus(ctx context.Context, paperID, status string) (found bool, err error)
+	Get(ctx context.Context, paperID string) (paper *registry.Paper, found bool, err error)
 }
 
 // Engine fans one SearchEntry out to every provider, merges the hits by
@@ -133,16 +134,26 @@ func MintHits(ctx context.Context, reg minter, onMint func(ctx context.Context, 
 			if err != nil {
 				return results, candidates, fmt.Errorf("search: resolve-or-mint %s: %w", identityKey(h), err)
 			}
+			shouldIngest := created
 			if created {
 				// Registry mints with the schema default status 'ready';
 				// search-minted papers still need ingestion, so demote to
-				// 'pending' and notify the lazy-ingestion hook.
+				// 'pending' before notifying the lazy-ingestion hook.
 				if _, err := reg.UpdateStatus(ctx, paperID, "pending"); err != nil {
 					return results, candidates, fmt.Errorf("search: mark minted paper %s pending: %w", paperID, err)
 				}
-				if onMint != nil {
-					onMint(ctx, paperID, ref)
+			} else if onMint != nil {
+				// A process restart can strand an in-memory ingestion job.
+				// Re-searching an existing pending paper re-drives it, while
+				// ready/failed papers remain side-effect free.
+				paper, found, err := reg.Get(ctx, paperID)
+				if err != nil {
+					return results, candidates, fmt.Errorf("search: inspect paper %s for ingestion: %w", paperID, err)
 				}
+				shouldIngest = found && paper.Status == "pending"
+			}
+			if shouldIngest && onMint != nil {
+				onMint(ctx, paperID, ref)
 			}
 			res.PaperID = paperID
 			res.Created = created

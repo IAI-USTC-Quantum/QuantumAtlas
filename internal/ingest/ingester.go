@@ -1,21 +1,20 @@
 // Package ingest is the lazy-ingestion pipeline that turns a freshly
-// minted 'pending' paper into a fetched arXiv PDF asset.
+// minted 'pending' paper into a fetched PDF asset.
 //
 // The search engine mints papers with status 'pending' and fires its
 // onMint hook (see internal/search.Engine); Ingester.OnMint matches that
 // hook signature exactly. Each notification is coalesced by paper_id
 // (singleflight) and handed to a small bounded worker pool that:
 //
-//  1. skips refs without an arXiv id (DOI-only refs have nothing to
-//     fetch from arXiv — the paper stays 'pending'),
-//  2. parses the id and resolves the latest version when the ref came
+//  1. resolves DOI-only refs through OpenAlex to either an arXiv twin
+//     or a direct open-access PDF URL,
+//  2. parses arXiv ids and resolves the latest version when the ref came
 //     in unversioned (OpenAlex landing_page_url never carries vN),
-//  3. fetches the PDF via internal/arxiv (rate-limited, byte-immutable
-//     versioned URL),
-//  4. writes the bytes to the paper-assets object store under the
-//     canonical AssetKey ("pdf/<yymm>/<stem>.pdf"),
-//  5. records the asset via registry.UpsertPDF with the bucket-relative
-//     path ("<yymm>/<stem>.pdf"), which flips the paper to 'ready'.
+//  3. fetches the PDF through the shared rate-limited, size-bounded PDF
+//     validator,
+//  4. writes the bytes under the canonical arXiv or DOI AssetKey,
+//  5. records the asset via registry.UpsertPDF or UpsertPDFByDOI, which
+//     flips the paper to 'ready'.
 //
 // Failures mark the paper 'failed' and log a warning; there are no
 // retries here — a later janitor pass can re-drive failed papers.
@@ -34,6 +33,7 @@ import (
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/arxiv"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/openalex"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperassets"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/registry"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/safego"
@@ -50,7 +50,15 @@ const DefaultConcurrency = 2
 // implicitly.
 type registryWriter interface {
 	UpsertPDF(ctx context.Context, ref registry.PaperRef, version int, sha256 string, size int64, pdfPath string) (paperID string, assetID int64, err error)
+	UpsertPDFByDOI(ctx context.Context, ref registry.PaperRef, sha256 string, size int64, pdfPath string) (paperID string, assetID int64, err error)
 	UpdateStatus(ctx context.Context, paperID, status string) (found bool, err error)
+}
+
+// doiResolver is the slice of openalex.Resolver used by DOI-only
+// search hits. Keeping it as an interface makes the fetch path fully
+// offline-testable.
+type doiResolver interface {
+	ResolveDOI(ctx context.Context, doi string) (openalex.Resolution, error)
 }
 
 // assetPutter is the slice of objstore.Store the ingester needs. Both
@@ -101,11 +109,23 @@ func WithIndexPusher(p IndexPusher) Option {
 	}
 }
 
+// WithDOIResolver enables automatic ingestion of DOI-only search hits.
+// The resolver returns either an arXiv twin or a direct open-access PDF
+// URL. nil leaves DOI-only papers pending for manual contribution.
+func WithDOIResolver(r doiResolver) Option {
+	return func(i *Ingester) {
+		if r != nil {
+			i.doiResolver = r
+		}
+	}
+}
+
 // Ingester is the lazy-ingestion pipeline. Construct with New; the
 // worker pool starts immediately. Safe for concurrent use.
 type Ingester struct {
 	reg         registryWriter
 	fetcher     *arxiv.Fetcher
+	doiResolver doiResolver
 	store       assetPutter
 	pusher      IndexPusher
 	log         *slog.Logger
@@ -238,11 +258,27 @@ func (i *Ingester) process(j job) {
 	log := i.log.With("paper_id", j.paperID)
 	ctx := j.ctx
 
+	if j.ref.ArxivID == "" && j.ref.DOI != "" {
+		if i.doiResolver == nil {
+			i.skipped.Add(1)
+			log.Debug("ingest: DOI resolver unavailable; leaving paper pending", "doi", j.ref.DOI)
+			return
+		}
+		resolved, err := i.doiResolver.ResolveDOI(ctx, j.ref.DOI)
+		if err != nil {
+			i.fail(ctx, log, j.paperID, "resolve-doi", err)
+			return
+		}
+		if resolved.ArxivID != "" {
+			j.ref.ArxivID = resolved.ArxivID
+		} else {
+			i.processDOI(ctx, log, j, resolved.OAPdfURL)
+			return
+		}
+	}
 	if j.ref.ArxivID == "" {
-		// DOI-only refs can't be fetched from arXiv; leave the paper
-		// 'pending' for some other contribution path.
 		i.skipped.Add(1)
-		log.Debug("ingest: no arxiv id; leaving paper pending")
+		log.Debug("ingest: no fetchable paper identity; leaving paper pending")
 		return
 	}
 
@@ -302,6 +338,56 @@ func (i *Ingester) process(j job) {
 	log.Info("ingest: pdf ingested",
 		"arxiv_id", parsed.Canonical,
 		"version", version,
+		"size", res.Size,
+		"attempts", res.Attempts,
+	)
+}
+
+// processDOI fetches and records the published open-access PDF for a
+// DOI-only paper. ResolveDOI guarantees oaPDFURL is non-empty when no
+// arXiv twin exists; FetchURL still validates scheme, size, and PDF
+// magic before any bytes reach object storage.
+func (i *Ingester) processDOI(ctx context.Context, log *slog.Logger, j job, oaPDFURL string) {
+	doi, ok := paperassets.ValidateDOI(j.ref.DOI)
+	if !ok {
+		i.fail(ctx, log, j.paperID, "parse-doi", fmt.Errorf("invalid DOI %q", j.ref.DOI))
+		return
+	}
+	if strings.TrimSpace(oaPDFURL) == "" {
+		i.fail(ctx, log, j.paperID, "resolve-doi", fmt.Errorf("no open-access PDF URL for %q", doi))
+		return
+	}
+
+	res, err := i.fetcher.FetchURL(ctx, oaPDFURL)
+	if err != nil {
+		i.fail(ctx, log, j.paperID, "fetch-doi", err)
+		return
+	}
+	assetKey := paperassets.DOIAssetKey("pdf", doi)
+	if assetKey == "" {
+		i.fail(ctx, log, j.paperID, "asset-key", fmt.Errorf("no pdf asset key for DOI %q", doi))
+		return
+	}
+	if _, err := i.store.Put(ctx, assetKey, res.Body, res.Size, "application/pdf"); err != nil {
+		i.fail(ctx, log, j.paperID, "store-put", err)
+		return
+	}
+
+	ref := j.ref
+	ref.DOI = doi
+	if _, _, err := i.reg.UpsertPDFByDOI(ctx, ref, res.Sha256, res.Size, bucketRelKey(assetKey)); err != nil {
+		i.fail(ctx, log, j.paperID, "upsert-pdf-doi", err)
+		return
+	}
+	if i.pusher != nil {
+		if err := i.pusher.PushIndex(ctx, doi); err != nil {
+			log.Warn("ingest: rag index push failed", "doi", doi, "error", err)
+		}
+	}
+
+	i.fetched.Add(1)
+	log.Info("ingest: published pdf ingested",
+		"doi", doi,
 		"size", res.Size,
 		"attempts", res.Attempts,
 	)

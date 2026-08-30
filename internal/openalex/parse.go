@@ -23,12 +23,22 @@ type Work struct {
 	DOI             string       `json:"doi"` // "https://doi.org/10.7717/peerj.4375"
 	Title           string       `json:"title"`
 	PublicationDate string       `json:"publication_date"`
+	Biblio          Biblio       `json:"biblio"`
 	OpenAccess      OpenAccess   `json:"open_access"`
 	BestOALocation  *Location    `json:"best_oa_location"`
 	Locations       []Location   `json:"locations"`
 	Authorships     []Authorship `json:"authorships"`
 	ReferencedWorks []string     `json:"referenced_works"`
 	CitedByCount    int          `json:"cited_by_count"`
+}
+
+// Biblio is the journal coordinate subset used to construct stable
+// publisher mirror URLs when a provider's nominal PDF URL is protected
+// by an HTML anti-bot interstitial.
+type Biblio struct {
+	Volume    string `json:"volume"`
+	Issue     string `json:"issue"`
+	FirstPage string `json:"first_page"`
 }
 
 // OpenAccess is the Work's open_access block. OAURL is the best free
@@ -117,15 +127,18 @@ func arxivIDFromURL(u string) string {
 // ExtractOAPdfURL returns the best direct open-access PDF URL for a
 // Work, or "" when OpenAlex knows none. Preference order:
 //
-//  1. best_oa_location.pdf_url — OpenAlex's curated pick (publisher or
-//     repository PDF for the Version of Record);
-//  2. the first non-empty locations[*].pdf_url.
+//  1. a verified stable publisher mirror derived from journal metadata;
+//  2. best_oa_location.pdf_url — OpenAlex's curated pick;
+//  3. the first non-empty locations[*].pdf_url.
 //
 // The URL is NOT guaranteed to be a PDF byte stream (a publisher may
 // gate or interstitial it); the fetch layer's %PDF- magic check is the
 // final arbiter. Used by the DOI fetch pipeline when the work has no
 // arXiv twin.
 func ExtractOAPdfURL(w Work) string {
+	if mirror := researchingPDFURL(w); mirror != "" {
+		return mirror
+	}
 	if w.BestOALocation != nil && w.BestOALocation.PDFURL != "" {
 		return w.BestOALocation.PDFURL
 	}
@@ -135,6 +148,44 @@ func ExtractOAPdfURL(w Work) string {
 		}
 	}
 	return ""
+}
+
+// researchingPDFURL derives the official researching.cn static PDF
+// mirror for journals whose DOI family and mirror code are known. All
+// path fields are restricted to decimal digits so untrusted OpenAlex
+// metadata cannot inject path segments. Chinese Journal of Lasers uses
+// DOI suffix prefix CJL and mirror collection m00001.
+var decimalPathPartRE = regexp.MustCompile(`^[0-9]+$`)
+
+func researchingPDFURL(w Work) string {
+	doi := shortDOI(w.DOI)
+	slash := strings.IndexByte(doi, '/')
+	if slash < 0 {
+		return ""
+	}
+	suffix := strings.ToLower(doi[slash+1:])
+	journalCode := ""
+	if strings.HasPrefix(suffix, "cjl") {
+		journalCode = "m00001"
+	}
+	if journalCode == "" {
+		return ""
+	}
+
+	year := strings.TrimSpace(strings.SplitN(w.PublicationDate, "-", 2)[0])
+	parts := []string{
+		year,
+		strings.TrimSpace(w.Biblio.Volume),
+		strings.TrimSpace(w.Biblio.Issue),
+		strings.TrimSpace(w.Biblio.FirstPage),
+	}
+	for _, part := range parts {
+		if !decimalPathPartRE.MatchString(part) {
+			return ""
+		}
+	}
+	return "https://www.researching.cn/ArticlePdf/" + journalCode + "/" +
+		strings.Join(parts, "/") + ".pdf"
 }
 
 // shortID strips the OpenAlex URL prefix from a W/A/S/T id, leaving the

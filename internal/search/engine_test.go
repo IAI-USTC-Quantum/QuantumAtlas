@@ -33,11 +33,13 @@ func (f *fakeProvider) Search(_ context.Context, _ SearchEntry) ([]Hit, error) {
 
 // fakeMinter records ResolveOrMint / UpdateStatus calls without a DB.
 type fakeMinter struct {
-	refs       []registry.PaperRef
-	statuses   []string
-	nextID     int
-	resolveErr error
-	createdFor func(ref registry.PaperRef) bool
+	refs        []registry.PaperRef
+	statuses    []string
+	nextID      int
+	resolveErr  error
+	getErr      error
+	paperStatus string
+	createdFor  func(ref registry.PaperRef) bool
 }
 
 func (m *fakeMinter) ResolveOrMint(_ context.Context, ref registry.PaperRef) (string, bool, error) {
@@ -53,6 +55,17 @@ func (m *fakeMinter) ResolveOrMint(_ context.Context, ref registry.PaperRef) (st
 func (m *fakeMinter) UpdateStatus(_ context.Context, _ string, status string) (bool, error) {
 	m.statuses = append(m.statuses, status)
 	return true, nil
+}
+
+func (m *fakeMinter) Get(_ context.Context, paperID string) (*registry.Paper, bool, error) {
+	if m.getErr != nil {
+		return nil, false, m.getErr
+	}
+	status := m.paperStatus
+	if status == "" {
+		status = "ready"
+	}
+	return &registry.Paper{PaperID: paperID, Status: status}, true, nil
 }
 
 func TestNormalize(t *testing.T) {
@@ -180,11 +193,13 @@ func TestMintingPath(t *testing.T) {
 
 func TestExistingPaperNotDemoted(t *testing.T) {
 	mint := &fakeMinter{createdFor: func(registry.PaperRef) bool { return false }}
+	var queued []string
 	eng := &Engine{
 		providers: []Provider{&fakeProvider{name: "p1", hits: []Hit{
 			{ArxivID: "2401.00001", Score: 1.0, Source: "p1"},
 		}}},
-		reg: mint,
+		reg:    mint,
+		onMint: func(_ context.Context, paperID string, _ registry.PaperRef) { queued = append(queued, paperID) },
 	}
 	resp, err := eng.Search(context.Background(), SearchEntry{Text: "q"})
 	if err != nil {
@@ -195,5 +210,36 @@ func TestExistingPaperNotDemoted(t *testing.T) {
 	}
 	if len(mint.statuses) != 0 {
 		t.Fatalf("existing paper must not be re-demoted: %v", mint.statuses)
+	}
+	if len(queued) != 0 {
+		t.Fatalf("ready paper must not be requeued: %v", queued)
+	}
+}
+
+func TestExistingPendingPaperRequeues(t *testing.T) {
+	mint := &fakeMinter{
+		createdFor:  func(registry.PaperRef) bool { return false },
+		paperStatus: "pending",
+	}
+	var queued []string
+	eng := &Engine{
+		providers: []Provider{&fakeProvider{name: "p1", hits: []Hit{
+			{DOI: "10.3788/cjl221209", Score: 1.0, Source: "p1"},
+		}}},
+		reg:    mint,
+		onMint: func(_ context.Context, paperID string, _ registry.PaperRef) { queued = append(queued, paperID) },
+	}
+	resp, err := eng.Search(context.Background(), SearchEntry{Text: "q"})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(resp.Results) != 1 || resp.Results[0].Created {
+		t.Fatalf("expected existing pending paper: %+v", resp.Results)
+	}
+	if len(mint.statuses) != 0 {
+		t.Fatalf("existing pending paper must not be re-demoted: %v", mint.statuses)
+	}
+	if len(queued) != 1 || queued[0] != resp.Results[0].PaperID {
+		t.Fatalf("pending paper was not requeued: %v", queued)
 	}
 }

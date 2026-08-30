@@ -20,6 +20,7 @@ import (
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/arxiv"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/openalex"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/registry"
 )
 
@@ -45,6 +46,13 @@ func (f *fakeReg) UpsertPDF(_ context.Context, ref registry.PaperRef, version in
 	return ref.ArxivID, 1, nil
 }
 
+func (f *fakeReg) UpsertPDFByDOI(_ context.Context, ref registry.PaperRef, sha string, size int64, pdfPath string) (string, int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.upserts = append(f.upserts, upsertCall{ref: ref, sha256: sha, size: size, pdfPath: pdfPath})
+	return ref.DOI, 1, nil
+}
+
 func (f *fakeReg) UpdateStatus(_ context.Context, paperID, status string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -56,6 +64,27 @@ func (f *fakeReg) snapshot() ([]upsertCall, []string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]upsertCall(nil), f.upserts...), append([]string(nil), f.statuses...)
+}
+
+// fakeDOIResolver returns a canned OpenAlex resolution and records calls.
+type fakeDOIResolver struct {
+	mu         sync.Mutex
+	resolution openalex.Resolution
+	err        error
+	dois       []string
+}
+
+func (r *fakeDOIResolver) ResolveDOI(_ context.Context, doi string) (openalex.Resolution, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.dois = append(r.dois, doi)
+	return r.resolution, r.err
+}
+
+func (r *fakeDOIResolver) calls() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.dois...)
 }
 
 // testPDF is a minimal byte string that passes the fetcher's %PDF-
@@ -70,9 +99,11 @@ func testPDFSha() string {
 // arxivStub serves /abs/<id> (og:url version tag) and /pdf/<id>
 // (the fixture bytes). Paths not in the maps get a 404.
 type arxivStub struct {
+	baseURL   string
 	absPages  map[string]string // id -> version to advertise, e.g. "2401.12345" -> "v3"
 	pdfBytes  map[string][]byte // full versioned id -> body
 	pdfHits   atomic.Int64
+	oaPDFHits atomic.Int64
 	absHits   atomic.Int64
 	gate      chan struct{} // when non-nil, pdf handlers signal then block until closed
 	pdfServed chan struct{} // signals a pdf handler was entered
@@ -91,6 +122,11 @@ func (s *arxivStub) handler() http.Handler {
 		}
 		w.Header().Set("Content-Type", "text/html")
 		fmt.Fprintf(w, `<html><head><meta property="og:url" content="https://arxiv.org/abs/%s%s" /></head></html>`, id, v)
+	})
+	mux.HandleFunc("/oa.pdf", func(w http.ResponseWriter, _ *http.Request) {
+		s.oaPDFHits.Add(1)
+		w.Header().Set("Content-Type", "application/pdf")
+		_, _ = w.Write(testPDF)
 	})
 	mux.HandleFunc("/pdf/", func(w http.ResponseWriter, r *http.Request) {
 		s.pdfHits.Add(1)
@@ -115,6 +151,7 @@ func (s *arxivStub) handler() http.Handler {
 func newTestIngester(t *testing.T, stub *arxivStub, reg registryWriter, opts ...Option) (*Ingester, *objstore.LocalStore) {
 	t.Helper()
 	srv := httptest.NewServer(stub.handler())
+	stub.baseURL = srv.URL
 	t.Cleanup(srv.Close)
 	fetcher, err := arxiv.New(arxiv.Config{
 		BaseURL:    srv.URL + "/pdf/",
@@ -185,7 +222,7 @@ func TestOnMintCoalesces(t *testing.T) {
 	}
 }
 
-func TestOnMintDOIOnlySkips(t *testing.T) {
+func TestOnMintDOIOnlyWithoutResolverSkips(t *testing.T) {
 	stub := &arxivStub{}
 	reg := &fakeReg{}
 	ing, _ := newTestIngester(t, stub, reg)
@@ -202,6 +239,68 @@ func TestOnMintDOIOnlySkips(t *testing.T) {
 	}
 	if got := stub.pdfHits.Load() + stub.absHits.Load(); got != 0 {
 		t.Fatalf("expected no arxiv traffic, got %d hits", got)
+	}
+}
+
+func TestOnMintDOIOnlyFetchesOpenAccessPDF(t *testing.T) {
+	stub := &arxivStub{}
+	resolver := &fakeDOIResolver{}
+	reg := &fakeReg{}
+	ing, store := newTestIngester(t, stub, reg, WithDOIResolver(resolver))
+	resolver.resolution = openalex.Resolution{OAPdfURL: stub.baseURL + "/oa.pdf"}
+
+	const doi = "10.3788/CJL221209"
+	ing.OnMint(context.Background(), "qa_doi_oa", registry.PaperRef{DOI: doi, Title: "Optical computing"})
+
+	waitFor(t, "fetched==1", func() bool { return ing.Snapshot()["fetched"] == 1 })
+	upserts, statuses := reg.snapshot()
+	if len(statuses) != 0 {
+		t.Fatalf("unexpected status updates: %v", statuses)
+	}
+	if len(upserts) != 1 {
+		t.Fatalf("expected one DOI PDF upsert, got %+v", upserts)
+	}
+	u := upserts[0]
+	if u.ref.DOI != "10.3788/cjl221209" || u.ref.Title != "Optical computing" {
+		t.Errorf("published ref = %+v", u.ref)
+	}
+	if u.version != 0 || u.sha256 != testPDFSha() || u.size != int64(len(testPDF)) {
+		t.Errorf("published upsert = %+v", u)
+	}
+	if u.pdfPath != "doi/10.3788/cjl221209.pdf" {
+		t.Errorf("pdfPath = %q", u.pdfPath)
+	}
+	if got := resolver.calls(); len(got) != 1 || got[0] != doi {
+		t.Errorf("resolver calls = %v", got)
+	}
+	if got := stub.oaPDFHits.Load(); got != 1 {
+		t.Errorf("OA PDF hits = %d, want 1", got)
+	}
+	if got := stub.pdfHits.Load() + stub.absHits.Load(); got != 0 {
+		t.Errorf("unexpected arxiv traffic: %d", got)
+	}
+	r, _, err := store.Get(context.Background(), "pdf/doi/10.3788/cjl221209.pdf")
+	if err != nil {
+		t.Fatalf("Get DOI PDF: %v", err)
+	}
+	defer r.Close()
+}
+
+func TestOnMintDOIResolverFailureMarksFailed(t *testing.T) {
+	stub := &arxivStub{}
+	resolver := &fakeDOIResolver{err: openalex.ErrDOINotFound}
+	reg := &fakeReg{}
+	ing, _ := newTestIngester(t, stub, reg, WithDOIResolver(resolver))
+
+	ing.OnMint(context.Background(), "qa_doi_closed", registry.PaperRef{DOI: "10.1000/closed"})
+
+	waitFor(t, "failed==1", func() bool { return ing.Snapshot()["failed"] == 1 })
+	upserts, statuses := reg.snapshot()
+	if len(upserts) != 0 {
+		t.Fatalf("unexpected upserts: %+v", upserts)
+	}
+	if len(statuses) != 1 || statuses[0] != "qa_doi_closed:failed" {
+		t.Fatalf("statuses = %v", statuses)
 	}
 }
 

@@ -57,6 +57,8 @@ export function usePaperDetail(paperId: string | null) {
     queryFn: () =>
       getJson<PaperDetail>(`/api/papers/${encodeURIComponent(paperId!)}`),
     enabled: Boolean(paperId),
+    refetchInterval: (query) =>
+      query.state.data?.status === 'pending' ? 2_000 : false,
   })
 }
 

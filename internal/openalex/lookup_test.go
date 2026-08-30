@@ -195,6 +195,30 @@ func TestExtractOAPdfURL(t *testing.T) {
 		want string
 	}{
 		{
+			name: "Chinese Journal of Lasers stable mirror preferred",
+			work: Work{
+				DOI:             "https://doi.org/10.3788/CJL221209",
+				PublicationDate: "2023-01-01",
+				Biblio: Biblio{
+					Volume: "50", Issue: "5", FirstPage: "0500001",
+				},
+				BestOALocation: &Location{PDFURL: "https://publisher.example/waf"},
+			},
+			want: "https://www.researching.cn/ArticlePdf/m00001/2023/50/5/0500001.pdf",
+		},
+		{
+			name: "mirror rejects unsafe path metadata",
+			work: Work{
+				DOI:             "10.3788/cjl221209",
+				PublicationDate: "2023-01-01",
+				Biblio: Biblio{
+					Volume: "50", Issue: "../5", FirstPage: "0500001",
+				},
+				BestOALocation: &Location{PDFURL: "https://best/safe-fallback.pdf"},
+			},
+			want: "https://best/safe-fallback.pdf",
+		},
+		{
 			name: "best_oa_location preferred",
 			work: Work{
 				BestOALocation: &Location{PDFURL: "https://best/oa.pdf"},
