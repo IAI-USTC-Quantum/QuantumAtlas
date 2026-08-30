@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.23.2 (2026-08-30)
+
+### Fix
+
+- **ingest**: DOI-only search hits now resolve through OpenAlex to an arXiv twin or open-access published PDF, write the PDF into object storage, register a `published` asset, and flip the paper from `pending` to `ready`.
+- **search**: re-searching an existing `pending` paper re-enqueues ingestion after a process restart without re-fetching `ready` papers.
+- **openalex**: Chinese Journal of Lasers records use the verified `researching.cn` static PDF mirror when the nominal publisher URL returns an anti-bot HTML interstitial.
+- **web**: paper detail pages poll every two seconds while a paper is `pending`, then stop automatically at a terminal status.
+
 ## v0.23.1 (2026-08-30)
 
 ### Fix
