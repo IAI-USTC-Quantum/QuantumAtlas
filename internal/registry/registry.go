@@ -99,10 +99,11 @@ type Paper struct {
 
 // Stats holds aggregate registry counters by lifecycle status.
 type Stats struct {
-	Total   int
-	Pending int
-	Ready   int
-	Failed  int
+	Total             int
+	Pending           int
+	Ready             int
+	Failed            int
+	ConvertedMarkdown int
 }
 
 // normalizedRef is a PaperRef reduced to canonical storage forms.
@@ -497,14 +498,21 @@ func (s *Store) QueryStats(ctx context.Context) (Stats, error) {
 	if !s.ensure(ctx) {
 		return st, ErrCatalogUnavailable
 	}
-	var total, pending, ready, failed int64
+	var total, pending, ready, failed, convertedMarkdown int64
 	err := s.pool.QueryRow(ctx, `
 		SELECT
 			count(*)::bigint,
-			count(*) FILTER (WHERE status = 'pending')::bigint,
-			count(*) FILTER (WHERE status = 'ready')::bigint,
-			count(*) FILTER (WHERE status = 'failed')::bigint
-		FROM papers`).Scan(&total, &pending, &ready, &failed)
+			count(*) FILTER (WHERE p.status = 'pending')::bigint,
+			count(*) FILTER (WHERE p.status = 'ready')::bigint,
+			count(*) FILTER (WHERE p.status = 'failed')::bigint,
+			count(*) FILTER (
+				WHERE p.status NOT LIKE 'merged_into:%'
+				  AND EXISTS (
+					SELECT 1 FROM paper_assets a
+					WHERE a.paper_id = p.paper_id AND a.mineru_md_path IS NOT NULL
+				  )
+			)::bigint
+		FROM papers p`).Scan(&total, &pending, &ready, &failed, &convertedMarkdown)
 	if err != nil {
 		return st, catalogUnavailable("registry: query stats", err)
 	}
@@ -512,6 +520,7 @@ func (s *Store) QueryStats(ctx context.Context) (Stats, error) {
 	st.Pending = int(pending)
 	st.Ready = int(ready)
 	st.Failed = int(failed)
+	st.ConvertedMarkdown = int(convertedMarkdown)
 	return st, nil
 }
 

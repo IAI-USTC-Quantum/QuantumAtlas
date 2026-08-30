@@ -3,6 +3,7 @@ import {
   CheckCircle2,
   CircleX,
   Database,
+  FileText,
   Loader2,
   type LucideIcon,
 } from 'lucide-react'
@@ -65,12 +66,18 @@ export function MetricGrid(
         value: props.paperStats?.failed ?? 0,
         icon: CircleX,
       },
+      {
+        key: 'converted-markdown',
+        label: t('metrics.convertedMarkdown'),
+        value: props.paperStats?.converted_markdown ?? 0,
+        icon: FileText,
+      },
     ]
   }
   const loading = props.loading ?? false
 
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
       {items.map((metric) => {
         const Icon = metric.icon
         return (

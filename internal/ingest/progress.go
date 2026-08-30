@@ -1,6 +1,9 @@
 package ingest
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // ProgressEvent is one observable transition in the PDF acquisition
 // pipeline. The history is process-local but remains available after a
@@ -27,7 +30,11 @@ type Progress struct {
 	Events    []ProgressEvent `json:"events"`
 }
 
-func (i *Ingester) beginProgress(paperID string) {
+type acquisitionEventWriter interface {
+	RecordAcquisitionEvent(ctx context.Context, paperID, phase, state, detail string) error
+}
+
+func (i *Ingester) beginProgress(ctx context.Context, paperID string) {
 	now := time.Now().UTC()
 	i.progressMu.Lock()
 	i.progress[paperID] = &Progress{
@@ -42,9 +49,10 @@ func (i *Ingester) beginProgress(paperID string) {
 		}},
 	}
 	i.progressMu.Unlock()
+	i.persistEvent(ctx, paperID, "queued", "queued", "")
 }
 
-func (i *Ingester) transition(paperID, phase, state, detail string, terminal bool) {
+func (i *Ingester) transition(ctx context.Context, paperID, phase, state, detail string, terminal bool) {
 	now := time.Now().UTC()
 	i.progressMu.Lock()
 	p := i.progress[paperID]
@@ -66,6 +74,17 @@ func (i *Ingester) transition(paperID, phase, state, detail string, terminal boo
 		p.Error = detail
 	}
 	i.progressMu.Unlock()
+	i.persistEvent(ctx, paperID, phase, state, detail)
+}
+
+func (i *Ingester) persistEvent(ctx context.Context, paperID, phase, state, detail string) {
+	writer, ok := i.reg.(acquisitionEventWriter)
+	if !ok {
+		return
+	}
+	if err := writer.RecordAcquisitionEvent(ctx, paperID, phase, state, detail); err != nil {
+		i.log.Warn("ingest: persist acquisition event failed", "paper_id", paperID, "phase", phase, "error", err)
+	}
 }
 
 // SnapshotFor returns a deep-copy snapshot for one registry paper.

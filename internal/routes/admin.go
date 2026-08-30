@@ -32,6 +32,8 @@
 //	                                conversion run immediately (see
 //	                                admin_mineru.go).
 //	GET  /api/admin/mineru/status — adminGuard; scheduler snapshot.
+//	GET  /api/admin/acquisition/failures — adminGuard; persisted PDF
+//	                                         acquisition failures/logs.
 //
 // The agentic-search metering surface (usage / plans / quotas) lives in
 // admin_usage.go.
@@ -91,6 +93,7 @@ func RegisterAdmin(se *core.ServeEvent, cfg *config.Config, app core.App, pool *
 	se.Router.GET("/api/admin/db/tables/{name}/rows", adminGuard(cfg, adminDBRowsHandler(pool)))
 	se.Router.POST("/api/admin/mineru/run", adminGuard(cfg, adminMineruRunHandler(sched)))
 	se.Router.GET("/api/admin/mineru/status", adminGuard(cfg, adminMineruStatusHandler(sched)))
+	se.Router.GET("/api/admin/acquisition/failures", adminGuard(cfg, adminAcquisitionFailuresHandler(pool)))
 	registerAdminUsage(se, cfg, app, usageStore)
 	registerAdminPlugins(se, cfg, pluginRegistry, remote)
 }

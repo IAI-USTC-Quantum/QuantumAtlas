@@ -4,6 +4,7 @@ export type PaperStats = {
   pending?: number
   ready?: number
   failed?: number
+  converted_markdown?: number
 }
 
 import { pb } from './pb'
@@ -398,6 +399,26 @@ export function adminWhoami(): Promise<AdminWhoami> {
 
 export function adminDBSchema(): Promise<AdminDBSchema> {
   return getJson<AdminDBSchema>('/api/admin/db/schema')
+}
+
+
+export type AdminAcquisitionFailure = {
+  paper_id: string
+  arxiv_id?: string
+  doi?: string
+  title?: string
+  stage?: string
+  reason?: string
+  failed_at: string
+  attempts: number
+}
+
+export type AdminAcquisitionFailuresResponse = {
+  items: AdminAcquisitionFailure[]
+}
+
+export function adminAcquisitionFailures(): Promise<AdminAcquisitionFailuresResponse> {
+  return getJson<AdminAcquisitionFailuresResponse>('/api/admin/acquisition/failures?limit=100')
 }
 
 // Admin plugin listing: same PluginSummary shape as GET /api/v1/plugins,

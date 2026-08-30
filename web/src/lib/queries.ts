@@ -1,5 +1,6 @@
 import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query'
 import {
+  adminAcquisitionFailures,
   adminDBSchema,
   adminDBTableRows,
   adminListPlugins,
@@ -15,6 +16,7 @@ import {
   myUsage,
   paperSearch,
   papersList,
+  type AdminAcquisitionFailuresResponse,
   type AdminDBRows,
   type AdminDBSchema,
   type AdminPlansResponse,
@@ -86,6 +88,16 @@ export function useAdminWhoami() {
   })
 }
 
+export function useAdminAcquisitionFailures(enabled: boolean) {
+  return useQuery({
+    queryKey: ['admin-acquisition-failures'],
+    queryFn: (): Promise<AdminAcquisitionFailuresResponse> => adminAcquisitionFailures(),
+    enabled,
+    retry: false,
+    refetchInterval: enabled ? 15_000 : false,
+  })
+}
+
 export function useAdminSchema(enabled: boolean) {
   return useQuery({
     queryKey: ['admin-db-schema'],
@@ -142,7 +154,8 @@ export function useMyUsage() {
   })
 }
 
-export function useAdminUsage(day: string | undefined, enabled: boolean) {  return useQuery({
+export function useAdminUsage(day: string | undefined, enabled: boolean) {
+  return useQuery({
     queryKey: ['admin-usage', day ?? ''],
     queryFn: (): Promise<AdminUsageResponse> => adminUsage(day),
     enabled,

@@ -226,11 +226,12 @@ func (i *Ingester) OnMint(ctx context.Context, paperID string, ref registry.Pape
 		return
 	}
 	i.sf.DoChan(paperID, func() (any, error) {
-		i.beginProgress(paperID)
+		jobCtx := context.WithoutCancel(ctx)
+		i.beginProgress(jobCtx, paperID)
 		j := job{
 			paperID: paperID,
 			ref:     ref,
-			ctx:     context.WithoutCancel(ctx),
+			ctx:     jobCtx,
 			done:    make(chan struct{}),
 		}
 		select {
@@ -281,7 +282,7 @@ func (i *Ingester) process(j job) {
 	ctx := j.ctx
 
 	if j.ref.ArxivID == "" && j.ref.DOI != "" {
-		i.transition(j.paperID, "resolving_source", "running", "", false)
+		i.transition(ctx, j.paperID, "resolving_source", "running", "", false)
 		if i.doiResolver == nil {
 			i.skipped.Add(1)
 			log.Debug("ingest: DOI resolver unavailable; leaving paper pending", "doi", j.ref.DOI)
@@ -311,7 +312,7 @@ func (i *Ingester) process(j job) {
 		return
 	}
 	if parsed.Version == "" {
-		i.transition(j.paperID, "resolving_version", "running", "", false)
+		i.transition(ctx, j.paperID, "resolving_version", "running", "", false)
 		parsed, err = i.fetcher.ResolveLatestVersion(ctx, parsed)
 		if err != nil {
 			i.fail(ctx, log, j.paperID, "resolve-version", err)
@@ -324,7 +325,7 @@ func (i *Ingester) process(j job) {
 		return
 	}
 
-	i.transition(j.paperID, "downloading_pdf", "running", "", false)
+	i.transition(ctx, j.paperID, "downloading_pdf", "running", "", false)
 	res, err := i.fetcher.Fetch(ctx, parsed)
 	if err != nil {
 		i.fail(ctx, log, j.paperID, "fetch", err)
@@ -336,7 +337,7 @@ func (i *Ingester) process(j job) {
 		i.fail(ctx, log, j.paperID, "asset-key", fmt.Errorf("no pdf asset key for %q", parsed.Canonical))
 		return
 	}
-	i.transition(j.paperID, "storing_pdf", "running", "", false)
+	i.transition(ctx, j.paperID, "storing_pdf", "running", "", false)
 	if _, err := i.store.Put(ctx, assetKey, res.Body, res.Size, "application/pdf"); err != nil {
 		i.fail(ctx, log, j.paperID, "store-put", err)
 		return
@@ -347,7 +348,7 @@ func (i *Ingester) process(j job) {
 	// the Router re-adds on write.
 	ref := j.ref
 	ref.ArxivID = parsed.Canonical
-	i.transition(j.paperID, "registering_asset", "running", "", false)
+	i.transition(ctx, j.paperID, "registering_asset", "running", "", false)
 	if _, _, err := i.reg.UpsertPDF(ctx, ref, version, res.Sha256, res.Size, bucketRelKey(assetKey)); err != nil {
 		i.fail(ctx, log, j.paperID, "upsert-pdf", err)
 		return
@@ -355,7 +356,7 @@ func (i *Ingester) process(j job) {
 
 	// The paper is 'ready' now: push the index build to qatlas-rag.
 	// Best-effort — a push failure must not retro-fail the ingest.
-	i.transition(j.paperID, "pdf_ready", "done", "", true)
+	i.transition(ctx, j.paperID, "pdf_ready", "done", "", true)
 	if i.onPDFReady != nil {
 		i.onPDFReady(ctx, parsed.Canonical, false)
 	}
@@ -389,7 +390,7 @@ func (i *Ingester) processDOI(ctx context.Context, log *slog.Logger, j job, oaPD
 		return
 	}
 
-	i.transition(j.paperID, "downloading_pdf", "running", "", false)
+	i.transition(ctx, j.paperID, "downloading_pdf", "running", "", false)
 	res, err := i.fetcher.FetchURL(ctx, oaPDFURL)
 	if err != nil {
 		i.fail(ctx, log, j.paperID, "fetch-doi", err)
@@ -400,7 +401,7 @@ func (i *Ingester) processDOI(ctx context.Context, log *slog.Logger, j job, oaPD
 		i.fail(ctx, log, j.paperID, "asset-key", fmt.Errorf("no pdf asset key for DOI %q", doi))
 		return
 	}
-	i.transition(j.paperID, "storing_pdf", "running", "", false)
+	i.transition(ctx, j.paperID, "storing_pdf", "running", "", false)
 	if _, err := i.store.Put(ctx, assetKey, res.Body, res.Size, "application/pdf"); err != nil {
 		i.fail(ctx, log, j.paperID, "store-put", err)
 		return
@@ -408,12 +409,12 @@ func (i *Ingester) processDOI(ctx context.Context, log *slog.Logger, j job, oaPD
 
 	ref := j.ref
 	ref.DOI = doi
-	i.transition(j.paperID, "registering_asset", "running", "", false)
+	i.transition(ctx, j.paperID, "registering_asset", "running", "", false)
 	if _, _, err := i.reg.UpsertPDFByDOI(ctx, ref, res.Sha256, res.Size, bucketRelKey(assetKey)); err != nil {
 		i.fail(ctx, log, j.paperID, "upsert-pdf-doi", err)
 		return
 	}
-	i.transition(j.paperID, "pdf_ready", "done", "", true)
+	i.transition(ctx, j.paperID, "pdf_ready", "done", "", true)
 	if i.onPDFReady != nil {
 		i.onPDFReady(ctx, doi, true)
 	}
@@ -436,7 +437,7 @@ func (i *Ingester) processDOI(ctx context.Context, log *slog.Logger, j job, oaPD
 // stays in whatever state the catalog has.
 func (i *Ingester) fail(ctx context.Context, log *slog.Logger, paperID, stage string, err error) {
 	i.failed.Add(1)
-	i.transition(paperID, stage, "failed", err.Error(), true)
+	i.transition(ctx, paperID, stage, "failed", err.Error(), true)
 	log.Warn("ingest: failed", "stage", stage, "error", err)
 	if _, uerr := i.reg.UpdateStatus(ctx, paperID, "failed"); uerr != nil {
 		log.Warn("ingest: could not mark paper failed", "error", uerr)

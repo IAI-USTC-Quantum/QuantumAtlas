@@ -9,6 +9,7 @@ import {
   BookOpenText,
   ChevronRight,
   Database,
+  FileWarning,
   Gauge,
   KeyRound,
   Puzzle,
@@ -34,11 +35,13 @@ import { useLang } from '@/hooks/use-lang'
 import {
   adminPutPlan,
   adminPutQuota,
+  type AdminAcquisitionFailure,
   type AdminPlan,
   type AdminSchemaTable,
   type AdminUsageRow,
 } from '@/lib/api'
 import {
+  useAdminAcquisitionFailures,
   useAdminPlans,
   useAdminSchema,
   useAdminUsage,
@@ -61,6 +64,7 @@ function AdminPage() {
   const whoami = useAdminWhoami()
   const isAdmin = whoami.data?.is_admin ?? false
   const schema = useAdminSchema(isAdmin)
+  const acquisitionFailures = useAdminAcquisitionFailures(isAdmin)
   const [day, setDay] = useState(todayUTC)
   const usage = useAdminUsage(day || undefined, isAdmin)
   const plans = useAdminPlans(isAdmin)
@@ -127,6 +131,13 @@ function AdminPage() {
           </Alert>
         ) : (
           <div className="space-y-8">
+            <AcquisitionFailuresSection
+              items={acquisitionFailures.data?.items ?? []}
+              loading={acquisitionFailures.isLoading}
+              error={acquisitionFailures.error?.message ?? ''}
+              lang={lang}
+            />
+
             <StatusBlock
               loading={schema.isLoading}
               error={schema.error?.message ?? ''}
@@ -170,6 +181,95 @@ function AdminPage() {
       </StatusBlock>
     </section>
   )
+}
+
+function AcquisitionFailuresSection({
+  items,
+  loading,
+  error,
+  lang,
+}: {
+  items: AdminAcquisitionFailure[]
+  loading: boolean
+  error: string
+  lang: string
+}) {
+  const { t } = useTranslation('admin')
+
+  return (
+    <Panel
+      title={t('acquisitionFailures.title')}
+      icon={FileWarning}
+      suffix={`${items.length}`}
+    >
+      <p className="mb-3 text-sm text-muted-foreground">
+        {t('acquisitionFailures.description')}
+      </p>
+      <StatusBlock
+        loading={loading}
+        error={error}
+        empty={!loading && !error && items.length === 0}
+        emptyMessage={t('acquisitionFailures.empty')}
+      >
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="w-full text-sm">
+            <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
+              <tr>
+                <th className="px-4 py-2 font-medium">{t('acquisitionFailures.cols.paper')}</th>
+                <th className="px-4 py-2 font-medium">{t('acquisitionFailures.cols.stage')}</th>
+                <th className="px-4 py-2 font-medium">{t('acquisitionFailures.cols.attempts')}</th>
+                <th className="px-4 py-2 font-medium">{t('acquisitionFailures.cols.time')}</th>
+                <th className="px-4 py-2 font-medium">{t('acquisitionFailures.cols.reason')}</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {items.map((item) => (
+                <tr key={item.paper_id} className="align-top">
+                  <td className="min-w-72 px-4 py-2">
+                    <Link
+                      to="/$lang/papers/$paperId"
+                      params={{ lang, paperId: item.paper_id }}
+                      className="line-clamp-2 font-medium text-primary hover:underline"
+                    >
+                      {item.title || item.arxiv_id || item.doi || item.paper_id}
+                    </Link>
+                    <code className="mt-1 block text-xs text-muted-foreground">
+                      {item.arxiv_id ? `arXiv:${item.arxiv_id}` : item.doi ? `doi:${item.doi}` : item.paper_id}
+                    </code>
+                  </td>
+                  <td className="px-4 py-2">
+                    <Badge variant="outline">
+                      {item.stage || t('acquisitionFailures.legacy')}
+                    </Badge>
+                  </td>
+                  <td className="px-4 py-2 tabular-nums">{item.attempts}</td>
+                  <td className="whitespace-nowrap px-4 py-2 text-muted-foreground">
+                    {formatAdminTime(item.failed_at)}
+                  </td>
+                  <td className="min-w-96 px-4 py-2">
+                    {item.reason ? (
+                      <code className="block whitespace-pre-wrap break-words rounded bg-muted px-2 py-1 text-xs text-destructive">
+                        {item.reason}
+                      </code>
+                    ) : (
+                      <span className="text-muted-foreground">
+                        {t('acquisitionFailures.noLog')}
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </StatusBlock>
+    </Panel>
+  )
+}
+
+function formatAdminTime(value: string): string {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
 }
 
 function TableCard({ table }: { table: AdminSchemaTable }) {

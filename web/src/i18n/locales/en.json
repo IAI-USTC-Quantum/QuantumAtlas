@@ -63,7 +63,8 @@
       "papersTotal": "Registered papers",
       "papersPending": "Pending",
       "papersReady": "Ready",
-      "papersFailed": "Failed"
+      "papersFailed": "Failed",
+      "convertedMarkdown": "Converted Markdown"
     },
     "notFound": {
       "eyebrow": "404",
@@ -375,6 +376,20 @@
         "appliedTitle": "Configuration applied",
         "applied": "Applied keys: {{keys}}",
         "restartHint": "A plugin restart is required for the changes to take effect."
+      }
+    },
+    "acquisitionFailures": {
+      "title": "PDF acquisition failures",
+      "description": "Recent failed PDF acquisition jobs. New records persist stage, reason and attempt count; browse paper_acquisition_events for the full event log.",
+      "empty": "No failed PDF acquisition records.",
+      "legacy": "Legacy record",
+      "noLog": "This failure predates durable acquisition logging; no reason was recorded.",
+      "cols": {
+        "paper": "Paper",
+        "stage": "Failed stage",
+        "attempts": "Attempts",
+        "time": "Failed at",
+        "reason": "Reason / log"
       }
     },
     "dbrows": {

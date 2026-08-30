@@ -759,11 +759,12 @@ func paperStatsHandler(re *core.RequestEvent, catalog *registry.Store) error {
 		return re.JSON(http.StatusOK, map[string]any{"available": false})
 	}
 	return re.JSON(http.StatusOK, map[string]any{
-		"available": true,
-		"total":     stats.Total,
-		"pending":   stats.Pending,
-		"ready":     stats.Ready,
-		"failed":    stats.Failed,
+		"available":          true,
+		"total":              stats.Total,
+		"pending":            stats.Pending,
+		"ready":              stats.Ready,
+		"failed":             stats.Failed,
+		"converted_markdown": stats.ConvertedMarkdown,
 	})
 }
 

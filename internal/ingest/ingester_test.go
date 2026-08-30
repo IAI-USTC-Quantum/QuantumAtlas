@@ -30,6 +30,21 @@ type fakeReg struct {
 	upserts  []upsertCall
 	statuses []string
 	pending  []registry.PendingPaper
+	events   []recordedAcquisitionEvent
+}
+
+type recordedAcquisitionEvent struct {
+	paperID string
+	phase   string
+	state   string
+	detail  string
+}
+
+func (f *fakeReg) RecordAcquisitionEvent(_ context.Context, paperID, phase, state, detail string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.events = append(f.events, recordedAcquisitionEvent{paperID: paperID, phase: phase, state: state, detail: detail})
+	return nil
 }
 
 func (f *fakeReg) PendingPapers(_ context.Context, after string, limit int) ([]registry.PendingPaper, error) {
@@ -348,6 +363,11 @@ func TestRecoverPendingReplaysAndTracksProgress(t *testing.T) {
 	defer hookMu.Unlock()
 	if len(hooked) != 2 {
 		t.Errorf("PDF-ready hooks = %v", hooked)
+	}
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if len(reg.events) < 8 {
+		t.Errorf("durable acquisition events = %v", reg.events)
 	}
 }
 

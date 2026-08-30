@@ -63,7 +63,8 @@
       "papersTotal": "已收录论文",
       "papersPending": "待处理",
       "papersReady": "已就绪",
-      "papersFailed": "失败"
+      "papersFailed": "失败",
+      "convertedMarkdown": "已转换 Markdown"
     },
     "notFound": {
       "eyebrow": "404",
@@ -375,6 +376,20 @@
         "appliedTitle": "配置已生效",
         "applied": "已应用字段：{{keys}}",
         "restartHint": "需要重启插件后改动才会生效。"
+      }
+    },
+    "acquisitionFailures": {
+      "title": "PDF 获取失败",
+      "description": "最近失败的 PDF 获取任务。新记录持久化阶段、原因与尝试次数；完整事件可在数据库表 paper_acquisition_events 中查看。",
+      "empty": "当前没有失败的 PDF 获取记录。",
+      "legacy": "历史记录",
+      "noLog": "该记录产生于持久日志启用之前，暂无失败原因。",
+      "cols": {
+        "paper": "论文",
+        "stage": "失败阶段",
+        "attempts": "尝试次数",
+        "time": "失败时间",
+        "reason": "原因 / 日志"
       }
     },
     "dbrows": {
