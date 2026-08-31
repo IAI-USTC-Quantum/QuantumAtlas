@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.24.0 (2026-08-31)
+
+### Feat
+
+- **admin**: user roles live on the users record — `is_admin`, `is_superadmin` and a `disabled` availability flag (PocketBase migration, zero value = enabled). New `GET/PATCH /api/admin/users` surface: admins list all users and toggle availability, superadmins additionally manage `is_admin`; env allowlist admins stay superadmin-equivalent while `adminGuard` ops endpoints remain env-gated. Disabling an account kills its sessions and PATs on the next request and blocks new OAuth sign-ins. `is_superadmin` is seeded from `auth.superadmin_logins` at bootstrap (monotonic) or the PocketBase admin UI, never via the API. Ships with a `/$lang/admin/users` management page, whoami/me role fields and an auth-model.md section.
+
 ## v0.23.7 (2026-08-30)
 
 ### Fix
