@@ -602,13 +602,14 @@ func docPATScopes() {}
 //
 // @Summary     My profile
 // @Description Returns the signed-in user's profile:
-// @Description {id, email, name, avatar, github_login, is_admin, created}.
+// @Description {id, email, name, avatar, github_login, is_admin,
+// @Description is_superadmin, created}.
 // @Description avatar is the PocketBase file name — build the URL via the
 // @Description PocketBase files API.
 // @Tags        Me
 // @Produce     json
 // @Security    BearerAuth
-// @Success     200 {object} map[string]interface{} "{id, email, name, avatar, github_login, is_admin, created}"
+// @Success     200 {object} map[string]interface{} "{id, email, name, avatar, github_login, is_admin, is_superadmin, created}"
 // @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string "PAT auth not accepted"
 // @Router      /api/me [get]
@@ -642,14 +643,18 @@ func docMeUsage() {}
 // adminWhoami reports the caller's GitHub login and admin status.
 //
 // @Summary     Admin whoami
-// @Description Returns {login, is_admin} for the signed-in session user.
-// @Description The SPA uses this to decide whether to render the admin
-// @Description nav; non-admins get is_admin:false rather than a 403.
-// @Description Session-token auth only (PAT auth refused, same as /api/pat).
+// @Description Returns {login, is_admin, is_user_admin, is_superadmin}
+// @Description for the signed-in session user. is_admin is the env
+// @Description allowlist gate (ops dashboard); is_user_admin /
+// @Description is_superadmin mirror the /api/admin/users guard for the
+// @Description user-management nav. The SPA uses these to decide which
+// @Description admin surfaces to render; non-admins get false flags
+// @Description rather than a 403. Session-token auth only (PAT auth
+// @Description refused, same as /api/pat).
 // @Tags        Admin
 // @Produce     json
 // @Security    BearerAuth
-// @Success     200 {object} map[string]interface{} "{login, is_admin}"
+// @Success     200 {object} map[string]interface{} "{login, is_admin, is_user_admin, is_superadmin}"
 // @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string "PAT auth not accepted"
 // @Router      /api/admin/whoami [get]
@@ -691,6 +696,44 @@ func docAdminDBSchema() {}
 // @Failure     404 {object} map[string]string "dev docs not bundled"
 // @Router      /api/admin/devdoc/ticket [post]
 func docAdminDevdocTicket() {}
+
+// adminListUsers returns every users record with its role/availability flags.
+//
+// @Summary     List users
+// @Description Every users record: {users:[{id, name, email, github_login,
+// @Description is_admin, is_superadmin, disabled, created, updated}], total}.
+// @Description Requires a session AND one of: is_admin, is_superadmin, or the
+// @Description env admin allowlist (userAdminGuard — PATs rejected).
+// @Tags        Admin
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200 {object} map[string]interface{} "{users, total}"
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string "user management requires admin / PAT auth not accepted"
+// @Router      /api/admin/users [get]
+func docAdminListUsers() {}
+
+// adminUpdateUser toggles a user's availability and/or is_admin flag.
+//
+// @Summary     Update user flags
+// @Description Body is a JSON object with any of {"disabled": bool,
+// @Description "is_admin": bool} — at least one key required. disabled needs
+// @Description admin-or-above; is_admin needs superadmin (env-allowlist admins
+// @Description count as superadmin). Self-protection: nobody may disable
+// @Description themselves or change their own is_admin; admins cannot
+// @Description disable superadmins. is_superadmin is not patchable here.
+// @Tags        Admin
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id path string true "users record id"
+// @Success     200 {object} map[string]interface{} "the updated user record"
+// @Failure     400 {object} map[string]string "empty or invalid body"
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string "role too low / self-protection"
+// @Failure     404 {object} map[string]string "user not found"
+// @Router      /api/admin/users/{id} [patch]
+func docAdminUpdateUser() {}
 
 // --- OAuth Device Flow -------------------------------------------------------
 //

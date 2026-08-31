@@ -59,9 +59,12 @@ export function Sidebar({
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const homePath = `/${lang}`
   // Session-only whoami; cached for a few minutes in the query cache.
-  // Hidden (not errored) for non-admins / non-sessions.
+  // Hidden (not errored) for non-admins / non-sessions. is_user_admin
+  // broadens the entry to DB-flag user managers (is_admin stays the env
+  // allowlist gate for the ops dashboard itself).
   const whoami = useAdminWhoami()
-  const showAdmin = whoami.data?.is_admin === true
+  const showAdmin =
+    whoami.data?.is_admin === true || whoami.data?.is_user_admin === true
   const adminPath = `${homePath}/admin`
 
   return (

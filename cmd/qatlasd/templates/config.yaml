@@ -37,6 +37,10 @@
 #   github_client_secret: ""
 #   allowed_logins: [your-gh-login, teammate-gh-login]
 #   admin_logins: [your-gh-login]
+#   # Logins promoted to is_superadmin on the users record at every
+#   # boot (see docs/concepts/auth-model.md §DB 角色). Seed/recovery
+#   # path for the role-management API; never demotes.
+#   superadmin_logins: [your-gh-login]
 
 # ─── PostgreSQL (paper registry + OpenAlex corpus) ─────────────────────
 # Without a DSN the paper registry degrades to {available:false} and

@@ -37,6 +37,13 @@ func Register(app core.App, cfg *config.Config) {
 			// PocketBase. OAuth login will simply 4xx until resolved.
 			slog.Warn("github oauth provider sync failed", "error", err)
 		}
+		if err := promoteRoleFlags(e.App, cfg); err != nil {
+			// Same tolerance: a failed promotion must not take the server
+			// down. The env allowlist (adminGuard) still works; only the
+			// DB-flag user-management surface stays degraded until the
+			// next boot retries.
+			slog.Warn("auth: role-flag promotion failed", "error", err)
+		}
 		return nil
 	})
 
@@ -50,6 +57,9 @@ func Register(app core.App, cfg *config.Config) {
 		// Returning an error here aborts the OAuth2 request so a blocked
 		// account leaves no trace and gets a clean 403.
 		if err := enforceLoginAllowlist(e, cfg); err != nil {
+			return err
+		}
+		if err := rejectDisabledUser(e); err != nil {
 			return err
 		}
 		if err := syncStableUserID(e); err != nil {
@@ -69,6 +79,81 @@ func Register(app core.App, cfg *config.Config) {
 		stampGitHubLogin(e)
 		return nil
 	})
+}
+
+// rejectDisabledUser blocks OAuth sign-in for a users record whose
+// availability flag is off. Unlike enforceLoginAllowlist it only fires
+// for RETURNING users (e.Record non-nil — PocketBase has already matched
+// them by externalAuths or email); fresh signups have no record yet and
+// can't have been disabled. Runs before e.Next() so a disabled account
+// gets a clean 403 and no session token is issued.
+//
+// This is the front door; the same flag is re-checked on every request
+// by isAuthorized (internal/routes/auth.go) so already-issued sessions
+// and PATs die when an admin flips the switch.
+func rejectDisabledUser(e *core.RecordAuthWithOAuth2RequestEvent) error {
+	if e == nil || e.Record == nil {
+		return nil
+	}
+	if !e.Record.GetBool(DisabledField) {
+		return nil
+	}
+	slog.Warn("oauth: blocked sign-in for disabled account",
+		"user_id", e.Record.Id,
+		"provider", e.ProviderName,
+	)
+	return apis.NewForbiddenError("This account has been deactivated.", nil)
+}
+
+// promoteRoleFlags stamps the is_admin / is_superadmin flags onto users
+// records whose github_login appears in the corresponding config seed
+// list. Runs at bootstrap, idempotently: it only ever SETS flags
+// (promotion), never clears them — demotion is an explicit operator
+// action via the /api/admin/users API (or the PocketBase admin UI), so
+// removing a login from the seed list does not demote an existing
+// holder on the next boot.
+//
+// This is the bootstrap/recovery path for the DB-flag roles: the
+// migration only adds the (false-defaulting) columns, so without this
+// promotion the flags would require manual SQLite surgery to seed.
+func promoteRoleFlags(app core.App, cfg *config.Config) error {
+	if len(cfg.AdminGitHubLogins) == 0 && len(cfg.SuperadminGitHubLogins) == 0 {
+		return nil
+	}
+	records, err := app.FindAllRecords(UsersCollection)
+	if err != nil {
+		return fmt.Errorf("list %s: %w", UsersCollection, err)
+	}
+	promotedAdmin, promotedSuper := 0, 0
+	for _, rec := range records {
+		login := rec.GetString(GitHubLoginField)
+		changed := false
+		if !rec.GetBool(IsAdminField) && cfg.IsGitHubAdmin(login) {
+			rec.Set(IsAdminField, true)
+			changed = true
+			promotedAdmin++
+		}
+		if !rec.GetBool(IsSuperadminField) && cfg.IsGitHubSuperadmin(login) {
+			rec.Set(IsSuperadminField, true)
+			changed = true
+			promotedSuper++
+		}
+		if !changed {
+			continue
+		}
+		if err := app.Save(rec); err != nil {
+			// Skip-and-log: one bad record must not block the rest.
+			slog.Warn("auth: failed to save promoted role flags",
+				"user_id", rec.Id, "error", err)
+		}
+	}
+	if promotedAdmin > 0 || promotedSuper > 0 {
+		slog.Info("auth: promoted role flags from config seed lists",
+			"admins", promotedAdmin,
+			"superadmins", promotedSuper,
+		)
+	}
+	return nil
 }
 
 // stampGitHubLogin persists the GitHub account login onto the users

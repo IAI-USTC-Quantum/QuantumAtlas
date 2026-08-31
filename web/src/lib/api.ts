@@ -44,6 +44,27 @@ export async function putJson<T>(url: string, body: unknown): Promise<T> {
   return response.json() as Promise<T>
 }
 
+// Same error-surfacing contract as putJson, for the PATCH verbs on the
+// admin user-management surface.
+export async function patchJson<T>(url: string, body: unknown): Promise<T> {
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: { ...authHeaders(), 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) {
+    let detail = ''
+    try {
+      const j = (await response.json()) as { detail?: string }
+      detail = j.detail ?? ''
+    } catch {
+      // not JSON; ignore
+    }
+    throw new Error(detail ? `${response.status}: ${detail}` : `${response.status} ${response.statusText}`)
+  }
+  return response.json() as Promise<T>
+}
+
 export async function postJson<T>(url: string, body: unknown): Promise<T> {
   const response = await fetch(url, {
     method: 'POST',
@@ -327,6 +348,30 @@ export async function papersList(
 export type AdminWhoami = {
   login: string
   is_admin: boolean
+  // Role fields mirroring the /api/admin/users guard (userAdminGuard):
+  // is_user_admin = env admin OR is_admin OR is_superadmin;
+  // is_superadmin = env admin OR is_superadmin.
+  is_user_admin: boolean
+  is_superadmin: boolean
+}
+
+// GET /api/admin/users — every users record with role/availability
+// flags (admin_users.go).
+export type AdminUser = {
+  id: string
+  name: string
+  email: string
+  github_login: string
+  is_admin: boolean
+  is_superadmin: boolean
+  disabled: boolean
+  created: string
+  updated: string
+}
+
+export type AdminUsersResponse = {
+  users: AdminUser[]
+  total: number
 }
 
 export type AdminSchemaColumn = {
@@ -373,6 +418,7 @@ export type MeProfile = {
   avatar: string
   github_login: string
   is_admin: boolean
+  is_superadmin: boolean
   created: string
 }
 
@@ -395,6 +441,20 @@ export function myUsage(): Promise<MyUsage> {
 
 export function adminWhoami(): Promise<AdminWhoami> {
   return getJson<AdminWhoami>('/api/admin/whoami')
+}
+
+// PATCH /api/admin/users/{id} — toggle availability and/or is_admin.
+// is_admin changes are rejected server-side unless the caller is
+// superadmin; omit the key rather than sending it when not allowed.
+export function adminUpdateUser(
+  id: string,
+  body: { disabled?: boolean; is_admin?: boolean },
+): Promise<AdminUser> {
+  return patchJson<AdminUser>(`/api/admin/users/${id}`, body)
+}
+
+export function adminListUsers(): Promise<AdminUsersResponse> {
+  return getJson<AdminUsersResponse>('/api/admin/users')
 }
 
 export function adminDBSchema(): Promise<AdminDBSchema> {

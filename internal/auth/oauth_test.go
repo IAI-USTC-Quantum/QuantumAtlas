@@ -4,6 +4,8 @@ import (
 	"regexp"
 	"testing"
 
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
+
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
 	pbauth "github.com/pocketbase/pocketbase/tools/auth"
@@ -59,7 +61,6 @@ func TestDeriveStableUserID_EmptyInputsStillHash(t *testing.T) {
 		t.Errorf("len = %d, want %d", len(got), stableUserIDLength)
 	}
 }
-
 
 // ---------------------------------------------------------------------------
 // stampGitHubLogin — persists the GitHub login onto the users record
@@ -137,5 +138,117 @@ func TestStampGitHubLogin_SkipsNonGitHubAndBlank(t *testing.T) {
 				t.Errorf("github_login = %q, want empty", got)
 			}
 		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// rejectDisabledUser — OAuth front door for the availability flag
+// ---------------------------------------------------------------------------
+
+func TestRejectDisabledUser(t *testing.T) {
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatalf("NewTestApp: %v", err)
+	}
+	t.Cleanup(app.Cleanup)
+
+	col, err := app.FindCollectionByNameOrId(UsersCollection)
+	if err != nil {
+		t.Fatalf("users collection: %v", err)
+	}
+
+	// Fresh signup shape: e.Record nil (PB hasn't matched an existing
+	// record yet) — must pass, new users can't have been disabled.
+	if err := rejectDisabledUser(newStampEvent(app, pbauth.NameGithub, "someone", nil)); err != nil {
+		t.Errorf("nil record: err = %v, want nil", err)
+	}
+
+	enabled := core.NewRecord(col)
+	enabled.SetEmail("enabled@example.com")
+	enabled.SetPassword("enabled-test-password")
+	if err := app.Save(enabled); err != nil {
+		t.Fatalf("save enabled: %v", err)
+	}
+	if err := rejectDisabledUser(newStampEvent(app, pbauth.NameGithub, "someone", enabled)); err != nil {
+		t.Errorf("enabled record: err = %v, want nil", err)
+	}
+
+	disabled := core.NewRecord(col)
+	disabled.SetEmail("disabled@example.com")
+	disabled.SetPassword("disabled-test-password")
+	disabled.Set(DisabledField, true)
+	if err := app.Save(disabled); err != nil {
+		t.Fatalf("save disabled: %v", err)
+	}
+	if err := rejectDisabledUser(newStampEvent(app, pbauth.NameGithub, "someone", disabled)); err == nil {
+		t.Error("disabled record: err = nil, want forbidden error")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// promoteRoleFlags — bootstrap seeding from the config lists
+// ---------------------------------------------------------------------------
+
+func TestPromoteRoleFlags(t *testing.T) {
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatalf("NewTestApp: %v", err)
+	}
+	t.Cleanup(app.Cleanup)
+
+	cfg := &config.Config{
+		AdminGitHubLogins:      []string{"Boss1"},
+		SuperadminGitHubLogins: []string{"Root2"},
+	}
+
+	mk := func(email, login string, isAdmin, isSuper bool) *core.Record {
+		col, err := app.FindCollectionByNameOrId(UsersCollection)
+		if err != nil {
+			t.Fatalf("users collection: %v", err)
+		}
+		rec := core.NewRecord(col)
+		rec.SetEmail(email)
+		rec.SetPassword("promote-test-password")
+		rec.Set(GitHubLoginField, login)
+		rec.Set(IsAdminField, isAdmin)
+		rec.Set(IsSuperadminField, isSuper)
+		if err := app.Save(rec); err != nil {
+			t.Fatalf("save %s: %v", email, err)
+		}
+		return rec
+	}
+
+	plain := mk("plain@example.com", "nobody", false, false)
+	boss := mk("boss@example.com", "boss1", false, false) // case-insensitive match
+	root := mk("root@example.com", "Root2", false, false)
+	preSet := mk("preset@example.com", "nobody2", true, false) // is_admin already on, login unlisted
+
+	if err := promoteRoleFlags(app, cfg); err != nil {
+		t.Fatalf("promoteRoleFlags: %v", err)
+	}
+
+	refetch := func(id string) *core.Record {
+		rec, err := app.FindRecordById(UsersCollection, id)
+		if err != nil {
+			t.Fatalf("refetch %s: %v", id, err)
+		}
+		return rec
+	}
+
+	if refetch(plain.Id).GetBool(IsAdminField) || refetch(plain.Id).GetBool(IsSuperadminField) {
+		t.Error("unlisted login got promoted")
+	}
+	if !refetch(boss.Id).GetBool(IsAdminField) {
+		t.Error("admin_listed login (case-insensitive) not promoted to is_admin")
+	}
+	if refetch(boss.Id).GetBool(IsSuperadminField) {
+		t.Error("admin-only login should not be superadmin")
+	}
+	if !refetch(root.Id).GetBool(IsSuperadminField) {
+		t.Error("superadmin_listed login not promoted to is_superadmin")
+	}
+	// Promotion must not DEMOTE pre-existing flags for unlisted logins.
+	if !refetch(preSet.Id).GetBool(IsAdminField) {
+		t.Error("pre-existing is_admin was demoted — promotion must be monotonic")
 	}
 }

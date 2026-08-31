@@ -104,14 +104,14 @@ type Config struct {
 	// Retention for sandbox directories before the janitor sweeps them
 	// (default 24h), MaxBudgetUSD per call (0 = no --max-budget-usd flag),
 	// PromptTemplate overriding the embedded prompt (empty = embedded).
-	AgenticBackend            string
-	AgenticLocalClaudeBin     string
-	AgenticLocalModel         string
-	AgenticLocalSandboxDir    string
-	AgenticLocalTimeout       time.Duration
-	AgenticLocalRetention     time.Duration
-	AgenticLocalMaxBudgetUSD  float64
-	AgenticLocalPromptTpl     string
+	AgenticBackend           string
+	AgenticLocalClaudeBin    string
+	AgenticLocalModel        string
+	AgenticLocalSandboxDir   string
+	AgenticLocalTimeout      time.Duration
+	AgenticLocalRetention    time.Duration
+	AgenticLocalMaxBudgetUSD float64
+	AgenticLocalPromptTpl    string
 
 	// Public URL: server's own canonical https origin (scheme+host[+port])
 	// as users see it from outside any reverse proxy. Required for
@@ -128,6 +128,13 @@ type Config struct {
 
 	// GitHub login whitelist auto-promoted to admin on first OAuth login.
 	AdminGitHubLogins []string
+
+	// GitHub logins auto-promoted to superadmin (is_superadmin flag on
+	// the users record) at bootstrap. Superadmins may manage other
+	// users' is_admin flag via /api/admin/users in addition to
+	// everything is_admin holders can do. Also seeds the flag recovery
+	// path: promote-yourself here, restart, then demote via the API.
+	SuperadminGitHubLogins []string
 
 	// GitHub login allowlist gating OAuth sign-in. Only accounts whose
 	// GitHub login appears here (or in AdminGitHubLogins) may obtain an
@@ -341,6 +348,7 @@ type fileConfig struct {
 		GitHubClientSecret string   `yaml:"github_client_secret"`
 		AllowedLogins      []string `yaml:"allowed_logins"`
 		AdminLogins        []string `yaml:"admin_logins"`
+		SuperadminLogins   []string `yaml:"superadmin_logins"`
 	} `yaml:"auth"`
 
 	S3 struct {
@@ -609,35 +617,36 @@ func (fc *fileConfig) toConfig(anchor string) (*Config, error) {
 		ForceTCP4:      fc.ForceTCP4,
 		SkipPBDataLock: fc.SkipPBDataLock,
 
-		PostgresDSN:          fc.Postgres.DSN,
-		PostgresMaxConns:     intOrDefault(fc.Postgres.MaxConns, 10),
-		CorpusEnsureIndexes:  boolOrDefault(fc.Postgres.CorpusEnsureIndexes, true),
-		SearchProviders:      fc.Search.Providers,
-		GitHubClientID:       fc.Auth.GitHubClientID,
-		GitHubClientSecret:   fc.Auth.GitHubClientSecret,
-		AllowedGitHubLogins:  fc.Auth.AllowedLogins,
-		AdminGitHubLogins:    fc.Auth.AdminLogins,
-		S3Endpoint:           fc.S3.Endpoint,
-		S3PublicEndpoint:     fc.S3.PublicEndpoint,
-		S3BucketPDF:          fc.S3.BucketPDF,
-		S3BucketMD:           fc.S3.BucketMD,
-		S3BucketImages:       fc.S3.BucketImages,
-		S3BucketOpenAlex:     fc.S3.BucketOpenAlex,
-		S3AccessKeyID:        fc.S3.AccessKeyID,
-		S3SecretAccessKey:    fc.S3.SecretAccessKey,
-		PaperAccessEnabled:   fc.PaperAccess.Enabled,
-		OpenAlexMailto:       fc.PaperAccess.OpenAlexMailto,
-		ArxivFetchConcurrent: intOrDefault(fc.PaperAccess.ArxivFetchConcurrent, 2),
-		ArxivFetchRPS:        floatOrDefault(fc.PaperAccess.ArxivFetchRPS, 0.33),
-		RAGRemoteEnabled:     fc.RAG.Remote.Enabled,
-		RAGRemoteURL:         fc.RAG.Remote.URL,
-		RAGRemoteToken:       fc.RAG.Remote.Token,
-		PluginsEnabled:       fc.Plugins.Enabled,
-		PluginsDisabled:      fc.Plugins.Disabled,
-		PluginConnectSecret:  fc.Plugins.ConnectSecret,
-		RPCWSBind:            defaultIfEmpty(fc.Plugins.RPCWSBind, "127.0.0.1:8799"),
-		SystemPATToken:       fc.SystemPAT.Token,
-		SystemPATScopes:      fc.SystemPAT.Scopes,
+		PostgresDSN:            fc.Postgres.DSN,
+		PostgresMaxConns:       intOrDefault(fc.Postgres.MaxConns, 10),
+		CorpusEnsureIndexes:    boolOrDefault(fc.Postgres.CorpusEnsureIndexes, true),
+		SearchProviders:        fc.Search.Providers,
+		GitHubClientID:         fc.Auth.GitHubClientID,
+		GitHubClientSecret:     fc.Auth.GitHubClientSecret,
+		AllowedGitHubLogins:    fc.Auth.AllowedLogins,
+		AdminGitHubLogins:      fc.Auth.AdminLogins,
+		SuperadminGitHubLogins: fc.Auth.SuperadminLogins,
+		S3Endpoint:             fc.S3.Endpoint,
+		S3PublicEndpoint:       fc.S3.PublicEndpoint,
+		S3BucketPDF:            fc.S3.BucketPDF,
+		S3BucketMD:             fc.S3.BucketMD,
+		S3BucketImages:         fc.S3.BucketImages,
+		S3BucketOpenAlex:       fc.S3.BucketOpenAlex,
+		S3AccessKeyID:          fc.S3.AccessKeyID,
+		S3SecretAccessKey:      fc.S3.SecretAccessKey,
+		PaperAccessEnabled:     fc.PaperAccess.Enabled,
+		OpenAlexMailto:         fc.PaperAccess.OpenAlexMailto,
+		ArxivFetchConcurrent:   intOrDefault(fc.PaperAccess.ArxivFetchConcurrent, 2),
+		ArxivFetchRPS:          floatOrDefault(fc.PaperAccess.ArxivFetchRPS, 0.33),
+		RAGRemoteEnabled:       fc.RAG.Remote.Enabled,
+		RAGRemoteURL:           fc.RAG.Remote.URL,
+		RAGRemoteToken:         fc.RAG.Remote.Token,
+		PluginsEnabled:         fc.Plugins.Enabled,
+		PluginsDisabled:        fc.Plugins.Disabled,
+		PluginConnectSecret:    fc.Plugins.ConnectSecret,
+		RPCWSBind:              defaultIfEmpty(fc.Plugins.RPCWSBind, "127.0.0.1:8799"),
+		SystemPATToken:         fc.SystemPAT.Token,
+		SystemPATScopes:        fc.SystemPAT.Scopes,
 	}
 	if len(cfg.SearchProviders) == 0 {
 		cfg.SearchProviders = []string{"catalog", "arxiv", "openalex"}
@@ -992,6 +1001,25 @@ func (c *Config) IsGitHubAdmin(login string) bool {
 		return false
 	}
 	for _, l := range c.AdminGitHubLogins {
+		if strings.ToLower(strings.TrimSpace(l)) == login {
+			return true
+		}
+	}
+	return false
+}
+
+// IsGitHubSuperadmin reports whether the given GitHub login belongs to
+// the superadmin seed list (auth.superadmin_logins). Like IsGitHubAdmin
+// it is a strict subset of allowed sign-ins and compares
+// case-insensitively. Used only for the bootstrap flag promotion in
+// internal/auth — runtime superadmin checks read the is_superadmin
+// flag off the users record instead.
+func (c *Config) IsGitHubSuperadmin(login string) bool {
+	login = strings.ToLower(strings.TrimSpace(login))
+	if login == "" {
+		return false
+	}
+	for _, l := range c.SuperadminGitHubLogins {
 		if strings.ToLower(strings.TrimSpace(l)) == login {
 			return true
 		}

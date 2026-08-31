@@ -23,6 +23,7 @@ import { Route as LangPapersIndexRouteImport } from './routes/$lang.papers.index
 import { Route as LangAdminIndexRouteImport } from './routes/$lang.admin.index'
 import { Route as LangPapersSearchRouteImport } from './routes/$lang.papers.search'
 import { Route as LangPapersPaperIdRouteImport } from './routes/$lang.papers.$paperId'
+import { Route as LangAdminUsersRouteImport } from './routes/$lang.admin.users'
 import { Route as LangAdminPluginsRouteImport } from './routes/$lang.admin.plugins'
 import { Route as LangAdminDocsRouteImport } from './routes/$lang.admin.docs'
 import { Route as LangAdminDbTableRouteImport } from './routes/$lang.admin.db.$table'
@@ -97,6 +98,11 @@ const LangPapersPaperIdRoute = LangPapersPaperIdRouteImport.update({
   path: '/papers/$paperId',
   getParentRoute: () => LangRoute,
 } as any)
+const LangAdminUsersRoute = LangAdminUsersRouteImport.update({
+  id: '/admin/users',
+  path: '/admin/users',
+  getParentRoute: () => LangRoute,
+} as any)
 const LangAdminPluginsRoute = LangAdminPluginsRouteImport.update({
   id: '/admin/plugins',
   path: '/admin/plugins',
@@ -126,6 +132,7 @@ export interface FileRoutesByFullPath {
   '/$lang/': typeof LangIndexRoute
   '/$lang/admin/docs': typeof LangAdminDocsRoute
   '/$lang/admin/plugins': typeof LangAdminPluginsRoute
+  '/$lang/admin/users': typeof LangAdminUsersRoute
   '/$lang/papers/$paperId': typeof LangPapersPaperIdRoute
   '/$lang/papers/search': typeof LangPapersSearchRoute
   '/$lang/admin/': typeof LangAdminIndexRoute
@@ -144,6 +151,7 @@ export interface FileRoutesByTo {
   '/$lang': typeof LangIndexRoute
   '/$lang/admin/docs': typeof LangAdminDocsRoute
   '/$lang/admin/plugins': typeof LangAdminPluginsRoute
+  '/$lang/admin/users': typeof LangAdminUsersRoute
   '/$lang/papers/$paperId': typeof LangPapersPaperIdRoute
   '/$lang/papers/search': typeof LangPapersSearchRoute
   '/$lang/admin': typeof LangAdminIndexRoute
@@ -164,6 +172,7 @@ export interface FileRoutesById {
   '/$lang/': typeof LangIndexRoute
   '/$lang/admin/docs': typeof LangAdminDocsRoute
   '/$lang/admin/plugins': typeof LangAdminPluginsRoute
+  '/$lang/admin/users': typeof LangAdminUsersRoute
   '/$lang/papers/$paperId': typeof LangPapersPaperIdRoute
   '/$lang/papers/search': typeof LangPapersSearchRoute
   '/$lang/admin/': typeof LangAdminIndexRoute
@@ -185,6 +194,7 @@ export interface FileRouteTypes {
     | '/$lang/'
     | '/$lang/admin/docs'
     | '/$lang/admin/plugins'
+    | '/$lang/admin/users'
     | '/$lang/papers/$paperId'
     | '/$lang/papers/search'
     | '/$lang/admin/'
@@ -203,6 +213,7 @@ export interface FileRouteTypes {
     | '/$lang'
     | '/$lang/admin/docs'
     | '/$lang/admin/plugins'
+    | '/$lang/admin/users'
     | '/$lang/papers/$paperId'
     | '/$lang/papers/search'
     | '/$lang/admin'
@@ -222,6 +233,7 @@ export interface FileRouteTypes {
     | '/$lang/'
     | '/$lang/admin/docs'
     | '/$lang/admin/plugins'
+    | '/$lang/admin/users'
     | '/$lang/papers/$paperId'
     | '/$lang/papers/search'
     | '/$lang/admin/'
@@ -338,6 +350,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LangPapersPaperIdRouteImport
       parentRoute: typeof LangRoute
     }
+    '/$lang/admin/users': {
+      id: '/$lang/admin/users'
+      path: '/admin/users'
+      fullPath: '/$lang/admin/users'
+      preLoaderRoute: typeof LangAdminUsersRouteImport
+      parentRoute: typeof LangRoute
+    }
     '/$lang/admin/plugins': {
       id: '/$lang/admin/plugins'
       path: '/admin/plugins'
@@ -369,6 +388,7 @@ interface LangRouteChildren {
   LangIndexRoute: typeof LangIndexRoute
   LangAdminDocsRoute: typeof LangAdminDocsRoute
   LangAdminPluginsRoute: typeof LangAdminPluginsRoute
+  LangAdminUsersRoute: typeof LangAdminUsersRoute
   LangPapersPaperIdRoute: typeof LangPapersPaperIdRoute
   LangPapersSearchRoute: typeof LangPapersSearchRoute
   LangAdminIndexRoute: typeof LangAdminIndexRoute
@@ -383,6 +403,7 @@ const LangRouteChildren: LangRouteChildren = {
   LangIndexRoute: LangIndexRoute,
   LangAdminDocsRoute: LangAdminDocsRoute,
   LangAdminPluginsRoute: LangAdminPluginsRoute,
+  LangAdminUsersRoute: LangAdminUsersRoute,
   LangPapersPaperIdRoute: LangPapersPaperIdRoute,
   LangPapersSearchRoute: LangPapersSearchRoute,
   LangAdminIndexRoute: LangAdminIndexRoute,

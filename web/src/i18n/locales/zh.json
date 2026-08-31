@@ -402,6 +402,37 @@
       "prev": "上一页",
       "next": "下一页",
       "pageOf": "第 {{page}} / {{pages}} 页"
+    },
+    "users": {
+      "title": "用户管理",
+      "subtitle": "查看所有账号、切换可用性、管理 admin 标志。",
+      "open": "管理用户",
+      "back": "返回管理台",
+      "empty": "暂无用户。",
+      "you": "我",
+      "adminRole": "管理员",
+      "superadminRole": "超级管理员",
+      "activeBadge": "正常",
+      "disabledBadge": "已禁用",
+      "cols": {
+        "user": "用户",
+        "roles": "角色",
+        "status": "状态",
+        "created": "注册时间",
+        "actions": "操作"
+      },
+      "disable": "禁用",
+      "enable": "启用",
+      "makeAdmin": "设为管理员",
+      "removeAdmin": "取消管理员",
+      "selfHint": "不能禁用自己的账号。",
+      "protectedHint": "禁用超级管理员需要超级管理员权限。",
+      "toasts": {
+        "disabled": "账号已禁用——其会话与 PAT 立即失效。",
+        "enabled": "账号已重新启用。",
+        "madeAdmin": "{{login}} 已成为管理员。",
+        "removedAdmin": "{{login}} 已不再是管理员。"
+      }
     }
   },
   "login": {

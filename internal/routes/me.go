@@ -4,7 +4,7 @@
 //	GET /api/me        — sessionGuard; the caller's own profile: id,
 //	                     email, name, avatar (PocketBase file name — the
 //	                     SPA builds the URL via pb.files.getURL),
-//	                     github_login, is_admin, created.
+//	                     github_login, is_admin, is_superadmin, created.
 //	GET /api/me/usage  — sessionGuard; the caller's metering state for
 //	                     the agentic-search surface: today's call count,
 //	                     the effective daily limit (per-user override >
@@ -43,13 +43,14 @@ func meProfileHandler(cfg *config.Config) func(re *core.RequestEvent) error {
 		user := re.Auth // sessionGuard guarantees non-nil + browser-sourced
 		login := user.GetString(auth.GitHubLoginField)
 		return re.JSON(http.StatusOK, map[string]any{
-			"id":           user.Id,
-			"email":        user.GetString("email"),
-			"name":         user.GetString("name"),
-			"avatar":       user.GetString("avatar"),
-			"github_login": login,
-			"is_admin":     cfg.IsGitHubAdmin(login),
-			"created":      user.GetDateTime("created").String(),
+			"id":            user.Id,
+			"email":         user.GetString("email"),
+			"name":          user.GetString("name"),
+			"avatar":        user.GetString("avatar"),
+			"github_login":  login,
+			"is_admin":      cfg.IsGitHubAdmin(login),
+			"is_superadmin": user.GetBool(auth.IsSuperadminField) || cfg.IsGitHubSuperadmin(login),
+			"created":       user.GetDateTime("created").String(),
 		})
 	}
 }

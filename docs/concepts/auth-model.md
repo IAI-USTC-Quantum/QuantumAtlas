@@ -42,6 +42,32 @@ System PAT 明文格式随意（推荐 `openssl rand -base64 32`），**只活�
     进后台、改 `QATLAS_ALLOWED_GITHUB_LOGINS`、重启 server 即可恢复。所以"全拒"不会变成
     永久砖。
 
+## DB 角色：is_admin / is_superadmin / disabled
+
+除了上面的 env 白名单 admin（运维面，`adminGuard`），`users` 记录上还有三个数据库字段
+（迁移 `1788100000_add_role_flags_to_users.go`），支撑**用户管理面**：
+
+| 字段 | 谁能改 | 持有者能做什么 |
+|---|---|---|
+| `is_admin` | superadmin（`PATCH /api/admin/users/{id}`）| 看所有用户 + 切换其他账号可用性；对其他人的 `is_admin` **只读** |
+| `is_superadmin` | 仅 bootstrap 播种（`auth.superadmin_logins`）或 `/_/` 后台 | 在 `is_admin` 之上，还能管理其他用户的 `is_admin` |
+| `disabled` | admin 及以上 | 账号可用性开关（**注意反向极性**：PB bool 无默认值，零值必须是常态=未禁用）|
+
+接口（均为 `userAdminGuard`：浏览器 session + 上述任一角色；PAT 一律拒绝）：
+
+```
+GET   /api/admin/users          # 全量用户列表（含 is_admin/is_superadmin/disabled）
+PATCH /api/admin/users/{id}     # body: {"disabled": bool} 或 {"is_admin": bool}（后者需 superadmin）
+```
+
+要点：
+
+- **env 白名单 admin 在此面上是 superadmin 等价**——运维永远保有角色管理权，即使所有 DB 标志全灭。
+- **`disabled` 的生效是即时的**：`isAuthorized` 每个请求都会复查该标志（session 与 PAT 两条路），OAuth 登录钩子也会拒绝禁用账号换新 session。管理员禁用一个账号后，其 14 天 session 与全部 PAT 立即失效。
+- **自我保护**：不能禁用自己、不能改自己的 `is_admin`、admin 不能禁用 superadmin——防止把管理面自己锁死。
+- **`is_superadmin` 不可通过 API 授予**（防止一次 admin session 泄漏直接提权）：播种源是配置文件的 `auth.superadmin_logins`（每次启动单调晋升，从不下调）或 `/_/` 后台手改。
+- 这三个字段与 env 白名单 admin 的关系：`adminGuard`（db schema / usage / mineru 等运维端点）**仍然只认 env 白名单**，DB 角色不扩权到运维面。
+
 ## Scope 词表
 
 PAT 携带一组显式 scope（GitHub fine-grained PAT 同款设计）。当前词表：
@@ -93,6 +119,7 @@ flowchart TD
 | Health / Meta (`/api/health`、`/api/server/info`、`/api/pat/scopes`、`/install-qatlasd.sh`、`/swagger/*`、SPA `/{path...}`) | **公开**（无数据 / bootstrap / 外壳）|
 | 论文上传 / mineru 相关 | `authGuard + papers:write` |
 | **PAT 管理** (`/api/pat`) | `sessionGuard`（拒 PAT）|
+| **用户管理** (`GET /api/admin/users`、`PATCH /api/admin/users/{id}`) | `userAdminGuard`（session + is_admin / is_superadmin / env 白名单，拒 PAT）|
 
 设计原则：**凡是返回语料数据的端点（读和写）都要鉴权**；只有"无数据"的探活 / 版本 / 安装脚本 / 文档 / SPA 外壳保持公开。知识库不再匿名可读。论文 PDF / Markdown 字节在 quantum-atlas.ai 等公开实例上**默认不通过 HTTP API 对外分发**（`QATLAS_PAPER_ACCESS_ENABLED=false`）——客户端只能查询元数据（OpenAlex 同步进来的内容）与论文具备何种资产的开关位（`stats` / `needs-mineru`）。Self-hosted 部署可在受控范围内打开该开关，启用后 `papers:read` 同时覆盖 `GET /api/papers/{id}/markdown` 类端点，详见 [License & Attribution · 论文访问开关](../about/license-and-attribution.md#论文访问开关-self-hosted)。
 

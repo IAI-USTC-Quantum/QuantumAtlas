@@ -4,6 +4,7 @@ import {
   adminDBSchema,
   adminDBTableRows,
   adminListPlugins,
+  adminListUsers,
   adminPlans,
   adminPluginManifest,
   adminPluginUpdateConfig,
@@ -23,6 +24,7 @@ import {
   type AdminPluginConfigResult,
   type AdminPluginManifest,
   type AdminUsageResponse,
+  type AdminUsersResponse,
   type AdminWhoami,
   type MeProfile,
   type MyUsage,
@@ -102,6 +104,18 @@ export function useAdminSchema(enabled: boolean) {
   return useQuery({
     queryKey: ['admin-db-schema'],
     queryFn: (): Promise<AdminDBSchema> => adminDBSchema(),
+    enabled,
+    retry: false,
+  })
+}
+
+// User-management listing (GET /api/admin/users). Enabled only for
+// userAdminGuard passers (whoami.is_user_admin); retry disabled
+// because a 401/403 just means the session lacks the role.
+export function useAdminUsers(enabled: boolean) {
+  return useQuery({
+    queryKey: ['admin-users'],
+    queryFn: (): Promise<AdminUsersResponse> => adminListUsers(),
     enabled,
     retry: false,
   })

@@ -35,6 +35,10 @@
 //	GET  /api/admin/acquisition/failures — adminGuard; persisted PDF
 //	                                         acquisition failures/logs.
 //
+// The DB-flag user-management surface (list users, toggle availability
+// / is_admin — backed by the users-record role flags, NOT the env
+// allowlist) lives in admin_users.go.
+//
 // The agentic-search metering surface (usage / plans / quotas) lives in
 // admin_usage.go.
 package routes
@@ -94,6 +98,7 @@ func RegisterAdmin(se *core.ServeEvent, cfg *config.Config, app core.App, pool *
 	se.Router.POST("/api/admin/mineru/run", adminGuard(cfg, adminMineruRunHandler(sched)))
 	se.Router.GET("/api/admin/mineru/status", adminGuard(cfg, adminMineruStatusHandler(sched)))
 	se.Router.GET("/api/admin/acquisition/failures", adminGuard(cfg, adminAcquisitionFailuresHandler(pool)))
+	registerAdminUsers(se, cfg, app)
 	registerAdminUsage(se, cfg, app, usageStore)
 	registerAdminPlugins(se, cfg, pluginRegistry, remote)
 }
@@ -101,15 +106,35 @@ func RegisterAdmin(se *core.ServeEvent, cfg *config.Config, app core.App, pool *
 // adminWhoamiHandler reports the caller's GitHub login and admin status
 // so the frontend can decide whether to show the admin nav. Session-only
 // (PAT auth rejected with the sessionGuard 403, same as /api/pat).
+//
+// is_admin stays env-allowlist-only (the ops dashboard gate). The two
+// role fields mirror the /api/admin/users guard: is_user_admin = env
+// admin OR is_admin OR is_superadmin (drives the user-management nav),
+// is_superadmin = env admin OR is_superadmin (drives the is_admin
+// toggle column on that page).
 func adminWhoamiHandler(cfg *config.Config) func(re *core.RequestEvent) error {
 	return func(re *core.RequestEvent) error {
 		login := ""
 		if re.Auth != nil {
 			login = re.Auth.GetString(auth.GitHubLoginField)
 		}
+		envAdmin := cfg.IsGitHubAdmin(login)
+		isSuper := envAdmin
+		isUserAdmin := envAdmin
+		if re.Auth != nil {
+			if re.Auth.GetBool(auth.IsSuperadminField) {
+				isSuper = true
+				isUserAdmin = true
+			}
+			if re.Auth.GetBool(auth.IsAdminField) {
+				isUserAdmin = true
+			}
+		}
 		return re.JSON(http.StatusOK, map[string]any{
-			"login":    login,
-			"is_admin": cfg.IsGitHubAdmin(login),
+			"login":          login,
+			"is_admin":       envAdmin,
+			"is_user_admin":  isUserAdmin,
+			"is_superadmin":  isSuper,
 		})
 	}
 }

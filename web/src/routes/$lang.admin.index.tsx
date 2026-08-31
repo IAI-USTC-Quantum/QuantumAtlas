@@ -14,6 +14,7 @@ import {
   KeyRound,
   Puzzle,
   Settings2,
+  UsersRound,
 } from 'lucide-react'
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -63,6 +64,10 @@ function AdminPage() {
   const { lang } = Route.useParams()
   const whoami = useAdminWhoami()
   const isAdmin = whoami.data?.is_admin ?? false
+  // DB-flag user managers (is_admin / is_superadmin on the users
+  // record) reach the user-management surface without the env
+  // allowlist; see internal/routes/admin_users.go.
+  const canManageUsers = whoami.data?.is_user_admin ?? false
   const schema = useAdminSchema(isAdmin)
   const acquisitionFailures = useAdminAcquisitionFailures(isAdmin)
   const [day, setDay] = useState(todayUTC)
@@ -76,6 +81,24 @@ function AdminPage() {
         title={t('title')}
         copy={t('subtitle')}
       />
+
+      {/* User management entry: role-gated on is_user_admin (env admin,
+          is_admin or is_superadmin); the target page applies the same
+          gate. */}
+      {canManageUsers && (
+        <Panel title={t('users.title')} icon={UsersRound}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-muted-foreground">
+              {t('users.subtitle')}
+            </p>
+            <Button asChild size="sm" variant="outline">
+              <Link to="/$lang/admin/users" params={{ lang }}>
+                {t('users.open')}
+              </Link>
+            </Button>
+          </div>
+        </Panel>
+      )}
 
       {/* Dev docs entry: sphinx-hosted at /devdoc behind a server-side
           admin ticket gate; the target page mints the ticket. */}
@@ -119,7 +142,7 @@ function AdminPage() {
               </Button>
             </AlertDescription>
           </Alert>
-        ) : whoami.data && !isAdmin ? (
+        ) : whoami.data && !isAdmin && !canManageUsers ? (
           <Alert>
             <AlertCircle className="size-4" />
             <AlertTitle>{t('adminOnly')}</AlertTitle>
@@ -129,7 +152,7 @@ function AdminPage() {
               </AlertDescription>
             )}
           </Alert>
-        ) : (
+        ) : isAdmin ? (
           <div className="space-y-8">
             <AcquisitionFailuresSection
               items={acquisitionFailures.data?.items ?? []}
@@ -177,6 +200,10 @@ function AdminPage() {
               usageRows={usage.data?.rows ?? []}
             />
           </div>
+        ) : (
+          // User-manager without the env allowlist: no ops dashboard —
+          // the users entry panel above is the whole surface.
+          null
         )}
       </StatusBlock>
     </section>

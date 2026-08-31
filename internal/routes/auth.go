@@ -67,6 +67,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/auth"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/pat"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -166,9 +167,14 @@ func sessionGuard(handler func(re *core.RequestEvent) error) func(re *core.Reque
 //     handlers behave the same as for a JWT-authed request), stash
 //     the granted scope list under authScopesKey, mark the request
 //     as PAT-sourced, and fire-and-forget a last_used_at bump.
+//     A PAT whose owner has been deactivated (auth.DisabledField)
+//     is rejected — see the disabled checks below.
 //
 //  3. Session fallback: trust whatever PocketBase's own middleware
-//     put on re.Auth — must be a record in the "users" collection.
+//     put on re.Auth — must be a record in the "users" collection
+//     that has not been deactivated. Deactivation is checked here
+//     on EVERY request so flipping auth.DisabledField kills live
+//     sessions immediately, without waiting out the 14-day expiry.
 //     We mark the request as session-sourced and grant the master
 //     scope so downstream scopeGuard checks are no-ops.
 //
@@ -193,6 +199,11 @@ func isAuthorized(re *core.RequestEvent) bool {
 		if err != nil {
 			return false
 		}
+		if userRec.GetBool(auth.DisabledField) {
+			// Availability off: the PAT itself is valid, but its owner
+			// is deactivated. Fail closed like an unknown PAT.
+			return false
+		}
 		re.Auth = userRec
 		re.Set(authSourceKey, authSourcePAT)
 		re.Set(authScopesKey, decodeScopes(patRec.GetString("scopes")))
@@ -204,6 +215,13 @@ func isAuthorized(re *core.RequestEvent) bool {
 		return false
 	}
 	if re.Auth.Collection().Name != "users" {
+		return false
+	}
+	if re.Auth.GetBool(auth.DisabledField) {
+		// Session fallback: PocketBase validated the JWT, but the
+		// record's availability flag has since been switched off —
+		// the account is deactivated NOW, so an old (up to 14-day)
+		// session token must not keep working.
 		return false
 	}
 	re.Set(authSourceKey, authSourceSession)
@@ -288,5 +306,5 @@ func IsCallerAuthenticated(re *core.RequestEvent) bool {
 	if re.Auth == nil || re.Auth.Collection() == nil {
 		return false
 	}
-	return re.Auth.Collection().Name == "users"
+	return re.Auth.Collection().Name == "users" && !re.Auth.GetBool(auth.DisabledField)
 }

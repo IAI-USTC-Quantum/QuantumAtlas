@@ -119,6 +119,124 @@
                 }
             }
         },
+        "/api/admin/users": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Every users record: {users:[{id, name, email, github_login,\nis_admin, is_superadmin, disabled, created, updated}], total}.\nRequires a session AND one of: is_admin, is_superadmin, or the\nenv admin allowlist (userAdminGuard — PATs rejected).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin"
+                ],
+                "summary": "List users",
+                "responses": {
+                    "200": {
+                        "description": "{users, total}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "user management requires admin / PAT auth not accepted",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/admin/users/{id}": {
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Body is a JSON object with any of {\"disabled\": bool,\n\"is_admin\": bool} — at least one key required. disabled needs\nadmin-or-above; is_admin needs superadmin (env-allowlist admins\ncount as superadmin). Self-protection: nobody may disable\nthemselves or change their own is_admin; admins cannot\ndisable superadmins. is_superadmin is not patchable here.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin"
+                ],
+                "summary": "Update user flags",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "users record id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "the updated user record",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "empty or invalid body",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "role too low / self-protection",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "user not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/admin/whoami": {
             "get": {
                 "security": [
@@ -126,7 +244,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns {login, is_admin} for the signed-in session user.\nThe SPA uses this to decide whether to render the admin\nnav; non-admins get is_admin:false rather than a 403.\nSession-token auth only (PAT auth refused, same as /api/pat).",
+                "description": "Returns {login, is_admin, is_user_admin, is_superadmin}\nfor the signed-in session user. is_admin is the env\nallowlist gate (ops dashboard); is_user_admin /\nis_superadmin mirror the /api/admin/users guard for the\nuser-management nav. The SPA uses these to decide which\nadmin surfaces to render; non-admins get false flags\nrather than a 403. Session-token auth only (PAT auth\nrefused, same as /api/pat).",
                 "produces": [
                     "application/json"
                 ],
@@ -136,7 +254,7 @@
                 "summary": "Admin whoami",
                 "responses": {
                     "200": {
-                        "description": "{login, is_admin}",
+                        "description": "{login, is_admin, is_user_admin, is_superadmin}",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -191,7 +309,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns the signed-in user's profile:\n{id, email, name, avatar, github_login, is_admin, created}.\navatar is the PocketBase file name — build the URL via the\nPocketBase files API.",
+                "description": "Returns the signed-in user's profile:\n{id, email, name, avatar, github_login, is_admin,\nis_superadmin, created}.\navatar is the PocketBase file name — build the URL via the\nPocketBase files API.",
                 "produces": [
                     "application/json"
                 ],
@@ -201,7 +319,7 @@
                 "summary": "My profile",
                 "responses": {
                     "200": {
-                        "description": "{id, email, name, avatar, github_login, is_admin, created}",
+                        "description": "{id, email, name, avatar, github_login, is_admin, is_superadmin, created}",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true

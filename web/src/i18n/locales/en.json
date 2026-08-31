@@ -402,6 +402,37 @@
       "prev": "Prev",
       "next": "Next",
       "pageOf": "Page {{page}} of {{pages}}"
+    },
+    "users": {
+      "title": "User management",
+      "subtitle": "List every account, toggle availability, and manage admin flags.",
+      "open": "Manage users",
+      "back": "Back to admin",
+      "empty": "No users found.",
+      "you": "You",
+      "adminRole": "admin",
+      "superadminRole": "superadmin",
+      "activeBadge": "Active",
+      "disabledBadge": "Disabled",
+      "cols": {
+        "user": "User",
+        "roles": "Roles",
+        "status": "Status",
+        "created": "Joined",
+        "actions": "Actions"
+      },
+      "disable": "Disable",
+      "enable": "Enable",
+      "makeAdmin": "Make admin",
+      "removeAdmin": "Remove admin",
+      "selfHint": "You cannot disable your own account.",
+      "protectedHint": "Disabling a superadmin requires superadmin.",
+      "toasts": {
+        "disabled": "Account disabled — its sessions and PATs are now rejected.",
+        "enabled": "Account re-enabled.",
+        "madeAdmin": "{{login}} is now an admin.",
+        "removedAdmin": "{{login}} is no longer an admin."
+      }
     }
   },
   "login": {

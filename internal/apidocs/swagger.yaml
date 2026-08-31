@@ -249,18 +249,108 @@ paths:
       summary: Dev-docs ticket
       tags:
       - Admin
-  /api/admin/whoami:
+  /api/admin/users:
     get:
       description: |-
-        Returns {login, is_admin} for the signed-in session user.
-        The SPA uses this to decide whether to render the admin
-        nav; non-admins get is_admin:false rather than a 403.
-        Session-token auth only (PAT auth refused, same as /api/pat).
+        Every users record: {users:[{id, name, email, github_login,
+        is_admin, is_superadmin, disabled, created, updated}], total}.
+        Requires a session AND one of: is_admin, is_superadmin, or the
+        env admin allowlist (userAdminGuard — PATs rejected).
       produces:
       - application/json
       responses:
         "200":
-          description: '{login, is_admin}'
+          description: '{users, total}'
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: user management requires admin / PAT auth not accepted
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List users
+      tags:
+      - Admin
+  /api/admin/users/{id}:
+    patch:
+      consumes:
+      - application/json
+      description: |-
+        Body is a JSON object with any of {"disabled": bool,
+        "is_admin": bool} — at least one key required. disabled needs
+        admin-or-above; is_admin needs superadmin (env-allowlist admins
+        count as superadmin). Self-protection: nobody may disable
+        themselves or change their own is_admin; admins cannot
+        disable superadmins. is_superadmin is not patchable here.
+      parameters:
+      - description: users record id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: the updated user record
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: empty or invalid body
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: role too low / self-protection
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: user not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update user flags
+      tags:
+      - Admin
+  /api/admin/whoami:
+    get:
+      description: |-
+        Returns {login, is_admin, is_user_admin, is_superadmin}
+        for the signed-in session user. is_admin is the env
+        allowlist gate (ops dashboard); is_user_admin /
+        is_superadmin mirror the /api/admin/users guard for the
+        user-management nav. The SPA uses these to decide which
+        admin surfaces to render; non-admins get false flags
+        rather than a 403. Session-token auth only (PAT auth
+        refused, same as /api/pat).
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{login, is_admin, is_user_admin, is_superadmin}'
           schema:
             additionalProperties: true
             type: object
@@ -302,14 +392,16 @@ paths:
     get:
       description: |-
         Returns the signed-in user's profile:
-        {id, email, name, avatar, github_login, is_admin, created}.
+        {id, email, name, avatar, github_login, is_admin,
+        is_superadmin, created}.
         avatar is the PocketBase file name — build the URL via the
         PocketBase files API.
       produces:
       - application/json
       responses:
         "200":
-          description: '{id, email, name, avatar, github_login, is_admin, created}'
+          description: '{id, email, name, avatar, github_login, is_admin, is_superadmin,
+            created}'
           schema:
             additionalProperties: true
             type: object
