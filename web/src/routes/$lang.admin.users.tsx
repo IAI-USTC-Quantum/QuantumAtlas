@@ -162,8 +162,8 @@ function UserRow({
     onSuccess: (updated) => {
       toast.success(
         updated.is_admin
-          ? t('users.toasts.madeAdmin', { login: user.github_login || user.email })
-          : t('users.toasts.removedAdmin', { login: user.github_login || user.email }),
+          ? t('users.toasts.madeAdmin', { login: user.github_login || user.gitea_login || user.email })
+          : t('users.toasts.removedAdmin', { login: user.github_login || user.gitea_login || user.email }),
       )
       invalidate()
     },
@@ -178,13 +178,17 @@ function UserRow({
     <tr className="align-top">
       <td className="min-w-64 px-4 py-2">
         <span className="flex items-center gap-2 font-medium">
-          {user.name || user.github_login || user.email}
+          {user.name || user.github_login || user.gitea_login || user.email}
           {self && (
             <Badge variant="outline">{t('users.you')}</Badge>
           )}
         </span>
         <code className="mt-0.5 block text-xs text-muted-foreground">
-          {user.github_login ? `@${user.github_login}` : '—'}
+          {user.github_login
+            ? `@${user.github_login}`
+            : user.gitea_login
+              ? `@${user.gitea_login}`
+              : '—'}
         </code>
         <span className="block text-xs text-muted-foreground">{user.email}</span>
       </td>

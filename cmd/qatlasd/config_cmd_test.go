@@ -209,6 +209,9 @@ postgres:
 auth:
   github_client_id: gh-client-a
   github_client_secret: ghs_example
+  gitea_url: https://git.example.com
+  gitea_client_id: gitea-client-a
+  gitea_client_secret: gto_example
 s3:
   endpoint: http://s3.internal:9000
   bucket_pdf: qatlas-pdf
@@ -234,6 +237,8 @@ system_pat:
 	for _, want := range []string{
 		"public_url: https://test.example.com",
 		"github_client_id: gh-client-a",
+		"gitea_url: https://git.example.com",
+		"gitea_client_id: gitea-client-a",
 		"endpoint: http://s3.internal:9000",
 		"postgres:", // DSN is not a masked class (matches old config show behaviour)
 	} {
@@ -242,7 +247,7 @@ system_pat:
 		}
 	}
 	// Secret values must be masked and never leak.
-	for _, plain := range []string{"AKIA-EXAMPLE-NEVER-REAL", "SECRET-EXAMPLE-NEVER-REAL", "ghs_example", "supersecret-system-pat"} {
+	for _, plain := range []string{"AKIA-EXAMPLE-NEVER-REAL", "SECRET-EXAMPLE-NEVER-REAL", "ghs_example", "gto_example", "supersecret-system-pat"} {
 		if strings.Contains(got, plain) {
 			t.Errorf("secret %q leaked into show output:\n%s", plain, got)
 		}

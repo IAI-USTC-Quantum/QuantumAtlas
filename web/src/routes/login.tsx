@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Github, Loader2, Sparkles } from 'lucide-react'
+import { GitFork, Github, Info, Loader2, Sparkles } from 'lucide-react'
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -13,10 +13,17 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
-import { loginWithGitHub, useAuth } from '@/lib/auth'
+import {
+  listLoginProviders,
+  loginWithGitea,
+  loginWithGitHub,
+  loginWithOAuth2,
+  useAuth,
+  type OAuth2ProviderName,
+} from '@/lib/auth'
 import { safeRedirect } from '@/lib/safe-redirect'
 
-type LoginSearch = { from?: string }
+type LoginSearch = { from?: string; match?: string }
 
 export const Route = createFileRoute('/login')({
   component: LoginPage,
@@ -24,19 +31,48 @@ export const Route = createFileRoute('/login')({
     // Same-origin gate at the search-validation layer too, so we never
     // even round-trip a hostile `?from=` through the component (defence
     // in depth — the component also calls safeRedirect before
-    // window.location.assign).
-    if (typeof search.from !== 'string') return {}
-    return { from: safeRedirect(search.from, '/') === '/' ? undefined : search.from }
+    // window.location.assign). `match` is the provider name the conflict
+    // prompt forwarded: it only toggles a guidance banner, never a
+    // redirect target.
+    const out: LoginSearch = {}
+    if (typeof search.from === 'string' && safeRedirect(search.from, '/') !== '/') {
+      out.from = search.from
+    }
+    if (typeof search.match === 'string' && search.match) {
+      out.match = search.match
+    }
+    return out
   },
 })
+
+// One button per OAuth2 provider the server exposes. The busy provider's
+// button spins; the others stay clickable (the page is torn down on
+// navigation anyway, so at most one flow can ever start).
+const PROVIDER_BUTTONS: Record<
+  OAuth2ProviderName,
+  { icon: typeof Github; login: (from?: string) => Promise<void>; labelKey: string; redirectKey: string }
+> = {
+  github: { icon: Github, login: loginWithGitHub, labelKey: 'github', redirectKey: 'redirecting' },
+  gitea: { icon: GitFork, login: loginWithGitea, labelKey: 'gitea', redirectKey: 'redirectingGitea' },
+}
 
 function LoginPage() {
   const { t } = useTranslation('login')
   const auth = useAuth()
   const navigate = useNavigate()
   const search = Route.useSearch()
-  const [busy, setBusy] = useState(false)
+  const [busy, setBusy] = useState<OAuth2ProviderName | null>(null)
   const [error, setError] = useState<string>('')
+  // Providers enabled server-side; null until listAuthMethods resolves.
+  // On fetch failure we fall back to the historic GitHub-only layout so
+  // the page still renders a working sign-in affordance.
+  const [providers, setProviders] = useState<string[] | null>(null)
+
+  useEffect(() => {
+    listLoginProviders()
+      .then((names) => setProviders(names))
+      .catch(() => setProviders(['github']))
+  }, [])
 
   useEffect(() => {
     if (auth.isAuthed) {
@@ -57,21 +93,24 @@ function LoginPage() {
     }
   }, [auth.isAuthed, navigate, search.from])
 
-  async function handleLogin() {
-    setBusy(true)
+  function handleLogin(provider: OAuth2ProviderName) {
+    setBusy(provider)
     setError('')
-    try {
-      // On success this navigates the whole tab to github.com; the promise
-      // never resolves from this page's perspective because the document is
-      // torn down. We only land in catch if the provider lookup fails
-      // synchronously (network / config error).
-      await loginWithGitHub(search.from)
-    } catch (e) {
+    // On success this navigates the whole tab to the provider; the promise
+    // never resolves from this page's perspective because the document is
+    // torn down. We only land in catch if the provider lookup fails
+    // synchronously (network / config error).
+    loginWithOAuth2(provider, search.from).catch((e: unknown) => {
       const message = e instanceof Error ? e.message : String(e)
       setError(message || t('failed'))
-      setBusy(false)
-    }
+      setBusy(null)
+    })
   }
+
+  // Render one entry per server-enabled provider we know how to draw.
+  const buttons = (providers ?? []).filter(
+    (name): name is OAuth2ProviderName => name in PROVIDER_BUTTONS,
+  )
 
   return (
     <div className="flex min-h-svh items-center justify-center bg-gradient-to-br from-primary/10 via-background to-accent/30 p-6">
@@ -84,20 +123,49 @@ function LoginPage() {
           <CardDescription>{t('subtitle')}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <Button
-            type="button"
-            size="lg"
-            className="w-full"
-            disabled={busy}
-            onClick={handleLogin}
-          >
-            {busy ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <Github className="size-4" />
-            )}
-            {busy ? t('redirecting') : t('github')}
-          </Button>
+          {search.match && (
+            // Arrived from the conflict prompt's "match" action: guide the
+            // user through the two remaining steps instead of leaving them
+            // to guess what "matching" means.
+            <Alert className="text-start">
+              <Info className="size-4" />
+              <AlertTitle>{t('matchTitle')}</AlertTitle>
+              <AlertDescription>
+                {t('matchHint', { provider: search.match })}
+              </AlertDescription>
+            </Alert>
+          )}
+          {buttons.length === 0 ? (
+            // listAuthMethods resolved but no known provider is enabled —
+            // surface it instead of drawing a dead button.
+            <Alert variant="destructive">
+              <AlertTitle>{t('failed')}</AlertTitle>
+              <AlertDescription>{t('noProviders')}</AlertDescription>
+            </Alert>
+          ) : (
+            buttons.map((name) => {
+              const { icon: Icon, labelKey, redirectKey } = PROVIDER_BUTTONS[name]
+              const isBusy = busy === name
+              return (
+                <Button
+                  key={name}
+                  type="button"
+                  size="lg"
+                  variant={name === 'github' ? 'default' : 'outline'}
+                  className="w-full"
+                  disabled={busy !== null}
+                  onClick={() => handleLogin(name)}
+                >
+                  {isBusy ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Icon className="size-4" />
+                  )}
+                  {isBusy ? t(redirectKey) : t(labelKey)}
+                </Button>
+              )
+            })
+          )}
           {error && (
             <Alert variant="destructive">
               <AlertTitle>{t('failed')}</AlertTitle>
@@ -114,4 +182,3 @@ function LoginPage() {
     </div>
   )
 }
-

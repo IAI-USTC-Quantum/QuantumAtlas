@@ -362,6 +362,7 @@ export type AdminUser = {
   name: string
   email: string
   github_login: string
+  gitea_login: string
   is_admin: boolean
   is_superadmin: boolean
   disabled: boolean
@@ -417,6 +418,9 @@ export type MeProfile = {
   name: string
   avatar: string
   github_login: string
+  gitea_login: string
+  github_bound: boolean
+  gitea_bound: boolean
   is_admin: boolean
   is_superadmin: boolean
   created: string

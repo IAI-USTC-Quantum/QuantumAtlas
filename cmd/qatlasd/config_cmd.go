@@ -257,6 +257,10 @@ func effectiveConfigYAML(cfg *config.Config, redact bool) ([]byte, error) {
 			"github_client_secret": mask(cfg.GitHubClientSecret),
 			"allowed_logins":       cfg.AllowedGitHubLogins,
 			"admin_logins":         cfg.AdminGitHubLogins,
+			"gitea_url":            cfg.GiteaURL,
+			"gitea_client_id":      cfg.GiteaClientID,
+			"gitea_client_secret":  mask(cfg.GiteaClientSecret),
+			"gitea_admin_logins":   cfg.AdminGiteaLogins,
 		},
 		"s3": map[string]any{
 			"endpoint":          cfg.S3Endpoint,

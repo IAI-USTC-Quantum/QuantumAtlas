@@ -437,19 +437,35 @@
   },
   "login": {
     "title": "QuantumAtlas",
-    "subtitle": "Sign in with your GitHub account to continue.",
+    "subtitle": "Sign in with your GitHub or Gitea account to continue.",
     "github": "Continue with GitHub",
+    "gitea": "Continue with Gitea",
     "redirecting": "Redirecting to GitHub…",
-    "failed": "GitHub login failed",
-    "footer": "You will be redirected to github.com to authorize, then sent back here automatically."
+    "redirectingGitea": "Redirecting to Gitea…",
+    "noProviders": "No sign-in provider is enabled on this server. Ask the operator to configure OAuth (auth section of config.yaml).",
+    "failed": "Sign-in failed",
+    "footer": "You will be redirected to GitHub or Gitea to authorize, then sent back here automatically.",
+    "matchTitle": "Match an existing account",
+    "matchHint": "Sign in with your EXISTING account (the one the conflict was reported for). After signing in, open the dashboard and use the account binding panel to link {{provider}} to it."
   },
   "auth": {
     "restoring": "Restoring your session…",
     "finishing": "Finishing sign-in…",
-    "exchanging": "Exchanging the GitHub code with PocketBase.",
+    "exchanging": "Exchanging the authorization code with PocketBase.",
     "failedTitle": "Sign-in failed",
     "failedReturn": "<loginLink>Return to the sign-in page</loginLink> and try again.",
-    "missingCode": "Missing code or state in OAuth callback URL."
+    "missingCode": "Missing code or state in OAuth callback URL.",
+    "conflict": {
+      "title": "Possible account match",
+      "subtitle": "This sign-in may belong to an account that already exists.",
+      "emailTitle": "Email already in use",
+      "emailDesc": "The account {{login}} uses an email that already belongs to an existing QuantumAtlas account ({{existing}}). Same-email sign-ins are never merged automatically — to match them, sign in with the existing account and bind this provider in the dashboard.",
+      "usernameTitle": "Username already in use",
+      "usernameDesc": "The username {{login}} matches an existing account ({{existing}}). To use the same account, sign in with it and bind this provider in the dashboard; or continue and create a separate account.",
+      "match": "Match to my existing account",
+      "independent": "Continue with a separate account",
+      "cancel": "Cancel"
+    }
   },
   "dashboard": {
     "eyebrow": "Account",
@@ -458,6 +474,7 @@
     "profile": {
       "title": "Profile",
       "githubLogin": "GitHub account",
+      "giteaLogin": "Gitea account",
       "name": "Display name",
       "email": "Email",
       "userId": "User ID",
@@ -465,6 +482,17 @@
       "admin": "Admin",
       "member": "Member",
       "created": "Joined"
+    },
+    "bind": {
+      "title": "Account binding",
+      "copy": "Bind GitHub / Gitea identities to this account; after binding, either one can sign in to it.",
+      "bound": "Bound",
+      "notBound": "Not bound",
+      "hint": "Bind {{provider}} so its sign-in leads to this account.",
+      "bindGithub": "Bind GitHub",
+      "bindGitea": "Bind Gitea",
+      "switchedTitle": "Session switched",
+      "switchedDesc": "That identity was already bound to a different account — you are now signed in as that account instead. Nothing was re-bound; go back to the previous account's dashboard if you wanted to bind there."
     },
     "usage": {
       "title": "Today's usage",

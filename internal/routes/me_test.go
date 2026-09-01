@@ -207,3 +207,49 @@ func TestAPI_Me_UsageNilPool(t *testing.T) {
 		t.Fatalf("status = %d, want 503 (nil pool); body=%v", status, body)
 	}
 }
+
+// TestAPI_Me_BoundFlags: *_bound mirrors the _externalAuths relations —
+// it drives the dashboard's 账号绑定 panels, so a record with a linked
+// gitea identity but no github link must report gitea_bound=true /
+// github_bound=false regardless of the (display-only) *_login fields.
+func TestAPI_Me_BoundFlags(t *testing.T) {
+	h := newMeHarness(t)
+
+	col, err := h.app.FindCollectionByNameOrId(auth.UsersCollection)
+	if err != nil {
+		h.t.Fatalf("find users collection: %v", err)
+	}
+	rec := core.NewRecord(col)
+	rec.SetEmail("bound@example.com")
+	rec.SetPassword("bound-test-password")
+	rec.Set(auth.GiteaLoginField, "bound-gitea-user")
+	if err := h.app.Save(rec); err != nil {
+		h.t.Fatalf("save user: %v", err)
+	}
+	rel := core.NewExternalAuth(h.app)
+	rel.SetCollectionRef(col.Id)
+	rel.SetRecordRef(rec.Id)
+	rel.SetProvider("gitea")
+	rel.SetProviderId("777")
+	if err := h.app.Save(rel); err != nil {
+		h.t.Fatalf("save external auth: %v", err)
+	}
+	token, err := rec.NewAuthToken()
+	if err != nil {
+		h.t.Fatalf("NewAuthToken: %v", err)
+	}
+
+	status, _, body := h.do(http.MethodGet, "/api/me", "", rawHeader(token))
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%v", status, body)
+	}
+	if body["gitea_bound"] != true {
+		t.Errorf("gitea_bound = %v, want true", body["gitea_bound"])
+	}
+	if body["github_bound"] != false {
+		t.Errorf("github_bound = %v, want false", body["github_bound"])
+	}
+	if got := asString(body["gitea_login"]); got != "bound-gitea-user" {
+		t.Errorf("gitea_login = %q", got)
+	}
+}

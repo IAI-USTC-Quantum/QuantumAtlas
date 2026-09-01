@@ -437,19 +437,35 @@
   },
   "login": {
     "title": "QuantumAtlas",
-    "subtitle": "使用你的 GitHub 账户登录以继续。",
+    "subtitle": "使用你的 GitHub 或 Gitea 账户登录以继续。",
     "github": "使用 GitHub 登录",
+    "gitea": "使用 Gitea 登录",
     "redirecting": "正在跳转到 GitHub…",
-    "failed": "GitHub 登录失败",
-    "footer": "你将被重定向到 github.com 完成授权，然后自动返回这里。"
+    "redirectingGitea": "正在跳转到 Gitea…",
+    "noProviders": "服务器未启用任何登录方式。请联系管理员配置 OAuth（config.yaml 的 auth 段）。",
+    "failed": "登录失败",
+    "footer": "你将被重定向到 GitHub 或 Gitea 完成授权，然后自动返回这里。",
+    "matchTitle": "匹配已有账号",
+    "matchHint": "请先用你【已有】的那个账号登录。登录成功后进入控制台，在「账号绑定」面板中完成 {{provider}} 的绑定。"
   },
   "auth": {
     "restoring": "正在恢复你的会话…",
     "finishing": "正在完成登录…",
-    "exchanging": "正在与 PocketBase 交换 GitHub 授权码。",
+    "exchanging": "正在与 PocketBase 交换授权码。",
     "failedTitle": "登录失败",
     "failedReturn": "<loginLink>返回登录页</loginLink>重试。",
-    "missingCode": "OAuth 回调缺失 code 或 state。"
+    "missingCode": "OAuth 回调缺失 code 或 state。",
+    "conflict": {
+      "title": "检测到可能的账号匹配",
+      "subtitle": "本次登录可能属于一个已存在的账号。",
+      "emailTitle": "邮箱已被占用",
+      "emailDesc": "账号 {{login}} 使用的邮箱已属于已有 QuantumAtlas 账号（{{existing}}）。同邮箱登录不会自动合并——如需匹配，请用已有账号登录后，在控制台的「账号绑定」中完成绑定。",
+      "usernameTitle": "用户名已被占用",
+      "usernameDesc": "用户名 {{login}} 与已有账号（{{existing}}）相同。如要使用同一账号，请用该账号登录后在控制台完成绑定；也可以继续登录，创建一个独立账号。",
+      "match": "匹配到我的已有账号",
+      "independent": "继续，使用独立账号",
+      "cancel": "取消"
+    }
   },
   "dashboard": {
     "eyebrow": "个人中心",
@@ -458,6 +474,7 @@
     "profile": {
       "title": "个人信息",
       "githubLogin": "GitHub 账号",
+      "giteaLogin": "Gitea 账号",
       "name": "昵称",
       "email": "邮箱",
       "userId": "用户 ID",
@@ -465,6 +482,17 @@
       "admin": "管理员",
       "member": "普通用户",
       "created": "注册时间"
+    },
+    "bind": {
+      "title": "账号绑定",
+      "copy": "将 GitHub / Gitea 身份绑定到当前账号；绑定后任一身份登录的都是同一个账号。",
+      "bound": "已绑定",
+      "notBound": "未绑定",
+      "hint": "绑定 {{provider}} 后，即可用它登录当前账号。",
+      "bindGithub": "绑定 GitHub",
+      "bindGitea": "绑定 Gitea",
+      "switchedTitle": "会话已切换",
+      "switchedDesc": "该身份此前已绑定在另一个账号上——当前已切换为那个账号登录，本次没有执行任何新的绑定。如本意是绑定到之前的账号，请回到该账号的控制台重新操作。"
     },
     "usage": {
       "title": "今日用量",

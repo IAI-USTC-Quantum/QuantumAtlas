@@ -6,7 +6,7 @@ nav:
     - 反向代理: reverse-proxy.md
   - 服务端配置: server-config.md
   - 依赖服务:
-    - GitHub OAuth: github-oauth.md
+    - OAuth 登录（GitHub/Gitea）: github-oauth.md
     - RustFS / S3: rustfs.md
   - API:
     - REST API 总览: rest-api.md

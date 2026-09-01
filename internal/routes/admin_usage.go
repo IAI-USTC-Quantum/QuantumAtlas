@@ -92,9 +92,10 @@ func adminUsageHandler(cfg *config.Config, app core.App, usageStore *usage.Store
 	}
 }
 
-// resolveUserLogins maps users-record ids to their github_login. Users
-// that no longer resolve (deleted account, lookup failure) are left
-// empty — usage rows outlive the accounts that produced them.
+// resolveUserLogins maps users-record ids to a display login (github_login,
+// falling back to gitea_login for Gitea-only accounts). Users that no
+// longer resolve (deleted account, lookup failure) are left empty —
+// usage rows outlive the accounts that produced them.
 func resolveUserLogins(app core.App, rows []usage.UserUsage) map[string]string {
 	ids := make([]string, 0, len(rows))
 	seen := map[string]bool{}
@@ -113,7 +114,11 @@ func resolveUserLogins(app core.App, rows []usage.UserUsage) map[string]string {
 		return out
 	}
 	for _, rec := range recs {
-		out[rec.Id] = rec.GetString(auth.GitHubLoginField)
+		login := rec.GetString(auth.GitHubLoginField)
+		if login == "" {
+			login = rec.GetString(auth.GiteaLoginField)
+		}
+		out[rec.Id] = login
 	}
 	return out
 }

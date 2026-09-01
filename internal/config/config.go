@@ -144,6 +144,26 @@ type Config struct {
 	// the recovery path.
 	AllowedGitHubLogins []string
 
+	// Gitea OAuth (optional self-hosted Gitea/Forgejo instance, a second
+	// provider alongside GitHub). GiteaURL is the instance origin (e.g.
+	// "https://git.example.com"); the authorize/token/userinfo endpoints
+	// are derived from it when the provider is synced onto the users
+	// collection (the stock PocketBase gitea provider points at
+	// gitea.com, which is wrong for a self-hosted instance).
+	GiteaURL          string
+	GiteaClientID     string
+	GiteaClientSecret string
+
+	// Gitea login lists mirroring the GitHub ones above. Deliberately
+	// SEPARATE from the GitHub lists: a GitHub login and a Gitea login
+	// are different identities, so an entry in auth.admin_logins must
+	// not also make the same-named Gitea account an admin (and vice
+	// versa). There is NO sign-in allowlist for Gitea — every account
+	// on the configured instance may sign in (operator choice); these
+	// lists only grant admin / superadmin.
+	AdminGiteaLogins      []string
+	SuperadminGiteaLogins []string
+
 	// Object storage (RustFS / S3-compatible) for the RAW asset bucket.
 	// When S3Endpoint is empty the server falls back to RawDir on the
 	// local filesystem. When set, all required fields must be non-empty
@@ -349,6 +369,12 @@ type fileConfig struct {
 		AllowedLogins      []string `yaml:"allowed_logins"`
 		AdminLogins        []string `yaml:"admin_logins"`
 		SuperadminLogins   []string `yaml:"superadmin_logins"`
+
+		GiteaURL              string   `yaml:"gitea_url"`
+		GiteaClientID         string   `yaml:"gitea_client_id"`
+		GiteaClientSecret     string   `yaml:"gitea_client_secret"`
+		GiteaAdminLogins      []string `yaml:"gitea_admin_logins"`
+		GiteaSuperadminLogins []string `yaml:"gitea_superadmin_logins"`
 	} `yaml:"auth"`
 
 	S3 struct {
@@ -626,6 +652,11 @@ func (fc *fileConfig) toConfig(anchor string) (*Config, error) {
 		AllowedGitHubLogins:    fc.Auth.AllowedLogins,
 		AdminGitHubLogins:      fc.Auth.AdminLogins,
 		SuperadminGitHubLogins: fc.Auth.SuperadminLogins,
+		GiteaURL:              strings.TrimSuffix(strings.TrimSpace(fc.Auth.GiteaURL), "/"),
+		GiteaClientID:         fc.Auth.GiteaClientID,
+		GiteaClientSecret:     fc.Auth.GiteaClientSecret,
+		AdminGiteaLogins:      fc.Auth.GiteaAdminLogins,
+		SuperadminGiteaLogins: fc.Auth.GiteaSuperadminLogins,
 		S3Endpoint:             fc.S3.Endpoint,
 		S3PublicEndpoint:       fc.S3.PublicEndpoint,
 		S3BucketPDF:            fc.S3.BucketPDF,
@@ -957,8 +988,21 @@ func defaultXDGSubdir(name string) string {
 }
 
 // ---------------------------------------------------------------------------
-// GitHub login allowlists
+// Provider login allowlists
 // ---------------------------------------------------------------------------
+
+// loginListed reports whether the given (already lowercased + trimmed)
+// login appears in the list, comparing case-insensitively. Shared by the
+// GitHub and Gitea allowlist methods — both providers treat logins as
+// case-insensitive identifiers.
+func loginListed(list []string, login string) bool {
+	for _, l := range list {
+		if strings.ToLower(strings.TrimSpace(l)) == login {
+			return true
+		}
+	}
+	return false
+}
 
 // IsGitHubLoginAllowed reports whether the given GitHub login (username)
 // is permitted to complete OAuth sign-in.
@@ -976,17 +1020,7 @@ func (c *Config) IsGitHubLoginAllowed(login string) bool {
 	if login == "" {
 		return false
 	}
-	for _, l := range c.AllowedGitHubLogins {
-		if strings.ToLower(strings.TrimSpace(l)) == login {
-			return true
-		}
-	}
-	for _, l := range c.AdminGitHubLogins {
-		if strings.ToLower(strings.TrimSpace(l)) == login {
-			return true
-		}
-	}
-	return false
+	return loginListed(c.AllowedGitHubLogins, login) || loginListed(c.AdminGitHubLogins, login)
 }
 
 // IsGitHubAdmin reports whether the given GitHub login belongs to the
@@ -1000,12 +1034,7 @@ func (c *Config) IsGitHubAdmin(login string) bool {
 	if login == "" {
 		return false
 	}
-	for _, l := range c.AdminGitHubLogins {
-		if strings.ToLower(strings.TrimSpace(l)) == login {
-			return true
-		}
-	}
-	return false
+	return loginListed(c.AdminGitHubLogins, login)
 }
 
 // IsGitHubSuperadmin reports whether the given GitHub login belongs to
@@ -1019,10 +1048,28 @@ func (c *Config) IsGitHubSuperadmin(login string) bool {
 	if login == "" {
 		return false
 	}
-	for _, l := range c.SuperadminGitHubLogins {
-		if strings.ToLower(strings.TrimSpace(l)) == login {
-			return true
-		}
+	return loginListed(c.SuperadminGitHubLogins, login)
+}
+
+// IsGiteaAdmin reports whether the given Gitea login belongs to the
+// Gitea admin allowlist (auth.gitea_admin_logins). Fail-closed and
+// case-insensitive like IsGitHubAdmin; grants on the /api/admin surface
+// alongside the GitHub admin allowlist.
+func (c *Config) IsGiteaAdmin(login string) bool {
+	login = strings.ToLower(strings.TrimSpace(login))
+	if login == "" {
+		return false
 	}
-	return false
+	return loginListed(c.AdminGiteaLogins, login)
+}
+
+// IsGiteaSuperadmin reports whether the given Gitea login belongs to the
+// Gitea superadmin seed list (auth.gitea_superadmin_logins). Used only
+// for the bootstrap flag promotion, like IsGitHubSuperadmin.
+func (c *Config) IsGiteaSuperadmin(login string) bool {
+	login = strings.ToLower(strings.TrimSpace(login))
+	if login == "" {
+		return false
+	}
+	return loginListed(c.SuperadminGiteaLogins, login)
 }

@@ -253,9 +253,10 @@ paths:
     get:
       description: |-
         Every users record: {users:[{id, name, email, github_login,
-        is_admin, is_superadmin, disabled, created, updated}], total}.
+        gitea_login, is_admin, is_superadmin, disabled, created,
+        updated}], total}.
         Requires a session AND one of: is_admin, is_superadmin, or the
-        env admin allowlist (userAdminGuard — PATs rejected).
+        config admin allowlist (userAdminGuard — PATs rejected).
       produces:
       - application/json
       responses:
@@ -339,12 +340,13 @@ paths:
     get:
       description: |-
         Returns {login, is_admin, is_user_admin, is_superadmin}
-        for the signed-in session user. is_admin is the env
-        allowlist gate (ops dashboard); is_user_admin /
-        is_superadmin mirror the /api/admin/users guard for the
-        user-management nav. The SPA uses these to decide which
-        admin surfaces to render; non-admins get false flags
-        rather than a 403. Session-token auth only (PAT auth
+        for the signed-in session user. login is the github_login,
+        falling back to gitea_login when only that is stamped.
+        is_admin is the config allowlist gate (ops dashboard);
+        is_user_admin / is_superadmin mirror the /api/admin/users
+        guard for the user-management nav. The SPA uses these to
+        decide which admin surfaces to render; non-admins get false
+        flags rather than a 403. Session-token auth only (PAT auth
         refused, same as /api/pat).
       produces:
       - application/json
@@ -392,16 +394,19 @@ paths:
     get:
       description: |-
         Returns the signed-in user's profile:
-        {id, email, name, avatar, github_login, is_admin,
-        is_superadmin, created}.
+        {id, email, name, avatar, github_login, gitea_login,
+        github_bound, gitea_bound, is_admin, is_superadmin,
+        created}.
         avatar is the PocketBase file name — build the URL via the
-        PocketBase files API.
+        PocketBase files API. *_bound reports which OAuth2
+        identities are linked to the record (the dashboard's
+        account-binding panels).
       produces:
       - application/json
       responses:
         "200":
-          description: '{id, email, name, avatar, github_login, is_admin, is_superadmin,
-            created}'
+          description: '{id, email, name, avatar, github_login, gitea_login, github_bound,
+            gitea_bound, is_admin, is_superadmin, created}'
           schema:
             additionalProperties: true
             type: object

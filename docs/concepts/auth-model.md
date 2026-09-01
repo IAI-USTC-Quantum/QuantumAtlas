@@ -26,21 +26,34 @@ PAT 明文以 `qat_` 开头，**只在创建时显示一次**，server 只存 bc
 
 System PAT 明文格式随意（推荐 `openssl rand -base64 32`），**只活在进程内存 + .env 里**，server 不持久化也不哈希。详见 [§System PAT](#system-pat)。
 
-## 谁能登录（GitHub 白名单）
+## 谁能登录（GitHub 白名单 + Gitea 敞开）
 
-读口已全锁（见 [§哪些端点要鉴权](#哪些端点要鉴权)）后，"匿名拿 401" 只是第一道墙；第二道墙是 **不是任何 GitHub 账号都能换到 session**。
+读口已全锁（见 [§哪些端点要鉴权](#哪些端点要鉴权)）后，"匿名拿 401" 只是第一道墙；第二道墙是 **不是任何账号都能换到 session**。
 
-`internal/auth/oauth.go` 在 `OnRecordAuthWithOAuth2Request` 钩子里做登录白名单校验：拿到 GitHub 身份、但**还没建 `users` 记录、还没发 token** 那一刻，比对 `Config.IsGitHubLoginAllowed(login)`，不在名单一律返回 **403**、不留任何痕迹。
+`internal/auth/oauth.go` 在 `OnRecordAuthWithOAuth2Request` 钩子里做登录校验：拿到 provider 身份、但**还没建 `users` 记录、还没发 token** 那一刻：
 
-- 名单来源：`QATLAS_ALLOWED_GITHUB_LOGINS`（逗号分隔，大小写不敏感）∪ `QATLAS_ADMIN_GITHUB_LOGINS`。
-- **Fail-closed**：两个名单同时为空 ⇒ **谁都登不了**（含你自己）。这是刻意的"默认上锁"——漏配环境变量得到的是"没人能进"，而不是"整个互联网都能进"。
+- **GitHub**：比对 `Config.IsGitHubLoginAllowed(login)`（config.yaml `auth.allowed_logins` ∪ `auth.admin_logins`，大小写不敏感），不在名单一律返回 **403**。
+- **Gitea**：**不做白名单**——实例上任何账号都能登录（实例自身的注册/审核策略就是门槛）。`auth.gitea_admin_logins` 只授予 admin，不管登录。
+
+要点：
+
+- **GitHub fail-closed**：`allowed_logins` 和 `admin_logins` 同时为空 ⇒ GitHub 谁都登不了。这是刻意的"默认上锁"——漏配得到的是"没人能进"，而不是"整个互联网都能进"。
+- **GitHub 与 Gitea 名单互不相通**：GitHub 名单里的 `alice` 不会让 Gitea 上同名账号获得任何权限（反之亦然）——两者是不同 IdP 里的不同身份。
 - 这道闸**既挡新注册、也挡"记录已存在但被移出名单"的老用户**（每次登录都校验，纵深防御）。
 
 !!! warning "别把自己锁死：superuser 是逃生通道"
-    这个白名单只管 `users` 集合的 **GitHub OAuth 登录**，**不影响 PocketBase superuser**
+    这个白名单只管 `users` 集合的 **OAuth 登录**，**不影响 PocketBase superuser**
     （`_superusers` 集合，邮箱+密码登 `/_/`）。误配/漏配把所有人挡在外面时，用 superuser
-    进后台、改 `QATLAS_ALLOWED_GITHUB_LOGINS`、重启 server 即可恢复。所以"全拒"不会变成
+    进后台、改 config.yaml 的 `auth:` 名单、重启 server 即可恢复。所以"全拒"不会变成
     永久砖。
+
+## 登录冲突匹配与账号绑定
+
+跨 provider 的"同人不同账号"由 `internal/auth/oauth_conflict.go` + dashboard 绑定面板处理：
+
+- **邮箱冲突 → 409 提示**：PocketBase 默认会把同邮箱的新 OAuth 身份静默挂到现有记录（对邮箱未验证的 provider 这还是接管漏洞）。qatlasd 在建记录/发 token 之前拦下，返回 409（`data.code = oauth_conflict`），SPA 弹"是否匹配已有账号"。匹配路径：用已有账号登录 → dashboard「账号绑定」→ 点绑定按钮（携带 session 的授权交换，即 PocketBase 原生 link 语义）。
+- **用户名冲突 → 409 提示（可跳过）**：全新登录的 GitHub/Gitea 用户名与现有 `github_login` / `gitea_login` 相同。提示页可选"匹配"或"继续，使用独立账号"；后者重走一次授权跳转，服务端内存里有 15 分钟的"已提示"标记，第二次交换放行。
+- **绑定的判定**：`_externalAuths` 表有无该 provider 的关系行（`/api/me` 的 `github_bound` / `gitea_bound`）；`github_login` / `gitea_login` 字段只是展示用的登录名。绑定流程不会静默切换账号——若身份已属于别的账号，PocketBase 会切换会话，SPA 检测后显示"会话已切换"警告。
 
 ## DB 角色：is_admin / is_superadmin / disabled
 

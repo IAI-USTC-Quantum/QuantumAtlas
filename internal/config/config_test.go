@@ -245,6 +245,11 @@ auth:
   github_client_secret: gh-secret
   allowed_logins: [alice, bob]
   admin_logins: [alice]
+  gitea_url: https://git.example.com/
+  gitea_client_id: gitea-client
+  gitea_client_secret: gitea-secret
+  gitea_admin_logins: [gitea-alice]
+  gitea_superadmin_logins: [gitea-root]
 s3:
   endpoint: http://10.0.0.1:9000
   public_endpoint: https://raw.example.com
@@ -317,6 +322,13 @@ system_pat:
 		{"GitHubClientSecret", cfg.GitHubClientSecret, "gh-secret"},
 		{"AllowedGitHubLogins", strings.Join(cfg.AllowedGitHubLogins, ","), "alice,bob"},
 		{"AdminGitHubLogins", strings.Join(cfg.AdminGitHubLogins, ","), "alice"},
+		// Trailing slash on gitea_url is normalized away so endpoint
+		// derivation never produces "//login/oauth/authorize".
+		{"GiteaURL", cfg.GiteaURL, "https://git.example.com"},
+		{"GiteaClientID", cfg.GiteaClientID, "gitea-client"},
+		{"GiteaClientSecret", cfg.GiteaClientSecret, "gitea-secret"},
+		{"AdminGiteaLogins", strings.Join(cfg.AdminGiteaLogins, ","), "gitea-alice"},
+		{"SuperadminGiteaLogins", strings.Join(cfg.SuperadminGiteaLogins, ","), "gitea-root"},
 		{"S3Endpoint", cfg.S3Endpoint, "http://10.0.0.1:9000"},
 		{"S3PublicEndpoint", cfg.S3PublicEndpoint, "https://raw.example.com"},
 		{"S3BucketPDF", cfg.S3BucketPDF, "qatlas-pdf"},
@@ -856,5 +868,45 @@ func TestIsGitHubAdmin_AdminListOnly(t *testing.T) {
 	// Fail-closed when the admin list is empty.
 	if (&Config{}).IsGitHubAdmin("carol") {
 		t.Error("empty admin allowlist must reject everyone (fail-closed)")
+	}
+}
+
+// The Gitea admin/superadmin lists mirror the GitHub ones: fail-closed,
+// case-insensitive, and — critically — COMPLETELY INDEPENDENT of the
+// GitHub lists. A same-named account on the other provider derives no
+// privileges from an entry it didn't get itself. (There is no Gitea
+// sign-in allowlist — Gitea logins are open by design.)
+func TestGiteaAllowlists_MirrorGitHubSemantics(t *testing.T) {
+	c := &Config{
+		AllowedGitHubLogins: []string{"alice"},
+		AdminGitHubLogins:   []string{"boss"},
+		AdminGiteaLogins:    []string{"gitea-boss"},
+	}
+	cases := []struct {
+		name string
+		got  bool
+		want bool
+	}{
+		{"gitea admin (case-insensitive)", c.IsGiteaAdmin("Gitea-Boss"), true},
+		// Cross-provider isolation both ways:
+		{"github admin is not a gitea admin", c.IsGiteaAdmin("boss"), false},
+		{"github allowed is not a gitea admin", c.IsGiteaAdmin("alice"), false},
+		{"gitea admin is not a github admin", c.IsGitHubAdmin("gitea-boss"), false},
+		{"gitea admin is not github-allowed", c.IsGitHubLoginAllowed("gitea-boss"), false},
+	}
+	for _, tc := range cases {
+		if tc.got != tc.want {
+			t.Errorf("%s: got %v, want %v", tc.name, tc.got, tc.want)
+		}
+	}
+	// Fail-closed when every gitea list is empty.
+	empty := &Config{AllowedGitHubLogins: []string{"alice"}}
+	if empty.IsGiteaAdmin("alice") || empty.IsGiteaSuperadmin("alice") {
+		t.Error("empty gitea allowlists must reject everyone (fail-closed)")
+	}
+	// Superadmin seed list matches only its own entries.
+	super := &Config{SuperadminGiteaLogins: []string{"gitea-root"}}
+	if !super.IsGiteaSuperadmin("Gitea-Root") || super.IsGiteaSuperadmin("other") {
+		t.Error("IsGiteaSuperadmin membership check failed")
 	}
 }

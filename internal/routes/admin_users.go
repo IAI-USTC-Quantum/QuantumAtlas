@@ -7,9 +7,9 @@
 //	                (disabled); the flag itself is READ-ONLY to them.
 //	is_superadmin — additionally may toggle other users' is_admin.
 //
-// The env-derived allowlist admin (Config.IsGitHubAdmin, adminGuard)
-// is a strict superset here: it passes userAdminGuard and is treated
-// as superadmin-equivalent, so the operator always retains role
+// The allowlist admin (Config.IsGitHubAdmin / Config.IsGiteaAdmin,
+// adminGuard) is a strict superset here: it passes userAdminGuard and is
+// treated as superadmin-equivalent, so the operator always retains role
 // management even when every DB flag is off.
 //
 //	GET   /api/admin/users        — userAdminGuard; every users record
@@ -68,19 +68,20 @@ func isUserManager(re *core.RequestEvent, cfg *config.Config) bool {
 	if re.Auth == nil {
 		return false
 	}
-	if cfg.IsGitHubAdmin(re.Auth.GetString(auth.GitHubLoginField)) {
+	if isAdminCaller(re, cfg) {
 		return true
 	}
 	return re.Auth.GetBool(auth.IsAdminField) || re.Auth.GetBool(auth.IsSuperadminField)
 }
 
 // isSuperadminCaller reports whether the caller may modify is_admin
-// flags: env allowlist admins (operators) or is_superadmin holders.
+// flags: allowlist admins of either provider (operators) or
+// is_superadmin holders.
 func isSuperadminCaller(re *core.RequestEvent, cfg *config.Config) bool {
 	if re.Auth == nil {
 		return false
 	}
-	if cfg.IsGitHubAdmin(re.Auth.GetString(auth.GitHubLoginField)) {
+	if isAdminCaller(re, cfg) {
 		return true
 	}
 	return re.Auth.GetBool(auth.IsSuperadminField)
@@ -102,6 +103,7 @@ func adminUserJSON(rec *core.Record) map[string]any {
 		"name":          rec.GetString("name"),
 		"email":         rec.GetString("email"),
 		"github_login":  rec.GetString(auth.GitHubLoginField),
+		"gitea_login":   rec.GetString(auth.GiteaLoginField),
 		"is_admin":      rec.GetBool(auth.IsAdminField),
 		"is_superadmin": rec.GetBool(auth.IsSuperadminField),
 		"disabled":      rec.GetBool(auth.DisabledField),

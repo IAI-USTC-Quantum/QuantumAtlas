@@ -3,15 +3,15 @@
 // pb.authStore is a vanilla event emitter; we wrap it in a React state hook
 // so components re-render on login / logout / token refresh.
 //
-// GitHub OAuth uses a manual redirect flow (see PocketBase docs §"Manual code
-// exchange"):
-//   1. loginWithGitHub() fetches provider config via listAuthMethods, stashes
-//      verifier+state+returnTo in sessionStorage, then navigates the WHOLE
-//      page to GitHub's authorize URL with redirect_uri pointing at our SPA
-//      /auth/callback route.
-//   2. GitHub bounces back to /auth/callback?code=...&state=... which mounts
-//      the AuthCallback route. It calls completeOAuth2Login() to exchange
-//      the code via pb.collection('users').authWithOAuth2Code(...).
+// OAuth (GitHub / Gitea alike) uses a manual redirect flow (see PocketBase
+// docs §"Manual code exchange"):
+//   1. loginWithOAuth2(provider) fetches the provider config via
+//      listAuthMethods, stashes verifier+state+returnTo in sessionStorage,
+//      then navigates the WHOLE page to the provider's authorize URL with
+//      redirect_uri pointing at our SPA /auth/callback route.
+//   2. The provider bounces back to /auth/callback?code=...&state=... which
+//      mounts the AuthCallback route. It calls completeOAuth2Login() to
+//      exchange the code via pb.collection('users').authWithOAuth2Code(...).
 //
 // We avoid the SDK's popup-based authWithOAuth2() because it (a) opens an
 // about:blank popup before fetching providers (visible flash + popup-blocker
@@ -138,6 +138,23 @@ export function useAuth(): AuthState {
 }
 
 const PENDING_KEY = 'qatlas_oauth_pending'
+// Set after a successful link-mode exchange; the dashboard reads (and
+// clears) it to refetch /api/me so the new binding shows immediately
+// despite the 5-minute staleTime on the me query.
+export const BIND_DONE_KEY = 'qatlas_bind_done'
+// Set when a link-mode exchange ended up switching the session to a
+// DIFFERENT account (the identity was already bound there) instead of
+// binding to the caller — the dashboard surfaces a warning.
+export const BIND_SWITCHED_KEY = 'qatlas_bind_switched'
+
+// OAuth2 provider names the server may expose on the users collection.
+export type OAuth2ProviderName = 'github' | 'gitea'
+
+// 'login' — the plain sign-in flow (creates or resumes a session).
+// 'link'  — the dashboard 账号绑定 flow: the exchange is made while a
+//           session is already held, so PocketBase links the OAuth2
+//           identity to the signed-in record instead of creating one.
+export type OAuth2FlowMode = 'login' | 'link'
 
 type PendingOAuth = {
   provider: string
@@ -145,17 +162,76 @@ type PendingOAuth = {
   codeVerifier: string
   redirectURL: string
   from: string | null
+  mode: OAuth2FlowMode
 }
 
-// Kick off the GitHub OAuth redirect flow. Returns nothing meaningful — on
-// success the page navigates away to github.com and never resumes here. Only
-// the initial provider fetch can throw synchronously (network down, GitHub
-// provider disabled on the server, etc).
-export async function loginWithGitHub(from?: string): Promise<void> {
+// The 409 body qatlasd's conflict hook returns when a new OAuth identity
+// may match an existing account (same email, or same provider login).
+export type OAuthConflictInfo = {
+  code: 'oauth_conflict'
+  provider: string
+  login: string
+  conflict: 'email' | 'username'
+  existing: string
+  from: string | null
+}
+
+export class OAuthConflictError extends Error {
+  constructor(readonly info: OAuthConflictInfo) {
+    super('OAuth sign-in matched an existing account')
+    this.name = 'OAuthConflictError'
+  }
+}
+
+// asOAuthConflict digs the conflict payload out of a PocketBase SDK
+// error. The SDK exposes the parsed response body as err.data (which for
+// our hand-written 409 is {status, message, data:{code, ...}}); tolerate
+// both the nested and a flat shape.
+function asOAuthConflict(err: unknown, from: string | null): OAuthConflictInfo | null {
+  const body = (err as { data?: unknown } | null)?.data as
+    | Record<string, unknown>
+    | undefined
+  if (!body) return null
+  const payload =
+    (body.data as Record<string, unknown> | undefined)?.code === 'oauth_conflict'
+      ? (body.data as Record<string, unknown>)
+      : body.code === 'oauth_conflict'
+        ? body
+        : null
+  if (!payload) return null
+  const conflict = payload.conflict === 'email' ? 'email' : 'username'
+  return {
+    code: 'oauth_conflict',
+    provider: String(payload.provider ?? ''),
+    login: String(payload.login ?? ''),
+    conflict,
+    existing: String(payload.existing ?? ''),
+    from,
+  }
+}
+
+// listLoginProviders returns the OAuth2 provider names the server has
+// configured (e.g. ['github', 'gitea']); the login page renders one
+// button per entry. An empty array means OAuth is entirely disabled.
+export async function listLoginProviders(): Promise<string[]> {
   const methods = await pb.collection(AUTH_COLLECTION).listAuthMethods()
-  const provider = methods.oauth2?.providers?.find((p) => p.name === 'github')
+  return (methods.oauth2?.providers ?? []).map((p) => p.name)
+}
+
+// Kick off the OAuth redirect flow for the given provider ('github' or
+// 'gitea'). Returns nothing meaningful — on success the page navigates
+// away to the provider and never resumes here. Only the initial provider
+// fetch can throw synchronously (network down, provider disabled on the
+// server, etc).
+export async function loginWithOAuth2(
+  providerName: OAuth2ProviderName,
+  from?: string,
+  mode: OAuth2FlowMode = 'login',
+): Promise<void> {
+  const methods = await pb.collection(AUTH_COLLECTION).listAuthMethods()
+  const provider = methods.oauth2?.providers?.find((p) => p.name === providerName)
   if (!provider) {
-    throw new Error('GitHub login is not enabled on this server.')
+    throw new Error(`${providerName} login is not enabled on this server.`)
   }
   const redirectURL = `${window.location.origin}/auth/callback`
   const pending: PendingOAuth = {
@@ -164,23 +240,40 @@ export async function loginWithGitHub(from?: string): Promise<void> {
     codeVerifier: provider.codeVerifier,
     redirectURL,
     from: from ?? null,
+    mode,
   }
   sessionStorage.setItem(PENDING_KEY, JSON.stringify(pending))
   // provider.authURL already ends with "&redirect_uri=" — just append the
   // encoded SPA callback URL and navigate. window.location.assign keeps
-  // GitHub's authorize page in the back/forward history so the browser Back
-  // button behaves naturally.
+  // the provider's authorize page in the back/forward history so the
+  // browser Back button behaves naturally.
   window.location.assign(provider.authURL + encodeURIComponent(redirectURL))
+}
+
+// Thin named wrappers — most call sites care about one specific provider.
+export const loginWithGitHub = (from?: string) => loginWithOAuth2('github', from)
+export const loginWithGitea = (from?: string) => loginWithOAuth2('gitea', from)
+
+// linkProvider starts the dashboard binding flow: the same OAuth2 round
+// trip, but because the session token stays in pb.authStore the code
+// exchange links the identity to the signed-in account.
+export function linkProvider(provider: OAuth2ProviderName, from: string): Promise<void> {
+  return loginWithOAuth2(provider, from, 'link')
 }
 
 export type OAuthCompletion = {
   from: string | null
+  // link mode only: true when the OAuth identity was already bound to a
+  // DIFFERENT account and PocketBase switched the session to it instead
+  // of binding — the caller must not present this as a successful bind.
+  switchedAccount?: boolean
 }
 
-// Exchange the OAuth2 code returned by GitHub for a PocketBase session.
-// Called from /auth/callback. Throws if state mismatches, sessionStorage was
-// cleared (user closed and reopened the tab mid-flow), or the server rejects
-// the exchange.
+// Exchange the OAuth2 code returned by the provider for a PocketBase
+// session. Called from /auth/callback. Throws OAuthConflictError when the
+// server reports a possible match with an existing account (see
+// internal/auth/oauth_conflict.go), and plain errors for everything else
+// (state mismatch, cleared sessionStorage, rejected exchange).
 export async function completeOAuth2Login(
   code: string,
   state: string,
@@ -202,6 +295,11 @@ export async function completeOAuth2Login(
     sessionStorage.removeItem(PENDING_KEY)
     throw new Error('OAuth state mismatch. Please sign in again.')
   }
+  // For the link flow, remember who is binding so we can detect the
+  // identity-owned-by-another-account case (PocketBase then signs us in
+  // as that account rather than linking).
+  const prevRecordId =
+    pending.mode === 'link' ? (pb.authStore.record?.id ?? null) : null
   try {
     await pb
       .collection(AUTH_COLLECTION)
@@ -211,6 +309,12 @@ export async function completeOAuth2Login(
         pending.codeVerifier,
         pending.redirectURL,
       )
+  } catch (e) {
+    const conflict = asOAuthConflict(e, pending.from)
+    if (conflict) {
+      throw new OAuthConflictError(conflict)
+    }
+    throw e
   } finally {
     sessionStorage.removeItem(PENDING_KEY)
   }
@@ -218,7 +322,22 @@ export async function completeOAuth2Login(
   // record from the exchange.
   bootstrapDone = true
   notifyReady()
-  return { from: pending.from }
+  if (pending.mode === 'link') {
+    const nowRecordId = pb.authStore.record?.id ?? null
+    if (prevRecordId && nowRecordId && nowRecordId !== prevRecordId) {
+      sessionStorage.setItem(BIND_SWITCHED_KEY, '1')
+    } else {
+      sessionStorage.setItem(BIND_DONE_KEY, '1')
+    }
+  }
+  return {
+    from: pending.from,
+    switchedAccount:
+      pending.mode === 'link' &&
+      prevRecordId != null &&
+      pb.authStore.record?.id != null &&
+      pb.authStore.record.id !== prevRecordId,
+  }
 }
 
 export function logout() {

@@ -1,9 +1,10 @@
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
-import { Loader2 } from 'lucide-react'
+import { GitFork, Link2, Loader2 } from 'lucide-react'
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
 import {
   Card,
   CardContent,
@@ -11,7 +12,13 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
-import { completeOAuth2Login } from '@/lib/auth'
+import {
+  completeOAuth2Login,
+  loginWithOAuth2,
+  OAuthConflictError,
+  type OAuth2ProviderName,
+  type OAuthConflictInfo,
+} from '@/lib/auth'
 import { safeRedirect } from '@/lib/safe-redirect'
 
 type CallbackSearch = {
@@ -39,6 +46,8 @@ function AuthCallbackPage() {
   const navigate = useNavigate()
   const search = Route.useSearch()
   const [error, setError] = useState<string>('')
+  const [conflict, setConflict] = useState<OAuthConflictInfo | null>(null)
+  const [retrying, setRetrying] = useState(false)
   // React 18 dev StrictMode mounts effects twice. The OAuth code is single-use
   // — a second call would fail with "invalid grant". Guard with a ref instead
   // of state so it survives the synchronous remount.
@@ -74,6 +83,10 @@ function AuthCallbackPage() {
         }
       })
       .catch((e: unknown) => {
+        if (e instanceof OAuthConflictError) {
+          setConflict(e.info)
+          return
+        }
         const message = e instanceof Error ? e.message : String(e)
         setError(message || t('failedTitle'))
       })
@@ -85,6 +98,102 @@ function AuthCallbackPage() {
     search.error_description,
     t,
   ])
+
+  // "保持独立账号" restarts the authorize round trip; the server recorded
+  // the conflict offer in memory, so the retried exchange passes and
+  // creates the separate account. Only meaningful for username conflicts —
+  // a same-email sign-in can never be a separate record.
+  function retryIndependent() {
+    if (!conflict) return
+    setRetrying(true)
+    loginWithOAuth2(
+      conflict.provider as OAuth2ProviderName,
+      conflict.from ?? undefined,
+    ).catch((e: unknown) => {
+      setRetrying(false)
+      const message = e instanceof Error ? e.message : String(e)
+      setError(message || t('failedTitle'))
+    })
+  }
+
+  if (conflict) {
+    return (
+      <div className="flex min-h-svh items-center justify-center bg-gradient-to-br from-primary/10 via-background to-accent/30 p-6">
+        <Card className="w-full max-w-md">
+          <CardHeader className="items-center text-center">
+            <span className="mb-2 flex size-14 items-center justify-center rounded-2xl bg-primary/15 text-primary">
+              <Link2 className="size-7" />
+            </span>
+            <CardTitle className="text-2xl">{t('conflict.title')}</CardTitle>
+            <CardDescription>{t('conflict.subtitle')}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Alert>
+              <GitFork className="size-4" />
+              <AlertTitle>
+                {conflict.conflict === 'email'
+                  ? t('conflict.emailTitle')
+                  : t('conflict.usernameTitle')}
+              </AlertTitle>
+              <AlertDescription>
+                {conflict.conflict === 'email'
+                  ? t('conflict.emailDesc', {
+                      login: conflict.login || conflict.provider,
+                      existing: conflict.existing,
+                    })
+                  : t('conflict.usernameDesc', {
+                      login: conflict.login,
+                      existing: conflict.existing,
+                    })}
+              </AlertDescription>
+            </Alert>
+            <Button
+              type="button"
+              size="lg"
+              className="w-full"
+              disabled={retrying}
+              onClick={() =>
+                navigate({
+                  to: '/login',
+                  search: {
+                    from: conflict.from ?? undefined,
+                    match: conflict.provider,
+                  },
+                })
+              }
+            >
+              {t('conflict.match')}
+            </Button>
+            {conflict.conflict === 'username' && (
+              <Button
+                type="button"
+                size="lg"
+                variant="outline"
+                className="w-full"
+                disabled={retrying}
+                onClick={retryIndependent}
+              >
+                {retrying ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : null}
+                {t('conflict.independent')}
+              </Button>
+            )}
+            <Button
+              type="button"
+              size="lg"
+              variant="ghost"
+              className="w-full"
+              disabled={retrying}
+              onClick={() => navigate({ to: '/login' })}
+            >
+              {t('conflict.cancel')}
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
 
   return (
     <div className="flex min-h-svh items-center justify-center bg-gradient-to-br from-primary/10 via-background to-accent/30 p-6">
@@ -126,4 +235,3 @@ function AuthCallbackPage() {
     </div>
   )
 }
-

@@ -4,7 +4,8 @@
 //	GET /api/me        — sessionGuard; the caller's own profile: id,
 //	                     email, name, avatar (PocketBase file name — the
 //	                     SPA builds the URL via pb.files.getURL),
-//	                     github_login, is_admin, is_superadmin, created.
+//	                     github_login, gitea_login, github_bound,
+//	                     gitea_bound, is_admin, is_superadmin, created.
 //	GET /api/me/usage  — sessionGuard; the caller's metering state for
 //	                     the agentic-search surface: today's call count,
 //	                     the effective daily limit (per-user override >
@@ -24,7 +25,9 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/usage"
 
+	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
+	pbauth "github.com/pocketbase/pocketbase/tools/auth"
 )
 
 // RegisterMe wires the /api/me surface. usageStore may have a nil pool —
@@ -37,22 +40,42 @@ func RegisterMe(se *core.ServeEvent, cfg *config.Config, usageStore *usage.Store
 
 // meProfileHandler returns the caller's own users-record fields. Unlike
 // /api/admin/whoami (login + admin flag only) this is the full profile
-// the dashboard renders.
+// the dashboard renders. is_admin / is_superadmin consult both
+// providers' allowlists (GitHub against github_login, Gitea against
+// gitea_login), and *_bound reports which OAuth2 identities are linked
+// to the record (drives the dashboard's 账号绑定 panels).
 func meProfileHandler(cfg *config.Config) func(re *core.RequestEvent) error {
 	return func(re *core.RequestEvent) error {
 		user := re.Auth // sessionGuard guarantees non-nil + browser-sourced
 		login := user.GetString(auth.GitHubLoginField)
+		giteaLogin := user.GetString(auth.GiteaLoginField)
 		return re.JSON(http.StatusOK, map[string]any{
 			"id":            user.Id,
 			"email":         user.GetString("email"),
 			"name":          user.GetString("name"),
 			"avatar":        user.GetString("avatar"),
 			"github_login":  login,
-			"is_admin":      cfg.IsGitHubAdmin(login),
-			"is_superadmin": user.GetBool(auth.IsSuperadminField) || cfg.IsGitHubSuperadmin(login),
+			"gitea_login":   giteaLogin,
+			"github_bound":  providerBound(re.App, user, pbauth.NameGithub),
+			"gitea_bound":   providerBound(re.App, user, pbauth.NameGitea),
+			"is_admin":      cfg.IsGitHubAdmin(login) || cfg.IsGiteaAdmin(giteaLogin),
+			"is_superadmin": user.GetBool(auth.IsSuperadminField) || cfg.IsGitHubSuperadmin(login) || cfg.IsGiteaSuperadmin(giteaLogin),
 			"created":       user.GetDateTime("created").String(),
 		})
 	}
+}
+
+// providerBound reports whether the users record has an _externalAuths
+// relation for the given OAuth2 provider — the authoritative "this
+// identity can sign in as this account" signal (the *_login fields are
+// display-only and are stamped independently of the link).
+func providerBound(app core.App, user *core.Record, provider string) bool {
+	rel, err := app.FindFirstExternalAuthByExpr(dbx.HashExp{
+		"collectionRef": user.Collection().Id,
+		"recordRef":     user.Id,
+		"provider":      provider,
+	})
+	return err == nil && rel != nil
 }
 
 // meUsageResponse is the wire shape of GET /api/me/usage — deliberately

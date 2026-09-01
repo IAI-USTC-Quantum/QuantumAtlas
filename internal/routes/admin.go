@@ -1,12 +1,14 @@
 // Admin console API.
 //
-// The admin concept is a GitHub-login allowlist (Config.AdminGitHubLogins,
-// QATLAS_ADMIN_GITHUB_LOGINS): a caller is an admin iff they hold an
+// The admin concept is a provider-login allowlist: the GitHub lists
+// (Config.AdminGitHubLogins, auth.admin_logins) matched against the
+// github_login stamped on the users record, or — since Gitea login was
+// added — the Gitea lists (Config.AdminGiteaLogins, auth.gitea_admin_logins)
+// matched against gitea_login. A caller is an admin iff they hold an
 // authenticated PocketBase SESSION (admins are humans — PATs, both user
 // and system, are rejected via sessionGuard semantics, same as /api/pat)
-// AND the github_login stamped on their users record (see
-// internal/auth/migrations.go + stampGitHubLogin) matches the allowlist
-// (case-insensitive, see Config.IsGitHubAdmin).
+// AND one of those matches (case-insensitive, see Config.IsGitHubAdmin /
+// Config.IsGiteaAdmin).
 //
 // Two endpoints:
 //
@@ -63,21 +65,31 @@ import (
 // adminGuard layers the admin allowlist check on top of sessionGuard:
 // the caller must be session-authenticated (PATs rejected, because admin
 // surfaces are for humans — a leaked PAT must not reach them) AND their
-// users-record github_login must appear in cfg.AdminGitHubLogins.
+// users-record github_login / gitea_login must appear in the matching
+// config admin allowlist (either provider grants admin; the lists are
+// checked against their own login field so a GitHub entry never matches
+// a Gitea account of the same name, and vice versa).
 // 403 {"detail":"admin only"} otherwise.
 func adminGuard(cfg *config.Config, handler func(re *core.RequestEvent) error) func(re *core.RequestEvent) error {
 	return sessionGuard(func(re *core.RequestEvent) error {
-		login := ""
-		if re.Auth != nil {
-			login = re.Auth.GetString(auth.GitHubLoginField)
-		}
-		if !cfg.IsGitHubAdmin(login) {
+		if !isAdminCaller(re, cfg) {
 			return re.JSON(http.StatusForbidden, map[string]string{
 				"detail": "admin only",
 			})
 		}
 		return handler(re)
 	})
+}
+
+// isAdminCaller reports whether the session-authenticated caller is on
+// either provider's admin allowlist. sessionGuard has already run, so
+// re.Auth is a live users record (nil-tolerant for unit tests).
+func isAdminCaller(re *core.RequestEvent, cfg *config.Config) bool {
+	if re.Auth == nil {
+		return false
+	}
+	return cfg.IsGitHubAdmin(re.Auth.GetString(auth.GitHubLoginField)) ||
+		cfg.IsGiteaAdmin(re.Auth.GetString(auth.GiteaLoginField))
 }
 
 // RegisterAdmin wires the /api/admin/* surface. pool is the Postgres
@@ -103,22 +115,29 @@ func RegisterAdmin(se *core.ServeEvent, cfg *config.Config, app core.App, pool *
 	registerAdminPlugins(se, cfg, pluginRegistry, remote)
 }
 
-// adminWhoamiHandler reports the caller's GitHub login and admin status
-// so the frontend can decide whether to show the admin nav. Session-only
+// adminWhoamiHandler reports the caller's provider login (GitHub, else
+// Gitea — whichever is stamped on the record) and admin status so the
+// frontend can decide whether to show the admin nav. Session-only
 // (PAT auth rejected with the sessionGuard 403, same as /api/pat).
 //
-// is_admin stays env-allowlist-only (the ops dashboard gate). The two
-// role fields mirror the /api/admin/users guard: is_user_admin = env
-// admin OR is_admin OR is_superadmin (drives the user-management nav),
-// is_superadmin = env admin OR is_superadmin (drives the is_admin
-// toggle column on that page).
+// is_admin stays allowlist-only (the ops dashboard gate). The two
+// role fields mirror the /api/admin/users guard: is_user_admin = an
+// allowlist admin OR is_admin OR is_superadmin (drives the
+// user-management nav), is_superadmin = an allowlist admin OR
+// is_superadmin (drives the is_admin toggle column on that page).
 func adminWhoamiHandler(cfg *config.Config) func(re *core.RequestEvent) error {
 	return func(re *core.RequestEvent) error {
 		login := ""
 		if re.Auth != nil {
+			// Display value only: show the GitHub login when stamped,
+			// else the Gitea login, else empty. Both allowlists are
+			// consulted below regardless of which one is set.
 			login = re.Auth.GetString(auth.GitHubLoginField)
+			if login == "" {
+				login = re.Auth.GetString(auth.GiteaLoginField)
+			}
 		}
-		envAdmin := cfg.IsGitHubAdmin(login)
+		envAdmin := isAdminCaller(re, cfg)
 		isSuper := envAdmin
 		isUserAdmin := envAdmin
 		if re.Auth != nil {

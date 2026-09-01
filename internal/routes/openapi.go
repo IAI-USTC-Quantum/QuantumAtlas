@@ -602,14 +602,17 @@ func docPATScopes() {}
 //
 // @Summary     My profile
 // @Description Returns the signed-in user's profile:
-// @Description {id, email, name, avatar, github_login, is_admin,
-// @Description is_superadmin, created}.
+// @Description {id, email, name, avatar, github_login, gitea_login,
+// @Description github_bound, gitea_bound, is_admin, is_superadmin,
+// @Description created}.
 // @Description avatar is the PocketBase file name — build the URL via the
-// @Description PocketBase files API.
+// @Description PocketBase files API. *_bound reports which OAuth2
+// @Description identities are linked to the record (the dashboard's
+// @Description account-binding panels).
 // @Tags        Me
 // @Produce     json
 // @Security    BearerAuth
-// @Success     200 {object} map[string]interface{} "{id, email, name, avatar, github_login, is_admin, is_superadmin, created}"
+// @Success     200 {object} map[string]interface{} "{id, email, name, avatar, github_login, gitea_login, github_bound, gitea_bound, is_admin, is_superadmin, created}"
 // @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string "PAT auth not accepted"
 // @Router      /api/me [get]
@@ -637,19 +640,21 @@ func docMeUsage() {}
 // --- Admin -------------------------------------------------------------------
 //
 // Admin console API. Session-token auth only (PATs rejected); the db
-// schema endpoint additionally requires the caller's github_login to be
-// on the QATLAS_ADMIN_GITHUB_LOGINS allowlist. See internal/routes/admin.go.
+// schema endpoint additionally requires the caller's github_login /
+// gitea_login to be on the matching config admin allowlist
+// (auth.admin_logins / auth.gitea_admin_logins). See internal/routes/admin.go.
 
-// adminWhoami reports the caller's GitHub login and admin status.
+// adminWhoami reports the caller's provider login and admin status.
 //
 // @Summary     Admin whoami
 // @Description Returns {login, is_admin, is_user_admin, is_superadmin}
-// @Description for the signed-in session user. is_admin is the env
-// @Description allowlist gate (ops dashboard); is_user_admin /
-// @Description is_superadmin mirror the /api/admin/users guard for the
-// @Description user-management nav. The SPA uses these to decide which
-// @Description admin surfaces to render; non-admins get false flags
-// @Description rather than a 403. Session-token auth only (PAT auth
+// @Description for the signed-in session user. login is the github_login,
+// @Description falling back to gitea_login when only that is stamped.
+// @Description is_admin is the config allowlist gate (ops dashboard);
+// @Description is_user_admin / is_superadmin mirror the /api/admin/users
+// @Description guard for the user-management nav. The SPA uses these to
+// @Description decide which admin surfaces to render; non-admins get false
+// @Description flags rather than a 403. Session-token auth only (PAT auth
 // @Description refused, same as /api/pat).
 // @Tags        Admin
 // @Produce     json
@@ -701,9 +706,10 @@ func docAdminDevdocTicket() {}
 //
 // @Summary     List users
 // @Description Every users record: {users:[{id, name, email, github_login,
-// @Description is_admin, is_superadmin, disabled, created, updated}], total}.
+// @Description gitea_login, is_admin, is_superadmin, disabled, created,
+// @Description updated}], total}.
 // @Description Requires a session AND one of: is_admin, is_superadmin, or the
-// @Description env admin allowlist (userAdminGuard — PATs rejected).
+// @Description config admin allowlist (userAdminGuard — PATs rejected).
 // @Tags        Admin
 // @Produce     json
 // @Security    BearerAuth

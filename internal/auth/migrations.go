@@ -25,6 +25,14 @@ import (
 // recovery path.
 const GitHubLoginField = "github_login"
 
+// GiteaLoginField is the gitea twin of GitHubLoginField: the users-
+// collection field storing the Gitea account login (the `login` property
+// of the Gitea user API response) after an OAuth sign-in via the gitea
+// provider. Every gitea_* config allowlist matches against this value,
+// exactly like the github lists match github_login. Stamped lazily by
+// the same OnRecordAuthWithOAuth2Request hook (stampGiteaLogin).
+const GiteaLoginField = "gitea_login"
+
 // Role / availability fields on the users collection (see
 // 1788100000_add_role_flags_to_users.go). The env-derived admin gate
 // (Config.IsGitHubAdmin) stays authoritative for the /api/admin ops
@@ -50,6 +58,7 @@ const (
 func init() {
 	core.AppMigrations.Register(upAddGitHubLoginField, downAddGitHubLoginField, "1787000000_add_github_login_to_users.go")
 	core.AppMigrations.Register(upAddRoleFlags, downAddRoleFlags, "1788100000_add_role_flags_to_users.go")
+	core.AppMigrations.Register(upAddGiteaLoginField, downAddGiteaLoginField, "1789000000_add_gitea_login_to_users.go")
 }
 
 // upAddGitHubLoginField adds the github_login text column to the users
@@ -79,6 +88,38 @@ func downAddGitHubLoginField(app core.App) error {
 		return nil // collection absent — treat as success
 	}
 	field := col.Fields.GetByName(GitHubLoginField)
+	if field == nil {
+		return nil
+	}
+	col.Fields.RemoveById(field.GetId())
+	return app.Save(col)
+}
+
+// upAddGiteaLoginField adds the gitea_login text column to the users
+// collection — the gitea twin of upAddGitHubLoginField, idempotent the
+// same way.
+func upAddGiteaLoginField(app core.App) error {
+	col, err := app.FindCollectionByNameOrId(UsersCollection)
+	if err != nil {
+		return err
+	}
+	if col.Fields.GetByName(GiteaLoginField) != nil {
+		return nil
+	}
+	col.Fields.Add(&core.TextField{
+		Name: GiteaLoginField,
+		Max:  100, // Gitea logins cap at 40 chars; headroom is free
+	})
+	return app.Save(col)
+}
+
+// downAddGiteaLoginField removes the column added by the up.
+func downAddGiteaLoginField(app core.App) error {
+	col, err := app.FindCollectionByNameOrId(UsersCollection)
+	if err != nil {
+		return nil // collection absent — treat as success
+	}
+	field := col.Fields.GetByName(GiteaLoginField)
 	if field == nil {
 		return nil
 	}

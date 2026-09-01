@@ -126,7 +126,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Every users record: {users:[{id, name, email, github_login,\nis_admin, is_superadmin, disabled, created, updated}], total}.\nRequires a session AND one of: is_admin, is_superadmin, or the\nenv admin allowlist (userAdminGuard — PATs rejected).",
+                "description": "Every users record: {users:[{id, name, email, github_login,\ngitea_login, is_admin, is_superadmin, disabled, created,\nupdated}], total}.\nRequires a session AND one of: is_admin, is_superadmin, or the\nconfig admin allowlist (userAdminGuard — PATs rejected).",
                 "produces": [
                     "application/json"
                 ],
@@ -244,7 +244,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns {login, is_admin, is_user_admin, is_superadmin}\nfor the signed-in session user. is_admin is the env\nallowlist gate (ops dashboard); is_user_admin /\nis_superadmin mirror the /api/admin/users guard for the\nuser-management nav. The SPA uses these to decide which\nadmin surfaces to render; non-admins get false flags\nrather than a 403. Session-token auth only (PAT auth\nrefused, same as /api/pat).",
+                "description": "Returns {login, is_admin, is_user_admin, is_superadmin}\nfor the signed-in session user. login is the github_login,\nfalling back to gitea_login when only that is stamped.\nis_admin is the config allowlist gate (ops dashboard);\nis_user_admin / is_superadmin mirror the /api/admin/users\nguard for the user-management nav. The SPA uses these to\ndecide which admin surfaces to render; non-admins get false\nflags rather than a 403. Session-token auth only (PAT auth\nrefused, same as /api/pat).",
                 "produces": [
                     "application/json"
                 ],
@@ -309,7 +309,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns the signed-in user's profile:\n{id, email, name, avatar, github_login, is_admin,\nis_superadmin, created}.\navatar is the PocketBase file name — build the URL via the\nPocketBase files API.",
+                "description": "Returns the signed-in user's profile:\n{id, email, name, avatar, github_login, gitea_login,\ngithub_bound, gitea_bound, is_admin, is_superadmin,\ncreated}.\navatar is the PocketBase file name — build the URL via the\nPocketBase files API. *_bound reports which OAuth2\nidentities are linked to the record (the dashboard's\naccount-binding panels).",
                 "produces": [
                     "application/json"
                 ],
@@ -319,7 +319,7 @@
                 "summary": "My profile",
                 "responses": {
                     "200": {
-                        "description": "{id, email, name, avatar, github_login, is_admin, is_superadmin, created}",
+                        "description": "{id, email, name, avatar, github_login, gitea_login, github_bound, gitea_bound, is_admin, is_superadmin, created}",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true

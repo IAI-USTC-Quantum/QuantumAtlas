@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## Unreleased
+
+### Feat
+
+- **auth**: Gitea/Forgejo login alongside GitHub. New `auth.gitea_url` / `gitea_client_id` / `gitea_client_secret` + `gitea_admin_logins` / `gitea_superadmin_logins` config keys register PocketBase's `gitea` provider against a self-hosted instance (endpoint URLs derived from `gitea_url`; creds without a URL are a sync error, never a silent fallback to gitea.com). Gitea sign-in is deliberately NOT allowlist-gated — every account on the instance may sign in; the gitea lists only grant admin / superadmin, independently of the GitHub ones. New `gitea_login` users field (migration `1789000000`) is stamped on sign-in and consulted by `adminGuard`, role-flag promotion, `/api/me` and `/api/admin/users`; the login page renders one button per server-enabled provider (`/auth/callback` redirect shared with GitHub).
+- **auth**: cross-provider account matching. A brand-new OAuth identity whose email matches an existing users record no longer auto-links (PocketBase's default, an unverified-email takeover vector) — the sign-in is interrupted with a 409 `oauth_conflict` and the SPA prompts "match to your existing account?"; same for username collisions (`github_login` / `gitea_login`, case-insensitive), where "continue with a separate account" is honored via a 15-minute in-process acknowledgement. The dashboard gains an 账号绑定 panel: one card per provider showing userinfo when bound (`github_bound` / `gitea_bound` from `_externalAuths`, new on `/api/me`) or a bind button that runs the link-mode OAuth exchange against the signed-in session.
+
 ## v0.24.0 (2026-08-31)
 
 ### Feat

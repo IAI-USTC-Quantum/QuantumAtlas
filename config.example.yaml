@@ -27,11 +27,14 @@
 # OAuth callback URLs and public-facing links.
 # public_url: https://atlas.example.com
 
-# ─── GitHub OAuth (required for browser login) ─────────────────────────
-# Create an OAuth app at https://github.com/settings/developers
-# (callback: https://<server>/api/oauth2-redirect). Fail-closed:
-# if allowed_logins *and* admin_logins are both empty, nobody can sign
-# in (deliberately locked default). Recovery: PocketBase superuser at /_/.
+# ─── OAuth login (GitHub required, Gitea optional; browser login) ─────
+# Create a GitHub OAuth app at https://github.com/settings/developers
+# and, optionally, a Gitea app at <your-gitea>/user/settings/applications
+# (both with callback: https://<server>/auth/callback). GitHub sign-in is
+# allowlist-gated and fail-closed: if allowed_logins *and* admin_logins
+# are both empty, nobody can sign in with GitHub (deliberately locked
+# default; recovery: PocketBase superuser at /_/). Gitea sign-in is NOT
+# allowlist-gated — every account on the instance may sign in.
 # auth:
 #   github_client_id: ""
 #   github_client_secret: ""
@@ -41,6 +44,17 @@
 #   # boot (see auth-model.md §DB 角色). Seed/recovery path for the
 #   # role-management API; never demotes.
 #   superadmin_logins: [your-gh-login]
+#   # Self-hosted Gitea/Forgejo as a second login provider. gitea_url is
+#   # the instance origin; authorize/token/userinfo endpoints are derived
+#   # from it. No sign-in allowlist: the instance's own account policy is
+#   # the gate. The gitea_* login lists only grant admin / superadmin and
+#   # are SEPARATE from the GitHub ones — a same-named account on the
+#   # other provider derives no privileges from them.
+#   gitea_url: https://git.example.com
+#   gitea_client_id: ""
+#   gitea_client_secret: ""
+#   gitea_admin_logins: [your-gitea-login]
+#   gitea_superadmin_logins: [your-gitea-login]
 
 # ─── PostgreSQL (paper registry + OpenAlex corpus) ─────────────────────
 # Without a DSN the paper registry degrades to {available:false} and

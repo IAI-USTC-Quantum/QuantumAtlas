@@ -33,9 +33,13 @@ func Register(app core.App, cfg *config.Config) {
 		}
 		if err := syncGitHubProvider(e.App, cfg); err != nil {
 			// Don't fail bootstrap — log loudly and keep the server up so
-			// the operator can fix env vars without losing the rest of
+			// the operator can fix config without losing the rest of
 			// PocketBase. OAuth login will simply 4xx until resolved.
 			slog.Warn("github oauth provider sync failed", "error", err)
+		}
+		if err := syncGiteaProvider(e.App, cfg); err != nil {
+			// Same tolerance as the GitHub sync above.
+			slog.Warn("gitea oauth provider sync failed", "error", err)
 		}
 		if err := promoteRoleFlags(e.App, cfg); err != nil {
 			// Same tolerance: a failed promotion must not take the server
@@ -54,12 +58,17 @@ func Register(app core.App, cfg *config.Config) {
 	app.OnRecordAuthWithOAuth2Request(UsersCollection).BindFunc(func(e *core.RecordAuthWithOAuth2RequestEvent) error {
 		// Gate FIRST: a non-allowlisted GitHub account must be rejected
 		// before any users record is minted or session token issued.
+		// Gitea accounts are deliberately NOT allowlist-gated (operator
+		// choice: the Gitea instance's own signup policy is the gate).
 		// Returning an error here aborts the OAuth2 request so a blocked
 		// account leaves no trace and gets a clean 403.
 		if err := enforceLoginAllowlist(e, cfg); err != nil {
 			return err
 		}
 		if err := rejectDisabledUser(e); err != nil {
+			return err
+		}
+		if err := checkOAuthConflicts(e); err != nil {
 			return err
 		}
 		if err := syncStableUserID(e); err != nil {
@@ -74,9 +83,10 @@ func Register(app core.App, cfg *config.Config) {
 			return err
 		}
 		// Auth succeeded (new signup or returning login) — persist the
-		// GitHub login onto the record so the admin gate can match it
-		// against Config.AdminGitHubLogins without a network lookup.
+		// provider login onto the record so the admin gate can match it
+		// against the Config.Admin*Logins lists without a network lookup.
 		stampGitHubLogin(e)
+		stampGiteaLogin(e)
 		return nil
 	})
 }
@@ -106,18 +116,19 @@ func rejectDisabledUser(e *core.RecordAuthWithOAuth2RequestEvent) error {
 }
 
 // promoteRoleFlags stamps the is_admin / is_superadmin flags onto users
-// records whose github_login appears in the corresponding config seed
-// list. Runs at bootstrap, idempotently: it only ever SETS flags
-// (promotion), never clears them — demotion is an explicit operator
+// records whose github_login / gitea_login appears in the corresponding
+// config seed list. Runs at bootstrap, idempotently: it only ever SETS
+// flags (promotion), never clears them — demotion is an explicit operator
 // action via the /api/admin/users API (or the PocketBase admin UI), so
-// removing a login from the seed list does not demote an existing
-// holder on the next boot.
+// removing a login from a seed list does not demote an existing holder
+// on the next boot.
 //
 // This is the bootstrap/recovery path for the DB-flag roles: the
 // migration only adds the (false-defaulting) columns, so without this
 // promotion the flags would require manual SQLite surgery to seed.
 func promoteRoleFlags(app core.App, cfg *config.Config) error {
-	if len(cfg.AdminGitHubLogins) == 0 && len(cfg.SuperadminGitHubLogins) == 0 {
+	if len(cfg.AdminGitHubLogins) == 0 && len(cfg.SuperadminGitHubLogins) == 0 &&
+		len(cfg.AdminGiteaLogins) == 0 && len(cfg.SuperadminGiteaLogins) == 0 {
 		return nil
 	}
 	records, err := app.FindAllRecords(UsersCollection)
@@ -126,14 +137,15 @@ func promoteRoleFlags(app core.App, cfg *config.Config) error {
 	}
 	promotedAdmin, promotedSuper := 0, 0
 	for _, rec := range records {
-		login := rec.GetString(GitHubLoginField)
+		ghLogin := rec.GetString(GitHubLoginField)
+		giteaLogin := rec.GetString(GiteaLoginField)
 		changed := false
-		if !rec.GetBool(IsAdminField) && cfg.IsGitHubAdmin(login) {
+		if !rec.GetBool(IsAdminField) && (cfg.IsGitHubAdmin(ghLogin) || cfg.IsGiteaAdmin(giteaLogin)) {
 			rec.Set(IsAdminField, true)
 			changed = true
 			promotedAdmin++
 		}
-		if !rec.GetBool(IsSuperadminField) && cfg.IsGitHubSuperadmin(login) {
+		if !rec.GetBool(IsSuperadminField) && (cfg.IsGitHubSuperadmin(ghLogin) || cfg.IsGiteaSuperadmin(giteaLogin)) {
 			rec.Set(IsSuperadminField, true)
 			changed = true
 			promotedSuper++
@@ -159,11 +171,11 @@ func promoteRoleFlags(app core.App, cfg *config.Config) error {
 // stampGitHubLogin persists the GitHub account login onto the users
 // record after a successful OAuth sign-in. PocketBase's default OAuth2
 // mapped fields only cover name/avatar (MappedFields.Username is empty
-// on the stock users collection), so the login — the value
-// Config.AdminGitHubLogins / AllowedGitHubLogins match against — would
-// otherwise never be stored. Stamping here covers both fresh signups
-// and lazy backfill for users who registered before the github_login
-// field existed: they get it on their next login.
+// on the stock users collection), so the login — the value the
+// Config.*GitHubLogins lists match against — would otherwise never be
+// stored. Stamping here covers both fresh signups and lazy backfill for
+// users who registered before the github_login field existed: they get
+// it on their next login.
 //
 // Logged-not-fatal: a failed save must not break sign-in (the response
 // has already been written by e.Next() at this point anyway); the worst
@@ -175,20 +187,43 @@ func stampGitHubLogin(e *core.RecordAuthWithOAuth2RequestEvent) {
 	if e.ProviderName != auth.NameGithub {
 		return
 	}
-	login := strings.TrimSpace(e.OAuth2User.Username) // GitHub provider maps `login` here
-	if login == "" || e.Record.GetString(GitHubLoginField) == login {
+	stampLoginOnRecord(e, GitHubLoginField)
+}
+
+// stampGiteaLogin is the gitea twin of stampGitHubLogin — same lazy
+// stamp + backfill contract, but for the gitea provider and the
+// gitea_login field (the value the Config.*GiteaLogins lists match).
+func stampGiteaLogin(e *core.RecordAuthWithOAuth2RequestEvent) {
+	if e == nil || e.Record == nil || e.OAuth2User == nil {
+		return
+	}
+	if e.ProviderName != auth.NameGitea {
+		return
+	}
+	stampLoginOnRecord(e, GiteaLoginField)
+}
+
+// stampLoginOnRecord is the shared engine behind stampGitHubLogin /
+// stampGiteaLogin: it writes e.OAuth2User.Username (both providers map
+// the profile `login` property there) into the named users field,
+// skipping no-op saves and defensively skipping when the field is
+// missing from the collection schema.
+func stampLoginOnRecord(e *core.RecordAuthWithOAuth2RequestEvent, field string) {
+	login := strings.TrimSpace(e.OAuth2User.Username)
+	if login == "" || e.Record.GetString(field) == login {
 		return
 	}
 	// Defensive: only stamp when the field actually exists on the
 	// collection (it is added by this package's migration, which runs
 	// at bootstrap — but a hand-migrated pb_data could lack it).
-	if e.Record.Collection().Fields.GetByName(GitHubLoginField) == nil {
+	if e.Record.Collection().Fields.GetByName(field) == nil {
 		return
 	}
-	e.Record.Set(GitHubLoginField, login)
+	e.Record.Set(field, login)
 	if err := e.App.Save(e.Record); err != nil {
-		slog.Warn("oauth: failed to stamp github login on users record",
+		slog.Warn("oauth: failed to stamp provider login on users record",
 			"user_id", e.Record.Id,
+			"field", field,
 			"error", err,
 		)
 	}
@@ -196,15 +231,19 @@ func stampGitHubLogin(e *core.RecordAuthWithOAuth2RequestEvent) {
 
 // enforceLoginAllowlist rejects OAuth sign-in for any GitHub account whose
 // login is not on the configured allowlist (Config.IsGitHubLoginAllowed).
+// Gitea sign-ins are deliberately NOT gated — the operator opted to let the
+// self-hosted instance's own account policy decide who may sign in (the
+// gitea_* admin lists still control who becomes an admin).
 //
 // This is the membership gate that turns the read-locked knowledge base
-// into a members-only one: scopeGuard on every data endpoint makes an
-// unauthenticated caller get 401, and this hook ensures only vetted GitHub
-// accounts can obtain an authenticated session in the first place.
+// into a members-only one for the GitHub door: scopeGuard on every data
+// endpoint makes an unauthenticated caller get 401, and this hook ensures
+// only vetted GitHub accounts can obtain an authenticated session.
 //
-// Fail-closed: an empty allowlist blocks everyone (see IsGitHubLoginAllowed).
-// A nil OAuth2User (no identity to vet) yields an empty login, which is also
-// rejected — we never let an unidentified caller through.
+// Fail-closed for GitHub: an empty allowlist blocks everyone (see
+// IsGitHubLoginAllowed). A nil OAuth2User (no identity to vet) yields an
+// empty login, which is also rejected — we never let an unidentified
+// caller through. Any provider other than github/gitea fails closed too.
 func enforceLoginAllowlist(e *core.RecordAuthWithOAuth2RequestEvent, cfg *config.Config) error {
 	if e == nil {
 		return nil
@@ -213,65 +252,53 @@ func enforceLoginAllowlist(e *core.RecordAuthWithOAuth2RequestEvent, cfg *config
 	if e.OAuth2User != nil {
 		login = e.OAuth2User.Username // GitHub provider maps `login` here
 	}
-	if cfg.IsGitHubLoginAllowed(login) {
+	var allowed bool
+	switch e.ProviderName {
+	case auth.NameGithub:
+		allowed = cfg.IsGitHubLoginAllowed(login)
+	case auth.NameGitea:
+		allowed = true
+	default:
+		allowed = false
+	}
+	if allowed {
 		return nil
 	}
-	slog.Warn("oauth: blocked sign-in for non-allowlisted github account",
+	slog.Warn("oauth: blocked sign-in for non-allowlisted account",
 		"login", login,
 		"provider", e.ProviderName,
 	)
-	return apis.NewForbiddenError("This GitHub account is not authorized to sign in to QuantumAtlas.", nil)
+	return apis.NewForbiddenError("This account is not authorized to sign in to QuantumAtlas.", nil)
 }
 
 // syncGitHubProvider makes the users collection's OAuth2 settings reflect
-// the GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET env vars. Idempotent: safe
-// to call on every boot.
+// the auth.github_client_id / auth.github_client_secret config keys.
+// Idempotent: safe to call on every boot.
 //
 // Behavior matrix:
 //
 //	creds set,  not configured  -> insert provider, enable OAuth2
 //	creds set,  already present -> overwrite clientId/clientSecret in place
 //	creds empty, configured     -> leave existing config alone (operator
-//	                               manually disabled the env var; respect
+//	                               manually disabled the keys; respect
 //	                               whatever they last saved in the admin UI)
 //	creds empty, not configured -> no-op
 func syncGitHubProvider(app core.App, cfg *config.Config) error {
 	if cfg.GitHubClientID == "" || cfg.GitHubClientSecret == "" {
-		slog.Debug("github oauth env vars empty; skipping provider sync")
+		slog.Debug("github oauth config empty; skipping provider sync")
 		return nil
 	}
 
-	collection, err := app.FindCollectionByNameOrId(UsersCollection)
+	collection, err := authCollection(app)
 	if err != nil {
-		return fmt.Errorf("find %s collection: %w", UsersCollection, err)
-	}
-	if !collection.IsAuth() {
-		return fmt.Errorf("%s collection is not an auth collection", UsersCollection)
+		return err
 	}
 
-	desired := core.OAuth2ProviderConfig{
+	replaced := upsertOAuth2Provider(collection, core.OAuth2ProviderConfig{
 		Name:         auth.NameGithub,
 		ClientId:     cfg.GitHubClientID,
 		ClientSecret: cfg.GitHubClientSecret,
-	}
-
-	replaced := false
-	for i, existing := range collection.OAuth2.Providers {
-		if existing.Name == auth.NameGithub {
-			// Preserve any operator-tuned fields (DisplayName, Extra, etc.)
-			// while pushing the env-driven secret pair through.
-			merged := existing
-			merged.ClientId = desired.ClientId
-			merged.ClientSecret = desired.ClientSecret
-			collection.OAuth2.Providers[i] = merged
-			replaced = true
-			break
-		}
-	}
-	if !replaced {
-		collection.OAuth2.Providers = append(collection.OAuth2.Providers, desired)
-	}
-	collection.OAuth2.Enabled = true
+	})
 
 	if err := app.Save(collection); err != nil {
 		return fmt.Errorf("save %s collection: %w", UsersCollection, err)
@@ -286,6 +313,97 @@ func syncGitHubProvider(app core.App, cfg *config.Config) error {
 		"client_id_suffix", lastChars(cfg.GitHubClientID, 4),
 	)
 	return nil
+}
+
+// syncGiteaProvider mirrors syncGitHubProvider for a self-hosted
+// Gitea/Forgejo instance (auth.gitea_* config keys). The stock
+// PocketBase gitea provider points at gitea.com, so we also override
+// the authorize/token/userinfo endpoint URLs from Config.GiteaURL —
+// an empty gitea_url with credentials set is reported as an error
+// rather than silently authenticating against the public gitea.com.
+func syncGiteaProvider(app core.App, cfg *config.Config) error {
+	if cfg.GiteaClientID == "" || cfg.GiteaClientSecret == "" {
+		slog.Debug("gitea oauth config empty; skipping provider sync")
+		return nil
+	}
+	if cfg.GiteaURL == "" {
+		return errors.New("auth.gitea_client_id/secret set but auth.gitea_url is empty — set it to the Gitea instance origin (e.g. https://git.example.com)")
+	}
+
+	collection, err := authCollection(app)
+	if err != nil {
+		return err
+	}
+
+	replaced := upsertOAuth2Provider(collection, core.OAuth2ProviderConfig{
+		Name:         auth.NameGitea,
+		ClientId:     cfg.GiteaClientID,
+		ClientSecret: cfg.GiteaClientSecret,
+		AuthURL:      cfg.GiteaURL + "/login/oauth/authorize",
+		TokenURL:     cfg.GiteaURL + "/login/oauth/access_token",
+		UserInfoURL:  cfg.GiteaURL + "/api/v1/user",
+	})
+
+	if err := app.Save(collection); err != nil {
+		return fmt.Errorf("save %s collection: %w", UsersCollection, err)
+	}
+
+	action := "inserted"
+	if replaced {
+		action = "updated"
+	}
+	slog.Info("gitea oauth provider synced",
+		"action", action,
+		"base_url", cfg.GiteaURL,
+		"client_id_suffix", lastChars(cfg.GiteaClientID, 4),
+	)
+	return nil
+}
+
+// authCollection fetches the users collection and asserts it is an auth
+// collection (shared preflight of the two provider sync functions).
+func authCollection(app core.App) (*core.Collection, error) {
+	collection, err := app.FindCollectionByNameOrId(UsersCollection)
+	if err != nil {
+		return nil, fmt.Errorf("find %s collection: %w", UsersCollection, err)
+	}
+	if !collection.IsAuth() {
+		return nil, fmt.Errorf("%s collection is not an auth collection", UsersCollection)
+	}
+	return collection, nil
+}
+
+// upsertOAuth2Provider pushes the config-driven fields of desired onto
+// the collection's OAuth2 provider list, preserving any operator-tuned
+// fields (DisplayName, Extra, PKCE, …). Non-empty AuthURL/TokenURL/
+// UserInfoURL on desired also override; empty ones leave the existing
+// values alone (which is why the GitHub sync — never URL-driven — keeps
+// whatever endpoints the admin UI holds). Returns true when an existing
+// entry was replaced, false when the provider was appended.
+func upsertOAuth2Provider(collection *core.Collection, desired core.OAuth2ProviderConfig) bool {
+	for i, existing := range collection.OAuth2.Providers {
+		if existing.Name != desired.Name {
+			continue
+		}
+		merged := existing
+		merged.ClientId = desired.ClientId
+		merged.ClientSecret = desired.ClientSecret
+		if desired.AuthURL != "" {
+			merged.AuthURL = desired.AuthURL
+		}
+		if desired.TokenURL != "" {
+			merged.TokenURL = desired.TokenURL
+		}
+		if desired.UserInfoURL != "" {
+			merged.UserInfoURL = desired.UserInfoURL
+		}
+		collection.OAuth2.Providers[i] = merged
+		collection.OAuth2.Enabled = true
+		return true
+	}
+	collection.OAuth2.Providers = append(collection.OAuth2.Providers, desired)
+	collection.OAuth2.Enabled = true
+	return false
 }
 
 // lastChars returns the trailing n characters of s, or s itself when
