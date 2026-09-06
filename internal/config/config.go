@@ -303,6 +303,13 @@ type Config struct {
 	DownloaderAgentClaudeModel  string
 	DownloaderAgentTimeout      time.Duration
 	DownloaderAgentMaxBudgetUSD float64
+	// DownloaderBrowserCDPURL points the browser lane at an
+	// already-running Chromium's DevTools endpoint (e.g. the
+	// chromedp/headless-shell compose sidecar, ws://browser:9222).
+	// Empty disables the lane; publisher logins live in that browser's
+	// user-data-dir.
+	DownloaderBrowserCDPURL  string
+	DownloaderBrowserTimeout time.Duration
 
 	// Plugin platform. Plugins are optional: an empty directory or no
 	// manifests means the core server still starts with just papers /
@@ -448,6 +455,10 @@ type fileConfig struct {
 			Timeout      string  `yaml:"timeout"`
 			MaxBudgetUSD float64 `yaml:"max_budget_usd"`
 		} `yaml:"agent"`
+		Browser struct {
+			CDPURL  string `yaml:"cdp_url"`
+			Timeout string `yaml:"timeout"`
+		} `yaml:"browser"`
 	} `yaml:"downloader"`
 
 	RAG struct {
@@ -728,6 +739,7 @@ func (fc *fileConfig) toConfig(anchor string) (*Config, error) {
 		DownloaderAgentClaudeBin:    defaultIfEmpty(strings.TrimSpace(fc.Downloader.Agent.ClaudeBin), "claude"),
 		DownloaderAgentClaudeModel:  strings.TrimSpace(fc.Downloader.Agent.ClaudeModel),
 		DownloaderAgentMaxBudgetUSD: fc.Downloader.Agent.MaxBudgetUSD,
+		DownloaderBrowserCDPURL:     strings.TrimSpace(fc.Downloader.Browser.CDPURL),
 		RAGRemoteEnabled:            fc.RAG.Remote.Enabled,
 		RAGRemoteURL:                fc.RAG.Remote.URL,
 		RAGRemoteToken:              fc.RAG.Remote.Token,
@@ -768,6 +780,9 @@ func (fc *fileConfig) toConfig(anchor string) (*Config, error) {
 		return nil, err
 	}
 	if cfg.DownloaderAgentTimeout, err = parseDuration(fc.Downloader.Agent.Timeout, 120*time.Second, "downloader.agent.timeout"); err != nil {
+		return nil, err
+	}
+	if cfg.DownloaderBrowserTimeout, err = parseDuration(fc.Downloader.Browser.Timeout, 45*time.Second, "downloader.browser.timeout"); err != nil {
 		return nil, err
 	}
 	switch cfg.DownloaderAgentBackend {

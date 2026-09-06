@@ -647,11 +647,16 @@ func main() {
 			if cfg.DownloaderAgentBackend != "" {
 				agentState = cfg.DownloaderAgentBackend
 			}
+			browserState := "off"
+			if cfg.DownloaderBrowserCDPURL != "" {
+				browserState = cfg.DownloaderBrowserCDPURL
+			}
 			slog.Info("downloader enabled",
 				"concurrency", cfg.DownloaderConcurrency,
 				"respect_robots", cfg.DownloaderRespectRobots,
 				"unpaywall", unpaywallEmail != "",
 				"agent", agentState,
+				"browser", browserState,
 			)
 			app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
 				shutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

@@ -65,6 +65,7 @@ type Config struct {
 	Concurrency    int
 	Fetch          FetchConfig
 	Agent          AgentConfig
+	Browser        BrowserConfig
 	UnpaywallEmail string
 	S2APIKey       string
 	// OA resolvers used by the oa-apis strategy, in try order. Empty →
@@ -150,6 +151,7 @@ type Downloader struct {
 	unpaywall   *Unpaywall
 	epmc        *EuropePMC
 	agent       LinkExtractor
+	browser     *BrowserLane
 
 	reg        registryWriter
 	store      objstore.Store
@@ -213,6 +215,7 @@ func New(reg registryWriter, store objstore.Store, fetcher *arxiv.Fetcher, oa DO
 		d.oaResolvers = []OAResolver{d.epmc, d.unpaywall, &openalexAdapter{oa: oa}, NewSemanticScholar("", cfg.S2APIKey, cfg.Fetch.RequestTimeout)}
 	}
 	d.agent = NewLinkExtractor(cfg.Agent)
+	d.browser = NewBrowserLane(cfg.Browser)
 	for _, opt := range opts {
 		opt(d)
 	}
@@ -370,15 +373,35 @@ func (d *Downloader) FetchPDF(ctx context.Context, ref registry.PaperRef) (*Fetc
 		if len(landing.Candidates) == 0 {
 			out.Trace = append(out.Trace, Attempt{Strategy: "landing", URL: landing.FinalURL, Error: "no PDF candidates on landing page"})
 		}
-		if d.agent != nil {
-			cands, err := d.agent.Extract(ctx, ExtractInput{DOI: doi, LandingURL: landing.FinalURL, HTML: landing.HTML})
-			if err != nil {
-				out.Trace = append(out.Trace, Attempt{Strategy: d.agent.Name(), Error: errString(err)})
+	}
+
+	// Browser lane: replay the publisher PDF/landing URLs through a
+	// real Chromium when the plain-HTTP attempts hit bot walls — the
+	// most common terminal failure on entitled networks. Enabled via
+	// downloader.browser.cdp_url.
+	if d.browser.Enabled() && traceSawChallenge(out.Trace) {
+		start := time.Now()
+		for _, u := range browserTargets(out, doi) {
+			res, berr := d.browser.FetchPDF(ctx, u)
+			if berr == nil {
+				out.Strategy = "browser"
+				out.URL = res.URL
+				out.Result = res
+				out.Trace = append(out.Trace, Attempt{Strategy: "browser", URL: u, Millis: time.Since(start).Milliseconds()})
+				return out, nil
 			}
-			for _, u := range cands {
-				if res := d.tryCandidate(ctx, d.agent.Name(), u, out); res != nil {
-					return out, nil
-				}
+			out.Trace = append(out.Trace, attemptOf("browser", u, berr, start))
+		}
+	}
+
+	if landing != nil && d.agent != nil {
+		cands, err := d.agent.Extract(ctx, ExtractInput{DOI: doi, LandingURL: landing.FinalURL, HTML: landing.HTML})
+		if err != nil {
+			out.Trace = append(out.Trace, Attempt{Strategy: d.agent.Name(), Error: errString(err)})
+		}
+		for _, u := range cands {
+			if res := d.tryCandidate(ctx, d.agent.Name(), u, out); res != nil {
+				return out, nil
 			}
 		}
 	}
@@ -446,6 +469,50 @@ func attemptOf(strategy, url string, err error, start time.Time) Attempt {
 		a.Error = err.Error()
 	}
 	return a
+}
+
+// traceSawChallenge reports whether any attempt so far hit a bot wall
+// (Cloudflare/Radware challenge, IEEE-style 202/403 gateway) — the
+// trigger for the browser lane.
+func traceSawChallenge(trace []Attempt) bool {
+	for _, a := range trace {
+		if a.Error == "" {
+			continue
+		}
+		switch {
+		case strings.Contains(a.Error, "bot challenge"),
+			strings.Contains(a.Error, "pow_challenge"),
+			strings.Contains(a.Error, "http 202"),
+			strings.Contains(a.Error, "http 403"),
+			strings.Contains(a.Error, "identity-provider handshake"):
+			return true
+		}
+	}
+	return false
+}
+
+// browserTargets collects the URLs worth replaying in the browser:
+// every PDF-ish candidate already tried (they carry the publisher's
+// canonical PDF endpoints) plus the DOI landing URL itself (challenge
+// pages that resolve to a PDF link inside a real browser).
+func browserTargets(out *FetchOutcome, doi string) []string {
+	var urls []string
+	seen := map[string]bool{}
+	add := func(u string) {
+		if u != "" && !seen[u] {
+			seen[u] = true
+			urls = append(urls, u)
+		}
+	}
+	for _, a := range out.Trace {
+		if a.URL != "" && (looksLikePDF(a.URL) || strings.Contains(a.Strategy, "landing")) {
+			add(a.URL)
+		}
+	}
+	if doi != "" {
+		add("https://doi.org/" + doi)
+	}
+	return urls
 }
 
 // looksLikePDF reports whether a candidate URL plausibly serves PDF

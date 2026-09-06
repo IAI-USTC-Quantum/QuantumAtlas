@@ -40,6 +40,8 @@ type downloaderProbeFlags struct {
 	search      string
 	dryRun      bool
 	agent       bool
+	browserCDP  string
+	browserOn   bool
 	concurrency int
 	jsonOut     bool
 	perPaperTO  time.Duration
@@ -85,6 +87,8 @@ trailer, size bounds) and reports which strategy succeeded.`,
 	cmd.Flags().IntVar(&flags.random, "random", 0, "sample N random works from OpenAlex instead of positional identifiers")
 	cmd.Flags().StringVar(&flags.search, "search", "", "OpenAlex search filter for --random (e.g. \"quantum computing\")")
 	cmd.Flags().BoolVar(&flags.agent, "agent", false, "force-enable the agent fallback (requires downloader.agent.* in config)")
+	cmd.Flags().StringVar(&flags.browserCDP, "browser", "", "browser lane CDP endpoint override (e.g. ws://127.0.0.1:9222); implies --browser-on)")
+	cmd.Flags().BoolVar(&flags.browserOn, "browser-on", false, "enable the browser lane using downloader.browser.cdp_url from config")
 	cmd.Flags().IntVar(&flags.concurrency, "concurrency", 3, "parallel papers")
 	cmd.Flags().BoolVar(&flags.jsonOut, "json", false, "emit machine-readable JSON instead of the table")
 	cmd.Flags().DurationVar(&flags.perPaperTO, "timeout", flags.perPaperTO, "per-paper ladder budget")
@@ -107,6 +111,18 @@ type probeResult struct {
 	Sha256   string               `json:"sha256,omitempty"`
 	Error    string               `json:"error,omitempty"`
 	Attempts []downloader.Attempt `json:"attempts"`
+}
+
+// browserCDP resolves the probe's browser-lane endpoint: --browser
+// wins, else --browser-on uses the config value.
+func browserCDP(cfg *config.Config, flags downloaderProbeFlags) string {
+	if flags.browserCDP != "" {
+		return flags.browserCDP
+	}
+	if flags.browserOn {
+		return cfg.DownloaderBrowserCDPURL
+	}
+	return ""
 }
 
 func runDownloaderProbe(stdout, stderr io.Writer, args []string, flags downloaderProbeFlags) error {
@@ -164,6 +180,10 @@ func runDownloaderProbe(stdout, stderr io.Writer, args []string, flags downloade
 			RespectRobots: cfg.DownloaderRespectRobots,
 		},
 		Agent: agentCfg,
+		Browser: downloader.BrowserConfig{
+			CDPURL:  browserCDP(cfg, flags),
+			Timeout: cfg.DownloaderBrowserTimeout,
+		},
 	})
 	defer func() {
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

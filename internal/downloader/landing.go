@@ -20,6 +20,9 @@ var (
 	pdfHrefRe         = regexp.MustCompile(`(?is)(?:href|src)=["']([^"'\s<>]+\.pdf(?:\?[^"'\s<>]*)?)["']`)
 	ieeeDocRe         = regexp.MustCompile(`(?i)ieeexplore\.ieee\.org/document/(\d+)`)
 	ieeeFrameSrcRe    = regexp.MustCompile(`(?is)(?:iframe[^>]+src|window\.open\(["'])\s*(/stamp/stampPDF\.jsp[^"'\s)]+|/iel[0-9x]+/[^"'\s)]+\.pdf)`)
+	// jsonPDFURLRe matches inline-JSON pdf links ("pdfUrl": "/…"),
+	// how IEEE Xplore embeds the stamp URL in its document pages.
+	jsonPDFURLRe = regexp.MustCompile(`(?i)"(?:pdfUrl|pdf_url|pdfLink)"\s*:\s*"([^"]+)"`)
 )
 
 // LandingInfo is the outcome of a landing-page fetch: the candidates

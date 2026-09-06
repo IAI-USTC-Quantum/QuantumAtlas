@@ -199,6 +199,15 @@
 #                                    # blanket-disallow "*" as an anti-AI
 #                                    # measure, which would break legit
 #                                    # downloads. Enable for strict parity.
+#   browser:                        # CDP-driven real-Chromium lane for
+#                                    # bot walls (Cloudflare/IEEE WAF).
+#                                    # Point at the compose sidecar:
+#                                    #   cdp_url: http://qatlas-browser:9222
+#                                    # Publisher LOGIN happens in the
+#                                    # sidecar's persistent profile — one
+#                                    # headed sign-in on the host reusing
+#                                    # the profile volume (see
+#                                    # deploy/docker-compose.yml notes).
 #   agent:                          # LLM fallback link extractor
 #     backend: ""                   # "" = off | "openai" | "claude"
 #     base_url: ""                  # openai: e.g. https://llm.example.com/v1

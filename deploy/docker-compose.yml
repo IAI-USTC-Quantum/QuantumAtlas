@@ -121,6 +121,38 @@ services:
       # persist updates back to this file.
       - ${HOME}/.qatlas/search.yaml:/etc/qatlas-search/config.yaml
 
+  # ── qatlas-browser: Chromium sidecar for the robust downloader ────────
+  # Optional. The downloader's browser lane (downloader.browser.cdp_url)
+  # drives a real Chromium over CDP to clear publisher bot walls that
+  # defeat every plain-HTTP strategy (Cloudflare challenges, IEEE's AWS
+  # WAF 202s). Publisher logins live in the PERSISTENT profile volume —
+  # sign in ONCE via a headed Chrome on the host pointed at the same
+  # directory (see config.example.yaml "downloader.browser" notes), and
+  # every later headless fetch reuses those cookies.
+  # Bring it online with:  docker compose --profile browser up -d
+  # Then set in ~/.qatlas/config.yaml:
+  #   downloader:
+  #     browser:
+  #       cdp_url: "http://qatlas-browser:9222"
+  qatlas-browser:
+    image: chromedp/headless-shell:latest
+    container_name: qatlas-browser
+    restart: unless-stopped
+    profiles: ["browser"]
+    networks:
+      - shared-infra
+    command:
+      - --remote-debugging-address=0.0.0.0
+      - --remote-debugging-port=9222
+      - --disable-blink-features=AutomationControlled
+      - --no-sandbox
+    volumes:
+      - qatlas-browser-profile:/data
+    # No ports mapping: only qatlasd talks to it, over shared-infra.
+    # One-time publisher login (run on the HOST):
+    #   chromium --user-data-dir=$(docker volume inspect -f '{{.Mountpoint}}' deploy_qatlas-browser-profile) https://ieeexplore.ieee.org
+    # (find the volume's real name via `docker volume ls | grep browser`)
+
   # ── qatlas-rag: GPU semantic-retrieval microservice ───────────────────
   # Optional. Lives in the separate repository IAI-USTC-Quantum/qatlas-rag;
   # its release workflow publishes the image to ghcr (deploy hosts pull,
@@ -177,6 +209,9 @@ networks:
 volumes:
   # Model-weight cache for the qatlas-rag service (see above).
   hf-cache:
+  # Persistent Chromium profile for the downloader browser sidecar
+  # (publisher login cookies survive restarts).
+  qatlas-browser-profile:
 
 # ── Alternative storage: docker named volumes ─────────────────────────────
 # Uncomment this block + delete the `./data/*` host paths above if you
