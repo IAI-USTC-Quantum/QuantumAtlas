@@ -33,6 +33,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -87,6 +88,14 @@ func main() {
 	fetcher, err := arxiv.New(arxiv.Config{})
 	if err != nil {
 		log.Fatalf("arxiv fetcher: %v", err)
+	}
+
+	// Browser supervisor: WAF-heavy pages can leave the browser process
+	// alive with a deadlocked CDP endpoint (never exits, port hung). The
+	// shell-level restart-on-exit cannot see that, so the service probes
+	// /json/version every 5s and replaces the process after 3 misses.
+	if cdp != "" {
+		go superviseBrowser(cdp)
 	}
 	dl := downloader.New(nil, nil, fetcher, nil, downloader.Config{
 		Concurrency:    2,
@@ -245,10 +254,13 @@ func (s *server) handleJob(w http.ResponseWriter, r *http.Request) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if j.Status == "done" && (j.FileToken == "" || time.Now().After(j.ExpiresAt)) {
-		// Token consumed/expired — strip it from the view.
-		stripped := *j
-		stripped.FileToken = ""
-		_ = json.NewEncoder(w).Encode(stripped)
+		// Token consumed/expired — hide it from the view. The job
+		// embeds a mutex, so it must not be value-copied; mutate under
+		// the lock and restore right after encoding instead.
+		token := j.FileToken
+		j.FileToken = ""
+		_ = json.NewEncoder(w).Encode(j)
+		j.FileToken = token
 		return
 	}
 	_ = json.NewEncoder(w).Encode(j)
@@ -338,4 +350,92 @@ func writeAll(path string, r io.Reader) error {
 		return err
 	}
 	return os.Rename(f.Name(), path)
+}
+
+// superviseBrowser keeps a CDP endpoint alive: probe every 5s, kill
+// and restart the bundled headless-shell after 3 consecutive misses.
+// The browser binary is located the same way the entrypoint does.
+func superviseBrowser(cdpURL string) {
+	bin := findBrowserBinary()
+	if bin == "" {
+		log.Printf("browser supervisor: no browser binary found; lane stays off")
+		return
+	}
+	for {
+		proc := startBrowser(bin)
+		waitForCDP(cdpURL, 30*time.Second)
+		fails := 0
+		for procAlive(proc) {
+			if probeCDP(cdpURL) {
+				fails = 0
+			} else {
+				fails++
+				if fails >= 3 {
+					log.Printf("browser supervisor: CDP unresponsive; replacing browser")
+					_ = proc.Process.Kill()
+					_, _ = proc.Process.Wait()
+					break
+				}
+			}
+			time.Sleep(5 * time.Second)
+		}
+		_ = proc.Wait()
+		os.RemoveAll("/tmp/chromium-profile/SingletonLock")
+		time.Sleep(2 * time.Second)
+	}
+}
+
+func findBrowserBinary() string {
+	for _, name := range []string{"headless-shell", "google-chrome", "chrome", "chromium", "chromium-browser"} {
+		if p, err := exec.LookPath(name); err == nil {
+			return p
+		}
+	}
+	return ""
+}
+
+func startBrowser(bin string) *exec.Cmd {
+	cmd := exec.Command(bin,
+		"--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage",
+		"--remote-debugging-address=127.0.0.1", "--remote-debugging-port=9222",
+		"--user-data-dir=/tmp/chromium-profile", "about:blank",
+	)
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	if err := cmd.Start(); err != nil {
+		log.Printf("browser supervisor: start failed: %v", err)
+	}
+	return cmd
+}
+
+func probeCDP(cdpURL string) bool {
+	host := strings.TrimPrefix(strings.TrimPrefix(cdpURL, "http://"), "https://")
+	if !strings.Contains(host, ":9222") {
+		host = host + ":9222" //nolint: staticcheck // default CDP port
+	}
+	if !strings.HasPrefix(host, "127.0.0.1") {
+		return true // remote sidecar: not ours to supervise
+	}
+	client := &http.Client{Timeout: 4 * time.Second}
+	resp, err := client.Get("http://" + host + "/json/version")
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<10))
+	return resp.StatusCode == http.StatusOK
+}
+
+func waitForCDP(cdpURL string, d time.Duration) {
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		if probeCDP(cdpURL) {
+			return
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+func procAlive(cmd *exec.Cmd) bool {
+	return cmd != nil && cmd.Process != nil && cmd.Process.Signal(syscall.Signal(0)) == nil
 }

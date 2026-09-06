@@ -23,12 +23,13 @@ elif command -v headless-shell >/dev/null 2>&1; then
 fi
 
 if [ -n "$BIN" ]; then
+  # One initial start; the Go service supervises it from here on.
   # shellcheck disable=SC2086
-  "$BIN" $CHROME_ARGS about:blank &
+  "$BIN" $CHROME_ARGS about:blank >/dev/null 2>&1 &
+
   # Wait for the CDP endpoint (busybox wget; curl as fallback).
   for _ in $(seq 1 60); do
-    if wget -q -O /dev/null http://127.0.0.1:9222/json/version 2>/dev/null \
-       || curl -sf http://127.0.0.1:9222/json/version >/dev/null 2>&1; then
+    if curl -sf -m 3 http://127.0.0.1:9222/json/version >/dev/null 2>&1; then
       echo "CDP endpoint ready ($BIN)" >&2
       break
     fi

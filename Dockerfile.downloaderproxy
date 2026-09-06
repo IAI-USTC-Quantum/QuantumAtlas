@@ -32,7 +32,7 @@ FROM chromedp/headless-shell:latest AS browser
 FROM debian:bookworm-slim
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      ca-certificates libnss3 libnspr4 libexpat1 \
+      ca-certificates curl libnss3 libnspr4 libexpat1 \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=browser /headless-shell/headless-shell /usr/local/bin/headless-shell
 COPY --from=build /out/downloaderproxy /usr/local/bin/downloaderproxy
