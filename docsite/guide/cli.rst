@@ -70,3 +70,25 @@
    发现，安装对应的插件包后命令自动出现在 CLI 中，未安装时会提示
    安装方法）：前者由 qatlas-search 仓库提供，后者由 qatlas-rag 仓库
    提供，详见 :doc:`插件化架构与路线图 </dev/plugins>`。
+
+服务器端运维命令（``qatlasd``）
+-------------------------------
+
+Robust Downloader 的验收 / 压测工具随 qatlasd 二进制发布：
+
+.. code-block:: bash
+
+   # 单篇论文跑完整下载阶梯，打印策略轨迹
+   qatlasd downloader probe 10.1038/s41586-024-07806-9 arXiv:2401.12345
+
+   # 从 OpenAlex 随机抽 N 篇论文压测（可选 ``--search`` 过滤领域）
+   qatlasd downloader probe --random 30 --search "quantum computing"
+
+   # 指定远程 downloaderproxy（校园出口）与 agent 兜底
+   qatlasd downloader probe --random 10 --proxy http://ag-workstation:8602
+
+   # 机器可读 JSON 输出；任一失败退出码为 1（适合自动化）
+   qatlasd downloader probe --random 5 --json
+
+需要 ``paper_access.enabled: true``（读取 ``~/.qatlas/config.yaml``）。
+详见 :doc:`search` 的 :doc:`search <search>` 一节。

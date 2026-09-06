@@ -24,6 +24,42 @@ API 参考
 
 请求体格式见 :doc:`search`。
 
+``POST /api/search/multi``
+    逐平台搜索：每个被选 backend 返回自己的原始命中列表（该平台自身
+    排序，**不做跨源合并与融合评分**），供前端分平台 Tab 展示。请求体
+    ``{"text": "...", "max_results": 10, "sources": ["arxiv", "ieee"]}``，
+    响应 ``{"results": {backend: [hit, ...]}, "errors": {backend: msg}}``。
+    需 ``papers:read``。
+
+``POST /api/search/agentic``
+    LLM 搜索（带总结与配额），请求体同上（可加 ``"agent": true``），
+    响应增加 ``conclusion`` 与 ``usage``。需 ``papers:read`` 且用户级
+    凭据（计量）。
+
+``GET /api/search/backends``
+    backend 目录（搜索页复选框数据源）：静态表 ∪ qatlas-search 实时
+    可用性 ∪ 当前用户已配置的个人 key 状态。``selectable`` 为
+    ``server_ready || (user_key && key_configured)``——需 key 但未
+    配置的后端复选框禁用。仅浏览器会话。
+
+``GET/PUT/DELETE /api/me/search-keys``
+    个人搜索 API key 管理（dashboard 面板数据源）。PUT 校验 backend
+    是否有用户 key 槽位；列表只回末四位掩码。仅浏览器会话。
+
+Robust Downloader
+~~~~~~~~~~~~~~~~~
+
+``POST /api/downloader/fetch``
+    提交一批论文标识（DOI / arXiv id / 论文链接，每行一条，单次最多
+    50 条），逐条解析 → resolve-or-mint 入注册表 → 入队多范式下载
+    阶梯。需 ``papers:write``。
+
+``GET /api/downloader/jobs``
+    任务快照：每篇论文的状态 / 当前策略 / 完整尝试轨迹 / 计数器。
+    需 ``papers:read``。
+
+完整策略阶梯与配置见 :doc:`search` 的 :doc:`search <search>` 一节。
+
 论文与资产
 ----------
 

@@ -126,10 +126,10 @@ qatlas-search（``POST /api/search/multi``），每个被选中的 backend 返�
   PocketBase（加密密钥由服务端 system PAT 派生，无额外配置项），列表只
   显示末四位掩码；搜索时代理解密注入，qatlas-search 不持久化任何请求级
   key。服务端 YAML 里的同名 key 仍作为兜底（优先级：用户 key > 服务端）。
-- **API**：``POST /api/search/multi``（papers:read scope），body
-  ``{"text", "max_results", "sources": [backend]}``，响应
-  ``{"results": {backend: [hit]}, "errors": {backend: msg}, "remote": true}``；
-  key 的 CRUD 在 ``GET/PUT/DELETE /api/me/search-keys``（仅浏览器会话）。
+- **API**：``POST /api/search/multi``（papers:read scope），请求体
+  含 text / max_results / sources，响应按 backend 分组返回原始命中
+  列表；key 的 CRUD 在 ``GET/PUT/DELETE /api/me/search-keys``（仅
+  浏览器会话）。完整请求/响应格式见 :doc:`api <api>`。
 
 Robust Downloader（多范式下载入库）
 ------------------------------------
@@ -156,9 +156,9 @@ Robust Downloader（多范式下载入库）
    Frontiers/PLOS/eLife/bioRxiv，按 DOI 前缀）；
 5. **landing** — doi.org 落地页 ``citation_pdf_url`` 挖掘（IEEE 文档页
    额外解析 stamp.jsp 中间页）；
-6. **agent**（兜底，默认关）— LLM 阅读落地页 HTML 提取候选链接，
-   ``downloader.agent.backend: openai``（OpenAI 兼容端点）或
-   ``claude``（本机 headless claude CLI，Read/Glob/Grep 沙箱）。
+6. agent（兜底，默认关）——LLM 阅读落地页 HTML 提取候选链接。配置
+   项 ``downloader.agent.backend`` 设为 ``openai``（OpenAI 兼容端点）
+   或 ``claude``（本机 headless claude CLI）。
 
 成功的 PDF 带溯源元数据（``downloader:<策略>``、来源 URL、sha256）写入
 对象存储并触发 MinerU 转换；每次尝试的策略轨迹记录在任务快照与
@@ -166,8 +166,8 @@ Robust Downloader（多范式下载入库）
 按主机限速；``downloader.respect_robots`` 默认关闭（按需授权获取不属于
 爬虫，且多家出版社用 ``Disallow: *`` 反 AI 爬虫会误伤合法下载）。
 
-**验收工具**：``qatlasd downloader probe [ids | --random N --search "..."]``
-从 OpenAlex 随机抽样跑全链路并输出逐篇结果与失败分类（机器人墙 /
+**验收工具**：:command:`qatlasd downloader probe` 支持位置参数（DOI/arXiv）、:code:`--random N`（OpenAlex 随机抽样）、:code:`--search`（领域过滤）。
+从 OpenAlex 抽样跑全链路并输出逐篇结果与失败分类（机器人墙 /
 付费墙 / 404 / 无候选…），任一失败退出码为 1，便于自动化压测。残余
 失败均为环境权限类终态：IEEE 网关 202、Wiley/AIP 的 Cloudflare 挑战、
 无 OA 副本且无订阅的 Nature/Elsevier 内容——这类论文请用浏览器下载后
