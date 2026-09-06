@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.27.0 (2026-09-07)
+
+### Feat
+
+- **downloader**: downloaderproxy — a standalone, self-contained robust-downloader service (`cmd/downloaderproxy`, `Dockerfile.downloaderproxy`) for deployment on a machine with direct publisher entitlement (e.g. a campus-egress workstation), replacing the browser sidecar design. ONE container, no sidecars: the image bundles a current Chrome-for-Testing (chromedp/headless-shell binary — publisher WAFs reject the stale chromium debian ships) started by the entrypoint with a local CDP endpoint; the service exposes a complete API — `POST /v1/jobs` (async ladder run), `GET /v1/jobs/{id}` (status + full attempt trace), `GET /v1/files/{token}` (single-use 30-min file token) — behind an optional bearer token (`DL_PROXY_TOKEN`), with env knobs for unpaywall email / S2 key / debug logging. qatlasd gains `downloader.proxy.{url,token,timeout}` and a `RemoteProxy` client (`internal/downloader/proxy.go`): when local attempts hit entitlement walls, the ladder delegates submit→poll→fetch to the proxy and validates the returned bytes through the shared pipeline (strategy `remote-proxy:<s>`); the proxy outranks the local browser lane. The `qatlasd downloader probe` gains `--proxy/--proxy-token`. Semantic Scholar clients (Go + proxy service) accept `downloader.s2_api_key` / `DL_S2_API_KEY` with a local 1 req/s limiter honoring the free-key budget. Browser-lane fixes: the Fetch-domain capture now wraps `GetResponseBody` in an ActionFunc (session context), navigations use raw `page.Navigate` (PDF documents never fire load events), and the HTML miner reuses the landing-page extractors (incl. IEEE's inline `"pdfUrl"` JSON field). Field-tested end-to-end: campus-egress proxy downloads a 4.2 MB IEEE CVPR PDF through the AWS-WAF challenge → stamp.jsp → getPDF.jsp chain in 42s; the one-time file token returns `%PDF-` bytes exactly once.
+
 ## v0.26.0 (2026-09-06)
 
 ### Feat
