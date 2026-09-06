@@ -200,14 +200,19 @@
 #                                    # measure, which would break legit
 #                                    # downloads. Enable for strict parity.
 #   browser:                        # CDP-driven real-Chromium lane for
-#                                    # bot walls (Cloudflare/IEEE WAF).
-#                                    # Point at the compose sidecar:
-#                                    #   cdp_url: http://qatlas-browser:9222
-#                                    # Publisher LOGIN happens in the
-#                                    # sidecar's persistent profile — one
-#                                    # headed sign-in on the host reusing
-#                                    # the profile volume (see
-#                                    # deploy/docker-compose.yml notes).
+#                                    # bot walls (Cloudflare/IEEE WAF),
+#                                    # via an already-running Chromium's
+#                                    # DevTools endpoint.
+#   proxy:                          # delegate to a standalone
+#                                    # downloaderproxy (cmd/downloaderproxy,
+#                                    # Dockerfile.downloaderproxy) deployed
+#                                    # on a machine with direct publisher
+#                                    # entitlement, e.g. a campus-egress
+#                                    # workstation. Preferred over the
+#                                    # local browser lane when set.
+#     url: http://ag-workstation:8602
+#     token: ""
+#     timeout: 5m
 #   agent:                          # LLM fallback link extractor
 #     backend: ""                   # "" = off | "openai" | "claude"
 #     base_url: ""                  # openai: e.g. https://llm.example.com/v1

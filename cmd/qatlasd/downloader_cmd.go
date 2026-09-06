@@ -42,6 +42,8 @@ type downloaderProbeFlags struct {
 	agent       bool
 	browserCDP  string
 	browserOn   bool
+	proxyURL    string
+	proxyToken  string
 	concurrency int
 	jsonOut     bool
 	perPaperTO  time.Duration
@@ -89,6 +91,8 @@ trailer, size bounds) and reports which strategy succeeded.`,
 	cmd.Flags().BoolVar(&flags.agent, "agent", false, "force-enable the agent fallback (requires downloader.agent.* in config)")
 	cmd.Flags().StringVar(&flags.browserCDP, "browser", "", "browser lane CDP endpoint override (e.g. ws://127.0.0.1:9222); implies --browser-on)")
 	cmd.Flags().BoolVar(&flags.browserOn, "browser-on", false, "enable the browser lane using downloader.browser.cdp_url from config")
+	cmd.Flags().StringVar(&flags.proxyURL, "proxy", "", "remote downloaderproxy URL override (e.g. http://ag-workstation:8602)")
+	cmd.Flags().StringVar(&flags.proxyToken, "proxy-token", "", "remote downloaderproxy bearer token")
 	cmd.Flags().IntVar(&flags.concurrency, "concurrency", 3, "parallel papers")
 	cmd.Flags().BoolVar(&flags.jsonOut, "json", false, "emit machine-readable JSON instead of the table")
 	cmd.Flags().DurationVar(&flags.perPaperTO, "timeout", flags.perPaperTO, "per-paper ladder budget")
@@ -111,6 +115,15 @@ type probeResult struct {
 	Sha256   string               `json:"sha256,omitempty"`
 	Error    string               `json:"error,omitempty"`
 	Attempts []downloader.Attempt `json:"attempts"`
+}
+
+// proxyURL resolves the probe's remote-proxy endpoint: --proxy wins,
+// else the config value is used (empty = disabled).
+func proxyURL(cfg *config.Config, flags downloaderProbeFlags) string {
+	if flags.proxyURL != "" {
+		return flags.proxyURL
+	}
+	return cfg.DownloaderProxyURL
 }
 
 // browserCDP resolves the probe's browser-lane endpoint: --browser
@@ -183,6 +196,10 @@ func runDownloaderProbe(stdout, stderr io.Writer, args []string, flags downloade
 		Browser: downloader.BrowserConfig{
 			CDPURL:  browserCDP(cfg, flags),
 			Timeout: cfg.DownloaderBrowserTimeout,
+		},
+		Proxy: &downloader.RemoteProxy{
+			BaseURL: proxyURL(cfg, flags),
+			Token:   flags.proxyToken,
 		},
 	})
 	defer func() {

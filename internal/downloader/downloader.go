@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -25,6 +26,9 @@ var ErrNoPDF = errors.New("downloader: all strategies failed")
 
 // ErrNoIdentity is returned when a ref has neither DOI nor arXiv id.
 var ErrNoIdentity = errors.New("downloader: no DOI or arXiv identity")
+
+// ErrProxyNotConfigured when the remote downloaderproxy is unset.
+var ErrProxyNotConfigured = errors.New("downloader: remote proxy not configured")
 
 // registryWriter is the slice of *registry.Store the downloader needs
 // (factored out so tests can fake the catalog without a database).
@@ -66,6 +70,7 @@ type Config struct {
 	Fetch          FetchConfig
 	Agent          AgentConfig
 	Browser        BrowserConfig
+	Proxy          *RemoteProxy
 	UnpaywallEmail string
 	S2APIKey       string
 	// OA resolvers used by the oa-apis strategy, in try order. Empty →
@@ -152,6 +157,7 @@ type Downloader struct {
 	epmc        *EuropePMC
 	agent       LinkExtractor
 	browser     *BrowserLane
+	proxy       *RemoteProxy
 
 	reg        registryWriter
 	store      objstore.Store
@@ -216,6 +222,12 @@ func New(reg registryWriter, store objstore.Store, fetcher *arxiv.Fetcher, oa DO
 	}
 	d.agent = NewLinkExtractor(cfg.Agent)
 	d.browser = NewBrowserLane(cfg.Browser)
+	if cfg.Proxy != nil && cfg.Proxy.Enabled() {
+		d.proxy = cfg.Proxy
+		if d.proxy.Client == nil {
+			d.proxy.Client = &http.Client{Timeout: d.proxy.Timeout + 30*time.Second}
+		}
+	}
 	for _, opt := range opts {
 		opt(d)
 	}
@@ -373,6 +385,24 @@ func (d *Downloader) FetchPDF(ctx context.Context, ref registry.PaperRef) (*Fetc
 		if len(landing.Candidates) == 0 {
 			out.Trace = append(out.Trace, Attempt{Strategy: "landing", URL: landing.FinalURL, Error: "no PDF candidates on landing page"})
 		}
+	}
+
+	// Remote proxy FIRST: a standalone downloaderproxy on a
+	// directly-entitled machine (campus egress) runs the full ladder —
+	// including its own browser lane — so it beats every local last
+	// resort when the local network is proxied or unentitled.
+	if d.proxy.Enabled() && traceSawChallenge(out.Trace) {
+		start := time.Now()
+		res, attempts, strategy, perr := d.proxy.FetchPDF(ctx, ref)
+		out.Trace = append(out.Trace, attempts...)
+		if perr == nil {
+			out.Strategy = strategy
+			out.URL = res.URL
+			out.Result = res
+			out.Trace = append(out.Trace, Attempt{Strategy: strategy, URL: res.URL, Millis: time.Since(start).Milliseconds()})
+			return out, nil
+		}
+		out.Trace = append(out.Trace, attemptOf("remote-proxy", "", perr, start))
 	}
 
 	// Browser lane: replay the publisher PDF/landing URLs through a

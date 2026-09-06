@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -179,6 +181,9 @@ func (b *BrowserLane) navigate(ctx context.Context, rawURL string) (*browserBody
 					return berr
 				}))
 				if err == nil && len(body) > 0 {
+					if debugBrowser {
+						log.Printf("[browserlane] BODY kind=%s len=%d url=%.100s", ClassifyBody(body), len(body), url)
+					}
 					switch kind := ClassifyBody(body); kind {
 					case BodyPDF:
 						select {
@@ -228,6 +233,9 @@ func (b *BrowserLane) navigate(ctx context.Context, rawURL string) (*browserBody
 			return
 		}
 		visited[u] = true
+		if debugBrowser {
+			log.Printf("[browserlane] NAV %.120s", u)
+		}
 		_ = chromedp.Run(tabCtx, chromedp.ActionFunc(func(cctx context.Context) error {
 			_, _, _, err := page.Navigate(u).Do(cctx)
 			return err
@@ -274,6 +282,9 @@ func mineBrowserHTML(doc *browserBody) []string {
 	if doc == nil || len(doc.body) == 0 {
 		return nil
 	}
+	if debugBrowser {
+		log.Printf("[browserlane] MINE url=%.90s len=%d", doc.url, len(doc.body))
+	}
 	html := string(doc.body)
 	base := doc.url
 	var out []string
@@ -317,3 +328,6 @@ Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
 Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
 window.chrome = window.chrome || {runtime: {}};
 `
+
+// debugBrowser enables verbose lane logging (env DL_BROWSER_DEBUG).
+var debugBrowser = os.Getenv("DL_BROWSER_DEBUG") != ""

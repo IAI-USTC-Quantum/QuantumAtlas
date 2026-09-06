@@ -311,6 +311,14 @@ type Config struct {
 	DownloaderBrowserCDPURL  string
 	DownloaderBrowserTimeout time.Duration
 
+	// DownloaderProxy* wires the ladder at a standalone downloaderproxy
+	// (cmd/downloaderproxy) deployed on a directly-entitled machine
+	// (campus egress, e.g. an Ag-Workstation). Papers whose local
+	// attempts hit entitlement walls are delegated to it.
+	DownloaderProxyURL     string
+	DownloaderProxyToken   string
+	DownloaderProxyTimeout time.Duration
+
 	// Plugin platform. Plugins are optional: an empty directory or no
 	// manifests means the core server still starts with just papers /
 	// auth enabled.
@@ -459,6 +467,11 @@ type fileConfig struct {
 			CDPURL  string `yaml:"cdp_url"`
 			Timeout string `yaml:"timeout"`
 		} `yaml:"browser"`
+		Proxy struct {
+			URL     string `yaml:"url"`
+			Token   string `yaml:"token"`
+			Timeout string `yaml:"timeout"`
+		} `yaml:"proxy"`
 	} `yaml:"downloader"`
 
 	RAG struct {
@@ -740,6 +753,8 @@ func (fc *fileConfig) toConfig(anchor string) (*Config, error) {
 		DownloaderAgentClaudeModel:  strings.TrimSpace(fc.Downloader.Agent.ClaudeModel),
 		DownloaderAgentMaxBudgetUSD: fc.Downloader.Agent.MaxBudgetUSD,
 		DownloaderBrowserCDPURL:     strings.TrimSpace(fc.Downloader.Browser.CDPURL),
+		DownloaderProxyURL:          strings.TrimRight(strings.TrimSpace(fc.Downloader.Proxy.URL), "/"),
+		DownloaderProxyToken:        fc.Downloader.Proxy.Token,
 		RAGRemoteEnabled:            fc.RAG.Remote.Enabled,
 		RAGRemoteURL:                fc.RAG.Remote.URL,
 		RAGRemoteToken:              fc.RAG.Remote.Token,
@@ -783,6 +798,9 @@ func (fc *fileConfig) toConfig(anchor string) (*Config, error) {
 		return nil, err
 	}
 	if cfg.DownloaderBrowserTimeout, err = parseDuration(fc.Downloader.Browser.Timeout, 45*time.Second, "downloader.browser.timeout"); err != nil {
+		return nil, err
+	}
+	if cfg.DownloaderProxyTimeout, err = parseDuration(fc.Downloader.Proxy.Timeout, 5*time.Minute, "downloader.proxy.timeout"); err != nil {
 		return nil, err
 	}
 	switch cfg.DownloaderAgentBackend {

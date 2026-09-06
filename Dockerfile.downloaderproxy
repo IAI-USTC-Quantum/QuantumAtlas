@@ -1,0 +1,43 @@
+# downloaderproxy — standalone robust downloader service.
+#
+# ONE container, no sidecars: bundles Chromium (driven through a local
+# CDP endpoint by the browser lane) plus the service itself. Deploy on
+# a machine whose egress carries institutional subscriptions (e.g. an
+# Ag-Workstation on the campus network); qatlasd delegates to it via
+# downloader.proxy_url.
+#
+# Build:  docker build -f Dockerfile.downloaderproxy -t qatlas-downloaderproxy .
+# Run:    docker run -d --name downloader-proxy -p 8602:8602 \
+#           -e DL_PROXY_TOKEN=<shared-secret> \
+#           -e DL_UNPAYWALL_EMAIL=you@example.com \
+#           -e DL_S2_API_KEY=s2k-... \
+#           qatlas-downloaderproxy
+#
+# NOTE: run WITHOUT http_proxy/https_proxy env (docker daemon defaults
+# or -e flags) so the container egress keeps the campus identity.
+
+FROM golang:1.26 AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd/downloaderproxy ./cmd/downloaderproxy
+COPY internal ./internal
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/downloaderproxy ./cmd/downloaderproxy
+
+# The browser binary comes from chromedp/headless-shell (a current
+# Chrome for Testing build — publisher WAFs reject the stale chromium
+# debian ships) while debian provides the shell + CA store. Both base
+# images are locally cached, so the build needs no registry access.
+FROM chromedp/headless-shell:latest AS browser
+FROM debian:bookworm-slim
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates libnss3 libnspr4 libexpat1 \
+ && rm -rf /var/lib/apt/lists/*
+COPY --from=browser /headless-shell/headless-shell /usr/local/bin/headless-shell
+COPY --from=build /out/downloaderproxy /usr/local/bin/downloaderproxy
+COPY deploy/downloaderproxy-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+EXPOSE 8602
+ENTRYPOINT ["/entrypoint.sh"]

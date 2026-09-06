@@ -651,12 +651,17 @@ func main() {
 			if cfg.DownloaderBrowserCDPURL != "" {
 				browserState = cfg.DownloaderBrowserCDPURL
 			}
+			proxyState := "off"
+			if cfg.DownloaderProxyURL != "" {
+				proxyState = cfg.DownloaderProxyURL
+			}
 			slog.Info("downloader enabled",
 				"concurrency", cfg.DownloaderConcurrency,
 				"respect_robots", cfg.DownloaderRespectRobots,
 				"unpaywall", unpaywallEmail != "",
 				"agent", agentState,
 				"browser", browserState,
+				"proxy", proxyState,
 			)
 			app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
 				shutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

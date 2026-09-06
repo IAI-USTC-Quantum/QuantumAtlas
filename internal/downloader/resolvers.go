@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"golang.org/x/time/rate"
 )
 
 // OAResolver produces candidate direct-PDF URLs for a DOI from one
@@ -252,12 +254,14 @@ func epmcPDFURLs(res *epmcResult) []string {
 }
 
 // SemanticScholar resolves via the S2 Graph API openAccessPdf field.
-// The unauthenticated pool is globally shared and often saturated; the
-// resolver is best-effort by design (errors just demote the strategy).
+// A free key grants a dedicated 1 req/s budget (the unauthenticated
+// pool is globally shared and bursts into 429s) — a keyed client is
+// rate-limited locally to honor it, making the resolver deterministic.
 type SemanticScholar struct {
 	BaseURL string
 	APIKey  string
 	Client  *http.Client
+	limiter *rate.Limiter // nil for unauthenticated (best-effort mode)
 }
 
 func NewSemanticScholar(baseURL, apiKey string, timeout time.Duration) *SemanticScholar {
@@ -267,7 +271,11 @@ func NewSemanticScholar(baseURL, apiKey string, timeout time.Duration) *Semantic
 	if timeout == 0 {
 		timeout = 15 * time.Second
 	}
-	return &SemanticScholar{BaseURL: baseURL, APIKey: apiKey, Client: &http.Client{Timeout: timeout}}
+	s := &SemanticScholar{BaseURL: baseURL, APIKey: apiKey, Client: &http.Client{Timeout: timeout}}
+	if apiKey != "" {
+		s.limiter = rate.NewLimiter(rate.Limit(1), 1)
+	}
+	return s
 }
 
 func (s *SemanticScholar) Name() string { return "semantic_scholar" }
@@ -279,6 +287,11 @@ type s2PaperResponse struct {
 }
 
 func (s *SemanticScholar) Candidates(ctx context.Context, doi string) ([]string, error) {
+	if s.limiter != nil {
+		if err := s.limiter.Wait(ctx); err != nil {
+			return nil, fmt.Errorf("semantic_scholar: %w", err)
+		}
+	}
 	var out s2PaperResponse
 	raw := fmt.Sprintf("%s/graph/v1/paper/DOI:%s?fields=openAccessPdf", s.BaseURL, url.PathEscape(doi))
 	err := getS2JSON(ctx, s.Client, s.APIKey, raw, &out)
