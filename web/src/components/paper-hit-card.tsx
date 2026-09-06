@@ -15,13 +15,16 @@ type Props = {
   paperId?: string
   /** True when this search minted the registry paper (picked up by lazy ingestion). */
   created?: boolean
+  /** Hide the fused score (multi-mode raw results carry no meaningful score). */
+  hideScore?: boolean
 }
 
 // One search hit rendered as a card: title/authors/year, identity badges
 // (arxiv id, DOI), the provider that produced it, and the merge score.
 // Hits with a registry paper_id link through to the paper detail route;
-// title-only candidates (no paper_id) render without the link.
-export function PaperHitCard({ hit, rank, paperId, created }: Props) {
+// hits with only an external url render an outbound link; title-only
+// candidates (neither) render without a link.
+export function PaperHitCard({ hit, rank, paperId, created, hideScore }: Props) {
   const { t } = useTranslation('papers')
   const lang = useLang()
   const detail = usePaperDetail(paperId ?? null)
@@ -44,6 +47,16 @@ export function PaperHitCard({ hit, rank, paperId, created }: Props) {
               >
                 {title}
               </Link>
+            ) : hit.url ? (
+              <a
+                href={hit.url}
+                target="_blank"
+                rel="noreferrer"
+                className="truncate text-base font-medium text-foreground hover:text-primary hover:underline"
+                title={title}
+              >
+                {title}
+              </a>
             ) : (
               <h3 className="truncate text-base font-medium text-foreground" title={title}>
                 {title}
@@ -55,9 +68,11 @@ export function PaperHitCard({ hit, rank, paperId, created }: Props) {
               </Badge>
             )}
           </div>
-          <span className="shrink-0 font-mono text-xs text-muted-foreground">
-            {t('scoreLabel')}: {hit.score.toFixed(3)}
-          </span>
+          {!hideScore && (
+            <span className="shrink-0 font-mono text-xs text-muted-foreground">
+              {t('scoreLabel')}: {hit.score.toFixed(3)}
+            </span>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5 text-xs">
@@ -73,6 +88,12 @@ export function PaperHitCard({ hit, rank, paperId, created }: Props) {
           )}
           {hit.year ? <Badge variant="outline">{hit.year}</Badge> : null}
           <Badge variant="outline">{hit.source}</Badge>
+          {hit.venue && <Badge variant="outline">{hit.venue}</Badge>}
+          {typeof hit.citations === 'number' && hit.citations > 0 && (
+            <Badge variant="outline" className="tabular-nums">
+              {t('citationsLabel', { count: hit.citations })}
+            </Badge>
+          )}
         </div>
 
         {hit.authors && hit.authors.length > 0 && (

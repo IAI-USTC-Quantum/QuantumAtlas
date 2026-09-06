@@ -18,6 +18,7 @@
       "dashboard": "Dashboard",
       "papers": "Paper Search",
       "papersList": "Papers",
+      "downloader": "Robust Downloader",
       "pat": "PATs",
       "admin": "Admin"
     },
@@ -187,7 +188,26 @@
       "pageOf": "Page {{page}} of {{pages}}",
       "prev": "Previous",
       "next": "Next"
-    }
+    },
+    "backends": {
+      "title": "Search backends",
+      "academic": "Academic sources",
+      "web": "Web engines",
+      "loading": "Loading backend catalog…",
+      "unavailable": "Backend catalog unavailable (search microservice not connected).",
+      "keysDisabled": "Personal API keys are disabled on this server; key-requiring backends cannot be selected.",
+      "selectedCount": "{{count}} backends selected",
+      "noneSelected": "Select at least one search backend before searching.",
+      "keyRequired": "Configure an API key to enable this backend",
+      "configure": "Configure",
+      "userKey": "your key",
+      "serverKey": "server key"
+    },
+    "tabs": {
+      "noResults": "No results from this platform.",
+      "errorTitle": "{{backend}} search failed"
+    },
+    "citationsLabel": "{{count}} citations"
   },
   "token": {
     "_removed": "Session-token page was removed; the PAT page covers all CLI bearer-token use cases."
@@ -505,6 +525,73 @@
       "title": "Access tokens",
       "copy": "Manage personal access tokens (PATs) for CLI and API access.",
       "manage": "Manage tokens"
+    },
+    "searchKeys": {
+      "title": "Search API keys",
+      "copy": "Configure your own API keys for key-requiring academic and web search backends. Once saved, the backend becomes selectable on the search page. Keys are encrypted at rest and only used to run searches on your behalf.",
+      "loading": "Loading…",
+      "listUnavailable": "Could not load your stored keys (server error).",
+      "disabled": "Personal search API keys are disabled on this server (no encryption secret configured).",
+      "empty": "No key-configurable backends right now (the search microservice is unavailable).",
+      "required": "required",
+      "optional": "optional",
+      "notConfigured": "not configured",
+      "keyLabel": "API key",
+      "secretHint": "stored; leave empty to keep",
+      "save": "Save",
+      "delete": "Delete",
+      "saved": "Saved {{backend}} API key",
+      "deleted": "Deleted {{backend}} API key",
+      "confirmDelete": "Delete the {{backend}} API key?",
+      "updatedAt": "Updated {{date}}"
+    }
+  },
+  "downloader": {
+    "eyebrow": "Paper acquisition",
+    "title": "Robust Downloader",
+    "subtitle": "Batch-download PDFs into the registry by DOI, arXiv id, or paper URL. The downloader walks a strategy ladder — arXiv → OA APIs → publisher patterns → landing pages → agent fallback — and only marks a job failed once every strategy has been exhausted.",
+    "unavailable": "The downloader plugin is not enabled or connected; submissions are disabled.",
+    "form": {
+      "title": "Batch download",
+      "placeholder": "One identifier per line: DOI, arXiv id, or paper URL\ne.g. 10.1038/s41586-020-2649-2\ne.g. arXiv:2401.12345",
+      "preview": "Parsed preview",
+      "tooMany": "At most {{max}} items per batch; you have {{count}} lines.",
+      "more": "{{count}} more lines not shown",
+      "submit": "Download & ingest",
+      "submitting": "Submitting…",
+      "validCount": "{{count}} valid"
+    },
+    "kind": {
+      "doi": "DOI",
+      "arxiv": "arXiv",
+      "url": "URL",
+      "invalid": "unrecognized"
+    },
+    "toasts": {
+      "submitted": "Submitted {{count}} download jobs"
+    },
+    "jobs": {
+      "title": "Jobs",
+      "empty": "No download jobs yet. Submit a batch of identifiers to see progress here.",
+      "counters": "{{succeeded}} succeeded · {{failed}} failed · {{in_flight}} in flight"
+    },
+    "state": {
+      "queued": "Queued",
+      "running": "Running",
+      "done": "Done",
+      "failed": "Failed"
+    },
+    "phase": {
+      "queued": "Queued",
+      "downloading_pdf": "Downloading PDF",
+      "storing_pdf": "Storing PDF",
+      "registering_asset": "Registering paper asset",
+      "pdf_ready": "PDF ready",
+      "validated": "PDF validated",
+      "fetch": "Fetch stage"
+    },
+    "trace": {
+      "title": "Fetch trace ({{count}} attempts)"
     }
   }
 }

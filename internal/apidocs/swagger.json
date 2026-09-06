@@ -281,6 +281,126 @@
                 }
             }
         },
+        "/api/downloader/fetch": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Parses each input line (DOI, arXiv id, or paper URL),\nresolve-or-mints it into the registry and enqueues the\nmulti-paradigm acquisition ladder (arXiv direct → OA\nAPIs → publisher URL patterns → landing page → LLM\nagent fallback). Every fetched body is validated (%PDF-\nmagic, trailer, size bounds, HTML-disguise classification)\nbefore it is stored and the MinerU pipeline is triggered.\nTrack progress via GET /api/downloader/jobs or the paper\ndetail acquisition block. Requires papers:write.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Downloader"
+                ],
+                "summary": "Robust download (enqueue)",
+                "parameters": [
+                    {
+                        "description": "{items: [\\",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{items: [{input, kind, paper_id?, created, error?}], enqueued}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "downloader or registry not configured",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/downloader/jobs": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "In-process snapshot of downloader jobs (active + recent\nterminal): per-paper state/phase, the winning strategy,\nthe full attempt trace and healthz-style counters. The\nSPA's Robust Downloader page polls this every 2s while\njobs are active. Requires papers:read.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Downloader"
+                ],
+                "summary": "Downloader jobs",
+                "responses": {
+                    "200": {
+                        "description": "{jobs: [...], counters: {queued, in_flight, succeeded, failed, skipped}}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/health": {
             "get": {
                 "description": "Liveness plus parallel dependency probes (rawstore, postgres,\nregistry). HTTP status is always 200; read data.status for the\nreal verdict (\"healthy\" | \"degraded\").",
@@ -336,6 +456,206 @@
                     },
                     "403": {
                         "description": "PAT auth not accepted",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/me/search-keys": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The caller's per-user third-party search API key inventory\n(backend name, masked hint, updated_at — never the key\nmaterial). enabled=false means the server has no encryption\nsecret configured and the whole feature is off. Session-only\n(same reasoning as /api/pat: a leaked PAT must not read the\nowner's third-party keys).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Me"
+                ],
+                "summary": "List my search API keys",
+                "responses": {
+                    "200": {
+                        "description": "{enabled: bool, keys: [{backend, hint, updated_at}]}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "PAT auth not accepted",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/me/search-keys/{backend}": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Upserts the caller's API key for one backend (AES-256-GCM\nencrypted at rest; injected into multi/agentic search calls\non the caller's behalf). The backend must be a catalog\nbackend with a user-key slot. 503 when the server has no\nencryption secret configured. Session-only.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Me"
+                ],
+                "summary": "Store my search API key",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "backend name (e.g. ieee, tavily)",
+                        "name": "backend",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "{key: string}",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{ok: true}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "boolean"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "unknown backend / no user-key slot / empty key",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "PAT auth not accepted",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "feature disabled",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Removes the caller's stored key for one backend (opaque 404\nwhen absent). Session-only.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Me"
+                ],
+                "summary": "Delete my search API key",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "backend name",
+                        "name": "backend",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{ok: true}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "boolean"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "PAT auth not accepted",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "key not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "feature disabled",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -2049,6 +2369,135 @@
                     },
                     "503": {
                         "description": "registry unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/search/backends": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The backend catalog for the search page's backend picker:\nthe static table merged with the qatlas-search\nmicroservice's live availability (server_ready) and the\ncaller's stored API keys (key_configured). selectable =\nserver_ready || (user_key \u0026\u0026 key_configured) — key-requiring\nbackends without a stored key render disabled. Session-only\n(key_configured is user-private).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Search"
+                ],
+                "summary": "List search backends",
+                "responses": {
+                    "200": {
+                        "description": "{remote, keys_enabled, backends: [{name, label, category, requires_key, user_key, server_ready, key_configured, selectable}]}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/search/multi": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Proxies one mode=\"multi\" call to the qatlas-search\nmicroservice: every requested backend returns its own raw\nhit list (the source's own order), with NO cross-backend\nmerge or ranking. The caller's stored third-party API keys\n(configured in the dashboard) are decrypted and forwarded so\nkey-requiring backends run under the user's credentials.\nRequires the papers:read scope; 503 when search.remote is\ndisabled; 502 when the microservice call fails.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Search"
+                ],
+                "summary": "Multi-backend search (per-platform raw results)",
+                "parameters": [
+                    {
+                        "description": "{text, max_results?, sources: [backend names]}",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{results: {backend: [hits]}, usage, errors: {backend: msg}, remote: true}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "upstream failed",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "search.remote disabled",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {

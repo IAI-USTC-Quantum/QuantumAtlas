@@ -139,7 +139,7 @@ func TestRemoteProvider_SearchAgentic(t *testing.T) {
 	f := newRemoteFixture(t, remoteOKResponse)
 	p := f.provider("tok")
 
-	resp, err := p.SearchAgentic(context.Background(), SearchEntry{Title: "bell state"}, true)
+	resp, err := p.SearchAgentic(context.Background(), SearchEntry{Title: "bell state"}, true, nil)
 	if err != nil {
 		t.Fatalf("SearchAgentic: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestRemoteProvider_SearchAgenticReturnsRealErrors(t *testing.T) {
 	f.statusCode = http.StatusBadGateway
 	p := f.provider("")
 
-	if _, err := p.SearchAgentic(context.Background(), SearchEntry{Text: "x"}, true); err == nil {
+	if _, err := p.SearchAgentic(context.Background(), SearchEntry{Text: "x"}, true, nil); err == nil {
 		t.Fatal("SearchAgentic returned nil error on 502, want a real error (refund signal)")
 	}
 }

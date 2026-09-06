@@ -150,6 +150,29 @@ func ExtractOAPdfURL(w Work) string {
 	return ""
 }
 
+// ExtractLocationsPDFURLs returns every distinct locations[*].pdf_url
+// (excluding the one ExtractOAPdfURL already picked) as a fallback
+// list. Order follows OpenAlex's location ranking.
+func ExtractLocationsPDFURLs(w Work) []string {
+	best := ExtractOAPdfURL(w)
+	var out []string
+	seen := map[string]bool{best: true}
+	add := func(u string) {
+		if u == "" || seen[u] {
+			return
+		}
+		seen[u] = true
+		out = append(out, u)
+	}
+	if w.BestOALocation != nil {
+		add(w.BestOALocation.PDFURL)
+	}
+	for _, loc := range w.Locations {
+		add(loc.PDFURL)
+	}
+	return out
+}
+
 // researchingPDFURL derives the official researching.cn static PDF
 // mirror for journals whose DOI family and mirror code are known. All
 // path fields are restricted to decimal digits so untrusted OpenAlex

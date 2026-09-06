@@ -94,7 +94,7 @@ func TestRunner_AgentHappyPath(t *testing.T) {
 		o.MaxBudgetUSD = 1.5
 	})
 
-	resp, err := r.SearchAgentic(context.Background(), search.SearchEntry{Text: "quantum sensors"}, true)
+	resp, err := r.SearchAgentic(context.Background(), search.SearchEntry{Text: "quantum sensors"}, true, nil)
 	if err != nil {
 		t.Fatalf("SearchAgentic: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestRunner_AgentResultObject(t *testing.T) {
 ENVELOPE
 `)
 	r := newTestRunner(t, bin, testEngine(), nil)
-	resp, err := r.SearchAgentic(context.Background(), search.SearchEntry{Text: "x"}, true)
+	resp, err := r.SearchAgentic(context.Background(), search.SearchEntry{Text: "x"}, true, nil)
 	if err != nil {
 		t.Fatalf("SearchAgentic: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestRunner_AgentClaudeError(t *testing.T) {
 ENVELOPE
 `)
 	r := newTestRunner(t, bin, testEngine(), nil)
-	_, err := r.SearchAgentic(context.Background(), search.SearchEntry{Text: "x"}, true)
+	_, err := r.SearchAgentic(context.Background(), search.SearchEntry{Text: "x"}, true, nil)
 	if err == nil || !strings.Contains(err.Error(), "error_max_budget_usd") {
 		t.Fatalf("err = %v, want is_error surfaced with subtype", err)
 	}
@@ -199,7 +199,7 @@ ENVELOPE
 func TestRunner_AgentMalformedEnvelope(t *testing.T) {
 	bin := writeFakeClaude(t, "echo 'not json at all'\n")
 	r := newTestRunner(t, bin, testEngine(), nil)
-	_, err := r.SearchAgentic(context.Background(), search.SearchEntry{Text: "x"}, true)
+	_, err := r.SearchAgentic(context.Background(), search.SearchEntry{Text: "x"}, true, nil)
 	if err == nil || !strings.Contains(err.Error(), "decode claude envelope") {
 		t.Fatalf("err = %v, want envelope decode failure", err)
 	}
@@ -208,7 +208,7 @@ func TestRunner_AgentMalformedEnvelope(t *testing.T) {
 func TestRunner_AgentNonZeroExit(t *testing.T) {
 	bin := writeFakeClaude(t, "echo 'boom' >&2\nexit 2\n")
 	r := newTestRunner(t, bin, testEngine(), nil)
-	_, err := r.SearchAgentic(context.Background(), search.SearchEntry{Text: "x"}, true)
+	_, err := r.SearchAgentic(context.Background(), search.SearchEntry{Text: "x"}, true, nil)
 	if err == nil || !strings.Contains(err.Error(), "exited 2") || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("err = %v, want exit code + stderr", err)
 	}
@@ -219,7 +219,7 @@ func TestRunner_AgentTimeout(t *testing.T) {
 	// sleeper itself (no grandchild holding the stdout pipe open).
 	bin := writeFakeClaude(t, "exec sleep 30\n")
 	r := newTestRunner(t, bin, testEngine(), func(o *Options) { o.Timeout = 200 * time.Millisecond })
-	_, err := r.SearchAgentic(context.Background(), search.SearchEntry{Text: "x"}, true)
+	_, err := r.SearchAgentic(context.Background(), search.SearchEntry{Text: "x"}, true, nil)
 	if err == nil || !strings.Contains(err.Error(), "timed out") {
 		t.Fatalf("err = %v, want timeout", err)
 	}
@@ -237,7 +237,7 @@ func TestRunner_NonAgentSkipsClaude(t *testing.T) {
 	)
 	r := newTestRunner(t, bin, engine, nil)
 
-	resp, err := r.SearchAgentic(context.Background(), search.SearchEntry{Text: "q", MaxResults: 10}, false)
+	resp, err := r.SearchAgentic(context.Background(), search.SearchEntry{Text: "q", MaxResults: 10}, false, nil)
 	if err != nil {
 		t.Fatalf("SearchAgentic: %v", err)
 	}

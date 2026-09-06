@@ -1,4 +1,6 @@
-import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import {
   adminAcquisitionFailures,
   adminDBSchema,
@@ -11,12 +13,19 @@ import {
   adminUsage,
   adminWhoami,
   agenticSearch,
+  deleteSearchKey,
+  downloaderFetch,
+  downloaderJobs,
   getJson,
+  getSearchBackends,
+  listMySearchKeys,
   listPlugins,
   meProfile,
+  multiSearch,
   myUsage,
   paperSearch,
   papersList,
+  putSearchKey,
   type AdminAcquisitionFailuresResponse,
   type AdminDBRows,
   type AdminDBSchema,
@@ -26,13 +35,18 @@ import {
   type AdminUsageResponse,
   type AdminUsersResponse,
   type AdminWhoami,
+  type DownloaderFetchResponse,
+  type DownloaderJobsResponse,
   type MeProfile,
+  type MeSearchKeysResponse,
+  type MultiSearchEntry,
   type MyUsage,
   type PaperDetail,
   type PaperSearchEntry,
   type PapersListParams,
   type PaperStats,
   type PluginsResponse,
+  type SearchBackendsResponse,
 } from './api'
 
 export function usePaperStats() {
@@ -135,13 +149,76 @@ export function usePlugins() {
 
 // Agentic search against POST /api/search/agentic. Same null-to-idle
 // convention as usePaperSearch; 429 surfaces as an AgenticSearchError
-// carrying the usage block.
-export function useAgenticSearch(entry: PaperSearchEntry | null) {
+// carrying the usage block. The entry may pin `sources` (selected
+// backends) — the server forwards them to the microservice.
+export function useAgenticSearch(entry: (PaperSearchEntry & { sources?: string[] }) | null) {
   return useQuery({
     queryKey: ['agentic-search', JSON.stringify(entry ?? null)],
     queryFn: () => agenticSearch(entry as PaperSearchEntry),
     enabled: entry !== null,
     retry: false,
+  })
+}
+
+// Backend catalog for the search page's checkbox picker. Only fetched
+// when the search-remote plugin is connected (the catalog proxies the
+// microservice); retry disabled because a failure just means "picker
+// unavailable" and the page falls back to the legacy fused search.
+export function useSearchBackends(enabled = true) {
+  return useQuery({
+    queryKey: ['search-backends'],
+    queryFn: (): Promise<SearchBackendsResponse> => getSearchBackends(),
+    enabled,
+    staleTime: 60_000,
+    retry: false,
+  })
+}
+
+// Per-backend multi search against POST /api/search/multi. Same
+// null-to-idle convention; the query key includes the sources so a
+// checkbox change refetches.
+export function useMultiSearch(entry: MultiSearchEntry | null) {
+  return useQuery({
+    queryKey: ['multi-search', JSON.stringify(entry ?? null)],
+    queryFn: () => multiSearch(entry as MultiSearchEntry),
+    enabled: entry !== null,
+    retry: false,
+  })
+}
+
+// Dashboard: the caller's stored third-party search keys (masked).
+export function useMySearchKeys() {
+  return useQuery({
+    queryKey: ['me-search-keys'],
+    queryFn: (): Promise<MeSearchKeysResponse> => listMySearchKeys(),
+    retry: false,
+  })
+}
+
+export function useSaveSearchKey() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ backend, key }: { backend: string; key: string }) =>
+      putSearchKey(backend, key),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['me-search-keys'] })
+      void qc.invalidateQueries({ queryKey: ['search-backends'] })
+      void qc.invalidateQueries({ queryKey: ['multi-search'] })
+      void qc.invalidateQueries({ queryKey: ['agentic-search'] })
+    },
+  })
+}
+
+export function useDeleteSearchKey() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (backend: string) => deleteSearchKey(backend),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['me-search-keys'] })
+      void qc.invalidateQueries({ queryKey: ['search-backends'] })
+      void qc.invalidateQueries({ queryKey: ['multi-search'] })
+      void qc.invalidateQueries({ queryKey: ['agentic-search'] })
+    },
   })
 }
 
@@ -229,5 +306,37 @@ export function useAdminPluginSaveConfig(id: string) {
   return useMutation({
     mutationFn: (updates: Record<string, unknown>): Promise<AdminPluginConfigResult> =>
       adminPluginUpdateConfig(id, updates),
+  })
+}
+
+// Downloader job snapshot (GET /api/downloader/jobs). Polls every 2s
+// while any job is active (derived from the data itself, like
+// usePaperDetail) or while the caller reports a recent submit — the
+// page passes `active` for its 30s post-submit window so polling starts
+// before the snapshot has caught up with the new jobs.
+export function useDownloaderJobs(active: boolean, enabled = true) {
+  return useQuery({
+    queryKey: ['downloader-jobs'],
+    queryFn: (): Promise<DownloaderJobsResponse> => downloaderJobs(),
+    enabled,
+    retry: false,
+    refetchInterval: (query) =>
+      active || query.state.data?.jobs.some((job) => job.active) ? 2_000 : false,
+  })
+}
+
+// Batch submit for the downloader page (POST /api/downloader/fetch).
+// Toasts the enqueued count (503 surfaces its detail via postJson) and
+// refreshes the job snapshot.
+export function useDownloaderSubmit() {
+  const qc = useQueryClient()
+  const { t } = useTranslation('downloader')
+  return useMutation({
+    mutationFn: (items: string[]) => downloaderFetch(items),
+    onSuccess: (data: DownloaderFetchResponse) => {
+      toast.success(t('toasts.submitted', { count: data.enqueued }))
+      void qc.invalidateQueries({ queryKey: ['downloader-jobs'] })
+    },
+    onError: (error: Error) => toast.error(error.message),
   })
 }

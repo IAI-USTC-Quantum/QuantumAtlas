@@ -17,16 +17,23 @@ import (
 // SearchAgentic for the metered POST /api/search/agentic endpoint —
 // that method returns the FULL wire response (conclusion, LLM token
 // usage, per-backend errors) and a real error so the caller can decide
-// on quota refunds.
+// on quota refunds. SearchMulti drives the per-backend "multi" mode and
+// ListBackends fetches the backend catalog for /api/search/backends.
 //
 // Wire contract (see the design brief):
 //
 //	POST {url}/v1/search   Authorization: Bearer {token}
-//	req:  {"query", "max_results", "sources": [str]|null, "agent": bool}
-//	resp: {"hits": [{title, authors[], year?, doi?, arxiv_id?, url?,
-//	        venue?, citations?, source, score}],
+//	req:  {"query", "max_results", "sources": [str]|null, "agent": bool,
+//	       "mode": "fused"|"multi", "api_keys": {backend: key}|null}
+//	resp (fused): {"hits": [{title, authors[], year?, doi?, arxiv_id?, url?,
+//	        venue?, citations?, source, score, raw_rank?, raw_score?}],
 //	       "conclusion": str|null, "usage": {"llm_tokens": int},
 //	       "errors": {backend: msg}}
+//	resp (multi):  {"results": {backend: [hit, ...]}, "conclusion": null,
+//	       "usage": {"llm_tokens": 0}, "errors": {backend: msg}}
+//	GET  {url}/v1/backends Authorization: Bearer {token}
+//	resp: {"backends": [{name, label, category, requires_key,
+//	       user_key, available}]}
 //	GET  {url}/healthz     → 200 {"status":"ok",...}
 type RemoteProvider struct {
 	BaseProvider
@@ -57,7 +64,7 @@ type RemoteUsage struct {
 	LLMTokens int64 `json:"llm_tokens"`
 }
 
-// RemoteResponse is the full /v1/search response contract.
+// RemoteResponse is the full /v1/search response contract (fused mode).
 type RemoteResponse struct {
 	Hits       []RemoteHit       `json:"hits"`
 	Conclusion *string           `json:"conclusion"`
@@ -65,12 +72,40 @@ type RemoteResponse struct {
 	Errors     map[string]string `json:"errors"`
 }
 
+// RemoteMultiResponse is the mode="multi" /v1/search response: one raw
+// hit list per backend in the source's own order, no cross-backend
+// merge or ranking.
+type RemoteMultiResponse struct {
+	Results map[string][]RemoteHit `json:"results"`
+	Usage   RemoteUsage            `json:"usage"`
+	Errors  map[string]string      `json:"errors"`
+}
+
+// RemoteBackendMeta is one entry of the microservice's /v1/backends
+// catalog. Available reflects the SERVER-side key/config only — the
+// caller merges it with per-user keys to decide selectability.
+type RemoteBackendMeta struct {
+	Name        string `json:"name"`
+	Label       string `json:"label"`
+	Category    string `json:"category"` // "academic" | "web"
+	RequiresKey bool   `json:"requires_key"`
+	UserKey     bool   `json:"user_key"`
+	Available   bool   `json:"available"`
+}
+
+// remoteBackendsResponse is the /v1/backends envelope.
+type remoteBackendsResponse struct {
+	Backends []RemoteBackendMeta `json:"backends"`
+}
+
 // remoteRequest is the /v1/search request contract.
 type remoteRequest struct {
-	Query      string   `json:"query"`
-	MaxResults int      `json:"max_results"`
-	Sources    []string `json:"sources"`
-	Agent      bool     `json:"agent"`
+	Query      string            `json:"query"`
+	MaxResults int               `json:"max_results"`
+	Sources    []string          `json:"sources"`
+	Agent      bool              `json:"agent"`
+	Mode       string            `json:"mode,omitempty"`
+	ApiKeys    map[string]string `json:"api_keys,omitempty"`
 }
 
 // NewRemoteProvider builds a RemoteProvider for the microservice at
@@ -117,7 +152,7 @@ func (p *RemoteProvider) Healthz(ctx context.Context) error {
 // failures follow the provider contract: recorded via BaseProvider,
 // reported as (nil, nil).
 func (p *RemoteProvider) Search(ctx context.Context, e SearchEntry) ([]Hit, error) {
-	resp, err := p.SearchAgentic(ctx, e, false)
+	resp, err := p.SearchAgentic(ctx, e, false, nil)
 	if err != nil {
 		return p.RecordFailure(err)
 	}
@@ -131,8 +166,9 @@ func (p *RemoteProvider) Search(ctx context.Context, e SearchEntry) ([]Hit, erro
 // SearchAgentic runs one /v1/search call and returns the FULL contract
 // response. Unlike Search it returns real errors (HTTP failure, non-200,
 // malformed body) — the caller (the metered agentic endpoint) needs the
-// failure signal to refund the user's quota.
-func (p *RemoteProvider) SearchAgentic(ctx context.Context, entry SearchEntry, agent bool) (RemoteResponse, error) {
+// failure signal to refund the user's quota. sources optionally pins the
+// microservice backends (nil = its default tool list).
+func (p *RemoteProvider) SearchAgentic(ctx context.Context, entry SearchEntry, agent bool, sources []string) (RemoteResponse, error) {
 	if p.baseURL == "" {
 		return RemoteResponse{}, fmt.Errorf("remote search: no base URL configured")
 	}
@@ -144,18 +180,90 @@ func (p *RemoteProvider) SearchAgentic(ctx context.Context, entry SearchEntry, a
 	if maxResults <= 0 {
 		maxResults = DefaultMaxResults
 	}
-	body, err := json.Marshal(remoteRequest{
+	req := remoteRequest{
 		Query:      query,
 		MaxResults: maxResults,
-		Sources:    nil, // let the microservice pick its default backends
+		Sources:    sources,
 		Agent:      agent,
-	})
-	if err != nil {
+	}
+	var out RemoteResponse
+	if err := p.postJSON(ctx, "/v1/search", req, &out); err != nil {
 		return RemoteResponse{}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/v1/search", bytes.NewReader(body))
+	return out, nil
+}
+
+// SearchMulti runs one mode="multi" /v1/search call: one raw hit list
+// per requested backend, no merge/ranking. apiKeys carries per-user
+// third-party keys (backend name -> key) that the microservice applies
+// over its server-level fallbacks; it may be nil. Returns real errors —
+// the multi endpoint has no quota to refund but the caller still needs
+// the failure signal to answer 502.
+func (p *RemoteProvider) SearchMulti(ctx context.Context, query string, maxResults int, sources []string, apiKeys map[string]string) (RemoteMultiResponse, error) {
+	if p.baseURL == "" {
+		return RemoteMultiResponse{}, fmt.Errorf("remote search: no base URL configured")
+	}
+	if maxResults <= 0 {
+		maxResults = DefaultMaxResults
+	}
+	req := remoteRequest{
+		Query:      query,
+		MaxResults: maxResults,
+		Sources:    sources,
+		Mode:       "multi",
+		ApiKeys:    apiKeys,
+	}
+	var out RemoteMultiResponse
+	if err := p.postJSON(ctx, "/v1/search", req, &out); err != nil {
+		return RemoteMultiResponse{}, err
+	}
+	return out, nil
+}
+
+// ListBackends fetches the microservice's backend catalog
+// (GET /v1/backends). The returned entries describe server-side
+// availability only; merging with per-user keys is the caller's job.
+func (p *RemoteProvider) ListBackends(ctx context.Context) ([]RemoteBackendMeta, error) {
+	if p.baseURL == "" {
+		return nil, fmt.Errorf("remote search: no base URL configured")
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, p.baseURL+"/v1/backends", nil)
 	if err != nil {
-		return RemoteResponse{}, err
+		return nil, err
+	}
+	if p.token != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+p.token)
+	}
+	resp, err := p.client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("remote search backends: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, fmt.Errorf("remote search backends: read body: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("remote search backends: status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	var out remoteBackendsResponse
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("remote search backends: decode response: %w", err)
+	}
+	return out.Backends, nil
+}
+
+// postJSON issues one authenticated JSON POST against the microservice
+// and decodes the response into out. Non-200 and transport failures come
+// back as errors carrying the upstream body excerpt.
+func (p *RemoteProvider) postJSON(ctx context.Context, path string, payload any, out any) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if p.token != "" {
@@ -163,21 +271,20 @@ func (p *RemoteProvider) SearchAgentic(ctx context.Context, entry SearchEntry, a
 	}
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return RemoteResponse{}, fmt.Errorf("remote search: %w", err)
+		return fmt.Errorf("remote search: %w", err)
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {
-		return RemoteResponse{}, fmt.Errorf("remote search: read body: %w", err)
+		return fmt.Errorf("remote search: read body: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return RemoteResponse{}, fmt.Errorf("remote search: status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		return fmt.Errorf("remote search: status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
-	var out RemoteResponse
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return RemoteResponse{}, fmt.Errorf("remote search: decode response: %w", err)
+	if err := json.Unmarshal(raw, out); err != nil {
+		return fmt.Errorf("remote search: decode response: %w", err)
 	}
-	return out, nil
+	return nil
 }
 
 // AdminProxyResult is the raw upstream response of an AdminProxy call:

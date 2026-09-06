@@ -280,6 +280,30 @@ type Config struct {
 	// arxiv's published "one request every 3 seconds" guidance.
 	ArxivFetchRPS float64
 
+	// Robust downloader (internal/downloader; POST /api/downloader/*).
+	// Master switch defaults to on but is subordinate to
+	// PaperAccessEnabled — the downloader needs the same fetcher /
+	// resolver / objstore wiring. DownloaderAgentBackend selects the
+	// fallback link extractor: "" = off, "openai" (OpenAI-compatible
+	// endpoint via BaseURL/APIKey/Model), "claude" (local claude CLI).
+	DownloaderEnabled        bool
+	DownloaderConcurrency    int
+	DownloaderUnpaywallEmail string
+	// DownloaderS2APIKey is an optional Semantic Scholar key — the
+	// unauthenticated pool is globally shared and bursts into 429s; a
+	// free key (1 rps) stabilizes the highest-recall OA resolver.
+	DownloaderS2APIKey          string
+	DownloaderRespectRobots     bool
+	DownloaderAgentBackend      string
+	DownloaderAgentBaseURL      string
+	DownloaderAgentAPIKey       string
+	DownloaderAgentModel        string
+	DownloaderAgentMaxTokens    int
+	DownloaderAgentClaudeBin    string
+	DownloaderAgentClaudeModel  string
+	DownloaderAgentTimeout      time.Duration
+	DownloaderAgentMaxBudgetUSD float64
+
 	// Plugin platform. Plugins are optional: an empty directory or no
 	// manifests means the core server still starts with just papers /
 	// auth enabled.
@@ -406,6 +430,25 @@ type fileConfig struct {
 			MaxConcurrentJobs *int     `yaml:"max_concurrent_jobs"`
 		} `yaml:"mineru"`
 	} `yaml:"paper_access"`
+
+	Downloader struct {
+		Enabled        *bool  `yaml:"enabled"`
+		Concurrency    *int   `yaml:"concurrency"`
+		UnpaywallEmail string `yaml:"unpaywall_email"`
+		S2APIKey       string `yaml:"s2_api_key"`
+		RespectRobots  *bool  `yaml:"respect_robots"`
+		Agent          struct {
+			Backend      string  `yaml:"backend"`
+			BaseURL      string  `yaml:"base_url"`
+			APIKey       string  `yaml:"api_key"`
+			Model        string  `yaml:"model"`
+			MaxTokens    *int    `yaml:"max_tokens"`
+			ClaudeBin    string  `yaml:"claude_bin"`
+			ClaudeModel  string  `yaml:"claude_model"`
+			Timeout      string  `yaml:"timeout"`
+			MaxBudgetUSD float64 `yaml:"max_budget_usd"`
+		} `yaml:"agent"`
+	} `yaml:"downloader"`
 
 	RAG struct {
 		Remote struct {
@@ -643,41 +686,57 @@ func (fc *fileConfig) toConfig(anchor string) (*Config, error) {
 		ForceTCP4:      fc.ForceTCP4,
 		SkipPBDataLock: fc.SkipPBDataLock,
 
-		PostgresDSN:            fc.Postgres.DSN,
-		PostgresMaxConns:       intOrDefault(fc.Postgres.MaxConns, 10),
-		CorpusEnsureIndexes:    boolOrDefault(fc.Postgres.CorpusEnsureIndexes, true),
-		SearchProviders:        fc.Search.Providers,
-		GitHubClientID:         fc.Auth.GitHubClientID,
-		GitHubClientSecret:     fc.Auth.GitHubClientSecret,
-		AllowedGitHubLogins:    fc.Auth.AllowedLogins,
-		AdminGitHubLogins:      fc.Auth.AdminLogins,
-		SuperadminGitHubLogins: fc.Auth.SuperadminLogins,
-		GiteaURL:              strings.TrimSuffix(strings.TrimSpace(fc.Auth.GiteaURL), "/"),
-		GiteaClientID:         fc.Auth.GiteaClientID,
-		GiteaClientSecret:     fc.Auth.GiteaClientSecret,
-		AdminGiteaLogins:      fc.Auth.GiteaAdminLogins,
-		SuperadminGiteaLogins: fc.Auth.GiteaSuperadminLogins,
-		S3Endpoint:             fc.S3.Endpoint,
-		S3PublicEndpoint:       fc.S3.PublicEndpoint,
-		S3BucketPDF:            fc.S3.BucketPDF,
-		S3BucketMD:             fc.S3.BucketMD,
-		S3BucketImages:         fc.S3.BucketImages,
-		S3BucketOpenAlex:       fc.S3.BucketOpenAlex,
-		S3AccessKeyID:          fc.S3.AccessKeyID,
-		S3SecretAccessKey:      fc.S3.SecretAccessKey,
-		PaperAccessEnabled:     fc.PaperAccess.Enabled,
-		OpenAlexMailto:         fc.PaperAccess.OpenAlexMailto,
-		ArxivFetchConcurrent:   intOrDefault(fc.PaperAccess.ArxivFetchConcurrent, 2),
-		ArxivFetchRPS:          floatOrDefault(fc.PaperAccess.ArxivFetchRPS, 0.33),
-		RAGRemoteEnabled:       fc.RAG.Remote.Enabled,
-		RAGRemoteURL:           fc.RAG.Remote.URL,
-		RAGRemoteToken:         fc.RAG.Remote.Token,
-		PluginsEnabled:         fc.Plugins.Enabled,
-		PluginsDisabled:        fc.Plugins.Disabled,
-		PluginConnectSecret:    fc.Plugins.ConnectSecret,
-		RPCWSBind:              defaultIfEmpty(fc.Plugins.RPCWSBind, "127.0.0.1:8799"),
-		SystemPATToken:         fc.SystemPAT.Token,
-		SystemPATScopes:        fc.SystemPAT.Scopes,
+		PostgresDSN:              fc.Postgres.DSN,
+		PostgresMaxConns:         intOrDefault(fc.Postgres.MaxConns, 10),
+		CorpusEnsureIndexes:      boolOrDefault(fc.Postgres.CorpusEnsureIndexes, true),
+		SearchProviders:          fc.Search.Providers,
+		GitHubClientID:           fc.Auth.GitHubClientID,
+		GitHubClientSecret:       fc.Auth.GitHubClientSecret,
+		AllowedGitHubLogins:      fc.Auth.AllowedLogins,
+		AdminGitHubLogins:        fc.Auth.AdminLogins,
+		SuperadminGitHubLogins:   fc.Auth.SuperadminLogins,
+		GiteaURL:                 strings.TrimSuffix(strings.TrimSpace(fc.Auth.GiteaURL), "/"),
+		GiteaClientID:            fc.Auth.GiteaClientID,
+		GiteaClientSecret:        fc.Auth.GiteaClientSecret,
+		AdminGiteaLogins:         fc.Auth.GiteaAdminLogins,
+		SuperadminGiteaLogins:    fc.Auth.GiteaSuperadminLogins,
+		S3Endpoint:               fc.S3.Endpoint,
+		S3PublicEndpoint:         fc.S3.PublicEndpoint,
+		S3BucketPDF:              fc.S3.BucketPDF,
+		S3BucketMD:               fc.S3.BucketMD,
+		S3BucketImages:           fc.S3.BucketImages,
+		S3BucketOpenAlex:         fc.S3.BucketOpenAlex,
+		S3AccessKeyID:            fc.S3.AccessKeyID,
+		S3SecretAccessKey:        fc.S3.SecretAccessKey,
+		PaperAccessEnabled:       fc.PaperAccess.Enabled,
+		OpenAlexMailto:           fc.PaperAccess.OpenAlexMailto,
+		ArxivFetchConcurrent:     intOrDefault(fc.PaperAccess.ArxivFetchConcurrent, 2),
+		ArxivFetchRPS:            floatOrDefault(fc.PaperAccess.ArxivFetchRPS, 0.33),
+		DownloaderEnabled:        boolOrDefault(fc.Downloader.Enabled, true),
+		DownloaderConcurrency:    intOrDefault(fc.Downloader.Concurrency, 2),
+		DownloaderUnpaywallEmail: fc.Downloader.UnpaywallEmail,
+		DownloaderS2APIKey:       fc.Downloader.S2APIKey,
+		// Default off: on-demand entitled fetches, not crawling
+		// (several publishers blanket-disallow "*" as an anti-AI-crawler
+		// measure, which would silently break legitimate downloads).
+		DownloaderRespectRobots:     boolOrDefault(fc.Downloader.RespectRobots, false),
+		DownloaderAgentBackend:      strings.TrimSpace(fc.Downloader.Agent.Backend),
+		DownloaderAgentBaseURL:      strings.TrimRight(strings.TrimSpace(fc.Downloader.Agent.BaseURL), "/"),
+		DownloaderAgentAPIKey:       fc.Downloader.Agent.APIKey,
+		DownloaderAgentModel:        strings.TrimSpace(fc.Downloader.Agent.Model),
+		DownloaderAgentMaxTokens:    intOrDefault(fc.Downloader.Agent.MaxTokens, 1024),
+		DownloaderAgentClaudeBin:    defaultIfEmpty(strings.TrimSpace(fc.Downloader.Agent.ClaudeBin), "claude"),
+		DownloaderAgentClaudeModel:  strings.TrimSpace(fc.Downloader.Agent.ClaudeModel),
+		DownloaderAgentMaxBudgetUSD: fc.Downloader.Agent.MaxBudgetUSD,
+		RAGRemoteEnabled:            fc.RAG.Remote.Enabled,
+		RAGRemoteURL:                fc.RAG.Remote.URL,
+		RAGRemoteToken:              fc.RAG.Remote.Token,
+		PluginsEnabled:              fc.Plugins.Enabled,
+		PluginsDisabled:             fc.Plugins.Disabled,
+		PluginConnectSecret:         fc.Plugins.ConnectSecret,
+		RPCWSBind:                   defaultIfEmpty(fc.Plugins.RPCWSBind, "127.0.0.1:8799"),
+		SystemPATToken:              fc.SystemPAT.Token,
+		SystemPATScopes:             fc.SystemPAT.Scopes,
 	}
 	if len(cfg.SearchProviders) == 0 {
 		cfg.SearchProviders = []string{"catalog", "arxiv", "openalex"}
@@ -707,6 +766,14 @@ func (fc *fileConfig) toConfig(anchor string) (*Config, error) {
 	var err error
 	if cfg.RemoteTimeout, err = parseDuration(fc.Search.Remote.Timeout, 60*time.Second, "search.remote.timeout"); err != nil {
 		return nil, err
+	}
+	if cfg.DownloaderAgentTimeout, err = parseDuration(fc.Downloader.Agent.Timeout, 120*time.Second, "downloader.agent.timeout"); err != nil {
+		return nil, err
+	}
+	switch cfg.DownloaderAgentBackend {
+	case "", "off", "none", "openai", "claude":
+	default:
+		return nil, fmt.Errorf("downloader.agent.backend must be \"\", \"openai\" or \"claude\", got %q", cfg.DownloaderAgentBackend)
 	}
 	if cfg.RAGRemoteTimeout, err = parseDuration(fc.RAG.Remote.Timeout, 30*time.Second, "rag.remote.timeout"); err != nil {
 		return nil, err

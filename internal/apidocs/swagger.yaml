@@ -373,6 +373,98 @@ paths:
       summary: Admin whoami
       tags:
       - Admin
+  /api/downloader/fetch:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Parses each input line (DOI, arXiv id, or paper URL),
+        resolve-or-mints it into the registry and enqueues the
+        multi-paradigm acquisition ladder (arXiv direct → OA
+        APIs → publisher URL patterns → landing page → LLM
+        agent fallback). Every fetched body is validated (%PDF-
+        magic, trailer, size bounds, HTML-disguise classification)
+        before it is stored and the MinerU pipeline is triggered.
+        Track progress via GET /api/downloader/jobs or the paper
+        detail acquisition block. Requires papers:write.
+      parameters:
+      - description: '{items: [\'
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{items: [{input, kind, paper_id?, created, error?}], enqueued}'
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: downloader or registry not configured
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Robust download (enqueue)
+      tags:
+      - Downloader
+  /api/downloader/jobs:
+    get:
+      description: |-
+        In-process snapshot of downloader jobs (active + recent
+        terminal): per-paper state/phase, the winning strategy,
+        the full attempt trace and healthz-style counters. The
+        SPA's Robust Downloader page polls this every 2s while
+        jobs are active. Requires papers:read.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{jobs: [...], counters: {queued, in_flight, succeeded, failed,
+            skipped}}'
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Downloader jobs
+      tags:
+      - Downloader
   /api/health:
     get:
       description: |-
@@ -425,6 +517,148 @@ paths:
       security:
       - BearerAuth: []
       summary: My profile
+      tags:
+      - Me
+  /api/me/search-keys:
+    get:
+      description: |-
+        The caller's per-user third-party search API key inventory
+        (backend name, masked hint, updated_at — never the key
+        material). enabled=false means the server has no encryption
+        secret configured and the whole feature is off. Session-only
+        (same reasoning as /api/pat: a leaked PAT must not read the
+        owner's third-party keys).
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{enabled: bool, keys: [{backend, hint, updated_at}]}'
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: PAT auth not accepted
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List my search API keys
+      tags:
+      - Me
+  /api/me/search-keys/{backend}:
+    delete:
+      description: |-
+        Removes the caller's stored key for one backend (opaque 404
+        when absent). Session-only.
+      parameters:
+      - description: backend name
+        in: path
+        name: backend
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{ok: true}'
+          schema:
+            additionalProperties:
+              type: boolean
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: PAT auth not accepted
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: key not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: feature disabled
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete my search API key
+      tags:
+      - Me
+    put:
+      consumes:
+      - application/json
+      description: |-
+        Upserts the caller's API key for one backend (AES-256-GCM
+        encrypted at rest; injected into multi/agentic search calls
+        on the caller's behalf). The backend must be a catalog
+        backend with a user-key slot. 503 when the server has no
+        encryption secret configured. Session-only.
+      parameters:
+      - description: backend name (e.g. ieee, tavily)
+        in: path
+        name: backend
+        required: true
+        type: string
+      - description: '{key: string}'
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{ok: true}'
+          schema:
+            additionalProperties:
+              type: boolean
+            type: object
+        "400":
+          description: unknown backend / no user-key slot / empty key
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: PAT auth not accepted
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: feature disabled
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Store my search API key
       tags:
       - Me
   /api/me/usage:
@@ -1714,6 +1948,106 @@ paths:
       security:
       - BearerAuth: []
       summary: Search papers
+      tags:
+      - Search
+  /api/search/backends:
+    get:
+      description: |-
+        The backend catalog for the search page's backend picker:
+        the static table merged with the qatlas-search
+        microservice's live availability (server_ready) and the
+        caller's stored API keys (key_configured). selectable =
+        server_ready || (user_key && key_configured) — key-requiring
+        backends without a stored key render disabled. Session-only
+        (key_configured is user-private).
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{remote, keys_enabled, backends: [{name, label, category,
+            requires_key, user_key, server_ready, key_configured, selectable}]}'
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List search backends
+      tags:
+      - Search
+  /api/search/multi:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Proxies one mode="multi" call to the qatlas-search
+        microservice: every requested backend returns its own raw
+        hit list (the source's own order), with NO cross-backend
+        merge or ranking. The caller's stored third-party API keys
+        (configured in the dashboard) are decrypted and forwarded so
+        key-requiring backends run under the user's credentials.
+        Requires the papers:read scope; 503 when search.remote is
+        disabled; 502 when the microservice call fails.
+      parameters:
+      - description: '{text, max_results?, sources: [backend names]}'
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{results: {backend: [hits]}, usage, errors: {backend: msg},
+            remote: true}'
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "502":
+          description: upstream failed
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: search.remote disabled
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Multi-backend search (per-platform raw results)
       tags:
       - Search
   /api/server/info:

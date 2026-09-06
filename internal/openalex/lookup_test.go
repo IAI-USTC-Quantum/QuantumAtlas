@@ -148,7 +148,8 @@ func TestResolveDOI_OAPdfWithoutArxiv(t *testing.T) {
 	// return the same resolution (regression guard for the cacheEntry
 	// struct change).
 	res2, err := r.ResolveDOI(context.Background(), "10.1038/s41534-020-00001-0")
-	if err != nil || res2 != res {
+	if err != nil || res2.ArxivID != res.ArxivID || res2.OAPdfURL != res.OAPdfURL ||
+		len(res2.LocationsPDFURLs) != len(res.LocationsPDFURLs) {
 		t.Errorf("cached resolve = %+v, %v; want %+v, nil", res2, err, res)
 	}
 }

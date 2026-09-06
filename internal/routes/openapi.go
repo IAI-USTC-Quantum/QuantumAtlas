@@ -121,6 +121,92 @@ func docInstallScript() {}
 // @Router      /api/search [post]
 func docSearchPapers() {}
 
+// multiSearch runs the per-backend ("multi") search.
+//
+// @Summary     Multi-backend search (per-platform raw results)
+// @Description Proxies one mode="multi" call to the qatlas-search
+// @Description microservice: every requested backend returns its own raw
+// @Description hit list (the source's own order), with NO cross-backend
+// @Description merge or ranking. The caller's stored third-party API keys
+// @Description (configured in the dashboard) are decrypted and forwarded so
+// @Description key-requiring backends run under the user's credentials.
+// @Description Requires the papers:read scope; 503 when search.remote is
+// @Description disabled; 502 when the microservice call fails.
+// @Tags        Search
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body body object true "{text, max_results?, sources: [backend names]}"
+// @Success     200 {object} map[string]interface{} "{results: {backend: [hits]}, usage, errors: {backend: msg}, remote: true}"
+// @Failure     400 {object} map[string]string
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Failure     502 {object} map[string]string "upstream failed"
+// @Failure     503 {object} map[string]string "search.remote disabled"
+// @Router      /api/search/multi [post]
+func docMultiSearch() {}
+
+// searchBackends returns the selectable search backend catalog.
+//
+// @Summary     List search backends
+// @Description The backend catalog for the search page's backend picker:
+// @Description the static table merged with the qatlas-search
+// @Description microservice's live availability (server_ready) and the
+// @Description caller's stored API keys (key_configured). selectable =
+// @Description server_ready || (user_key && key_configured) — key-requiring
+// @Description backends without a stored key render disabled. Session-only
+// @Description (key_configured is user-private).
+// @Tags        Search
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200 {object} map[string]interface{} "{remote, keys_enabled, backends: [{name, label, category, requires_key, user_key, server_ready, key_configured, selectable}]}"
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Router      /api/search/backends [get]
+func docSearchBackends() {}
+
+// downloaderFetch submits identifiers to the robust downloader.
+//
+// @Summary     Robust download (enqueue)
+// @Description Parses each input line (DOI, arXiv id, or paper URL),
+// @Description resolve-or-mints it into the registry and enqueues the
+// @Description multi-paradigm acquisition ladder (arXiv direct → OA
+// @Description APIs → publisher URL patterns → landing page → LLM
+// @Description agent fallback). Every fetched body is validated (%PDF-
+// @Description magic, trailer, size bounds, HTML-disguise classification)
+// @Description before it is stored and the MinerU pipeline is triggered.
+// @Description Track progress via GET /api/downloader/jobs or the paper
+// @Description detail acquisition block. Requires papers:write.
+// @Tags        Downloader
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body body object true "{items: [\"10.1038/...\", \"arXiv:2401.12345\", \"https://doi.org/...\"]} (max 50)"
+// @Success     200 {object} map[string]interface{} "{items: [{input, kind, paper_id?, created, error?}], enqueued}"
+// @Failure     400 {object} map[string]string
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Failure     503 {object} map[string]string "downloader or registry not configured"
+// @Router      /api/downloader/fetch [post]
+func docDownloaderFetch() {}
+
+// downloaderJobs lists downloader job progress.
+//
+// @Summary     Downloader jobs
+// @Description In-process snapshot of downloader jobs (active + recent
+// @Description terminal): per-paper state/phase, the winning strategy,
+// @Description the full attempt trace and healthz-style counters. The
+// @Description SPA's Robust Downloader page polls this every 2s while
+// @Description jobs are active. Requires papers:read.
+// @Tags        Downloader
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200 {object} map[string]interface{} "{jobs: [...], counters: {queued, in_flight, succeeded, failed, skipped}}"
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Router      /api/downloader/jobs [get]
+func docDownloaderJobs() {}
+
 // papersList returns the paginated registry paper list.
 //
 // @Summary     List papers
@@ -636,6 +722,63 @@ func docMeProfile() {}
 // @Failure     503 {object} map[string]string "postgres registry unavailable"
 // @Router      /api/me/usage [get]
 func docMeUsage() {}
+
+// meSearchKeysList returns the caller's stored search API keys.
+//
+// @Summary     List my search API keys
+// @Description The caller's per-user third-party search API key inventory
+// @Description (backend name, masked hint, updated_at — never the key
+// @Description material). enabled=false means the server has no encryption
+// @Description secret configured and the whole feature is off. Session-only
+// @Description (same reasoning as /api/pat: a leaked PAT must not read the
+// @Description owner's third-party keys).
+// @Tags        Me
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200 {object} map[string]interface{} "{enabled: bool, keys: [{backend, hint, updated_at}]}"
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string "PAT auth not accepted"
+// @Router      /api/me/search-keys [get]
+func docMeSearchKeysList() {}
+
+// meSearchKeysPut stores one search API key.
+//
+// @Summary     Store my search API key
+// @Description Upserts the caller's API key for one backend (AES-256-GCM
+// @Description encrypted at rest; injected into multi/agentic search calls
+// @Description on the caller's behalf). The backend must be a catalog
+// @Description backend with a user-key slot. 503 when the server has no
+// @Description encryption secret configured. Session-only.
+// @Tags        Me
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       backend path string true "backend name (e.g. ieee, tavily)"
+// @Param       body body object true "{key: string}"
+// @Success     200 {object} map[string]bool "{ok: true}"
+// @Failure     400 {object} map[string]string "unknown backend / no user-key slot / empty key"
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string "PAT auth not accepted"
+// @Failure     503 {object} map[string]string "feature disabled"
+// @Router      /api/me/search-keys/{backend} [put]
+func docMeSearchKeysPut() {}
+
+// meSearchKeysDelete removes one stored search API key.
+//
+// @Summary     Delete my search API key
+// @Description Removes the caller's stored key for one backend (opaque 404
+// @Description when absent). Session-only.
+// @Tags        Me
+// @Produce     json
+// @Security    BearerAuth
+// @Param       backend path string true "backend name"
+// @Success     200 {object} map[string]bool "{ok: true}"
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string "PAT auth not accepted"
+// @Failure     404 {object} map[string]string "key not found"
+// @Failure     503 {object} map[string]string "feature disabled"
+// @Router      /api/me/search-keys/{backend} [delete]
+func docMeSearchKeysDelete() {}
 
 // --- Admin -------------------------------------------------------------------
 //

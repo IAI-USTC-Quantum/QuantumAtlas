@@ -60,8 +60,10 @@ type agenticResponseJSON struct {
 // local claude-CLI runner (*agentic.Runner), selected by
 // search.agentic.backend. Both return the same standardized
 // search.RemoteResponse, so the handler below is backend-agnostic.
+// sources optionally pins the remote microservice backends (nil = its
+// default tool list); the local runner ignores it.
 type AgenticBackend interface {
-	SearchAgentic(ctx context.Context, entry search.SearchEntry, agent bool) (search.RemoteResponse, error)
+	SearchAgentic(ctx context.Context, entry search.SearchEntry, agent bool, sources []string) (search.RemoteResponse, error)
 }
 
 // compile-time check: the remote microservice client is a backend.
@@ -96,12 +98,14 @@ func RegisterSearchAgentic(se *core.ServeEvent, cfg *config.Config, backend Agen
 				"detail": "read search entry body: " + err.Error(),
 			})
 		}
-		// The body is a standard SearchEntry plus one extension field:
+		// The body is a standard SearchEntry plus two extension fields:
 		// "agent" (default true) lets the caller skip the LLM conclusion
-		// while still using the metered multi-source pipeline.
+		// while still using the metered multi-source pipeline, and
+		// "sources" pins the qatlas-search backends (null = default).
 		var body struct {
 			search.SearchEntry
-			Agent *bool `json:"agent"`
+			Agent   *bool    `json:"agent"`
+			Sources []string `json:"sources"`
 		}
 		if err := json.Unmarshal(raw, &body); err != nil {
 			return re.JSON(http.StatusBadRequest, map[string]string{
@@ -111,6 +115,7 @@ func RegisterSearchAgentic(se *core.ServeEvent, cfg *config.Config, backend Agen
 		entry := body.SearchEntry
 		entry.Normalize()
 		agent := body.Agent == nil || *body.Agent
+		sources := normalizeSources(body.Sources)
 
 		ctx := re.Request.Context()
 		limit, err := usageStore.EffectiveLimit(ctx, userID, cfg.AgenticDailyLimit)
@@ -128,7 +133,7 @@ func RegisterSearchAgentic(se *core.ServeEvent, cfg *config.Config, backend Agen
 			})
 		}
 
-		resp, err := backend.SearchAgentic(ctx, entry, agent)
+		resp, err := backend.SearchAgentic(ctx, entry, agent, sources)
 		if err != nil {
 			// Upstream failed: the user must not pay for a call we could
 			// not fulfil — refund the reserved slot.

@@ -17,6 +17,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as LangIndexRouteImport } from './routes/$lang.index'
 import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
 import { Route as LangPatRouteImport } from './routes/$lang.pat'
+import { Route as LangDownloaderRouteImport } from './routes/$lang.downloader'
 import { Route as LangDeviceRouteImport } from './routes/$lang.device'
 import { Route as LangDashboardRouteImport } from './routes/$lang.dashboard'
 import { Route as LangPapersIndexRouteImport } from './routes/$lang.papers.index'
@@ -66,6 +67,11 @@ const AuthCallbackRoute = AuthCallbackRouteImport.update({
 const LangPatRoute = LangPatRouteImport.update({
   id: '/pat',
   path: '/pat',
+  getParentRoute: () => LangRoute,
+} as any)
+const LangDownloaderRoute = LangDownloaderRouteImport.update({
+  id: '/downloader',
+  path: '/downloader',
   getParentRoute: () => LangRoute,
 } as any)
 const LangDeviceRoute = LangDeviceRouteImport.update({
@@ -127,6 +133,7 @@ export interface FileRoutesByFullPath {
   '/pat': typeof PatRoute
   '/$lang/dashboard': typeof LangDashboardRoute
   '/$lang/device': typeof LangDeviceRoute
+  '/$lang/downloader': typeof LangDownloaderRoute
   '/$lang/pat': typeof LangPatRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/$lang/': typeof LangIndexRoute
@@ -146,6 +153,7 @@ export interface FileRoutesByTo {
   '/pat': typeof PatRoute
   '/$lang/dashboard': typeof LangDashboardRoute
   '/$lang/device': typeof LangDeviceRoute
+  '/$lang/downloader': typeof LangDownloaderRoute
   '/$lang/pat': typeof LangPatRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/$lang': typeof LangIndexRoute
@@ -167,6 +175,7 @@ export interface FileRoutesById {
   '/pat': typeof PatRoute
   '/$lang/dashboard': typeof LangDashboardRoute
   '/$lang/device': typeof LangDeviceRoute
+  '/$lang/downloader': typeof LangDownloaderRoute
   '/$lang/pat': typeof LangPatRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/$lang/': typeof LangIndexRoute
@@ -189,6 +198,7 @@ export interface FileRouteTypes {
     | '/pat'
     | '/$lang/dashboard'
     | '/$lang/device'
+    | '/$lang/downloader'
     | '/$lang/pat'
     | '/auth/callback'
     | '/$lang/'
@@ -208,6 +218,7 @@ export interface FileRouteTypes {
     | '/pat'
     | '/$lang/dashboard'
     | '/$lang/device'
+    | '/$lang/downloader'
     | '/$lang/pat'
     | '/auth/callback'
     | '/$lang'
@@ -228,6 +239,7 @@ export interface FileRouteTypes {
     | '/pat'
     | '/$lang/dashboard'
     | '/$lang/device'
+    | '/$lang/downloader'
     | '/$lang/pat'
     | '/auth/callback'
     | '/$lang/'
@@ -308,6 +320,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LangPatRouteImport
       parentRoute: typeof LangRoute
     }
+    '/$lang/downloader': {
+      id: '/$lang/downloader'
+      path: '/downloader'
+      fullPath: '/$lang/downloader'
+      preLoaderRoute: typeof LangDownloaderRouteImport
+      parentRoute: typeof LangRoute
+    }
     '/$lang/device': {
       id: '/$lang/device'
       path: '/device'
@@ -384,6 +403,7 @@ declare module '@tanstack/react-router' {
 interface LangRouteChildren {
   LangDashboardRoute: typeof LangDashboardRoute
   LangDeviceRoute: typeof LangDeviceRoute
+  LangDownloaderRoute: typeof LangDownloaderRoute
   LangPatRoute: typeof LangPatRoute
   LangIndexRoute: typeof LangIndexRoute
   LangAdminDocsRoute: typeof LangAdminDocsRoute
@@ -399,6 +419,7 @@ interface LangRouteChildren {
 const LangRouteChildren: LangRouteChildren = {
   LangDashboardRoute: LangDashboardRoute,
   LangDeviceRoute: LangDeviceRoute,
+  LangDownloaderRoute: LangDownloaderRoute,
   LangPatRoute: LangPatRoute,
   LangIndexRoute: LangIndexRoute,
   LangAdminDocsRoute: LangAdminDocsRoute,

@@ -91,8 +91,10 @@ type runMeta struct {
 // directory and normalizes its structured output. A claude/parse failure
 // is returned as a real error so the route can refund the user's quota —
 // the sandbox (including meta.json with the failure detail) is kept for
-// audit and reaped by the janitor.
-func (r *Runner) SearchAgentic(ctx context.Context, entry search.SearchEntry, agent bool) (search.RemoteResponse, error) {
+// audit and reaped by the janitor. The sources parameter (remote-backend
+// pinning) is ignored by the local runner: the local provider set is
+// configured server-side.
+func (r *Runner) SearchAgentic(ctx context.Context, entry search.SearchEntry, agent bool, _ []string) (search.RemoteResponse, error) {
 	entry.Normalize()
 	sb, err := NewSandbox(r.opts.SandboxRoot)
 	if err != nil {

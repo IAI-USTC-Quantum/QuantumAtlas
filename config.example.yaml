@@ -112,6 +112,14 @@
 # microservice (requires search.remote below to be enabled). Semantic
 # retrieval is served by qatlas-search (backed by qatlas-rag), never by
 # qatlasd itself.
+#
+# search.remote also powers POST /api/search/multi (per-backend raw
+# results) and GET /api/search/backends (the SPA's backend picker).
+# Users' own third-party keys for key-requiring backends (IEEE, Scopus,
+# Tavily, ...) are stored encrypted in the search_api_keys PocketBase
+# collection — the AES key is derived from the system_pat token above,
+# so no extra config key is needed. Rotating the system PAT invalidates
+# stored user keys (users re-enter them).
 # search:
 #   providers: [catalog, arxiv, openalex]
 #   remote:
@@ -167,6 +175,40 @@
 #     poll_interval: 3s
 #     timeout: 30m
 #     max_concurrent_jobs: 4
+
+# ─── Robust downloader (multi-paradigm PDF acquisition) ────────────────
+# The "Robust Downloader" (POST /api/downloader/* + the SPA page):
+# given a DOI / arXiv id / paper URL it runs a strategy ladder —
+# arXiv direct → OpenAlex arXiv-twin → OA metadata APIs (Europe PMC,
+# Unpaywall, OpenAlex, Semantic Scholar) → publisher URL patterns →
+# landing-page citation_pdf_url mining (incl. green-OA repository
+# pages and the IEEE stamp flow) → optional LLM agent fallback —
+# validating every candidate (%PDF- magic, %%EOF, size bounds,
+# bot-challenge/paywall classification) before storing + triggering
+# MinerU. Only active when paper_access.enabled: true; registered as
+# the builtin "downloader" plugin.
+# downloader:
+#   enabled: true
+#   concurrency: 2                  # parallel download jobs
+#   unpaywall_email: ""             # falls back to paper_access.openalex_mailto
+#   s2_api_key: ""                  # optional Semantic Scholar key (free,
+#                                    # 1 rps) — stabilizes the highest-recall
+#                                    # OA resolver against shared-pool 429s
+#   respect_robots: false           # on-demand entitled fetches are not
+#                                    # crawling; several publishers
+#                                    # blanket-disallow "*" as an anti-AI
+#                                    # measure, which would break legit
+#                                    # downloads. Enable for strict parity.
+#   agent:                          # LLM fallback link extractor
+#     backend: ""                   # "" = off | "openai" | "claude"
+#     base_url: ""                  # openai: e.g. https://llm.example.com/v1
+#     api_key: ""
+#     model: ""
+#     max_tokens: 1024
+#     claude_bin: claude            # claude: must be OAuth-logged-in here
+#     claude_model: ""              # empty = claude default
+#     timeout: 120s
+#     max_budget_usd: 0             # claude only; 0 = no budget flag
 
 # ─── Edge label (multi-edge audit only) ────────────────────────────────
 # Folded into the S3 client User-Agent. Cosmetic; never for auth.

@@ -218,6 +218,10 @@ type Resolution struct {
 	// OAPdfURL is the best open-access PDF URL (see ExtractOAPdfURL).
 	// Empty when OpenAlex knows no direct OA PDF.
 	OAPdfURL string
+	// LocationsPDFURLs lists the remaining locations[*].pdf_url
+	// fallbacks (excluding OAPdfURL) — consumed by the robust
+	// downloader's strategy ladder; the ingest pipeline ignores it.
+	LocationsPDFURLs []string
 }
 
 // ResolveDOI resolves doi via OpenAlex. Returns ErrDOINotFound when
@@ -401,8 +405,9 @@ func (r *Resolver) lookup(ctx context.Context, doi string) (Resolution, error) {
 		return Resolution{}, err
 	}
 	res := Resolution{
-		ArxivID:  ExtractArxivID(work),
-		OAPdfURL: ExtractOAPdfURL(work),
+		ArxivID:          ExtractArxivID(work),
+		OAPdfURL:         ExtractOAPdfURL(work),
+		LocationsPDFURLs: ExtractLocationsPDFURLs(work),
 	}
 	if res.ArxivID == "" && res.OAPdfURL == "" {
 		return Resolution{}, ErrDOINotFound

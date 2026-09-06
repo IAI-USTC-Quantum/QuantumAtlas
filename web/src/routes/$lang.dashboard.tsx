@@ -9,13 +9,19 @@ import {
   KeyRound,
   Link2,
   Loader2,
+  Save,
+  Search,
   ShieldCheck,
+  Trash2,
   UserRound,
 } from 'lucide-react'
+import { toast } from 'sonner'
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { PageHeader } from '@/components/page-header'
 import { Panel } from '@/components/panel'
 import { StatusBlock } from '@/components/status-block'
@@ -27,7 +33,14 @@ import {
   linkProvider,
   type OAuth2ProviderName,
 } from '@/lib/auth'
-import { useMe, useMyUsage } from '@/lib/queries'
+import {
+  useMe,
+  useMySearchKeys,
+  useMyUsage,
+  useSaveSearchKey,
+  useSearchBackends,
+  useDeleteSearchKey,
+} from '@/lib/queries'
 
 export const Route = createFileRoute('/$lang/dashboard')({
   component: DashboardPage,
@@ -256,6 +269,10 @@ function DashboardPage() {
         )}
       </Panel>
 
+      <Panel title={t('searchKeys.title')} icon={Search}>
+        <SearchKeysPanel />
+      </Panel>
+
       <Panel title={t('pat.title')} icon={KeyRound}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="text-sm text-muted-foreground">{t('pat.copy')}</p>
@@ -267,6 +284,140 @@ function DashboardPage() {
         </div>
       </Panel>
     </section>
+  )
+}
+
+// SearchKeysPanel manages the caller's third-party search API keys:
+// one row per backend that accepts a user key. Secret-field pattern
+// from PluginConfigForm — password input, empty means "leave
+// unchanged", masked hint shows what is stored.
+function SearchKeysPanel() {
+  const { t } = useTranslation('dashboard')
+  const keysQuery = useMySearchKeys()
+  const backendsQuery = useSearchBackends(true)
+  const saveMutation = useSaveSearchKey()
+  const deleteMutation = useDeleteSearchKey()
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
+
+  const keysEnabled = keysQuery.data?.enabled ?? true
+  const storedByBackend = new Map(
+    (keysQuery.data?.keys ?? []).map((k) => [k.backend, k]),
+  )
+  const configurable =
+    backendsQuery.data?.backends.filter((b) => b.user_key) ?? []
+
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-muted-foreground">{t('searchKeys.copy')}</p>
+      {keysQuery.error ? (
+        <p className="text-sm text-muted-foreground">
+          {t('searchKeys.listUnavailable')}
+        </p>
+      ) : keysQuery.isLoading ? (
+        <p className="text-sm text-muted-foreground">{t('searchKeys.loading')}</p>
+      ) : !keysEnabled ? (
+        <p className="text-sm text-muted-foreground">{t('searchKeys.disabled')}</p>
+      ) : configurable.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{t('searchKeys.empty')}</p>
+      ) : (
+        <div className="space-y-3">
+          {configurable.map((b) => {
+            const stored = storedByBackend.get(b.name)
+            const draft = drafts[b.name] ?? ''
+            const busy =
+              (saveMutation.isPending && saveMutation.variables?.backend === b.name) ||
+              (deleteMutation.isPending && deleteMutation.variables === b.name)
+            return (
+              <div
+                key={b.name}
+                className="space-y-2 rounded-lg border border-border p-4"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-medium">{b.label}</span>
+                  <Badge variant={b.requires_key ? 'default' : 'secondary'}>
+                    {b.requires_key
+                      ? t('searchKeys.required')
+                      : t('searchKeys.optional')}
+                  </Badge>
+                  {stored ? (
+                    <Badge variant="outline" className="font-mono">
+                      {stored.hint}
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline">{t('searchKeys.notConfigured')}</Badge>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-end gap-2">
+                  <div className="min-w-52 flex-1 space-y-1.5">
+                    <Label htmlFor={`key-${b.name}`} className="text-xs">
+                      {t('searchKeys.keyLabel')}
+                    </Label>
+                    <Input
+                      id={`key-${b.name}`}
+                      type="password"
+                      autoComplete="off"
+                      placeholder={stored ? t('searchKeys.secretHint') : ''}
+                      value={draft}
+                      onChange={(e) =>
+                        setDrafts((prev) => ({ ...prev, [b.name]: e.target.value }))
+                      }
+                    />
+                  </div>
+                  <Button
+                    size="sm"
+                    disabled={!draft.trim() || busy}
+                    onClick={() =>
+                      saveMutation.mutate(
+                        { backend: b.name, key: draft.trim() },
+                        {
+                          onSuccess: () => {
+                            toast.success(t('searchKeys.saved', { backend: b.label }))
+                            setDrafts((prev) => ({ ...prev, [b.name]: '' }))
+                          },
+                          onError: (e) => toast.error(e.message),
+                        },
+                      )
+                    }
+                  >
+                    {busy ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <Save className="size-4" />
+                    )}
+                    {t('searchKeys.save')}
+                  </Button>
+                  {stored && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={busy}
+                      onClick={() => {
+                        if (!window.confirm(t('searchKeys.confirmDelete', { backend: b.label }))) return
+                        deleteMutation.mutate(b.name, {
+                          onSuccess: () =>
+                            toast.success(t('searchKeys.deleted', { backend: b.label })),
+                          onError: (e) => toast.error(e.message),
+                        })
+                      }}
+                    >
+                      <Trash2 className="size-4" />
+                      {t('searchKeys.delete')}
+                    </Button>
+                  )}
+                </div>
+                {stored?.updated_at && (
+                  <p className="text-xs text-muted-foreground">
+                    {t('searchKeys.updatedAt', {
+                      date: new Date(stored.updated_at).toLocaleString(),
+                    })}
+                  </p>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
   )
 }
 

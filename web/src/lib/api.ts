@@ -112,6 +112,13 @@ export type SearchHit = {
   year?: number
   score: number
   source: string
+  // Extended per-hit fields carried by the remote/multi search paths
+  // (absent on plain /api/search hits).
+  url?: string
+  venue?: string
+  citations?: number
+  raw_rank?: number
+  raw_score?: number
 }
 
 export type SearchResult = {
@@ -167,7 +174,7 @@ export class AgenticSearchError extends Error {
 }
 
 export async function agenticSearch(
-  body: PaperSearchEntry,
+  body: PaperSearchEntry & { sources?: string[] },
 ): Promise<AgenticSearchResponse> {
   const response = await fetch('/api/search/agentic', {
     method: 'POST',
@@ -194,6 +201,110 @@ export async function agenticSearch(
     )
   }
   return response.json() as Promise<AgenticSearchResponse>
+}
+
+// --- Multi search + backend catalog (POST /api/search/multi, GET /api/search/backends) ---
+//
+// The per-backend search path used when agentic search is off: every
+// selected backend returns its own raw hit list (the source's own
+// order, no cross-backend ranking). The backend catalog drives the
+// search page's checkbox picker — key-requiring backends without a
+// stored key render disabled (selectable=false).
+
+export type SearchBackendEntry = {
+  name: string
+  label: string
+  category: 'academic' | 'web'
+  requires_key: boolean
+  user_key: boolean
+  server_ready: boolean
+  key_configured: boolean
+  selectable: boolean
+}
+
+export type SearchBackendsResponse = {
+  remote: boolean
+  keys_enabled: boolean
+  backends: SearchBackendEntry[]
+}
+
+export function getSearchBackends(): Promise<SearchBackendsResponse> {
+  return getJson<SearchBackendsResponse>('/api/search/backends')
+}
+
+export type MultiSearchEntry = {
+  text: string
+  max_results?: number
+  sources: string[]
+}
+
+export type MultiSearchResponse = {
+  results: Record<string, SearchHit[]>
+  usage: { llm_tokens: number }
+  errors: Record<string, string>
+  remote: boolean
+}
+
+// Requires the papers:read scope; the server injects the caller's
+// stored third-party keys for the requested backends.
+export async function multiSearch(
+  body: MultiSearchEntry,
+): Promise<MultiSearchResponse> {
+  return postJson<MultiSearchResponse>('/api/search/multi', body)
+}
+
+// --- My search API keys (GET/PUT/DELETE /api/me/search-keys) ------------------
+//
+// Per-user third-party keys, AES-encrypted at rest on the server. The
+// list never returns key material — only a masked hint.
+
+export type MeSearchKey = {
+  backend: string
+  hint: string
+  updated_at: string
+}
+
+export type MeSearchKeysResponse = {
+  enabled: boolean
+  keys: MeSearchKey[]
+}
+
+export function listMySearchKeys(): Promise<MeSearchKeysResponse> {
+  return getJson<MeSearchKeysResponse>('/api/me/search-keys')
+}
+
+export function putSearchKey(
+  backend: string,
+  key: string,
+): Promise<{ ok: boolean }> {
+  return putJson<{ ok: boolean }>(
+    `/api/me/search-keys/${encodeURIComponent(backend)}`,
+    { key },
+  )
+}
+
+export function deleteSearchKey(backend: string): Promise<{ ok: boolean }> {
+  return delJson<{ ok: boolean }>(
+    `/api/me/search-keys/${encodeURIComponent(backend)}`,
+  )
+}
+
+export async function delJson<T>(url: string): Promise<T> {
+  const response = await fetch(url, {
+    method: 'DELETE',
+    headers: { ...authHeaders() },
+  })
+  if (!response.ok) {
+    let detail = ''
+    try {
+      const j = (await response.json()) as { detail?: string }
+      detail = j.detail ?? ''
+    } catch {
+      // not JSON; ignore
+    }
+    throw new Error(detail ? `${response.status}: ${detail}` : `${response.status} ${response.statusText}`)
+  }
+  return response.json() as Promise<T>
 }
 
 // --- Plugins (GET /api/v1/plugins) ------------------------------------------
@@ -232,6 +343,15 @@ export function isSearchRemoteAvailable(
   plugins: PluginSummary[] | undefined,
 ): boolean {
   const entry = plugins?.find((p) => p.id === 'search-remote')
+  return Boolean(entry && entry.enabled && entry.status === 'connected')
+}
+
+// The `downloader` builtin plugin entry — gates the downloader page the
+// same way isSearchRemoteAvailable gates agentic search.
+export function isDownloaderAvailable(
+  plugins: PluginSummary[] | undefined,
+): boolean {
+  const entry = plugins?.find((p) => p.id === 'downloader')
   return Boolean(entry && entry.enabled && entry.status === 'connected')
 }
 
@@ -619,4 +739,81 @@ export function adminPutQuota(
   body: { plan?: string; daily_limit_override?: number | null },
 ): Promise<unknown> {
   return putJson(`/api/admin/quotas/${encodeURIComponent(userId)}`, body)
+}
+
+// --- Robust Downloader (POST /api/downloader/fetch, GET /api/downloader/jobs) ---
+//
+// Batch paper acquisition driven by the `downloader` builtin plugin:
+// every input line is parsed (DOI / arXiv id / paper URL), resolve-or-
+// minted into the registry, and enqueued on the strategy ladder
+// (arXiv → OA APIs → publisher patterns → landing page → agent). The
+// routes stay mounted when the plugin is off: fetch answers 503 with a
+// detail, jobs degrades to an empty snapshot.
+
+export type DownloaderFetchItem = {
+  input: string
+  kind: 'doi' | 'arxiv' | 'url' | 'invalid'
+  paper_id?: string
+  created: boolean
+  error?: string
+}
+
+export type DownloaderFetchResponse = {
+  items: DownloaderFetchItem[]
+  enqueued: number
+}
+
+// One strategy attempt, successful or not (downloader.Attempt).
+export type DownloaderAttempt = {
+  strategy: string
+  url?: string
+  error?: string
+  ms?: number
+}
+
+export type DownloaderJobEvent = {
+  phase: string
+  state: string
+  at: string
+  detail?: string
+}
+
+// One job from GET /api/downloader/jobs (downloader.Progress).
+export type DownloaderJob = {
+  paper_id: string
+  input?: string
+  kind?: string
+  state: 'queued' | 'running' | 'done' | 'failed'
+  phase: string
+  active: boolean
+  strategy?: string
+  error?: string
+  submitted_at: string
+  updated_at: string
+  finished_at?: string
+  trace?: DownloaderAttempt[]
+  events: DownloaderJobEvent[]
+}
+
+export type DownloaderJobsResponse = {
+  jobs: DownloaderJob[]
+  counters: {
+    queued?: number
+    in_flight?: number
+    succeeded?: number
+    failed?: number
+    skipped?: number
+  }
+}
+
+// Requires the papers:write scope; max 50 items per batch.
+export function downloaderFetch(
+  items: string[],
+): Promise<DownloaderFetchResponse> {
+  return postJson<DownloaderFetchResponse>('/api/downloader/fetch', { items })
+}
+
+// Requires the papers:read scope.
+export function downloaderJobs(): Promise<DownloaderJobsResponse> {
+  return getJson<DownloaderJobsResponse>('/api/downloader/jobs')
 }

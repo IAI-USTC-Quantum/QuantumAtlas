@@ -2,6 +2,7 @@ import { Link, useRouterState } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 import {
   Database,
+  Download,
   FileSearch,
   Home,
   Key,
@@ -21,6 +22,7 @@ type NavLink = {
     | '/$lang/dashboard'
     | '/$lang/papers/search'
     | '/$lang/papers'
+    | '/$lang/downloader'
     | '/$lang/admin'
     | '/$lang/pat'
   labelKey: string
@@ -43,6 +45,7 @@ const links: NavLink[] = [
   { to: '/$lang/dashboard', labelKey: 'nav.dashboard', icon: LayoutDashboard },
   { to: '/$lang/papers/search', labelKey: 'nav.papers', icon: FileSearch, matchPrefix: '/papers/search' },
   { to: '/$lang/papers', labelKey: 'nav.papersList', icon: Library, matchPrefix: '/papers', excludePrefix: '/papers/search' },
+  { to: '/$lang/downloader', labelKey: 'nav.downloader', icon: Download },
   { to: '/$lang/pat', labelKey: 'nav.pat', icon: Key },
 ]
 

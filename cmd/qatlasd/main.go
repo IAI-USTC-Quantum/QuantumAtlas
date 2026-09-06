@@ -30,6 +30,7 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/arxiv"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/auth"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/downloader"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/events"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/healthz"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/hostapi"
@@ -45,6 +46,7 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/routes"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/search"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/usage"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/userkeys"
 	qweb "github.com/IAI-USTC-Quantum/QuantumAtlas/web"
 
 	_ "github.com/IAI-USTC-Quantum/QuantumAtlas/internal/apidocs"
@@ -260,6 +262,12 @@ func main() {
 	papersCmd := NewPapersCommand()
 	attachPBLockProbe(papersCmd, cfg)
 	app.RootCmd.AddCommand(papersCmd)
+
+	// Mount the `downloader` subcommand group (`downloader probe` — the
+	// live robustness harness for the acquisition ladder).
+	downloaderCmd := NewDownloaderCommand()
+	attachPBLockProbe(downloaderCmd, cfg)
+	app.RootCmd.AddCommand(downloaderCmd)
 
 	// Mount the `openalex` subcommand group (bootstrap / query the
 	// OpenAlex works corpus in PostgreSQL). Execution is
@@ -595,6 +603,72 @@ func main() {
 			return e.Next()
 		})
 
+		// Robust downloader (POST /api/downloader/*): the multi-paradigm
+		// acquisition ladder (arXiv → OA APIs → publisher patterns →
+		// landing page → agent fallback) with per-attempt traces. Built
+		// under the same master switch as the rest of paper access; the
+		// agent fallback needs downloader.agent.* when enabled.
+		var downloaderModule *downloader.Downloader
+		if cfg.PaperAccessEnabled && cfg.DownloaderEnabled {
+			unpaywallEmail := cfg.DownloaderUnpaywallEmail
+			if unpaywallEmail == "" {
+				unpaywallEmail = cfg.OpenAlexMailto
+			}
+			downloaderModule = downloader.New(registryStore, rawStore, arxivFetcher, doiResolver, downloader.Config{
+				Concurrency:    cfg.DownloaderConcurrency,
+				UnpaywallEmail: unpaywallEmail,
+				S2APIKey:       cfg.DownloaderS2APIKey,
+				Fetch: downloader.FetchConfig{
+					RequestTimeout: 60 * time.Second,
+					RespectRobots:  cfg.DownloaderRespectRobots,
+				},
+				Agent: downloader.AgentConfig{
+					Backend:      cfg.DownloaderAgentBackend,
+					BaseURL:      cfg.DownloaderAgentBaseURL,
+					APIKey:       cfg.DownloaderAgentAPIKey,
+					Model:        cfg.DownloaderAgentModel,
+					MaxTokens:    cfg.DownloaderAgentMaxTokens,
+					ClaudeBin:    cfg.DownloaderAgentClaudeBin,
+					ClaudeModel:  cfg.DownloaderAgentClaudeModel,
+					Timeout:      cfg.DownloaderAgentTimeout,
+					MaxBudgetUSD: cfg.DownloaderAgentMaxBudgetUSD,
+				},
+			},
+				downloader.WithIndexPusher(ingestPusher),
+				downloader.WithPDFReadyHook(func(ctx context.Context, canonical string, isDOI bool) {
+					if isDOI {
+						mineruConverter.EnsureByDOI(ctx, canonical, "")
+						return
+					}
+					mineruConverter.Ensure(ctx, canonical)
+				}),
+			)
+			agentState := "off"
+			if cfg.DownloaderAgentBackend != "" {
+				agentState = cfg.DownloaderAgentBackend
+			}
+			slog.Info("downloader enabled",
+				"concurrency", cfg.DownloaderConcurrency,
+				"respect_robots", cfg.DownloaderRespectRobots,
+				"unpaywall", unpaywallEmail != "",
+				"agent", agentState,
+			)
+			app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
+				shutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				if err := downloaderModule.Shutdown(shutCtx); err != nil {
+					slog.Warn("downloader: shutdown drain incomplete", "error", err)
+				}
+				return e.Next()
+			})
+		}
+		// Typed-nil trap: keep the routes-facing interface genuinely nil
+		// when the module is off so its 503 branch works.
+		var downloaderRoutes routes.Downloader
+		if downloaderModule != nil {
+			downloaderRoutes = downloaderModule
+		}
+
 		// Multi-provider search engine (POST /api/search). Providers come
 		// from search.providers (default catalog,arxiv,openalex);
 		// "remote" additionally requires the qatlas-search microservice
@@ -651,7 +725,7 @@ func main() {
 				}
 			}
 
-			registerRoutes(se, app, cfg, rawStore, registryStore, corpus, searchEngine, remoteProvider, ragClient, localAgentic, usageStore, enforcer, mineruConverter, mineruScheduler, ingester, doiResolver, arxivFetcher, serverStarted)
+			registerRoutes(se, app, cfg, rawStore, registryStore, corpus, searchEngine, remoteProvider, ragClient, localAgentic, usageStore, enforcer, mineruConverter, mineruScheduler, ingester, doiResolver, arxivFetcher, downloaderRoutes, serverStarted)
 
 			// Docs sites (/doc public, /devdoc behind the admin ticket
 			// gate): disk override under ~/.qatlas/docs first, embedded
@@ -891,6 +965,17 @@ func buildSearchEngine(cfg *config.Config, pool *pgxpool.Pool, registryStore *re
 // buildRemoteProvider constructs the qatlas-search microservice client
 // (used both as a fan-out provider and by POST /api/search/agentic).
 // Returns nil unless search.remote is enabled AND carries a URL.
+// multiBackendFor adapts the remote provider to the multi-search backend
+// interface, mapping "not configured" (nil provider) to a nil interface
+// value so the routes' `backend == nil` 503 branches work (a nil
+// *search.RemoteProvider wrapped in an interface is NOT nil).
+func multiBackendFor(p *search.RemoteProvider) routes.MultiBackend {
+	if p == nil {
+		return nil
+	}
+	return p
+}
+
 func buildRemoteProvider(cfg *config.Config) *search.RemoteProvider {
 	if !cfg.RemoteEnabled || strings.TrimSpace(cfg.RemoteURL) == "" {
 		return nil
@@ -1026,7 +1111,7 @@ func ensureBucketVersioning(rawStore objstore.Store) {
 // registerRoutes wires the QuantumAtlas /api/* surface. Most endpoints are
 // implemented under internal/routes/ and pulled in by their respective
 // Register* helpers as we migrate each module in subsequent phases.
-func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawStore objstore.Store, registryStore *registry.Store, corpus *openalexcorpus.Store, searchEngine *search.Engine, remoteProvider *search.RemoteProvider, ragClient *rag.RemoteClient, localAgentic *agentic.Runner, usageStore *usage.Store, enforcer *casbin.Enforcer, mineruConverter *mineru.Converter, mineruScheduler *mineru.Scheduler, ingester *ingest.Ingester, doiResolver *openalex.Resolver, arxivFetcher *arxiv.Fetcher, started time.Time) {
+func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawStore objstore.Store, registryStore *registry.Store, corpus *openalexcorpus.Store, searchEngine *search.Engine, remoteProvider *search.RemoteProvider, ragClient *rag.RemoteClient, localAgentic *agentic.Runner, usageStore *usage.Store, enforcer *casbin.Enforcer, mineruConverter *mineru.Converter, mineruScheduler *mineru.Scheduler, ingester *ingest.Ingester, doiResolver *openalex.Resolver, arxivFetcher *arxiv.Fetcher, downloaderRoutes routes.Downloader, started time.Time) {
 	probes := healthz.Probes{
 		Cfg:      cfg,
 		RawStore: rawStore,
@@ -1214,6 +1299,19 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 			Capabilities: []string{"rag"},
 		},
 	}
+	// The robust downloader is the third builtin: an internal module
+	// (internal/downloader) surfaced through the plugin registry so the
+	// SPA can gate the Robust Downloader page on its enabled state.
+	downloaderManifest := qplugin.Manifest{
+		ID:         "downloader",
+		Name:       "Robust paper downloader (multi-parad + agent fallback)",
+		Version:    Version,
+		ABIVersion: qplugin.HostABIVersion,
+		Kind:       qplugin.KindBuiltin,
+		Contributes: qplugin.Contributes{
+			Capabilities: []string{"download"},
+		},
+	}
 	pluginDisabled := cfg.PluginsDisabled
 	if !cfg.RemoteEnabled {
 		pluginDisabled = append(append([]string(nil), pluginDisabled...), "search-remote")
@@ -1221,10 +1319,13 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	if !cfg.RAGRemoteEnabled {
 		pluginDisabled = append(append([]string(nil), pluginDisabled...), "rag-remote")
 	}
+	if downloaderRoutes == nil {
+		pluginDisabled = append(append([]string(nil), pluginDisabled...), "downloader")
+	}
 	pluginRegistry, err := qplugin.LoadDir(cfg.PluginsDir, qplugin.Options{
 		Enabled:  cfg.PluginsEnabled,
 		Disabled: pluginDisabled,
-		Builtins: append(qplugin.BuiltinManifests(), searchRemoteManifest, ragRemoteManifest),
+		Builtins: append(qplugin.BuiltinManifests(), searchRemoteManifest, ragRemoteManifest, downloaderManifest),
 	})
 	if err != nil {
 		slog.Warn("plugins: failed to load plugin manifests", "dir", cfg.PluginsDir, "error", err)
@@ -1286,6 +1387,27 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// internal/routes/search.go.
 	routes.RegisterSearch(se, searchEngine, enforcer)
 
+	// Per-user third-party search API keys (dashboard CRUD + injection
+	// into the multi/agentic proxy calls). Encrypted at rest with a key
+	// derived from the system PAT token; disabled (writes 503) when the
+	// server has no secret configured. See internal/userkeys.
+	userKeys := userkeys.NewStore(app, cfg.SystemPATToken)
+
+	// Per-backend ("multi") search — POST /api/search/multi plus the
+	// GET /api/search/backends catalog. Both talk to the remote
+	// qatlas-search microservice; remoteProvider == nil (search.remote
+	// disabled) leaves multi 503 and the catalog empty+remote:false. See
+	// internal/routes/search_multi.go.
+	routes.RegisterSearchMulti(se, userKeys, multiBackendFor(remoteProvider), enforcer)
+
+	// Robust downloader — POST /api/downloader/fetch + GET
+	// /api/downloader/jobs. downloaderRoutes is nil when paper access /
+	// the downloader switch is off: the routes stay mounted but answer
+	// 503, and the builtin plugin manifest is disabled above. See
+	// internal/routes/downloader.go.
+	routes.RegisterDownloader(se, downloaderRoutes, registryStore, enforcer)
+	routes.RegisterSearchBackends(se, userKeys, multiBackendFor(remoteProvider))
+
 	// Metered agentic search — POST /api/search/agentic. The backend is
 	// the remote qatlas-search microservice by default, or the local
 	// claude-CLI runner when search.agentic.backend: local; both satisfy
@@ -1313,9 +1435,11 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// no enforcer needed because there's no scope-gated endpoint here.
 	routes.RegisterPAT(se, app)
 
-	// "Me" self-service API (user dashboard) — see internal/routes/me.go.
-	// Session-token-only; /api/me/usage 503s when Postgres is unavailable.
+	// "Me" self-service API (user dashboard) — see internal/routes/me.go
+	// and internal/routes/me_search_keys.go. Session-token-only;
+	// /api/me/usage 503s when Postgres is unavailable.
 	routes.RegisterMe(se, cfg, usageStore)
+	routes.RegisterMeSearchKeys(se, userKeys)
 
 	// OAuth 2.0 Device Authorization Grant (RFC 8628) — see
 	// internal/routes/oauthdevice.go. Lets `qatlas auth login --device`

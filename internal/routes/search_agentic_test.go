@@ -154,7 +154,7 @@ type fakeAgenticBackend struct {
 	called bool
 }
 
-func (f *fakeAgenticBackend) SearchAgentic(_ context.Context, _ search.SearchEntry, _ bool) (search.RemoteResponse, error) {
+func (f *fakeAgenticBackend) SearchAgentic(_ context.Context, _ search.SearchEntry, _ bool, _ []string) (search.RemoteResponse, error) {
 	f.called = true
 	return search.RemoteResponse{}, nil
 }
