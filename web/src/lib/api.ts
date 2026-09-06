@@ -459,6 +459,38 @@ export async function papersList(
   return getJson<PapersListResponse>(`/api/papers${suffix ? `?${suffix}` : ''}`)
 }
 
+// --- Manual PDF contribution (POST /api/papers/{doi}/upload-pdf) -------------
+// Human-in-the-loop lane for papers the automated ladder could not fetch:
+// the admin failures table pairs the DOI with a locally-downloaded PDF;
+// qatlasd verifies the metadata against OpenAlex, resolve-or-mints the
+// paper and registers the asset (same path as `qatlas contrib`).
+export async function uploadPaperPDFByDOI(
+  doi: string,
+  file: File,
+): Promise<{ paper_id: string }> {
+  const form = new FormData()
+  form.append('pdf', file)
+  const response = await fetch(
+    `/api/papers/${encodeURIComponent(doi)}/upload-pdf`,
+    {
+      method: 'POST',
+      headers: { ...authHeaders() },
+      body: form,
+    },
+  )
+  if (!response.ok) {
+    let detail = ''
+    try {
+      const j = (await response.json()) as { detail?: string }
+      detail = j.detail ?? ''
+    } catch {
+      // not JSON; ignore
+    }
+    throw new Error(detail ? `${response.status}: ${detail}` : `${response.status} ${response.statusText}`)
+  }
+  return response.json() as Promise<{ paper_id: string }>
+}
+
 // --- Admin (GET /api/admin/*) ------------------------------------------------
 //
 // whoami is session-only and always 200 for a signed-in browser user;

@@ -10,6 +10,7 @@ import {
   ChevronRight,
   Database,
   FileWarning,
+  Upload,
   Gauge,
   KeyRound,
   Puzzle,
@@ -43,6 +44,7 @@ import {
 } from '@/lib/api'
 import {
   useAdminAcquisitionFailures,
+  useUploadFailurePDF,
   useAdminPlans,
   useAdminSchema,
   useAdminUsage,
@@ -222,6 +224,7 @@ function AcquisitionFailuresSection({
   lang: string
 }) {
   const { t } = useTranslation('admin')
+  const uploadPDF = useUploadFailurePDF()
 
   return (
     <Panel
@@ -247,6 +250,7 @@ function AcquisitionFailuresSection({
                 <th className="px-4 py-2 font-medium">{t('acquisitionFailures.cols.attempts')}</th>
                 <th className="px-4 py-2 font-medium">{t('acquisitionFailures.cols.time')}</th>
                 <th className="px-4 py-2 font-medium">{t('acquisitionFailures.cols.reason')}</th>
+                <th className="px-4 py-2 font-medium">{t('acquisitionFailures.cols.actions')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -260,9 +264,29 @@ function AcquisitionFailuresSection({
                     >
                       {item.title || item.arxiv_id || item.doi || item.paper_id}
                     </Link>
-                    <code className="mt-1 block text-xs text-muted-foreground">
-                      {item.arxiv_id ? `arXiv:${item.arxiv_id}` : item.doi ? `doi:${item.doi}` : item.paper_id}
-                    </code>
+                    {item.arxiv_id ? (
+                      <a
+                        href={`https://arxiv.org/abs/${item.arxiv_id}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-1 block text-xs text-muted-foreground hover:text-primary hover:underline"
+                      >
+                        arXiv:{item.arxiv_id} ↗
+                      </a>
+                    ) : item.doi ? (
+                      <a
+                        href={`https://doi.org/${item.doi}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-1 block text-xs text-muted-foreground hover:text-primary hover:underline"
+                      >
+                        doi:{item.doi} ↗
+                      </a>
+                    ) : (
+                      <code className="mt-1 block text-xs text-muted-foreground">
+                        {item.paper_id}
+                      </code>
+                    )}
                   </td>
                   <td className="px-4 py-2">
                     <Badge variant="outline">
@@ -282,6 +306,41 @@ function AcquisitionFailuresSection({
                       <span className="text-muted-foreground">
                         {t('acquisitionFailures.noLog')}
                       </span>
+                    )}
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-2">
+                    {item.doi ? (
+                      <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium hover:border-primary/50 hover:text-primary">
+                        <Upload className="size-3.5" />
+                        {uploadPDF.isPending &&
+                        uploadPDF.variables?.doi === item.doi
+                          ? t('acquisitionFailures.uploading')
+                          : t('acquisitionFailures.uploadPDF')}
+                        <input
+                          type="file"
+                          accept="application/pdf"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0]
+                            e.target.value = ''
+                            if (!file) return
+                            uploadPDF.mutate(
+                              { doi: item.doi!, file },
+                              {
+                                onSuccess: () =>
+                                  toast.success(
+                                    t('acquisitionFailures.uploaded', {
+                                      doi: item.doi,
+                                    }),
+                                  ),
+                                onError: (err: Error) => toast.error(err.message),
+                              },
+                            )
+                          }}
+                        />
+                      </label>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
                     )}
                   </td>
                 </tr>

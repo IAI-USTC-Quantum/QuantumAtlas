@@ -400,7 +400,7 @@
     },
     "acquisitionFailures": {
       "title": "PDF acquisition failures",
-      "description": "Recent failed PDF acquisition jobs. New records persist stage, reason and attempt count; browse paper_acquisition_events for the full event log.",
+      "description": "Papers whose automated fetch failed (see reason). Click the DOI to open the publisher page and download manually, then \"Upload PDF\" to pair the file with the DOI — it is verified, registered and ingested via the contribution path.",
       "empty": "No failed PDF acquisition records.",
       "legacy": "Legacy record",
       "noLog": "This failure predates durable acquisition logging; no reason was recorded.",
@@ -409,8 +409,12 @@
         "stage": "Failed stage",
         "attempts": "Attempts",
         "time": "Failed at",
-        "reason": "Reason / log"
-      }
+        "reason": "Reason / log",
+        "actions": "Actions"
+      },
+      "uploadPDF": "Upload PDF",
+      "uploading": "Uploading…",
+      "uploaded": "{{doi}} ingested"
     },
     "dbrows": {
       "browse": "Browse rows",

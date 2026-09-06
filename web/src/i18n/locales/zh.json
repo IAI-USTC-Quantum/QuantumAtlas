@@ -400,7 +400,7 @@
     },
     "acquisitionFailures": {
       "title": "PDF 获取失败",
-      "description": "最近失败的 PDF 获取任务。新记录持久化阶段、原因与尝试次数；完整事件可在数据库表 paper_acquisition_events 中查看。",
+      "description": "以下论文自动获取失败（原因见右）。点击 DOI 打开出版社页面人工下载，再用「上传 PDF」把文件和 DOI 一起提交入库（自动校验并登记，走贡献通道）。",
       "empty": "当前没有失败的 PDF 获取记录。",
       "legacy": "历史记录",
       "noLog": "该记录产生于持久日志启用之前，暂无失败原因。",
@@ -409,8 +409,12 @@
         "stage": "失败阶段",
         "attempts": "尝试次数",
         "time": "失败时间",
-        "reason": "原因 / 日志"
-      }
+        "reason": "原因 / 日志",
+        "actions": "操作"
+      },
+      "uploadPDF": "上传 PDF",
+      "uploading": "上传中…",
+      "uploaded": "{{doi}} 已入库"
     },
     "dbrows": {
       "browse": "浏览数据",

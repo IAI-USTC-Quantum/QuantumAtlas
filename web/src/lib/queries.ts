@@ -14,6 +14,7 @@ import {
   adminWhoami,
   agenticSearch,
   deleteSearchKey,
+  uploadPaperPDFByDOI,
   downloaderFetch,
   downloaderJobs,
   getJson,
@@ -299,6 +300,19 @@ export function useAdminPluginManifest(id: string, enabled: boolean) {
     queryFn: (): Promise<AdminPluginManifest> => adminPluginManifest(id),
     enabled,
     retry: false,
+  })
+}
+
+// Manual PDF contribution from the admin failures table (paper fetched
+// by a human, paired with its DOI).
+export function useUploadFailurePDF() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ doi, file }: { doi: string; file: File }) =>
+      uploadPaperPDFByDOI(doi, file),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['admin-acquisition-failures'] })
+    },
   })
 }
 

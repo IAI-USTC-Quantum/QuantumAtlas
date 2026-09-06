@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"regexp"
 	"strings"
@@ -110,6 +111,15 @@ func pdfish(url, disposition string) bool {
 func (b *BrowserLane) FetchPDF(ctx context.Context, rawURL string) (*FetchResult, error) {
 	if !b.Enabled() {
 		return nil, ErrBrowserNotConfigured
+	}
+	// Human pacing: the lane is an assistant doing one navigation on the
+	// user's behalf, not a crawler — a short randomized think-time before
+	// touching the publisher keeps the cadence unmistakably human.
+	pause := 1500 + rand.Intn(1500)
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-time.After(time.Duration(pause) * time.Millisecond):
 	}
 	body, err := b.navigate(ctx, rawURL)
 	if err != nil {
@@ -257,6 +267,13 @@ func (b *BrowserLane) navigate(ctx context.Context, rawURL string) (*browserBody
 			for _, u := range mineBrowserHTML(html) {
 				navigateTo(u)
 			}
+			// SPA pages (ScienceDirect et al.) inject their citation
+			// meta only AFTER JS renders; the network body alone misses
+			// it. Give the renderer a beat, then mine the live DOM too.
+			time.Sleep(1200 * time.Millisecond)
+			for _, u := range b.mineRenderedDOM(tabCtx) {
+				navigateTo(u)
+			}
 		case <-timer.C:
 			mu.Lock()
 			defer mu.Unlock()
@@ -273,6 +290,33 @@ func (b *BrowserLane) navigate(ctx context.Context, rawURL string) (*browserBody
 			return nil, ErrBrowserTimeout
 		}
 	}
+}
+
+// mineRenderedDOM extracts PDF links from the CURRENT rendered DOM —
+// the complement to mineBrowserHTML (which sees the raw response body).
+func (b *BrowserLane) mineRenderedDOM(tabCtx context.Context) []string {
+	var out []string
+	_ = chromedp.Run(tabCtx, chromedp.Evaluate(`(function(){
+		var xs = [];
+		var m = document.querySelector('meta[name="citation_pdf_url"]');
+		if (m && m.content) xs.push(m.content);
+		document.querySelectorAll('a[href]').forEach(function(a){
+			var h = a.href || '';
+			if (/\.pdf(\?|$)|\/pdf($|\/)|pdf-direct|pdfft|getPDF|stamp\.jsp/i.test(h) && !/epdf/i.test(h)) xs.push(h);
+		});
+		return xs.slice(0, 6).join('\n');
+	})()`, &out))
+	if len(out) == 0 {
+		return nil
+	}
+	var urls []string
+	for _, line := range strings.Split(strings.Join(out, "\n"), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "http") {
+			urls = append(urls, line)
+		}
+	}
+	return urls
 }
 
 // mineBrowserHTML extracts the next-hop PDF URLs from a document the

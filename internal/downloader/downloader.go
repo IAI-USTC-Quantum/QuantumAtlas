@@ -409,7 +409,7 @@ func (d *Downloader) FetchPDF(ctx context.Context, ref registry.PaperRef) (*Fetc
 	// real Chromium when the plain-HTTP attempts hit bot walls — the
 	// most common terminal failure on entitled networks. Enabled via
 	// downloader.browser.cdp_url.
-	if d.browser.Enabled() && traceSawChallenge(out.Trace) {
+	if d.browser.Enabled() && (traceSawChallenge(out.Trace) || traceSawNoCandidates(out.Trace)) {
 		start := time.Now()
 		for _, u := range browserTargets(out, doi) {
 			res, berr := d.browser.FetchPDF(ctx, u)
@@ -436,7 +436,48 @@ func (d *Downloader) FetchPDF(ctx context.Context, ref registry.PaperRef) (*Fetc
 		}
 	}
 
+	// Final fallback: if EVERYTHING above failed (not only entitlement
+	// walls), the proxy's campus egress is still the strongest position —
+	// one last delegation before declaring the paper unreachable.
+	if d.proxy.Enabled() && !sawStrategy(out.Trace, "remote-proxy") {
+		start := time.Now()
+		res, attempts, strategy, perr := d.proxy.FetchPDF(ctx, ref)
+		out.Trace = append(out.Trace, attempts...)
+		if perr == nil {
+			out.Strategy = strategy
+			out.URL = res.URL
+			out.Result = res
+			out.Trace = append(out.Trace, Attempt{Strategy: strategy, URL: res.URL, Millis: time.Since(start).Milliseconds()})
+			return out, nil
+		}
+		out.Trace = append(out.Trace, attemptOf("remote-proxy", "", perr, start))
+	}
+
 	return out, fmt.Errorf("%w (%d attempts, doi=%s)", ErrNoPDF, len(out.Trace), doi)
+}
+
+// traceSawNoCandidates reports whether a landing/repository page arrived
+// but yielded nothing minable — SPA publisher sites (ScienceDirect et
+// al.) inject their PDF links only after JS renders, which the raw
+// response body never sees. That is exactly the browser lane's job.
+func traceSawNoCandidates(trace []Attempt) bool {
+	for _, a := range trace {
+		if strings.Contains(a.Error, "no PDF candidates") {
+			return true
+		}
+	}
+	return false
+}
+
+// sawStrategy reports whether the trace already contains an attempt with
+// the given strategy id (guards against double proxy delegation).
+func sawStrategy(trace []Attempt, name string) bool {
+	for _, a := range trace {
+		if a.Strategy == name {
+			return true
+		}
+	}
+	return false
 }
 
 // tryArxiv runs the arXiv strategy: parse, resolve the latest version
