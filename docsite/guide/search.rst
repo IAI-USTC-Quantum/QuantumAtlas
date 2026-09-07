@@ -209,3 +209,90 @@ Robust Downloader（多范式下载入库）
 ``agent: false`` 的请求同样可用：本地后端只做引擎 fan-out，不调 claude，
 ``conclusion`` 为 null、``errors`` 携带各 provider 失败表，响应形状与
 ``agent: true`` 完全一致。
+
+
+Downloader Proxy（远程代理下载）
+-------------------------------
+
+当 qatlasd 所在网络无法直接访问出版社（如被代理 / VPN 劫持出口 IP），
+可在一台有机构订阅权限的机器上部署 **downloaderproxy**（独立容器，
+自带 Chromium 无 sidecar），qatlasd 的下载阶梯在本地策略失败后自动
+委托给它。
+
+**部署**（在有校园网直连的机器上）：
+
+.. code-block:: bash
+
+   # 构建镜像（在 QuantumAtlas 仓库根目录）
+   docker build -f Dockerfile.downloaderproxy -t qatlas-downloaderproxy .
+
+   # 启动（环境变量可选）
+   docker run -d --name downloader-proxy \
+     -p 8602:8602 --memory=2g --restart=on-failure \
+     -e DL_PROXY_TOKEN=<shared-secret> \
+     -e DL_UNPAYWALL_EMAIL=you@example.com \
+     -e DL_S2_API_KEY=s2k-... \
+     qatlas-downloaderproxy
+
+**qatlasd 配置**（``~/.qatlas/config.yaml``）：
+
+.. code-block:: yaml
+
+   downloader:
+     proxy:
+       url: http://<entitled-host>:8602
+       token: <shared-secret>
+       timeout: 5m
+
+**API**（downloaderproxy 自身暴露的接口，Bearer 鉴权）：
+
+.. code-block:: text
+
+   POST /v1/jobs            {"identifier": "10.1109/..."}  → 202 {job_id}
+   GET  /v1/jobs/{id}       → {status, strategy, attempts[], file_token}
+   GET  /v1/files/{token}   → PDF bytes（单次使用，30 分钟过期）
+
+**触发逻辑**：qatlasd 在以下条件时委托 proxy——
+
+1. 本地策略命中 bot 挑战 / 202 / 403 / IDP 握手墙；
+2. 或本地所有策略全部失败（最终兜底）。
+
+proxy 侧有自己的完整策略阶梯（含 browser lane），优先级高于 qatlasd
+本地的 browser lane。
+
+浏览器 lane（真实 Chromium 兜底）
+----------------------------------
+
+当出版社的 bot 墙（Cloudflare / IEEE AWS WAF）挡住所有 plain-HTTP
+策略时，downloader 会通过 CDP 驱动一个真实 Chromium 浏览器——事件驱
+动挖掘落地页链接（citation_pdf_url / 内联 JSON pdfUrl / IEEE stamp
+中间页），被动捕获 PDF 响应，并以人类节奏（1.5–3s 随机间隔）运行。
+
+**本地启用**（qatlasd 所在机器跑一个 Chromium）：
+
+.. code-block:: yaml
+
+   downloader:
+     browser:
+       cdp_url: http://127.0.0.1:9222   # Chromium --remote-debugging-port
+       timeout: 45s
+
+downloaderproxy 容器自带 Chromium（无需额外配置）。
+
+人工补救通道
+------------
+
+所有自动下载失败的论文在管理后台的「下载失败列表」中列出，
+提供两个操作：
+
+1. **DOI 链接**：点击直达出版社页面人工下载 PDF；
+2. **上传 PDF**：选本地文件 → 自动配对 DOI → 走贡献通道入库
+   （OpenAlex 元数据校验 + resolve-or-mint + 触发 MinerU 转换）。
+
+对应的 CLI 命令为 ``qatlas contrib pdf <id> --pdf file.pdf``。
+
+Admin 资产浏览
+--------------
+
+管理员可在 ``/zh/admin/assets`` 搜索、预览、下载论文的 PDF 与
+Markdown，并生成预签名 S3 URL。详见 :doc:`admin`。

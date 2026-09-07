@@ -37,8 +37,29 @@
 
 别名：``papers`` → ``paper``，``parse`` → ``parser``。
 
+插件命令（需安装对应插件包）
+------------------------------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 18 30 52
+
+   * - 命令
+     - 插件包
+     - 说明
+   * - ``qatlas search``
+     - ``qatlas-search``
+     - agentic 多源学术搜索（默认走 qatlasd 代理，``--direct`` 本地跑）
+   * - ``qatlas rag``
+     - ``qatlas-rag``
+     - 语义检索（qatlas-rag 微服务的 CLI 前端）
+
+未安装时会提示安装方法，不影响其他命令。
+
 示例
 ----
+
+**论文获取**
 
 .. code-block:: bash
 
@@ -46,12 +67,32 @@
    qatlas paper get markdown quant-ph/9508027 -o paper.md
    qatlas paper get pdf 10.1103/PhysRevLett.103.150502 -o paper.pdf
 
+   # 查看转换进度
+   qatlas paper status 2401.12345
+
+**贡献者工作流**
+
+.. code-block:: bash
+
    # 上传本地 PDF（需 papers:write 权限的 PAT）
    qatlas contrib pdf quant-ph/9508027v1 --pdf paper.pdf
 
    # 本地 MinerU 转换并回传
    qatlas contrib mineru 2501.00010v1
    qatlas contrib mineru --watch
+
+**搜索**
+
+.. code-block:: bash
+
+   # agentic 搜索（经 qatlasd 代理，消耗每日配额）
+   qatlas search "surface code threshold"
+
+   # 纯 JSON 输出
+   qatlas search "quantum error correction" --json
+
+   # 本地直跑（不走服务端，需要自己配 key）
+   qatlas search "graph neural network" --direct --tools arxiv,openalex,crossref
 
 论文 ID 支持多种形式（服务端自动补全）：带版本 arXiv ID（``0811.3171v3``）、
 裸 arXiv ID（补最新版本）、裸旧式编号（补 ``quant-ph/`` 分类）、DOI。
@@ -81,7 +122,7 @@ Robust Downloader 的验收 / 压测工具随 qatlasd 二进制发布：
    # 单篇论文跑完整下载阶梯，打印策略轨迹
    qatlasd downloader probe 10.1038/s41586-024-07806-9 arXiv:2401.12345
 
-   # 从 OpenAlex 随机抽 N 篇论文压测（可选 ``--search`` 过滤领域）
+   # 从 OpenAlex 随机抽 N 篇论文压测（可选 --search 过滤领域）
    qatlasd downloader probe --random 30 --search "quantum computing"
 
    # 指定远程 downloaderproxy（校园出口）与 agent 兜底
@@ -90,5 +131,32 @@ Robust Downloader 的验收 / 压测工具随 qatlasd 二进制发布：
    # 机器可读 JSON 输出；任一失败退出码为 1（适合自动化）
    qatlasd downloader probe --random 5 --json
 
+常用标志：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 75
+
+   * - 标志
+     - 说明
+   * - ``--random N``
+     - 从 OpenAlex 随机抽 N 篇（自动过滤 ``has_doi:true``）
+   * - ``--search "..."`
+     - OpenAlex 搜索过滤（与 ``--random`` 组合；不带 ``--random`` 时无效）
+   * - ``--proxy URL``
+     - 远程 downloaderproxy 端点（校园出口，绕过本地网络限制）
+   * - ``--proxy-token T``
+     - downloaderproxy bearer token
+   * - ``--browser URL``
+     - 本地 browser lane CDP 端点（如 ``http://127.0.0.1:9222``）
+   * - ``--agent``
+     - 强制启用 LLM agent 兜底（需 ``downloader.agent.*`` 配置）
+   * - ``--concurrency N``
+     - 并行论文数（默认 3）
+   * - ``--timeout D``
+     - 单篇预算（默认 4m）
+   * - ``--json``
+     - 机器可读 JSON 输出
+
 需要 ``paper_access.enabled: true``（读取 ``~/.qatlas/config.yaml``）。
-详见 :doc:`search` 的 :doc:`search <search>` 一节。
+策略阶梯详见 :doc:`search`。
