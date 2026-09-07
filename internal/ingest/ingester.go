@@ -267,11 +267,12 @@ func (i *Ingester) worker() {
 	}
 }
 
-// process runs the fetch→store→catalog pipeline for one paper. It
-// always closes j.done (releasing the singleflight window) and always
-// resolves the paper to a terminal state itself: success flips to
-// 'ready' via UpsertPDF, failure marks 'failed', unfetchable refs stay
-// 'pending' untouched.
+	// process runs the fetch→store→catalog pipeline for one paper. It
+	// always closes j.done (releasing the singleflight window) and always
+	// resolves the paper to a terminal state itself: success flips to
+	// 'ready' via UpsertPDF, failure delegates to the robust downloader
+	// (which has the full strategy ladder incl. remote proxy), unfetchable
+	// refs stay 'pending' untouched.
 func (i *Ingester) process(j job) {
 	defer close(j.done)
 	defer i.sf.Forget(j.paperID)
