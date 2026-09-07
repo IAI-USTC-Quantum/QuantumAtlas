@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.30.0 (2026-09-07)
+
+### Feat
+
+- **routes**: 论文端点全标识符寻址——`GET /api/papers/{id}` 详情接受 arXiv ID（新旧式、可无版本）与 DOI（含 URL 形态），未收录 404 并指向 `/api/papers/lookup`；资产端点（markdown/pdf/status/images/zip）接受 `qa_` paper_id（内部解析 canonical 版本，DOI-only 论文走 DOI 管线）；bare arXiv ID 版本推断改 catalog 优先。
+- **routes**: `GET /api/papers` 新增 `arxiv_id` / `doi` / `paper_id` 精确过滤（版本后缀自动归一化）。
+- **search**: `/api/search` 与 `/api/search/agentic` 把 arxiv_id/doi/title 透传给 qatlas-search（配合 qatlas-search v0.4.0 的身份感知查询，修复空查询 fan-out 400）；results 每项附带 `has_md`/`has_pdf`/`status`；空 entry 返回 400。`/api/search/multi` 不再丢弃 MintHits 结果，hit 回填 `paper_id`/`created`/`has_md`/`status`。
+- **routes**: `/api/server/info` 新增 `capabilities` 能力发现（paper_access / markdown_delivery / pdf_delivery / agentic_search / mineru；MinerU 的 daily_cap/converted_today 仅认证调用者可见，对齐 /api/health 隐私分层）。
+- **routes**: `/api/papers/lookup` 结果新增 `has_md`（≤200 批量身份核对的官方入口）。
+- **web**: 搜索结果卡片链到站内详情页（multi 结果现在携带 paper_id）；arXiv/DOI 胶囊改为外链按钮；新增入库管线四态进度芯片（排队等待下载 / 正在下载 / 排队等待转换 / 转换中 + 全局队列位置与并发展示）。
+
+### Fix
+
+- **docs**: CLI 安装命令 `quantum-atlas` → `qatlas-cli`（12 处）；标注 `/pdf` 端点恒 410；明确 MinerU 配额口径（批处理自限 4000/天，on-demand 不计入、共享上游 token 池）。
+
 ## v0.29.0 (2026-09-07)
 
 ### Fix
