@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.29.0 (2026-09-07)
+
+### Fix
+
+- **search**: multi search now triggers the full ingest pipeline — per-backend hits with DOI/arXiv ID are resolve-or-minted after the microservice responds (deduped across backends), firing the lazy-ingestion hook → PDF fetch → MinerU conversion, matching the behavior of POST /api/search and /api/search/agentic. Previously multi search returned raw hits without any registry minting or pipeline triggering.
+- **downloader**: fix Proxy and Browser fields missing from the downloader.Config construction in main.go (lost during a stash recovery) — the remote proxy delegation and browser lane were silently disabled despite the config and startup log showing them as enabled.
+
 ## Unreleased
 
 ### Feat
