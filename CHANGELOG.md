@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.30.1 (2026-09-07)
+
+### Fix
+
+- **web**: 管理员资产预览与下载改用 S3 预签名 URL——`<iframe>`/`<a>` 导航无法携带 Bearer 头，而服务端 `/api/*` 只认 Authorization 头、无 cookie 认证通路，导致登录管理员预览 PDF 恒 401；改为打开预览/点击下载时经 `GET /api/admin/assets/{id}/{kind}/url` 换取 1 小时预签名 URL 直连对象存储（字节不再经 qatlasd 中转）。同时修复论文详情页 Markdown 预览 fetch 只带 `credentials` 未带 Bearer 的同类隐患。
+
 ## v0.30.0 (2026-09-07)
 
 ### Feat
