@@ -36,9 +36,23 @@ package routes
 // @Router      /api/health [get]
 func docHealthCheck() {}
 
-// serverInfo returns the server mode, version and engine.
+// serverInfo returns the server mode, version, engine and capabilities.
 //
 // @Summary     Server info
+// @Description Capability discovery: mode / version / engine plus a
+// @Description capabilities block — paper_access, markdown_delivery,
+// @Description pdf_delivery (always false — the /pdf endpoint answers
+// @Description 410 by design), agentic_search, and a nested mineru
+// @Description object (enabled / on_demand). Privacy mirrors /api/health:
+// @Description anonymous callers see the booleans only; authenticated
+// @Description callers (system PAT or session) additionally get
+// @Description mineru.daily_cap and mineru.converted_today from the
+// @Description batch-scheduler snapshot. Note the quota semantics:
+// @Description daily_cap self-limits the nightly BATCH scheduler
+// @Description (default 4000/day, reserving headroom for interactive
+// @Description traffic); on-demand conversions triggered by GET
+// @Description /markdown are NOT counted against it — they only share
+// @Description the upstream per-token daily quota.
 // @Tags        System
 // @Produce     json
 // @Success     200 {object} map[string]interface{}
@@ -107,19 +121,56 @@ func docInstallScript() {}
 // @Description identity-anchored hit against the paper registry. Newly minted
 // @Description papers carry created=true and are picked up by the lazy
 // @Description ingestion pipeline; title-only hits return as un-minted
-// @Description candidates. Requires the papers:read scope.
+// @Description candidates. The entry may carry an identity (arxiv_id / doi)
+// @Description instead of free text — identity fields are forwarded to the
+// @Description remote provider for identity-aware lookups; an entry with
+// @Description none of text / title / arxiv_id / doi is a 400. Each minted
+// @Description result also carries its hosting summary: has_md / has_pdf /
+// @Description status from the registry default asset (omitted when the
+// @Description registry is unavailable). Requires the papers:read scope.
 // @Tags        Search
 // @Accept      json
 // @Produce     json
 // @Security    BearerAuth
 // @Param       body body object true "search entry {text?, title?, doi?, arxiv_id?, max_results?, required_phrases?}"
-// @Success     200 {object} map[string]interface{} "{results:[{paper_id,hit,created}], candidates:[...]}"
-// @Failure     400 {object} map[string]string
+// @Success     200 {object} map[string]interface{} "{results:[{paper_id,hit,created,has_md?,has_pdf?,status?}], candidates:[...]}"
+// @Failure     400 {object} map[string]string "invalid JSON or empty search entry"
 // @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string
 // @Failure     503 {object} map[string]string "registry unavailable"
 // @Router      /api/search [post]
 func docSearchPapers() {}
+
+// searchAgentic runs the metered agentic (LLM-conclusion) search.
+//
+// @Summary     Agentic search (metered)
+// @Description One multi-source search through the agentic backend
+// @Description (remote qatlas-search microservice or the local runner),
+// @Description optionally with an LLM conclusion ({"agent": false} skips
+// @Description it). The body is a search entry plus "agent" and "sources"
+// @Description extensions; identity fields (arxiv_id / doi / title) are
+// @Description forwarded so identity-only entries run identity lookups
+// @Description instead of an empty query — an entry with none of text /
+// @Description title / arxiv_id / doi is a 400 (before metering). Every
+// @Description call is metered per user per day (usage block); a failed
+// @Description upstream is refunded. Results mirror POST /api/search,
+// @Description including the has_md / has_pdf / status hosting summary
+// @Description on minted results. Requires the papers:read scope plus a
+// @Description user-bound credential (system PATs get 403).
+// @Tags        Search
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body body object true "{text?, title?, doi?, arxiv_id?, max_results?, agent?, sources?}"
+// @Success     200 {object} map[string]interface{} "{results:[{paper_id,hit,created,has_md?,has_pdf?,status?}], candidates:[...], conclusion, usage, errors}"
+// @Failure     400 {object} map[string]string "invalid JSON or empty search entry"
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string "system PAT (no user to meter)"
+// @Failure     429 {object} map[string]interface{} "daily agentic limit reached"
+// @Failure     502 {object} map[string]string "upstream failed (quota refunded)"
+// @Failure     503 {object} map[string]string "no backend configured / registry unavailable"
+// @Router      /api/search/agentic [post]
+func docSearchAgentic() {}
 
 // multiSearch runs the per-backend ("multi") search.
 //
@@ -130,6 +181,13 @@ func docSearchPapers() {}
 // @Description merge or ranking. The caller's stored third-party API keys
 // @Description (configured in the dashboard) are decrypted and forwarded so
 // @Description key-requiring backends run under the user's credentials.
+// @Description Identity-anchored hits (DOI / arXiv id) are resolve-or-
+// @Description minted into the registry before the response, firing the
+// @Description lazy ingestion pipeline, and carry the server-side
+// @Description enrichment paper_id / created / has_md / status (the
+// @Description hosting summary is omitted when the registry is
+// @Description unavailable). Title-only hits — no DOI, no arXiv id — are
+// @Description never minted and carry none of these fields.
 // @Description Requires the papers:read scope; 503 when search.remote is
 // @Description disabled; 502 when the microservice call fails.
 // @Tags        Search
@@ -137,7 +195,7 @@ func docSearchPapers() {}
 // @Produce     json
 // @Security    BearerAuth
 // @Param       body body object true "{text, max_results?, sources: [backend names]}"
-// @Success     200 {object} map[string]interface{} "{results: {backend: [hits]}, usage, errors: {backend: msg}, remote: true}"
+// @Success     200 {object} map[string]interface{} "{results: {backend: [{title, authors?, year?, doi?, arxiv_id?, url?, venue?, citations?, source, score, paper_id?, created?, has_md?, status?}]}, usage, errors: {backend: msg}, remote: true}"
 // @Failure     400 {object} map[string]string
 // @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string
@@ -214,7 +272,10 @@ func docDownloaderJobs() {}
 // @Description excluded). has_md filters on converted markdown present on
 // @Description the paper's default asset (the "converted papers" page);
 // @Description status filters by lifecycle; q is a case-insensitive title
-// @Description substring. Sorted by created_at (default) or updated_at,
+// @Description substring; arxiv_id / doi / paper_id are exact-identity
+// @Description filters (arxiv_id may carry a version suffix and doi a
+// @Description URL prefix — both are canonicalized before matching).
+// @Description Sorted by created_at (default) or updated_at,
 // @Description descending. Requires the papers:read scope.
 // @Tags        Papers
 // @Produce     json
@@ -222,6 +283,9 @@ func docDownloaderJobs() {}
 // @Param       has_md   query bool   false "true = only papers with converted markdown on the default asset"
 // @Param       status   query string false "pending | ready | failed"
 // @Param       q        query string false "title substring (case-insensitive)"
+// @Param       arxiv_id query string false "exact arXiv id filter (version suffix optional)"
+// @Param       doi      query string false "exact DOI filter (URL prefix tolerated)"
+// @Param       paper_id query string false "exact surrogate paper id (qa_...)"
 // @Param       page     query int    false "1-based page (default 1)"
 // @Param       per_page query int    false "page size (default 20, max 100)"
 // @Param       sort     query string false "created_at (default) | updated_at, descending"
@@ -237,11 +301,16 @@ func docPapersList() {}
 //
 // @Summary     Get paper by id
 // @Description Returns the registry paper (status, identities) plus its
-// @Description asset rows for the surrogate paper_id ("qa_" + ULID).
+// @Description asset rows. The id is the surrogate paper_id ("qa_" +
+// @Description ULID), an arXiv id (new or old style, with or without a
+// @Description vN suffix), or a DOI — identifier forms resolve against
+// @Description the registry; a valid identifier the server does not
+// @Description host answers 404 pointing at GET /api/papers/lookup for
+// @Description metadata resolution.
 // @Tags        Papers
 // @Produce     json
 // @Security    BearerAuth
-// @Param       paper_id path string true "surrogate paper id (qa_...)"
+// @Param       paper_id path string true "paper id: qa_... | arXiv id | DOI"
 // @Success     200 {object} map[string]interface{}
 // @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string
@@ -308,9 +377,13 @@ func docNeedsMineru() {}
 // @Summary     Resolve references (batch, exact)
 // @Description Resolves comma-separated namespaced `kind:id` refs
 // @Description (arxiv:… / openalex:… / doi:…) against the local OpenAlex
-// @Description corpus. Returns per-ref {ref,title,authors,year,hosted,resolved}
-// @Description plus corpus_available. Exact-by-id only; fuzzy search is a
-// @Description separate deferred capability.
+// @Description corpus. Returns per-ref {ref,title,authors,year,hosted,
+// @Description has_md,resolved} plus corpus_available — hosted reports
+// @Description whether QuantumAtlas hosts the ref, and has_md (meaningful
+// @Description only when hosted) whether its default asset carries
+// @Description converted markdown, so batch consumers learn both facts in
+// @Description one call (≤200 refs per batch). Exact-by-id only; fuzzy
+// @Description search is a separate deferred capability.
 // @Tags        Papers
 // @Produce     json
 // @Param       ids query string true "comma-separated kind:id refs"
@@ -335,7 +408,11 @@ func docPaperLookup() {}
 // @Summary     Get paper markdown
 // @Description Returns the cached MinerU markdown for the given arxiv id
 // @Description (or DOI — the id_or_doi path component is auto-detected
-// @Description against the IANA prefix `10.<registrant>/...`). Only
+// @Description against the IANA prefix `10.<registrant>/...`). A qa_
+// @Description paper_id is also accepted: the server resolves the
+// @Description surrogate to the paper's canonical identity (pinned to
+// @Description the highest ingested arXiv version; DOI-only papers are
+// @Description served from the DOI namespace). Only
 // @Description registered when QATLAS_PAPER_ACCESS_ENABLED=true on the
 // @Description server (default off).
 // @Description
@@ -390,7 +467,9 @@ func docPaperMarkdown() {}
 // @Summary     Get markdown conversion status
 // @Description Side-effect-free poll surface. Never starts a job and
 // @Description never triggers a fetch. Only registered when
-// @Description QATLAS_PAPER_ACCESS_ENABLED=true on the server.
+// @Description QATLAS_PAPER_ACCESS_ENABLED=true on the server. Like the
+// @Description markdown endpoint, the id may be an arXiv id, a DOI, or
+// @Description a qa_ paper_id.
 // @Description
 // @Description Canonical resolution: same DOI-wins rule as
 // @Description /api/papers/{id_or_doi}/markdown. Pass `?force_arxiv=1`
@@ -424,9 +503,10 @@ func docPaperMarkdownStatus() {}
 // @Description validates the id and always returns 410 Gone with
 // @Description `{"detail": "PDF delivery is disabled; use the markdown
 // @Description endpoint instead"}`. Use
-// @Description /api/papers/{id_or_doi}/markdown instead. Only
-// @Description registered when QATLAS_PAPER_ACCESS_ENABLED=true on the
-// @Description server.
+// @Description /api/papers/{id_or_doi}/markdown instead. The id may be
+// @Description an arXiv id, a DOI, or a qa_ paper_id (resolved to the
+// @Description canonical identity first). Only registered when
+// @Description QATLAS_PAPER_ACCESS_ENABLED=true on the server.
 // @Tags        Papers
 // @Produce     json
 // @Security    BearerAuth
@@ -448,7 +528,8 @@ func docPaperPDF() {}
 // @Description Side-effect-free probe reporting the pdf_ready /
 // @Description md_ready booleans for a paper. Retained for debugging
 // @Description after PDF delivery was disabled (GET .../pdf answers
-// @Description 410 Gone); the body no longer carries a pdf_url. Only
+// @Description 410 Gone); the body no longer carries a pdf_url. The id
+// @Description may be an arXiv id, a DOI, or a qa_ paper_id. Only
 // @Description registered when QATLAS_PAPER_ACCESS_ENABLED=true.
 // @Description
 // @Description Canonical resolution: same DOI-wins rule as
@@ -472,7 +553,9 @@ func docPaperPDFStatus() {}
 // @Summary     Get paper images zip
 // @Description Returns the images zip (application/zip) for the given
 // @Description arxiv id or DOI — the bundle the MinerU conversion
-// @Description produced alongside the markdown. Only registered when
+// @Description produced alongside the markdown. The id may also be a
+// @Description qa_ paper_id (resolved to the canonical identity
+// @Description first). Only registered when
 // @Description QATLAS_PAPER_ACCESS_ENABLED=true on the server.
 // @Description
 // @Description Canonical resolution: same DOI-wins rule as

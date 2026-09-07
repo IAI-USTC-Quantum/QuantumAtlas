@@ -6,6 +6,9 @@ import (
 	"testing"
 )
 
+// joinDefaults is a tiny local helper for the assertion-heavy tests.
+func joinDefaults(d []string) string { return strings.Join(d, "|") }
+
 // TestComputeResolution_NoChange verifies that fully canonical input
 // produces an empty resolution (no defaults applied, no rename).
 func TestComputeResolution_NoChange(t *testing.T) {
@@ -85,6 +88,36 @@ func TestComputeResolution_DOIChain(t *testing.T) {
 	}
 	if !strings.Contains(joined, "version=v3") {
 		t.Errorf("missing version=v3 hint in %q", joined)
+	}
+}
+
+// TestComputeResolution_QAPaperID verifies the qa_ surrogate → arxiv id
+// rewrite surfaces a paper_id_resolved note (never the DOI message), and
+// that a versioned resolution carries the version inline rather than
+// emitting the scrape-flavoured "latest published version" note.
+func TestComputeResolution_QAPaperID(t *testing.T) {
+	// Pinned version (registry-resolved): one note, version inline.
+	r := computeResolution("qa_01h5gvbpyf25hjyb9wq3v7r9ta", "2501.00010v2", "2501.00010v2")
+	if !r.hasChanges() {
+		t.Fatal("hasChanges() = false for qa_ input")
+	}
+	if len(r.DefaultsApplied) != 1 {
+		t.Fatalf("DefaultsApplied = %v, want exactly the paper_id_resolved note", r.DefaultsApplied)
+	}
+	joined := joinDefaults(r.DefaultsApplied)
+	if !containsSubstr(joined, "paper_id_resolved") || !containsSubstr(joined, "2501.00010v2") {
+		t.Errorf("defaults = %q, want paper_id_resolved carrying the versioned id", joined)
+	}
+	if containsSubstr(joined, "doi_resolved_via_openalex") {
+		t.Errorf("defaults = %q, must not claim DOI resolution", joined)
+	}
+
+	// Scrape fallback (no ingested version): paper_id note + the
+	// standard latest-version note.
+	r = computeResolution("qa_01h5gvbpyf25hjyb9wq3v7r9ta", "2501.00010", "2501.00010v3")
+	joined = joinDefaults(r.DefaultsApplied)
+	if !containsSubstr(joined, "paper_id_resolved") || !containsSubstr(joined, "version=v3") {
+		t.Errorf("defaults = %q, want paper_id_resolved + version=v3", joined)
 	}
 }
 

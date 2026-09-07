@@ -1021,7 +1021,10 @@ paths:
         excluded). has_md filters on converted markdown present on
         the paper's default asset (the "converted papers" page);
         status filters by lifecycle; q is a case-insensitive title
-        substring. Sorted by created_at (default) or updated_at,
+        substring; arxiv_id / doi / paper_id are exact-identity
+        filters (arxiv_id may carry a version suffix and doi a
+        URL prefix — both are canonicalized before matching).
+        Sorted by created_at (default) or updated_at,
         descending. Requires the papers:read scope.
       parameters:
       - description: true = only papers with converted markdown on the default asset
@@ -1035,6 +1038,18 @@ paths:
       - description: title substring (case-insensitive)
         in: query
         name: q
+        type: string
+      - description: exact arXiv id filter (version suffix optional)
+        in: query
+        name: arxiv_id
+        type: string
+      - description: exact DOI filter (URL prefix tolerated)
+        in: query
+        name: doi
+        type: string
+      - description: exact surrogate paper id (qa_...)
+        in: query
+        name: paper_id
         type: string
       - description: 1-based page (default 1)
         in: query
@@ -1327,7 +1342,9 @@ paths:
       description: |-
         Returns the images zip (application/zip) for the given
         arxiv id or DOI — the bundle the MinerU conversion
-        produced alongside the markdown. Only registered when
+        produced alongside the markdown. The id may also be a
+        qa_ paper_id (resolved to the canonical identity
+        first). Only registered when
         QATLAS_PAPER_ACCESS_ENABLED=true on the server.
 
         Canonical resolution: same DOI-wins rule as
@@ -1414,7 +1431,11 @@ paths:
       description: |-
         Returns the cached MinerU markdown for the given arxiv id
         (or DOI — the id_or_doi path component is auto-detected
-        against the IANA prefix `10.<registrant>/...`). Only
+        against the IANA prefix `10.<registrant>/...`). A qa_
+        paper_id is also accepted: the server resolves the
+        surrogate to the paper's canonical identity (pinned to
+        the highest ingested arXiv version; DOI-only papers are
+        served from the DOI namespace). Only
         registered when QATLAS_PAPER_ACCESS_ENABLED=true on the
         server (default off).
 
@@ -1526,7 +1547,9 @@ paths:
       description: |-
         Side-effect-free poll surface. Never starts a job and
         never triggers a fetch. Only registered when
-        QATLAS_PAPER_ACCESS_ENABLED=true on the server.
+        QATLAS_PAPER_ACCESS_ENABLED=true on the server. Like the
+        markdown endpoint, the id may be an arXiv id, a DOI, or
+        a qa_ paper_id.
 
         Canonical resolution: same DOI-wins rule as
         /api/papers/{id_or_doi}/markdown. Pass `?force_arxiv=1`
@@ -1593,9 +1616,10 @@ paths:
         validates the id and always returns 410 Gone with
         `{"detail": "PDF delivery is disabled; use the markdown
         endpoint instead"}`. Use
-        /api/papers/{id_or_doi}/markdown instead. Only
-        registered when QATLAS_PAPER_ACCESS_ENABLED=true on the
-        server.
+        /api/papers/{id_or_doi}/markdown instead. The id may be
+        an arXiv id, a DOI, or a qa_ paper_id (resolved to the
+        canonical identity first). Only registered when
+        QATLAS_PAPER_ACCESS_ENABLED=true on the server.
       parameters:
       - description: arXiv canonical id with vN suffix, or a DOI
         in: path
@@ -1660,7 +1684,8 @@ paths:
         Side-effect-free probe reporting the pdf_ready /
         md_ready booleans for a paper. Retained for debugging
         after PDF delivery was disabled (GET .../pdf answers
-        410 Gone); the body no longer carries a pdf_url. Only
+        410 Gone); the body no longer carries a pdf_url. The id
+        may be an arXiv id, a DOI, or a qa_ paper_id. Only
         registered when QATLAS_PAPER_ACCESS_ENABLED=true.
 
         Canonical resolution: same DOI-wins rule as
@@ -1711,9 +1736,14 @@ paths:
     get:
       description: |-
         Returns the registry paper (status, identities) plus its
-        asset rows for the surrogate paper_id ("qa_" + ULID).
+        asset rows. The id is the surrogate paper_id ("qa_" +
+        ULID), an arXiv id (new or old style, with or without a
+        vN suffix), or a DOI — identifier forms resolve against
+        the registry; a valid identifier the server does not
+        host answers 404 pointing at GET /api/papers/lookup for
+        metadata resolution.
       parameters:
-      - description: surrogate paper id (qa_...)
+      - description: 'paper id: qa_... | arXiv id | DOI'
         in: path
         name: paper_id
         required: true
@@ -1814,9 +1844,13 @@ paths:
       description: |-
         Resolves comma-separated namespaced `kind:id` refs
         (arxiv:… / openalex:… / doi:…) against the local OpenAlex
-        corpus. Returns per-ref {ref,title,authors,year,hosted,resolved}
-        plus corpus_available. Exact-by-id only; fuzzy search is a
-        separate deferred capability.
+        corpus. Returns per-ref {ref,title,authors,year,hosted,
+        has_md,resolved} plus corpus_available — hosted reports
+        whether QuantumAtlas hosts the ref, and has_md (meaningful
+        only when hosted) whether its default asset carries
+        converted markdown, so batch consumers learn both facts in
+        one call (≤200 refs per batch). Exact-by-id only; fuzzy
+        search is a separate deferred capability.
       parameters:
       - description: comma-separated kind:id refs
         in: query
@@ -2020,7 +2054,13 @@ paths:
         identity-anchored hit against the paper registry. Newly minted
         papers carry created=true and are picked up by the lazy
         ingestion pipeline; title-only hits return as un-minted
-        candidates. Requires the papers:read scope.
+        candidates. The entry may carry an identity (arxiv_id / doi)
+        instead of free text — identity fields are forwarded to the
+        remote provider for identity-aware lookups; an entry with
+        none of text / title / arxiv_id / doi is a 400. Each minted
+        result also carries its hosting summary: has_md / has_pdf /
+        status from the registry default asset (omitted when the
+        registry is unavailable). Requires the papers:read scope.
       parameters:
       - description: search entry {text?, title?, doi?, arxiv_id?, max_results?, required_phrases?}
         in: body
@@ -2032,12 +2072,13 @@ paths:
       - application/json
       responses:
         "200":
-          description: '{results:[{paper_id,hit,created}], candidates:[...]}'
+          description: '{results:[{paper_id,hit,created,has_md?,has_pdf?,status?}],
+            candidates:[...]}'
           schema:
             additionalProperties: true
             type: object
         "400":
-          description: Bad Request
+          description: invalid JSON or empty search entry
           schema:
             additionalProperties:
               type: string
@@ -2063,6 +2104,80 @@ paths:
       security:
       - BearerAuth: []
       summary: Search papers
+      tags:
+      - Search
+  /api/search/agentic:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        One multi-source search through the agentic backend
+        (remote qatlas-search microservice or the local runner),
+        optionally with an LLM conclusion ({"agent": false} skips
+        it). The body is a search entry plus "agent" and "sources"
+        extensions; identity fields (arxiv_id / doi / title) are
+        forwarded so identity-only entries run identity lookups
+        instead of an empty query — an entry with none of text /
+        title / arxiv_id / doi is a 400 (before metering). Every
+        call is metered per user per day (usage block); a failed
+        upstream is refunded. Results mirror POST /api/search,
+        including the has_md / has_pdf / status hosting summary
+        on minted results. Requires the papers:read scope plus a
+        user-bound credential (system PATs get 403).
+      parameters:
+      - description: '{text?, title?, doi?, arxiv_id?, max_results?, agent?, sources?}'
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{results:[{paper_id,hit,created,has_md?,has_pdf?,status?}],
+            candidates:[...], conclusion, usage, errors}'
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: invalid JSON or empty search entry
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: system PAT (no user to meter)
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "429":
+          description: daily agentic limit reached
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: upstream failed (quota refunded)
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: no backend configured / registry unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Agentic search (metered)
       tags:
       - Search
   /api/search/backends:
@@ -2112,6 +2227,13 @@ paths:
         merge or ranking. The caller's stored third-party API keys
         (configured in the dashboard) are decrypted and forwarded so
         key-requiring backends run under the user's credentials.
+        Identity-anchored hits (DOI / arXiv id) are resolve-or-
+        minted into the registry before the response, firing the
+        lazy ingestion pipeline, and carry the server-side
+        enrichment paper_id / created / has_md / status (the
+        hosting summary is omitted when the registry is
+        unavailable). Title-only hits — no DOI, no arXiv id — are
+        never minted and carry none of these fields.
         Requires the papers:read scope; 503 when search.remote is
         disabled; 502 when the microservice call fails.
       parameters:
@@ -2125,8 +2247,9 @@ paths:
       - application/json
       responses:
         "200":
-          description: '{results: {backend: [hits]}, usage, errors: {backend: msg},
-            remote: true}'
+          description: '{results: {backend: [{title, authors?, year?, doi?, arxiv_id?,
+            url?, venue?, citations?, source, score, paper_id?, created?, has_md?,
+            status?}]}, usage, errors: {backend: msg}, remote: true}'
           schema:
             additionalProperties: true
             type: object
@@ -2167,6 +2290,21 @@ paths:
       - Search
   /api/server/info:
     get:
+      description: |-
+        Capability discovery: mode / version / engine plus a
+        capabilities block — paper_access, markdown_delivery,
+        pdf_delivery (always false — the /pdf endpoint answers
+        410 by design), agentic_search, and a nested mineru
+        object (enabled / on_demand). Privacy mirrors /api/health:
+        anonymous callers see the booleans only; authenticated
+        callers (system PAT or session) additionally get
+        mineru.daily_cap and mineru.converted_today from the
+        batch-scheduler snapshot. Note the quota semantics:
+        daily_cap self-limits the nightly BATCH scheduler
+        (default 4000/day, reserving headroom for interactive
+        traffic); on-demand conversions triggered by GET
+        /markdown are NOT counted against it — they only share
+        the upstream per-token daily quota.
       produces:
       - application/json
       responses:

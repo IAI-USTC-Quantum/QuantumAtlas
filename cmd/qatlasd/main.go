@@ -1306,15 +1306,10 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 		return nil
 	})
 
-	// /api/server/info — minimal placeholder until internal/routes/info.go
-	// migrates the full Python implementation in P3.
-	se.Router.GET("/api/server/info", func(re *core.RequestEvent) error {
-		return re.JSON(200, map[string]any{
-			"mode":    "server",
-			"version": Version,
-			"engine":  "go+pocketbase",
-		})
-	})
+	// /api/server/info — capability discovery (mode / version / engine
+	// plus the capabilities block, MinerU numbers for authenticated
+	// callers). See internal/routes/info.go.
+	routes.RegisterServerInfo(se, cfg, Version, mineruConverter, mineruScheduler, remoteProvider != nil || localAgentic != nil)
 
 	// (P12 removed: /api/session/token. It was a caddy-security-era stub
 	// that returned an empty string. The SPA now reads pb.authStore.token
@@ -1437,7 +1432,7 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 
 	// Multi-provider paper search — POST /api/search. See
 	// internal/routes/search.go.
-	routes.RegisterSearch(se, searchEngine, enforcer)
+	routes.RegisterSearch(se, searchEngine, registryStore, enforcer)
 
 	// Per-user third-party search API keys (dashboard CRUD + injection
 	// into the multi/agentic proxy calls). Encrypted at rest with a key
@@ -1450,7 +1445,7 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// qatlas-search microservice; remoteProvider == nil (search.remote
 	// disabled) leaves multi 503 and the catalog empty+remote:false. See
 	// internal/routes/search_multi.go.
-	routes.RegisterSearchMulti(se, userKeys, multiBackendFor(remoteProvider), searchEngine, enforcer)
+	routes.RegisterSearchMulti(se, userKeys, multiBackendFor(remoteProvider), searchEngine, registryStore, enforcer)
 
 	// Robust downloader — POST /api/downloader/fetch + GET
 	// /api/downloader/jobs. downloaderRoutes is nil when paper access /
@@ -1480,7 +1475,7 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 		})
 		go agentic.RunJanitor(janCtx, cfg.AgenticLocalSandboxDir, cfg.AgenticLocalRetention)
 	}
-	routes.RegisterSearchAgentic(se, cfg, agenticBackend, usageStore, searchEngine, enforcer)
+	routes.RegisterSearchAgentic(se, cfg, agenticBackend, usageStore, searchEngine, registryStore, enforcer)
 
 	// Personal Access Tokens — see internal/routes/pat.go.
 	// /api/pat is session-token-only (PAT auth refused by sessionGuard);

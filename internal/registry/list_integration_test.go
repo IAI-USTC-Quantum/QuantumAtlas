@@ -134,3 +134,56 @@ func TestIntegrationListPapers(t *testing.T) {
 		t.Errorf("nil store ListPapers err = %v, want ErrCatalogUnavailable", err)
 	}
 }
+
+// TestIntegrationListPapersIdentityFilters covers the exact-identity
+// filters (arxiv_id / doi / paper_id), including the caller-facing
+// normalization: a versioned arxiv id and a URL-prefixed DOI both match.
+func TestIntegrationListPapersIdentityFilters(t *testing.T) {
+	s, ctx := migrateStore(t)
+
+	pid, _, err := s.ResolveOrMint(ctx, PaperRef{
+		ArxivID: "2401.94001v2",
+		DOI:     "10.22331/ZZListFilter-94001",
+		Title:   "ZZListFilter alpha",
+	})
+	if err != nil {
+		t.Fatalf("ResolveOrMint: %v", err)
+	}
+	defer cleanupPapers(t, s, pid)
+
+	list := func(f ListFilter) ([]ListItem, int) {
+		t.Helper()
+		items, total, lerr := s.ListPapers(ctx, f)
+		if lerr != nil {
+			t.Fatalf("ListPapers(%+v): %v", f, lerr)
+		}
+		return items, total
+	}
+
+	items, total := list(ListFilter{ArxivID: "2401.94001"})
+	if total != 1 || len(items) != 1 || items[0].PaperID != pid {
+		t.Errorf("arxiv_id filter = %v (total %d), want the minted paper", items, total)
+	}
+	// Version suffix is normalized away before matching.
+	if _, total = list(ListFilter{ArxivID: "2401.94001v7"}); total != 1 {
+		t.Errorf("versioned arxiv_id filter total = %d, want 1", total)
+	}
+	// DOI filter matches the normalized (lower-cased) column.
+	if _, total = list(ListFilter{DOI: "10.22331/zzlistfilter-94001"}); total != 1 {
+		t.Errorf("doi filter total = %d, want 1", total)
+	}
+	// paper_id filter.
+	if _, total = list(ListFilter{PaperID: pid}); total != 1 {
+		t.Errorf("paper_id filter total = %d, want 1", total)
+	}
+	// Unknown identities match nothing.
+	if _, total = list(ListFilter{ArxivID: "2401.99999"}); total != 0 {
+		t.Errorf("unknown arxiv_id total = %d, want 0", total)
+	}
+	if _, total = list(ListFilter{DOI: "10.22331/zzlistfilter-does-not-exist"}); total != 0 {
+		t.Errorf("unknown doi total = %d, want 0", total)
+	}
+	if _, total = list(ListFilter{PaperID: "qa_doesnotexist000000000000"}); total != 0 {
+		t.Errorf("unknown paper_id total = %d, want 0", total)
+	}
+}

@@ -74,8 +74,10 @@ var _ AgenticBackend = (*search.RemoteProvider)(nil)
 // route still registers (so the surface is stable) but every call gets a
 // 503. usageStore meters against the registry Postgres; engine is used
 // only for its resolve-or-mint half (registry anchoring of the returned
-// hits).
-func RegisterSearchAgentic(se *core.ServeEvent, cfg *config.Config, backend AgenticBackend, usageStore *usage.Store, engine *search.Engine, enforcer *casbin.Enforcer) {
+// hits). catalog decorates the minted results with their hosting
+// summary (has_md / has_pdf / status) and may be nil — the fields are
+// then omitted.
+func RegisterSearchAgentic(se *core.ServeEvent, cfg *config.Config, backend AgenticBackend, usageStore *usage.Store, engine *search.Engine, catalog *registry.Store, enforcer *casbin.Enforcer) {
 	se.Router.POST("/api/search/agentic", scopeGuard(enforcer, "papers", "read", func(re *core.RequestEvent) error {
 		if backend == nil {
 			return re.JSON(http.StatusServiceUnavailable, map[string]string{
@@ -116,6 +118,12 @@ func RegisterSearchAgentic(se *core.ServeEvent, cfg *config.Config, backend Agen
 		entry.Normalize()
 		agent := body.Agent == nil || *body.Agent
 		sources := normalizeSources(body.Sources)
+		// Empty-entry guard fires BEFORE the metering reservation: an
+		// entry with none of text / title / arxiv_id / doi must neither
+		// burn a daily slot nor fan out an empty query.
+		if rejectEmptySearchEntry(re, entry) {
+			return nil
+		}
 
 		ctx := re.Request.Context()
 		limit, err := usageStore.EffectiveLimit(ctx, userID, cfg.AgenticDailyLimit)
@@ -192,6 +200,7 @@ func RegisterSearchAgentic(se *core.ServeEvent, cfg *config.Config, backend Agen
 				Created: r.Created,
 			})
 		}
+		attachResultSummaries(out.Results, resultSummaries(ctx, catalog, results))
 		return re.JSON(http.StatusOK, out)
 	}))
 }

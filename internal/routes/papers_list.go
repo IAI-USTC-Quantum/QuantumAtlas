@@ -2,15 +2,18 @@ package routes
 
 // papers_list.go: GET /api/papers — the paginated papers list backing
 // the "converted papers" frontend page. Filters: has_md (converted
-// markdown present on the default asset), status, title substring;
-// sorted by created_at (default) or updated_at, descending.
+// markdown present on the default asset), status, title substring, and
+// the exact-identity trio arxiv_id / doi / paper_id; sorted by
+// created_at (default) or updated_at, descending.
 
 import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperassets"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/registry"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -48,6 +51,33 @@ func papersListHandler(re *core.RequestEvent, catalog *registry.Store) error {
 		}
 	}
 	filter.Query = q.Get("q")
+	// Exact-identity filters: format-checked here (400 on garbage), then
+	// normalized inside ListPapers — arxiv_id may carry a version suffix
+	// and doi a URL prefix; both are canonicalized before the SQL.
+	if v := q.Get("arxiv_id"); v != "" {
+		if _, perr := paperassets.Parse(v); perr != nil {
+			return re.JSON(http.StatusBadRequest, map[string]string{
+				"detail": "invalid arxiv_id (want e.g. 2501.00010 or quant-ph/9508027, optional vN): " + v,
+			})
+		}
+		filter.ArxivID = v
+	}
+	if v := q.Get("doi"); v != "" {
+		if _, ok := paperassets.ValidateDOI(v); !ok {
+			return re.JSON(http.StatusBadRequest, map[string]string{
+				"detail": "invalid doi: " + v,
+			})
+		}
+		filter.DOI = v
+	}
+	if v := q.Get("paper_id"); v != "" {
+		if !strings.HasPrefix(v, "qa_") || len(v) <= len("qa_") {
+			return re.JSON(http.StatusBadRequest, map[string]string{
+				"detail": "invalid paper_id (want the qa_ surrogate id): " + v,
+			})
+		}
+		filter.PaperID = v
+	}
 	if v := q.Get("sort"); v != "" {
 		switch v {
 		case "created_at", "updated_at":

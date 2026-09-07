@@ -1189,7 +1189,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Paginated list of registry papers (merged tombstones\nexcluded). has_md filters on converted markdown present on\nthe paper's default asset (the \"converted papers\" page);\nstatus filters by lifecycle; q is a case-insensitive title\nsubstring. Sorted by created_at (default) or updated_at,\ndescending. Requires the papers:read scope.",
+                "description": "Paginated list of registry papers (merged tombstones\nexcluded). has_md filters on converted markdown present on\nthe paper's default asset (the \"converted papers\" page);\nstatus filters by lifecycle; q is a case-insensitive title\nsubstring; arxiv_id / doi / paper_id are exact-identity\nfilters (arxiv_id may carry a version suffix and doi a\nURL prefix — both are canonicalized before matching).\nSorted by created_at (default) or updated_at,\ndescending. Requires the papers:read scope.",
                 "produces": [
                     "application/json"
                 ],
@@ -1214,6 +1214,24 @@ const docTemplate = `{
                         "type": "string",
                         "description": "title substring (case-insensitive)",
                         "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "exact arXiv id filter (version suffix optional)",
+                        "name": "arxiv_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "exact DOI filter (URL prefix tolerated)",
+                        "name": "doi",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "exact surrogate paper id (qa_...)",
+                        "name": "paper_id",
                         "in": "query"
                     },
                     {
@@ -1289,7 +1307,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Resolves comma-separated namespaced ` + "`" + `kind:id` + "`" + ` refs\n(arxiv:… / openalex:… / doi:…) against the local OpenAlex\ncorpus. Returns per-ref {ref,title,authors,year,hosted,resolved}\nplus corpus_available. Exact-by-id only; fuzzy search is a\nseparate deferred capability.",
+                "description": "Resolves comma-separated namespaced ` + "`" + `kind:id` + "`" + ` refs\n(arxiv:… / openalex:… / doi:…) against the local OpenAlex\ncorpus. Returns per-ref {ref,title,authors,year,hosted,\nhas_md,resolved} plus corpus_available — hosted reports\nwhether QuantumAtlas hosts the ref, and has_md (meaningful\nonly when hosted) whether its default asset carries\nconverted markdown, so batch consumers learn both facts in\none call (≤200 refs per batch). Exact-by-id only; fuzzy\nsearch is a separate deferred capability.",
                 "produces": [
                     "application/json"
                 ],
@@ -1773,7 +1791,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns the images zip (application/zip) for the given\narxiv id or DOI — the bundle the MinerU conversion\nproduced alongside the markdown. Only registered when\nQATLAS_PAPER_ACCESS_ENABLED=true on the server.\n\nCanonical resolution: same DOI-wins rule as\n/api/papers/{id_or_doi}/markdown; pass ` + "`" + `?force_arxiv=1` + "`" + `\nto opt out per request.\n\nThis endpoint has no long-running-operation semantics:\nwhen no images zip is stored it answers 404 (fetch\n/markdown first to trigger the conversion that produces\nthe images).\n\nTransport (ADR 0011): defaults to a byte stream\n(application/zip). Pass ` + "`" + `?format=link` + "`" + ` to instead\nreceive a JSON body with a short-lived RustFS direct\nlink (` + "`" + `{images_url, format:\"link\", expires_in}` + "`" + `); on a\nbackend that cannot presign (dev LocalStore) a link\nrequest transparently falls back to bytes. Any other\n?format= value is a 400.",
+                "description": "Returns the images zip (application/zip) for the given\narxiv id or DOI — the bundle the MinerU conversion\nproduced alongside the markdown. The id may also be a\nqa_ paper_id (resolved to the canonical identity\nfirst). Only registered when\nQATLAS_PAPER_ACCESS_ENABLED=true on the server.\n\nCanonical resolution: same DOI-wins rule as\n/api/papers/{id_or_doi}/markdown; pass ` + "`" + `?force_arxiv=1` + "`" + `\nto opt out per request.\n\nThis endpoint has no long-running-operation semantics:\nwhen no images zip is stored it answers 404 (fetch\n/markdown first to trigger the conversion that produces\nthe images).\n\nTransport (ADR 0011): defaults to a byte stream\n(application/zip). Pass ` + "`" + `?format=link` + "`" + ` to instead\nreceive a JSON body with a short-lived RustFS direct\nlink (` + "`" + `{images_url, format:\"link\", expires_in}` + "`" + `); on a\nbackend that cannot presign (dev LocalStore) a link\nrequest transparently falls back to bytes. Any other\n?format= value is a 400.",
                 "produces": [
                     "application/zip"
                 ],
@@ -1869,7 +1887,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns the cached MinerU markdown for the given arxiv id\n(or DOI — the id_or_doi path component is auto-detected\nagainst the IANA prefix ` + "`" + `10.\u003cregistrant\u003e/...` + "`" + `). Only\nregistered when QATLAS_PAPER_ACCESS_ENABLED=true on the\nserver (default off).\n\nCanonical resolution: a ` + "`" + `:PaperWork` + "`" + ` node with\n` + "`" + `identifier_scheme='doi'` + "`" + ` ALWAYS wins over its arxiv\ntwin when both exist — DOI is the canonical identity of\nthe published version. The dispatcher serves DOI bytes\nfor either id form when a DOI contribution is on file;\npass ` + "`" + `?force_arxiv=1` + "`" + ` to opt out per request (DOI input\nwith force_arxiv + no arxiv twin returns 409). See\ndocs/server/upload-api.md §Canonical resolution.\n\nLong-running operation semantics: on cache miss the\nserver may transparently fetch the PDF from arxiv.org\n(silent_fetch) — or, for a DOI without an arXiv twin,\nfrom the open-access PDF URL OpenAlex surfaces\n(best_oa_location.pdf_url) — and trigger a MinerU\nconversion. The first call returns 202 with\n` + "`" + `Operation-Location:\n/api/papers/{id}/markdown/status` + "`" + ` and ` + "`" + `Retry-After: 5` + "`" + `;\nclients poll the status endpoint until state=cached then\nre-GET this resource for the bytes. A DOI with no arXiv\ntwin and no OA PDF stays 404 (contribute the PDF via\nPOST /api/papers/{doi}/upload-pdf).\n\nTransport (ADR 0011): markdown DEFAULTS to a byte stream\n(text/markdown). Pass ` + "`" + `?format=link` + "`" + ` to instead receive a\nJSON body with a short-lived RustFS direct link\n(` + "`" + `{markdown_url, format:\"link\", expires_in}` + "`" + `); on a backend\nthat cannot presign (dev LocalStore) a link request\ntransparently falls back to bytes.",
+                "description": "Returns the cached MinerU markdown for the given arxiv id\n(or DOI — the id_or_doi path component is auto-detected\nagainst the IANA prefix ` + "`" + `10.\u003cregistrant\u003e/...` + "`" + `). A qa_\npaper_id is also accepted: the server resolves the\nsurrogate to the paper's canonical identity (pinned to\nthe highest ingested arXiv version; DOI-only papers are\nserved from the DOI namespace). Only\nregistered when QATLAS_PAPER_ACCESS_ENABLED=true on the\nserver (default off).\n\nCanonical resolution: a ` + "`" + `:PaperWork` + "`" + ` node with\n` + "`" + `identifier_scheme='doi'` + "`" + ` ALWAYS wins over its arxiv\ntwin when both exist — DOI is the canonical identity of\nthe published version. The dispatcher serves DOI bytes\nfor either id form when a DOI contribution is on file;\npass ` + "`" + `?force_arxiv=1` + "`" + ` to opt out per request (DOI input\nwith force_arxiv + no arxiv twin returns 409). See\ndocs/server/upload-api.md §Canonical resolution.\n\nLong-running operation semantics: on cache miss the\nserver may transparently fetch the PDF from arxiv.org\n(silent_fetch) — or, for a DOI without an arXiv twin,\nfrom the open-access PDF URL OpenAlex surfaces\n(best_oa_location.pdf_url) — and trigger a MinerU\nconversion. The first call returns 202 with\n` + "`" + `Operation-Location:\n/api/papers/{id}/markdown/status` + "`" + ` and ` + "`" + `Retry-After: 5` + "`" + `;\nclients poll the status endpoint until state=cached then\nre-GET this resource for the bytes. A DOI with no arXiv\ntwin and no OA PDF stays 404 (contribute the PDF via\nPOST /api/papers/{doi}/upload-pdf).\n\nTransport (ADR 0011): markdown DEFAULTS to a byte stream\n(text/markdown). Pass ` + "`" + `?format=link` + "`" + ` to instead receive a\nJSON body with a short-lived RustFS direct link\n(` + "`" + `{markdown_url, format:\"link\", expires_in}` + "`" + `); on a backend\nthat cannot presign (dev LocalStore) a link request\ntransparently falls back to bytes.",
                 "produces": [
                     "text/plain"
                 ],
@@ -1977,7 +1995,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Side-effect-free poll surface. Never starts a job and\nnever triggers a fetch. Only registered when\nQATLAS_PAPER_ACCESS_ENABLED=true on the server.\n\nCanonical resolution: same DOI-wins rule as\n/api/papers/{id_or_doi}/markdown. Pass ` + "`" + `?force_arxiv=1` + "`" + `\nto query the arxiv-side status instead.\n\nResponse shape always carries the agent-decision triple\n` + "`" + `state / pdf_ready / md_ready` + "`" + ` plus an optional ` + "`" + `phase` + "`" + `\n(fetching_pdf | converting_md | ready | error_fetching |\nerror_converting) and ` + "`" + `fetch` + "`" + ` / ` + "`" + `convert` + "`" + ` sub-objects\nwith bytes_received / mineru_task_id / polled_count so a\npolling client can show precise progress.",
+                "description": "Side-effect-free poll surface. Never starts a job and\nnever triggers a fetch. Only registered when\nQATLAS_PAPER_ACCESS_ENABLED=true on the server. Like the\nmarkdown endpoint, the id may be an arXiv id, a DOI, or\na qa_ paper_id.\n\nCanonical resolution: same DOI-wins rule as\n/api/papers/{id_or_doi}/markdown. Pass ` + "`" + `?force_arxiv=1` + "`" + `\nto query the arxiv-side status instead.\n\nResponse shape always carries the agent-decision triple\n` + "`" + `state / pdf_ready / md_ready` + "`" + ` plus an optional ` + "`" + `phase` + "`" + `\n(fetching_pdf | converting_md | ready | error_fetching |\nerror_converting) and ` + "`" + `fetch` + "`" + ` / ` + "`" + `convert` + "`" + ` sub-objects\nwith bytes_received / mineru_task_id / polled_count so a\npolling client can show precise progress.",
                 "produces": [
                     "application/json"
                 ],
@@ -2054,7 +2072,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "PDF delivery is disabled. This endpoint no longer\nserves PDF bytes (or direct links) in any state: it\nvalidates the id and always returns 410 Gone with\n` + "`" + `{\"detail\": \"PDF delivery is disabled; use the markdown\nendpoint instead\"}` + "`" + `. Use\n/api/papers/{id_or_doi}/markdown instead. Only\nregistered when QATLAS_PAPER_ACCESS_ENABLED=true on the\nserver.",
+                "description": "PDF delivery is disabled. This endpoint no longer\nserves PDF bytes (or direct links) in any state: it\nvalidates the id and always returns 410 Gone with\n` + "`" + `{\"detail\": \"PDF delivery is disabled; use the markdown\nendpoint instead\"}` + "`" + `. Use\n/api/papers/{id_or_doi}/markdown instead. The id may be\nan arXiv id, a DOI, or a qa_ paper_id (resolved to the\ncanonical identity first). Only registered when\nQATLAS_PAPER_ACCESS_ENABLED=true on the server.",
                 "produces": [
                     "application/json"
                 ],
@@ -2145,7 +2163,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Side-effect-free probe reporting the pdf_ready /\nmd_ready booleans for a paper. Retained for debugging\nafter PDF delivery was disabled (GET .../pdf answers\n410 Gone); the body no longer carries a pdf_url. Only\nregistered when QATLAS_PAPER_ACCESS_ENABLED=true.\n\nCanonical resolution: same DOI-wins rule as\n/api/papers/{id_or_doi}/markdown. Pass ` + "`" + `?force_arxiv=1` + "`" + `\nto query the arxiv-side status instead.",
+                "description": "Side-effect-free probe reporting the pdf_ready /\nmd_ready booleans for a paper. Retained for debugging\nafter PDF delivery was disabled (GET .../pdf answers\n410 Gone); the body no longer carries a pdf_url. The id\nmay be an arXiv id, a DOI, or a qa_ paper_id. Only\nregistered when QATLAS_PAPER_ACCESS_ENABLED=true.\n\nCanonical resolution: same DOI-wins rule as\n/api/papers/{id_or_doi}/markdown. Pass ` + "`" + `?force_arxiv=1` + "`" + `\nto query the arxiv-side status instead.",
                 "produces": [
                     "application/json"
                 ],
@@ -2213,7 +2231,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns the registry paper (status, identities) plus its\nasset rows for the surrogate paper_id (\"qa_\" + ULID).",
+                "description": "Returns the registry paper (status, identities) plus its\nasset rows. The id is the surrogate paper_id (\"qa_\" +\nULID), an arXiv id (new or old style, with or without a\nvN suffix), or a DOI — identifier forms resolve against\nthe registry; a valid identifier the server does not\nhost answers 404 pointing at GET /api/papers/lookup for\nmetadata resolution.",
                 "produces": [
                     "application/json"
                 ],
@@ -2224,7 +2242,7 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "surrogate paper id (qa_...)",
+                        "description": "paper id: qa_... | arXiv id | DOI",
                         "name": "paper_id",
                         "in": "path",
                         "required": true
@@ -2494,7 +2512,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Fans one search entry out to the configured providers\n(catalog / arxiv / openalex / remote), merges hits by paper\nidentity (DOI \u003e arXiv \u003e title hash) and resolve-or-mints each\nidentity-anchored hit against the paper registry. Newly minted\npapers carry created=true and are picked up by the lazy\ningestion pipeline; title-only hits return as un-minted\ncandidates. Requires the papers:read scope.",
+                "description": "Fans one search entry out to the configured providers\n(catalog / arxiv / openalex / remote), merges hits by paper\nidentity (DOI \u003e arXiv \u003e title hash) and resolve-or-mints each\nidentity-anchored hit against the paper registry. Newly minted\npapers carry created=true and are picked up by the lazy\ningestion pipeline; title-only hits return as un-minted\ncandidates. The entry may carry an identity (arxiv_id / doi)\ninstead of free text — identity fields are forwarded to the\nremote provider for identity-aware lookups; an entry with\nnone of text / title / arxiv_id / doi is a 400. Each minted\nresult also carries its hosting summary: has_md / has_pdf /\nstatus from the registry default asset (omitted when the\nregistry is unavailable). Requires the papers:read scope.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2518,14 +2536,14 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "{results:[{paper_id,hit,created}], candidates:[...]}",
+                        "description": "{results:[{paper_id,hit,created,has_md?,has_pdf?,status?}], candidates:[...]}",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
                     },
                     "400": {
-                        "description": "Bad Request",
+                        "description": "invalid JSON or empty search entry",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -2553,6 +2571,98 @@ const docTemplate = `{
                     },
                     "503": {
                         "description": "registry unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/search/agentic": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "One multi-source search through the agentic backend\n(remote qatlas-search microservice or the local runner),\noptionally with an LLM conclusion ({\"agent\": false} skips\nit). The body is a search entry plus \"agent\" and \"sources\"\nextensions; identity fields (arxiv_id / doi / title) are\nforwarded so identity-only entries run identity lookups\ninstead of an empty query — an entry with none of text /\ntitle / arxiv_id / doi is a 400 (before metering). Every\ncall is metered per user per day (usage block); a failed\nupstream is refunded. Results mirror POST /api/search,\nincluding the has_md / has_pdf / status hosting summary\non minted results. Requires the papers:read scope plus a\nuser-bound credential (system PATs get 403).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Search"
+                ],
+                "summary": "Agentic search (metered)",
+                "parameters": [
+                    {
+                        "description": "{text?, title?, doi?, arxiv_id?, max_results?, agent?, sources?}",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{results:[{paper_id,hit,created,has_md?,has_pdf?,status?}], candidates:[...], conclusion, usage, errors}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "invalid JSON or empty search entry",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "system PAT (no user to meter)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "429": {
+                        "description": "daily agentic limit reached",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "upstream failed (quota refunded)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "no backend configured / registry unavailable",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -2614,7 +2724,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Proxies one mode=\"multi\" call to the qatlas-search\nmicroservice: every requested backend returns its own raw\nhit list (the source's own order), with NO cross-backend\nmerge or ranking. The caller's stored third-party API keys\n(configured in the dashboard) are decrypted and forwarded so\nkey-requiring backends run under the user's credentials.\nRequires the papers:read scope; 503 when search.remote is\ndisabled; 502 when the microservice call fails.",
+                "description": "Proxies one mode=\"multi\" call to the qatlas-search\nmicroservice: every requested backend returns its own raw\nhit list (the source's own order), with NO cross-backend\nmerge or ranking. The caller's stored third-party API keys\n(configured in the dashboard) are decrypted and forwarded so\nkey-requiring backends run under the user's credentials.\nIdentity-anchored hits (DOI / arXiv id) are resolve-or-\nminted into the registry before the response, firing the\nlazy ingestion pipeline, and carry the server-side\nenrichment paper_id / created / has_md / status (the\nhosting summary is omitted when the registry is\nunavailable). Title-only hits — no DOI, no arXiv id — are\nnever minted and carry none of these fields.\nRequires the papers:read scope; 503 when search.remote is\ndisabled; 502 when the microservice call fails.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2638,7 +2748,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "{results: {backend: [hits]}, usage, errors: {backend: msg}, remote: true}",
+                        "description": "{results: {backend: [{title, authors?, year?, doi?, arxiv_id?, url?, venue?, citations?, source, score, paper_id?, created?, has_md?, status?}]}, usage, errors: {backend: msg}, remote: true}",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -2694,6 +2804,7 @@ const docTemplate = `{
         },
         "/api/server/info": {
             "get": {
+                "description": "Capability discovery: mode / version / engine plus a\ncapabilities block — paper_access, markdown_delivery,\npdf_delivery (always false — the /pdf endpoint answers\n410 by design), agentic_search, and a nested mineru\nobject (enabled / on_demand). Privacy mirrors /api/health:\nanonymous callers see the booleans only; authenticated\ncallers (system PAT or session) additionally get\nmineru.daily_cap and mineru.converted_today from the\nbatch-scheduler snapshot. Note the quota semantics:\ndaily_cap self-limits the nightly BATCH scheduler\n(default 4000/day, reserving headroom for interactive\ntraffic); on-demand conversions triggered by GET\n/markdown are NOT counted against it — they only share\nthe upstream per-token daily quota.",
                 "produces": [
                     "application/json"
                 ],

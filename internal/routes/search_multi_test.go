@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/pat"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/registry"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/search"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/userkeys"
 
@@ -43,14 +44,17 @@ func (f *fakeMultiBackend) ListBackends(context.Context) ([]search.RemoteBackend
 	return f.listResp, f.listErr
 }
 
-// multiHarness mounts the multi search + backends + search-keys routes
+// newMultiHarness mounts the multi search + backends + search-keys routes
 // over a real test PB app, with a userkeys store keyed by a fixed secret.
+// engine / catalog drive the resolve-or-mint + summary-enrichment path
+// (nil registry inside the engine = minting disabled; nil catalog = the
+// hosting summary is omitted) without needing PostgreSQL.
 type multiHarness struct {
 	*patHarness
 	keys *userkeys.Store
 }
 
-func newMultiHarness(t testing.TB, backend MultiBackend) *multiHarness {
+func newMultiHarness(t testing.TB, backend MultiBackend, engine *search.Engine, catalog *registry.Store) *multiHarness {
 	t.Helper()
 	h := &multiHarness{patHarness: &patHarness{t: t}}
 
@@ -77,7 +81,7 @@ func newMultiHarness(t testing.TB, backend MultiBackend) *multiHarness {
 
 	var built http.Handler
 	err = app.OnServe().Trigger(se, func(e *core.ServeEvent) error {
-		RegisterSearchMulti(e, h.keys, backend, nil, enforcer)
+		RegisterSearchMulti(e, h.keys, backend, engine, catalog, enforcer)
 		RegisterSearchBackends(e, h.keys, backend)
 		RegisterMeSearchKeys(e, h.keys)
 		m, mErr := e.Router.BuildMux()
@@ -98,7 +102,7 @@ func newMultiHarness(t testing.TB, backend MultiBackend) *multiHarness {
 }
 
 func TestAPI_SearchMulti_RejectsAnonymous(t *testing.T) {
-	h := newMultiHarness(t, &fakeMultiBackend{})
+	h := newMultiHarness(t, &fakeMultiBackend{}, search.NewEngine(nil, nil), nil)
 	status, _, _ := h.do(http.MethodPost, "/api/search/multi", `{"text":"x","sources":["arxiv"]}`, nil)
 	if status != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", status)
@@ -106,7 +110,7 @@ func TestAPI_SearchMulti_RejectsAnonymous(t *testing.T) {
 }
 
 func TestAPI_SearchMulti_NoBackend(t *testing.T) {
-	h := newMultiHarness(t, nil)
+	h := newMultiHarness(t, nil, nil, nil)
 	status, _, body := h.do(http.MethodPost, "/api/search/multi", `{"text":"x","sources":["arxiv"]}`, rawHeader(h.sessionToken()))
 	if status != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503; body=%v", status, body)
@@ -117,7 +121,7 @@ func TestAPI_SearchMulti_NoBackend(t *testing.T) {
 }
 
 func TestAPI_SearchMulti_ValidatesBody(t *testing.T) {
-	h := newMultiHarness(t, &fakeMultiBackend{})
+	h := newMultiHarness(t, &fakeMultiBackend{}, search.NewEngine(nil, nil), nil)
 	hdr := rawHeader(h.sessionToken())
 	for _, tc := range []struct{ name, body string }{
 		{"no text", `{"sources":["arxiv"]}`},
@@ -140,7 +144,7 @@ func TestAPI_SearchMulti_ForwardsSourcesAndUserKeys(t *testing.T) {
 			Errors: map[string]string{"tavily": "HTTPError: 401"},
 		},
 	}
-	h := newMultiHarness(t, fake)
+	h := newMultiHarness(t, fake, search.NewEngine(nil, nil), nil)
 
 	// Store a user key for a key-requiring backend first (dashboard flow).
 	status, _, _ := h.do(http.MethodPut, "/api/me/search-keys/ieee", `{"key":"ieee-user-key-99"}`, rawHeader(h.sessionToken()))
@@ -178,10 +182,123 @@ func TestAPI_SearchMulti_ForwardsSourcesAndUserKeys(t *testing.T) {
 func TestAPI_SearchMulti_UpstreamFailure(t *testing.T) {
 	fake := &fakeMultiBackend{}
 	fake.multiErr = context.DeadlineExceeded
-	h := newMultiHarness(t, fake)
+	h := newMultiHarness(t, fake, search.NewEngine(nil, nil), nil)
 	status, _, body := h.do(http.MethodPost, "/api/search/multi", `{"text":"x","sources":["arxiv"]}`, rawHeader(h.sessionToken()))
 	if status != http.StatusBadGateway {
 		t.Fatalf("status = %d, want 502; body=%v", status, body)
+	}
+}
+
+// TestMultiAnchors_BackfillsAcrossBackends covers the server-side
+// enrichment mapping: mint results anchor by DOI (arXiv as fallback), so
+// every backend's hit carrying the same identity backfills the SAME
+// paper_id; title-only hits and identities without a summary entry keep
+// the fields omitted. The populated-paper path needs a live Postgres
+// (see the registry integration suite); the mapping itself is pure.
+func TestMultiAnchors_BackfillsAcrossBackends(t *testing.T) {
+	// What the engine returns for the deduped hits: the DOI+arXiv hit
+	// anchors by DOI (minted here), the arXiv-only twin resolves to the
+	// same paper (created=false); qa_nomd has no summary entry.
+	results := []search.Result{
+		{PaperID: "qa_doi", Created: true, Hit: search.Hit{DOI: "10.1234/qa", ArxivID: "2501.03424", Title: "Twin identities"}},
+		{PaperID: "qa_doi", Created: false, Hit: search.Hit{ArxivID: "2501.03424", Title: "arXiv-only twin"}},
+		{PaperID: "qa_nomd", Created: false, Hit: search.Hit{DOI: "10.5555/no-summary"}},
+	}
+	resp := search.RemoteMultiResponse{Results: map[string][]search.RemoteHit{
+		"arxiv": {
+			{Title: "Twin identities", DOI: "10.1234/qa", ArxivID: "2501.03424", Source: "arxiv"},
+			{Title: "No identity here", Source: "arxiv"},
+		},
+		"crossref": {
+			{Title: "Twin identities (again)", DOI: "10.1234/qa", Source: "crossref"},
+			{Title: "arXiv-only twin", ArxivID: "2501.03424", Source: "crossref"},
+			{Title: "No summary for me", DOI: "10.5555/no-summary", Source: "crossref"},
+		},
+	}}
+	attachMultiAnchors(resp.Results, multiAnchors(results), map[string]registry.PaperSummary{
+		"qa_doi": {Status: "ready", HasMD: true},
+	})
+
+	// DOI-anchored hit: full enrichment, same paper on both backends.
+	arxiv0 := resp.Results["arxiv"][0]
+	if arxiv0.PaperID != "qa_doi" || !arxiv0.Created {
+		t.Errorf("arxiv[0] = %+v, want qa_doi created", arxiv0)
+	}
+	if arxiv0.HasMD == nil || !*arxiv0.HasMD || arxiv0.Status != "ready" {
+		t.Errorf("arxiv[0] summary = %+v, want ready+has_md", arxiv0)
+	}
+	crossref0 := resp.Results["crossref"][0]
+	if crossref0.PaperID != "qa_doi" || !crossref0.Created || crossref0.Status != "ready" {
+		t.Errorf("crossref[0] = %+v, want the same qa_doi anchor", crossref0)
+	}
+	// arXiv-only twin of the same paper: same paper_id, resolved not
+	// minted (created omitted on the wire).
+	crossref1 := resp.Results["crossref"][1]
+	if crossref1.PaperID != "qa_doi" || crossref1.Created {
+		t.Errorf("crossref[1] = %+v, want qa_doi resolved", crossref1)
+	}
+	// Title-only hit: no anchor at all.
+	if hit := resp.Results["arxiv"][1]; hit.PaperID != "" || hit.Created || hit.HasMD != nil || hit.Status != "" {
+		t.Errorf("title-only hit = %+v, want no enrichment", hit)
+	}
+	// Summary miss: anchored but has_md/status omitted.
+	nomd := resp.Results["crossref"][2]
+	if nomd.PaperID != "qa_nomd" || nomd.HasMD != nil || nomd.Status != "" {
+		t.Errorf("summary-miss hit = %+v, want paper_id only", nomd)
+	}
+}
+
+// TestAPI_SearchMulti_EnrichmentOmittedWithoutRegistry: with minting
+// disabled (nil registry inside the engine) and no catalog, identity
+// hits still answer 200 with the raw fields — no paper_id / created /
+// has_md / status keys anywhere in the body.
+func TestAPI_SearchMulti_EnrichmentOmittedWithoutRegistry(t *testing.T) {
+	fake := &fakeMultiBackend{
+		multiResp: search.RemoteMultiResponse{
+			Results: map[string][]search.RemoteHit{
+				"arxiv":  {{Title: "Anchored", DOI: "10.1234/qa", Source: "arxiv"}},
+				"web":    {{Title: "Title only", Source: "wikipedia"}},
+			},
+		},
+	}
+	h := newMultiHarness(t, fake, search.NewEngine(nil, nil), nil)
+	status, raw, resp := h.do(http.MethodPost, "/api/search/multi", `{"text":"x","sources":["arxiv","web"]}`, rawHeader(h.sessionToken()))
+	if status != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", status, raw)
+	}
+	results := resp["results"].(map[string]any)
+	if results["arxiv"].([]any)[0].(map[string]any)["title"] != "Anchored" {
+		t.Fatalf("raw hits lost: %s", raw)
+	}
+	for _, key := range []string{"paper_id", "created", "has_md", "status"} {
+		if containsSubstr(string(raw), `"`+key+`"`) {
+			t.Errorf("body must omit %q without a registry: %s", key, raw)
+		}
+	}
+}
+
+// TestAPI_SearchMulti_MintFailureKeepsResponse: a failing mint (nil-pool
+// registry store → ErrCatalogUnavailable) is best-effort — the response
+// stays 200 with the raw hits and no enrichment fields.
+func TestAPI_SearchMulti_MintFailureKeepsResponse(t *testing.T) {
+	fake := &fakeMultiBackend{
+		multiResp: search.RemoteMultiResponse{
+			Results: map[string][]search.RemoteHit{
+				"arxiv": {{Title: "Anchored", ArxivID: "2501.03424", Source: "arxiv"}},
+			},
+		},
+	}
+	h := newMultiHarness(t, fake, search.NewEngine(registry.NewStore(nil), nil), registry.NewStore(nil))
+	status, raw, resp := h.do(http.MethodPost, "/api/search/multi", `{"text":"x","sources":["arxiv"]}`, rawHeader(h.sessionToken()))
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200 despite mint failure; body=%s", status, raw)
+	}
+	results := resp["results"].(map[string]any)
+	if results["arxiv"].([]any)[0].(map[string]any)["title"] != "Anchored" {
+		t.Fatalf("raw hits lost: %s", raw)
+	}
+	if containsSubstr(string(raw), `"paper_id"`) || containsSubstr(string(raw), `"status"`) {
+		t.Errorf("body must omit enrichment after a mint failure: %s", raw)
 	}
 }
 
@@ -193,7 +310,7 @@ func TestAPI_SearchBackends_MergesLiveAndUserKeys(t *testing.T) {
 			{Name: "totally_new", Label: "Brand New", Category: "web", UserKey: true, Available: true},
 		},
 	}
-	h := newMultiHarness(t, fake)
+	h := newMultiHarness(t, fake, search.NewEngine(nil, nil), nil)
 
 	status, _, _ := h.do(http.MethodPut, "/api/me/search-keys/ieee", `{"key":"ieee-user-key-99"}`, rawHeader(h.sessionToken()))
 	if status != http.StatusOK {
@@ -236,7 +353,7 @@ func TestAPI_SearchBackends_MergesLiveAndUserKeys(t *testing.T) {
 }
 
 func TestAPI_SearchBackends_NoBackendIsEmpty(t *testing.T) {
-	h := newMultiHarness(t, nil)
+	h := newMultiHarness(t, nil, nil, nil)
 	status, _, resp := h.do(http.MethodGet, "/api/search/backends", "", rawHeader(h.sessionToken()))
 	if status != http.StatusOK {
 		t.Fatalf("status = %d", status)
@@ -250,7 +367,7 @@ func TestAPI_SearchBackends_NoBackendIsEmpty(t *testing.T) {
 }
 
 func TestAPI_SearchBackends_RejectsAnonymous(t *testing.T) {
-	h := newMultiHarness(t, &fakeMultiBackend{})
+	h := newMultiHarness(t, &fakeMultiBackend{}, search.NewEngine(nil, nil), nil)
 	status, _, _ := h.do(http.MethodGet, "/api/search/backends", "", nil)
 	if status != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", status)
@@ -258,7 +375,7 @@ func TestAPI_SearchBackends_RejectsAnonymous(t *testing.T) {
 }
 
 func TestAPI_MeSearchKeys_CRUD(t *testing.T) {
-	h := newMultiHarness(t, &fakeMultiBackend{})
+	h := newMultiHarness(t, &fakeMultiBackend{}, search.NewEngine(nil, nil), nil)
 	hdr := rawHeader(h.sessionToken())
 
 	// Unknown backend / no user-key slot -> 400.

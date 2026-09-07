@@ -24,6 +24,13 @@ type ListFilter struct {
 	Status string
 	// Query is a case-insensitive title substring match (ILIKE).
 	Query string
+	// ArxivID / DOI / PaperID are exact-identity filters (one paper at
+	// most). ArxivID is normalized (version suffix stripped) and DOI
+	// canonicalized before the query, so callers may pass versioned /
+	// URL-prefixed forms. Empty = no filter.
+	ArxivID string
+	DOI     string
+	PaperID string
 	// Page is 1-based; PerPage is the page size. Callers clamp both.
 	Page, PerPage int
 	// Sort is "created_at" (default) or "updated_at", always descending.
@@ -67,6 +74,15 @@ func (s *Store) ListPapers(ctx context.Context, f ListFilter) (items []ListItem,
 	}
 	if f.Status != "" {
 		add("p.status = $%d", f.Status)
+	}
+	if v := f.ArxivID; v != "" {
+		add("p.arxiv_id = $%d", NormalizeArxivID(v))
+	}
+	if v := f.DOI; v != "" {
+		add("p.doi = $%d", NormalizeDOI(v))
+	}
+	if v := f.PaperID; v != "" {
+		add("p.paper_id = $%d", v)
 	}
 	if q := strings.TrimSpace(f.Query); q != "" {
 		add("p.title ILIKE '%%' || $%d || '%%'", q)

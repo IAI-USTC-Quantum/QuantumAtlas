@@ -24,7 +24,8 @@ import (
 //
 //	POST {url}/v1/search   Authorization: Bearer {token}
 //	req:  {"query", "max_results", "sources": [str]|null, "agent": bool,
-//	       "mode": "fused"|"multi", "api_keys": {backend: key}|null}
+//	       "mode": "fused"|"multi", "api_keys": {backend: key}|null,
+//	       "arxiv_id"?: str, "doi"?: str, "title"?: str}
 //	resp (fused): {"hits": [{title, authors[], year?, doi?, arxiv_id?, url?,
 //	        venue?, citations?, source, score, raw_rank?, raw_score?}],
 //	       "conclusion": str|null, "usage": {"llm_tokens": int},
@@ -57,6 +58,16 @@ type RemoteHit struct {
 	Citations int      `json:"citations,omitempty"`
 	Source    string   `json:"source"`
 	Score     float64  `json:"score"`
+	// Server-side enrichment, backfilled by qatlasd on the multi
+	// response after resolve-or-minting identity-anchored hits into the
+	// registry: the anchored paper_id, whether this search minted it,
+	// and the paper's hosting summary. The qatlas-search microservice
+	// itself never returns these; omitempty keeps the fields invisible
+	// to the microservice's own deserialization and to old clients.
+	PaperID string `json:"paper_id,omitempty"`
+	Created bool   `json:"created,omitempty"`
+	HasMD   *bool  `json:"has_md,omitempty"`
+	Status  string `json:"status,omitempty"`
 }
 
 // RemoteUsage is the metering section of the microservice response.
@@ -106,6 +117,15 @@ type remoteRequest struct {
 	Agent      bool              `json:"agent"`
 	Mode       string            `json:"mode,omitempty"`
 	ApiKeys    map[string]string `json:"api_keys,omitempty"`
+	// Identity fields (identity-aware queries): when the caller's entry
+	// carries an arXiv id / DOI but no free-text query, the
+	// microservice runs an identity lookup instead of an empty search.
+	// omitempty keeps plain text queries byte-identical and lets older
+	// qatlas-search deployments (pydantic ignores unknown fields)
+	// coexist during the upgrade window.
+	ArxivID string `json:"arxiv_id,omitempty"`
+	DOI     string `json:"doi,omitempty"`
+	Title   string `json:"title,omitempty"`
 }
 
 // NewRemoteProvider builds a RemoteProvider for the microservice at
@@ -168,6 +188,11 @@ func (p *RemoteProvider) Search(ctx context.Context, e SearchEntry) ([]Hit, erro
 // malformed body) — the caller (the metered agentic endpoint) needs the
 // failure signal to refund the user's quota. sources optionally pins the
 // microservice backends (nil = its default tool list).
+//
+// The entry's identity fields (arxiv_id / doi / title) are forwarded
+// alongside query so identity-only entries survive: query alone would
+// be empty when the caller passed just an id, which pre-identity
+// microservices answered with a per-backend 400.
 func (p *RemoteProvider) SearchAgentic(ctx context.Context, entry SearchEntry, agent bool, sources []string) (RemoteResponse, error) {
 	if p.baseURL == "" {
 		return RemoteResponse{}, fmt.Errorf("remote search: no base URL configured")
@@ -185,6 +210,9 @@ func (p *RemoteProvider) SearchAgentic(ctx context.Context, entry SearchEntry, a
 		MaxResults: maxResults,
 		Sources:    sources,
 		Agent:      agent,
+		ArxivID:    entry.ArxivID,
+		DOI:        entry.DOI,
+		Title:      entry.Title,
 	}
 	var out RemoteResponse
 	if err := p.postJSON(ctx, "/v1/search", req, &out); err != nil {

@@ -70,6 +70,13 @@ import (
 // net/http's mux can't express "{prefix...}/{action}" cleanly.
 // Special case: GET /api/papers/needs-mineru is path-only with no
 // arxiv_id, dispatched first.
+//
+// GET dispatch order: reserved words (needs-mineru / stats / lookup) →
+// qa_ surrogate ids (detail + on-demand images) → detail by external
+// identifier (arXiv id old/new style with or without vN, or DOI — any
+// path whose trailing segment is not a known asset action) → the
+// asset-download handlers (only when the operator opted in via
+// QATLAS_PAPER_ACCESS_ENABLED).
 func RegisterPapers(
 	se *core.ServeEvent,
 	cfg *config.Config,
@@ -123,6 +130,18 @@ func RegisterPapers(
 				return paperDetailHandler(re, catalog, raw, ingester, converter)
 			}
 		}
+		// Detail by external identifier: GET /api/papers/<arxiv id or
+		// DOI>. splitPapersPath's last-slash rule turns old-style ids
+		// ("quant-ph/9508027") into a bogus (id, action) pair and leaves
+		// any bare id as a bogus action, so identifier-shaped paths used
+		// to dead-end at the generic 404 below. When the trailing
+		// segment is NOT a known asset action we treat the whole raw
+		// path as an identifier and resolve it against the registry.
+		// Like the qa_ detail above this is metadata-only and served
+		// regardless of PaperAccessEnabled.
+		if handled, err := dispatchDetailByIdentifier(re, catalog, raw, ingester, converter); handled {
+			return err
+		}
 		// Asset-download endpoints are only registered when the
 		// operator opted in via QATLAS_PAPER_ACCESS_ENABLED. When
 		// the switch is off the catch-all path below returns 404 so
@@ -163,6 +182,49 @@ func RegisterPapers(
 			bareIDPostDOI := arxivPart
 			forceArxiv := parseForceArxivQuery(re)
 			ctx := re.Request.Context()
+
+			// qa_ paper_id input: resolve the surrogate through the
+			// catalog and re-enter the dispatcher with the paper's
+			// canonical identity, so every asset endpoint below also
+			// answers GET /api/papers/qa_<ulid>/(markdown|pdf|...).
+			// The POST upload endpoints deliberately keep requiring
+			// the contributor-declared arXiv id: upload identity is
+			// an input to record, not a registry lookup.
+			if pid, ok := strings.CutPrefix(arxivPart, "qa_"); ok && pid != "" && !strings.Contains(pid, "/") {
+				target, terr := resolvePaperAssetTarget(ctx, catalog, arxivPart)
+				if terr != nil {
+					if errors.Is(terr, registry.ErrCatalogUnavailable) {
+						return re.JSON(http.StatusServiceUnavailable, map[string]string{
+							"detail": "catalog unavailable (PostgreSQL unreachable); retry shortly",
+						})
+					}
+					return re.JSON(http.StatusInternalServerError, map[string]string{"detail": terr.Error()})
+				}
+				if target.NotFound {
+					return re.JSON(http.StatusNotFound, map[string]string{
+						"detail": "no such paper: " + arxivPart,
+					})
+				}
+				if target.DOI != "" {
+					// DOI-only paper (no arXiv identity): serve from
+					// the DOI namespace directly.
+					applyDOICanonicalHeaders(re, requestedID, target.DOI, "")
+					return dispatchGETDOIHandlers(re, cfg, rawStore, converter, target.DOI, action, statusKind, raw, "")
+				}
+				// arXiv identity: rewrite arxivPart to the version the
+				// catalog already holds (highest ingested arXiv asset
+				// version; bare when no asset carries one — the
+				// latest-version inference below then scrapes
+				// arxiv.org) and continue. The shape-(b) DOI-twin
+				// check below applies DOI-canonical as usual.
+				if target.ArxivVersioned != "" {
+					arxivPart = target.ArxivVersioned
+					bareIDPostDOI = target.ArxivVersioned
+				} else {
+					arxivPart = target.ArxivBare
+					bareIDPostDOI = target.ArxivBare
+				}
+			}
 
 			// Canonical resolution rule (see
 			// docs/server/upload-api.md §Canonical resolution): a
@@ -319,12 +381,24 @@ func RegisterPapers(
 			// scrape (og:url meta tag carries the canonical latest
 			// version). Applies to BOTH DOI-derived bare ids and
 			// direct-bare arxiv inputs from the caller.
+			//
+			// Catalog-first: a hosted paper already knows its latest
+			// INGESTED version — reuse it and skip the scrape. Miss or
+			// catalog error falls through to the scrape: the arxiv
+			// path is designed to be independent of PostgreSQL
+			// availability, so a catalog outage must not gate arxiv
+			// access.
 			if parsed, perr := paperassets.Parse(arxivPart); perr == nil && parsed.IsValid() && parsed.Version == "" {
-				versioned, err := resolveBareToVersioned(ctx, arxivFetcher, arxivPart)
-				if err != nil {
-					return doiVersionErrorResponse(re, requestedID, arxivPart, err)
+				bare := paperassets.StripVersion(arxivPart)
+				if v, found, verr := catalog.LatestArxivAssetVersion(ctx, bare); verr == nil && found && v > 0 {
+					arxivPart = fmt.Sprintf("%sv%d", bare, v)
+				} else {
+					versioned, err := resolveBareToVersioned(ctx, arxivFetcher, arxivPart)
+					if err != nil {
+						return doiVersionErrorResponse(re, requestedID, arxivPart, err)
+					}
+					arxivPart = versioned
 				}
-				arxivPart = versioned
 			}
 
 			// Stash the resolution chain on the request context so
@@ -458,6 +532,145 @@ func peelImagesZipAction(arxivID, action string) (string, string) {
 		return strings.TrimSuffix(arxivID, "/images"), "images/zip"
 	}
 	return arxivID, action
+}
+
+// paperCatalog is the slice of *registry.Store the GET dispatcher's
+// identifier-resolution paths need, factored out so tests can fake the
+// catalog without a database (same pattern as search.Engine's minter
+// and mineru.Scheduler's queueReader). *registry.Store satisfies it
+// implicitly.
+type paperCatalog interface {
+	GetWithAssets(ctx context.Context, paperID string) (*registry.PaperDetail, bool, error)
+	GetPaperIDByIdentity(ctx context.Context, scheme, id string) (string, bool, error)
+	LatestArxivAssetVersion(ctx context.Context, bareArxiv string) (int, bool, error)
+}
+
+// isKnownGETAction reports whether the trailing path segment(s) of raw
+// name one of the asset dispatcher's actions (markdown / pdf / images /
+// images/zip / the .../markdown/status + .../pdf/status variants, or a
+// bare status). It applies the same peeling the dispatcher does so the
+// two can never disagree about what counts as an action.
+func isKnownGETAction(raw string) bool {
+	arxivPart, action := splitPapersPath(raw)
+	arxivPart = normalizeIDForDispatch(arxivPart)
+	if action == "status" {
+		switch {
+		case strings.HasSuffix(arxivPart, "/markdown"), strings.HasSuffix(arxivPart, "/pdf"):
+			return true // 2-segment status variant
+		}
+	}
+	arxivPart, action = peelImagesZipAction(arxivPart, action)
+	switch action {
+	case "markdown", "pdf", "images", "images/zip", "status":
+		return true
+	}
+	return false
+}
+
+// dispatchDetailByIdentifier serves GET /api/papers/<identifier> for
+// paths whose trailing segment is not a known asset action: the whole
+// raw path (after DOI-URL-prefix normalization) is treated as a
+// bibliographic identifier — an arXiv id (new or old style, bare or
+// versioned) or a DOI. Known identifiers resolve through the registry
+// (GetPaperIDByIdentity normalizes away version suffixes / DOI URL
+// prefixes) and reuse paperDetailHandler; an identifier the server does
+// not host answers 404 with a pointer at the batch lookup endpoint.
+//
+// Returns handled=false for paths that are not identifier-shaped
+// (garbage, or an asset action) so the caller keeps its existing
+// dispatch / generic 404. Detail is metadata-only and never consults
+// OpenAlex or arxiv.org — no network round-trip on this path.
+func dispatchDetailByIdentifier(
+	re *core.RequestEvent,
+	catalog paperCatalog,
+	raw string,
+	ingester *ingest.Ingester,
+	converter *mineru.Converter,
+) (handled bool, err error) {
+	if isKnownGETAction(raw) {
+		return false, nil
+	}
+	ident := normalizeIDForDispatch(strings.Trim(raw, "/"))
+	if ident == "" {
+		return false, nil
+	}
+	scheme, id := "", ""
+	if isDOICandidate(ident) {
+		scheme, id = "doi", ident
+	} else if parsed, perr := paperassets.Parse(ident); perr == nil && parsed.IsValid() {
+		scheme, id = "arxiv", registry.NormalizeArxivID(ident)
+	} else {
+		return false, nil
+	}
+	paperID, found, lerr := catalog.GetPaperIDByIdentity(re.Request.Context(), scheme, id)
+	if lerr != nil {
+		// Catalog down: 503 rather than 404 — the identifier may well
+		// be hosted (same convention as the qa_ detail handler).
+		return true, re.JSON(http.StatusServiceUnavailable, map[string]string{
+			"detail": "catalog unavailable (PostgreSQL unreachable); retry shortly",
+		})
+	}
+	if !found {
+		return true, re.JSON(http.StatusNotFound, map[string]string{
+			"detail": "not hosted; resolve metadata via GET /api/papers/lookup?ids=" + scheme + ":" + id,
+		})
+	}
+	return true, paperDetailHandler(re, catalog, paperID, ingester, converter)
+}
+
+// paperAssetTarget is the canonical serving identity a qa_ paper_id
+// resolves to for the asset endpoints. Exactly one of Arxiv* / DOI is
+// set; NotFound marks an unknown surrogate id.
+type paperAssetTarget struct {
+	// ArxivBare is the paper's bare (unversioned) arXiv id.
+	ArxivBare string
+	// ArxivVersioned is the bare id pinned to the highest arXiv asset
+	// version the catalog holds; empty when no asset carries a version
+	// (the caller then falls back to the arxiv.org latest-version
+	// scrape).
+	ArxivVersioned string
+	// DOI is set for papers with no arXiv identity: they must be
+	// served through the DOI handlers.
+	DOI string
+	// NotFound is true when the qa_ id matches no papers row.
+	NotFound bool
+}
+
+// resolvePaperAssetTarget maps a qa_ paper_id onto the identity its GET
+// asset handlers serve. DOI-canonical is honored downstream, not here:
+// an arXiv-identity paper flows back into the dispatcher's shape-(b)
+// reverse lookup, which redirects to the DOI twin when a published
+// asset exists. Papers whose only identity is a DOI dispatch to the DOI
+// handlers directly.
+func resolvePaperAssetTarget(ctx context.Context, catalog paperCatalog, paperID string) (paperAssetTarget, error) {
+	detail, found, err := catalog.GetWithAssets(ctx, paperID)
+	if err != nil {
+		return paperAssetTarget{}, err
+	}
+	if !found {
+		return paperAssetTarget{NotFound: true}, nil
+	}
+	p := detail.Paper
+	best := 0
+	for _, a := range detail.Assets {
+		if a.Source == "arxiv" && a.ArxivVersion > best {
+			best = a.ArxivVersion
+		}
+	}
+	switch {
+	case p.ArxivID != "":
+		t := paperAssetTarget{ArxivBare: p.ArxivID}
+		if best > 0 {
+			t.ArxivVersioned = fmt.Sprintf("%sv%d", p.ArxivID, best)
+		}
+		return t, nil
+	case p.DOI != "":
+		return paperAssetTarget{DOI: registry.NormalizeDOI(p.DOI)}, nil
+	}
+	// papers rows carry at least one external id by schema; reaching
+	// here means a merged/tombstoned edge — treat as unknown rather
+	// than guessing a namespace.
+	return paperAssetTarget{NotFound: true}, nil
 }
 
 // splitMineruClaimRelease parses MinerU lease release paths and returns

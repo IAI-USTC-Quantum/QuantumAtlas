@@ -10,6 +10,8 @@ package routes
 // one or more inference steps before calling the handler:
 //
 //   - DOI → bare arxiv id (via OpenAlex)
+//   - qa_ paper_id → arxiv id (via the registry; asset endpoints
+//     addressed by surrogate id)
 //   - bare arxiv id → versioned (via arxiv.Fetcher.ResolveLatestVersion)
 //   - bare old-style id → quant-ph/ canonical (via
 //     paperassets.DefaultOldStyleCategory)
@@ -101,10 +103,17 @@ func computeResolution(requestedID, bareIDPostDOI, finalID string) *idResolution
 		return r
 	}
 
-	// 1. DOI resolution
+	// 1. Identity resolution onto the arxiv namespace. Two flavors:
+	//    a qa_ surrogate resolved through the registry (asset endpoints
+	//    addressed by paper_id), or DOI → bare arxiv id via OpenAlex.
 	if bareIDPostDOI != requestedID {
-		r.DefaultsApplied = append(r.DefaultsApplied,
-			"doi_resolved_via_openalex (DOI → arxiv id "+bareIDPostDOI+")")
+		if strings.HasPrefix(requestedID, "qa_") {
+			r.DefaultsApplied = append(r.DefaultsApplied,
+				"paper_id_resolved ("+requestedID+" → arxiv id "+bareIDPostDOI+")")
+		} else {
+			r.DefaultsApplied = append(r.DefaultsApplied,
+				"doi_resolved_via_openalex (DOI → arxiv id "+bareIDPostDOI+")")
+		}
 	}
 
 	// 2. Latest-version inference. We can detect this by parsing

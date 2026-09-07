@@ -165,6 +165,64 @@ func TestRemoteProvider_SearchAgentic(t *testing.T) {
 	}
 }
 
+func TestRemoteProvider_SearchAgenticForwardsIdentity(t *testing.T) {
+	// Identity-aware query contract: an entry carrying only an arXiv id
+	// / DOI / title must forward those fields so the microservice can
+	// run an identity lookup instead of an empty search. query stays
+	// empty (Title fallback deliberately not copied into query when
+	// Text is empty and the entry is identity-driven — the identity
+	// fields carry the intent).
+	f := newRemoteFixture(t, remoteOKResponse)
+	p := f.provider("tok")
+
+	entry := SearchEntry{
+		ArxivID: "2501.03424",
+		DOI:     "10.22331/q-2025-01-01-1",
+		Title:   "Some Paper Title",
+	}
+	if _, err := p.SearchAgentic(context.Background(), entry, true, nil); err != nil {
+		t.Fatalf("SearchAgentic: %v", err)
+	}
+	if got := f.lastBody["arxiv_id"]; got != "2501.03424" {
+		t.Errorf("arxiv_id = %v, want 2501.03424", got)
+	}
+	if got := f.lastBody["doi"]; got != "10.22331/q-2025-01-01-1" {
+		t.Errorf("doi = %v", got)
+	}
+	if got := f.lastBody["title"]; got != "Some Paper Title" {
+		t.Errorf("title = %v", got)
+	}
+	if got := f.lastBody["query"]; got != "Some Paper Title" {
+		t.Errorf("query = %v, want the Title fallback (unchanged behaviour)", got)
+	}
+
+	// Truly identity-only entry: query is EMPTY on the wire and the
+	// identity field carries the lookup — exactly the shape the
+	// microservice's identity-aware path expects.
+	f1 := newRemoteFixture(t, remoteOKResponse)
+	if _, err := f1.provider("").SearchAgentic(context.Background(), SearchEntry{ArxivID: "quant-ph/9508027"}, true, nil); err != nil {
+		t.Fatalf("SearchAgentic: %v", err)
+	}
+	if got := f1.lastBody["arxiv_id"]; got != "quant-ph/9508027" {
+		t.Errorf("arxiv_id = %v", got)
+	}
+	if got, has := f1.lastBody["query"]; has && got != "" {
+		t.Errorf("query = %v, want empty for the identity-only entry", got)
+	}
+
+	// Plain text queries must stay byte-lean: identity fields are
+	// omitempty, so a text-only entry serializes without them.
+	f2 := newRemoteFixture(t, remoteOKResponse)
+	if _, err := f2.provider("").SearchAgentic(context.Background(), SearchEntry{Text: "teleportation"}, false, nil); err != nil {
+		t.Fatalf("SearchAgentic: %v", err)
+	}
+	for _, key := range []string{"arxiv_id", "doi", "title"} {
+		if _, has := f2.lastBody[key]; has {
+			t.Errorf("%s must be omitted for a text-only entry; body=%v", key, f2.lastBody)
+		}
+	}
+}
+
 func TestRemoteProvider_SearchAgenticReturnsRealErrors(t *testing.T) {
 	f := newRemoteFixture(t, map[string]any{"detail": "upstream broke"})
 	f.statusCode = http.StatusBadGateway

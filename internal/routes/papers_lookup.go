@@ -19,9 +19,12 @@ import (
 // paperLookupHandler answers GET /api/papers/lookup?ids=arxiv:…,openalex:…,doi:…
 // (ADR 0007): a batch, EXACT, by-id resolver over the local OpenAlex corpus
 // (ADR 0006). Each ref is a namespaced, unversioned `kind:id` string. The
-// response is per-ref `{ref, title, authors, year, hosted, resolved}`:
+// response is per-ref `{ref, title, authors, year, hosted, has_md, resolved}`:
 //
 //   - hosted   — is this ref a Paper QuantumAtlas hosts (join vs papers)?
+//   - has_md   — when hosted, does the paper's default asset carry
+//     converted markdown (the batch counterpart of the per-paper detail /
+//     search-result fields; false when not hosted)?
 //   - resolved — did the OpenAlex corpus have it? false (not an error) for ids
 //     the corpus doesn't hold; the whole batch never errors on one miss.
 //
@@ -39,6 +42,7 @@ type lookupResult struct {
 	Authors  []string `json:"authors,omitempty"`
 	Year     int      `json:"year,omitempty"`
 	Hosted   bool     `json:"hosted"`
+	HasMD    bool     `json:"has_md"`
 	Resolved bool     `json:"resolved"`
 }
 
@@ -72,7 +76,7 @@ func paperLookupHandler(re *core.RequestEvent, catalog *registry.Store, corpus *
 			continue
 		}
 
-		r.Hosted = catalogHosted(ctx, catalog, kind, id)
+		r.Hosted, r.HasMD = catalogHostedWithMD(ctx, catalog, kind, id)
 
 		if corpusAvailable {
 			// Lazy write-through cache-aside (ADR 0006 + 0012): resolve the ref
@@ -177,19 +181,23 @@ func corpusResolve(ctx context.Context, corpus *openalexcorpus.Store, kind, id s
 	return work, true
 }
 
-// catalogHosted reports whether a ref corresponds to a papers row (a Paper
-// QuantumAtlas hosts). Best-effort: a catalog miss or unavailability is "not
-// hosted", never an error for the batch.
-func catalogHosted(ctx context.Context, catalog *registry.Store, kind, id string) bool {
+// catalogHostedWithMD reports whether a ref corresponds to a papers row
+// (a Paper QuantumAtlas hosts) and, when it does, whether the paper's
+// default asset carries converted markdown. Best-effort: a catalog miss
+// or unavailability is "not hosted", never an error for the batch.
+func catalogHostedWithMD(ctx context.Context, catalog *registry.Store, kind, id string) (hosted, hasMD bool) {
 	if catalog == nil {
-		return false
+		return false, false
 	}
 	scheme, value := kind, id
 	if kind == "arxiv" {
 		value = stripArxivVersion(id)
 	}
-	hosted, err := catalog.IsHosted(ctx, scheme, value)
-	return err == nil && hosted
+	hosted, hasMD, err := catalog.HostedWithMD(ctx, scheme, value)
+	if err != nil {
+		return false, false
+	}
+	return hosted, hasMD
 }
 
 var arxivVersionRE = regexp.MustCompile(`v\d+$`)

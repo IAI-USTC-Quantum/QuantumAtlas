@@ -2,8 +2,15 @@ package routes
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"testing"
+
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/registry"
+
+	"github.com/pocketbase/pocketbase/core"
 )
 
 func TestParseLookupIDs(t *testing.T) {
@@ -79,7 +86,39 @@ func TestYearFromPubDate(t *testing.T) {
 }
 
 func TestCatalogHostedNilCatalogIsFalse(t *testing.T) {
-	if catalogHosted(context.Background(), nil, "arxiv", "2208.06941") {
+	if hosted, hasMD := catalogHostedWithMD(context.Background(), nil, "arxiv", "2208.06941"); hosted || hasMD {
 		t.Fatal("nil catalog must report not-hosted")
+	}
+}
+
+// TestPaperLookupResponseCarriesHasMD drives the handler with an
+// unconfigured catalog: the per-ref objects must carry hosted:false AND
+// has_md:false on the wire (the populated path is covered by the
+// registry integration suite).
+func TestPaperLookupResponseCarriesHasMD(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/papers/lookup?ids=arxiv:2208.06941", nil)
+	rec := httptest.NewRecorder()
+	re := &core.RequestEvent{}
+	re.Request = req
+	re.Response = rec
+	if err := paperLookupHandler(re, registry.NewStore(nil), nil, nil); err != nil {
+		t.Fatalf("paperLookupHandler: %v", err)
+	}
+	var body struct {
+		Results []struct {
+			Ref    string `json:"ref"`
+			Hosted bool   `json:"hosted"`
+			HasMD  bool   `json:"has_md"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode %q: %v", rec.Body.String(), err)
+	}
+	if len(body.Results) != 1 {
+		t.Fatalf("results = %d, want 1", len(body.Results))
+	}
+	r := body.Results[0]
+	if r.Ref != "arxiv:2208.06941" || r.Hosted || r.HasMD {
+		t.Errorf("result = %+v, want ref + hosted:false + has_md:false", r)
 	}
 }

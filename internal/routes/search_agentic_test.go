@@ -64,7 +64,7 @@ func newAgenticHarness(t testing.TB, backend AgenticBackend) *agenticHarness {
 
 	var built http.Handler
 	err = app.OnServe().Trigger(se, func(e *core.ServeEvent) error {
-		RegisterSearchAgentic(e, &config.Config{}, backend, usage.NewStore(nil), search.NewEngine(nil, nil), enforcer)
+		RegisterSearchAgentic(e, &config.Config{}, backend, usage.NewStore(nil), search.NewEngine(nil, nil), nil, enforcer)
 		m, mErr := e.Router.BuildMux()
 		if mErr != nil {
 			return mErr
@@ -171,5 +171,42 @@ func TestAPI_SearchAgentic_LocalBackendWiring(t *testing.T) {
 	}
 	if fake.called {
 		t.Error("backend invoked before metering passed, want untouched")
+	}
+}
+
+// TestAPI_SearchAgentic_EmptyEntry: an entry with none of text / title /
+// arxiv_id / doi 400s BEFORE the metering reservation (nil-pool usage
+// store never reached) and never reaches the backend.
+func TestAPI_SearchAgentic_EmptyEntry(t *testing.T) {
+	fake := &fakeAgenticBackend{}
+	h := newAgenticHarness(t, fake)
+	for _, body := range []string{`{}`, `{"text":"","doi":""}`, `{"agent":false}`} {
+		status, _, decoded := h.do(http.MethodPost, "/api/search/agentic", body, rawHeader(h.sessionToken()))
+		if status != http.StatusBadRequest {
+			t.Errorf("body %s: status = %d, want 400", body, status)
+			continue
+		}
+		if detail, _ := decoded["detail"].(string); !containsSubstr(detail, "empty search entry") {
+			t.Errorf("body %s: detail = %q, want the empty-search-entry message", body, detail)
+		}
+	}
+	if fake.called {
+		t.Error("backend invoked for an empty entry, want untouched")
+	}
+}
+
+// TestAPI_SearchAgentic_IdentityOnlyPassesGuard: identity fields count
+// as a query — the entry clears the guard and proceeds to metering
+// (nil-pool store → the 503 convention), proving identity-only entries
+// are no longer rejected.
+func TestAPI_SearchAgentic_IdentityOnlyPassesGuard(t *testing.T) {
+	fake := &fakeAgenticBackend{}
+	h := newAgenticHarness(t, fake)
+	status, _, body := h.do(http.MethodPost, "/api/search/agentic", `{"arxiv_id":"2501.03424","agent":false}`, rawHeader(h.sessionToken()))
+	if status != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 (guard passed, nil-pool metering); body=%v", status, body)
+	}
+	if detail, _ := body["detail"].(string); !containsSubstr(detail, "catalog unavailable") {
+		t.Errorf("detail = %q, want the metering 503 convention", detail)
 	}
 }

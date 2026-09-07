@@ -11,8 +11,12 @@ package routes
 //	                           The caller's stored third-party keys are
 //	                           decrypted and forwarded as api_keys so
 //	                           key-requiring backends run under the
-//	                           user's own credentials. Not metered (same
-//	                           as POST /api/search).
+//	                           user's own credentials. Identity-anchored
+//	                           hits are resolve-or-minted (lazy ingest)
+//	                           and backfilled with paper_id / created /
+//	                           has_md / status — title-only hits get no
+//	                           enrichment. Not metered (same as POST
+//	                           /api/search).
 //	GET  /api/search/backends — sessionGuard. The backend catalog the
 //	                           SPA renders as checkboxes: static table
 //	                           merged with the microservice's live
@@ -30,6 +34,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/registry"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/search"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/userkeys"
 
@@ -86,6 +91,61 @@ func normalizeSources(in []string) []string {
 	return out
 }
 
+// multiHitAnchor is the registry anchoring one minted identity resolved
+// to: the paper_id and whether this search minted the paper.
+type multiHitAnchor struct {
+	PaperID string
+	Created bool
+}
+
+// multiIdentityKey reduces a hit to the cross-backend dedup identity —
+// DOI first, else the arXiv id, "" for title-only hits. The mint loop
+// and the backfill below both key off it, so a raw hit and its mint
+// result can never disagree.
+func multiIdentityKey(doi, arxivID string) string {
+	if doi != "" {
+		return doi
+	}
+	return arxivID
+}
+
+// multiAnchors indexes the mint results by identity key. Results with an
+// empty paper_id (minting disabled — nil registry) are left out: there
+// is nothing to anchor.
+func multiAnchors(results []search.Result) map[string]multiHitAnchor {
+	anchors := make(map[string]multiHitAnchor, len(results))
+	for _, r := range results {
+		if r.PaperID == "" {
+			continue
+		}
+		anchors[multiIdentityKey(r.Hit.DOI, r.Hit.ArxivID)] = multiHitAnchor{PaperID: r.PaperID, Created: r.Created}
+	}
+	return anchors
+}
+
+// attachMultiAnchors backfills the server-enriched fields onto every
+// backend's raw hits: paper_id / created from the anchors, has_md /
+// status from the registry summaries. Title-only hits (no DOI, no arXiv
+// id), identities that were not minted and missing summary entries all
+// keep the fields omitted — enrichment never fails the response.
+func attachMultiAnchors(results map[string][]search.RemoteHit, anchors map[string]multiHitAnchor, summaries map[string]registry.PaperSummary) {
+	for _, backendHits := range results {
+		for i := range backendHits {
+			a, ok := anchors[multiIdentityKey(backendHits[i].DOI, backendHits[i].ArxivID)]
+			if !ok {
+				continue
+			}
+			backendHits[i].PaperID = a.PaperID
+			backendHits[i].Created = a.Created
+			if sum, has := summaries[a.PaperID]; has {
+				hasMD := sum.HasMD
+				backendHits[i].HasMD = &hasMD
+				backendHits[i].Status = sum.Status
+			}
+		}
+	}
+}
+
 // RegisterSearchMulti mounts POST /api/search/multi. backend is nil when
 // search.remote is disabled — the route stays registered but every call
 // answers 503 (same convention as the agentic endpoint).
@@ -94,8 +154,12 @@ func normalizeSources(in []string) []string {
 // microservice returns per-backend raw hits, identity-anchored results
 // (DOI / arXiv ID) are resolve-or-minted into the registry, which fires
 // the ingester's OnMint hook → PDF fetch → MinerU conversion. This
-// mirrors what POST /api/search and /api/search/agentic already do.
-func RegisterSearchMulti(se *core.ServeEvent, keys *userkeys.Store, backend MultiBackend, engine *search.Engine, enforcer *casbin.Enforcer) {
+// mirrors what POST /api/search and /api/search/agentic already do; the
+// mint results are backfilled onto the raw hits (paper_id / created /
+// hosting summary) so frontends can link minted hits to the site.
+// catalog decorates those hits with the registry hosting summary
+// (has_md / status) and may be nil — the fields are then omitted.
+func RegisterSearchMulti(se *core.ServeEvent, keys *userkeys.Store, backend MultiBackend, engine *search.Engine, catalog *registry.Store, enforcer *casbin.Enforcer) {
 	se.Router.POST("/api/search/multi", scopeGuard(enforcer, "papers", "read", func(re *core.RequestEvent) error {
 		if backend == nil {
 			return re.JSON(http.StatusServiceUnavailable, map[string]string{
@@ -149,16 +213,14 @@ func RegisterSearchMulti(se *core.ServeEvent, keys *userkeys.Store, backend Mult
 		// the same behavior as POST /api/search and /api/search/agentic.
 		// Dedup by DOI > arXiv across backends to avoid minting the same
 		// paper N times when N backends return it.
+		var mintResults []search.Result
 		if engine != nil {
 			var hits []search.Hit
 			seen := map[string]bool{}
 			for _, backendHits := range resp.Results {
 				for _, rh := range backendHits {
 					h := rh.ToHit()
-					key := h.DOI
-					if key == "" {
-						key = h.ArxivID
-					}
+					key := multiIdentityKey(h.DOI, h.ArxivID)
 					if key == "" || seen[key] {
 						continue // title-only or duplicate
 					}
@@ -170,11 +232,26 @@ func RegisterSearchMulti(se *core.ServeEvent, keys *userkeys.Store, backend Mult
 				// Best-effort: minting failures must not break the
 				// search response; the paper stays unminted and the
 				// user can still see the raw hit.
-				if _, _, mintErr := engine.MintHits(re.Request.Context(), hits, len(hits)); mintErr != nil {
+				results, _, mintErr := engine.MintHits(re.Request.Context(), hits, len(hits))
+				if mintErr != nil {
 					slog.Warn("multi search: lazy minting failed", "error", mintErr)
 				}
+				mintResults = results
 			}
 		}
+
+		// Server-side enrichment: reflect the anchors back onto every
+		// backend's raw hits (paper_id / created from the mint results,
+		// has_md / status from the registry summaries — best-effort, a
+		// summary miss just omits the fields).
+		anchors := multiAnchors(mintResults)
+		ids := make([]string, 0, len(anchors))
+		for _, a := range anchors {
+			if a.PaperID != "" {
+				ids = append(ids, a.PaperID)
+			}
+		}
+		attachMultiAnchors(resp.Results, anchors, paperSummaries(re.Request.Context(), catalog, ids))
 
 		out := multiSearchResponse{
 			Results: resp.Results,
