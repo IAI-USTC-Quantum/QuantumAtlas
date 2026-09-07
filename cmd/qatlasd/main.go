@@ -633,6 +633,15 @@ func main() {
 					Timeout:      cfg.DownloaderAgentTimeout,
 					MaxBudgetUSD: cfg.DownloaderAgentMaxBudgetUSD,
 				},
+				Browser: downloader.BrowserConfig{
+					CDPURL:  cfg.DownloaderBrowserCDPURL,
+					Timeout: cfg.DownloaderBrowserTimeout,
+				},
+				Proxy: &downloader.RemoteProxy{
+					BaseURL: cfg.DownloaderProxyURL,
+					Token:   cfg.DownloaderProxyToken,
+					Timeout: cfg.DownloaderProxyTimeout,
+				},
 			},
 				downloader.WithIndexPusher(ingestPusher),
 				downloader.WithPDFReadyHook(func(ctx context.Context, canonical string, isDOI bool) {
