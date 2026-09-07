@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.28.0 (2026-09-07)
+
+### Feat
+
+- **admin**: Asset Browser — a new admin surface (`GET /api/admin/assets/*`, 8 endpoints) for browsing, previewing, downloading, and presigning paper PDFs and markdown directly from S3. `GET .../assets/{paper_id}` lists all assets with object keys / sizes / SHA256s; `.../{kind}/download` streams as attachment; `.../{kind}/inline` streams for browser preview (PDF in iframe viewer, markdown as text); `.../{kind}/url` generates a time-limited presigned S3 URL (1m–24h TTL) for direct browser-to-S3 access bypassing the qatlasd proxy; `.../batch` lists assets for up to 50 papers; `.../batch/download` produces a streaming ZIP (max 20 papers); `.../search?q=` finds papers with assets by title/DOI/arXiv ID (new `registry.SearchPapersWithAssets` ILIKE query). All adminGuard-ed (admin allowlist), independent of `paper_access.enabled`. Ships with a full SPA page at `/$lang/admin/assets`: debounced search → paper cards → expandable asset table with per-row Preview (Dialog iframe/pre), Download, and Copy Presigned URL + Copy S3 Key actions. Sidebar entry for admins in both locales.
+
 ## v0.27.0 (2026-09-07)
 
 ### Feat
