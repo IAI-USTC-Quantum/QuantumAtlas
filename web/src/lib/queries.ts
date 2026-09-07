@@ -9,6 +9,7 @@ import {
   adminDBTableRows,
   adminListPlugins,
   adminListUsers,
+  adminMineruStatus,
   adminPlans,
   adminPluginManifest,
   adminPluginUpdateConfig,
@@ -34,6 +35,7 @@ import {
   type AdminAssetSearchResponse,
   type AdminDBRows,
   type AdminDBSchema,
+  type AdminMineruStatusResponse,
   type AdminPlansResponse,
   type AdminPluginConfigResult,
   type AdminPluginManifest,
@@ -383,5 +385,35 @@ export function useDownloaderSubmit() {
       void qc.invalidateQueries({ queryKey: ['downloader-jobs'] })
     },
     onError: (error: Error) => toast.error(error.message),
+  })
+}
+
+// --- Admin pipeline monitor ----------------------------------------------------
+
+// MinerU scheduler snapshot (GET /api/admin/mineru/status). AdminGuard-ed;
+// polled every 10s while the pipelines page is open.
+export function useAdminMineruStatus(enabled: boolean) {
+  return useQuery({
+    queryKey: ['admin-mineru-status'],
+    queryFn: (): Promise<AdminMineruStatusResponse> => adminMineruStatus(),
+    enabled,
+    retry: false,
+    refetchInterval: enabled ? 10_000 : false,
+  })
+}
+
+// Downloader job snapshot for the admin pipelines page. Polls every 2s
+// while any job is active (derived from the data itself, like
+// usePaperDetail), backing off to 10s when the pipeline is quiet.
+// Separate query key from useDownloaderJobs so the two pages keep their
+// own polling cadence.
+export function useAdminPipelineJobs(enabled: boolean) {
+  return useQuery({
+    queryKey: ['admin-pipeline-jobs'],
+    queryFn: (): Promise<DownloaderJobsResponse> => downloaderJobs(),
+    enabled,
+    retry: false,
+    refetchInterval: (query) =>
+      query.state.data?.jobs.some((job) => job.active) ? 2_000 : 10_000,
   })
 }

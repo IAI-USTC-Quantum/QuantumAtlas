@@ -21,7 +21,8 @@
       "downloader": "Robust Downloader",
       "pat": "PATs",
       "admin": "Admin",
-      "adminAssets": "Asset Browser"
+      "adminAssets": "Asset Browser",
+      "adminPipelines": "Pipeline Status"
     },
     "status": {
       "loading": "Loading…",
@@ -496,6 +497,47 @@
       "urlTitle": "Presigned URL",
       "urlDescription": "Short-lived direct object-store URL (TTL 1h).",
       "expiresAt": "Expires: {{time}}"
+    },
+    "pipelines": {
+      "title": "Pipeline Status",
+      "subtitle": "Live status of the MinerU conversion pipeline and the Robust Downloader pipeline.",
+      "backToAdmin": "Back to admin",
+      "mineru": {
+        "title": "MinerU conversion pipeline",
+        "running": "Running",
+        "idle": "Idle",
+        "todayConverted": "Converted today",
+        "dailyCap": "daily cap",
+        "capDay": "Cap day",
+        "lastRun": "Last run",
+        "noLastRun": "The scheduler has not run yet.",
+        "processed": "Processed",
+        "succeeded": "Succeeded",
+        "failed": "Failed",
+        "skipped": "Skipped",
+        "nextRun": "Next scheduled run",
+        "lastStopReason": "Last stop reason"
+      },
+      "downloader": {
+        "title": "Downloader pipeline",
+        "autoRefresh": "auto-refresh",
+        "empty": "No download jobs right now.",
+        "counters": {
+          "queued": "Queued",
+          "inFlight": "In flight",
+          "succeeded": "Succeeded",
+          "failed": "Failed",
+          "skipped": "Skipped"
+        },
+        "cols": {
+          "status": "Status",
+          "input": "Input",
+          "strategy": "Strategy",
+          "phase": "Phase",
+          "error": "Error"
+        },
+        "trace": "Fetch trace ({{count}} attempts)"
+      }
     }
   },
   "login": {

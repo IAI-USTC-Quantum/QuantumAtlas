@@ -26,6 +26,7 @@ import { Route as LangPapersSearchRouteImport } from './routes/$lang.papers.sear
 import { Route as LangPapersPaperIdRouteImport } from './routes/$lang.papers.$paperId'
 import { Route as LangAdminUsersRouteImport } from './routes/$lang.admin.users'
 import { Route as LangAdminPluginsRouteImport } from './routes/$lang.admin.plugins'
+import { Route as LangAdminPipelinesRouteImport } from './routes/$lang.admin.pipelines'
 import { Route as LangAdminDocsRouteImport } from './routes/$lang.admin.docs'
 import { Route as LangAdminAssetsRouteImport } from './routes/$lang.admin.assets'
 import { Route as LangAdminDbTableRouteImport } from './routes/$lang.admin.db.$table'
@@ -115,6 +116,11 @@ const LangAdminPluginsRoute = LangAdminPluginsRouteImport.update({
   path: '/admin/plugins',
   getParentRoute: () => LangRoute,
 } as any)
+const LangAdminPipelinesRoute = LangAdminPipelinesRouteImport.update({
+  id: '/admin/pipelines',
+  path: '/admin/pipelines',
+  getParentRoute: () => LangRoute,
+} as any)
 const LangAdminDocsRoute = LangAdminDocsRouteImport.update({
   id: '/admin/docs',
   path: '/admin/docs',
@@ -145,6 +151,7 @@ export interface FileRoutesByFullPath {
   '/$lang/': typeof LangIndexRoute
   '/$lang/admin/assets': typeof LangAdminAssetsRoute
   '/$lang/admin/docs': typeof LangAdminDocsRoute
+  '/$lang/admin/pipelines': typeof LangAdminPipelinesRoute
   '/$lang/admin/plugins': typeof LangAdminPluginsRoute
   '/$lang/admin/users': typeof LangAdminUsersRoute
   '/$lang/papers/$paperId': typeof LangPapersPaperIdRoute
@@ -166,6 +173,7 @@ export interface FileRoutesByTo {
   '/$lang': typeof LangIndexRoute
   '/$lang/admin/assets': typeof LangAdminAssetsRoute
   '/$lang/admin/docs': typeof LangAdminDocsRoute
+  '/$lang/admin/pipelines': typeof LangAdminPipelinesRoute
   '/$lang/admin/plugins': typeof LangAdminPluginsRoute
   '/$lang/admin/users': typeof LangAdminUsersRoute
   '/$lang/papers/$paperId': typeof LangPapersPaperIdRoute
@@ -189,6 +197,7 @@ export interface FileRoutesById {
   '/$lang/': typeof LangIndexRoute
   '/$lang/admin/assets': typeof LangAdminAssetsRoute
   '/$lang/admin/docs': typeof LangAdminDocsRoute
+  '/$lang/admin/pipelines': typeof LangAdminPipelinesRoute
   '/$lang/admin/plugins': typeof LangAdminPluginsRoute
   '/$lang/admin/users': typeof LangAdminUsersRoute
   '/$lang/papers/$paperId': typeof LangPapersPaperIdRoute
@@ -213,6 +222,7 @@ export interface FileRouteTypes {
     | '/$lang/'
     | '/$lang/admin/assets'
     | '/$lang/admin/docs'
+    | '/$lang/admin/pipelines'
     | '/$lang/admin/plugins'
     | '/$lang/admin/users'
     | '/$lang/papers/$paperId'
@@ -234,6 +244,7 @@ export interface FileRouteTypes {
     | '/$lang'
     | '/$lang/admin/assets'
     | '/$lang/admin/docs'
+    | '/$lang/admin/pipelines'
     | '/$lang/admin/plugins'
     | '/$lang/admin/users'
     | '/$lang/papers/$paperId'
@@ -256,6 +267,7 @@ export interface FileRouteTypes {
     | '/$lang/'
     | '/$lang/admin/assets'
     | '/$lang/admin/docs'
+    | '/$lang/admin/pipelines'
     | '/$lang/admin/plugins'
     | '/$lang/admin/users'
     | '/$lang/papers/$paperId'
@@ -395,6 +407,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LangAdminPluginsRouteImport
       parentRoute: typeof LangRoute
     }
+    '/$lang/admin/pipelines': {
+      id: '/$lang/admin/pipelines'
+      path: '/admin/pipelines'
+      fullPath: '/$lang/admin/pipelines'
+      preLoaderRoute: typeof LangAdminPipelinesRouteImport
+      parentRoute: typeof LangRoute
+    }
     '/$lang/admin/docs': {
       id: '/$lang/admin/docs'
       path: '/admin/docs'
@@ -427,6 +446,7 @@ interface LangRouteChildren {
   LangIndexRoute: typeof LangIndexRoute
   LangAdminAssetsRoute: typeof LangAdminAssetsRoute
   LangAdminDocsRoute: typeof LangAdminDocsRoute
+  LangAdminPipelinesRoute: typeof LangAdminPipelinesRoute
   LangAdminPluginsRoute: typeof LangAdminPluginsRoute
   LangAdminUsersRoute: typeof LangAdminUsersRoute
   LangPapersPaperIdRoute: typeof LangPapersPaperIdRoute
@@ -444,6 +464,7 @@ const LangRouteChildren: LangRouteChildren = {
   LangIndexRoute: LangIndexRoute,
   LangAdminAssetsRoute: LangAdminAssetsRoute,
   LangAdminDocsRoute: LangAdminDocsRoute,
+  LangAdminPipelinesRoute: LangAdminPipelinesRoute,
   LangAdminPluginsRoute: LangAdminPluginsRoute,
   LangAdminUsersRoute: LangAdminUsersRoute,
   LangPapersPaperIdRoute: LangPapersPaperIdRoute,

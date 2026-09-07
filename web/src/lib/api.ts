@@ -773,6 +773,35 @@ export function adminPutQuota(
   return putJson(`/api/admin/quotas/${encodeURIComponent(userId)}`, body)
 }
 
+// --- Admin: MinerU scheduler status (GET /api/admin/mineru/status) -----------
+//
+// Snapshot of the MinerU conversion scheduler: whether a run is active,
+// when the next run fires, the last run's counters, and today's daily-cap
+// consumption. All fields but `running` may be absent on a fresh server.
+
+export type MineruStatus = {
+  running: boolean
+  next_run_at?: string
+  last_run_started?: string
+  last_run_finished?: string
+  last_stop_reason?: string
+  last_run?: {
+    processed?: number
+    succeeded?: number
+    failed?: number
+    skipped?: number
+  }
+  daily_cap?: number
+  converted_today?: number
+  cap_day?: string
+}
+
+export type AdminMineruStatusResponse = MineruStatus
+
+export function adminMineruStatus(): Promise<AdminMineruStatusResponse> {
+  return getJson<AdminMineruStatusResponse>('/api/admin/mineru/status')
+}
+
 // --- Admin: asset browser (GET /api/admin/assets/*) --------------------------
 //
 // Ops surface over the object-store bytes behind each registry paper.
