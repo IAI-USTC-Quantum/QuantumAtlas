@@ -105,6 +105,8 @@
     "noResults": "No matching papers. Try a different query, a DOI, or an arXiv id.",
     "scoreLabel": "score",
     "newBadge": "new",
+    "openArxiv": "Open on arXiv",
+    "openDoi": "Open via DOI",
     "untitled": "Untitled",
     "candidatesTitle": "Possible matches",
     "candidatesHint": "Title-only hits without a strong identity (no DOI or arXiv id) — these were NOT minted into the registry.",
@@ -140,6 +142,20 @@
         "error_fetching": "PDF download failed",
         "error_converting": "MinerU conversion failed"
       }
+    },
+    "pipeline": {
+      "step": {
+        "download": "Download",
+        "convert": "Convert"
+      },
+      "waitingDownload": "Queued for download",
+      "downloading": "Downloading PDF",
+      "waitingConvert": "Queued for conversion",
+      "converting": "Converting with MinerU",
+      "done": "Ready",
+      "failed": "Acquisition failed",
+      "queueHint": "Queue #{{position}} · {{ahead}} ahead · global concurrency {{max}}",
+      "queueEta": "≈{{eta}}"
     },
     "detail": {
       "back": "Back to search",

@@ -105,6 +105,8 @@
     "noResults": "没有匹配的论文。换一个查询，或试试 DOI、arXiv ID。",
     "scoreLabel": "得分",
     "newBadge": "新收录",
+    "openArxiv": "在 arXiv 上打开",
+    "openDoi": "通过 DOI 打开",
     "untitled": "无标题",
     "candidatesTitle": "可能的匹配",
     "candidatesHint": "仅有标题、缺少强身份标识（无 DOI / arXiv ID）的命中 — 这些不会被登记进注册库。",
@@ -140,6 +142,20 @@
         "error_fetching": "PDF 下载失败",
         "error_converting": "MinerU 转换失败"
       }
+    },
+    "pipeline": {
+      "step": {
+        "download": "下载",
+        "convert": "转换"
+      },
+      "waitingDownload": "排队等待下载",
+      "downloading": "正在下载 PDF",
+      "waitingConvert": "排队等待转换",
+      "converting": "MinerU 转换中",
+      "done": "已就绪",
+      "failed": "获取失败",
+      "queueHint": "队列第 {{position}} 位 · 前方 {{ahead}} · 全局并发 {{max}}",
+      "queueEta": "≈{{eta}}"
     },
     "detail": {
       "back": "返回搜索",

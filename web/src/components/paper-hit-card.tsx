@@ -2,11 +2,12 @@ import { Link } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import type { SearchHit } from '@/lib/api'
 import { useLang } from '@/hooks/use-lang'
 import { usePaperDetail } from '@/lib/queries'
-import { PaperAcquisition } from '@/components/paper-acquisition'
+import { PaperPipelineChip } from '@/components/paper-pipeline-chip'
 
 type Props = {
   hit: SearchHit
@@ -19,8 +20,9 @@ type Props = {
   hideScore?: boolean
 }
 
-// One search hit rendered as a card: title/authors/year, identity badges
-// (arxiv id, DOI), the provider that produced it, and the merge score.
+// One search hit rendered as a card: title/authors/year, outbound
+// buttons for the hit's identities (arXiv abs page, DOI resolver), the
+// provider that produced it, and the merge score.
 // Hits with a registry paper_id link through to the paper detail route;
 // hits with only an external url render an outbound link; title-only
 // candidates (neither) render without a link.
@@ -77,14 +79,30 @@ export function PaperHitCard({ hit, rank, paperId, created, hideScore }: Props) 
 
         <div className="flex flex-wrap items-center gap-1.5 text-xs">
           {hit.arxiv_id && (
-            <Badge variant="default" className="font-mono">
-              arXiv:{hit.arxiv_id}
-            </Badge>
+            <Button asChild variant="outline" size="xs" className="font-mono">
+              <a
+                href={`https://arxiv.org/abs/${hit.arxiv_id}`}
+                target="_blank"
+                rel="noreferrer"
+                title={t('openArxiv')}
+                aria-label={t('openArxiv')}
+              >
+                arXiv:{hit.arxiv_id}
+              </a>
+            </Button>
           )}
           {hit.doi && (
-            <Badge variant="secondary" className="font-mono">
-              doi:{hit.doi}
-            </Badge>
+            <Button asChild variant="outline" size="xs" className="font-mono">
+              <a
+                href={`https://doi.org/${hit.doi}`}
+                target="_blank"
+                rel="noreferrer"
+                title={t('openDoi')}
+                aria-label={t('openDoi')}
+              >
+                doi:{hit.doi}
+              </a>
+            </Button>
           )}
           {hit.year ? <Badge variant="outline">{hit.year}</Badge> : null}
           <Badge variant="outline">{hit.source}</Badge>
@@ -108,9 +126,7 @@ export function PaperHitCard({ hit, rank, paperId, created, hideScore }: Props) 
           </p>
         )}
 
-        {paperId && (
-          <PaperAcquisition acquisition={detail.data?.acquisition} compact />
-        )}
+        {paperId && <PaperPipelineChip acquisition={detail.data?.acquisition} />}
       </CardContent>
     </Card>
   )

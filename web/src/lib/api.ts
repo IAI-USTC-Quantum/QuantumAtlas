@@ -119,6 +119,13 @@ export type SearchHit = {
   citations?: number
   raw_rank?: number
   raw_score?: number
+  // Server-side enrichment on the multi search response: qatlasd
+  // resolve-or-mints identity-anchored hits and backfills these. Only
+  // minted hits carry them (title-only hits never mint).
+  paper_id?: string
+  created?: boolean
+  has_md?: boolean
+  status?: string
 }
 
 export type SearchResult = {

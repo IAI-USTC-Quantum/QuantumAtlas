@@ -351,6 +351,8 @@ function MultiResults({
                       key={`${hit.title}-${idx}`}
                       hit={hit}
                       rank={idx + 1}
+                      paperId={hit.paper_id}
+                      created={hit.created}
                       hideScore
                     />
                   ))}
