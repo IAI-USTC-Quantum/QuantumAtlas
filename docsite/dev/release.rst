@@ -43,6 +43,24 @@ app 微服务之间的 HTTP 接口协议。本文介绍从代码到线上的标�
      - push tag ``v*.*.*``
      - ghcr 镜像 ``ghcr.io/iai-ustc-quantum/qatlas-rag:{vX.Y.Z, X.Y.Z, latest}``
        + GitHub Release（GPU 镜像）
+   * - ``downloaderproxy``\（主仓 ``cmd/downloaderproxy``）
+     - 跟随主仓 ``VERSION``\（同一 tag）
+     - 主仓 push tag ``v*.*.*``\（无独立 release 产物）
+     - **无 registry 产物**：部署方在 campus-egress 主机上用主仓
+       ``Dockerfile.downloaderproxy`` 现场构建（见下文例外与
+       :doc:`prod-deploy` 的 runbook）
+
+.. rubric:: 记录在案的例外：downloaderproxy
+
+标准化原则 2 对 downloaderproxy 有一条**记录在案的例外**：它不产
+ghcr 镜像，由部署方在目标机上现场构建。理由：它的价值恰恰绑定在
+特定网络位置（出口带机构订阅的 campus 主机）上，镜像离开那台机器
+没有意义；且它与主仓 ``internal/downloader`` 同源演进，跟随主仓
+tag 在 checkout 内 build 即是它的版本 pin 方式（升级 = checkout
+到目标 tag + 重建，见 :doc:`prod-deploy`）。除此之外该组件仍遵守
+其余原则：版本来源唯一（主仓 tag）、可回滚（回退到旧 tag 重建）、
+与 qatlasd 的协议（``/v1/jobs``、``/v1/files/{token}``）按
+expand-contract 演进。
 
 标准化原则
 ----------
@@ -50,7 +68,8 @@ app 微服务之间的 HTTP 接口协议。本文介绍从代码到线上的标�
 1. **每个组件有且只有一个版本唯一来源**；发布只由 tag 触发，不允许
    "在部署机上现场 build"成为发布路径；
 2. **产物一律进入 registry**：Docker 镜像推送到 ghcr，Python 包发布到
-   PyPI；部署机只执行 ``pull``，不执行 ``build``；
+   PyPI；部署机只执行 ``pull``，不执行 ``build``
+   （downloaderproxy 是唯一记录在案的例外，见上表）；
 3. **部署机的版本一律显式 pin 在** ``deploy/.env`` 中（如
    ``QATLAS_VERSION=v0.22.1``），不使用 ``latest``，这样保证部署
    可回滚、可审计；

@@ -191,6 +191,51 @@ token**。开发者选择独立仓库的判据是：app 需要独立的发行节
 依赖栈（如依赖 GPU 或 LLM），或者开发者希望核心仓库永远不携带这部分
 代码。
 
+对照：downloaderproxy —— 主仓内的独立服务
+------------------------------------------
+
+v0.27.0 起，生态里出现了第二种 app 形态：**源码在主仓库、部署在现场
+的独立服务** ``cmd/downloaderproxy``\（健壮下载器的 campus-egress
+部署形态，架构见 :doc:`downloader`）。它与 qatlas-search /
+qatlas-rag 的独立仓库模式逐项对照：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 38 38
+
+   * - 维度
+     - qatlas-search / qatlas-rag（独立仓库）
+     - downloaderproxy（主仓内）
+   * - 源码位置
+     - 各自独立仓库，自有 ``VERSION`` 与 release.yml
+     - ``cmd/downloaderproxy``，与 ``internal/downloader`` 同仓同步
+       演进（它就是这条策略梯的打包形态）
+   * - 技术栈
+     - Python / FastAPI
+     - 纯 Go 单二进制 + 自带 headless Chromium 的单容器
+   * - 接入协议
+     - HTTP + Bearer（``{enabled, url, token, timeout}`` 配置段）
+     - 相同风格：``downloader.proxy: {url, token, timeout}``；
+       submit → poll → 一次性 file token 取回
+   * - 产物与分发
+     - ghcr 镜像，部署机只 pull
+     - **例外**：不在 ghcr，由部署方在目标机上用
+       ``Dockerfile.downloaderproxy`` 现场构建（见 :doc:`release`）
+   * - 配置方式
+     - 自有 YAML 配置文件
+     - 环境变量（``DL_PROXY_TOKEN`` 等）——它不是 qatlasd，
+       YAML-only 严格校验只约束 qatlasd 进程
+   * - 部署位置
+     - 与 qatlasd 同栈 compose、``shared-infra`` 内网、无端口映射
+     - **campus-egress 主机上的独立容器**\（出口带机构订阅是它的
+       存在意义），不在 qatlasd 的 compose 栈内；qatlasd 仍是它
+       的唯一合法调用方，但寻址走校园网络而非 docker 网络
+
+判据：当服务与主仓内某个 internal 包**同源**（共享策略梯代码）、
+依赖栈一致（纯 Go）、且**部署位置由网络拓扑决定**（必须在特定出口
+机器上）时，独立仓库的发行解耦收益不复存在，主仓内 + 现场构建是更
+诚实的形态。新 app 默认仍应走独立仓库模式。
+
 app 之间的依赖
 --------------
 

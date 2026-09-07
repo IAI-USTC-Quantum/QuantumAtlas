@@ -208,7 +208,19 @@
       "noResults": "该平台没有返回结果。",
       "errorTitle": "{{backend}} 搜索失败"
     },
-    "citationsLabel": "被引 {{count}} 次"
+    "citationsLabel": "被引 {{count}} 次",
+    "adminAssets": {
+      "title": "资产预览",
+      "previewPdf": "预览 PDF",
+      "previewMd": "预览 Markdown",
+      "pdfPreview": "PDF 预览",
+      "mdPreview": "Markdown 预览",
+      "copyUrl": "复制链接",
+      "copyUrlHint": "生成预签名 URL 并复制到剪贴板（1 小时有效）",
+      "presignedUrl": "预签名 URL",
+      "urlCopied": "已复制到剪贴板，1 小时内有效。",
+      "loading": "加载中…"
+    }
   },
   "token": {
     "_removed": "session token 页面已移除；PAT 页面覆盖所有 CLI bearer token 场景。"

@@ -1,6 +1,6 @@
 # `qatlasd` 服务端 CLI 参考
 
-`qatlasd` 是 Go binary，单文件 ~30 MB，自带 SPA + PocketBase + SQLite。继承 PocketBase 全部命令 + QuantumAtlas 自有的 `service` / `pat` / `storage` 子命令树。
+`qatlasd` 是 Go binary，单文件 ~30 MB，自带 SPA + PocketBase + SQLite。继承 PocketBase 全部命令 + QuantumAtlas 自有的 `service` / `pat` / `storage` / `downloader` 子命令树。
 
 ```
 qatlasd [global flags] <subcommand> [args...]
@@ -280,6 +280,72 @@ qatlasd storage prune --prefix pdf/2511/ --older-than 30d --yes
 **永远不会删的对象**：current version、delete marker、metadata sidecar（LocalStore）。
 
 详见 [RustFS 部署](rustfs.md#prune)。
+
+---
+
+## `downloader`：Robust Downloader 工具
+
+围绕 [Robust Downloader](downloader.md)（`internal/downloader`；server 侧
+`POST /api/downloader/*`）的运维子命令树。
+
+```
+qatlasd downloader <probe>
+```
+
+### `downloader probe` { #downloader-probe }
+
+对真实论文跑完整策略阶梯（arXiv 直下 → OA 元数据 API → 出版社 URL 模板 →
+落地页 → agent 兜底）的**在线健壮性压测**。逐篇输出结果表 + 失败分类学汇总；
+**任一论文失败即 exit 1**，供脚本 / 自动调试循环分支。probe 不写 registry、
+不写对象存储——验证管线与 server 路径完全一致，但结果只进 stdout。
+要求 `paper_access.enabled: true`（否则直接报错退出）。
+
+```
+qatlasd downloader probe [identifier ...] [flags]
+```
+
+`identifier` 是 DOI / arXiv id / 论文 URL（`arXiv:2401.12345`、
+`10.1038/s41586-024-07806-9` 均可）；解析不了的会被跳过并在 stderr 提示。
+
+| Flag | 默认 | 含义 |
+|---|---|---|
+| `--random <N>` | 0 | 从 OpenAlex 抽 N 篇随机 works（`has_doi:true`；无 `--search` 时用 `sample=N` 均匀抽样，每次全新）代替位置参数 |
+| `--search <q>` | — | `--random` 的 OpenAlex 检索过滤（如 `"quantum computing"`）|
+| `--agent` | false | 强制启用 agent 兜底（仍需 config 里 `downloader.agent.backend` 已配；未配则 stderr 提示并保持关闭）|
+| `--browser <url>` | — | 浏览器 lane CDP 端点 override（如 `ws://127.0.0.1:9222`；给出即隐含 `--browser-on`）|
+| `--browser-on` | false | 用 config 里 `downloader.browser.cdp_url` 启用浏览器 lane |
+| `--proxy <url>` | — | downloaderproxy URL override（如 `http://ag-workstation:8602`；缺省回落 config 的 `downloader.proxy.url`）|
+| `--proxy-token <t>` | — | downloaderproxy Bearer token |
+| `--concurrency <N>` | 3 | 并行论文数 |
+| `--timeout <dur>` | 4m | 单篇阶梯预算 |
+| `--json` | false | 机读 JSON 输出（`{results:[{input, ok, strategy, url, size, sha256, error, attempts[]}]}`）替代表格 |
+
+```bash
+# 指定标识符
+qatlasd downloader probe 10.1038/s41586-024-07806-9 arXiv:2401.12345
+
+# 随机抽 30 篇量子计算论文压测
+qatlasd downloader probe --random 30 --search "quantum computing"
+
+# 连 campus-egress 代理机一起验
+qatlasd downloader probe --random 10 --proxy http://ag-workstation:8602 \
+    --proxy-token "$DL_PROXY_TOKEN" --json
+```
+
+输出示例（表格模式；失败行下面缩进展开完整 attempt trace）：
+
+```text
+OK    10.1038/s41586-024-07806-9        strategy=oa:unpaywall     4200000 B  https://...
+FAIL  10.1109/CVPR.2024.00123           no PDF after ladder (9 attempts, doi=...) [pattern: bot challenge]
+
+summary: 29/30 ok
+  strategy oa:unpaywall                12
+  strategy arxiv                        9
+  failure  bot_challenge                 1
+```
+
+失败分类学桶：`bot_challenge` / `paywall` / `robots_blocked` / `not_pdf` /
+`404` / `403` / `rate_limited` / `no_candidates` / `other`。
 
 ---
 

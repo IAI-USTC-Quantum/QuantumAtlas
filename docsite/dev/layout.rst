@@ -7,8 +7,9 @@ Python 客户端、React 前端与部署模板。顶层布局：
 .. code-block:: text
 
    QuantumAtlas/
-   ├── cmd/qatlasd/        Go 服务器入口（内嵌 PocketBase + SPA + 本文档站）
-   ├── internal/           Go 服务器内部包（见下表）
+   ├── cmd/qatlasd/            Go 服务器入口（内嵌 PocketBase + SPA + 本文档站）
+   ├── cmd/downloaderproxy/    独立健壮下载器服务（campus-egress 部署，见 :doc:`downloader`）
+   ├── internal/               Go 服务器内部包（见下表）
    ├── qatlas/             Python 客户端（qatlas CLI）
    ├── web/                React SPA 前端
    ├── deploy/             docker-compose 部署模板
@@ -45,8 +46,21 @@ Python 客户端、React 前端与部署模板。顶层布局：
    * - ``internal/mineru``
      - MinerU 转换器（上传通道，不依赖公网 S3）+ 每日调度器
        （0 点启动、每日上限、单进程防重叠）
+   * - ``internal/downloader``
+     - 健壮论文 PDF 获取模块（Robust Downloader）：多范式策略梯
+       （arXiv → OpenAlex twin → OA API → 出版社 pattern → 落地页
+       → browser/agent 兜底 → downloaderproxy 委派）、统一验证
+       管线、ingest 式 worker 队列与审计，详见 :doc:`downloader`
+   * - ``internal/userkeys``
+     - 用户第三方搜索 API key 的 AES-256-GCM 加密存储
+       （``search_api_keys`` 集合，密钥派生自 system PAT），供
+       ``/api/search/multi`` 代理注入
    * - ``internal/routes``
-     - HTTP 路由层：papers / search / auth / pat / admin / oauth-device
+     - HTTP 路由层：papers / search（含逐平台 ``/api/search/multi``
+       与 backend 目录 ``/api/search/backends``）/ downloader
+       （``/api/downloader/*``）/ auth / pat / me（含
+       ``/api/me/search-keys``）/ admin（含 8 个资产浏览端点
+       ``/api/admin/assets/*``）/ oauth-device / docs
    * - ``internal/objstore``
      - S3 兼容对象存储客户端（RustFS / MinIO）
    * - ``internal/config``

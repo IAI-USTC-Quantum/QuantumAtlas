@@ -145,6 +145,20 @@ QuantumAtlas 既可以作为服务端运行，也可以作为远程客户端使�
 长串 `.gitignore` 规则），`go ./...` 不会撞到 FUSE 挂载，并且符合 XDG /
 FHS / 12-factor 的常规约定。
 
+## 服务端组件清单（`internal/` / `cmd/`）
+
+按上面分层对应的 qatlasd 主要 Go 包；都是主仓内的代码，不是独立进程：
+
+| 组件 | 职责 |
+|---|---|
+| `internal/registry` | PostgreSQL paper registry（`papers` / `paper_assets` / `paper_identities`），去重唯一入口 `ResolveOrMint` |
+| `internal/downloader` | Robust Downloader：多范式 PDF 抓取策略阶梯 + 统一验证管线（v0.26.0；builtin `downloader` 插件）|
+| `cmd/downloaderproxy` | 独立单容器部署的同款梯子服务——放在有出版社 entitlement 的机器（校园出口），qatlasd 经 `downloader.proxy` 委托；自带 Chrome-for-Testing 浏览器 lane（v0.27.0）|
+| `internal/search` | 搜索 Provider 抽象 + catalog/arxiv/openalex 内置 + remote 微服务 client + backend 静态目录（`backendmeta.go`）|
+| `internal/userkeys` | 每用户第三方搜索 key 的 AES-256-GCM 加密存储（`search_api_keys` collection；密钥派生自 system PAT）|
+| `internal/routes` | HTTP 路由层（papers / search（含 multi + backends）/ downloader / admin assets / me / auth …）|
+| `internal/ingest` · `internal/lazyload` · `internal/mineru` | 惰性摄入管线与 MinerU 转换调度 |
+
 ## 设计上的取舍
 
 - QuantumAtlas 不把浏览器 OAuth 登录流程内置进应用本体。

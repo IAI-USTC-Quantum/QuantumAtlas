@@ -91,11 +91,45 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
 
 | Method | Path | 鉴权 | 用途 |
 |---|---|---|---|
-| `POST` | `/api/search` | `papers:read` | 多 provider 论文搜索。body 为 SearchEntry JSON，engine fan-out 到 `QATLAS_SEARCH_PROVIDERS` 列出的 provider（默认 `catalog,arxiv,openalex`）|
+| `POST` | `/api/search` | `papers:read` | 多 provider 论文搜索。body 为 SearchEntry JSON，engine fan-out 到 `search.providers`（config.yaml，默认 `catalog,arxiv,openalex`）列出的 provider |
+| `POST` | `/api/search/multi` | `papers:read` | **逐平台原始搜索**。body `{text, max_results, sources[]}`（≤32 个 backend），代理一次 `mode:"multi"` 调用到 qatlas-search 微服务：每个 backend 返回**各自的原始命中列表**（源自己的排序），不做跨源融合打分（融合打分在 `POST /api/search` / `/api/search/agentic`）。调用者存着的第三方 key 被解密后随请求 `api_keys` 转发，key 后端跑在用户自己的凭据下。不计费（同 `POST /api/search`）。`search.remote` 未启用时 503 |
+| `GET` | `/api/search/backends` | session only | backend 目录（SPA 渲染成 checkbox 选择器）：静态表（`internal/search/backendmeta.go`）合并微服务 live `/v1/backends` 可用性 + 调用者已存的 key。每行 `{name, label, category, requires_key, user_key, server_ready, key_configured, selectable}`，`selectable = server_ready \|\| (user_key && key_configured)`——需要 key 但没配的后端渲染为禁用并附"去 dashboard 配置"链接 |
+| `POST` | `/api/search/agentic` | `papers:read` | 计量 + LLM 总结的 agentic 搜索（qatlas-search 微服务）。body 额外接受 `sources[]` **钉死 backend 列表**（v0.26.0 起；不传则由微服务侧全量 fan-out）|
 
-语义向量检索不在本端点的 provider 列表里：它由独立的 qatlas-rag 微服务
+语义向量检索不在 `/api/search` 的 provider 列表里：它由独立的 qatlas-rag 微服务
 提供，经 qatlas-search 的 fan-out 接入（`POST /api/search/agentic` 路径），
 qatlasd 在论文 ready 时通过 `rag.remote` 配置段向 qatlas-rag 推送索引构建。
+`/api/search/multi` 与 `/api/search/backends` 同样依赖 `search.remote` 启用。
+
+### Personal Search Keys（个人第三方搜索 key）
+
+每个用户可存自己的第三方搜索 API key（IEEE / Scopus / Tavily 等 key 后端），
+`POST /api/search/multi` 调用时自动解密注入。存储是 AES-256-GCM 加密的
+`search_api_keys` PocketBase collection（owner-only 规则、仅服务端写入）；
+加密密钥由 system PAT token 做域分离 SHA-256 派生——**轮换 system PAT 会使
+已存 key 全部失效**（表现为解密失败，用户重新录入即可），无独立配置键。
+
+| Method | Path | 鉴权 | 用途 |
+|---|---|---|---|
+| `GET` | `/api/me/search-keys` | session only | 当前用户的 key 清单：`{enabled, keys:[{backend, hint, updated_at}]}`。`hint` 是打码的末 4 位，**永不返回 key 本体**。server 未配 system PAT 时 `enabled:false` |
+| `PUT` | `/api/me/search-keys/{backend}` | session only | upsert 一个 key（body `{"key": "..."}`）。`backend` 必须是目录里有 user-key 槽位的后端，否则 400 |
+| `DELETE` | `/api/me/search-keys/{backend}` | session only | 删除；不存在时 opaque 404 |
+
+> session-only（非 scopeGuard）的理由同 `/api/pat`：这是浏览器 dashboard 里的
+> 凭据管理，泄露的 PAT 不应能读走或替换 owner 的第三方 key。
+
+### Robust Downloader
+
+详见 [Robust Downloader](downloader.md)（策略阶梯 / 配置 / downloaderproxy /
+probe）。端点本身：
+
+| Method | Path | 鉴权 | 用途 |
+|---|---|---|---|
+| `POST` | `/api/downloader/fetch` | `papers:write` | 提交一批标识符（DOI / arXiv id / 论文 URL，body `{"items":[...]}`，**≤50 条**）。每条先解析 + `ResolveOrMint` 进 registry，再入策略阶梯队列。逐条返回 `{input, kind, paper_id, created, error?}` + 总 `enqueued`。`paper_access.enabled` / `downloader.enabled` 任一关闭时 503；registry 不可用时 503 |
+| `GET` | `/api/downloader/jobs` | `papers:read` | job 快照：`{jobs:[...], counters:{...}}`。每个 job 含 per-paper state/phase、胜出策略、**完整 attempt trace**（策略 id / URL / 错误 / 耗时）|
+
+SPA 页面 `/$lang/downloader`：粘贴标识符 → 客户端解析预览徽章 → 提交 →
+逐 job 进度 + 策略轨迹渲染（挂在 `downloader` 插件上）。
 
 ### Plugins
 
@@ -163,6 +197,43 @@ RFC 8628 device authorization grant。CLI 没有浏览器 / session，所以由�
 | `POST` | `/api/oauth/device/deny` | session only | body `{user_code}`，拒绝。下一次 `/token` 轮询返回 `access_denied` |
 
 > 完整 device-flow 概念背景见 [概念 · 鉴权 · OAuth Device Flow](../concepts/auth-model.md)；schema 详见 `/swagger/index.html`。
+
+### Admin（管理端：Asset Browser + 获取失败）
+
+Admin 端点全部走 `adminGuard`：**session token + admin 白名单**（`auth.admin_logins`
+等，PAT 一律拒绝——管理员是人）。Asset Browser 是运维通道，**独立于
+`paper_access.enabled`**（不分发义务：admin 面板不算对外重分发 lane）。
+
+#### Admin Asset Browser（`/api/admin/assets/*`）
+
+SPA 页面 `/$lang/admin/assets`：防抖搜索 → 论文卡片 → 可展开资产表，每行
+Preview（Dialog iframe/pre）、Download、Copy Presigned URL + Copy S3 Key。
+`{kind}` 取 `pdf` 或 `markdown`（别名 `md`）。
+
+| Method | Path | 用途 |
+|---|---|---|
+| `GET` | `/api/admin/assets/{paper_id}` | 资产清单：每个 asset 的 S3 object key / size / sha256 / content-type |
+| `GET` | `/api/admin/assets/{paper_id}/{kind}` | 单资产详情；`?presign=true&ttl=1h` 附带 presigned URL |
+| `GET` | `/api/admin/assets/{paper_id}/{kind}/download` | 代理流式下载（`Content-Disposition: attachment`）|
+| `GET` | `/api/admin/assets/{paper_id}/{kind}/inline` | 代理流式预览（`Content-Disposition: inline`；PDF 进 iframe viewer，markdown 按 text 渲染）|
+| `GET` | `/api/admin/assets/{paper_id}/{kind}/url` | presigned S3 URL JSON——浏览器直连 S3，绕过 qatlasd 代理。TTL **1 分钟–24 小时**（默认 1h），超出区间截断 |
+| `GET` | `/api/admin/assets/batch?paper_ids=a,b,c` | 批量资产清单（**≤50 篇**）|
+| `GET` | `/api/admin/assets/batch/download?paper_ids=a,b,c&kind=pdf` | 流式 ZIP 打包下载（**≤20 篇**）|
+| `GET` | `/api/admin/assets/search?q=...&kind=pdf&limit=50` | 按 title / DOI / arXiv ID（ILIKE）找**有资产**的论文 |
+
+> presign 仅 S3 后端支持（`presign_supported` 字段）；dev 的 LocalStore 回落代理流。
+
+#### 获取失败与补救
+
+| Method | Path | 用途 |
+|---|---|---|
+| `GET` | `/api/admin/acquisition/failures` | 持久化的 PDF 抓取失败记录：阶段、原因、重试计数（`paper_acquisition_events` 审计表之上的聚合视图）|
+
+管理员 SPA 的失败表对每行渲染 DOI 直达链接 + **内联 PDF 上传**（人工取回 PDF
+对着 DOI 直接 `POST /api/papers/{doi}/upload-pdf`），即时闭合获取状态并触发
+MinerU——这是 Robust Downloader 的失败兜底闭环，见
+[Robust Downloader · 管理员补救流](downloader.md#admin-remediation)。
+
 
 ## 端点详解：选粹
 

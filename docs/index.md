@@ -79,10 +79,12 @@ flowchart LR
 ## 核心能力
 
 - **从 arXiv 收集论文**：自动抓取 PDF + 元数据，可选用 MinerU 解析为 Markdown
+- **Robust Downloader**：给定 DOI / arXiv id / 论文 URL，多范式策略阶梯抓取正式版 PDF——arXiv 直下、OA 元数据 API（Europe PMC / Unpaywall / OpenAlex / Semantic Scholar）、出版社 URL 模板、落地页挖掘、真实浏览器 lane、LLM 兜底，可再委托校园出口代理机（downloaderproxy）；每个候选都过统一验证管线（`%PDF-` magic、bot 墙 / 付费墙分类）
 - **PostgreSQL 论文 registry**：论文、身份（arXiv / DOI / OpenAlex）、资产状态全部入库，纯 SQL 可查；goose migrations 随 server 启动自动 apply
-- **多范式搜索**：`POST /api/search` 一个端点 fan-out 到 catalog / arXiv / OpenAlex provider，可选 Qdrant 混合向量检索（dense+sparse, RRF + rerank）
+- **多范式搜索**：`POST /api/search` 一个端点 fan-out 到 catalog / arxiv / OpenAlex provider；`POST /api/search/multi` 逐平台返回原始结果（SPA backend picker + 每用户第三方搜索 key，AES-GCM 加密存储）；语义混合检索（dense+sparse, RRF + rerank）经 qatlas-search / qatlas-rag 微服务接入
 - **懒加载摄入**：缓存未命中时 server 后台静默 fetch + 转换，LRO 状态可轮询，并发请求自动 dedupe
 - **OpenAlex 语料镜像**：works 语料灌进同一个 PG 库，引用上下文 / 批量分析直接 SQL
+- **管理端 Asset Browser**：admin 直接浏览 / 预览 / 下载 / presign 对象存储里的论文 PDF 与 Markdown（批量 ZIP、限时 presigned URL），抓取失败表 + 内联 PDF 上传闭环补救
 - **远程协作**：Web API + CLI，协作者不需要服务器登录权限
 
 ## 当前状态

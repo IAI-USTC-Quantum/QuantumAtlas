@@ -3,7 +3,7 @@
 
 :doc:`release` 描述"代码如何变成产物"的标准化流程，本文描述**产物如何在
 线上实例落地**：部署账号拓扑、目录与网络布局、日常运维动作，以及
-qatlas-rag 的首次启用 runbook。本文以当前唯一的生产实例为蓝本，后续新增
+qatlas-rag 与 downloaderproxy 的首次启用 runbook。本文以当前唯一的生产实例为蓝本，后续新增
 部署环境时按本文复制一份并替换具体值即可。
 
 部署账号拓扑
@@ -152,3 +152,73 @@ rag 链路涉及三个仓库的协调发版，首次启用按以下顺序执行�
 **回退**：任一环异常时把对应配置段改回 ``enabled: false``\ 并重启该
 服务即可，索引推送是 best-effort，失败不会阻塞主流程；rag 的缺失只让
 语义检索路径降级，不影响关键词检索。
+
+downloaderproxy 首次启用 runbook
+--------------------------------
+
+downloaderproxy 是健壮下载器（见 :doc:`downloader`）在校园出口机器上的
+独立部署形态：它的出口带机构订阅，qatlasd 自身的代理网络打不通的
+出版社内容委派给它取。它**不在 ghcr、不在 qatlasd 的 compose 栈内**，
+是在 campus-egress 主机上现场构建并运行的唯一例外组件（理由见
+:doc:`release`）。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - 前提
+     - 验收
+   * - campus-egress 主机
+     - 出口带机构订阅（直接访问出版社即 entitled）；装有 Docker，
+       且 Docker **不配置** http_proxy/https_proxy（否则丢失校园
+       出口身份）；与 qatlasd 主机网络互通（如 ``ag-workstation``
+       可被 qatlasd 解析访问）
+   * - QuantumAtlas checkout
+     - 主仓 checkout（部署分支或目标 tag），供现场构建镜像
+   * - qatlasd ≥ ``v0.27.0``
+     - 支持 ``downloader.proxy`` 配置段；插件注册表出现
+       ``downloader`` builtin
+
+1. **生成共享 token**：``openssl rand -hex 32``，两处保持一致——
+   容器环境变量 ``DL_PROXY_TOKEN`` 与 qatlasd 的
+   ``downloader.proxy.token``。
+2. **campus 主机构建并运行**\（在 QuantumAtlas checkout 内）::
+
+      docker build -f Dockerfile.downloaderproxy -t qatlas-downloaderproxy .
+      docker run -d --name downloader-proxy --restart unless-stopped \
+        -p 8602:8602 \
+        -e DL_PROXY_TOKEN=<token> \
+        -e DL_UNPAYWALL_EMAIL=<contact@example.edu> \
+        -e DL_S2_API_KEY=<s2k-...> \
+        qatlas-downloaderproxy
+
+   镜像自带 headless-shell（Chrome for Testing，过出版社 WAF 的
+   指纹），entrypoint 起浏览器后由服务的监督器接管（CDP 死锁自动
+   重启）。**不要**\ 注入任何代理相关环境变量。
+3. **配置 qatlasd**\（``~/.qatlas/config.yaml``）::
+
+      downloader:
+        proxy:
+          url: "http://<campus-host>:8602"
+          token: "<token>"
+
+   重启 qatlasd（配置段在启动时读取）。
+4. **验证**：
+
+   - campus 主机 ``curl -s http://127.0.0.1:8602/healthz``\ 返回
+     ``{"status":"ok"}``；
+   - qatlasd 主机上现场压测委派链路：
+     ``qatlasd downloader probe <一个此前失败的 DOI> --proxy
+     http://<campus-host>:8602 --proxy-token <token>``\，确认
+     winning strategy 为 ``remote-proxy:<s>``；
+   - SPA 的 Robust Downloader 页面提交同一 DOI，任务 trace 中出现
+     ``remote-proxy`` 尝试并成功。
+
+**升级**：在 campus 主机的 checkout 内 ``git fetch && git checkout
+<tag>`` 后重复第 2 步的 build + run（先 ``docker rm -f
+downloader-proxy``）；它没有状态（文件 token 全在内存 /
+``/tmp``），随主仓 tag 演进即可。
+
+**回退**：qatlasd 侧删掉 ``downloader.proxy`` 段并重启——梯子回到
+本地策略（含本地 browser lane），Robust Downloader 功能不中断，只是
+失去 campus 出口这一跳；campus 主机容器可保留待用。

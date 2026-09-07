@@ -94,6 +94,26 @@ arxiv 自己通过 OAI-PMH 接口对外发布的全量论文 metadata 快照。
 
 **两个互补**：OpenAlex 缺 unstructured reference 文本 / 撤稿声明 / 部分引用边；Crossref 缺反向 cited_by 列表 / 摘要 / 机构解析 / 主题分类。
 
+## OA 解析器：Robust Downloader 的 PDF 上游
+
+论文**元数据**之外，[Robust Downloader](../server/downloader.md) 还消费三个
+开放获取（OA）解析服务——给定 DOI 回答"哪里有合法的 OA 全文 PDF"。它们是
+策略阶梯 `oa:*` 段的数据源，不是元数据镜像：
+
+| 服务 | 运营方 | 用法（策略 id）| key |
+|---|---|---|---|
+| **Europe PMC** | EMBL-EBI | `fullTextUrlList` 的候选 URL，含免 PoW 挑战的 `?pdf=render` 直渲染路径（`oa:europepmc`）；另承担 PMCID → DOI 换算（`pmc-resolve`）| 无需 |
+| **Unpaywall** | OurResearch（与 OpenAlex 同门）| `best_oa_location` + 全部 `oa_locations`（`oa:unpaywall`）。候选若只是绿色 OA 仓库落地页（HAL、高校 repo…），会先挖出真正的 PDF 链接再抓（`oa:unpaywall+landing`）| 无需，但要求联系邮箱（`downloader.unpaywall_email`，空则回落 `paper_access.openalex_mailto`）|
+| **Semantic Scholar (S2)** | Allen Institute for AI | `openAccessPdf` 字段（`oa:semantic_scholar`）——最高召回的 OA resolver | 可选免费 key（`downloader.s2_api_key`；免费档预算 1 req/s，客户端已按此本地限速），配 key 可避开共享池的 429 |
+
+OpenAlex 自己也在梯子里（`oa:openalex`，works 的 `pdf_url` 候选 +
+DOI→arXiv twin 反查），见上文 OpenAlex 小节。
+
+这四家是**互补关系**：不同家对同一 DOI 知道的 OA 副本不同（出版社版本 vs
+绿色仓库版本），梯子按 europepmc → unpaywall → openalex → semantic_scholar
+的顺序逐个尝试，每个候选 URL 都要过统一验证管线（`%PDF-` magic / bot 墙 /
+付费墙分类）才会被接受。
+
 ## 引用关系的两个方向
 
 ```

@@ -2,12 +2,98 @@
 
 本文档描述 **`qatlasd` server**（Go binary）当前如何加载 / 解析 / 使用环境变量。
 
+!!! warning "现行配置已是 YAML-only（本页 env 部分为历史参考）"
+    qatlasd 现在**只从 YAML 配置文件读配置**（默认 `~/.qatlas/config.yaml`，
+    `qatlasd config init` 生成；`--config <path>` 覆盖）。进程环境里出现任何
+    `QATLAS_*` / `MINERU_*` / `GITHUB_CLIENT_*` 配置变量会**启动即失败**（错误
+    信息点名肇事变量；`QATLAS_TEST_*` / `QATLAS_VERSION` 等工具变量除外）。
+    Docker 部署把 config.yaml 只读 bind-mount 进容器。
+
+    完整 schema 见仓库根 [`config.example.yaml`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/config.example.yaml)；
+    本页下方新增章节收录 v0.26.0–v0.28.0 引入的 `downloader:` 与
+    `search.remote` 段。本页其余 env 内容保留为 pre-YAML 部署（v0.21 之前）
+    的历史参考，字段语义迁移时大多平移为 YAML 键名（`QATLAS_POSTGRES_DSN` →
+    `postgres.dsn` 等）。
+
 > **Client / Server 配置完全分离**：
 >
 > - **Server** (`qatlasd`): 三入口 **CLI flag > OS env > `.env` 文件 > default**（本页主题）
 > - **Client** (`qatlas` Python CLI): **只读 YAML** `~/.config/qatlas/config.yaml`，首次跑任意 `qatlas <cmd>` 自动创建模板（不再支持 CLI flag / OS env / `QATLAS_DOTENV`，自 v0.17.0 起）
 >
 > 设计哲学：server 是 long-lived daemon，运维要同时支持 systemd / docker / k8s / nohup 多形态，所以三入口；client 是 short-lived 命令，用户配置一次长期复用，YAML 单入口最简单。client 配置参考见 [`qatlas config` reference](../client/cli-qatlas.md#qatlas-config)。
+
+---
+
+## 0. YAML 配置段参考（`downloader:` 与 `search.remote`）
+
+v0.26.0–v0.28.0 引入的两个 config.yaml 段。逐字段语义如下；模块行为详见
+[Robust Downloader](downloader.md)。
+
+### `downloader:`（Robust Downloader，v0.26.0；`proxy:` v0.27.0）
+
+仅当 `paper_access.enabled: true` 时激活（复用其 fetcher/resolver/对象存储
+接线）；注册为 builtin `downloader` 插件。任一开关关闭时 `/api/downloader/*`
+仍注册但返回 503。
+
+```yaml
+downloader:
+  enabled: true                # 总开关（默认 true；还需 paper_access.enabled）
+  concurrency: 2               # 并行下载 job 数（默认 2）
+  unpaywall_email: ""          # Unpaywall 联系邮箱；空则回落 paper_access.openalex_mailto
+  s2_api_key: ""               # 可选 Semantic Scholar key（免费档，客户端 1 req/s 限速）——
+                               # 稳定最高召回的 OA resolver，避开共享池 429
+  respect_robots: false        # robots.txt 门控（默认 false：按需 entitled fetch 不是爬虫；
+                               # 多家出版社 blanket Disallow "*" 反 AI 爬虫，开启会误杀）
+  browser:                     # CDP 浏览器 lane：指向已在运行的 Chromium 的 DevTools 端点
+                               # （如 ws://browser:9222）。cdp_url 空 = 关闭该 lane；
+                               # 出版社登录态存在那个浏览器 profile 里（人工登一次）
+    cdp_url: ""
+    timeout: 45s               # 默认 45s
+  proxy:                       # 委托给独立 downloaderproxy（cmd/downloaderproxy，
+                               # Dockerfile.downloaderproxy），部署在有直连出版社
+                               # entitlement 的机器（如校园出口工作站）。设置后
+                               # 优先于本地浏览器 lane；返回字节仍过本地验证管线
+    url: ""                    # e.g. http://ag-workstation:8602
+    token: ""                  # 与代理机 DL_PROXY_TOKEN 同值
+    timeout: 5m                # 默认 5m（submit→poll→fetch 全程）
+  agent:                       # LLM 兜底链接提取器；backend 空 = 关闭
+    backend: ""                # "" | "openai" | "claude"
+    base_url: ""               # openai：OpenAI 兼容端点（e.g. https://llm.example.com/v1）
+    api_key: ""                # openai 端点 key
+    model: ""                  # 模型名
+    max_tokens: 1024           # 默认 1024
+    claude_bin: claude         # claude：本机 headless claude CLI 路径（需已 OAuth 登录）
+    claude_model: ""           # 空 = claude 默认模型
+    timeout: 120s              # 默认 120s
+    max_budget_usd: 0          # claude 专用；0 = 不加 --max-budget-usd
+```
+
+### `search:`（providers / remote / agentic）
+
+`search.remote` 接入外部 qatlas-search 微服务：启用后 `search.providers` 可
+加 `remote`，并解锁 `POST /api/search/agentic`（计量 + LLM 总结）、
+`POST /api/search/multi`（逐平台原始结果）与 `GET /api/search/backends`
+（backend 目录）。**v0.26.0 起 `search.remote` 同时是 multi 搜索与 backend
+picker 的依赖**；用户第三方 key 的加密存储见
+[REST API · Personal Search Keys](rest-api.md)。
+
+```yaml
+search:
+  providers: [catalog, arxiv, openalex]   # POST /api/search 的 fan-out 列表；
+                                          # 加 "remote" 接入 qatlas-search 微服务
+  remote:
+    enabled: false
+    url: ""            # e.g. http://qatlas-search:8600（内网，不做端口映射）
+    token: ""          # 必须与微服务的 search.service_token 同值
+    timeout: 60s       # agentic 调用可能带 LLM——留足
+  agentic:
+    daily_limit: 10000   # 默认 per-user 日限额（无 plan 行的用户的默认值）
+    price_per_mtok: 0.0  # USD / 1M LLM tokens；仅 admin 成本展示
+    backend: remote      # remote = qatlas-search 微服务；local = 本机 claude CLI
+    local:               # 仅 backend: local 时生效（字段见 config.example.yaml）
+      claude_bin: claude
+      # model / sandbox_dir / timeout / retention / max_budget_usd / prompt_template
+```
 
 ---
 

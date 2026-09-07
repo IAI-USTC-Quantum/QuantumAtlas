@@ -10,6 +10,7 @@ QuantumAtlas 开发文档
    layout
    plugins
    apps
+   downloader
    versioning
    release
    prod-deploy

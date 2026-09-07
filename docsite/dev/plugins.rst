@@ -32,8 +32,22 @@ QuantumAtlas 主仓库正在收敛为**核心的论文基础设施**：主仓库
        qatlas-search 经自己的 ``rag`` 配置段调用 ``POST /v1/retrieve``，
        把语义检索作为 fan-out 的一个 backend
    * - 服务插件平台（服务端）
-     - ``internal/hostapi`` 宿主 API + 配置驱动的启用开关
-       （当前内置插件为空）
+     - ``internal/plugin``\（manifest / registry / external JSON-RPC）
+       + ``internal/hostapi`` 宿主 API + 配置驱动的启用开关。内置
+       （kind=builtin）插件现有三个，manifest 在
+       ``cmd/qatlasd/main.go`` 构造：
+
+       - ``search-remote``\（capability ``search``）：qatlas-search
+         微服务的进程内客户端，enabled 镜像
+         ``search.remote.enabled``，后台 healthz 探测保持
+         connected/disconnected 诚实；
+       - ``rag-remote``\（capability ``rag``）：qatlas-rag 索引推送
+         客户端，enabled 镜像 ``rag.remote.enabled``，同样受
+         healthz 探测；
+       - ``downloader``\（capability ``download``）：内部模块
+         ``internal/downloader`` 经插件面暴露，SPA 的 Robust
+         Downloader 页面按其 enabled 状态显隐（架构见
+         :doc:`downloader`）。
    * - CLI 命令（客户端）
      - ``qatlas.plugins`` Python entry-point group：第三方包安装后即可
        贡献 ``qatlas <name>`` 顶层命令或 ``qatlas contrib <name>`` 子命令

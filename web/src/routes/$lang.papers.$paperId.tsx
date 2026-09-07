@@ -1,13 +1,17 @@
+import { useState } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
-import { ArrowLeft, FileText } from 'lucide-react'
+import { ArrowLeft, Download, Eye, FileText, Link2 } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { PageHeader } from '@/components/page-header'
 import { Panel } from '@/components/panel'
 import { StatusBlock } from '@/components/status-block'
 import { useLang } from '@/hooks/use-lang'
-import { usePaperDetail } from '@/lib/queries'
+import { useAdminWhoami, usePaperDetail } from '@/lib/queries'
+import { adminAssetURL } from '@/lib/api'
 import { PaperAcquisition } from '@/components/paper-acquisition'
 
 export const Route = createFileRoute('/$lang/papers/$paperId')({
@@ -77,6 +81,8 @@ function PaperDetailPage() {
             <Panel title={t('acquisition.title')} icon={FileText}>
               <PaperAcquisition acquisition={paper.acquisition} />
             </Panel>
+
+            <AdminAssetPreview paperId={paper.paper_id} />
 
             <Panel
               title={t('detail.assets')}
@@ -172,6 +178,120 @@ function formatBytes(size?: number): string {
     unit += 1
   }
   return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`
+}
+
+// AdminAssetPreview shows PDF/Markdown preview + download + presigned URL
+// for admins on the paper detail page. Hidden for non-admin users.
+function AdminAssetPreview({ paperId }: { paperId: string }) {
+  const { t } = useTranslation('papers')
+  const whoami = useAdminWhoami()
+  const isAdmin = whoami.data?.is_admin ?? false
+  const [previewKind, setPreviewKind] = useState<'pdf' | 'markdown' | null>(null)
+  const [urlKind, setUrlKind] = useState<'pdf' | 'markdown' | null>(null)
+  const [presignedUrl, setPresignedUrl] = useState('')
+  const [mdText, setMdText] = useState('')
+
+  if (!isAdmin) return null
+
+  const fetchMd = async (kind: string) => {
+    const resp = await fetch(
+      `/api/admin/assets/${encodeURIComponent(paperId)}/${kind}/inline`,
+      { credentials: 'same-origin' },
+    )
+    if (resp.ok) setMdText(await resp.text())
+  }
+
+  const openPreview = (kind: 'pdf' | 'markdown') => {
+    setPreviewKind(kind)
+    if (kind === 'markdown') void fetchMd(kind)
+  }
+
+  const copyUrl = async (kind: 'pdf' | 'markdown') => {
+    try {
+      const res = await adminAssetURL(paperId, kind)
+      setPresignedUrl(res.url)
+      setUrlKind(kind)
+      await navigator.clipboard.writeText(res.url)
+    } catch {
+      // show error state
+    }
+  }
+
+  const kinds = ['pdf', 'markdown'] as const
+
+  return (
+    <Panel title={t('adminAssets.title')} icon={Eye}>
+      <div className="flex flex-wrap gap-3">
+        {kinds.map((kind) => (
+          <div key={kind} className="flex items-center gap-1.5">
+            <Button variant="outline" size="sm" onClick={() => openPreview(kind)}>
+              <Eye className="size-3.5" />
+              {t(`adminAssets.preview${kind === 'pdf' ? 'Pdf' : 'Md'}`)}
+            </Button>
+            <Button variant="outline" size="sm" asChild>
+              <a
+                href={`/api/admin/assets/${encodeURIComponent(paperId)}/${kind}/download`}
+                download
+              >
+                <Download className="size-3.5" />
+                {kind === 'pdf' ? 'PDF' : 'MD'}
+              </a>
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void copyUrl(kind)}
+              title={t('adminAssets.copyUrlHint')}
+            >
+              <Link2 className="size-3.5" />
+              {t('adminAssets.copyUrl')}
+            </Button>
+          </div>
+        ))}
+      </div>
+
+      {previewKind && (
+        <Dialog open onOpenChange={() => setPreviewKind(null)}>
+          <DialogContent className="max-w-4xl">
+            <DialogHeader>
+              <DialogTitle>
+                {previewKind === 'pdf'
+                  ? t('adminAssets.pdfPreview')
+                  : t('adminAssets.mdPreview')}
+              </DialogTitle>
+            </DialogHeader>
+            {previewKind === 'pdf' ? (
+              <iframe
+                src={`/api/admin/assets/${encodeURIComponent(paperId)}/pdf/inline`}
+                className="h-[600px] w-full rounded-md border border-border"
+                title="PDF Preview"
+              />
+            ) : (
+              <pre className="max-h-[600px] overflow-auto rounded-md border border-border bg-muted/30 p-4 text-sm leading-relaxed">
+                {mdText || t('adminAssets.loading')}
+              </pre>
+            )}
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {urlKind && presignedUrl && (
+        <Dialog open onOpenChange={() => { setUrlKind(null); setPresignedUrl('') }}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>{t('adminAssets.presignedUrl')}</DialogTitle>
+            </DialogHeader>
+            <code className="break-all rounded-md bg-muted px-3 py-2 text-xs">
+              {presignedUrl}
+            </code>
+            <p className="text-xs text-muted-foreground">
+              {t('adminAssets.urlCopied')}
+            </p>
+          </DialogContent>
+        </Dialog>
+      )}
+    </Panel>
+  )
 }
 
 function formatDate(value?: string): string {

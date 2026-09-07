@@ -5,6 +5,7 @@ nav:
     - Docker 部署: docker.md
     - 反向代理: reverse-proxy.md
   - 服务端配置: server-config.md
+  - Robust Downloader: downloader.md
   - 依赖服务:
     - OAuth 登录（GitHub/Gitea）: github-oauth.md
     - RustFS / S3: rustfs.md

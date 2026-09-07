@@ -8,6 +8,7 @@ flowchart TB
         ARX[arXiv]
         OTH[其他来源<br/>本地 PDF]
         OA[OpenAlex]
+        PUB[出版社 / OA 仓库<br/>DOI 落地页]
     end
 
     subgraph STORE ["对象存储（不可变资产）"]
@@ -27,6 +28,7 @@ flowchart TB
 
     ARX -->|qatlas ingest| PDF
     OTH -->|qatlas contrib pdf| PDF
+    PUB -->|Robust Downloader| PDF
     PDF -->|MinerU| MD
     PDF -->|MinerU| IMG
 
@@ -41,11 +43,11 @@ flowchart TB
     style SEARCH fill:#fff3e0,stroke:#f57c00
 ```
 
-## 三种贡献路径
+## 四种获取路径
 
-数据可以从三个地方进入资产层。**最终的保存路径都一样**（`<raw>/pdf/<YYMM>/<id>v<n>.pdf` 等，S3 后端时是对应 bucket 里的对象 key），区别只是触发者：
+数据可以从四个地方进入资产层。**最终的保存路径都一样**（`<raw>/pdf/<YYMM>/<id>v<n>.pdf` 等，S3 后端时是对应 bucket 里的对象 key），区别只是触发者：
 
-=== "1. 服务器自动抓取"
+=== "1. 服务器自动抓取（arXiv）"
 
     ```bash
     qatlas ingest quant-ph/9508027 --parser mineru
@@ -72,7 +74,21 @@ flowchart TB
 
     本地用自己的 MinerU 配额跑解析。**server 颁发 30 分钟原子 claim**——多个贡献者并发跑不会撞重。需要 `papers:write` scope。
 
-详见 [上传论文资产](../client/upload-assets.md) 和 [用 MinerU 解析](../client/parse-with-mineru.md)。
+=== "4. Robust Downloader（DOI / 正式版批量抓取）"
+
+    ```http
+    POST /api/downloader/fetch
+    {"items": ["10.1038/s41586-024-07806-9", "arXiv:2401.12345"]}
+    ```
+
+    给 DOI / arXiv id / 论文 URL（单批 ≤50 条），server 跑多范式策略阶梯
+    （arXiv 直下 → OpenAlex twin → OA 元数据 API → 出版社 URL 模板 → 落地页
+    挖掘 → 浏览器 lane / LLM 兜底 / 远端代理）抓**正式版 PDF**，统一验证后
+    入库并驱动 MinerU。SPA 页面 `/$lang/downloader`。与前两条路径的区别：
+    **来源不限于 arXiv**——绿色 OA 仓库、出版社模式 URL、需要 entitlement 的
+    落地页都在射程内。需要 `papers:write`（提交）/ `papers:read`（查 job）scope。
+
+详见 [上传论文资产](../client/upload-assets.md)、[用 MinerU 解析](../client/parse-with-mineru.md) 和 [Robust Downloader](../server/downloader.md)。
 
 ## 懒加载摄入（lazy ingest）
 
@@ -97,11 +113,15 @@ dedupe 成 1 次 fetch + 1 次 convert。完整协议见
 
 ## 搜索路径
 
-`POST /api/search` 接收一个 SearchEntry JSON，engine 按
-`QATLAS_SEARCH_PROVIDERS`（默认 `catalog,arxiv,openalex`）fan-out：
+`POST /api/search` 接收一个 SearchEntry JSON，engine 按 config.yaml 的
+`search.providers`（默认 `catalog,arxiv,openalex`）fan-out：
 
 - **catalog**：本地 PostgreSQL registry 的元数据 + 资产状态；
-- **arxiv / openalex**：上游在线查询（建议配 `QATLAS_OPENALEX_MAILTO` 进 polite pool）。
+- **arxiv / openalex**：上游在线查询（建议配 `paper_access.openalex_mailto` 进 polite pool）。
+
+`search.remote` 启用后另有 `POST /api/search/multi`：逐平台（backend）返回
+**原始**命中列表，不做跨源融合——SPA 的 backend picker + 每平台 Tab 渲染
+就是这条路径（见 [REST API · Search](../server/rest-api.md)）。
 
 语义向量检索不在 `/api/search` 的 provider 列表里：它由独立的 qatlas-rag
 微服务提供（dense+sparse 混合检索，RRF + rerank），经 qatlas-search 作为

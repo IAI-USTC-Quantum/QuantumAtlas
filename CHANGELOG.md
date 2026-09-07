@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## Unreleased
+
+### Feat
+
+- **papers**: Admin asset preview panel on the paper detail page — admins see a new "Asset Preview" panel with PDF inline viewer (iframe), Markdown text preview, download buttons, and presigned S3 URL copy, all via the existing admin asset API. Hidden for non-admin users.
+- **docs**: Comprehensive documentation overhaul across three trees. **docs/ (public mkdocs/RTD)**: new `server/downloader.md` page (strategy ladder, config reference, downloaderproxy deployment, CLI probe); rest-api.md adds all 15 new endpoints from v0.26.0-v0.28.0; cli-qatlasd.md adds downloader probe; server-config.md adds full `downloader:` YAML block; index/architecture/data-flow/external-data-sources updated. **docsite/dev/ (admin Sphinx)**: new `dev/downloader.rst` (internal architecture, downloaderproxy REST contract, config knobs); layout/plugins/apps/prod-deploy/release updated with new packages, builtin plugins, deployment patterns. **docsite/guide/ (user Sphinx)**: api.rst expanded from 129 to ~370 lines; cli.rst from 94 to ~160; admin.rst from 32 to ~100; web.rst from 36 to ~80; search.rst from 211 to 299.
+
 ## v0.28.0 (2026-09-07)
 
 ### Feat
