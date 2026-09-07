@@ -77,7 +77,7 @@ func newMultiHarness(t testing.TB, backend MultiBackend) *multiHarness {
 
 	var built http.Handler
 	err = app.OnServe().Trigger(se, func(e *core.ServeEvent) error {
-		RegisterSearchMulti(e, h.keys, backend, enforcer)
+		RegisterSearchMulti(e, h.keys, backend, nil, enforcer)
 		RegisterSearchBackends(e, h.keys, backend)
 		RegisterMeSearchKeys(e, h.keys)
 		m, mErr := e.Router.BuildMux()

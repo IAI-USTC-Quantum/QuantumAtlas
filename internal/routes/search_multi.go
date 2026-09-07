@@ -89,7 +89,13 @@ func normalizeSources(in []string) []string {
 // RegisterSearchMulti mounts POST /api/search/multi. backend is nil when
 // search.remote is disabled — the route stays registered but every call
 // answers 503 (same convention as the agentic endpoint).
-func RegisterSearchMulti(se *core.ServeEvent, keys *userkeys.Store, backend MultiBackend, enforcer *casbin.Enforcer) {
+//
+// The minter (search engine) is used for lazy ingestion: after the
+// microservice returns per-backend raw hits, identity-anchored results
+// (DOI / arXiv ID) are resolve-or-minted into the registry, which fires
+// the ingester's OnMint hook → PDF fetch → MinerU conversion. This
+// mirrors what POST /api/search and /api/search/agentic already do.
+func RegisterSearchMulti(se *core.ServeEvent, keys *userkeys.Store, backend MultiBackend, engine *search.Engine, enforcer *casbin.Enforcer) {
 	se.Router.POST("/api/search/multi", scopeGuard(enforcer, "papers", "read", func(re *core.RequestEvent) error {
 		if backend == nil {
 			return re.JSON(http.StatusServiceUnavailable, map[string]string{
@@ -137,6 +143,39 @@ func RegisterSearchMulti(se *core.ServeEvent, keys *userkeys.Store, backend Mult
 				"detail": "multi search upstream failed: " + err.Error(),
 			})
 		}
+
+		// Lazy ingestion: resolve-or-mint identity-anchored hits so the
+		// ingest pipeline (PDF fetch → MinerU) fires for new papers —
+		// the same behavior as POST /api/search and /api/search/agentic.
+		// Dedup by DOI > arXiv across backends to avoid minting the same
+		// paper N times when N backends return it.
+		if engine != nil {
+			var hits []search.Hit
+			seen := map[string]bool{}
+			for _, backendHits := range resp.Results {
+				for _, rh := range backendHits {
+					h := rh.ToHit()
+					key := h.DOI
+					if key == "" {
+						key = h.ArxivID
+					}
+					if key == "" || seen[key] {
+						continue // title-only or duplicate
+					}
+					seen[key] = true
+					hits = append(hits, h)
+				}
+			}
+			if len(hits) > 0 {
+				// Best-effort: minting failures must not break the
+				// search response; the paper stays unminted and the
+				// user can still see the raw hit.
+				if _, _, mintErr := engine.MintHits(re.Request.Context(), hits, len(hits)); mintErr != nil {
+					slog.Warn("multi search: lazy minting failed", "error", mintErr)
+				}
+			}
+		}
+
 		out := multiSearchResponse{
 			Results: resp.Results,
 			Usage:   resp.Usage,
