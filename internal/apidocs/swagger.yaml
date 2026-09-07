@@ -168,6 +168,121 @@ info:
   title: QuantumAtlas API
   version: "1.0"
 paths:
+  /api/admin/assets/{paper_id}:
+    get:
+      description: |-
+        Admin-only asset listing: every PDF / markdown object the
+        paper owns, with S3 object keys, sizes, SHA256s.
+      parameters:
+      - description: paper id (qa_...)
+        in: path
+        name: paper_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List paper assets
+      tags:
+      - Admin
+  /api/admin/assets/{paper_id}/{kind}/download:
+    get:
+      description: 'Admin-only proxy stream with Content-Disposition: attachment.'
+      parameters:
+      - description: paper id
+        in: path
+        name: paper_id
+        required: true
+        type: string
+      - description: pdf | markdown
+        in: path
+        name: kind
+        required: true
+        type: string
+      produces:
+      - application/octet-stream
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: file
+      security:
+      - BearerAuth: []
+      summary: Download paper asset
+      tags:
+      - Admin
+  /api/admin/assets/{paper_id}/{kind}/url:
+    get:
+      description: 'Admin-only: time-limited presigned URL for direct browser-to-S3.'
+      parameters:
+      - description: paper id
+        in: path
+        name: paper_id
+        required: true
+        type: string
+      - description: pdf | markdown
+        in: path
+        name: kind
+        required: true
+        type: string
+      - description: duration (default 1h, max 24h)
+        in: query
+        name: ttl
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Presigned asset URL
+      tags:
+      - Admin
+  /api/admin/assets/search:
+    get:
+      description: 'Admin-only: find papers with at least one asset.'
+      parameters:
+      - description: search query
+        in: query
+        name: q
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Search papers with assets
+      tags:
+      - Admin
   /api/admin/db/schema:
     get:
       description: |-

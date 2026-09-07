@@ -20,7 +20,8 @@
       "papersList": "Papers",
       "downloader": "Robust Downloader",
       "pat": "PATs",
-      "admin": "Admin"
+      "admin": "Admin",
+      "adminAssets": "Asset Browser"
     },
     "status": {
       "loading": "Loading…",
@@ -457,6 +458,32 @@
         "madeAdmin": "{{login}} is now an admin.",
         "removedAdmin": "{{login}} is no longer an admin."
       }
+    },
+    "assets": {
+      "title": "Asset Browser",
+      "subtitle": "Search papers by title, DOI, or arXiv id and browse their PDF / Markdown assets in object storage — preview, download, or mint a presigned URL.",
+      "backToAdmin": "Back to admin",
+      "searchPlaceholder": "Search by title, DOI, arXiv id…",
+      "searchHint": "Type to start searching (500ms debounce); up to 50 results.",
+      "noResults": "No matching papers.",
+      "resultsCount": "{{count}} papers",
+      "noAssets": "This paper has no stored assets.",
+      "cols": {
+        "kind": "Kind",
+        "objectKey": "Object key",
+        "size": "Size",
+        "sha256": "SHA256",
+        "actions": "Actions"
+      },
+      "preview": "Preview",
+      "download": "Download",
+      "copyURL": "Copy URL",
+      "copyS3Key": "Copy S3 key",
+      "copied": "Copied",
+      "previewTitle": "{{kind}} preview",
+      "urlTitle": "Presigned URL",
+      "urlDescription": "Short-lived direct object-store URL (TTL 1h).",
+      "expiresAt": "Expires: {{time}}"
     }
   },
   "login": {

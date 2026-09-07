@@ -979,3 +979,59 @@ func docOAuthDeviceApprove() {}
 // @Failure     404 {object} map[string]string
 // @Router      /api/oauth/device/deny [post]
 func docOAuthDeviceDeny() {}
+
+// --- Admin: asset browser -----------------------------------------------------
+
+// adminAssetList lists a paper's assets with object keys.
+//
+// @Summary     List paper assets
+// @Description Admin-only asset listing: every PDF / markdown object the
+// @Description paper owns, with S3 object keys, sizes, SHA256s.
+// @Tags        Admin
+// @Produce     json
+// @Security    BearerAuth
+// @Param       paper_id path string true "paper id (qa_...)"
+// @Success     200 {object} map[string]interface{}
+// @Failure     403 {object} map[string]string
+// @Failure     404 {object} map[string]string
+// @Router      /api/admin/assets/{paper_id} [get]
+func docAdminAssetList() {}
+
+// adminAssetDownload streams an asset as attachment.
+//
+// @Summary     Download paper asset
+// @Description Admin-only proxy stream with Content-Disposition: attachment.
+// @Tags        Admin
+// @Produce     octet-stream
+// @Security    BearerAuth
+// @Param       paper_id path string true "paper id"
+// @Param       kind path string true "pdf | markdown"
+// @Success     200 {file} binary
+// @Router      /api/admin/assets/{paper_id}/{kind}/download [get]
+func docAdminAssetDownload() {}
+
+// adminAssetURL returns a presigned S3 URL.
+//
+// @Summary     Presigned asset URL
+// @Description Admin-only: time-limited presigned URL for direct browser-to-S3.
+// @Tags        Admin
+// @Produce     json
+// @Security    BearerAuth
+// @Param       paper_id path string true "paper id"
+// @Param       kind path string true "pdf | markdown"
+// @Param       ttl query string false "duration (default 1h, max 24h)"
+// @Success     200 {object} map[string]interface{}
+// @Router      /api/admin/assets/{paper_id}/{kind}/url [get]
+func docAdminAssetURL() {}
+
+// adminAssetSearch finds papers with assets.
+//
+// @Summary     Search papers with assets
+// @Description Admin-only: find papers with at least one asset.
+// @Tags        Admin
+// @Produce     json
+// @Security    BearerAuth
+// @Param       q query string true "search query"
+// @Success     200 {object} map[string]interface{}
+// @Router      /api/admin/assets/search [get]
+func docAdminAssetSearch() {}

@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import {
   adminAcquisitionFailures,
+  adminAssetList,
+  adminAssetSearch,
   adminDBSchema,
   adminDBTableRows,
   adminListPlugins,
@@ -28,6 +30,8 @@ import {
   papersList,
   putSearchKey,
   type AdminAcquisitionFailuresResponse,
+  type AdminAssetListResponse,
+  type AdminAssetSearchResponse,
   type AdminDBRows,
   type AdminDBSchema,
   type AdminPlansResponse,
@@ -320,6 +324,33 @@ export function useAdminPluginSaveConfig(id: string) {
   return useMutation({
     mutationFn: (updates: Record<string, unknown>): Promise<AdminPluginConfigResult> =>
       adminPluginUpdateConfig(id, updates),
+  })
+}
+
+// --- Admin asset browser -------------------------------------------------------
+
+// Paper search over papers that have stored assets (GET
+// /api/admin/assets/search). The page debounces `q` before calling; an
+// empty/whitespace query keeps the hook idle. keepPreviousData keeps the
+// previous results rendered while the next keystroke's query runs.
+export function useAdminAssetSearch(q: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['admin-asset-search', q],
+    queryFn: (): Promise<AdminAssetSearchResponse> => adminAssetSearch(q),
+    enabled: enabled && q.trim() !== '',
+    retry: false,
+    placeholderData: keepPreviousData,
+  })
+}
+
+// Asset listing for one selected paper (GET /api/admin/assets/{paper_id}).
+// Null keeps the hook idle while nothing is expanded.
+export function useAdminAssetList(paperId: string | null) {
+  return useQuery({
+    queryKey: ['admin-asset-list', paperId],
+    queryFn: (): Promise<AdminAssetListResponse> => adminAssetList(paperId!),
+    enabled: Boolean(paperId),
+    retry: false,
   })
 }
 

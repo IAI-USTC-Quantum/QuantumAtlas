@@ -1469,6 +1469,7 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// plugin registry and proxies manifest/config to the qatlas-search
 	// microservice (503 when remote search is disabled).
 	routes.RegisterAdmin(se, cfg, app, registryStore.Pool(), mineruScheduler, usageStore, pluginRegistry, remoteProvider)
+	routes.RegisterAdminAssets(se, cfg, rawStore, registryStore)
 }
 
 // probeRemoteSearch probes the qatlas-search microservice's /healthz

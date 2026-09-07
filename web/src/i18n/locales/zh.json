@@ -20,7 +20,8 @@
       "papersList": "论文列表",
       "downloader": "Robust 下载",
       "pat": "访问令牌",
-      "admin": "管理"
+      "admin": "管理",
+      "adminAssets": "资产浏览"
     },
     "status": {
       "loading": "加载中…",
@@ -457,6 +458,32 @@
         "madeAdmin": "{{login}} 已成为管理员。",
         "removedAdmin": "{{login}} 已不再是管理员。"
       }
+    },
+    "assets": {
+      "title": "资产浏览",
+      "subtitle": "按标题、DOI 或 arXiv ID 检索论文，浏览其在对象存储中的 PDF / Markdown 资产——预览、下载或签发预签名 URL。",
+      "backToAdmin": "返回管理页",
+      "searchPlaceholder": "按标题、DOI、arXiv ID 搜索…",
+      "searchHint": "输入关键词开始搜索（500ms 防抖），最多返回 50 条。",
+      "noResults": "没有匹配的论文。",
+      "resultsCount": "{{count}} 篇论文",
+      "noAssets": "该论文暂无资产。",
+      "cols": {
+        "kind": "类型",
+        "objectKey": "对象键",
+        "size": "大小",
+        "sha256": "SHA256",
+        "actions": "操作"
+      },
+      "preview": "预览",
+      "download": "下载",
+      "copyURL": "复制 URL",
+      "copyS3Key": "复制 S3 Key",
+      "copied": "已复制",
+      "previewTitle": "{{kind}} 预览",
+      "urlTitle": "预签名 URL",
+      "urlDescription": "短期有效的对象存储直连 URL（TTL 1 小时）。",
+      "expiresAt": "过期时间：{{time}}"
     }
   },
   "login": {

@@ -27,6 +27,7 @@ import { Route as LangPapersPaperIdRouteImport } from './routes/$lang.papers.$pa
 import { Route as LangAdminUsersRouteImport } from './routes/$lang.admin.users'
 import { Route as LangAdminPluginsRouteImport } from './routes/$lang.admin.plugins'
 import { Route as LangAdminDocsRouteImport } from './routes/$lang.admin.docs'
+import { Route as LangAdminAssetsRouteImport } from './routes/$lang.admin.assets'
 import { Route as LangAdminDbTableRouteImport } from './routes/$lang.admin.db.$table'
 
 const PatRoute = PatRouteImport.update({
@@ -119,6 +120,11 @@ const LangAdminDocsRoute = LangAdminDocsRouteImport.update({
   path: '/admin/docs',
   getParentRoute: () => LangRoute,
 } as any)
+const LangAdminAssetsRoute = LangAdminAssetsRouteImport.update({
+  id: '/admin/assets',
+  path: '/admin/assets',
+  getParentRoute: () => LangRoute,
+} as any)
 const LangAdminDbTableRoute = LangAdminDbTableRouteImport.update({
   id: '/admin/db/$table',
   path: '/admin/db/$table',
@@ -137,6 +143,7 @@ export interface FileRoutesByFullPath {
   '/$lang/pat': typeof LangPatRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/$lang/': typeof LangIndexRoute
+  '/$lang/admin/assets': typeof LangAdminAssetsRoute
   '/$lang/admin/docs': typeof LangAdminDocsRoute
   '/$lang/admin/plugins': typeof LangAdminPluginsRoute
   '/$lang/admin/users': typeof LangAdminUsersRoute
@@ -157,6 +164,7 @@ export interface FileRoutesByTo {
   '/$lang/pat': typeof LangPatRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/$lang': typeof LangIndexRoute
+  '/$lang/admin/assets': typeof LangAdminAssetsRoute
   '/$lang/admin/docs': typeof LangAdminDocsRoute
   '/$lang/admin/plugins': typeof LangAdminPluginsRoute
   '/$lang/admin/users': typeof LangAdminUsersRoute
@@ -179,6 +187,7 @@ export interface FileRoutesById {
   '/$lang/pat': typeof LangPatRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/$lang/': typeof LangIndexRoute
+  '/$lang/admin/assets': typeof LangAdminAssetsRoute
   '/$lang/admin/docs': typeof LangAdminDocsRoute
   '/$lang/admin/plugins': typeof LangAdminPluginsRoute
   '/$lang/admin/users': typeof LangAdminUsersRoute
@@ -202,6 +211,7 @@ export interface FileRouteTypes {
     | '/$lang/pat'
     | '/auth/callback'
     | '/$lang/'
+    | '/$lang/admin/assets'
     | '/$lang/admin/docs'
     | '/$lang/admin/plugins'
     | '/$lang/admin/users'
@@ -222,6 +232,7 @@ export interface FileRouteTypes {
     | '/$lang/pat'
     | '/auth/callback'
     | '/$lang'
+    | '/$lang/admin/assets'
     | '/$lang/admin/docs'
     | '/$lang/admin/plugins'
     | '/$lang/admin/users'
@@ -243,6 +254,7 @@ export interface FileRouteTypes {
     | '/$lang/pat'
     | '/auth/callback'
     | '/$lang/'
+    | '/$lang/admin/assets'
     | '/$lang/admin/docs'
     | '/$lang/admin/plugins'
     | '/$lang/admin/users'
@@ -390,6 +402,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LangAdminDocsRouteImport
       parentRoute: typeof LangRoute
     }
+    '/$lang/admin/assets': {
+      id: '/$lang/admin/assets'
+      path: '/admin/assets'
+      fullPath: '/$lang/admin/assets'
+      preLoaderRoute: typeof LangAdminAssetsRouteImport
+      parentRoute: typeof LangRoute
+    }
     '/$lang/admin/db/$table': {
       id: '/$lang/admin/db/$table'
       path: '/admin/db/$table'
@@ -406,6 +425,7 @@ interface LangRouteChildren {
   LangDownloaderRoute: typeof LangDownloaderRoute
   LangPatRoute: typeof LangPatRoute
   LangIndexRoute: typeof LangIndexRoute
+  LangAdminAssetsRoute: typeof LangAdminAssetsRoute
   LangAdminDocsRoute: typeof LangAdminDocsRoute
   LangAdminPluginsRoute: typeof LangAdminPluginsRoute
   LangAdminUsersRoute: typeof LangAdminUsersRoute
@@ -422,6 +442,7 @@ const LangRouteChildren: LangRouteChildren = {
   LangDownloaderRoute: LangDownloaderRoute,
   LangPatRoute: LangPatRoute,
   LangIndexRoute: LangIndexRoute,
+  LangAdminAssetsRoute: LangAdminAssetsRoute,
   LangAdminDocsRoute: LangAdminDocsRoute,
   LangAdminPluginsRoute: LangAdminPluginsRoute,
   LangAdminUsersRoute: LangAdminUsersRoute,

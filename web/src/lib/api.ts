@@ -773,6 +773,70 @@ export function adminPutQuota(
   return putJson(`/api/admin/quotas/${encodeURIComponent(userId)}`, body)
 }
 
+// --- Admin: asset browser (GET /api/admin/assets/*) --------------------------
+//
+// Ops surface over the object-store bytes behind each registry paper.
+// search finds papers that have assets; list enumerates a paper's stored
+// objects; url mints a short-lived presigned S3 URL. download/inline are
+// plain authenticated GETs (the PocketBase session cookie carries <a>/iframe
+// navigations), so the SPA builds those URLs as template strings.
+
+export type AdminAssetEntry = {
+  kind: 'pdf' | 'markdown'
+  object_key: string
+  size: number
+  sha256?: string
+  content_type?: string
+  presigned_url?: string
+  presign_supported: boolean
+}
+
+export type AdminAssetListResponse = {
+  paper_id: string
+  title?: string
+  arxiv_id?: string
+  doi?: string
+  status?: string
+  assets: AdminAssetEntry[]
+}
+
+export type AdminAssetSearchResponse = {
+  papers: {
+    paper_id: string
+    arxiv_id?: string
+    doi?: string
+    title?: string
+    status?: string
+  }[]
+}
+
+export type AdminAssetURLResponse = {
+  kind: string
+  url: string
+  expires_at: string
+  object_key: string
+}
+
+export function adminAssetSearch(q: string): Promise<AdminAssetSearchResponse> {
+  const qs = new URLSearchParams({ q, limit: '50' })
+  return getJson<AdminAssetSearchResponse>(`/api/admin/assets/search?${qs}`)
+}
+
+export function adminAssetList(paperId: string): Promise<AdminAssetListResponse> {
+  return getJson<AdminAssetListResponse>(
+    `/api/admin/assets/${encodeURIComponent(paperId)}`,
+  )
+}
+
+export function adminAssetURL(
+  paperId: string,
+  kind: string,
+): Promise<AdminAssetURLResponse> {
+  return getJson<AdminAssetURLResponse>(
+    `/api/admin/assets/${encodeURIComponent(paperId)}/${encodeURIComponent(kind)}/url?ttl=1h`,
+  )
+}
+
 // --- Robust Downloader (POST /api/downloader/fetch, GET /api/downloader/jobs) ---
 //
 // Batch paper acquisition driven by the `downloader` builtin plugin:

@@ -4,6 +4,7 @@ import {
   Database,
   Download,
   FileSearch,
+  FolderOpen,
   Home,
   Key,
   LayoutDashboard,
@@ -68,7 +69,11 @@ export function Sidebar({
   const whoami = useAdminWhoami()
   const showAdmin =
     whoami.data?.is_admin === true || whoami.data?.is_user_admin === true
+  // The asset browser is adminGuard-ed (env allowlist), unlike the user
+  // pages user-managers can reach — so only surface it for real admins.
+  const showAdminAssets = whoami.data?.is_admin === true
   const adminPath = `${homePath}/admin`
+  const adminAssetsPath = `${adminPath}/assets`
 
   return (
     <aside
@@ -123,22 +128,42 @@ export function Sidebar({
           )
         })}
         {showAdmin && (
-          <Link
-            to="/$lang/admin"
-            params={{ lang }}
-            onClick={onNavigate}
-            className={cn(
-              'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-              'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
-              'focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-sidebar-ring/50',
-              pathname.startsWith(adminPath)
-                ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-                : 'text-sidebar-foreground/80',
+          <>
+            <Link
+              to="/$lang/admin"
+              params={{ lang }}
+              onClick={onNavigate}
+              className={cn(
+                'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
+                'focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-sidebar-ring/50',
+                pathname.startsWith(adminPath)
+                  ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                  : 'text-sidebar-foreground/80',
+              )}
+            >
+              <Database className="size-4 shrink-0" />
+              {t('nav.admin')}
+            </Link>
+            {showAdminAssets && (
+              <Link
+                to="/$lang/admin/assets"
+                params={{ lang }}
+                onClick={onNavigate}
+                className={cn(
+                  'ml-5 flex items-center gap-3 rounded-md border-l border-sidebar-border px-3 py-1.5 text-[13px] font-medium transition-colors',
+                  'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
+                  'focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-sidebar-ring/50',
+                  pathname.startsWith(adminAssetsPath)
+                    ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                    : 'text-sidebar-foreground/70',
+                )}
+              >
+                <FolderOpen className="size-4 shrink-0" />
+                {t('nav.adminAssets')}
+              </Link>
             )}
-          >
-            <Database className="size-4 shrink-0" />
-            {t('nav.admin')}
-          </Link>
+          </>
         )}
       </nav>
     </aside>
