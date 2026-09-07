@@ -92,12 +92,12 @@ flowchart TB
 
 ## 懒加载摄入（lazy ingest）
 
-`GET /api/papers/{id_or_doi}/markdown` / `/pdf`（仅当部署方开启
-`QATLAS_PAPER_ACCESS_ENABLED`）在缓存未命中时**不阻塞**：server 立即返回
-202 + `Operation-Location`，后台静默从 arxiv.org fetch PDF（markdown 路径还会
-串 MinerU 转换），客户端轮询 `/markdown/status` / `/pdf/status` 直到
-`state == cached` 再 GET 拿字节。同一篇论文的 N 个并发请求被 server-side
-dedupe 成 1 次 fetch + 1 次 convert。完整协议见
+`GET /api/papers/{id_or_doi}/markdown`（仅当部署方开启
+`QATLAS_PAPER_ACCESS_ENABLED`；PDF 分发已停用——`/pdf` 恒 410，PDF 抓取只是
+markdown 管线的内部阶段）在缓存未命中时**不阻塞**：server 立即返回
+202 + `Operation-Location`，后台静默从 arxiv.org fetch PDF 并串 MinerU 转换，
+客户端轮询 `/markdown/status` 直到 `state == cached` 再 GET 拿字节。同一篇
+论文的 N 个并发请求被 server-side dedupe 成 1 次 fetch + 1 次 convert。完整协议见
 [REST API · 长任务](../server/rest-api.md)。
 
 ## Registry 写入路径

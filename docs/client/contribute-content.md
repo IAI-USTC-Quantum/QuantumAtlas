@@ -204,23 +204,22 @@ qatlas paper status 0811.3171v3 --kind markdown
 curl -i https://<server>/api/papers/quant-ph/9508027v2/markdown \
      -H "Authorization: Bearer $QATLAS_TOKEN"
 
-# PDF（缓存命中即 200 + application/pdf bytes）
-curl -i https://<server>/api/papers/quant-ph/9508027v2/pdf \
-     -H "Authorization: Bearer $QATLAS_TOKEN"
+# 注：PDF 分发已停用——GET /pdf 恒返 410（设计性禁用，用 markdown 端点）。
+# PDF 抓取仍作为 markdown 转换管线的内部阶段存在。
 
 # DOI 入口
 curl -i https://<server>/api/papers/10.1103/PhysRevLett.103.150502/markdown \
      -H "Authorization: Bearer $QATLAS_TOKEN"
 ```
 
-缓存未命中时这两类端点都走 **Long-Running Operation** 协议：
+缓存未命中时 markdown 端点走 **Long-Running Operation** 协议：
 
 1. 服务器立即返回 `202 Accepted` + `Operation-Location: …/status` + `Retry-After: 5`。
-2. 后台异步执行（PDF 不在 → silent fetch from arxiv.org → 写桶 → markdown 端点会
-   再串 MinerU convert → 写桶）。
-3. 客户端 poll 对应 `/markdown/status` 或 `/pdf/status`（side-effect-free，永远 200），
-   看 `state` / `pdf_ready` / `md_ready` / `phase` / `fetch.bytes_received` /
-   `convert.stage` 等字段做决策。
+2. 后台异步执行（PDF 不在 → silent fetch from arxiv.org → 写桶 → 串 MinerU
+   convert → 写桶）。
+3. 客户端 poll 对应 `/markdown/status`（side-effect-free，永远 200；`/pdf/status`
+   保留为内部抓取管线的 debug 探针），看 `state` / `pdf_ready` / `md_ready` /
+   `phase` / `fetch.bytes_received` / `convert.stage` 等字段做决策。
 4. `state == cached` 后再 GET 资源拿字节。
 
 N 个并发请求同一篇论文被**同一 process** 内 server-side 自动 dedupe 成 1 次 fetch + 1 次 convert；
@@ -254,7 +253,7 @@ agent 决策三元组（state / pdf_ready / md_ready）见
 | Scope | 覆盖端点 | 说明 |
 |---|---|---|
 | `papers:write` | `POST /api/papers/.../upload-pdf` / `upload-mineru` / `POST /api/v1/papers/.../mineru-lease`，`DELETE .../mineru-lease/{id}` | 上传 PDF / MinerU 结果包、跑 MinerU 任务 |
-| `papers:read` | `GET /api/papers/...` 各只读 endpoint（stats / needs-mineru）；以及 PAPER_ACCESS 启用后的 `GET …/markdown[/status]` / `GET …/pdf[/status]` | 读取 paper catalog 元数据；可触发 server 端 silent fetch + MinerU convert（需要部署方知情）|
+| `papers:read` | `GET /api/papers/...` 各只读 endpoint（stats / needs-mineru）；以及 PAPER_ACCESS 启用后的 `GET …/markdown[/status]` / `GET …/pdf/status`（`GET …/pdf` 恒返 410——PDF 分发已停用）| 读取 paper catalog 元数据；可触发 server 端 silent fetch + MinerU convert（需要部署方知情）|
 | `theorems:read` | `/api/theorems/*` 读口 | theorems builtin 插件（Lean 证明 registry 的 read-through）|
 
 scope 的 obj/act 在 `scopeGuard` 抛 403 时会回显在 `detail` 里——CLI 报错能直接告诉你"该 PAT 缺 `papers:write` scope，去 /pat 重发一条"。

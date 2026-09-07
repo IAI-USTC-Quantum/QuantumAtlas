@@ -2,6 +2,12 @@
 
 _实现 ADR `0007` 决定的读取界面，基于 ADR `0009` 的 `papers`/`paper_assets` schema。_
 
+> **状态注记**：本文关于 PDF 交付（默认直链 / `?format=bytes` 复写）的描述是
+> **停用前的历史行为**——PDF 分发后来被设计性停用，`GET /pdf` 现在恒返
+> **410 Gone**（PDF 仍作为内部资产服务 MinerU 转换与贡献者 lease）。
+> markdown 侧的决策（默认字节流、`?format=link` 复写、LRO suspend-and-wait）
+> 仍然有效。
+
 `GET /api/papers/{id}/markdown`（以及 `/pdf`）已经遵循 async LRO contract——`202 Accepted`
 + `Operation-Location` + `Retry-After`，轮询 `…/status`，完成后重新 GET。ADR `0009` 为每个
 work 提供一行 catalog row 和一个子 `paper_assets` 表后，读取路径会**经由 catalog 解析**

@@ -147,7 +147,7 @@ QuantumAtlas 用 **PocketBase session token (JWT)** 和 **Personal Access Token 
       env:
         QATLAS_TOKEN: ${{ secrets.QATLAS_TOKEN }}
       run: |
-        uv tool install quantum-atlas
+        uv tool install qatlas-cli
         qatlas config set server_url https://quantum-atlas.ai
         echo "$QATLAS_TOKEN" | qatlas auth login -s quantum-atlas.ai --with-token   # 从 stdin 读，不进 history
 

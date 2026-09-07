@@ -6,10 +6,11 @@
 
 .. code-block:: bash
 
-   # 从 PyPI 安装为全局工具（推荐）
-   uv tool install quantum-atlas
-   # 或以可编辑模式安装本地检出（贡献者）
-   uv tool install . --editable --force
+   # 从 PyPI 安装为全局工具（推荐；CLI 独立发布为 qatlas-cli 包）
+   uv tool install qatlas-cli
+   # 或以可编辑模式安装 qatlas-cli 仓库的本地检出（贡献者）
+   git clone https://github.com/IAI-USTC-Quantum/qatlas-cli.git
+   cd qatlas-cli && uv tool install . --editable --force
 
    qatlas --help
 
@@ -27,8 +28,10 @@
    * - ``qatlas auth``
      - 管理各服务器的 PAT / 会话令牌（``login`` 走 OAuth Device Flow）
    * - ``qatlas paper``
-     - 从服务器取论文资产：``get markdown`` / ``get pdf`` / ``status`` /
-       ``mineru-lease``；缓存未命中时自动触发服务端抓取与转换（LRO 轮询）
+     - 从服务器取论文资产：``get markdown`` / ``get images`` /
+       ``get metadata`` / ``status`` / ``mineru-lease``；缓存未命中时
+       自动触发服务端抓取与转换（LRO 轮询）。PDF 分发已停用
+       （``/pdf`` 恒 410），没有 ``get pdf`` 子命令
    * - ``qatlas contrib``
      - 贡献者工作流：``contrib pdf`` 上传 PDF；``contrib mineru`` 用自己的
        MinerU token 本地转换并回传（队列 / 单篇 / watch 守护模式）
@@ -63,9 +66,10 @@
 
 .. code-block:: bash
 
-   # 拉取论文 Markdown / PDF（未收录时服务端惰性抓取）
+   # 拉取论文 Markdown（未收录时服务端惰性抓取）。PDF 分发已停用
+   # （/pdf 恒 410），没有 get pdf 子命令——要元数据用 get metadata。
    qatlas paper get markdown quant-ph/9508027 -o paper.md
-   qatlas paper get pdf 10.1103/PhysRevLett.103.150502 -o paper.pdf
+   qatlas paper get metadata 10.1103/PhysRevLett.103.150502
 
    # 查看转换进度
    qatlas paper status 2401.12345

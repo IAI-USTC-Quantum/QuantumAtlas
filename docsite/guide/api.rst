@@ -22,8 +22,14 @@ API 参考
     响应字段：
 
     - :code:`results`：权威身份命中，每项含 :code:`paper_id`、命中信息 :code:`hit`
-      与 ``created``（本次是否触发了新收录）；
+      与 ``created``（本次是否触发了新收录），以及托管摘要 ``has_md`` /
+      ``has_pdf`` / ``status``（registry 不可用时省略）；
     - ``candidates``：仅标题命中的候选，不入库。
+
+    请求体 ``text`` / ``title`` / ``arxiv_id`` / ``doi`` 全空时返回 400；
+    带 ``arxiv_id`` / ``doi`` 的请求会把身份透传给 qatlas-search 微服务做
+    精确查询（arXiv ``id_list`` / OpenAlex DOI filter / Semantic Scholar
+    paper 端点），不再发出空查询。
 
     请求体格式见 :doc:`search`。
 
@@ -61,8 +67,10 @@ API 参考
 
 ``POST /api/search/agentic``
     LLM 搜索（带学术总结与每日配额）。请求体同 Search Entry，可加
-    ``"agent": true``（默认 true）与 ``"sources": [...]``。需
-    ``papers:read`` 且用户级凭据（系统 PAT 返回 403）。
+    ``"agent": true``（默认 true）与 ``"sources": [...]``。空 entry
+    （``text`` / ``title`` / ``arxiv_id`` / ``doi`` 全空）在计量之前就
+    返回 400；身份条目（``arxiv_id`` / ``doi``）同样透传给微服务做
+    精确查询。需 ``papers:read`` 且用户级凭据（系统 PAT 返回 403）。
 
     响应在普通搜索之上增加：
 
@@ -175,19 +183,33 @@ Robust Downloader
      - 说明
    * - GET
      - ``/api/papers``
-     - 分页列出论文（支持 ``has_md`` / ``status`` / ``q`` / ``sort`` 参数）
+     - 分页列出论文（过滤参数 ``has_md`` / ``status`` / ``q`` /
+       ``arxiv_id`` / ``doi`` / ``paper_id``，后三者为精确身份过滤——
+       ``arxiv_id`` 自动去版本后缀，``doi`` 容忍 URL 前缀；另有
+       ``page`` / ``per_page`` / ``sort``）
    * - GET
      - ``/api/papers/{id}``
-     - 论文详情；``{id}`` 可以是 ``paper_id``、arXiv ID 或 DOI
+     - 论文详情；``{id}`` 可以是 ``paper_id``、arXiv ID（新旧式，
+       可不带 ``vN``）或 DOI。合法但未收录的标识符返回 404，提示用
+       ``GET /api/papers/lookup`` 解析元数据
+   * - GET
+     - ``/api/papers/lookup?ids=``
+     - 批量（≤200 条）解析 ``arxiv:`` / ``doi:`` / ``openalex:`` 引用；
+       每项含 ``hosted`` 与 ``has_md``：前者表示是否已收录，后者表示
+       默认资产是否已有 markdown——批量核对「有没有 markdown」的官方入口
    * - GET
      - ``/api/papers/{id}/pdf``
-     - 获取 PDF（需 ``paper_access.enabled``）
+     - **已停用（410 Gone）**——PDF 分发设计性禁用，改用 markdown 端点；
+       PDF 仍作为内部资产服务转换与贡献者 lease
    * - GET
      - ``/api/papers/{id}/pdf/status``
-     - PDF 就绪探测（debug 端点）
+     - PDF 就绪探测（debug 端点；PDF 抓取仍是 markdown 转换管线的
+       内部阶段）
    * - GET
      - ``/api/papers/{id}/markdown``
-     - 获取 MinerU 转换的 Markdown（支持 ``?format=link|bytes|stream``）
+     - 获取 MinerU 转换的 Markdown（支持 ``?format=link|bytes|stream``）；
+       ``{id}`` 也接受 ``qa_`` paper_id（服务端解析成最高 arXiv 版本，
+       DOI-only 论文走 DOI 管线）
    * - GET
      - ``/api/papers/{id}/markdown/status``
      - Markdown 转换进度（LRO 轮询）
@@ -242,7 +264,10 @@ Dashboard / Me
      - 健康检查（匿名返回精简状态）
    * - GET
      - ``/api/server/info`` **公开**
-     - 服务器版本与能力信息
+     - 服务器版本与能力信息（``capabilities``：匿名只见布尔位——
+       ``paper_access`` / ``markdown_delivery`` / ``pdf_delivery``
+       （恒 false）/ ``agentic_search`` / ``mineru.*``；认证调用者
+       额外见 ``mineru.daily_cap`` / ``mineru.converted_today``）
    * - GET
      - ``/api/pat/scopes`` **公开**
      - PAT 权限范围词汇表

@@ -45,7 +45,7 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
 | Method | Path | 用途 |
 |---|---|---|
 | `GET` | `/api/health` | 健康检查 + 依赖探活 |
-| `GET` | `/api/server/info` | 版本 / 引擎信息 |
+| `GET` | `/api/server/info` | 版本 / 引擎信息 + **能力发现**（`capabilities`：匿名可见布尔位 `paper_access` / `markdown_delivery` / `pdf_delivery`（恒 false——PDF 分发设计性停用）/ `agentic_search` / `mineru.enabled` / `mineru.on_demand`；认证调用者额外见 `mineru.daily_cap` 与 `mineru.converted_today`，来自批处理调度器快照）|
 | `GET` | `/install-qatlasd.sh` | qatlasd 安装脚本 |
 | `GET` | `/swagger/index.html` | 交互式 API 文档（Swagger UI）|
 | `GET` | `/swagger/doc.json` | OpenAPI 2.0 JSON spec |
@@ -59,6 +59,9 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
 
 | Method | Path | 鉴权 | 用途 |
 |---|---|---|---|
+| `GET` | `/api/papers` | `papers:read` | 论文分页列表。过滤参数：`has_md`（默认资产已有 markdown）/ `status`（`pending \| ready \| failed`）/ `q`（标题子串，大小写不敏感）/**`arxiv_id` / `doi` / `paper_id`**（精确身份过滤——`arxiv_id` 自动去 `vN` 版本后缀，`doi` 容忍 `https://doi.org/` URL 前缀后归一）；`page` / `per_page`（默认 20，≤100）/ `sort`（`created_at` 默认 \| `updated_at`，降序）|
+| `GET` | `/api/papers/{id}` | `papers:read` | 论文详情（registry 记录 + 资产行）。`{id}` 接受**三种标识符**：`qa_` paper_id、arXiv ID（新式 `2501.00010` / 老式 `quant-ph/9508027`，带或不带 `vN`）、DOI（含 `https://doi.org/…` URL 形态）。合法但未收录的标识符返回 404，`detail` 提示用 `GET /api/papers/lookup?ids=arxiv:…` 解析元数据 |
+| `GET` | `/api/papers/lookup?ids=` | `papers:read` | 批量（**≤200 条**）解析 `kind:id` 引用（`arxiv:` / `doi:` / `openalex:`）。每项返回 `{ref, title, authors, year, hosted, has_md, resolved}`——`hosted` 表示是否已收录，`has_md`（hosted 时有意义）表示默认资产是否已有 markdown。**这是批量核对「有没有 markdown」的官方入口**，无需逐篇调详情 |
 | `GET` | `/api/papers/stats` | `papers:read` | 论文资产统计（`available`、`total`、`has_pdf`、`has_md`、`has_json`、`needs_mineru`、`total_images`、`loaded_at`）；paperindex 不可用时返回 `{available:false}` |
 | `GET` | `/api/papers/needs-mineru?limit=&include_claimed=` | `papers:read` | 列等待 MinerU 解析的论文 |
 | `POST` | `/api/papers/{arxiv_id}/upload-pdf` | `papers:write` | 上传 PDF，见 [Upload API](upload-api.md) |
@@ -82,19 +85,22 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
 > 公共 `quantum-atlas.ai` 部署默认 OFF。
 >
 > `{id_or_doi}` 路径段同时接受 arxiv canonical id（含 `vN`，例
-> `quant-ph/9508027v2` 或 `2501.00010v1`）和 DOI（IANA 前缀 `10.<registrant>/`
-> 自动 detect，例 `10.1103/PhysRevLett.103.150502`）。DOI 经 OpenAlex 反查到
-> canonical arxiv id 后走同一套 handler；缺 `QATLAS_OPENALEX_MAILTO` 时 DOI
-> 路径返回 503，arxiv 路径不受影响。
+> `quant-ph/9508027v2` 或 `2501.00010v1`）、DOI（IANA 前缀 `10.<registrant>/`
+> 自动 detect，例 `10.1103/PhysRevLett.103.150502`）以及 **`qa_` paper_id**
+> （server 内部解析成该论文的 canonical 身份，取最高已收录的 arXiv 版本；
+> DOI-only 论文走 DOI 管线）。bare arXiv ID 补版本时优先查本地 catalog，
+> 未收录才抓 arxiv.org。DOI 经 OpenAlex 反查到 canonical arxiv id 后
+> 走同一套 handler；缺 `QATLAS_OPENALEX_MAILTO` 时 DOI 路径返回 503，
+> arxiv 路径不受影响。
 
 ### Search
 
 | Method | Path | 鉴权 | 用途 |
 |---|---|---|---|
-| `POST` | `/api/search` | `papers:read` | 多 provider 论文搜索。body 为 SearchEntry JSON，engine fan-out 到 `search.providers`（config.yaml，默认 `catalog,arxiv,openalex`）列出的 provider |
+| `POST` | `/api/search` | `papers:read` | 多 provider 论文搜索。body 为 SearchEntry JSON，engine fan-out 到 `search.providers`（config.yaml，默认 `catalog,arxiv,openalex`）列出的 provider。`text` / `title` / `arxiv_id` / `doi` **全空时 400**（不再发出空查询）；带 `arxiv_id` / `doi` 的请求把身份透传给 qatlas-search 微服务做精确查询（arXiv `id_list` / OpenAlex DOI filter / Semantic Scholar paper 端点）。`results` 每项附带 `has_md` / `has_pdf` / `status`（registry 默认资产摘要；catalog 不可用时省略）|
 | `POST` | `/api/search/multi` | `papers:read` | **逐平台原始搜索**。body `{text, max_results, sources[]}`（≤32 个 backend），代理一次 `mode:"multi"` 调用到 qatlas-search 微服务：每个 backend 返回**各自的原始命中列表**（源自己的排序），不做跨源融合打分（融合打分在 `POST /api/search` / `/api/search/agentic`）。调用者存着的第三方 key 被解密后随请求 `api_keys` 转发，key 后端跑在用户自己的凭据下。不计费（同 `POST /api/search`）。`search.remote` 未启用时 503 |
 | `GET` | `/api/search/backends` | session only | backend 目录（SPA 渲染成 checkbox 选择器）：静态表（`internal/search/backendmeta.go`）合并微服务 live `/v1/backends` 可用性 + 调用者已存的 key。每行 `{name, label, category, requires_key, user_key, server_ready, key_configured, selectable}`，`selectable = server_ready \|\| (user_key && key_configured)`——需要 key 但没配的后端渲染为禁用并附"去 dashboard 配置"链接 |
-| `POST` | `/api/search/agentic` | `papers:read` | 计量 + LLM 总结的 agentic 搜索（qatlas-search 微服务）。body 额外接受 `sources[]` **钉死 backend 列表**（v0.26.0 起；不传则由微服务侧全量 fan-out）|
+| `POST` | `/api/search/agentic` | `papers:read` | 计量 + LLM 总结的 agentic 搜索（qatlas-search 微服务）。body 额外接受 `sources[]` **钉死 backend 列表**（v0.26.0 起；不传则由微服务侧全量 fan-out）。空 entry（`text` / `title` / `arxiv_id` / `doi` 全空）在计量**之前**就 400；身份条目同样透传给微服务；`results` 与 `POST /api/search` 一样附带 `has_md` / `has_pdf` / `status` |
 
 语义向量检索不在 `/api/search` 的 provider 列表里：它由独立的 qatlas-rag 微服务
 提供，经 qatlas-search 的 fan-out 接入（`POST /api/search/agentic` 路径），

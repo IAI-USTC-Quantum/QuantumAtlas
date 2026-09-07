@@ -98,6 +98,6 @@ flowchart LR
 ## 仓库 & 包
 
 - :material-github: 源码：<https://github.com/IAI-USTC-Quantum/QuantumAtlas>
-- :material-language-python: PyPI：[`quantum-atlas`](https://pypi.org/project/quantum-atlas/)
+- :material-language-python: PyPI：[`quantum-atlas`](https://pypi.org/project/quantum-atlas/)（parser 库；CLI 请装 [`qatlas-cli`](https://pypi.org/project/qatlas-cli/)）
 - :material-server-network: 生产入口：<https://quantum-atlas.ai>
 - :material-license: 协议：[Apache-2.0](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/LICENSE)

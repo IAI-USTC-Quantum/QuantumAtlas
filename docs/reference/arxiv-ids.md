@@ -36,7 +36,12 @@ QuantumAtlas 以 arXiv ID 为论文的主键。文本侧支持两种 ID 格式 +
 | `qatlas ingest <id>` | 可不带；server 取 arXiv 当前最新版 |
 | `qatlas contrib pdf <id>` | **必填**；对象寻址按 `<id>v<n>` 命名 |
 | `qatlas contrib mineru <id>` | **必填** |
-| `GET /api/papers/{id}/markdown` / `/pdf` | 可不带；server 取 catalog 内最新版（多版本时在响应里显式标）|
+| `GET /api/papers/{id}/markdown`（及 images 等） | 可不带；server 优先查本地 catalog 补最新版本，未收录才抓 arxiv.org（多版本时在响应里显式标）|
+| `GET /api/papers/{id}/pdf` | **恒 410 Gone**——PDF 分发已停用（设计性禁用，用 markdown 端点）|
+
+论文详情 `GET /api/papers/{id}` 与各资产端点还接受 **`qa_` paper_id**（服务端
+解析成该论文的 canonical 身份，取最高已收录的 arXiv 版本；DOI-only 论文走 DOI
+管线）。
 
 ## 3. 对象寻址映射（post-A1 layout）
 

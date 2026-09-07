@@ -299,6 +299,12 @@ catalog 里却永远有几千篇 PDF 在 `/api/papers/needs-mineru` 队列里等
 把闲置配额挂给项目，就把这些 PDF 变成可被 catalog 检索 / 可被语义索引的 markdown——
 **零代码贡献路径**。
 
+（服务端自己的 token 池另有一套口径：qatlasd 的夜间批处理调度器**自限 4000 篇 / 天**，
+给交互式流量留 ~1000 篇余量；`GET /markdown` 缓存未命中触发的单篇 on-demand 转换
+**不计入**这 4000 篇，只与批处理共享同一上游 token 池——某 token 额度耗尽（-60018）
+时冷却到次日零点，全部耗尽才 503。贡献者走的是**自己的**账号配额，与上述服务端
+数字互不相干。）
+
 完整使用指南、错误码分类、daily-limit 退避语义、claim 原子租约模型见
 [用 MinerU 解析 PDF（贡献你的额度）](client/parse-with-mineru.md)。
 最简流程：
@@ -341,7 +347,7 @@ qatlas contrib mineru --watch
     - PyPI 发 `quantum-atlas` wheel + sdist（版本取 pyproject.toml，与 qatlasd 版本无关；`skip-existing` 保证重复发同版本是 no-op）
 6. 验证：
     ```bash
-    pip install --upgrade quantum-atlas
+    pip install --upgrade quantum-atlas   # 验证 parser 包（主仓发的 quantum-atlas 只含 parser；CLI 包是独立的 qatlas-cli）
     curl https://quantum-atlas.ai/install-qatlasd.sh | sh -s -- --version vX.Y.Z
     ```
 

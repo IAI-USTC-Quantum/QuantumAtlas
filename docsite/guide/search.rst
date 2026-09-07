@@ -63,6 +63,12 @@ Search Entry 格式
      "required_phrases": ["必须出现的短语"]
    }
 
+``text`` / ``title`` / ``arxiv_id`` / ``doi`` 至少要有一个——全空时
+``POST /api/search`` 与 ``/api/search/agentic`` 都直接返回 400，不再发出
+空查询。仅带 ``arxiv_id`` / ``doi`` 的条目会把身份透传给 qatlas-search
+微服务做精确查询（arXiv ``id_list``、OpenAlex DOI filter、Semantic
+Scholar paper 端点）。
+
 结果归并
 --------
 

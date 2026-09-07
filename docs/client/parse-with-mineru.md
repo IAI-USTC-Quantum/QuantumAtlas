@@ -11,6 +11,10 @@ QuantumAtlas 默认只暴露**一条** MinerU 路径——**贡献者本地解�
 > 那条路径不替代本页讲的贡献者流程——两者并行：开关 ON 时 server 会用
 > **自己的** MinerU token 在 `GET /markdown` 缓存未命中时透明跑一次；贡献者
 > 仍可继续用自己的配额走 `qatlas contrib mineru` → `upload-mineru` 主动暖缓存。
+> 服务端配额口径：批处理调度器自限 **4000 篇 / 天**（上游每 token 5000 篇 / 天，
+> 留 ~1000 篇给交互式流量）；`GET /markdown` 触发的单篇 on-demand 转换
+> **不计入**这 4000 篇，但与批处理共享同一上游 token 池——某 token 耗尽
+> （-60018）时冷却到次日零点，全部 token 耗尽才 503。
 
 !!! tip "为什么这算贡献"
     MinerU 给每个注册账号送 **5000 篇 / 天** 的免费解析额度。绝大多数个人用户每天用不
@@ -24,8 +28,8 @@ QuantumAtlas 默认只暴露**一条** MinerU 路径——**贡献者本地解�
 如果你从来没装过 qatlas，全程就这四条命令，3 分钟搞定：
 
 ```bash
-# 1. 装 qatlas（uv 是 https://docs.astral.sh/uv/ 的官方安装器；alpha 版本要 --prerelease=allow）
-uv tool install --prerelease=allow quantum-atlas
+# 1. 装 qatlas（uv 是 https://docs.astral.sh/uv/ 的官方安装器；CLI 独立发布为 qatlas-cli 包）
+uv tool install qatlas-cli
 
 # 2. 拿一个上传 PAT。会浏览器打开 GitHub OAuth → 颁发 PAT → 自动写到
 #    ~/.config/qatlas/hosts.yml（明文密钥不进 shell history）。

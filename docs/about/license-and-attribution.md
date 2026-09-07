@@ -96,7 +96,7 @@ X-Attribution: OpenAlex (CC0), Crossref (CC0), arXiv
    （`text/markdown`），`?format=link` 改为返回 RustFS 直链（ADR 0011）；缓存未
    命中时 server 用部署方配置的 `MINERU_API_TOKENS` 跑 MinerU，markdown 写回
    `qatlas-md` 桶。
-2. **PDF 对外 serve + silent fetch**
+2. **PDF 对外 serve + silent fetch**（历史行为，现已停用）
    `GET /api/papers/{id_or_doi}/pdf` 注册，受 `papers:read` 保护。**默认返回 RustFS
    直链**（从 `QATLAS_S3_PUBLIC_ENDPOINT` presign，qatlasd 不代理大二进制），
    `?format=bytes` 改为串 `application/pdf` 字节；缓存未命中时用
@@ -104,6 +104,10 @@ X-Attribution: OpenAlex (CC0), Crossref (CC0), arXiv
    arxiv.org 拉 PDF，写入 `qatlas-pdf` 桶。**无论直链还是字节，部署方都对外重分发了
    arxiv PDF 的副本**（直链指向 QA 存的那份）——arxiv 的 ToS 没禁止 redistribution，但
    **版权归原作者**，部署方应自行评估对外受众范围与法域限制。
+
+   > 上述 PDF 交付是**停用前的行为**：PDF 分发现已设计性停用，`GET /pdf` 恒返
+   > **410 Gone**（提示改用 markdown 端点）；PDF 抓取仍作为 markdown 转换管线的
+   > 内部阶段、以及贡献者 MinerU lease 的对象保留。
 3. **DOI 寻址**
    path 头部匹配 `^10\.\d{4,9}/` 自动经 OpenAlex 反查 → canonical arxiv id →
    走同一套 handler；缺 `QATLAS_OPENALEX_MAILTO` 时 DOI 路径返回 503。

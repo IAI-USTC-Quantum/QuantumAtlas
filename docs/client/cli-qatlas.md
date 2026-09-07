@@ -1,6 +1,6 @@
 # `qatlas` 客户端 CLI 参考
 
-`qatlas` 是 Python 包 `quantum-atlas` 提供的 console script，按 `qatlas <subcommand>` 形式分发到子模块。
+`qatlas` 是独立 PyPI 包 `qatlas-cli` 提供的 console script（CLI 自 0.22.0 起从主仓的 `quantum-atlas` 包拆出），按 `qatlas <subcommand>` 形式分发到子模块。
 
 ## 顶层
 
@@ -75,7 +75,7 @@ qatlas config <subcommand>
 
 ```bash
 # 首次安装 + 配置（v0.17.0+）
-uv tool install --prerelease=allow quantum-atlas
+uv tool install qatlas-cli
 qatlas --help                                       # 任意命令都触发 yaml 自动创建
 qatlas config set server_url https://quantum-atlas.ai
 qatlas auth login -s quantum-atlas.ai               # OAuth device-code flow → 自动写 hosts.yml
@@ -186,13 +186,16 @@ qatlas contrib mineru --watch [--watch-interval N]  # 守护循环
 
 ### `qatlas paper`
 
-读 server 端缓存的 PDF / Markdown 字节。需要 `papers:read` scope。**仅对开启
+读 server 端缓存的 Markdown 字节与论文元数据。需要 `papers:read` scope。
+资产读取（markdown / images）**仅对开启
 `QATLAS_PAPER_ACCESS_ENABLED=true` 的 self-hosted 实例可用**——公开
-`quantum-atlas.ai` 默认关，调用会被路由 404。
+`quantum-atlas.ai` 默认关，调用会被路由 404；`get metadata` 走论文详情端点
+（`GET /api/papers/{id}`），不受该开关限制。
 
 ```
 qatlas paper get markdown ID_OR_DOI [--output FILE | --no-wait]
 qatlas paper get images   ID_OR_DOI [--output FILE]   # MinerU 图片 zip（显式获取）
+qatlas paper get metadata ID_OR_DOI                   # 论文详情 JSON（JSON-only、无 abstract，机器可读出口）
 qatlas paper status       ID_OR_DOI [--kind markdown]
 
 # 注：PDF 交付已在服务端停用（GET /pdf → 410），用户侧始终拿 MinerU markdown
@@ -203,9 +206,10 @@ qatlas paper status       ID_OR_DOI [--kind markdown]
 | 输入 | server 推断 |
 |---|---|
 | 完整 `0811.3171v3` / `quant-ph/9508027v2` | 不动 |
-| 无版本 `0811.3171` / `quant-ph/9508027` | 自动加 latest `vN`（fetch `/abs/<id>` HTML `og:url`）|
+| 无版本 `0811.3171` / `quant-ph/9508027` | 自动加 latest `vN`（优先查本地 catalog，未收录才 fetch `/abs/<id>` HTML `og:url`）|
 | bare old-style `9508027` / `9508027v2` | 自动加 `category=quant-ph`（生产 bootstrap 假设；详见 [arxiv-ids §3.1](../reference/arxiv-ids.md)）|
 | DOI `10.1103/PhysRevLett.103.150502` | OpenAlex 反查 → arxiv id |
+| `qa_` paper_id（`qa_01H…`）| 解析成该论文的 canonical 身份：最高已收录 arXiv 版本（DOI-only 论文走 DOI 管线）|
 
 每应用一次默认值，CLI 在 stderr 打一行 `Note (server applied defaults): ...`，
 来自 `X-QAtlas-Defaults-Applied` 响应头。`--quiet-notes` 抑制。
@@ -236,7 +240,7 @@ ID 解析到了哪一步所有信息。
 
 | Flag | 子命令 | 默认 | 含义 |
 |---|---|---|---|
-| `<id_or_doi>` | 全部 | 必填 | arxiv id 或 DOI（见上表）|
+| `<id_or_doi>` | 全部 | 必填 | arxiv id、DOI 或 `qa_` paper_id（见上表）|
 | `--output / -o FILE` | get | stdout | 字节写到 FILE；`-` 或省略 = stdout |
 | `--no-wait` | get | false | cache miss 时不 poll，直接吐 202 JSON 退出 0 |
 | `--max-wait N` | get | 1800 | poll 总时长上限（秒）；超时退出 1 |

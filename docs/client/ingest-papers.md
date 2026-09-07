@@ -7,7 +7,7 @@
 
 ## 前置条件
 
-- 已装 client：`uv tool install quantum-atlas`
+- 已装 client：`uv tool install qatlas-cli`
 - 已配 `server_url:`（`qatlas config set server_url https://...`）
 - 已跑 `qatlas auth login -s <host>` 拿到 PAT（写进 hosts.yml；带 **`papers:write`** scope，详见 [怎么拿 PAT](manage-credentials.md#mint-pat)）
 - 目标 server 端 `.env` 已配 `MINERU_API_TOKENS`（解析这一步要用）

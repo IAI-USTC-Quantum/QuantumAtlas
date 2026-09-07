@@ -10,11 +10,11 @@
 
     ```bash
     # 推荐：uv 全局工具（升级方便）
-    uv tool install quantum-atlas
+    uv tool install qatlas-cli
     # 或 pipx
-    pipx install quantum-atlas
+    pipx install qatlas-cli
     # 或 pip
-    pip install quantum-atlas
+    pip install qatlas-cli
 
     qatlas --help
     ```

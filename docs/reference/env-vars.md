@@ -133,15 +133,15 @@ Contributor 流程（`qatlas contrib mineru` → `POST /api/papers/{id}/upload-m
 
 ### Silent fetch from arxiv.org（仅当 `QATLAS_PAPER_ACCESS_ENABLED=true` 时生效）
 
-启用论文访问开关后，server 在 `GET /api/papers/{id}/markdown` 或
-`GET /api/papers/{id}/pdf` 缓存未命中时会**异步**从 arxiv.org 拉对应 PDF，
-写入对象存储后再触发后续步骤（markdown 触发 MinerU；pdf 直接 serve）。
-整个流程符合 Long-Running Operation 协议：
+启用论文访问开关后，server 在 `GET /api/papers/{id}/markdown` 缓存未命中时会
+**异步**从 arxiv.org 拉对应 PDF，写入对象存储后再触发 MinerU 转换。注意 PDF
+**分发**已停用——`GET /pdf` 恒返 410（设计性禁用），PDF 抓取仅作为 markdown
+转换管线的内部阶段存在。整个流程符合 Long-Running Operation 协议：
 
 1. 首次 GET 立即返回 `202 Accepted` + `Operation-Location` + `Retry-After`。
-2. Client poll `/markdown/status` 或 `/pdf/status` 拿到结构化进度
-   （`state` / `phase` / `pdf_ready` / `md_ready` / `fetch.bytes_received` /
-   `convert.stage` ...），side-effect-free。
+2. Client poll `/markdown/status`（`/pdf/status` 保留为内部抓取管线的 debug
+   探针）拿到结构化进度（`state` / `phase` / `pdf_ready` / `md_ready` /
+   `fetch.bytes_received` / `convert.stage` ...），side-effect-free。
 3. `state == cached` 后重新 GET 拿字节（200）。
 
 多并发同 id 请求被 server 内部去重为单次 fetch / convert，所有调用方

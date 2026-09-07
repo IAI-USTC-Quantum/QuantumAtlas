@@ -1,9 +1,9 @@
 # Python 客户端 `qatlas`
 
-`qatlas` 是 QuantumAtlas 的 Python 包：命令行客户端 + 库。它通过 HTTP 与 `qatlasd` 服务端通信，覆盖论文摄入、资产上传、本地 MinerU 解析、论文 PDF / Markdown 拉取、凭据管理等工作流。
+`qatlas` 是 QuantumAtlas 的命令行客户端，独立发布为 PyPI 包 **`qatlas-cli`**（CLI 自 0.22.0 起从主仓拆出；主仓的 `quantum-atlas` 包现在只含 parser 库）。它通过 HTTP 与 `qatlasd` 服务端通信，覆盖论文摄入、资产上传、本地 MinerU 解析、论文 Markdown / 图片拉取、凭据管理等工作流。
 
 ```bash
-uv tool install quantum-atlas    # 或 pipx install / pip install
+uv tool install qatlas-cli    # 或 pipx install / pip install
 qatlas --help
 ```
 

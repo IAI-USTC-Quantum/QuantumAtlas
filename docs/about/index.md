@@ -5,7 +5,7 @@
 ## 项目快照
 
 - **名字**：QuantumAtlas
-- **PyPI**：[`quantum-atlas`](https://pypi.org/project/quantum-atlas/)
+- **PyPI**：[`quantum-atlas`](https://pypi.org/project/quantum-atlas/)（parser 库）/ [`qatlas-cli`](https://pypi.org/project/qatlas-cli/)（CLI）
 - **GitHub**：<https://github.com/IAI-USTC-Quantum/QuantumAtlas>
 - **生产入口**：<https://quantum-atlas.ai>
 - **协议**：[Apache-2.0](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/LICENSE)
