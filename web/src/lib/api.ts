@@ -12,7 +12,7 @@ import { pb } from './pb'
 // Attach the current PocketBase auth token (if any) to outbound fetches so
 // that protected /api/* endpoints accept us. Reads via the SDK so token
 // rotation (authRefresh) is picked up automatically.
-function authHeaders(): Record<string, string> {
+export function authHeaders(): Record<string, string> {
   const token = pb.authStore.token
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
@@ -813,9 +813,10 @@ export function adminMineruStatus(): Promise<AdminMineruStatusResponse> {
 //
 // Ops surface over the object-store bytes behind each registry paper.
 // search finds papers that have assets; list enumerates a paper's stored
-// objects; url mints a short-lived presigned S3 URL. download/inline are
-// plain authenticated GETs (the PocketBase session cookie carries <a>/iframe
-// navigations), so the SPA builds those URLs as template strings.
+// objects; url mints a short-lived presigned S3 URL (1h TTL). /api/*
+// authenticates via the Authorization bearer header only, so <a>/iframe
+// navigations (which cannot carry headers) must go through the presigned
+// URL rather than the download/inline endpoints.
 
 export type AdminAssetEntry = {
   kind: 'pdf' | 'markdown'

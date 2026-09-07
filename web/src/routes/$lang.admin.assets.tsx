@@ -30,6 +30,7 @@ import { PageHeader } from '@/components/page-header'
 import { StatusBlock } from '@/components/status-block'
 import {
   adminAssetURL,
+  authHeaders,
   type AdminAssetEntry,
   type AdminAssetSearchResponse,
   type AdminAssetURLResponse,
@@ -39,7 +40,6 @@ import {
   useAdminAssetSearch,
   useAdminWhoami,
 } from '@/lib/queries'
-import { pb } from '@/lib/pb'
 
 export const Route = createFileRoute('/$lang/admin/assets')({
   component: AdminAssetsPage,
@@ -60,22 +60,14 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
   return debounced
 }
 
-function assetDownloadURL(paperId: string, kind: string): string {
-  return `/api/admin/assets/${encodeURIComponent(paperId)}/${encodeURIComponent(kind)}/download`
-}
-
 function assetInlineURL(paperId: string, kind: string): string {
   return `/api/admin/assets/${encodeURIComponent(paperId)}/${encodeURIComponent(kind)}/inline`
 }
 
-// Text fetch for the markdown preview. Same-origin cookies ride along,
-// but attach the session bearer too so dev mode (cross-origin
-// PocketBase) still authenticates.
+// Text fetch for the markdown preview. /api/* authenticates via the
+// Authorization bearer header only, so attach it explicitly.
 async function fetchAssetText(url: string): Promise<string> {
-  const token = pb.authStore.token
-  const response = await fetch(url, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  })
+  const response = await fetch(url, { headers: { ...authHeaders() } })
   if (!response.ok) {
     throw new Error(`${response.status} ${response.statusText}`)
   }
@@ -96,12 +88,20 @@ function AdminAssetsPage() {
   const [preview, setPreview] = useState<PreviewTarget | null>(null)
   const [urlTarget, setUrlTarget] = useState<URLTarget | null>(null)
 
-  // Markdown previews stream through the inline endpoint as text; PDFs
-  // are rendered straight into the dialog's <iframe> and need no query.
+  // Markdown previews stream through the inline endpoint as text (the
+  // fetch carries the bearer header); PDFs render in an <iframe>, which
+  // cannot send headers, so they use a presigned object-store URL.
   const previewText = useQuery({
     queryKey: ['admin-asset-preview', preview?.paperId, preview?.kind],
     queryFn: () => fetchAssetText(assetInlineURL(preview!.paperId, preview!.kind)),
     enabled: preview !== null && preview.kind === 'markdown',
+    retry: false,
+  })
+
+  const previewURL = useQuery({
+    queryKey: ['admin-asset-preview-url', preview?.paperId, preview?.kind],
+    queryFn: () => adminAssetURL(preview!.paperId, preview!.kind),
+    enabled: preview !== null && preview.kind === 'pdf',
     retry: false,
   })
 
@@ -214,6 +214,7 @@ function AdminAssetsPage() {
       <PreviewDialog
         preview={preview}
         text={previewText}
+        url={previewURL}
         onClose={() => setPreview(null)}
       />
 
@@ -353,6 +354,19 @@ function AssetRow({
   onCopyURL: (entry: AdminAssetEntry) => void
 }) {
   const { t } = useTranslation('admin')
+  const [downloading, setDownloading] = useState(false)
+
+  async function download() {
+    setDownloading(true)
+    try {
+      const { url } = await adminAssetURL(paperId, entry.kind)
+      window.open(url, '_blank', 'noopener,noreferrer')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error))
+    } finally {
+      setDownloading(false)
+    }
+  }
 
   return (
     <tr className="align-top">
@@ -391,12 +405,16 @@ function AssetRow({
           >
             <Eye className="size-3.5" /> {t('assets.preview')}
           </Button>
-          {/* Plain anchor: the download is an authenticated GET and the
-              PocketBase session cookie carries the navigation. */}
-          <Button asChild size="sm" variant="outline">
-            <a href={assetDownloadURL(paperId, entry.kind)} download>
-              <Download className="size-3.5" /> {t('assets.download')}
-            </a>
+          {/* Browser navigations can't carry the bearer header, so the
+              download goes through a freshly minted presigned URL. */}
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={downloading}
+            onClick={() => void download()}
+          >
+            <Download className="size-3.5" /> {t('assets.download')}
           </Button>
           <Button
             type="button"
@@ -412,21 +430,21 @@ function AssetRow({
   )
 }
 
-// Preview dialog: PDFs render in an <iframe> off the inline endpoint;
-// markdown is fetched as text and shown verbatim in a <pre>.
+// Preview dialog: PDFs render in an <iframe> pointed at a presigned
+// object-store URL; markdown is fetched as text (with the bearer header)
+// and shown verbatim in a <pre>.
 function PreviewDialog({
   preview,
   text,
+  url,
   onClose,
 }: {
   preview: PreviewTarget | null
   text: UseQueryResult<string, Error>
+  url: UseQueryResult<AdminAssetURLResponse, Error>
   onClose: () => void
 }) {
   const { t } = useTranslation('admin')
-  const inlineHref = preview
-    ? assetInlineURL(preview.paperId, preview.kind)
-    : ''
 
   return (
     <Dialog open={preview !== null} onOpenChange={(open) => !open && onClose()}>
@@ -440,12 +458,20 @@ function PreviewDialog({
           </DialogDescription>
         </DialogHeader>
         {preview?.kind === 'pdf' ? (
-          <iframe
-            src={inlineHref}
-            title={t('assets.previewTitle', { kind: preview.kind })}
-            className="w-full rounded-md border border-border"
-            style={{ height: 600 }}
-          />
+          <StatusBlock
+            loading={url.isLoading}
+            error={url.error?.message ?? ''}
+            empty={false}
+          >
+            {url.data && (
+              <iframe
+                src={url.data.url}
+                title={t('assets.previewTitle', { kind: preview.kind })}
+                className="w-full rounded-md border border-border"
+                style={{ height: 600 }}
+              />
+            )}
+          </StatusBlock>
         ) : preview ? (
           <StatusBlock
             loading={text.isLoading}

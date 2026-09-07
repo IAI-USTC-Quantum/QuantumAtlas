@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { ArrowLeft, Download, Eye, FileText, Link2 } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
@@ -11,7 +12,7 @@ import { Panel } from '@/components/panel'
 import { StatusBlock } from '@/components/status-block'
 import { useLang } from '@/hooks/use-lang'
 import { useAdminWhoami, usePaperDetail } from '@/lib/queries'
-import { adminAssetURL } from '@/lib/api'
+import { adminAssetURL, authHeaders } from '@/lib/api'
 import { PaperAcquisition } from '@/components/paper-acquisition'
 
 export const Route = createFileRoute('/$lang/papers/$paperId')({
@@ -190,20 +191,55 @@ function AdminAssetPreview({ paperId }: { paperId: string }) {
   const [urlKind, setUrlKind] = useState<'pdf' | 'markdown' | null>(null)
   const [presignedUrl, setPresignedUrl] = useState('')
   const [mdText, setMdText] = useState('')
+  const [pdfUrl, setPdfUrl] = useState('')
+  const [previewError, setPreviewError] = useState('')
 
   if (!isAdmin) return null
 
+  // /api/* authenticates via the Authorization bearer header only, so
+  // fetches attach it explicitly and <iframe>/download navigations go
+  // through a freshly minted presigned object-store URL.
   const fetchMd = async (kind: string) => {
-    const resp = await fetch(
-      `/api/admin/assets/${encodeURIComponent(paperId)}/${kind}/inline`,
-      { credentials: 'same-origin' },
-    )
-    if (resp.ok) setMdText(await resp.text())
+    try {
+      const resp = await fetch(
+        `/api/admin/assets/${encodeURIComponent(paperId)}/${kind}/inline`,
+        { headers: { ...authHeaders() } },
+      )
+      if (!resp.ok) throw new Error(`${resp.status} ${resp.statusText}`)
+      setMdText(await resp.text())
+    } catch (err) {
+      setPreviewError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  const fetchPdfUrl = async () => {
+    try {
+      const res = await adminAssetURL(paperId, 'pdf')
+      setPdfUrl(res.url)
+    } catch (err) {
+      setPreviewError(err instanceof Error ? err.message : String(err))
+    }
   }
 
   const openPreview = (kind: 'pdf' | 'markdown') => {
     setPreviewKind(kind)
-    if (kind === 'markdown') void fetchMd(kind)
+    setPreviewError('')
+    setMdText('')
+    setPdfUrl('')
+    if (kind === 'markdown') {
+      void fetchMd(kind)
+    } else {
+      void fetchPdfUrl()
+    }
+  }
+
+  const download = async (kind: 'pdf' | 'markdown') => {
+    try {
+      const res = await adminAssetURL(paperId, kind)
+      window.open(res.url, '_blank', 'noopener,noreferrer')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    }
   }
 
   const copyUrl = async (kind: 'pdf' | 'markdown') => {
@@ -228,14 +264,13 @@ function AdminAssetPreview({ paperId }: { paperId: string }) {
               <Eye className="size-3.5" />
               {t(`adminAssets.preview${kind === 'pdf' ? 'Pdf' : 'Md'}`)}
             </Button>
-            <Button variant="outline" size="sm" asChild>
-              <a
-                href={`/api/admin/assets/${encodeURIComponent(paperId)}/${kind}/download`}
-                download
-              >
-                <Download className="size-3.5" />
-                {kind === 'pdf' ? 'PDF' : 'MD'}
-              </a>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void download(kind)}
+            >
+              <Download className="size-3.5" />
+              {kind === 'pdf' ? 'PDF' : 'MD'}
             </Button>
             <Button
               variant="outline"
@@ -260,12 +295,20 @@ function AdminAssetPreview({ paperId }: { paperId: string }) {
                   : t('adminAssets.mdPreview')}
               </DialogTitle>
             </DialogHeader>
-            {previewKind === 'pdf' ? (
-              <iframe
-                src={`/api/admin/assets/${encodeURIComponent(paperId)}/pdf/inline`}
-                className="h-[600px] w-full rounded-md border border-border"
-                title="PDF Preview"
-              />
+            {previewError ? (
+              <p className="text-sm text-destructive">{previewError}</p>
+            ) : previewKind === 'pdf' ? (
+              pdfUrl ? (
+                <iframe
+                  src={pdfUrl}
+                  className="h-[600px] w-full rounded-md border border-border"
+                  title="PDF Preview"
+                />
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  {t('adminAssets.loading')}
+                </p>
+              )
             ) : (
               <pre className="max-h-[600px] overflow-auto rounded-md border border-border bg-muted/30 p-4 text-sm leading-relaxed">
                 {mdText || t('adminAssets.loading')}
