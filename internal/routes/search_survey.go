@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -33,7 +34,17 @@ func RegisterSearchSurvey(se *core.ServeEvent, keys *userkeys.Store, backend Mul
 			return re.JSON(http.StatusServiceUnavailable, map[string]string{"detail": "survey search backend unavailable"})
 		}
 		var req search.SurveyRequest
-		decoder := json.NewDecoder(io.LimitReader(re.Request.Body, 1<<20))
+		// Read the body into memory first: PocketBase v0.38 wraps every
+		// request body in a RereadableReadCloser that *rewinds* on EOF, so a
+		// trailing-garbage check via a second Decode on the raw request body
+		// would see the replayed body as a "second JSON value" (works over
+		// mux-direct tests, fails over real TCP). A bytes.Reader has no such
+		// rewind, so the EOF check below is reliable.
+		raw, err := io.ReadAll(io.LimitReader(re.Request.Body, 1<<20))
+		if err != nil {
+			return re.JSON(http.StatusBadRequest, map[string]string{"detail": "invalid survey request"})
+		}
+		decoder := json.NewDecoder(bytes.NewReader(raw))
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&req); err != nil {
 			return re.JSON(http.StatusBadRequest, map[string]string{"detail": "invalid survey request"})

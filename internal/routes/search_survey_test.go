@@ -1,10 +1,14 @@
 package routes
 
 import (
+	"bytes"
 	"context"
-	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/search"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"testing"
+
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/search"
 )
 
 type fakeSurveyBackend struct {
@@ -41,5 +45,48 @@ func TestSurveyAgenticRequiresMetering(t *testing.T) {
 	}
 	if backend.request.Goal != "" {
 		t.Fatal("planner called without metering")
+	}
+}
+
+// PocketBase v0.38 wraps every request body in a RereadableReadCloser that
+// rewinds on EOF. Over real TCP (net/http server bodies return EOF together
+// with the final bytes) a trailing-garbage check via a second Decode on the
+// raw request body sees the *replayed* body as a second JSON value — mux-direct
+// tests never exercise that path. This test pins the real-wire behavior.
+func TestSurveyTrailingGarbageCheckOverRealWire(t *testing.T) {
+	backend := &fakeSurveyBackend{}
+	h := newMultiHarness(t, backend, nil, nil)
+	srv := httptest.NewServer(h.mux)
+	defer srv.Close()
+	auth := rawHeader(h.sessionToken())
+
+	post := func(body string) (int, string) {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodPost, srv.URL+"/api/search/survey", bytes.NewReader([]byte(body)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		for k, v := range auth {
+			req.Header.Set(k, v)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return resp.StatusCode, string(raw)
+	}
+
+	// Single valid JSON object must NOT be misread as "multiple JSON values".
+	status, body := post(`{"goal":"quantum","sources":["semantic_scholar"]}`)
+	if status != 200 {
+		t.Fatalf("single value over wire: %d %s", status, body)
+	}
+	// Actual trailing garbage must still be rejected.
+	status, body = post(`{"goal":"x","sources":["arxiv"]} {}`)
+	if status != 400 {
+		t.Fatalf("trailing garbage over wire: %d %s", status, body)
 	}
 }
