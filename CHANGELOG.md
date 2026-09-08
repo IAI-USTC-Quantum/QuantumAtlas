@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.31.0 (2026-09-08)
+
+### Feat
+
+- **routes**: 新增 `POST /api/search/survey`——有界规则化学术检索的公开网关（QuantumAtlas#20，配套 qatlas-search v0.6.0 的 `/v1/survey-search`）。请求含 `goal`、可选 `queries`（≤6）、`rules`（authors / venues / year_from / year_to / min_citations / sort）、`sources`、`max_results`、`agentic`；用户第三方 backend key 一律服务端注入，调用方自带 `api_keys` 直接 400。只有过滤后的身份命中（DOI / arXiv ID）才 resolve-or-mint 进论文注册表并回填 `paper_id` / `has_md` / `status`；`agentic=true` 需用户级凭据并走既有 agentic 每日配额（先预留、上游失败退款、按真实 LLM token 记账）。响应 `coverage` 显式声明 `post_filter_bounded` + `exhaustive=false`——规则过滤的是有界取回集合，不是穷尽式作者/期刊检索。升级顺序：先 qatlas-search 后 qatlasd。
+- **search**: `RemoteProvider` 新增 `SearchSurvey` 客户端（`SurveyRequest` / `SurveyResponse` wire 类型）；`RegisterSearchMulti` 追加 `SurveyOptions` 可变参数挂载 survey 路由。
+
 ## v0.30.1 (2026-09-07)
 
 ### Fix
