@@ -1445,7 +1445,7 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// qatlas-search microservice; remoteProvider == nil (search.remote
 	// disabled) leaves multi 503 and the catalog empty+remote:false. See
 	// internal/routes/search_multi.go.
-	routes.RegisterSearchMulti(se, userKeys, multiBackendFor(remoteProvider), searchEngine, registryStore, enforcer)
+	routes.RegisterSearchMulti(se, userKeys, multiBackendFor(remoteProvider), searchEngine, registryStore, enforcer, routes.SurveyOptions{Config: cfg, Usage: usageStore})
 
 	// Robust downloader — POST /api/downloader/fetch + GET
 	// /api/downloader/jobs. downloaderRoutes is nil when paper access /

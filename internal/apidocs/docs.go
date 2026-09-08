@@ -2802,6 +2802,68 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/search/survey": {
+            "post": {
+                "description": "Keywords, author/year/venue/citation rules and agentic planning are owned by qatlas-search. Rules filter a bounded retrieved set, not an exhaustive corpus. Per-user backend keys are injected by qatlasd and cannot be supplied by callers.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "search"
+                ],
+                "summary": "Plan and execute a bounded academic survey search",
+                "parameters": [
+                    {
+                        "description": "{goal, queries?, rules?: {authors?, venues?, year_from?, year_to?, min_citations?, sort?}, sources, max_results?, agentic?}; agentic=true uses existing daily quota",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/server/info": {
             "get": {
                 "description": "Capability discovery: mode / version / engine plus a\ncapabilities block — paper_access, markdown_delivery,\npdf_delivery (always false — the /pdf endpoint answers\n410 by design), agentic_search, and a nested mineru\nobject (enabled / on_demand). Privacy mirrors /api/health:\nanonymous callers see the booleans only; authenticated\ncallers (system PAT or session) additionally get\nmineru.daily_cap and mineru.converted_today from the\nbatch-scheduler snapshot. Note the quota semantics:\ndaily_cap self-limits the nightly BATCH scheduler\n(default 4000/day, reserving headroom for interactive\ntraffic); on-demand conversions triggered by GET\n/markdown are NOT counted against it — they only share\nthe upstream per-token daily quota.",

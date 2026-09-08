@@ -159,7 +159,8 @@ func attachMultiAnchors(results map[string][]search.RemoteHit, anchors map[strin
 // hosting summary) so frontends can link minted hits to the site.
 // catalog decorates those hits with the registry hosting summary
 // (has_md / status) and may be nil — the fields are then omitted.
-func RegisterSearchMulti(se *core.ServeEvent, keys *userkeys.Store, backend MultiBackend, engine *search.Engine, catalog *registry.Store, enforcer *casbin.Enforcer) {
+func RegisterSearchMulti(se *core.ServeEvent, keys *userkeys.Store, backend MultiBackend, engine *search.Engine, catalog *registry.Store, enforcer *casbin.Enforcer, surveyOptions ...SurveyOptions) {
+	RegisterSearchSurvey(se, keys, backend, engine, catalog, enforcer, surveyOptions...)
 	se.Router.POST("/api/search/multi", scopeGuard(enforcer, "papers", "read", func(re *core.RequestEvent) error {
 		if backend == nil {
 			return re.JSON(http.StatusServiceUnavailable, map[string]string{

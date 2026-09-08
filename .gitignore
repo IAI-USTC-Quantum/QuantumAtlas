@@ -282,3 +282,5 @@ session-recap-*.html
 # Runtime data dirs (bind-mounted into containers / produced by local runs)
 /data/
 /output/
+
+/.gomodcache/

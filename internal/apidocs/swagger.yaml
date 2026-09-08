@@ -2288,6 +2288,52 @@ paths:
       summary: Multi-backend search (per-platform raw results)
       tags:
       - Search
+  /api/search/survey:
+    post:
+      consumes:
+      - application/json
+      description: Keywords, author/year/venue/citation rules and agentic planning
+        are owned by qatlas-search. Rules filter a bounded retrieved set, not an exhaustive
+        corpus. Per-user backend keys are injected by qatlasd and cannot be supplied
+        by callers.
+      parameters:
+      - description: '{goal, queries?, rules?: {authors?, venues?, year_from?, year_to?,
+          min_citations?, sort?}, sources, max_results?, agentic?}; agentic=true uses
+          existing daily quota'
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Plan and execute a bounded academic survey search
+      tags:
+      - search
   /api/server/info:
     get:
       description: |-
