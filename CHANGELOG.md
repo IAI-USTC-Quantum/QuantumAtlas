@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.31.1 (2026-09-08)
+
+### Fix
+
+- **routes**: 修复 `/api/search/survey` 在真实网关上对一切请求恒 400（"multiple JSON values"）——PocketBase v0.38 的 router 把请求 body 包成 EOF 即回卷的 `RereadableReadCloser`，二次 Decode 的尾随垃圾检查会把重放的同一 body 误判为第二个 JSON 值（mux 直连测试不触发，真实 TCP 下 server body 最后一批字节与 EOF 同返才命中）。改为先 `io.ReadAll` 落内存、在 `bytes.Reader` 上做严格 decode + 尾随检查（与 `/api/search/multi` 同路径）。新增真实 TCP 回归测试 `TestSurveyTrailingGarbageCheckOverRealWire`（单 JSON 不再误判、真尾随垃圾仍 400）。
+
 ## v0.31.0 (2026-09-08)
 
 ### Feat
