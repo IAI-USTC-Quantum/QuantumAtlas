@@ -374,3 +374,33 @@ func (rh RemoteHit) ToHit() Hit {
 		Source:   source,
 	}
 }
+
+// SurveyRequest is the public, credential-free search-plan payload.
+type SurveyRequest struct {
+	Goal       string          `json:"goal"`
+	Queries    []string        `json:"queries,omitempty"`
+	Rules      json.RawMessage `json:"rules,omitempty"`
+	Sources    []string        `json:"sources"`
+	MaxResults int             `json:"max_results,omitempty"`
+	Agentic    bool            `json:"agentic"`
+}
+
+type SurveyResponse struct {
+	Usage    RemoteUsage       `json:"usage"`
+	Metering map[string]int    `json:"metering,omitempty"`
+	Plan     map[string]any    `json:"plan"`
+	Hits     []RemoteHit       `json:"hits"`
+	Queries  []map[string]any  `json:"queries"`
+	Errors   map[string]string `json:"errors"`
+	Coverage map[string]any    `json:"coverage"`
+}
+
+func (p *RemoteProvider) SearchSurvey(ctx context.Context, request SurveyRequest, keys map[string]string) (SurveyResponse, error) {
+	payload := struct {
+		SurveyRequest
+		APIKeys map[string]string `json:"api_keys,omitempty"`
+	}{request, keys}
+	var out SurveyResponse
+	err := p.postJSON(ctx, "/v1/survey-search", payload, &out)
+	return out, err
+}

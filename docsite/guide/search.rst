@@ -302,3 +302,20 @@ Admin 资产浏览
 
 管理员可在 ``/zh/admin/assets`` 搜索、预览、下载论文的 PDF 与
 Markdown，并生成预签名 S3 URL。详见 :doc:`admin`。
+
+
+Rule-based survey search
+------------------------
+
+``POST /api/search/survey`` forwards a bounded query plan to qatlas-search.
+The payload contains ``goal``, optional ``queries`` (at most 6), ``rules``
+(authors, venues, year_from/year_to, min_citations, sort), ``sources``,
+``max_results`` and ``agentic``. User backend keys are injected on the server;
+callers cannot supply ``api_keys``. Filtered identity hits are anchored in the
+paper registry. With ``agentic=true``, a user-bound credential and the existing
+agentic daily quota are required; upstream transport failure refunds the slot.
+
+The returned coverage explicitly says ``post_filter_bounded`` and
+``exhaustive=false``. This endpoint filters retrieved metadata; it does not
+claim exhaustive author pagination or global citation ranking. Upgrade
+qatlas-search before qatlasd to enable the endpoint.

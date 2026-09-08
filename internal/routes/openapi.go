@@ -1118,3 +1118,17 @@ func docAdminAssetURL() {}
 // @Success     200 {object} map[string]interface{}
 // @Router      /api/admin/assets/search [get]
 func docAdminAssetSearch() {}
+
+// searchSurvey godoc
+// @Summary Plan and execute a bounded academic survey search
+// @Description Keywords, author/year/venue/citation rules and agentic planning are owned by qatlas-search. Rules filter a bounded retrieved set, not an exhaustive corpus. Per-user backend keys are injected by qatlasd and cannot be supplied by callers.
+// @Tags search
+// @Accept json
+// @Produce json
+// @Param request body object true "{goal, queries?, rules?: {authors?, venues?, year_from?, year_to?, min_citations?, sort?}, sources, max_results?, agentic?}; agentic=true uses existing daily quota"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Failure 503 {object} map[string]string
+// @Router /api/search/survey [post]
+func searchSurveyDoc() {}
