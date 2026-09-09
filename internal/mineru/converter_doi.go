@@ -108,12 +108,12 @@ func (c *Converter) EnsureByDOI(ctx context.Context, doi, oaPdfURL string) *Job 
 		oaPdfURL:    oaPdfURL,
 	}
 	c.jobs[jobKey] = job
+	// Snapshot before unlock/launch; the driver and another EnsureByDOI
+	// caller may immediately mutate the stored job once the mutex is released.
+	cp := *job
 	c.mu.Unlock()
 
 	go c.runDOI(jobKey, norm)
-
-	// Return a snapshot of the queued state.
-	cp := *job
 	return &cp
 }
 

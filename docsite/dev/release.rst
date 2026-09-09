@@ -6,7 +6,8 @@ QuantumAtlas 的线上形态由三类组件构成：**服务端 qatlasd**\ （�
 qatlas-search 为代表，每个 app 一个独立仓库，见 :doc:`apps`）。三者
 独立编号、独立发布，它们靠两条协议协作：qatlasd 与 qatlas-cli 之间的
 ``(major, minor)`` 兼容协议（见 :doc:`versioning`），以及 qatlasd 与
-app 微服务之间的 HTTP 接口协议。本文介绍从代码到线上的标准化流程。
+app 微服务之间的 HTTP 接口协议。主仓还包含独立部署的下载 worker，
+其当前构建分发边界与 v2 接入协议在下文单列。本文介绍从代码到线上的流程。
 
 组件与发布通道
 --------------
@@ -43,33 +44,41 @@ app 微服务之间的 HTTP 接口协议。本文介绍从代码到线上的标�
      - push tag ``v*.*.*``
      - ghcr 镜像 ``ghcr.io/iai-ustc-quantum/qatlas-rag:{vX.Y.Z, X.Y.Z, latest}``
        + GitHub Release（GPU 镜像）
-   * - ``downloaderproxy``\（主仓 ``cmd/downloaderproxy``）
+   * - ``downloaderworker``\（主仓 ``cmd/downloaderworker``）
+     - 跟随包含该实现的主仓提交 / tag，与主服务验证 v2 协议兼容
+     - 当前无独立 CI 发布通道；按指定 checkout 手动构建
+     - ``Dockerfile.downloaderworker`` 镜像或 Go 二进制；不假定已有 ghcr tag
+   * - ``downloaderproxy``\（主仓 ``cmd/downloaderproxy``，旧协议）
      - 跟随主仓 ``VERSION``\（同一 tag）
      - 主仓 push tag ``v*.*.*``\（无独立 release 产物）
      - **无 registry 产物**：部署方在 campus-egress 主机上用主仓
        ``Dockerfile.downloaderproxy`` 现场构建（见下文例外与
        :doc:`prod-deploy` 的 runbook）
 
-.. rubric:: 记录在案的例外：downloaderproxy
+.. rubric:: 下载执行端的当前分发边界
 
-标准化原则 2 对 downloaderproxy 有一条**记录在案的例外**：它不产
-ghcr 镜像，由部署方在目标机上现场构建。理由：它的价值恰恰绑定在
-特定网络位置（出口带机构订阅的 campus 主机）上，镜像离开那台机器
-没有意义；且它与主仓 ``internal/downloader`` 同源演进，跟随主仓
-tag 在 checkout 内 build 即是它的版本 pin 方式（升级 = checkout
-到目标 tag + 重建，见 :doc:`prod-deploy`）。除此之外该组件仍遵守
-其余原则：版本来源唯一（主仓 tag）、可回滚（回退到旧 tag 重建）、
-与 qatlasd 的协议（``/v1/jobs``、``/v1/files/{token}``）按
-expand-contract 演进。
+``downloaderworker`` 与旧 ``downloaderproxy`` 都复用主仓策略梯；当前
+提供 Dockerfile，但未为新 worker 增加独立的镜像发布 workflow。因此它们
+是下面 registry-only 原则的**已记录例外**，不能把“源码可构建”写成“某个
+发布镜像已经可拉取”。使用明确的提交/tag 与自建镜像标记，在受控构建机
+构建后分发，或在目标机构建；运行时网络权限由 worker 所在出口决定，
+不由构建位置或镜像名称决定。
+
+新 worker 只出站接入 ``/api/downloader/workers/v2``，升级保留节点身份和
+待交付文件的数据卷；旧 proxy 仍是主服务主动调用 ``/v1/jobs`` 与
+``/v1/files/{token}``。二者不是改名即可互换的协议。迁移顺序、管理员审批与
+回退路由见 :doc:`prod-deploy`；加入 fleet/admission 迁移后，旧主服务二进制
+会被 schema-version guard 拒绝，不能笼统承诺 checkout 旧 tag 即可回退。
 
 标准化原则
 ----------
 
-1. **每个组件有且只有一个版本唯一来源**；发布只由 tag 触发，不允许
-   "在部署机上现场 build"成为发布路径；
+1. **每个组件有且只有一个版本唯一来源**；常规软件发布由 tag 触发，
+   不以部署机现场 build 替代正式发布。文档的独立更新和下载执行端的
+   当前构建例外见上表，后者必须记录明确的源码 revision；
 2. **产物一律进入 registry**：Docker 镜像推送到 ghcr，Python 包发布到
    PyPI；部署机只执行 ``pull``，不执行 ``build``
-   （downloaderproxy 是唯一记录在案的例外，见上表）；
+   （下载执行端 downloaderworker / 旧 downloaderproxy 是当前例外，见上表）；
 3. **部署机的版本一律显式 pin 在** ``deploy/.env`` 中（如
    ``QATLAS_VERSION=v0.22.1``），不使用 ``latest``，这样保证部署
    可回滚、可审计；

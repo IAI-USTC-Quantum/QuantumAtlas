@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.32.0 (2026-09-09)
+
+### Feat
+
+- **downloader**: 新增主动接入的多 worker 架构：管理员审批、独立节点凭证、PostgreSQL 持久任务/租约、容量限制、跨节点失败切换、暂存上传及归档确认；主服务完成对象存储和 registry 登记后才允许 worker 清理文件。保留本地优先和旧 proxy 兼容配置，新增 worker Docker 镜像、管理页面、持久进度及部署迁移文档。
+- **downloader**: 本地优先任务的持久接收记录、请求代次与远端任务关联，恢复等待不误判终态失败；归档及 MinerU 后续工作可重启补偿，退出时停止并等待所拥有的任务和后台循环，再释放数据锁。
+
+### Fix
+
+- **downloader**: 校验已存在的 PDF 后再登记其真实 hash/大小，避免条件写冲突错误引用新候选的元数据；修复 PMC 解析后的 DOI 委派及大文件上传的 PocketBase body 限制/重读缓存。控制请求按有界独立缓冲区校验单个 JSON，避免 EOF 回卷误报。
+- **mineru**: 在启动转换 goroutine 前、持锁状态下复制 queued 快照，修复 Ensure / EnsureByDOI 返回值与后台更新之间的数据竞争。
+
+### Docs
+
+- 同步 `docs/` 与 `docsite/` 的用户使用、API/CLI、节点审批、内部架构及部署迁移说明；标明旧 proxy 兼容边界。站内公开版与管理员版均通过严格 Sphinx 构建。
+
+### Upgrade notes
+
+- 多 worker 模式需启用 `downloader.remote`，与非空旧 `downloader.proxy.url` 互斥；新增 PostgreSQL 迁移 `00004_downloadfleet.sql`、`00005_download_requests.sql`。主服务与 worker 暂存目录必须持久化。回退路由应保留新版主服务，不能忽略 schema-version guard 直接切回旧二进制。
+- 本次提供 `Dockerfile.downloaderworker`，未新增 worker 镜像的独立 CI 发布通道；现有 tag 流水线仍发布 qatlasd 等既有产物。真实浏览器、容器和机构网络需按部署文档进行预发布验收。
+
 ## v0.31.1 (2026-09-08)
 
 ### Fix

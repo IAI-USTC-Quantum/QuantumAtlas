@@ -10,6 +10,7 @@ import {
   Key,
   LayoutDashboard,
   Library,
+  Server,
   Sparkles,
   type LucideIcon,
 } from 'lucide-react'
@@ -77,6 +78,7 @@ export function Sidebar({
   const adminPath = `${homePath}/admin`
   const adminAssetsPath = `${adminPath}/assets`
   const adminPipelinesPath = `${adminPath}/pipelines`
+  const adminWorkersPath = `${adminPath}/downloader-workers`
 
   return (
     <aside
@@ -182,6 +184,24 @@ export function Sidebar({
               >
                 <Activity className="size-4 shrink-0" />
                 {t('nav.adminPipelines')}
+              </Link>
+            )}
+            {showAdminPages && (
+              <Link
+                to="/$lang/admin/downloader-workers"
+                params={{ lang }}
+                onClick={onNavigate}
+                className={cn(
+                  'ml-5 flex items-center gap-3 rounded-md border-l border-sidebar-border px-3 py-1.5 text-[13px] font-medium transition-colors',
+                  'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
+                  'focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-sidebar-ring/50',
+                  pathname.startsWith(adminWorkersPath)
+                    ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                    : 'text-sidebar-foreground/70',
+                )}
+              >
+                <Server className="size-4 shrink-0" />
+                {lang === 'zh' ? '下载工作节点' : 'Downloader workers'}
               </Link>
             )}
           </>

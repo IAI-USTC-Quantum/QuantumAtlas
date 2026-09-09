@@ -1,0 +1,34 @@
+# Outbound-only runner: no published ports, mount /var/lib/qatlas-downloader.
+FROM golang:1.26 AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd/downloaderworker ./cmd/downloaderworker
+COPY internal ./internal
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/downloaderworker ./cmd/downloaderworker
+
+# Copy the complete browser resource directory, not only its executable.
+# Do not inherit the browser image's listener/entrypoint/EXPOSE metadata.
+FROM chromedp/headless-shell:latest AS browser
+FROM debian:trixie-slim
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates libnss3 libnspr4 \
+    libexpat1 libasound2t64 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 \
+    libdbus-1-3 libdrm2 libgbm1 libglib2.0-0t64 libx11-6 libxcb1 libxcomposite1 \
+    libxdamage1 libxext6 libxfixes3 libxrandr2 libpango-1.0-0 libcairo2 \
+    fonts-liberation \
+ && rm -rf /var/lib/apt/lists/* \
+ && mkdir -p /var/lib/qatlas-downloader \
+ && chown 65532:65532 /var/lib/qatlas-downloader
+COPY --from=browser /headless-shell /headless-shell
+COPY --from=build /out/downloaderworker /usr/local/bin/downloaderworker
+COPY deploy/downloaderworker-entrypoint.sh /usr/local/bin/downloaderworker-entrypoint.sh
+RUN chmod +x /usr/local/bin/downloaderworker-entrypoint.sh
+ENV DL_BROWSER_BINARY=/headless-shell/headless-shell \
+    DL_WORKER_DATA_DIR=/var/lib/qatlas-downloader
+USER 65532:65532
+WORKDIR /var/lib/qatlas-downloader
+VOLUME ["/var/lib/qatlas-downloader"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+ CMD ["/usr/local/bin/downloaderworker", "--healthcheck"]
+ENTRYPOINT ["/usr/local/bin/downloaderworker-entrypoint.sh"]

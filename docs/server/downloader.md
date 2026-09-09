@@ -92,7 +92,17 @@ downloader:
     max_budget_usd: 0          # claude 专用；0 = 不加预算 flag
 ```
 
-## downloaderproxy：校园出口代理服务
+## 多 downloader-worker（推荐新部署）
+
+主服务现在可通过 `downloader.remote.enabled` 管理多个主动接入的 worker。
+worker 经管理员批准后领取任务、上传 PDF；主服务完成对象存储和 registry 登记后
+才返回归档确认，worker 再清理暂存。支持有界并发、跨节点失败切换、断线重传与
+重启恢复；仍保留本地优先策略，不需要暴露 worker 或浏览器入站端口。
+
+详见[主服务配置与迁移](downloader-fleet.md)、[worker 部署](downloader-workers.md)。
+新模式不能与非空 `downloader.proxy.url` 同时启用；下节为旧协议兼容说明。
+
+## downloaderproxy：校园出口代理服务（旧协议）
 
 当 qatlasd 所在网络没有出版社订阅（或被强制代理）时，把抓取委托给一台**有
 直连 entitlement 的机器**（如校园网出口的工作站）：

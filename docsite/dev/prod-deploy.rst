@@ -3,8 +3,9 @@
 
 :doc:`release` 描述"代码如何变成产物"的标准化流程，本文描述**产物如何在
 线上实例落地**：部署账号拓扑、目录与网络布局、日常运维动作，以及
-qatlas-rag 与 downloaderproxy 的首次启用 runbook。本文以当前唯一的生产实例为蓝本，后续新增
-部署环境时按本文复制一份并替换具体值即可。
+qatlas-rag 与多 downloader-worker 的首次启用 runbook，以及旧 downloaderproxy
+的兼容说明。账号与网络布局沿用原实例的记录；新增 worker 部分是部署步骤，
+**不表示现有线上实例已经升级**。后续环境请替换具体账号、域名和路径。
 
 部署账号拓扑
 ------------
@@ -153,14 +154,183 @@ rag 链路涉及三个仓库的协调发版，首次启用按以下顺序执行�
 服务即可，索引推送是 best-effort，失败不会阻塞主流程；rag 的缺失只让
 语义检索路径降级，不影响关键词检索。
 
-downloaderproxy 首次启用 runbook
---------------------------------
+多 downloader-worker 首次启用 runbook
+------------------------------------------------------------------------
+
+新部署使用 ``cmd/downloaderworker``。调度器内置在 qatlasd 中，worker
+主动向主服务注册、心跳、领取任务并上传 PDF；无需主服务反向访问电脑，
+也不需要新增共享磁盘、Redis 或消息中间件。实现与状态机见 :doc:`downloader`。
+
+前提与持久目录
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- 主服务运行**包含本次 worker 改造的版本/提交**，已有 PostgreSQL 与对象
+  存储配置，且 ``paper_access.enabled`` / ``downloader.enabled`` 均开启。
+- worker 能出站访问主服务的最终 HTTPS 地址；不要依靠 HTTP 跳转到 HTTPS，
+  runner 拒绝重定向。需要访问出版社的合法订阅或开放获取来源。
+- 主服务默认暂存目录是 ``<paths.pb_data_dir>/downloader-spool``，应随
+  ``pb_data`` 持久化；自定义 ``spool_dir`` 则另外挂载可写数据卷。
+- 每个 worker 使用一个独立持久卷，保存身份凭证、任务记录与待交付 PDF；
+  默认容器路径 ``/var/lib/qatlas-downloader``。不得复制身份给同时运行的
+  另一台电脑，也不能只放在容器临时文件系统中。
+
+主服务启用
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+在现有 ``config.yaml`` 中加入以下段落；若已有 ``downloader:``，应合并
+而不是写重复 YAML 键：
+
+.. code-block:: yaml
+
+   paper_access:
+     enabled: true
+   downloader:
+     enabled: true
+     concurrency: 2
+     remote:
+       enabled: true
+       max_in_flight: 6
+       max_worker_in_flight: 2
+       max_worker_attempts: 3
+       task_timeout: 15m
+       worker_timeout: 6m
+       lease_duration: 60s
+       spool_max_bytes: 2147483648
+       # spool_dir: /srv/qatlas/downloader-spool
+
+``remote.enabled: true`` 不能与非空 ``downloader.proxy.url`` 共存；先备份旧
+配置，再移除旧 URL。重启主服务后，等待既有的异步 schema 管理器完成
+``00004_downloadfleet.sql`` 和 ``00005_download_requests.sql``，再注册
+节点。不要只复制新 YAML 到不认识这些字段的旧二进制上。
+
+fleet 使用同一 PostgreSQL 的独立连接池，默认最多 20 个连接（按并发配置
+计算，范围 16–64），**另加** 现有 registry 连接池；部署前检查数据库连接预算。
+本期支持单主服务，不应据此假定已具备多主服务 HA。
+
+worker 安装、注册与审批
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+1. 在受控构建机或 worker 主机，从与主服务匹配的 checkout 构建镜像。
+   当前未新增 worker 镜像的 CI 发布通道，不要假定某个 ghcr tag 已存在：
+
+   .. code-block:: bash
+
+      docker build -f Dockerfile.downloaderworker -t qatlas-downloaderworker:<revision> .
+      docker volume create qatlas-worker-a-data
+
+2. 主服务管理员打开 ``/zh/admin/downloader-workers``（英文路径对应
+   ``/en/admin/downloader-workers``），生成一次性注册令牌，默认 15 分钟过期。
+   **建议镜像构建完成后再生成令牌**，以免构建期间过期。
+3. 在 worker 电脑创建仅部署账号可读的 ``worker.env`` （例如权限 600）：
+
+   .. code-block:: text
+
+      DL_WORKER_MASTER_URL=https://qatlas.example.org
+      DL_WORKER_ENROLLMENT_TOKEN=<new-enrollment-token>
+      DL_WORKER_NAME=campus-a
+      DL_WORKER_DATA_DIR=/var/lib/qatlas-downloader
+      DL_WORKER_CONCURRENCY=2
+      DL_WORKER_MAX_SPOOL_BYTES=10737418240
+      DL_WORKER_RESULT_TTL=24h
+      DL_UNPAYWALL_EMAIL=<contact@example.edu>
+      DL_S2_API_KEY=<optional-semantic-scholar-key>
+
+   不使用某项可选凭据时删除该行，不能把尖括号占位符作为实际密钥。主服务
+   ``qatlasd`` 仍从 YAML 读配置；这里的环境变量只用于独立 worker。
+4. 启动节点，不发布入站端口：
+
+   .. code-block:: bash
+
+      docker run -d --name qatlas-worker-a --restart unless-stopped \
+        --stop-timeout 30 --shm-size 256m \
+        --env-file worker.env \
+        -v qatlas-worker-a-data:/var/lib/qatlas-downloader \
+        qatlas-downloaderworker:<revision>
+
+   镜像以 UID/GID 65532 运行。named volume 继承镜像目录权限；若使用 bind
+   mount，请预先使目录对该 UID 可写，不能靠全局开放读写权限解决。
+5. 管理页出现 ``pending`` 后核实节点身份并批准。批准前只能查询状态，不能
+   领取或上传任务。注册成功后身份和独立节点密钥已保存于卷中，可以在下次
+   重启时移除注册令牌环境变量；正常重连无需重新审批。
+6. 为电脑 B 生成**新注册令牌和新数据卷**重复上述步骤。所有电脑只配置主服务
+   地址，主服务没有需要逐台维护的 worker URL 列表。
+
+浏览器、网络与反向代理
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Go runner 单独负责本地浏览器启动与监督；entrypoint 只 exec runner，避免
+两处重复启动。CDP 仅绑定容器内 ``127.0.0.1:9222``，不要映射该端口。
+可用 ``DL_BROWSER_CDP_URL`` 指向受信、外部维护的 CDP，此时 runner 不负责
+启动或终止外部浏览器。浏览器就绪不代表具有所有出版社的订阅权限。
+
+普通 PDF/落地页与 arXiv HTTP 获取会验证公网地址并固定 DNS 解析结果拨号，
+绕过环境 HTTP 代理；主服务通信及元数据解析使用不同客户端，浏览器/JS
+子资源也不由该 HTTP 校验覆盖。应使用网络命名空间和出站防火墙隔离敏感
+内网、宿主服务与云元数据端点，仅放行必要的主服务/CDP 等受信地址；不要用
+host 网络，也不要挂载 Docker socket 或数据库凭据。校园内私网 PDF 主机
+可能被普通获取通道拒绝，不能据此声称整个浏览器已有完整 SSRF 沙箱。
+
+主服务前的 HTTPS 反代需允许不超过 **100 MiB** 的 PDF 请求、保留
+``Authorization``、``X-PDF-*``、``X-Download-*`` 和 ``X-Source-URL``
+头，并给上传足够时限。主服务上传阶段默认固定预算 2 分钟、worker 客户端
+传输超时 3 分钟，两者都不是注册控制请求的超时。PocketBase 的 32 MiB 默认
+限制在该上传路由上已覆盖，并关闭 PDF body 的重读缓存以保持流式接收。
+
+归档、清理与故障处理
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- worker 下载完成只表示本机 ``ready``；它会主动上传并查询交付回执。
+- 主服务校验文件、写对象存储、登记 registry 后才返回持久 ``done`` 回执。
+  worker 需核对 task/attempt ID、SHA-256 与大小，再删除本机副本；收到普通
+  HTTP 200 或 ``staged`` 不能删除。MinerU 后续处理不阻塞这个归档确认。
+- 上传中断或确认丢失先重传/查回执，不重新抓取论文。主服务重启恢复任务与
+  归档；worker 重启恢复已下载文件，执行中任务按 interrupted 处理。
+- worker 未交付结果默认保留 24 小时；主服务 ``staged`` 归档重试默认保留
+  7 天。长期离线可能超过保留期限；磁盘不足时停止接新任务，不驱逐仍在
+  有效期内的结果。两侧暂存目录与数据库都应纳入容量监控和备份考虑。
+- ``drain`` 停止新任务、允许旧任务交付；``enable`` 只恢复排空节点；
+  ``reject`` / ``revoke`` 为终态，重新接入需要新身份。撤销前若希望保留
+  正常交付能力，应先排空，不能直接丢弃旧数据卷。
+
+验收与升级回退
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+先验证单节点完整流程，再测试两个节点同时处理不同论文，并让一个节点
+停止接单或断线以确认不会继续向其分配任务。通过主服务 Downloader 页面
+或 ``POST /api/downloader/fetch`` 提交有授权的样例，检查
+``GET /api/downloader/remote-jobs`` 中的 worker、任务状态，以及归档后主服务
+资产可读、worker 暂存已清理。若本地已成功或已有 PDF，根本不会生成远端任务；
+需选择确实会进入远端流程的样例。不要将 ``probe --proxy`` 当作新池验收。
+
+离线自动化测试可使用合成 PDF 和**独立测试数据库**：
+
+.. code-block:: bash
+
+   go test ./...
+   TEST_DOWNLOADFLEET_DATABASE_URL='postgres://test_user:password@localhost/test_database?sslmode=disable' \
+     go test -race ./internal/downloadfleet ./internal/downloadworker ./internal/registry
+
+测试会创建并清理自己的 schema，不得指向生产数据库。真实 Chrome、容器运行
+和机构网络权限仍需在受控预发布环境验收；本 runbook 不声称这些已在线上完成。
+
+升级 worker 前先排空并等待交付，停止后用新镜像重建容器，**复用原数据卷**。
+主服务与 worker 采用同一实现版本或经验证的 v2 协议组合。首次迁移先保留旧
+proxy，确认新池稳定后再退役。
+
+回退路由时保留**新版主服务二进制**，将 ``remote.enabled`` 设为 false，
+必要时恢复旧 ``proxy.url/token`` 并重启。保留数据库及两侧暂存卷，便于恢复。
+不能直接回退旧二进制：既有 schema-version guard 会拒绝新 schema，而向下
+迁移会删除 fleet/admission 记录。回退步骤与常规 app 的下游优先升级不是同一件事。
+
+旧 downloaderproxy 部署（兼容路径）
+------------------------------------------------------------------------
 
 downloaderproxy 是健壮下载器（见 :doc:`downloader`）在校园出口机器上的
 独立部署形态：它的出口带机构订阅，qatlasd 自身的代理网络打不通的
 出版社内容委派给它取。它**不在 ghcr、不在 qatlasd 的 compose 栈内**，
-是在 campus-egress 主机上现场构建并运行的唯一例外组件（理由见
-:doc:`release`）。
+是在 campus-egress 主机上现场构建并运行的旧协议组件（分发边界见
+:doc:`release`）。以下仅用于维护存量部署；新 worker 不使用此端口、共享
+proxy token 或一次性领取协议。
 
 .. list-table::
    :header-rows: 1
@@ -192,9 +362,9 @@ downloaderproxy 是健壮下载器（见 :doc:`downloader`）在校园出口机�
         -e DL_S2_API_KEY=<s2k-...> \
         qatlas-downloaderproxy
 
-   镜像自带 headless-shell（Chrome for Testing，过出版社 WAF 的
-   指纹），entrypoint 起浏览器后由服务的监督器接管（CDP 死锁自动
-   重启）。**不要**\ 注入任何代理相关环境变量。
+   镜像自带 headless-shell；旧版 entrypoint 和 Go 服务均有浏览器启动
+   逻辑，不能把服务存活等同于浏览器可用，也不保证通过所有 WAF。
+   为保留机构出口身份，**不要**\ 注入 http_proxy/https_proxy 环境变量。
 3. **配置 qatlasd**\（``~/.qatlas/config.yaml``）::
 
       downloader:
@@ -206,7 +376,7 @@ downloaderproxy 是健壮下载器（见 :doc:`downloader`）在校园出口机�
 4. **验证**：
 
    - campus 主机 ``curl -s http://127.0.0.1:8602/healthz``\ 返回
-     ``{"status":"ok"}``；
+     ``{"status":"ok"}``，只证明旧 HTTP 服务存活，不证明浏览器或订阅可用；
    - qatlasd 主机上现场压测委派链路：
      ``qatlasd downloader probe <一个此前失败的 DOI> --proxy
      http://<campus-host>:8602 --proxy-token <token>``\，确认

@@ -15,6 +15,7 @@ import {
   KeyRound,
   Puzzle,
   Settings2,
+  Server,
   UsersRound,
 } from 'lucide-react'
 
@@ -130,6 +131,21 @@ function AdminPage() {
           </Button>
         </div>
       </Panel>
+
+      {isAdmin && (
+        <Panel title={lang === 'zh' ? '下载工作节点' : 'Downloader workers'} icon={Server}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-muted-foreground">
+              {lang === 'zh' ? '审批节点注册，管理任务分配并监控容量、浏览器、磁盘及错误。' : 'Approve registrations, control job leasing and monitor capacity, browser health, disk and errors.'}
+            </p>
+            <Button asChild size="sm" variant="outline">
+              <Link to="/$lang/admin/downloader-workers" params={{ lang }}>
+                {lang === 'zh' ? '管理工作节点' : 'Manage workers'}
+              </Link>
+            </Button>
+          </div>
+        </Panel>
+      )}
 
       <StatusBlock loading={whoami.isLoading} error="" empty={false}>
         {/* whoami is session-only: a 401/403 means no browser session, so

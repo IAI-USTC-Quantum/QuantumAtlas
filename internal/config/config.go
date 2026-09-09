@@ -318,6 +318,16 @@ type Config struct {
 	DownloaderProxyURL     string
 	DownloaderProxyToken   string
 	DownloaderProxyTimeout time.Duration
+	// Outbound workers register with qatlasd; never expose their CDP endpoint.
+	DownloaderRemoteEnabled           bool
+	DownloaderRemoteMaxInFlight       int
+	DownloaderRemoteMaxWorkerInFlight int
+	DownloaderRemoteMaxAttempts       int
+	DownloaderRemoteTaskTimeout       time.Duration
+	DownloaderRemoteWorkerTimeout     time.Duration
+	DownloaderRemoteLeaseDuration     time.Duration
+	DownloaderRemoteSpoolDir          string
+	DownloaderRemoteSpoolMaxBytes     int64
 
 	// Plugin platform. Plugins are optional: an empty directory or no
 	// manifests means the core server still starts with just papers /
@@ -472,6 +482,17 @@ type fileConfig struct {
 			Token   string `yaml:"token"`
 			Timeout string `yaml:"timeout"`
 		} `yaml:"proxy"`
+		Remote struct {
+			Enabled           bool   `yaml:"enabled"`
+			MaxInFlight       *int   `yaml:"max_in_flight"`
+			MaxWorkerInFlight *int   `yaml:"max_worker_in_flight"`
+			MaxWorkerAttempts *int   `yaml:"max_worker_attempts"`
+			TaskTimeout       string `yaml:"task_timeout"`
+			WorkerTimeout     string `yaml:"worker_timeout"`
+			LeaseDuration     string `yaml:"lease_duration"`
+			SpoolDir          string `yaml:"spool_dir"`
+			SpoolMaxBytes     int64  `yaml:"spool_max_bytes"`
+		} `yaml:"remote"`
 	} `yaml:"downloader"`
 
 	RAG struct {
@@ -743,27 +764,33 @@ func (fc *fileConfig) toConfig(anchor string) (*Config, error) {
 		// Default off: on-demand entitled fetches, not crawling
 		// (several publishers blanket-disallow "*" as an anti-AI-crawler
 		// measure, which would silently break legitimate downloads).
-		DownloaderRespectRobots:     boolOrDefault(fc.Downloader.RespectRobots, false),
-		DownloaderAgentBackend:      strings.TrimSpace(fc.Downloader.Agent.Backend),
-		DownloaderAgentBaseURL:      strings.TrimRight(strings.TrimSpace(fc.Downloader.Agent.BaseURL), "/"),
-		DownloaderAgentAPIKey:       fc.Downloader.Agent.APIKey,
-		DownloaderAgentModel:        strings.TrimSpace(fc.Downloader.Agent.Model),
-		DownloaderAgentMaxTokens:    intOrDefault(fc.Downloader.Agent.MaxTokens, 1024),
-		DownloaderAgentClaudeBin:    defaultIfEmpty(strings.TrimSpace(fc.Downloader.Agent.ClaudeBin), "claude"),
-		DownloaderAgentClaudeModel:  strings.TrimSpace(fc.Downloader.Agent.ClaudeModel),
-		DownloaderAgentMaxBudgetUSD: fc.Downloader.Agent.MaxBudgetUSD,
-		DownloaderBrowserCDPURL:     strings.TrimSpace(fc.Downloader.Browser.CDPURL),
-		DownloaderProxyURL:          strings.TrimRight(strings.TrimSpace(fc.Downloader.Proxy.URL), "/"),
-		DownloaderProxyToken:        fc.Downloader.Proxy.Token,
-		RAGRemoteEnabled:            fc.RAG.Remote.Enabled,
-		RAGRemoteURL:                fc.RAG.Remote.URL,
-		RAGRemoteToken:              fc.RAG.Remote.Token,
-		PluginsEnabled:              fc.Plugins.Enabled,
-		PluginsDisabled:             fc.Plugins.Disabled,
-		PluginConnectSecret:         fc.Plugins.ConnectSecret,
-		RPCWSBind:                   defaultIfEmpty(fc.Plugins.RPCWSBind, "127.0.0.1:8799"),
-		SystemPATToken:              fc.SystemPAT.Token,
-		SystemPATScopes:             fc.SystemPAT.Scopes,
+		DownloaderRespectRobots:           boolOrDefault(fc.Downloader.RespectRobots, false),
+		DownloaderAgentBackend:            strings.TrimSpace(fc.Downloader.Agent.Backend),
+		DownloaderAgentBaseURL:            strings.TrimRight(strings.TrimSpace(fc.Downloader.Agent.BaseURL), "/"),
+		DownloaderAgentAPIKey:             fc.Downloader.Agent.APIKey,
+		DownloaderAgentModel:              strings.TrimSpace(fc.Downloader.Agent.Model),
+		DownloaderAgentMaxTokens:          intOrDefault(fc.Downloader.Agent.MaxTokens, 1024),
+		DownloaderAgentClaudeBin:          defaultIfEmpty(strings.TrimSpace(fc.Downloader.Agent.ClaudeBin), "claude"),
+		DownloaderAgentClaudeModel:        strings.TrimSpace(fc.Downloader.Agent.ClaudeModel),
+		DownloaderAgentMaxBudgetUSD:       fc.Downloader.Agent.MaxBudgetUSD,
+		DownloaderBrowserCDPURL:           strings.TrimSpace(fc.Downloader.Browser.CDPURL),
+		DownloaderProxyURL:                strings.TrimRight(strings.TrimSpace(fc.Downloader.Proxy.URL), "/"),
+		DownloaderProxyToken:              fc.Downloader.Proxy.Token,
+		DownloaderRemoteEnabled:           fc.Downloader.Remote.Enabled,
+		DownloaderRemoteMaxInFlight:       intOrDefault(fc.Downloader.Remote.MaxInFlight, 6),
+		DownloaderRemoteMaxWorkerInFlight: intOrDefault(fc.Downloader.Remote.MaxWorkerInFlight, 2),
+		DownloaderRemoteMaxAttempts:       intOrDefault(fc.Downloader.Remote.MaxWorkerAttempts, 3),
+		DownloaderRemoteSpoolDir:          strings.TrimSpace(fc.Downloader.Remote.SpoolDir),
+		DownloaderRemoteSpoolMaxBytes:     fc.Downloader.Remote.SpoolMaxBytes,
+		RAGRemoteEnabled:                  fc.RAG.Remote.Enabled,
+		RAGRemoteURL:                      fc.RAG.Remote.URL,
+		RAGRemoteToken:                    fc.RAG.Remote.Token,
+		PluginsEnabled:                    fc.Plugins.Enabled,
+		PluginsDisabled:                   fc.Plugins.Disabled,
+		PluginConnectSecret:               fc.Plugins.ConnectSecret,
+		RPCWSBind:                         defaultIfEmpty(fc.Plugins.RPCWSBind, "127.0.0.1:8799"),
+		SystemPATToken:                    fc.SystemPAT.Token,
+		SystemPATScopes:                   fc.SystemPAT.Scopes,
 	}
 	if len(cfg.SearchProviders) == 0 {
 		cfg.SearchProviders = []string{"catalog", "arxiv", "openalex"}
@@ -802,6 +829,35 @@ func (fc *fileConfig) toConfig(anchor string) (*Config, error) {
 	}
 	if cfg.DownloaderProxyTimeout, err = parseDuration(fc.Downloader.Proxy.Timeout, 5*time.Minute, "downloader.proxy.timeout"); err != nil {
 		return nil, err
+	}
+	if cfg.DownloaderRemoteTaskTimeout, err = parseDuration(fc.Downloader.Remote.TaskTimeout, 15*time.Minute, "downloader.remote.task_timeout"); err != nil {
+		return nil, err
+	}
+	if cfg.DownloaderRemoteWorkerTimeout, err = parseDuration(fc.Downloader.Remote.WorkerTimeout, 6*time.Minute, "downloader.remote.worker_timeout"); err != nil {
+		return nil, err
+	}
+	if cfg.DownloaderRemoteLeaseDuration, err = parseDuration(fc.Downloader.Remote.LeaseDuration, time.Minute, "downloader.remote.lease_duration"); err != nil {
+		return nil, err
+	}
+	if cfg.DownloaderRemoteSpoolMaxBytes == 0 {
+		cfg.DownloaderRemoteSpoolMaxBytes = 2 << 30
+	}
+	if cfg.DownloaderRemoteEnabled {
+		if !cfg.PaperAccessEnabled || !cfg.DownloaderEnabled {
+			return nil, fmt.Errorf("downloader.remote requires paper_access.enabled and downloader.enabled")
+		}
+		if cfg.DownloaderProxyURL != "" {
+			return nil, fmt.Errorf("downloader.remote and legacy downloader.proxy cannot be enabled together")
+		}
+		if cfg.DownloaderRemoteMaxInFlight < 1 || cfg.DownloaderRemoteMaxWorkerInFlight < 1 || cfg.DownloaderRemoteMaxAttempts < 1 {
+			return nil, fmt.Errorf("downloader.remote concurrency and attempts must be positive")
+		}
+		if cfg.DownloaderRemoteTaskTimeout <= 0 || cfg.DownloaderRemoteWorkerTimeout <= 0 || cfg.DownloaderRemoteLeaseDuration < 15*time.Second || cfg.DownloaderRemoteWorkerTimeout > cfg.DownloaderRemoteTaskTimeout || cfg.DownloaderRemoteLeaseDuration > cfg.DownloaderRemoteWorkerTimeout {
+			return nil, fmt.Errorf("downloader.remote requires 15s <= lease_duration <= worker_timeout <= task_timeout")
+		}
+		if cfg.DownloaderRemoteSpoolMaxBytes < 100<<20 {
+			return nil, fmt.Errorf("downloader.remote.spool_max_bytes must be at least 100 MiB")
+		}
 	}
 	switch cfg.DownloaderAgentBackend {
 	case "", "off", "none", "openai", "claude":
@@ -843,6 +899,7 @@ func (fc *fileConfig) toConfig(anchor string) (*Config, error) {
 	cfg.RawDir = expandPath(defaultIfEmpty(fc.Paths.RawDir, defaultXDGSubdir("raw")), anchor)
 	cfg.DataDir = expandPath(defaultIfEmpty(fc.Paths.DataDir, defaultXDGSubdir("data")), anchor)
 	cfg.PBDataDir = expandPath(defaultIfEmpty(fc.Paths.PBDataDir, defaultXDGSubdir("pb_data")), anchor)
+	cfg.DownloaderRemoteSpoolDir = expandPath(defaultIfEmpty(fc.Downloader.Remote.SpoolDir, filepath.Join(cfg.PBDataDir, "downloader-spool")), anchor)
 	cfg.PluginsDir = expandPath(defaultIfEmpty(fc.Plugins.Dir, defaultXDGConfigSubdir("plugins")), anchor)
 	cfg.DeadLetterDir = expandPath(defaultIfEmpty(fc.Plugins.DeadLetterDir, defaultXDGStateSubdir("dead")), anchor)
 

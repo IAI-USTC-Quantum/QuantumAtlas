@@ -598,12 +598,12 @@ func (c *Converter) Ensure(ctx context.Context, canonical string) *Job {
 		SubmittedAt: now,
 	}
 	c.jobs[canonical] = job
+	// Snapshot while protected and before launching the driver: runJob may
+	// update State/StartedAt as soon as the goroutine becomes runnable.
+	cp := *job
 	c.mu.Unlock()
 
 	go c.run(canonical)
-
-	// Return a snapshot of the queued state.
-	cp := *job
 	return &cp
 }
 

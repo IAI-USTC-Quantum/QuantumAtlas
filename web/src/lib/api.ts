@@ -809,6 +809,54 @@ export function adminMineruStatus(): Promise<AdminMineruStatusResponse> {
   return getJson<AdminMineruStatusResponse>('/api/admin/mineru/status')
 }
 
+// --- Admin: outbound downloader workers -------------------------------------
+// Registration creates a pending worker; enrollment is not approval. All of
+// these endpoints use the existing browser-session admin guard.
+export type AdminDownloaderWorker = {
+  id: string
+  name: string
+  status: string // pending | approved | rejected | revoked | draining
+  last_seen?: string
+  capacity?: number
+  running?: number
+  browser_ok?: boolean
+  disk_free_bytes?: number
+  spool_bytes?: number
+  last_error?: string
+}
+
+export type AdminDownloaderWorkerJob = DownloaderRemoteJob
+
+export type AdminDownloaderWorkersResponse = {
+  workers: AdminDownloaderWorker[]
+  jobs: AdminDownloaderWorkerJob[]
+}
+
+export type DownloaderWorkerAction = 'approve' | 'reject' | 'drain' | 'enable' | 'revoke'
+
+export type DownloaderEnrollment = {
+  token: string
+  expires_at: string
+}
+
+export function adminDownloaderWorkers(): Promise<AdminDownloaderWorkersResponse> {
+  return getJson<AdminDownloaderWorkersResponse>('/api/admin/downloader/workers')
+}
+
+export function adminDownloaderWorkerAction(
+  id: string,
+  action: DownloaderWorkerAction,
+): Promise<AdminDownloaderWorker> {
+  return postJson<AdminDownloaderWorker>(
+    `/api/admin/downloader/workers/${encodeURIComponent(id)}/${action}`,
+    {},
+  )
+}
+
+export function adminDownloaderEnrollment(): Promise<DownloaderEnrollment> {
+  return postJson<DownloaderEnrollment>('/api/admin/downloader/enrollment', {})
+}
+
 // --- Admin: asset browser (GET /api/admin/assets/*) --------------------------
 //
 // Ops surface over the object-store bytes behind each registry paper.
@@ -949,4 +997,24 @@ export function downloaderFetch(
 // Requires the papers:read scope.
 export function downloaderJobs(): Promise<DownloaderJobsResponse> {
   return getJson<DownloaderJobsResponse>('/api/downloader/jobs')
+}
+
+// Persisted remote progress, also used by the admin snapshot. This public
+// papers:read endpoint carries job assignments, not worker topology/health.
+export type DownloaderRemoteJob = {
+  id: string
+  worker_id?: string
+  state: string // queued | running | staged | done | failed
+  identifier: string
+  error?: string
+  updated_at?: string
+}
+
+export type DownloaderRemoteJobsResponse = {
+  enabled: boolean
+  jobs: DownloaderRemoteJob[]
+}
+
+export function downloaderRemoteJobs(): Promise<DownloaderRemoteJobsResponse> {
+  return getJson<DownloaderRemoteJobsResponse>('/api/downloader/remote-jobs')
 }

@@ -27,6 +27,7 @@ import { Route as LangPapersPaperIdRouteImport } from './routes/$lang.papers.$pa
 import { Route as LangAdminUsersRouteImport } from './routes/$lang.admin.users'
 import { Route as LangAdminPluginsRouteImport } from './routes/$lang.admin.plugins'
 import { Route as LangAdminPipelinesRouteImport } from './routes/$lang.admin.pipelines'
+import { Route as LangAdminDownloaderWorkersRouteImport } from './routes/$lang.admin.downloader-workers'
 import { Route as LangAdminDocsRouteImport } from './routes/$lang.admin.docs'
 import { Route as LangAdminAssetsRouteImport } from './routes/$lang.admin.assets'
 import { Route as LangAdminDbTableRouteImport } from './routes/$lang.admin.db.$table'
@@ -121,6 +122,12 @@ const LangAdminPipelinesRoute = LangAdminPipelinesRouteImport.update({
   path: '/admin/pipelines',
   getParentRoute: () => LangRoute,
 } as any)
+const LangAdminDownloaderWorkersRoute =
+  LangAdminDownloaderWorkersRouteImport.update({
+    id: '/admin/downloader-workers',
+    path: '/admin/downloader-workers',
+    getParentRoute: () => LangRoute,
+  } as any)
 const LangAdminDocsRoute = LangAdminDocsRouteImport.update({
   id: '/admin/docs',
   path: '/admin/docs',
@@ -151,6 +158,7 @@ export interface FileRoutesByFullPath {
   '/$lang/': typeof LangIndexRoute
   '/$lang/admin/assets': typeof LangAdminAssetsRoute
   '/$lang/admin/docs': typeof LangAdminDocsRoute
+  '/$lang/admin/downloader-workers': typeof LangAdminDownloaderWorkersRoute
   '/$lang/admin/pipelines': typeof LangAdminPipelinesRoute
   '/$lang/admin/plugins': typeof LangAdminPluginsRoute
   '/$lang/admin/users': typeof LangAdminUsersRoute
@@ -173,6 +181,7 @@ export interface FileRoutesByTo {
   '/$lang': typeof LangIndexRoute
   '/$lang/admin/assets': typeof LangAdminAssetsRoute
   '/$lang/admin/docs': typeof LangAdminDocsRoute
+  '/$lang/admin/downloader-workers': typeof LangAdminDownloaderWorkersRoute
   '/$lang/admin/pipelines': typeof LangAdminPipelinesRoute
   '/$lang/admin/plugins': typeof LangAdminPluginsRoute
   '/$lang/admin/users': typeof LangAdminUsersRoute
@@ -197,6 +206,7 @@ export interface FileRoutesById {
   '/$lang/': typeof LangIndexRoute
   '/$lang/admin/assets': typeof LangAdminAssetsRoute
   '/$lang/admin/docs': typeof LangAdminDocsRoute
+  '/$lang/admin/downloader-workers': typeof LangAdminDownloaderWorkersRoute
   '/$lang/admin/pipelines': typeof LangAdminPipelinesRoute
   '/$lang/admin/plugins': typeof LangAdminPluginsRoute
   '/$lang/admin/users': typeof LangAdminUsersRoute
@@ -222,6 +232,7 @@ export interface FileRouteTypes {
     | '/$lang/'
     | '/$lang/admin/assets'
     | '/$lang/admin/docs'
+    | '/$lang/admin/downloader-workers'
     | '/$lang/admin/pipelines'
     | '/$lang/admin/plugins'
     | '/$lang/admin/users'
@@ -244,6 +255,7 @@ export interface FileRouteTypes {
     | '/$lang'
     | '/$lang/admin/assets'
     | '/$lang/admin/docs'
+    | '/$lang/admin/downloader-workers'
     | '/$lang/admin/pipelines'
     | '/$lang/admin/plugins'
     | '/$lang/admin/users'
@@ -267,6 +279,7 @@ export interface FileRouteTypes {
     | '/$lang/'
     | '/$lang/admin/assets'
     | '/$lang/admin/docs'
+    | '/$lang/admin/downloader-workers'
     | '/$lang/admin/pipelines'
     | '/$lang/admin/plugins'
     | '/$lang/admin/users'
@@ -414,6 +427,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LangAdminPipelinesRouteImport
       parentRoute: typeof LangRoute
     }
+    '/$lang/admin/downloader-workers': {
+      id: '/$lang/admin/downloader-workers'
+      path: '/admin/downloader-workers'
+      fullPath: '/$lang/admin/downloader-workers'
+      preLoaderRoute: typeof LangAdminDownloaderWorkersRouteImport
+      parentRoute: typeof LangRoute
+    }
     '/$lang/admin/docs': {
       id: '/$lang/admin/docs'
       path: '/admin/docs'
@@ -446,6 +466,7 @@ interface LangRouteChildren {
   LangIndexRoute: typeof LangIndexRoute
   LangAdminAssetsRoute: typeof LangAdminAssetsRoute
   LangAdminDocsRoute: typeof LangAdminDocsRoute
+  LangAdminDownloaderWorkersRoute: typeof LangAdminDownloaderWorkersRoute
   LangAdminPipelinesRoute: typeof LangAdminPipelinesRoute
   LangAdminPluginsRoute: typeof LangAdminPluginsRoute
   LangAdminUsersRoute: typeof LangAdminUsersRoute
@@ -464,6 +485,7 @@ const LangRouteChildren: LangRouteChildren = {
   LangIndexRoute: LangIndexRoute,
   LangAdminAssetsRoute: LangAdminAssetsRoute,
   LangAdminDocsRoute: LangAdminDocsRoute,
+  LangAdminDownloaderWorkersRoute: LangAdminDownloaderWorkersRoute,
   LangAdminPipelinesRoute: LangAdminPipelinesRoute,
   LangAdminPluginsRoute: LangAdminPluginsRoute,
   LangAdminUsersRoute: LangAdminUsersRoute,

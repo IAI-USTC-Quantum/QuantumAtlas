@@ -24,6 +24,10 @@ import (
 // ErrNoPDF is the terminal error after every strategy failed.
 var ErrNoPDF = errors.New("downloader: all strategies failed")
 
+// ErrRemotePending means the durable task may still run or commit. A detached
+// waiter must not permanently fail the paper/admission.
+var ErrRemotePending = errors.New("downloader: remote task remains recoverable")
+
 // ErrNoIdentity is returned when a ref has neither DOI nor arXiv id.
 var ErrNoIdentity = errors.New("downloader: no DOI or arXiv identity")
 
@@ -64,15 +68,26 @@ type IndexPusher interface {
 	PushIndex(ctx context.Context, paperID string) error
 }
 
+// RemoteFetcher delegates to an outbound worker fleet. Implementations return
+// Archived=true only after durable object storage AND registry registration.
+// Kept as an interface to avoid coupling the shared download ladder to a server.
+type RemoteFetcher interface {
+	Enabled() bool
+	FetchPDF(context.Context, registry.PaperRef) (*FetchOutcome, error)
+}
+
 // Config configures a Downloader.
 type Config struct {
-	Concurrency    int
-	Fetch          FetchConfig
-	Agent          AgentConfig
-	Browser        BrowserConfig
-	Proxy          *RemoteProxy
-	UnpaywallEmail string
-	S2APIKey       string
+	Concurrency       int
+	Fetch             FetchConfig
+	Agent             AgentConfig
+	Browser           BrowserConfig
+	Proxy             *RemoteProxy // legacy, mutually exclusive with Remote
+	Remote            RemoteFetcher
+	RemoteConcurrency int             // additional bounded waiters; remote waits release local slots
+	Journal           DownloadJournal // persistent admission before remote delegation
+	UnpaywallEmail    string
+	S2APIKey          string
 	// OA resolvers used by the oa-apis strategy, in try order. Empty →
 	// the default set (Europe PMC, Unpaywall, OpenAlex, S2).
 	OAResolvers []OAResolver
@@ -140,6 +155,10 @@ type FetchOutcome struct {
 	ArxivVersion   int
 	DOI            string
 	Trace          []Attempt
+	Archived       bool // fleet already committed storage+registry; Body may be nil
+	Pending        bool // durable remote task continues after waiter detaches
+	WorkerID       string
+	RemoteTaskID   string
 }
 
 // Downloader is the robust acquisition module. Construct with New; the
@@ -158,6 +177,7 @@ type Downloader struct {
 	agent       LinkExtractor
 	browser     *BrowserLane
 	proxy       *RemoteProxy
+	localSlots  chan struct{} // nil without a fleet, preserving fetch-only behavior
 
 	reg        registryWriter
 	store      objstore.Store
@@ -165,12 +185,19 @@ type Downloader struct {
 	pusher     IndexPusher
 
 	// queue plumbing (ingest-shaped)
-	jobs      chan job
-	done      chan struct{}
-	sf        singleflight.Group
-	wg        sync.WaitGroup
-	closeOnce sync.Once
-	closed    atomic.Bool
+	jobs         chan job
+	done         chan struct{}
+	sf           singleflight.Group
+	wg           sync.WaitGroup
+	producers    sync.WaitGroup // Add is fenced by admissionMu before shutdown waits
+	runCtx       context.Context
+	runCancel    context.CancelFunc
+	shutdownDone chan struct{}
+	closeOnce    sync.Once
+	closed       atomic.Bool
+	admissionMu  sync.Mutex
+	scheduled    map[string]bool
+	maxScheduled int
 
 	progressMu sync.Mutex
 	progress   map[string]*Progress
@@ -201,7 +228,11 @@ func New(reg registryWriter, store objstore.Store, fetcher *arxiv.Fetcher, oa DO
 		fetchClient = &FetchClient{cfg: FetchConfig{}, now: time.Now} // unreachable; NewFetchClient never errors on sane input
 		_ = err
 	}
+	runCtx, runCancel := context.WithCancel(context.Background())
 	d := &Downloader{
+		runCtx: runCtx,
+		runCancel: runCancel,
+		shutdownDone: make(chan struct{}),
 		cfg:      cfg,
 		log:      slog.Default(),
 		fetch:    fetchClient,
@@ -234,7 +265,20 @@ func New(reg registryWriter, store objstore.Store, fetcher *arxiv.Fetcher, oa DO
 	if d.cfg.Concurrency < 1 {
 		d.cfg.Concurrency = 2
 	}
-	for w := 0; w < d.cfg.Concurrency; w++ {
+	workers := d.cfg.Concurrency
+	if d.cfg.Remote != nil && d.cfg.Remote.Enabled() {
+		d.localSlots = make(chan struct{}, d.cfg.Concurrency)
+		remoteWaiters := d.cfg.RemoteConcurrency
+		if remoteWaiters < 1 {
+			remoteWaiters = 6
+		}
+		workers += remoteWaiters
+	}
+	d.scheduled = make(map[string]bool)
+	// At most cap(jobs) admissions exist, including executing jobs. This makes
+	// the admissionMu-protected send nonblocking and fences it with Shutdown.
+	d.maxScheduled = cap(d.jobs)
+	for w := 0; w < workers; w++ {
 		d.wg.Add(1)
 		go func() {
 			defer d.wg.Done()
@@ -282,6 +326,14 @@ func (a *openalexAdapter) Candidates(ctx context.Context, doi string) ([]string,
 // to do with the outcome. The returned error is ErrNoPDF (with the
 // trace on the outcome) when every strategy failed.
 func (d *Downloader) FetchPDF(ctx context.Context, ref registry.PaperRef) (*FetchOutcome, error) {
+	if d.localSlots != nil {
+		permit := &localPermit{slots: d.localSlots}
+		if err := permit.acquire(ctx); err != nil {
+			return nil, err
+		}
+		defer permit.release()
+		ctx = context.WithValue(ctx, localPermitKey{}, permit)
+	}
 	out := &FetchOutcome{DOI: ref.DOI}
 
 	if ref.ArxivID != "" {
@@ -314,6 +366,10 @@ func (d *Downloader) FetchPDF(ctx context.Context, ref registry.PaperRef) (*Fetc
 		if ref.ArxivID == "" {
 			return out, ErrNoIdentity
 		}
+		if d.cfg.Remote != nil && d.cfg.Remote.Enabled() && d.tryRemote(ctx, ref, out) {
+			return out, nil
+		}
+		if out.Pending { return out, ErrRemotePending }
 		return out, fmt.Errorf("%w (arxiv fetch failed and no DOI)", ErrNoPDF)
 	}
 
@@ -391,19 +447,13 @@ func (d *Downloader) FetchPDF(ctx context.Context, ref registry.PaperRef) (*Fetc
 	// directly-entitled machine (campus egress) runs the full ladder —
 	// including its own browser lane — so it beats every local last
 	// resort when the local network is proxied or unentitled.
-	if d.proxy.Enabled() && traceSawChallenge(out.Trace) {
-		start := time.Now()
-		res, attempts, strategy, perr := d.proxy.FetchPDF(ctx, ref)
-		out.Trace = append(out.Trace, attempts...)
-		if perr == nil {
-			out.Strategy = strategy
-			out.URL = res.URL
-			out.Result = res
-			out.Trace = append(out.Trace, Attempt{Strategy: strategy, URL: res.URL, Millis: time.Since(start).Milliseconds()})
+	if d.remoteEnabled() && traceSawChallenge(out.Trace) {
+		if d.tryRemote(ctx, ref, out) {
 			return out, nil
 		}
-		out.Trace = append(out.Trace, attemptOf("remote-proxy", "", perr, start))
 	}
+
+	if out.Pending { return out, ErrRemotePending }
 
 	// Browser lane: replay the publisher PDF/landing URLs through a
 	// real Chromium when the plain-HTTP attempts hit bot walls — the
@@ -439,20 +489,13 @@ func (d *Downloader) FetchPDF(ctx context.Context, ref registry.PaperRef) (*Fetc
 	// Final fallback: if EVERYTHING above failed (not only entitlement
 	// walls), the proxy's campus egress is still the strongest position —
 	// one last delegation before declaring the paper unreachable.
-	if d.proxy.Enabled() && !sawStrategy(out.Trace, "remote-proxy") {
-		start := time.Now()
-		res, attempts, strategy, perr := d.proxy.FetchPDF(ctx, ref)
-		out.Trace = append(out.Trace, attempts...)
-		if perr == nil {
-			out.Strategy = strategy
-			out.URL = res.URL
-			out.Result = res
-			out.Trace = append(out.Trace, Attempt{Strategy: strategy, URL: res.URL, Millis: time.Since(start).Milliseconds()})
+	if d.remoteEnabled() && !sawStrategy(out.Trace, "remote-proxy") && !sawStrategy(out.Trace, "remote-worker") {
+		if d.tryRemote(ctx, ref, out) {
 			return out, nil
 		}
-		out.Trace = append(out.Trace, attemptOf("remote-proxy", "", perr, start))
 	}
 
+	if out.Pending { return out, ErrRemotePending }
 	return out, fmt.Errorf("%w (%d attempts, doi=%s)", ErrNoPDF, len(out.Trace), doi)
 }
 
@@ -621,18 +664,62 @@ func (d *Downloader) Enqueue(ctx context.Context, paperID, input string, kind Id
 	if d.closed.Load() {
 		return false
 	}
-	d.sf.DoChan(paperID, func() (any, error) {
-		jobCtx := context.WithoutCancel(ctx)
+	if d.cfg.Journal != nil {
+		requestID, err := d.cfg.Journal.SaveDownloadRequest(ctx, paperID, input, string(kind), ref)
+		if err != nil {
+			d.log.Error("persist download admission", "paper_id", paperID, "error", err)
+			return false
+		}
+		ctx = WithAdmissionID(ctx, requestID)
+	}
+	return d.enqueueAdmitted(ctx, paperID, input, kind, ref)
+}
+
+func (d *Downloader) enqueueAdmitted(ctx context.Context, paperID, input string, kind IdentifierKind, ref registry.PaperRef) bool {
+	// scheduled owns admission from acceptance through completion. Producer
+	// creation and the eventual queue send are both fenced with Shutdown.
+	d.admissionMu.Lock()
+	if d.closed.Load() {
+		d.admissionMu.Unlock()
+		return false
+	}
+	if d.scheduled[paperID] {
+		d.admissionMu.Unlock()
+		return true
+	}
+	if len(d.scheduled) >= d.maxScheduled {
+		d.admissionMu.Unlock()
+		return d.cfg.Journal != nil
+	}
+	d.scheduled[paperID] = true
+	d.producers.Add(1)
+	d.admissionMu.Unlock()
+	go func() {
+		defer d.producers.Done()
+		defer func() { d.admissionMu.Lock(); delete(d.scheduled, paperID); d.admissionMu.Unlock() }()
+		// Preserve request/admission values, but detach request cancellation and
+		// attach the downloader's lifecycle instead. Shutdown cancels accepted work.
+		jobCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+		defer cancel()
+		stop := context.AfterFunc(d.runCtx, cancel)
+		defer stop()
+		if d.runCtx.Err() != nil {
+			cancel()
+		}
 		d.beginProgress(jobCtx, paperID, input, kind)
 		j := job{paperID: paperID, input: input, kind: kind, ref: ref, ctx: jobCtx, done: make(chan struct{})}
-		select {
-		case d.jobs <- j:
-			d.queued.Add(1)
-			<-j.done
-		case <-d.done:
+		d.admissionMu.Lock()
+		if d.closed.Load() {
+			d.admissionMu.Unlock()
+			return // durable admission remains queued for the next process
 		}
-		return nil, nil
-	})
+		// maxScheduled <= cap(jobs), including running/pre-send admissions, so
+		// this send cannot block while holding admissionMu.
+		d.jobs <- j
+		d.queued.Add(1)
+		d.admissionMu.Unlock()
+		<-j.done
+	}()
 	return true
 }
 
@@ -671,7 +758,7 @@ func (d *Downloader) process(j job) {
 				d.transition(ctx, j.paperID, "pdf_ready", "done", "pdf already stored", true)
 				d.fireHooks(ctx, j.ref, log)
 				d.skipped.Add(1)
-				d.finishProgress(j.paperID, "done", "", "already-stored")
+				d.finishProgress(ctx, j.paperID, "done", "", "already-stored")
 				return
 			}
 		}
@@ -681,15 +768,29 @@ func (d *Downloader) process(j job) {
 	outcome, err := d.FetchPDF(ctx, j.ref)
 	d.recordTrace(ctx, j.paperID, outcome)
 	if err != nil {
+		if errors.Is(err, ErrRemotePending) || (ctx.Err() != nil && d.cfg.Journal != nil) {
+			// Keep the admission queued for recovery, not failed: a fleet commit
+			// may still be in flight, or shutdown merely cancelled this waiter.
+			d.transition(ctx, j.paperID, "remote_wait", "queued", "durable task awaiting recovery", false)
+			return
+		}
 		d.fail(ctx, log, j.paperID, outcome, err)
 		return
 	}
 
+	if outcome.Archived {
+		// The fleet commits independently of this in-memory waiter and owns a
+		// durable downstream-hook retry. Do not store or trigger hooks twice.
+		d.transition(ctx, j.paperID, "pdf_ready", "done", outcome.Strategy, true)
+		d.succeeded.Add(1)
+		d.finishProgress(ctx, j.paperID, "done", outcome.Strategy, "")
+		return
+	}
 	if d.store == nil {
 		// Fetch-only mode (probe --dry-run): nothing to persist.
 		d.transition(ctx, j.paperID, "validated", "done", outcome.Strategy, true)
 		d.succeeded.Add(1)
-		d.finishProgress(j.paperID, "done", outcome.Strategy, "")
+		d.finishProgress(ctx, j.paperID, "done", outcome.Strategy, "")
 		return
 	}
 
@@ -703,7 +804,7 @@ func (d *Downloader) process(j job) {
 	d.transition(ctx, j.paperID, "pdf_ready", "done", outcome.Strategy, true)
 	d.fireHooks(ctx, j.ref, log)
 	d.succeeded.Add(1)
-	d.finishProgress(j.paperID, "done", outcome.Strategy, "")
+	d.finishProgress(ctx, j.paperID, "done", outcome.Strategy, "")
 	log.Info("downloader: pdf acquired",
 		"strategy", outcome.Strategy, "url", outcome.URL, "size", outcome.Result.Size, "attempts", len(outcome.Trace))
 }
@@ -747,6 +848,27 @@ func (d *Downloader) storeOutcome(ctx context.Context, j job, out *FetchOutcome)
 	if putErr != nil && !errors.Is(putErr, objstore.ErrPreconditionFailed) {
 		return fmt.Errorf("store pdf: %w", putErr)
 	}
+	if errors.Is(putErr, objstore.ErrPreconditionFailed) {
+		// A different accepted copy may already occupy this canonical key.
+		// Register the actual stored bytes, never the new candidate's metadata.
+		body, info, err := d.store.Get(ctx, assetKey)
+		if err != nil {
+			return fmt.Errorf("read existing pdf: %w", err)
+		}
+		sha, n, readErr := inspectStoredPDF(body)
+		closeErr := body.Close()
+		if readErr != nil {
+			return fmt.Errorf("hash existing pdf: %w", readErr)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("close existing pdf: %w", closeErr)
+		}
+		out.Result.Sha256, out.Result.Size = sha, n
+		// Unknown existing provenance stays unknown: never attribute OLD bytes
+		// to the URL of the newly downloaded candidate that lost the CAS race.
+		out.URL = info.Metadata["source_url"]
+		out.Result.URL = out.URL
+	}
 
 	ref := j.ref
 	if isDOI {
@@ -784,6 +906,10 @@ func (d *Downloader) fireHooks(ctx context.Context, ref registry.PaperRef, log *
 }
 
 func (d *Downloader) fail(ctx context.Context, log *slog.Logger, paperID string, outcome *FetchOutcome, err error) {
+	if ctx.Err() != nil && d.cfg.Journal != nil {
+		d.transition(ctx, paperID, "queued", "queued", "interrupted; admission retained for recovery", false)
+		return
+	}
 	d.failed.Add(1)
 	detail := err.Error()
 	if outcome != nil && len(outcome.Trace) > 0 {
@@ -795,7 +921,7 @@ func (d *Downloader) fail(ctx context.Context, log *slog.Logger, paperID string,
 	if outcome != nil {
 		strategy = outcome.Strategy
 	}
-	d.finishProgress(paperID, "failed", strategy, detail)
+	d.finishProgress(ctx, paperID, "failed", strategy, detail)
 	log.Warn("downloader: failed", "error", err)
 	if d.reg != nil {
 		if _, uerr := d.reg.UpdateStatus(ctx, paperID, "failed"); uerr != nil {
@@ -804,19 +930,29 @@ func (d *Downloader) fail(ctx context.Context, log *slog.Logger, paperID string,
 	}
 }
 
-// Shutdown drains the queue like the ingester.
+// Shutdown fences new producers, cancels owned work, and joins both admissions
+// and workers. A timed-out caller may call again to finish joining; no new waiter
+// goroutine is created and accepted durable work stays available for recovery.
 func (d *Downloader) Shutdown(ctx context.Context) error {
 	d.closeOnce.Do(func() {
+		d.admissionMu.Lock()
 		d.closed.Store(true)
+		if d.shutdownDone == nil {
+			d.shutdownDone = make(chan struct{})
+		}
+		if d.runCancel != nil {
+			d.runCancel()
+		}
 		close(d.done)
+		d.admissionMu.Unlock()
+		go func() {
+			d.producers.Wait()
+			d.wg.Wait()
+			close(d.shutdownDone)
+		}()
 	})
-	drained := make(chan struct{})
-	go func() {
-		d.wg.Wait()
-		close(drained)
-	}()
 	select {
-	case <-drained:
+	case <-d.shutdownDone:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()

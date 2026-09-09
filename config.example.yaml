@@ -213,6 +213,19 @@
 #     url: http://ag-workstation:8602
 #     token: ""
 #     timeout: 5m
+#   remote:                         # outbound worker fleet; cannot combine with proxy.url
+#     enabled: false                # requires paper_access, downloader and PostgreSQL
+#     max_in_flight: 6              # fleet execution capacity, separate from local slots
+#     max_worker_in_flight: 2       # server-enforced per-worker ceiling
+#     max_worker_attempts: 3        # different workers per paper, no parallel duplicate fetch
+#     task_timeout: 15m
+#     worker_timeout: 6m
+#     lease_duration: 60s
+#     spool_dir: ""                 # defaults to <pb_data>/downloader-spool; persist this directory
+#     spool_max_bytes: 2147483648   # 2 GiB staged-upload quota
+#                                    # Nodes enroll outbound and require admin approval at
+#                                    # /en/admin/downloader-workers (or /zh/...).
+#                                    # See docs/server/downloader-workers.md.
 #   agent:                          # LLM fallback link extractor
 #     backend: ""                   # "" = off | "openai" | "claude"
 #     base_url: ""                  # openai: e.g. https://llm.example.com/v1

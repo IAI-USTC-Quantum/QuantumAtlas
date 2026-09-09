@@ -114,23 +114,26 @@
    ``qatlas search`` 与 ``qatlas rag`` 都由独立插件提供（entry-point
    发现，安装对应的插件包后命令自动出现在 CLI 中，未安装时会提示
    安装方法）：前者由 qatlas-search 仓库提供，后者由 qatlas-rag 仓库
-   提供，详见 :doc:`插件化架构与路线图 </dev/plugins>`。
+   提供，使用方法见 :doc:`search`。
 
 服务器端运维命令（``qatlasd``）
 -------------------------------
 
-Robust Downloader 的验收 / 压测工具随 qatlasd 二进制发布：
+``qatlasd downloader probe`` 是本地下载阶梯的诊断 / 抽样工具，
+**不接入新的 outbound multi-worker fleet**，不测试持久化入队、审批、
+远程租约、上传归档、done 收据或重启恢复。即使服务器配置启用了 remote，
+也不能用 probe 成功作为新 fleet 的验收结果：
 
 .. code-block:: bash
 
-   # 单篇论文跑完整下载阶梯，打印策略轨迹
+   # 本地运行下载阶梯，打印策略轨迹（不经过服务器 fleet）
    qatlasd downloader probe 10.1038/s41586-024-07806-9 arXiv:2401.12345
 
    # 从 OpenAlex 随机抽 N 篇论文压测（可选 --search 过滤领域）
    qatlasd downloader probe --random 30 --search "quantum computing"
 
-   # 指定远程 downloaderproxy（校园出口）与 agent 兜底
-   qatlasd downloader probe --random 10 --proxy http://ag-workstation:8602
+   # LEGACY：测试旧 downloaderproxy，不是 outbound worker 注册 / 调度
+   qatlasd downloader probe --random 10 --proxy https://legacy-proxy.example.org
 
    # 机器可读 JSON 输出；任一失败退出码为 1（适合自动化）
    qatlasd downloader probe --random 5 --json
@@ -145,12 +148,12 @@ Robust Downloader 的验收 / 压测工具随 qatlasd 二进制发布：
      - 说明
    * - ``--random N``
      - 从 OpenAlex 随机抽 N 篇（自动过滤 ``has_doi:true``）
-   * - ``--search "..."`
+   * - ``--search "..."``
      - OpenAlex 搜索过滤（与 ``--random`` 组合；不带 ``--random`` 时无效）
    * - ``--proxy URL``
-     - 远程 downloaderproxy 端点（校园出口，绕过本地网络限制）
+     - **LEGACY** downloaderproxy 端点（旧 ``/v1/jobs`` / ``/v1/files/*`` 协议）
    * - ``--proxy-token T``
-     - downloaderproxy bearer token
+     - **LEGACY** 代理 Bearer token，不是 enrollment token 或 worker secret
    * - ``--browser URL``
      - 本地 browser lane CDP 端点（如 ``http://127.0.0.1:9222``）
    * - ``--agent``
@@ -163,4 +166,24 @@ Robust Downloader 的验收 / 压测工具随 qatlasd 二进制发布：
      - 机器可读 JSON 输出
 
 需要 ``paper_access.enabled: true``（读取 ``~/.qatlas/config.yaml``）。
-策略阶梯详见 :doc:`search`。
+旧 ``downloader.proxy.url / token / timeout`` 配置为 **LEGACY**，不能与
+``downloader.remote.enabled: true`` 混用；新 worker 主动连接 qatlasd，
+不是把 worker URL 传给 ``--proxy``。
+
+新 fleet 的验证入口
+~~~~~~~~~~~~~~~~~~~
+
+#. 在 :doc:`admin` 节点页生成一次性 enrollment token，使用独立持久化卷
+   注册 worker，管理员以人类浏览器会话核实并 approve；PAT 不能执行审批。
+#. 在服务器 :doc:`web` 的 Robust Downloader 页或 :doc:`api` 的
+   ``POST /api/downloader/fetch`` 提交获授权样本。服务器先本地尝试，
+   按需委托使用各自网络 / 浏览器的 approved worker；不同论文并行，
+   单篇按次数与截止时间预算顺序故障转移。
+#. 用 ``GET /api/downloader/jobs`` 查看本地进度与最多 512 条持久化待执行
+   请求（含等待本地槽位者），用 ``GET /api/downloader/remote-jobs`` 查看
+   重启后仍可查询的远程快照（最多 500 条），管理员同步检查节点心跳与容量。
+#. 确认上传已完成 **对象存储 + registry 资产登记 → 持久化 done 收据**。
+   worker 核对收据后删除副本；staged 或 HTTP 成功不能代替此确认。
+   MinerU / 索引是独立后续处理，不阻塞收据，Markdown 转换需单独检查。
+
+协议、临时结果保留期限和策略详见 :doc:`search` 与 :doc:`api`。

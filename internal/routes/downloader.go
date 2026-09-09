@@ -136,6 +136,8 @@ func downloaderFetchHandler(dl Downloader, minter downloaderMinter) func(re *cor
 			item.Created = created
 			if dl.Enqueue(ctx, paperID, input, id.Kind, id.Ref) {
 				enqueued++
+			} else {
+				item.Error = "download queue unavailable; retry shortly"
 			}
 			out = append(out, item)
 		}

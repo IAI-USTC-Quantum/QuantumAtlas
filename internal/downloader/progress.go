@@ -18,6 +18,7 @@ type ProgressEvent struct {
 // Progress is a downloader job's state plus history, as served by
 // GET /api/downloader/jobs.
 type Progress struct {
+	RequestID string          `json:"request_id,omitempty"`
 	PaperID   string          `json:"paper_id"`
 	Input     string          `json:"input,omitempty"`
 	Kind      string          `json:"kind,omitempty"`
@@ -41,6 +42,7 @@ func (d *Downloader) beginProgress(ctx context.Context, paperID, input string, k
 	d.progressMu.Lock()
 	d.progress[paperID] = &Progress{
 		PaperID:   paperID,
+		RequestID: AdmissionID(ctx),
 		Input:     input,
 		Kind:      string(kind),
 		State:     "queued",
@@ -60,8 +62,12 @@ func (d *Downloader) transition(ctx context.Context, paperID, phase, state, deta
 	d.progressMu.Lock()
 	p := d.progress[paperID]
 	if p == nil {
-		p = &Progress{PaperID: paperID, Submitted: now}
+		p = &Progress{PaperID: paperID, RequestID: AdmissionID(ctx), Submitted: now}
 		d.progress[paperID] = p
+	}
+	if p.RequestID != "" && p.RequestID != AdmissionID(ctx) {
+		d.progressMu.Unlock()
+		return
 	}
 	if p.Phase != phase || p.State != state || detail != "" {
 		p.Events = append(p.Events, ProgressEvent{Phase: phase, State: state, At: now, Detail: detail})
@@ -75,6 +81,8 @@ func (d *Downloader) transition(ctx context.Context, paperID, phase, state, deta
 	}
 	if state == "failed" {
 		p.Error = detail
+	} else if state == "done" {
+		p.Error = ""
 	}
 	d.progressMu.Unlock()
 	d.persistEvent(ctx, paperID, phase, state, detail)
@@ -82,16 +90,28 @@ func (d *Downloader) transition(ctx context.Context, paperID, phase, state, deta
 
 // finishProgress stamps the terminal strategy and prunes old entries
 // so the snapshot stays bounded.
-func (d *Downloader) finishProgress(paperID, state, strategy, errMsg string) {
+func (d *Downloader) finishProgress(ctx context.Context, paperID, state, strategy, errMsg string) error {
+	var journalErr error
+	if d.cfg.Journal != nil && (state == "done" || state == "failed") {
+		persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		journalErr = d.cfg.Journal.FinishDownloadRequest(persistCtx, paperID, AdmissionID(ctx), state, errMsg)
+		cancel()
+		if journalErr != nil {
+			d.log.Error("persist download completion; admission remains recoverable", "paper_id", paperID, "error", journalErr)
+		}
+	}
 	d.progressMu.Lock()
-	if p := d.progress[paperID]; p != nil {
+	if p := d.progress[paperID]; p != nil && (p.RequestID == "" || p.RequestID == AdmissionID(ctx)) {
 		p.Strategy = strategy
-		if errMsg != "" {
+		if state == "done" {
+			p.Error = ""
+		} else if errMsg != "" {
 			p.Error = errMsg
 		}
 	}
 	d.pruneLocked()
 	d.progressMu.Unlock()
+	return journalErr
 }
 
 // recordTrace attaches the strategy trace to the snapshot and persists
@@ -101,7 +121,7 @@ func (d *Downloader) recordTrace(ctx context.Context, paperID string, out *Fetch
 		return
 	}
 	d.progressMu.Lock()
-	if p := d.progress[paperID]; p != nil {
+	if p := d.progress[paperID]; p != nil && (p.RequestID == "" || p.RequestID == AdmissionID(ctx)) {
 		p.Trace = append([]Attempt(nil), out.Trace...)
 	}
 	d.progressMu.Unlock()
@@ -176,13 +196,40 @@ func (d *Downloader) persistEvent(ctx context.Context, paperID, phase, state, de
 // copied.
 func (d *Downloader) Snapshot() []Progress {
 	d.progressMu.Lock()
-	defer d.progressMu.Unlock()
 	out := make([]Progress, 0, len(d.progress))
 	for _, p := range d.progress {
 		cp := *p
 		cp.Events = append([]ProgressEvent(nil), p.Events...)
 		cp.Trace = append([]Attempt(nil), p.Trace...)
 		out = append(out, cp)
+	}
+	d.progressMu.Unlock()
+	// Include durable overflow and recovered admissions that have not acquired
+	// an in-memory slot yet. Do not hold progressMu while accessing PostgreSQL.
+	if d.cfg.Journal != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		pending, err := d.cfg.Journal.PendingDownloadRequests(ctx, 512)
+		cancel()
+		if err == nil {
+			for _, request := range pending {
+				index := -1
+				for i := range out {
+					if out[i].PaperID == request.PaperID {
+						index = i
+						break
+					}
+				}
+				if index >= 0 && out[index].RequestID == request.RequestID && out[index].Active {
+					continue
+				}
+				p := Progress{PaperID: request.PaperID, RequestID: request.RequestID, Input: request.Input, Kind: request.Kind, State: "queued", Phase: "queued", Active: true, Submitted: request.CreatedAt, Updated: request.UpdatedAt, Events: []ProgressEvent{}}
+				if index >= 0 {
+					out[index] = p
+				} else {
+					out = append(out, p)
+				}
+			}
+		}
 	}
 	// Newest first; active jobs before terminal ones at equal times.
 	sortProgress(out)

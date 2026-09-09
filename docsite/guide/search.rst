@@ -109,9 +109,8 @@ Crossref / PubMed / Europe PMC / DBLP / DOAJ / OpenAIRE / catalog，以及需
 服务端默认 解析。管理员可在网页管理后台查看每用户用量（含按单价换算的
 cost）、编辑套餐限额、为单个用户指定套餐或自定义上限。日期按 UTC 日界。
 
-微服务部署见 :doc:`插件化架构与路线图 </dev/plugins>`——它以 docker 微服务
-形式接入（``docker compose --profile search up -d``），只在内网可达，
-全部终端用户流量由 qatlasd 代理并计量。
+微服务由管理员配置，终端用户通过 qatlasd 代理访问并计量；
+使用入口见 :doc:`web` 与 :doc:`api`。
 
 逐平台搜索与个人 API keys
 --------------------------
@@ -132,9 +131,9 @@ qatlas-search（``POST /api/search/multi``），每个被选中的 backend 返�
   PocketBase（加密密钥由服务端 system PAT 派生，无额外配置项），列表只
   显示末四位掩码；搜索时代理解密注入，qatlas-search 不持久化任何请求级
   key。服务端 YAML 里的同名 key 仍作为兜底（优先级：用户 key > 服务端）。
-- **API**：``POST /api/search/multi``（papers:read scope），请求体
+- **API**：``POST /api/search/multi`` （papers:read scope），请求体
   含 text / max_results / sources，响应按 backend 分组返回原始命中
-  列表；key 的 CRUD 在 ``GET/PUT/DELETE /api/me/search-keys``（仅
+  列表；key 的 CRUD 在 ``GET/PUT/DELETE /api/me/search-keys`` （仅
   浏览器会话）。完整请求/响应格式见 :doc:`api <api>`。
 
 Robust Downloader（多范式下载入库）
@@ -147,10 +146,17 @@ Robust Downloader（多范式下载入库）
 
 .. code-block:: text
 
-   POST /api/downloader/fetch   {"items": ["10.1038/...", "arXiv:2401.12345"]}
-   GET  /api/downloader/jobs    任务快照（状态/策略/完整尝试轨迹）
+   POST /api/downloader/fetch        {"items": ["10.1038/...", "arXiv:2401.12345"]}
+   GET  /api/downloader/jobs         本地进度与持久化待执行请求快照
+   GET  /api/downloader/remote-jobs  持久化远程任务进度
 
-策略阶梯（逐层尝试，全部候选先过统一验证管线——``%PDF-`` 魔数、
+下载 **local-first（本地优先）**：先尝试服务器自身网络可用的下载策略；
+启用 outbound worker fleet 后，本地受挑战阻断或策略耗尽时才委托远程任务。
+挑战触发的委托可先于本地 browser / agent 兜底，不是每篇论文都发往远程。
+远程等待释放本地下载槽位；不同论文可并行，同一论文按有限尝试次数与
+截止时间依次换 worker，不向所有节点无限广播。详见下文「Outbound workers」。
+
+本地策略阶梯（逐层尝试，全部候选先过统一验证管线——``%PDF-`` 魔数、
 ``%%EOF`` 尾部、大小上下限、bot 墙/付费墙/错误页分类）：
 
 1. **arxiv** — arXiv 直下（版本固定、全局限速）；
@@ -163,23 +169,24 @@ Robust Downloader（多范式下载入库）
 5. **landing** — doi.org 落地页 ``citation_pdf_url`` 挖掘（IEEE 文档页
    额外解析 stamp.jsp 中间页）；
 6. agent（兜底，默认关）——LLM 阅读落地页 HTML 提取候选链接。配置
-   项 ``downloader.agent.backend`` 设为 ``openai``（OpenAI 兼容端点）
-   或 ``claude``（本机 headless claude CLI）。
+   项 ``downloader.agent.backend`` 设为 ``openai`` （OpenAI 兼容端点）
+   或 ``claude`` （本机 headless claude CLI）。
 
 成功的 PDF 带溯源元数据（``downloader:<策略>``、来源 URL、sha256）写入
-对象存储并触发 MinerU 转换；每次尝试的策略轨迹记录在任务快照与
-``paper_acquisition_events`` 审计表。抓取带 cookie jar、浏览器式请求头、
-按主机限速；``downloader.respect_robots`` 默认关闭（按需授权获取不属于
-爬虫，且多家出版社用 ``Disallow: *`` 反 AI 爬虫会误伤合法下载）。
+对象存储并登记资产；MinerU 转换属于后续处理，PDF 已归档不等于转换已完成。
+本地策略轨迹记录在任务快照与 ``paper_acquisition_events`` 审计表，
+远程任务另有持久化进度。抓取带 cookie jar、浏览器式请求头、按主机限速；
+``downloader.respect_robots`` 默认关闭，运维人员仍须确认下载权限及站点条款。
 
-**验收工具**：:command:`qatlasd downloader probe` 支持位置参数（DOI/arXiv）、:code:`--random N`（OpenAlex 随机抽样）、:code:`--search`（领域过滤）。
-从 OpenAlex 抽样跑全链路并输出逐篇结果与失败分类（机器人墙 /
-付费墙 / 404 / 无候选…），任一失败退出码为 1，便于自动化压测。残余
-失败均为环境权限类终态：IEEE 网关 202、Wiley/AIP 的 Cloudflare 挑战、
-无 OA 副本且无订阅的 Nature/Elsevier 内容——这类论文请用浏览器下载后
-经 ``/api/papers/{id}/upload-pdf`` 手动上传。配置
-``downloader.s2_api_key``（免费 Semantic Scholar key）可显著稳定第 3 层
-的召回（CVPR/ICCV 等 IEEE 会议论文多靠 S2 找到 arXiv 副本）。
+**诊断工具**：:command:`qatlasd downloader probe` 支持位置参数（DOI/arXiv）、
+:code:`--random N`（OpenAlex 随机抽样）、:code:`--search`（领域过滤），
+输出本地下载阶梯的逐篇结果与失败分类，任一失败退出码为 1。
+它 **不测试新的 outbound fleet**；``--proxy`` 仅测试 LEGACY 代理。
+新 fleet 应通过服务器 :doc:`web` / :doc:`api` 提交并观察持久化进度，
+管理员同时检查节点状态（见 :doc:`admin`）。失败可能来自网络、权限、
+超时或服务故障，不能一概视为权限终态；有权获取但自动下载失败的论文
+可人工下载后经 ``/api/papers/{id}/upload-pdf`` 上传。配置
+``downloader.s2_api_key`` 可改善 Semantic Scholar OA 候选查询的稳定性。
 
 本地 agentic 后端（claude CLI）
 -------------------------------
@@ -217,54 +224,56 @@ Robust Downloader（多范式下载入库）
 ``agent: true`` 完全一致。
 
 
-Downloader Proxy（远程代理下载）
--------------------------------
+Outbound workers（主动连接的下载节点）
+----------------------------------------
 
-当 qatlasd 所在网络无法直接访问出版社（如被代理 / VPN 劫持出口 IP），
-可在一台有机构订阅权限的机器上部署 **downloaderproxy**（独立容器，
-自带 Chromium 无 sidecar），qatlasd 的下载阶梯在本地策略失败后自动
-委托给它。
+协调器内置于 qatlasd。管理员可批准多台 ``downloaderworker``，每台使用
+**自己的网络出口与浏览器环境** 获取其有权访问的论文；worker 使用共享
+下载策略，但不递归委托其他 worker / proxy，也不启用 agent 执行。
+worker 主动通过 HTTPS 注册、发心跳、领取租约、上传 PDF 并查询收据；
+服务器 **不拨入 worker**，无需开放 worker 或 CDP 入站端口。
 
-**部署**（在有校园网直连的机器上）：
+管理员启用 ``downloader.remote.enabled``，并配置 PostgreSQL 与对象存储后，
+已接收请求和远程任务进入持久化队列。全局容量、单节点容量、尝试次数与
+任务 / worker 截止时间共同限制并发和故障转移。单篇失败可换尚未尝试的
+worker，直到成功或预算耗尽；无效标识、取消等终态不会无限重试。
+每台 worker 需要独立持久化卷，保存身份、临时 PDF 与恢复状态；不要复制
+身份给并行节点。注册与人工审批步骤见 :doc:`admin`。
 
-.. code-block:: bash
+归档与删除顺序：
 
-   # 构建镜像（在 QuantumAtlas 仓库根目录）
-   docker build -f Dockerfile.downloaderproxy -t qatlas-downloaderproxy .
+#. worker 下载、校验并持久化本地 PDF，再主动上传；
+#. qatlasd 将上传流写入有配额的暂存区，独立校验大小、SHA-256、PDF 头尾；
+#. **对象存储写入与 registry 资产登记都成功** 后，生成持久化 ``done`` 收据；
+#. worker 核对收据的 task ID、attempt ID、SHA-256 与大小后删除已确认副本。
 
-   # 启动（环境变量可选）
-   docker run -d --name downloader-proxy \
-     -p 8602:8602 --memory=2g --restart=on-failure \
-     -e DL_PROXY_TOKEN=<shared-secret> \
-     -e DL_UNPAYWALL_EMAIL=you@example.com \
-     -e DL_S2_API_KEY=s2k-... \
-     qatlas-downloaderproxy
+HTTP 成功或 ``staged`` （归档中）本身都不是归档确认。上传响应丢失时，
+worker 可重复查询非破坏性收据或重试传输，不因不确定响应立即删除文件。
+临时结果仍有保留期限（worker 默认从 ready 起 24 小时），到期可清理并报告
+失败；不能保证服务器长期不可用时仍完成归档。磁盘 / 配额不足会暂停新任务，
+不以驱逐未过期结果腾空间。
 
-**qatlasd 配置**（``~/.qatlas/config.yaml``）：
+MinerU 与索引通过归档后的持久化 outbox 重试，**不阻塞 done 收据**；
+PDF 归档完成不表示 Markdown 已完成，转换进度需另外查看。
+``GET /api/downloader/remote-jobs`` 提供重启后仍可查询的远程任务，
+``GET /api/downloader/jobs`` 在本地进度之外合并最多 512 条持久化待执行请求，
+包含等待本地槽位的请求。远程快照最多 500 条；两者都不是完整分页历史。
+具体权限和状态见 :doc:`api`。
 
-.. code-block:: yaml
+浏览器不是完整的网络安全沙箱。每台 worker / browser 应隔离运行并限制
+出站访问，阻止访问宿主机服务、内部敏感网络和云元数据；勿用 host networking、
+挂载宿主服务 socket 或公开 CDP。节点审批并不赋予额外的出版社访问权。
 
-   downloader:
-     proxy:
-       url: http://<entitled-host>:8602
-       token: <shared-secret>
-       timeout: 5m
+LEGACY Downloader Proxy
+-----------------------
 
-**API**（downloaderproxy 自身暴露的接口，Bearer 鉴权）：
-
-.. code-block:: text
-
-   POST /v1/jobs            {"identifier": "10.1109/..."}  → 202 {job_id}
-   GET  /v1/jobs/{id}       → {status, strategy, attempts[], file_token}
-   GET  /v1/files/{token}   → PDF bytes（单次使用，30 分钟过期）
-
-**触发逻辑**：qatlasd 在以下条件时委托 proxy——
-
-1. 本地策略命中 bot 挑战 / 202 / 403 / IDP 握手墙；
-2. 或本地所有策略全部失败（最终兜底）。
-
-proxy 侧有自己的完整策略阶梯（含 browser lane），优先级高于 qatlasd
-本地的 browser lane。
+旧 ``downloaderproxy`` 为 **LEGACY**：qatlasd 主动访问代理的
+``POST /v1/jobs``、``GET /v1/jobs/{id}``、``GET /v1/files/{token}``，
+以共享 Bearer token 认证。旧配置 ``downloader.proxy.url / token / timeout``
+与 :doc:`cli` 中 ``--proxy`` / ``--proxy-token`` 只属于该协议，
+不是 outbound worker 的注册方式，也没有新协议的持久化 done 收据保证。
+``downloader.remote.enabled: true`` 与非空旧 ``downloader.proxy.url``
+不能同时配置；实现拒绝混用，不会自动迁移现有部署。
 
 浏览器 lane（真实 Chromium 兜底）
 ----------------------------------
@@ -274,7 +283,7 @@ proxy 侧有自己的完整策略阶梯（含 browser lane），优先级高于 
 动挖掘落地页链接（citation_pdf_url / 内联 JSON pdfUrl / IEEE stamp
 中间页），被动捕获 PDF 响应，并以人类节奏（1.5–3s 随机间隔）运行。
 
-**本地启用**（qatlasd 所在机器跑一个 Chromium）：
+**本地启用** （qatlasd 所在机器跑一个 Chromium）：
 
 .. code-block:: yaml
 
@@ -283,7 +292,9 @@ proxy 侧有自己的完整策略阶梯（含 browser lane），优先级高于 
        cdp_url: http://127.0.0.1:9222   # Chromium --remote-debugging-port
        timeout: 45s
 
-downloaderproxy 容器自带 Chromium（无需额外配置）。
+outbound ``downloaderworker`` 容器由自身 runner 管理 Chromium，使用该
+worker 的网络环境；外部 CDP 仅限受信任且隔离的私有端点。
+LEGACY ``downloaderproxy`` 容器也自带 Chromium，但使用旧代理协议。
 
 人工补救通道
 ------------

@@ -111,7 +111,7 @@ const (
 
 // FetchResult is a validated PDF body ready for object storage.
 type FetchResult struct {
-	Body     *bytes.Reader
+	Body     io.Reader `json:"-"` // caller owns optional io.Closer; permits file-backed fleet commits
 	Size     int64
 	Sha256   string
 	URL      string // final URL after redirects

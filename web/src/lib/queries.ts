@@ -7,6 +7,9 @@ import {
   adminAssetSearch,
   adminDBSchema,
   adminDBTableRows,
+  adminDownloaderWorkers,
+  adminDownloaderWorkerAction,
+  type DownloaderWorkerAction,
   adminListPlugins,
   adminListUsers,
   adminMineruStatus,
@@ -20,6 +23,7 @@ import {
   uploadPaperPDFByDOI,
   downloaderFetch,
   downloaderJobs,
+  downloaderRemoteJobs,
   getJson,
   getSearchBackends,
   listMySearchKeys,
@@ -372,6 +376,18 @@ export function useDownloaderJobs(active: boolean, enabled = true) {
   })
 }
 
+// Remote progress is persisted independently of the local in-memory jobs.
+// Poll while the downloader page is mounted, including idle/disabled snapshots
+// so remote mode becoming enabled is discovered without a page reload.
+export function useDownloaderRemoteJobs() {
+  return useQuery({
+    queryKey: ['downloader-remote-jobs'],
+    queryFn: downloaderRemoteJobs,
+    retry: false,
+    refetchInterval: 5_000,
+  })
+}
+
 // Batch submit for the downloader page (POST /api/downloader/fetch).
 // Toasts the enqueued count (503 surfaces its detail via postJson) and
 // refreshes the job snapshot.
@@ -383,8 +399,36 @@ export function useDownloaderSubmit() {
     onSuccess: (data: DownloaderFetchResponse) => {
       toast.success(t('toasts.submitted', { count: data.enqueued }))
       void qc.invalidateQueries({ queryKey: ['downloader-jobs'] })
+      void qc.invalidateQueries({ queryKey: ['downloader-remote-jobs'] })
     },
     onError: (error: Error) => toast.error(error.message),
+  })
+}
+
+// Admin-only worker health + lease/job snapshot. Keep polling even when idle
+// so newly registered pending workers appear without a page reload.
+export function useAdminDownloaderWorkers(enabled: boolean) {
+  return useQuery({
+    queryKey: ['admin-downloader-workers'],
+    queryFn: adminDownloaderWorkers,
+    enabled,
+    retry: false,
+    refetchInterval: enabled ? 10_000 : false,
+  })
+}
+
+export function useAdminDownloaderWorkerAction() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, action }: { id: string; action: DownloaderWorkerAction }) =>
+      adminDownloaderWorkerAction(id, action),
+    // No optimistic approval: the server owns worker lifecycle transitions.
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['admin-downloader-workers'] })
+      void qc.invalidateQueries({ queryKey: ['admin-pipeline-jobs'] })
+      void qc.invalidateQueries({ queryKey: ['downloader-jobs'] })
+      void qc.invalidateQueries({ queryKey: ['downloader-remote-jobs'] })
+    },
   })
 }
 

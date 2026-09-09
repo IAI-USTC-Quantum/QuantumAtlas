@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -31,6 +32,7 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/auth"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/downloader"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/downloadfleet"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/events"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/healthz"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/hostapi"
@@ -57,6 +59,7 @@ import (
 	"github.com/pocketbase/pocketbase/apis"
 	pbcmd "github.com/pocketbase/pocketbase/cmd"
 	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/tools/hook"
 	"github.com/spf13/cobra"
 	httpSwagger "github.com/swaggo/http-swagger/v2"
 )
@@ -377,7 +380,7 @@ func main() {
 		}
 		if pgPool != nil {
 			app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
-				pgPool.Close()
+				defer pgPool.Close() // stop consumers before closing their shared registry pool
 				return e.Next()
 			})
 		}
@@ -584,7 +587,9 @@ func main() {
 				mineruConverter.Ensure(ctx, canonical)
 			}),
 		)
-		if cfg.PaperAccessEnabled && registryStore.Configured() {
+		// Fleet mode adopts pending papers into the downloader's durable journal.
+		// Never replay them simultaneously through a separate ingestion pool.
+		if legacyDownloadRecoveryEnabled(cfg) && registryStore.Configured() {
 			go func() {
 				recovered, recoverErr := ingester.RecoverPending(context.Background())
 				if recoverErr != nil {
@@ -609,15 +614,57 @@ func main() {
 		// under the same master switch as the rest of paper access; the
 		// agent fallback needs downloader.agent.* when enabled.
 		var downloaderModule *downloader.Downloader
+		var downloadFleet *downloadfleet.Service
+		var fleetPool *pgxpool.Pool
+		var fleetBackground *downloadBackground
+		if cfg.DownloaderRemoteEnabled {
+			if pgPool == nil {
+				return fmt.Errorf("downloader.remote requires postgres.dsn")
+			}
+			// Fleet commits hold their task locks while invoking registry writes.
+			// Separate connection budgets prevent callbacks starving on their own pool.
+			poolCfg := pgPool.Config()
+			poolCfg.MaxConns = int32(max(16, min(64, 2*cfg.DownloaderRemoteMaxInFlight+8)))
+			var poolErr error
+			fleetPool, poolErr = pgxpool.NewWithConfig(context.Background(), poolCfg)
+			if poolErr != nil {
+				return fmt.Errorf("initialize fleet pool: %w", poolErr)
+			}
+			spoolDir := cfg.DownloaderRemoteSpoolDir
+			if spoolDir == "" {
+				spoolDir = filepath.Join(cfg.PBDataDir, "downloader-spool")
+			}
+			var fleetErr error
+			downloadFleet, fleetErr = downloadfleet.New(fleetPool, downloadfleet.Config{
+				Enabled: true, MaxInFlight: cfg.DownloaderRemoteMaxInFlight,
+				MaxWorkerInFlight: cfg.DownloaderRemoteMaxWorkerInFlight,
+				MaxWorkerAttempts: cfg.DownloaderRemoteMaxAttempts,
+				TaskTimeout:       cfg.DownloaderRemoteTaskTimeout,
+				WorkerTimeout:     cfg.DownloaderRemoteWorkerTimeout,
+				LeaseDuration:     cfg.DownloaderRemoteLeaseDuration,
+				SpoolDir:          spoolDir, SpoolMaxBytes: cfg.DownloaderRemoteSpoolMaxBytes,
+			})
+			if fleetErr != nil {
+				fleetPool.Close()
+				return fmt.Errorf("initialize downloader fleet: %w", fleetErr)
+			}
+		}
 		if cfg.PaperAccessEnabled && cfg.DownloaderEnabled {
 			unpaywallEmail := cfg.DownloaderUnpaywallEmail
 			if unpaywallEmail == "" {
 				unpaywallEmail = cfg.OpenAlexMailto
 			}
+			var journal downloader.DownloadJournal
+			if downloadFleet != nil {
+				journal = registryStore
+			}
 			downloaderModule = downloader.New(registryStore, rawStore, arxivFetcher, doiResolver, downloader.Config{
-				Concurrency:    cfg.DownloaderConcurrency,
-				UnpaywallEmail: unpaywallEmail,
-				S2APIKey:       cfg.DownloaderS2APIKey,
+				Journal:           journal,
+				Concurrency:       cfg.DownloaderConcurrency,
+				Remote:            downloadFleet,
+				RemoteConcurrency: cfg.DownloaderRemoteMaxInFlight,
+				UnpaywallEmail:    unpaywallEmail,
+				S2APIKey:          cfg.DownloaderS2APIKey,
 				Fetch: downloader.FetchConfig{
 					RequestTimeout: 60 * time.Second,
 					RespectRobots:  cfg.DownloaderRespectRobots,
@@ -652,6 +699,10 @@ func main() {
 					mineruConverter.Ensure(ctx, canonical)
 				}),
 			)
+			if downloadFleet != nil {
+				downloadFleet.SetArchive(downloaderModule.ArchiveRemote)
+				downloadFleet.SetHooks(durableRemoteHooks(mineruConverter, downloaderModule.AfterRemoteArchive))
+			}
 			agentState := "off"
 			if cfg.DownloaderAgentBackend != "" {
 				agentState = cfg.DownloaderAgentBackend
@@ -673,10 +724,16 @@ func main() {
 				"proxy", proxyState,
 			)
 			app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
+				// Stop and join recovery/commit producers before shutting down their
+				// downloader dependency. Its owned job context cancels accepted work;
+				// durable admissions are resumed by the next process, not failed.
+				fleetBackground.Stop()
 				shutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				defer cancel()
 				if err := downloaderModule.Shutdown(shutCtx); err != nil {
-					slog.Warn("downloader: shutdown drain incomplete", "error", err)
+					slog.Warn("downloader: shutdown still joining cancelled jobs", "error", err)
+					// Do not release the data lock or close pools under live consumers.
+					_ = downloaderModule.Shutdown(context.Background())
 				}
 				return e.Next()
 			})
@@ -725,13 +782,28 @@ func main() {
 				if lockErr != nil {
 					return fmt.Errorf("failed to acquire pb_data lock: %w", lockErr)
 				}
-				app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
-					_ = lock.Unlock()
-					return e.Next()
+				app.OnTerminate().Bind(&hook.Handler[*core.TerminateEvent]{
+					Id: "qatlasDataLock",
+					// Wrap all application teardown, including deferred pool closes.
+					// PocketBase's -9999 hook first stops HTTP admissions.
+					Priority: -1000,
+					Func: func(e *core.TerminateEvent) error {
+						defer lock.Unlock()
+						return e.Next()
+					},
 				})
 			}
 
 			serverStarted := time.Now()
+			if downloadFleet != nil {
+				fleetBackground = startDownloadBackground(downloadFleet.Start, downloaderModule.RunRecovery)
+				app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
+					fleetBackground.Stop() // idempotent; also stopped before downloader shutdown
+					defer fleetPool.Close()
+					return e.Next()
+				})
+			}
+			routes.RegisterDownloadFleet(se, cfg, downloadFleet, enforcer)
 
 			// Optional: force a tcp4-native listener via force_tcp4: true
 			// (WSL2 + Windows netsh portproxy escape hatch).

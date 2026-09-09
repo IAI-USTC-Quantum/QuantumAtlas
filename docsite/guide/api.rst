@@ -1,9 +1,11 @@
 API 参考
 ========
 
-除标注 **公开** 的端点外，所有 API 都需要认证（见本文 `认证：Personal Access Token`_）。
+除标注 **公开** 的端点外，所有 API 都需要认证。普通论文 API 使用会话或
+PAT（见本文 `认证：Personal Access Token`_）；管理员操作与 worker 协议
+使用下文各自标明的认证方式，不能相互替代。
 
-基础 URL 为 :code:`https://qatlas.hfnl.app.chenzhaoyun.com`（下文省略）。
+基础 URL 使用您实际连接的服务器 HTTPS origin（下文省略）。
 
 搜索
 ----
@@ -22,8 +24,8 @@ API 参考
     响应字段：
 
     - :code:`results`：权威身份命中，每项含 :code:`paper_id`、命中信息 :code:`hit`
-      与 ``created``（本次是否触发了新收录），以及托管摘要 ``has_md`` /
-      ``has_pdf`` / ``status``（registry 不可用时省略）；
+      与 ``created`` （本次是否触发了新收录），以及托管摘要 ``has_md`` /
+      ``has_pdf`` / ``status`` （registry 不可用时省略）；
     - ``candidates``：仅标题命中的候选，不入库。
 
     请求体 ``text`` / ``title`` / ``arxiv_id`` / ``doi`` 全空时返回 400；
@@ -111,7 +113,10 @@ Robust Downloader
 ``POST /api/downloader/fetch``
     提交一批论文标识（DOI / arXiv id / 论文链接，每行一条，单次最多
     50 条），逐条解析 → resolve-or-mint 入注册表 → 入队多范式下载
-    阶梯。需 ``papers:write``。
+    阶梯。需 ``papers:write``，成功返回 200；请求体缺失 / 超过 50 条返回
+    400，下载器或注册表不可用返回 503。逐项错误仍在 200 响应的 ``items``
+    中，``enqueued`` 表示接受入队，不表示 PDF 已归档。启用 remote fleet
+    时使用持久化 admission，先执行本地策略，再按需委托批准的 worker。
 
     .. code-block:: bash
 
@@ -135,8 +140,11 @@ Robust Downloader
        }
 
 ``GET /api/downloader/jobs``
-    任务快照：每篇论文的状态 / 当前策略 / 完整尝试轨迹 / 计数器。
-    需 ``papers:read``。前端 Robust Downloader 页面 2 秒轮询此端点。
+    返回 200，需 ``papers:read``。本地任务状态 / 当前策略 / 尝试轨迹 /
+    计数器快照；启用持久化 admission 时还合并最多 512 条待执行请求，
+    包括等待本地执行槽位的请求。内存中的详细轨迹可能随重启丢失，不能用
+    该列表代替持久化远程进度。前端活跃时 2 秒、静止时 30 秒轮询。
+    下载器未配置时返回空快照。
 
     响应::
 
@@ -154,15 +162,102 @@ Robust Downloader
          "counters": {"queued": 0, "in_flight": 0, "succeeded": 2, "failed": 1}
        }
 
-完整的六层策略阶梯与配置项见 :doc:`search`。
+``GET /api/downloader/remote-jobs``
+    返回 200，需 ``papers:read``。响应 ``{"enabled": true, "jobs": [...]}``；
+    fleet 关闭时仍返回 200，内容为 ``{"enabled": false, "jobs": []}``。
+    每项含 ``id``、``worker_id``、``state``、``identifier``、``error``、
+    ``updated_at``。这是 PostgreSQL 持久化远程任务快照，最多返回最近
+    更新的 500 条，不是分页历史；不返回节点拓扑、健康详情或凭据。
+
+    - ``queued``：等待可用 worker；不同论文可并行，同一论文有限次顺序换节点。
+    - ``running``：下载或上传中。
+    - ``staged``：PDF 已暂存，等待对象存储与 registry 归档完成。
+    - ``done``：对象存储写入与资产登记均已完成；不代表 MinerU 转换完成。
+    - ``failed``：任务终止，可查看 ``error``；某次 worker 尝试失败并不一定
+      表示整个任务终止，剩余预算允许时任务重新排队。
+
+本地优先、每节点网络 / 浏览器、归档收据与清理语义见 :doc:`search`；
+界面操作见 :doc:`web`。``qatlasd downloader probe`` 不接入新 fleet，
+请通过这里的提交 / 进度 API 与管理员节点页面验收。
+
+Outbound worker 协议（机器认证）
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+下表端点均在 **qatlasd**，由 worker 主动请求；无需 worker 入站监听。
+注册请求体为 ``id``、``name``、``enrollment_token``、``secret``，worker
+在首次请求前持久化随机身份与独立 secret。注册后的请求使用
+``Authorization: Bearer <worker secret>``，不是用户 PAT、管理员会话或
+enrollment token。pending 节点除同身份注册重试外只能查询自身 status。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 10 43 10 37
+
+   * - 方法
+     - 端点
+     - 成功状态
+     - 认证与用途
+   * - POST
+     - ``/api/downloader/workers/v2/register``
+     - 200
+     - 首次使用请求体中的一次性 enrollment 凭据；初始返回 pending，非自动批准
+   * - GET
+     - ``/api/downloader/workers/v2/status``
+     - 200
+     - worker Bearer；查询自身节点状态，pending 可用
+   * - POST
+     - ``/api/downloader/workers/v2/heartbeat``
+     - 200
+     - approved / draining worker；上报容量、浏览器、磁盘并续租
+   * - POST
+     - ``/api/downloader/workers/v2/claim``
+     - 200
+     - approved worker 领取任务；空 ``attempts`` 正常，draining 返回空列表
+   * - POST
+     - ``/api/downloader/workers/v2/report``
+     - 200
+     - approved / draining worker；报告自身 attempt 的失败并返回收据
+   * - PUT
+     - ``/api/downloader/workers/v2/upload/{attempt}``
+     - 200
+     - approved / draining worker；上传自身 attempt 的原始 PDF，返回收据
+   * - GET
+     - ``/api/downloader/workers/v2/receipts/{attempt}``
+     - 200
+     - approved / draining worker；非破坏性读取自身 attempt 收据
+
+除 register 外上表每一项均需 worker Bearer。无效 / 缺失凭据返回 401，
+pending 越权或 rejected / revoked 身份返回 403，不存在或不属于该 worker
+的 attempt 返回 404，过期 / 冲突的 attempt 可返回 409，请求超时可返回
+408，fleet 关闭或暂不可用返回 503；无效请求返回 400。
+
+上传使用 ``Content-Type: application/pdf``，必需头为 ``X-PDF-SHA256`` 与
+``X-PDF-Size``，PDF 上限 100 MiB（也受 assignment 的 ``max_pdf_bytes``
+限制）。可选 ``X-Source-URL``、``X-Download-Strategy`` 与
+``X-Download-Result``（base64url 无填充的 JSON 溯源元数据，头上限 16 KiB）。
+这不是用户的 multipart ``upload-pdf`` 接口。
+
+收据含 ``task_id``、``attempt_id``、``state`` 及可用时的 ``sha256``、
+``size``、``error``；状态为 ``running`` / ``staged`` / ``done`` /
+``failed`` / ``expired``。**HTTP 200 不等于 done**：暂存完成但归档未完成
+时不能删除本地 PDF。worker 核对 done 收据中的任务、attempt、摘要、大小
+均匹配后才删除已确认结果；不确定响应应查收据 / 重试，保留期限到期清理
+是独立的失败处理。MinerU / 索引由归档后的持久化 outbox 处理，不阻塞收据。
+
+LEGACY ``downloader.proxy.*``、代理自身的 ``/v1/jobs`` / ``/v1/files/*``
+以及 CLI ``--proxy`` 不属于此协议；不能与已启用的 remote fleet 混用。
+审批与 enrollment 管理见 :doc:`admin`。
 
 个人搜索 API keys
 -----------------
 
 ``GET /api/me/search-keys``
     列出当前用户已配置的个人搜索 API key。
-    仅浏览器会话。响应 ``{"enabled": true, "keys": [{"backend": "ieee",
-    "hint": "••••ab3f", "updated_at": "..."}]}``（hint 为末四位掩码）。
+    仅浏览器会话。响应示例（hint 为末四位掩码）：
+
+    .. code-block:: json
+
+       {"enabled": true, "keys": [{"backend": "ieee", "hint": "••••ab3f", "updated_at": "..."}]}
 
 ``PUT /api/me/search-keys/{backend}``
     保存 / 更新一个 backend 的个人 key。body ``{"key": "..."}``。
@@ -295,10 +390,10 @@ Dashboard / Me
         - 端点
         - 说明
       * - ``papers:read``
-        - GET /api/search、/api/papers/、/api/downloader/jobs
+        - POST /api/search、/api/search/multi；GET /api/papers/、/api/downloader/jobs、/api/downloader/remote-jobs
         - 搜索与读取
       * - ``papers:write``
-        - POST /api/search/multi、/api/downloader/fetch、upload
+        - POST /api/downloader/fetch、论文 upload 端点
         - 上传 / 下载触发（隐含 read）
       * - ``plugins:read``
         - GET /api/v1/plugins
@@ -310,7 +405,9 @@ Dashboard / Me
 管理端点
 --------
 
-``/api/admin/*`` 只接受管理员的浏览器会话，PAT 一律 403。
+``/api/admin/*`` 只接受管理员的浏览器会话，PAT 一律 403；
+``whoami`` 是例外，任意已登录用户会话可查询自己的管理员标志。
+worker secret 不能用于管理员操作。
 
 .. list-table::
    :header-rows: 1
@@ -353,6 +450,38 @@ Dashboard / Me
      - ``/api/admin/plugins/{id}/manifest`` / ``.../config``
      - 插件配置读写
 
+Downloader fleet 管理
+~~~~~~~~~~~~~~~~~~~~~
+
+以下均需 **管理员的人类浏览器会话**，不是 PAT / worker secret。
+未登录会话返回 401，非管理员会话或 PAT 返回 403。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 10 45 10 35
+
+   * - 方法
+     - 端点
+     - 成功状态
+     - 说明
+   * - GET
+     - ``/api/admin/downloader/workers``
+     - 200
+     - ``workers`` 与 ``jobs`` 快照，各最多 500 条；不含 worker secret
+   * - POST
+     - ``/api/admin/downloader/enrollment``
+     - 201
+     - 返回 ``token`` / ``expires_at``，默认 15 分钟有效的一次性注册凭据
+   * - POST
+     - ``/api/admin/downloader/workers/{id}/{action}``
+     - 200
+     - action 为 ``approve`` / ``reject`` / ``drain`` / ``enable`` / ``revoke``；返回更新节点
+
+fleet 未启用返回 503，节点不存在返回 404，未知 action 返回 400；
+已映射的冲突 / 禁止操作分别返回 409 / 403，其他操作错误返回 500
+（含当前实现的部分非法状态转换），应刷新节点状态后检查原因。
+批准、排空和撤销的操作语义见 :doc:`admin`。
+
 Admin Asset Browser（资产浏览）
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -393,4 +522,4 @@ S3 URL 供浏览器直连：
 
 ``{kind}`` 取 ``pdf`` 或 ``markdown``。
 
-前端入口：:code:`/zh/admin/assets`（侧边栏「资产浏览」，仅管理员可见）。
+前端入口： :code:`/zh/admin/assets` （侧边栏「资产浏览」，仅管理员可见）。

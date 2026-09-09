@@ -191,13 +191,16 @@ token**。开发者选择独立仓库的判据是：app 需要独立的发行节
 依赖栈（如依赖 GPU 或 LLM），或者开发者希望核心仓库永远不携带这部分
 代码。
 
-对照：downloaderproxy —— 主仓内的独立服务
-------------------------------------------
+对照：downloaderworker —— 主仓内的主动执行节点
+------------------------------------------------------------------------
 
-v0.27.0 起，生态里出现了第二种 app 形态：**源码在主仓库、部署在现场
-的独立服务** ``cmd/downloaderproxy``\（健壮下载器的 campus-egress
-部署形态，架构见 :doc:`downloader`）。它与 qatlas-search /
-qatlas-rag 的独立仓库模式逐项对照：
+下载执行端复用主仓 ``internal/downloader``，但部署在各自的网络出口。
+新形态为 ``cmd/downloaderworker``：它主动向 qatlasd 注册，经管理员批准
+后领取任务并上传结果，不是等待主服务转发 HTTP 的普通代理，也不是通用
+external JSON-RPC 插件。旧 ``cmd/downloaderproxy`` 保留兼容，不能与新协议
+混为一谈。架构见 :doc:`downloader`，部署见 :doc:`prod-deploy`。
+
+它与 qatlas-search / qatlas-rag 的独立仓库模式逐项对照：
 
 .. list-table::
    :header-rows: 1
@@ -205,36 +208,35 @@ qatlas-rag 的独立仓库模式逐项对照：
 
    * - 维度
      - qatlas-search / qatlas-rag（独立仓库）
-     - downloaderproxy（主仓内）
+     - downloaderworker（主仓内）
    * - 源码位置
      - 各自独立仓库，自有 ``VERSION`` 与 release.yml
-     - ``cmd/downloaderproxy``，与 ``internal/downloader`` 同仓同步
-       演进（它就是这条策略梯的打包形态）
+     - ``cmd/downloaderworker`` / ``internal/downloadworker``，与共享
+       策略梯、主服务 ``internal/downloadfleet`` 及 v2 协议同仓演进
    * - 技术栈
      - Python / FastAPI
      - 纯 Go 单二进制 + 自带 headless Chromium 的单容器
    * - 接入协议
      - HTTP + Bearer（``{enabled, url, token, timeout}`` 配置段）
-     - 相同风格：``downloader.proxy: {url, token, timeout}``；
-       submit → poll → 一次性 file token 取回
+     - 主服务 ``downloader.remote.enabled``；worker 主动出站 HTTPS
+       注册 / 心跳 / 领取 / 上传 / 查询归档回执，使用独立节点 Bearer 凭证
    * - 产物与分发
      - ghcr 镜像，部署机只 pull
-     - **例外**：不在 ghcr，由部署方在目标机上用
-       ``Dockerfile.downloaderproxy`` 现场构建（见 :doc:`release`）
+     - 当前未新增独立发布通道；用明确 checkout 的
+       ``Dockerfile.downloaderworker`` 自建并分发（见 :doc:`release`）
    * - 配置方式
      - 自有 YAML 配置文件
-     - 环境变量（``DL_PROXY_TOKEN`` 等）——它不是 qatlasd，
-       YAML-only 严格校验只约束 qatlasd 进程
+     - ``DL_WORKER_*`` 环境变量和非凭据 flags；独立身份写入本机持久卷。
+       qatlasd 的 YAML-only 约束不适用于 worker 进程
    * - 部署位置
      - 与 qatlasd 同栈 compose、``shared-infra`` 内网、无端口映射
-     - **campus-egress 主机上的独立容器**\（出口带机构订阅是它的
-       存在意义），不在 qatlasd 的 compose 栈内；qatlasd 仍是它
-       的唯一合法调用方，但寻址走校园网络而非 docker 网络
+     - 多台授权网络电脑的独立容器；无需入站端口或被主服务直接寻址，
+       只需能访问主服务 HTTPS。每个节点独立数据卷，不持有主服务存储密钥
 
-判据：当服务与主仓内某个 internal 包**同源**（共享策略梯代码）、
-依赖栈一致（纯 Go）、且**部署位置由网络拓扑决定**（必须在特定出口
-机器上）时，独立仓库的发行解耦收益不复存在，主仓内 + 现场构建是更
-诚实的形态。新 app 默认仍应走独立仓库模式。
+下载执行节点留在主仓的依据是共享策略梯、任务协议和归档语义需要同步演进，
+不是说其镜像只能在某一台电脑构建。运行出口、凭证与临时文件属于各 worker；
+调度、最终对象存储和 registry 仍由主服务负责。后续若增加 worker 独立发布
+通道，需要明确协议兼容矩阵和升级顺序；一般 app 默认仍采用独立仓库模式。
 
 app 之间的依赖
 --------------

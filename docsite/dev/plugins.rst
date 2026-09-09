@@ -46,8 +46,10 @@ QuantumAtlas 主仓库正在收敛为**核心的论文基础设施**：主仓库
          healthz 探测；
        - ``downloader``\（capability ``download``）：内部模块
          ``internal/downloader`` 经插件面暴露，SPA 的 Robust
-         Downloader 页面按其 enabled 状态显隐（架构见
-         :doc:`downloader`）。
+         Downloader 页面据其状态提供本地下载；启用 ``downloader.remote``
+         后由内置 fleet 管理多个主动接入的 worker，新增持久远端进度与
+         管理员节点审批。worker 不是额外的 JSON-RPC external 插件，
+         也不为每台电脑创建独立 builtin manifest（见 :doc:`downloader`）。
    * - CLI 命令（客户端）
      - ``qatlas.plugins`` Python entry-point group：第三方包安装后即可
        贡献 ``qatlas <name>`` 顶层命令或 ``qatlas contrib <name>`` 子命令
