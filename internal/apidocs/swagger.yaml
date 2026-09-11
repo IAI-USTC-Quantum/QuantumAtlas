@@ -580,6 +580,41 @@ paths:
       summary: Downloader jobs
       tags:
       - Downloader
+  /api/downloader/remote-jobs:
+    get:
+      description: |-
+        PostgreSQL-persisted snapshot of outbound fleet tasks (most
+        recently updated first, capped at 500): id, worker_id, state
+        (queued/running/staged/done/failed), identifier and error.
+        Unlike /api/downloader/jobs this survives server restarts.
+        Answers 200 with {enabled: false, jobs: []} when the remote
+        fleet is disabled. Requires papers:read.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{enabled: bool, jobs: [{id, worker_id, state, identifier,
+            error?, updated_at}]}'
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Downloader remote jobs
+      tags:
+      - Downloader
   /api/health:
     get:
       description: |-

@@ -265,6 +265,24 @@ func docDownloaderFetch() {}
 // @Router      /api/downloader/jobs [get]
 func docDownloaderJobs() {}
 
+// downloaderRemoteJobs lists the persisted remote-fleet job snapshot.
+//
+// @Summary     Downloader remote jobs
+// @Description PostgreSQL-persisted snapshot of outbound fleet tasks (most
+// @Description recently updated first, capped at 500): id, worker_id, state
+// @Description (queued/running/staged/done/failed), identifier and error.
+// @Description Unlike /api/downloader/jobs this survives server restarts.
+// @Description Answers 200 with {enabled: false, jobs: []} when the remote
+// @Description fleet is disabled. Requires papers:read.
+// @Tags        Downloader
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200 {object} map[string]interface{} "{enabled: bool, jobs: [{id, worker_id, state, identifier, error?, updated_at}]}"
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Router      /api/downloader/remote-jobs [get]
+func docDownloaderRemoteJobs() {}
+
 // papersList returns the paginated registry paper list.
 //
 // @Summary     List papers

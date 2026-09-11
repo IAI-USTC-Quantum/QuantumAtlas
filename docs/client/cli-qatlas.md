@@ -15,7 +15,7 @@ qatlas [--version] [--help] <subcommand> [args...]
 
 ## 通用 client flag
 
-所有调 server 的子命令（ingest / contrib 等）都接受这个 flag：
+所有调 server 的子命令（paper / contrib 等）都接受这个 flag：
 
 | Flag | 默认 | 含义 |
 |---|---|---|
@@ -102,32 +102,16 @@ qatlas contrib mineru --batch-size 3
 
 ---
 
-### `qatlas ingest`
+### `qatlas ingest`（已移除）
 
-让 server 抓 arXiv 论文 + 可选解析。需要 `papers:write` scope。
+`ingest` 子命令及其服务端端点（`POST /api/ingest/paper` 等）已随客户端
+重构移除。原「让 server 抓论文并解析」的能力拆到了现役命令：
 
-```
-qatlas ingest <arxiv_id> [--parser mineru] [options...]
-qatlas ingest continue <task_id> [options...]
-qatlas ingest status <task_id>
-```
-
-| Flag | 必填 | 默认 | 含义 |
-|---|---|---|---|
-| `<arxiv_id>` | ✅ | — | arXiv ID（旧式 `quant-ph/9508027` 或新式 `2501.00010`）|
-| `--parser mineru` | ❌ | `mineru` | 显式声明解析器；开源版本只支持 `mineru` 一种 |
-| `--stop-after fetch\|parse` | ❌ | — | 跑到指定阶段就停 |
-| `--stages a,b` | ❌ | — | 逗号分隔的精确阶段列表 |
-| `--force-fetch` | ❌ | false | 已有 PDF 也重抓 |
-| `--force-parse` | ❌ | false | 已有 markdown 也重解析 |
-| `--mineru-no-cache` | ❌ | false | bypass MinerU server-side cache |
-| `--no-poll` | ❌ | false | 提交后立返，不等任务结束 |
-| `--poll-interval <sec>` | ❌ | 1.0 | 轮询间隔 |
-| `--timeout <sec>` | ❌ | 600 | 总等待时间上限 |
-
-调用：`POST /api/ingest/paper`，轮询 `GET /api/ingest/{task_id}`。
-
-详细 how-to：[从 arXiv 摄入论文](ingest-papers.md)。
+| 原用法 | 现用法 |
+|---|---|
+| `qatlas ingest <arxiv_id>` | `qatlas paper get markdown <arxiv_id>`（缓存未命中自动触发服务端抓取 + MinerU 转换，LRO 轮询） |
+| `qatlas ingest status <task_id>` | `qatlas paper status <arxiv_id>` |
+| `--force-fetch` / `--force-parse` | 贡献者走 `qatlas contrib pdf --overwrite` / `qatlas contrib mineru` |
 
 ---
 

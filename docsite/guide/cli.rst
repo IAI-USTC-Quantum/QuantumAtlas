@@ -40,6 +40,114 @@
 
 别名：``papers`` → ``paper``，``parse`` → ``parser``。
 
+子命令参考
+----------
+
+``qatlas config`` — 配置文件管理
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 78
+
+   * - 子命令
+     - 说明
+   * - ``config path``
+     - 打印配置文件路径
+   * - ``config set <key> <value>``
+     - 写入一个键（敏感值走 stdin 隐藏输入）
+   * - ``config unset <key>``
+     - 删除一个键
+   * - ``config get <key>``
+     - 打印单个已解析值（未设置时退出码 1）
+   * - ``config show``
+     - 打印全部已解析配置
+
+``qatlas auth`` — 凭据管理
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 78
+
+   * - 子命令
+     - 说明
+   * - ``auth login``
+     - OAuth Device Flow 登录（RFC 8628）：打印并尝试打开批准页，
+       浏览器批准后 PAT 自动落盘 ``~/.config/qatlas/hosts.yml``
+   * - ``auth logout``
+     - 删除某 host 已存的 PAT
+   * - ``auth status``
+     - 列出已配置的 host 与 token 形态
+   * - ``auth token``
+     - 打印已存 token，便于管道给其他工具
+
+``auth login`` 常用标志：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - 标志
+     - 说明
+   * - ``--server-url, -s URL``
+     - 目标服务器（默认取配置 ``server_url``，缺省时交互式询问）
+   * - ``--with-token``
+     - 从 stdin 读 PAT 明文直接落盘（脚本 / CI 友好，跳过浏览器流，
+       明文不进 argv / shell 历史）
+   * - ``--no-browser``
+     - 不打开本地浏览器，只打印 URL（headless / SSH 场景把 URL 带到
+       任意其他设备打开）
+   * - ``--scopes`` / ``--expires-days`` / ``--token-name``
+     - 浏览器批准表单的预填默认值（批准页内仍可修改）
+   * - ``--timeout N``
+     - 等待浏览器批准的秒数（默认 600）
+   * - ``--insecure``
+     - 跳过 TLS 校验（仅自签名开发证书）
+
+``qatlas paper`` — 论文资产获取
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: bash
+
+   qatlas paper get markdown ID_OR_DOI [--output FILE] [--no-wait]
+   qatlas paper get images   ID_OR_DOI [--output FILE]
+   qatlas paper get metadata ID_OR_DOI
+   qatlas paper status       ID_OR_DOI [--kind markdown]
+   qatlas paper mineru-lease ID_OR_DOI [--ttl-seconds N]
+   qatlas paper mineru-lease release ID_OR_DOI CLAIM_ID
+
+- ``--output / -o``：写入文件（默认 stdout）；
+- ``--no-wait``：缓存未命中时只触发服务端抓取、不阻塞等待转换完成；
+- ``--ttl-seconds``：MinerU 租约时长（服务端有默认值与上限）；
+- 服务端 ``paper_access`` 的默认值提示输出在 stderr，用 ``--quiet-notes``
+  关闭。
+
+``qatlas contrib`` — 贡献者工作流
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: bash
+
+   qatlas contrib pdf <ARXIV_ID|DOI> --pdf <path> [--overwrite] [--verify warn|strict]
+   qatlas contrib mineru                                # 队列模式：认领并处理
+   qatlas contrib mineru <ARXIV_ID>                     # 单篇模式：认领、转换、上传
+   qatlas contrib mineru --watch [--watch-interval N]   # 守护循环
+   qatlas contrib mineru <DOI> --zip <path> [--verify warn|strict]
+                                                       # 上传现成 MinerU zip（DOI-only）
+
+``--verify strict`` 在校验失败时硬失败，``warn`` 仅告警；``--overwrite``
+覆盖服务端已有 PDF。
+
+``qatlas parser`` — 本地解析
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: bash
+
+   qatlas parser <arxiv_id> [-o OUTPUT_DIR] [--no-pdf] [-m] [-j]
+
+``-m`` / ``-j`` 额外保存 Markdown / JSON 解析产物，``--no-pdf`` 跳过
+PDF 下载；产物默认落在 ``./papers``。
+
 插件命令（需安装对应插件包）
 ------------------------------
 

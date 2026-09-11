@@ -585,6 +585,50 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/downloader/remote-jobs": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "PostgreSQL-persisted snapshot of outbound fleet tasks (most\nrecently updated first, capped at 500): id, worker_id, state\n(queued/running/staged/done/failed), identifier and error.\nUnlike /api/downloader/jobs this survives server restarts.\nAnswers 200 with {enabled: false, jobs: []} when the remote\nfleet is disabled. Requires papers:read.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Downloader"
+                ],
+                "summary": "Downloader remote jobs",
+                "responses": {
+                    "200": {
+                        "description": "{enabled: bool, jobs: [{id, worker_id, state, identifier, error?, updated_at}]}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/health": {
             "get": {
                 "description": "Liveness plus parallel dependency probes (rawstore, postgres,\nregistry). HTTP status is always 200; read data.status for the\nreal verdict (\"healthy\" | \"degraded\").",

@@ -107,6 +107,19 @@ PAT（见本文 `认证：Personal Access Token`_）；管理员操作与 worker
     ``selectable = server_ready || (user_key && key_configured)`` ——
     需 key 但未配置的后端复选框禁用，前端展示「去配置」链接。
 
+``POST /api/search/survey``
+    规则化综述检索：把有界查询计划转发给 qatlas-search 微服务执行。
+    请求体含 ``goal``、可选 ``queries``（至多 6 条）、``rules``
+    （authors / venues / year_from / year_to / min_citations / sort）、
+    ``sources``、``max_results`` 与 ``agentic``；用户 backend key 由
+    服务端注入，调用方不能自带 ``api_keys``，过滤后的身份命中锚定
+    论文注册表。``agentic=true`` 需要用户级凭据并消耗 agentic 每日配额
+    （上游传输失败退还名额）。需 ``papers:read``。
+
+    响应的 coverage 会显式标注 ``post_filter_bounded`` 与
+    ``exhaustive=false``：该端点过滤的是已检索到的元数据，不承诺穷尽的
+    作者分页或全局引用排序。请求 / 响应细节见 :doc:`search`。
+
 Robust Downloader
 -----------------
 
@@ -293,6 +306,14 @@ LEGACY ``downloader.proxy.*``、代理自身的 ``/v1/jobs`` / ``/v1/files/*``
        每项含 ``hosted`` 与 ``has_md``：前者表示是否已收录，后者表示
        默认资产是否已有 markdown——批量核对「有没有 markdown」的官方入口
    * - GET
+     - ``/api/papers/stats``
+     - registry 聚合计数（按生命周期状态分组，首页统计瓦片的数据源）；
+       registry 不可用时降级返回 ``{available: false}`` 而非 5xx
+   * - GET
+     - ``/api/papers/needs-mineru``
+     - 待 MinerU 转换队列（``?limit=N``，默认 10、上限 100）——贡献者
+       认领工作流的数据源；registry 不可用时同样降级 ``{available: false}``
+   * - GET
      - ``/api/papers/{id}/pdf``
      - **已停用（410 Gone）**——PDF 分发设计性禁用，改用 markdown 端点；
        PDF 仍作为内部资产服务转换与贡献者 lease
@@ -320,12 +341,15 @@ LEGACY ``downloader.proxy.*``、代理自身的 ``/v1/jobs`` / ``/v1/files/*``
    * - POST
      - ``/api/papers/{id}/upload-mineru``
      - 上传本地 MinerU 转换结果
-   * - POST
-     - ``/api/papers/{id}/mineru-claim``
-     - 认领一篇论文的 MinerU 转换权（贡献者工作流）
    * - POST / DELETE
-     - ``/api/papers/{id}/mineru-lease``
-     - 获取 / 释放 MinerU 租约
+     - ``/api/papers/{arxiv_id}/mineru-claim``
+       （DELETE 路径为 ``.../mineru-claim/{claim_id}``）
+     - 认领 / 取消认领一篇论文的 MinerU 转换权（贡献者工作流）
+   * - POST / DELETE
+     - ``/api/v1/papers/{arxiv_id}/mineru-lease``
+       （DELETE 路径为 ``.../mineru-lease/{claim_id}``）
+     - 获取 / 释放 MinerU 转换租约；POST 支持 ``?ttl_seconds=N``
+       指定租期（缺省用服务端默认值）。需 ``papers:write``
 
 Dashboard / Me
 --------------
@@ -366,6 +390,9 @@ Dashboard / Me
    * - GET
      - ``/api/pat/scopes`` **公开**
      - PAT 权限范围词汇表
+   * - GET
+     - ``/install-qatlasd.sh`` **公开**
+     - qatlasd 二进制安装脚本（POSIX sh，下载最新 release 产物）
    * - POST / GET / DELETE
      - ``/api/pat``
      - PAT 创建 / 列表 / 吊销（需浏览器会话）
@@ -399,8 +426,25 @@ Dashboard / Me
         - GET /api/v1/plugins
         - 插件状态查询
 
-命令行场景还支持 OAuth Device Flow（``/api/oauth/device/*``），适合无浏览器的
-终端登录。
+命令行场景还支持 OAuth Device Flow（RFC 8628），适合无浏览器的终端登录：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 10 40 50
+
+   * - 方法
+     - 端点
+     - 说明
+   * - POST
+     - ``/api/oauth/device/code``
+     - 发起设备流，返回 ``user_code`` 与批准页 URL（``qatlas auth login``
+       自动完成这一步与轮询）
+   * - POST
+     - ``/api/oauth/device/approve`` / ``/api/oauth/device/deny``
+     - 浏览器用户会话批准 / 拒绝；批准页可调整 scope、令牌名称与有效期
+   * - POST
+     - ``/api/oauth/device/token``
+     - CLI 轮询端点，批准后换取 PAT 明文（明文仅此一次可见）
 
 管理端点
 --------
@@ -449,6 +493,11 @@ worker secret 不能用于管理员操作。
    * - GET / PUT
      - ``/api/admin/plugins/{id}/manifest`` / ``.../config``
      - 插件配置读写
+   * - POST
+     - ``/api/admin/devdoc/ticket``
+     - 签发 ``/devdoc`` 管理员文档站的短期签名 ticket：返回
+       ``{"url": "/devdoc/?ticket=<hmac>"}``，浏览器凭 ticket 换取
+       12h HttpOnly cookie；重启后旧 ticket / cookie 全部失效
 
 Downloader fleet 管理
 ~~~~~~~~~~~~~~~~~~~~~
