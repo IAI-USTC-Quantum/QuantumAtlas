@@ -98,8 +98,11 @@ Crossref / PubMed / Europe PMC / DBLP / DOAJ / OpenAIRE / catalog，以及需
 - **网页**：搜索页打开「agentic 搜索」开关（微服务未上线时开关禁用）；
   结果上方显示 agent 总结，右上角显示「今日用量 x/限额」。
 - **CLI**：安装插件包后 ``qatlas search "query"`` 自动可用（entry-point
-  发现，无需改主仓库配置）；安装 qatlas-rag 包后 ``qatlas rag "query"``
-  可直接查询语义检索服务；两个插件未安装时都会提示安装方法。
+  发现，无需改主仓库配置）；``--direct`` 本地自带 key 直跑，``survey``
+  规则化综述、``multi`` 逐平台原始结果——详细用法与标志表见
+  :doc:`cli` 的「论文搜索（qatlas search）」一节；安装 qatlas-rag 包后
+  ``qatlas rag "query"`` 可直接查询语义检索服务；两个插件未安装时都会
+  提示安装方法。
 - **API**：``POST /api/search/agentic``，body 为 Search Entry（可选
   ``sources`` 指定 backend 列表），响应在普通搜索的
   ``results``/``candidates`` 之上增加 ``conclusion`` 与 ``usage``。

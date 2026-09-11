@@ -14,6 +14,14 @@
 
    qatlas --help
 
+默认线上实例为 https://qatlas.hfnl.app.chenzhaoyun.com/ （本文档即由它提供）。
+首次使用：
+
+.. code-block:: bash
+
+   qatlas config set server_url https://qatlas.hfnl.app.chenzhaoyun.com
+   qatlas auth login            # 浏览器批准后 PAT 自动落盘
+
 命令总览
 --------
 
@@ -41,11 +49,48 @@
 
 别名：``papers`` → ``paper``，``parse`` → ``parser``。
 
+``qatlas --help`` 的输出里带有本文档链接；各子命令 ``--help`` 有完整标志表。
+
+能力总览
+--------
+
+qatlas-cli 覆盖用户侧「搜论文 → 拿内容 → 做贡献」的完整工作流：
+
+- **论文搜索**：插件 ``qatlas search``。一条查询 fan-out 到 arXiv /
+  OpenAlex / Semantic Scholar / Crossref / PubMed / Europe PMC / DBLP /
+  DOAJ / OpenAIRE / 本站 catalog 等学术源，融合成单一排序结果；四种形态
+  ——默认 agentic（经 qatlasd，含可选 LLM 结论与用量计量）、``--direct``
+  本地自带 key 直跑、``survey`` 规则化综述检索、``multi`` 逐平台原始结果。
+  详细用法见下文 `论文搜索（qatlas search）`_。
+- **论文获取**：``paper get markdown``（缓存未命中自动触发服务端抓取 +
+  MinerU 转换，LRO 轮询到完成）、``paper get images``（插图 zip）、
+  ``paper get metadata``（registry 元数据 JSON）；``paper status`` 看转换进度。
+- **目录检索与批量下载**：``paper list``（registry 分页检索）、
+  ``paper lookup``（≤200 条引用批量解析）、``paper fetch``（向 Robust
+  Downloader 提交 ≤50 条 DOI / arXiv ID / 论文链接批量下载）与
+  ``paper jobs``（本地 / 远程进度，``--watch`` 轮询）。
+- **语义检索**：插件 ``qatlas rag``，直接查询 qatlas-rag 向量检索服务
+  （bge-m3 混合检索 + 重排）。
+- **贡献上传**：``contrib pdf`` 上传本地 PDF；``contrib mineru`` 用自己的
+  MinerU 配额本地转换并回传（队列 / 单篇 / ``--watch`` 守护）；DOI-only
+  论文可 ``--zip`` 上传现成 MinerU 产物。
+- **本地解析**：``parser`` 不经服务器、在本地工作区抓取并解析 arXiv 论文。
+
+**PDF 与管理员资产获取**：面向普通用户的 PDF 分发端点已停用
+（``GET /api/papers/{id}/pdf`` 恒 410），因此没有 ``paper get pdf`` 子命令。
+论文 PDF 由服务端 Robust Downloader 归档进对象存储，获取入口是**管理后台
+资产浏览页**：`/<lang>/admin/assets
+<https://qatlas.hfnl.app.chenzhaoyun.com/zh/admin/assets>`_。管理员可按
+标题 / DOI / arXiv ID 搜索已归档资产，在线预览与下载 PDF / Markdown、生成
+预签名 S3 URL，或单篇 / 批量（≤20 篇 ZIP）下载。这些 ``/api/admin/assets/*``
+端点只接受**浏览器会话**鉴权（PAT 会被拒绝），所以 CLI 不提供对应子命令。
+Markdown 对普通用户始终可用 ``paper get markdown`` 获取。
+
 子命令参考
 ----------
 
 ``qatlas config`` — 配置文件管理
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. list-table::
    :header-rows: 1
@@ -107,7 +152,7 @@
      - 跳过 TLS 校验（仅自签名开发证书）
 
 ``qatlas paper`` — 论文资产获取与下载
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: bash
 
@@ -174,8 +219,129 @@
 ``-m`` / ``-j`` 额外保存 Markdown / JSON 解析产物，``--no-pdf`` 跳过
 PDF 下载；产物默认落在 ``./papers``。
 
-插件命令（需安装对应插件包）
-------------------------------
+论文搜索（qatlas search）
+-------------------------
+
+``qatlas search`` 由独立插件包 ``qatlas-search`` 提供（entry-point 组
+``qatlas.plugins`` 自动挂载）。未安装时命令会给出安装提示，不影响其他命令；
+从私有仓库安装：
+
+.. code-block:: bash
+
+   uv tool install --from git+ssh://git@github.com/IAI-USTC-Quantum/qatlas-search.git qatlas-search
+
+四种形态：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
+
+   * - 形态
+     - 说明
+   * - ``qatlas search QUERY``
+     - **agentic 融合搜索**：默认。经 qatlasd 代理 fan-out 多源、融合排序，
+       可选 LLM 学术结论；按用户每日计量。``--direct`` 变体在本地自带 key
+       直跑（不走服务端、不计量的 Bring-Your-Own-Key 模式）
+   * - ``qatlas search survey GOAL``
+     - **规则化综述检索**：``/api/search/survey``，按作者 / 期刊 / 年份 /
+       引用量过滤；覆盖为 post-filter bounded（过滤已检索元数据，非穷尽）
+   * - ``qatlas search multi QUERY``
+     - **逐平台原始结果**：``/api/search/multi``，每个 backend 返回该平台
+       自身排序的命中，不做跨源融合
+   * - ``qatlas rag QUERY``
+     - qatlas-rag 插件提供的语义向量检索直连（独立命令，见 :doc:`search`）
+
+认证与服务器解析（服务器模式）：server URL 与 PAT 复用 qatlas 客户端配置
+（``config.yaml`` + ``hosts.yml``，即 ``qatlas auth login`` 存的那份），
+``--server`` / ``--token`` 可按次覆盖；需要 ``papers:read`` scope。
+``--direct`` 模式不访问 qatlasd，backend key 来自本机
+``~/.qatlas/config.yaml`` 的 ``search:`` 段（或 ``/etc/qatlas-search/``）。
+
+默认 agentic 搜索
+~~~~~~~~~~~~~~~~~
+
+.. code-block:: bash
+
+   qatlas search "surface code threshold"
+   qatlas search "quantum error correction" --json --top 20
+   qatlas search --list-tools                 # backend 目录（服务器模式含实时可用性）
+   qatlas search "graph neural networks" --direct --tools arxiv,openalex,crossref
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 74
+
+   * - 标志
+     - 说明
+   * - ``--agent / --no-agent``
+     - 是否请求 LLM 结论（默认开；服务器模式）。结论消耗 LLM tokens，
+       与调用次数一起计入每日配额
+   * - ``--tools a,b,c``
+     - backend 允许清单（默认取配置）。学术源之外还有网页引擎与需个人 key
+       的源（CORE / NASA ADS / IEEE / Scopus 等）；``--list-tools`` 查看全部
+   * - ``--top N`` / ``--max-results N``
+     - 展示条数（默认 15）/ 检索上限
+   * - ``--direct``
+     - 本地直跑：自带 key、无计量、无 registry 身份锚定；
+       配 ``--ranking scorer --scorer-file PATH`` 可用自定义 JSON 评分程序
+       （``--list-scoring-capabilities`` 打印能力清单，``--explain`` 输出
+       评分执行树）
+   * - ``--json`` / ``-v``
+     - JSON 输出 / 逐 backend 计数与错误
+
+超限（429）时 stderr 给出当日用量与限额；配额规则见 :doc:`search`。
+
+综述检索 survey
+~~~~~~~~~~~~~~~
+
+.. code-block:: bash
+
+   qatlas search survey "topological qubits" \
+     --author "Felix von Oppenheim" --year-from 2020 --min-citations 50
+   qatlas search survey "surface codes" --query "surface code threshold" \
+     --query "mbqec" --sort citations --json
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 74
+
+   * - 标志
+     - 说明
+   * - ``--query Q``
+     - 显式检索式（可重复，至多 6 条；缺省由 goal 与作者规则推导）
+   * - ``--author A`` / ``--venue V``
+     - 作者 / 期刊过滤（可重复）
+   * - ``--year-from / --year-to``
+     - 年份区间（1600–2100）
+   * - ``--min-citations N``
+     - 最低引用数
+   * - ``--sort relevance|newest|citations``
+     - 有界结果集内排序（默认 relevance）
+   * - ``--sources a,b``
+     - backend 允许清单（默认 semantic_scholar,arxiv,openalex）
+   * - ``--agent / --no-agent``
+     - 是否让服务端 LLM 规划查询（默认开，消耗 agentic 配额）
+
+命中按 DOI / arXiv ID 锚定进论文 registry；响应的 ``coverage`` 明示
+``post_filter_bounded``、``exhaustive=false``——规则只过滤已检索到的
+元数据，不是对全文献空间的穷尽综述。
+
+逐平台搜索 multi
+~~~~~~~~~~~~~~~~
+
+.. code-block:: bash
+
+   qatlas search multi "quantum error correction" --sources arxiv,openalex
+   qatlas search multi "fault tolerance" --sources semantic_scholar,wikipedia --json
+
+每个被选中的 backend 返回自己的原始命中（平台自身排序、含 ``paper_id``
+时说明已在本站 registry）；个人 backend key 由服务端注入（在网页 dashboard
+「搜索 API keys」里保存，AES-GCM 加密存储），失败的 backend 单独报错不影响
+其他平台。需要 key 但未配置的源会被跳过或禁用——用 ``--list-tools`` 查看
+哪些已就绪。
+
+其他插件命令
+------------
 
 .. list-table::
    :header-rows: 1
@@ -184,15 +350,12 @@ PDF 下载；产物默认落在 ``./papers``。
    * - 命令
      - 插件包
      - 说明
-   * - ``qatlas search``
-     - ``qatlas-search``
-     - agentic 多源学术搜索（默认走 qatlasd 代理，``--direct`` 本地跑）；
-       子命令 ``survey``（规则化综述检索）与 ``multi``（逐平台原始结果）
    * - ``qatlas rag``
      - ``qatlas-rag``
-     - 语义检索（qatlas-rag 微服务的 CLI 前端）
+     - 语义检索（qatlas-rag 微服务的 CLI 前端；``--server`` / ``--token``
+       / ``--max-results`` / ``--json``）
 
-未安装时会提示安装方法，不影响其他命令。
+未安装时 CLI 会提示安装方法，不影响其他命令。
 
 插件协议（CLI plugin API v2）
 -----------------------------
@@ -214,8 +377,8 @@ PDF 下载；产物默认落在 ``./papers``。
 **协议 v2 要点**：
 
 - ``CommandSpec.handler`` 支持两种签名：v1 的 ``handler(argv) -> int``
-  与 v2 的 ``handler(ctx, argv) -> int``（CLI 按签名探测分发，旧插件
-  无需改动）；
+  与 v2 的 ``handler(ctx, argv) -> int``。CLI 按签名探测分发，旧插件
+  无需改动；
 - ``ctx`` 是 ``CliContext``（已解析的 ``server_base_url`` / ``token`` /
   ``request_timeout`` / ``insecure`` / ``client_version``），与内置命令
   读同一份 ``~/.config/qatlas/config.yaml`` 与 hosts.yml；
@@ -262,29 +425,7 @@ PDF 下载；产物默认落在 ``./papers``。
    qatlas contrib mineru 2501.00010v1
    qatlas contrib mineru --watch
 
-**搜索**
-
-.. code-block:: bash
-
-   # agentic 搜索（经 qatlasd 代理，消耗每日配额）
-   qatlas search "surface code threshold"
-
-   # 纯 JSON 输出
-   qatlas search "quantum error correction" --json
-
-   # 本地直跑（不走服务端，需要自己配 key）
-   qatlas search "graph neural network" --direct --tools arxiv,openalex,crossref
-
-   # 规则化综述检索（/api/search/survey）：按作者/年份/引用量过滤，
-   # 覆盖为 post-filter bounded（过滤已检索元数据，非穷尽）
-   qatlas search survey "topological qubits" \
-     --author "Felix von Oppenheim" --year-from 2020 --min-citations 50
-   qatlas search survey "surface codes" --query "surface code threshold" \
-     --query "mbqec" --sort citations --json
-
-   # 逐平台原始结果（/api/search/multi）：各平台自身排序，不做融合；
-   # 个人 backend key 由服务端注入
-   qatlas search multi "quantum error correction" --sources arxiv,openalex
+搜索的用法示例见上文 `论文搜索（qatlas search）`_ 一节。
 
 论文 ID 支持多种形式（服务端自动补全）：带版本 arXiv ID（``0811.3171v3``）、
 裸 arXiv ID（补最新版本）、裸旧式编号（补 ``quant-ph/`` 分类）、DOI。
@@ -301,8 +442,9 @@ PDF 下载；产物默认落在 ``./papers``。
 
    ``qatlas search`` 与 ``qatlas rag`` 都由独立插件提供（entry-point
    发现，安装对应的插件包后命令自动出现在 CLI 中，未安装时会提示
-   安装方法）：前者由 qatlas-search 仓库提供，后者由 qatlas-rag 仓库
-   提供，使用方法见 :doc:`search`。
+   安装方法）：前者由 qatlas-search 仓库提供（详细用法见本文
+   `论文搜索（qatlas search）`_ 一节），后者由 qatlas-rag 仓库提供，
+   平台级搜索架构见 :doc:`search`。
 
 服务器端运维命令（``qatlasd``）
 -------------------------------
