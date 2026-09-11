@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## Unreleased
+
+### Fix
+
+- **papers**: 按 DOI 取资产时先校验 DOI 命名空间确有可服务字节（published 资产或 `doi/` 键对象），否则回落到同一论文的 arXiv 身份服务——与 arXiv 输入侧重定向到 DOI 前的 `HasPublishedAsset` 守卫互为镜像。修复「元数据回填 DOI 的 arXiv 论文」按 DOI 取 markdown 恒 202 → `ErrNoDOISource` 的问题（lookup 却报 `has_md=true`）：markdown 一直都在，只是躺在 arXiv 资产键下。真 DOI-only 论文行为不变。
+
 ## v0.32.0 (2026-09-09)
 
 ### Feat

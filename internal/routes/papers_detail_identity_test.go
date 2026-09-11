@@ -34,13 +34,18 @@ type fakePaperCatalog struct {
 	identity map[string]string                // "scheme:normalized-id" -> paper_id
 	latest   map[string]int                   // bare arxiv id -> highest asset version
 	err      error
+	// DOI probes for decideLocalDOIServing (keys are normalized DOIs).
+	doiRows         map[string]bool // papers row carries this DOI
+	publishedAssets map[string]bool // a published-source asset exists
 }
 
 func newFakePaperCatalog() *fakePaperCatalog {
 	return &fakePaperCatalog{
-		papers:   map[string]*registry.PaperDetail{},
-		identity: map[string]string{},
-		latest:   map[string]int{},
+		papers:          map[string]*registry.PaperDetail{},
+		identity:        map[string]string{},
+		latest:          map[string]int{},
+		doiRows:         map[string]bool{},
+		publishedAssets: map[string]bool{},
 	}
 }
 
@@ -66,6 +71,21 @@ func (f *fakePaperCatalog) LatestArxivAssetVersion(_ context.Context, bareArxiv 
 	}
 	v, ok := f.latest[bareArxiv]
 	return v, ok && v > 0, nil
+}
+
+func (f *fakePaperCatalog) LookupDOI(_ context.Context, doi string) (string, bool, error) {
+	if f.err != nil {
+		return "", false, f.err
+	}
+	hit := f.doiRows[doi]
+	return doi, hit, nil
+}
+
+func (f *fakePaperCatalog) HasPublishedAsset(_ context.Context, doi string) (bool, error) {
+	if f.err != nil {
+		return false, f.err
+	}
+	return f.publishedAssets[doi], nil
 }
 
 // TestIsKnownGETAction locks the action-vs-identifier boundary: exactly

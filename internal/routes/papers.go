@@ -256,39 +256,100 @@ func RegisterPapers(
 				// Shape (a): DOI input.
 				doi := arxivPart
 				if !forceArxiv {
-					// DOI-canonical fast path: serve from local DOI
-					// namespace when a contribution exists. Skips
+					// DOI-canonical fast path: serve from the local DOI
+					// namespace when it can actually serve bytes. Skips
 					// OpenAlex entirely (one fewer round-trip and one
 					// fewer failure mode).
 					//
-					// Three-state lookup (PR #19 review-5): genuine
-					// miss → fall through to OpenAlex; query-time
-					// error → 503 (treating it as a miss would serve
-					// a stale 404 when the local DOI bytes are in
-					// fact present, breaking DOI-canonical).
-					_, hit, err := catalog.LookupDOI(ctx, doi)
-					if err != nil {
+					// Three-state decision (PR #19 review-5 lineage):
+					// genuine miss → fall through to OpenAlex; query-time
+					// error → 503 (treating it as a miss would serve a
+					// stale 404 when the local DOI bytes are in fact
+					// present, breaking DOI-canonical); hit but nothing
+					// DOI-side to serve → fall back to the paper's arXiv
+					// identity (metadata-backfilled DOI) instead of
+					// dead-ending the DOI pipeline.
+					outcome, twin, derr := decideLocalDOIServing(ctx, catalog, rawStore, doi)
+					if derr != nil {
 						return re.JSON(http.StatusServiceUnavailable, map[string]any{
 							"detail": "catalog unavailable (PostgreSQL unreachable); retry shortly",
 							"doi":    doi,
 						})
 					}
-					if hit {
+					switch outcome {
+					case doiServeDOI:
 						applyDOICanonicalHeaders(re, requestedID, doi, "")
 						return dispatchGETDOIHandlers(re, cfg, rawStore, converter, doi, action, statusKind, raw, "")
+					case doiServeArxiv:
+						// Mirror of the HasPublishedAsset guard the
+						// arXiv-input shape (b) applies before
+						// redirecting TO the DOI namespace: without
+						// DOI-side bytes, the arXiv twin serves.
+						arxivPart = twin
+						bareIDPostDOI = twin
 					}
-					// Genuine miss (or catalog unconfigured): don't
-					// 503 here — OpenAlex may still resolve an arxiv
-					// twin we can serve as a best-effort fallback.
-					// The ErrDOINotFound branch below re-probes the
-					// local catalog for the definitive 404 / 503.
+					// doiServeDefer (or no twin): don't 503 here —
+					// OpenAlex may still resolve an arxiv twin we can
+					// serve as a best-effort fallback. The
+					// ErrDOINotFound branch below re-probes the local
+					// catalog for the definitive 404 / 503.
 				}
-				res, err := resolveDOIToCanonical(ctx, doiResolver, doi)
-				if err != nil {
-					if errors.Is(err, openalex.ErrDOINotFound) {
-						// No fetchable full text known. Under force_arxiv
-						// this is a hard 409 (caller asked for arxiv, we
-						// have none).
+				if arxivPart == doi {
+					res, err := resolveDOIToCanonical(ctx, doiResolver, doi)
+					if err != nil {
+						if errors.Is(err, openalex.ErrDOINotFound) {
+							// No fetchable full text known. Under force_arxiv
+							// this is a hard 409 (caller asked for arxiv, we
+							// have none).
+							if forceArxiv {
+								return re.JSON(http.StatusConflict, map[string]any{
+									"detail": "DOI has no arxiv presence in OpenAlex; remove ?force_arxiv to fetch the DOI version",
+									"doi":    doi,
+									"hint":   "GET /api/papers/" + doi + "/" + actionLabel(action, statusKind),
+								})
+							}
+							// Without force_arxiv we may STILL have a local
+							// DOI node (e.g. catalog was momentarily down
+							// during the fast-path check above). Re-probe.
+							// Note: this branch is only reachable when the
+							// fast path saw a MISS — a paper registered in
+							// the race window between the two probes — so
+							// no servability guard is applied here; the DOI
+							// handler's own 404/202 answer stands.
+							_, hit, lerr := catalog.LookupDOI(ctx, doi)
+							if lerr != nil {
+								return re.JSON(http.StatusServiceUnavailable, map[string]any{
+									"detail": "catalog unavailable (PostgreSQL unreachable); retry shortly",
+									"doi":    doi,
+								})
+							}
+							if hit {
+								applyDOICanonicalHeaders(re, requestedID, doi, "")
+								return dispatchGETDOIHandlers(re, cfg, rawStore, converter, doi, action, statusKind, raw, "")
+							}
+							// Catalog reachable + no local DOI node + no
+							// OpenAlex arxiv twin + no OA PDF → genuine 404.
+							// If the catalog has never been configured (ensure
+							// short-circuits, no err), Available() will
+							// be false and 503 is the more honest answer.
+							if !catalog.Available(ctx) {
+								return re.JSON(http.StatusServiceUnavailable, map[string]any{
+									"detail": "catalog unavailable (PostgreSQL unreachable); retry shortly",
+									"doi":    doi,
+								})
+							}
+							return re.JSON(http.StatusNotFound, map[string]any{
+								"detail": "DOI unknown to OpenAlex (or no arXiv twin and no open-access PDF) and no local DOI contribution exists; if you hold the PDF, contribute it via POST /api/papers/" + doi + "/upload-pdf",
+								"doi":    doi,
+							})
+						}
+						return doiErrorResponse(re, doi, err)
+					}
+					if res.ArxivID == "" {
+						// Published-only OA work: no arxiv twin, but OpenAlex
+						// surfaced a direct OA PDF URL — serve through the
+						// DOI pipeline, which fetches + converts on demand
+						// (202 LRO on the markdown endpoint).
 						if forceArxiv {
 							return re.JSON(http.StatusConflict, map[string]any{
 								"detail": "DOI has no arxiv presence in OpenAlex; remove ?force_arxiv to fetch the DOI version",
@@ -296,55 +357,12 @@ func RegisterPapers(
 								"hint":   "GET /api/papers/" + doi + "/" + actionLabel(action, statusKind),
 							})
 						}
-						// Without force_arxiv we may STILL have a local
-						// DOI node (e.g. catalog was momentarily down
-						// during the fast-path check above). Re-probe.
-						_, hit, lerr := catalog.LookupDOI(ctx, doi)
-						if lerr != nil {
-							return re.JSON(http.StatusServiceUnavailable, map[string]any{
-								"detail": "catalog unavailable (PostgreSQL unreachable); retry shortly",
-								"doi":    doi,
-							})
-						}
-						if hit {
-							applyDOICanonicalHeaders(re, requestedID, doi, "")
-							return dispatchGETDOIHandlers(re, cfg, rawStore, converter, doi, action, statusKind, raw, "")
-						}
-						// Catalog reachable + no local DOI node + no
-						// OpenAlex arxiv twin + no OA PDF → genuine 404.
-						// If the catalog has never been configured (ensure
-						// short-circuits, no err), Available() will
-						// be false and 503 is the more honest answer.
-						if !catalog.Available(ctx) {
-							return re.JSON(http.StatusServiceUnavailable, map[string]any{
-								"detail": "catalog unavailable (PostgreSQL unreachable); retry shortly",
-								"doi":    doi,
-							})
-						}
-						return re.JSON(http.StatusNotFound, map[string]any{
-							"detail": "DOI unknown to OpenAlex (or no arXiv twin and no open-access PDF) and no local DOI contribution exists; if you hold the PDF, contribute it via POST /api/papers/" + doi + "/upload-pdf",
-							"doi":    doi,
-						})
+						applyDOICanonicalHeaders(re, requestedID, doi, "")
+						return dispatchGETDOIHandlers(re, cfg, rawStore, converter, doi, action, statusKind, raw, res.OAPdfURL)
 					}
-					return doiErrorResponse(re, doi, err)
+					bareIDPostDOI = res.ArxivID
+					arxivPart = res.ArxivID
 				}
-				if res.ArxivID == "" {
-					// Published-only OA work: no arxiv twin, but OpenAlex
-					// surfaced a direct OA PDF URL — serve through the
-					// DOI pipeline, which fetches + converts on demand
-					// (202 LRO on the markdown endpoint).
-					if forceArxiv {
-						return re.JSON(http.StatusConflict, map[string]any{
-							"detail": "DOI has no arxiv presence in OpenAlex; remove ?force_arxiv to fetch the DOI version",
-							"doi":    doi,
-							"hint":   "GET /api/papers/" + doi + "/" + actionLabel(action, statusKind),
-						})
-					}
-					applyDOICanonicalHeaders(re, requestedID, doi, "")
-					return dispatchGETDOIHandlers(re, cfg, rawStore, converter, doi, action, statusKind, raw, res.OAPdfURL)
-				}
-				bareIDPostDOI = res.ArxivID
-				arxivPart = res.ArxivID
 			} else if !forceArxiv {
 				// Shape (b): arxiv input. Honour DOI canonical by
 				// looking up whether any DOI node has this arxiv id as
@@ -671,6 +689,96 @@ func resolvePaperAssetTarget(ctx context.Context, catalog paperCatalog, paperID 
 	// here means a merged/tombstoned edge — treat as unknown rather
 	// than guessing a namespace.
 	return paperAssetTarget{NotFound: true}, nil
+}
+
+// doiLocalCatalog is the registry slice the DOI-input fast path needs:
+// the paperCatalog seam plus the two DOI probes. *registry.Store
+// satisfies it implicitly; tests fake it with maps (same pattern as
+// paperCatalog).
+type doiLocalCatalog interface {
+	paperCatalog
+	LookupDOI(ctx context.Context, doi string) (string, bool, error)
+	HasPublishedAsset(ctx context.Context, doi string) (bool, error)
+}
+
+// doiServeOutcome is what decideLocalDOIServing wants the dispatcher to do.
+type doiServeOutcome int
+
+const (
+	// doiServeDefer: no local answer — fall through to the OpenAlex DOI
+	// resolution (its ErrDOINotFound branch re-probes the catalog).
+	doiServeDefer doiServeOutcome = iota
+	// doiServeDOI: the DOI namespace can serve bytes — dispatch to the
+	// DOI handlers (DOI-canonical).
+	doiServeDOI
+	// doiServeArxiv: a papers row exists but the DOI namespace holds no
+	// bytes — serve the paper's arXiv identity instead.
+	doiServeArxiv
+)
+
+// decideLocalDOIServing resolves the DOI-canonical fast path for a DOI
+// input using ONLY local state (registry + object store). The guard it
+// applies is the mirror of the arXiv-input shape: a DOI attached purely
+// by metadata backfill (the common case for arXiv-sourced papers) has no
+// published asset and no DOI-keyed objects, so serving it through the
+// DOI pipeline would dead-end with ErrNoDOISource even though the same
+// paper's arXiv asset holds the markdown. Registry query errors surface
+// as err (the dispatcher 503s — treating them as a miss would serve a
+// stale 404 while local DOI bytes are in fact present).
+func decideLocalDOIServing(ctx context.Context, catalog doiLocalCatalog, store objstore.Store, doi string) (doiServeOutcome, string, error) {
+	_, hit, err := catalog.LookupDOI(ctx, doi)
+	if err != nil || !hit {
+		return doiServeDefer, "", err
+	}
+	if doiNamespaceServable(ctx, catalog, store, doi) {
+		return doiServeDOI, "", nil
+	}
+	if twin, ok := doiArxivTwinFromCatalog(ctx, catalog, doi); ok {
+		return doiServeArxiv, twin, nil
+	}
+	return doiServeDefer, "", nil
+}
+
+// doiNamespaceServable reports whether the DOI namespace can actually
+// serve bytes: a published-source asset in the registry (what the
+// arXiv-input redirect checks) or a markdown/pdf object under the DOI
+// key layout (contributed bytes that may predate a registry sync).
+func doiNamespaceServable(ctx context.Context, catalog doiLocalCatalog, store objstore.Store, doi string) bool {
+	if hasPub, err := catalog.HasPublishedAsset(ctx, doi); err == nil && hasPub {
+		return true
+	}
+	if store == nil {
+		return false
+	}
+	for _, kind := range []string{"markdown", "pdf"} {
+		key := paperassets.DOIAssetKey(kind, doi)
+		if key == "" {
+			continue
+		}
+		if _, exists, err := store.Stat(ctx, key); err == nil && exists {
+			return true
+		}
+	}
+	return false
+}
+
+// doiArxivTwinFromCatalog returns the arXiv identity of the paper a DOI
+// belongs to — versioned when an ingested arXiv asset carries a version,
+// bare otherwise. ok=false when the DOI matches no paper or the paper
+// has no arXiv identity (a true DOI-only paper).
+func doiArxivTwinFromCatalog(ctx context.Context, catalog doiLocalCatalog, doi string) (string, bool) {
+	paperID, found, err := catalog.GetPaperIDByIdentity(ctx, "doi", doi)
+	if err != nil || !found {
+		return "", false
+	}
+	target, err := resolvePaperAssetTarget(ctx, catalog, paperID)
+	if err != nil || target.NotFound {
+		return "", false
+	}
+	if target.ArxivVersioned != "" {
+		return target.ArxivVersioned, true
+	}
+	return target.ArxivBare, true
 }
 
 // splitMineruClaimRelease parses MinerU lease release paths and returns

@@ -325,7 +325,8 @@ LEGACY ``downloader.proxy.*``、代理自身的 ``/v1/jobs`` / ``/v1/files/*``
      - ``/api/papers/{id}/markdown``
      - 获取 MinerU 转换的 Markdown（支持 ``?format=link|bytes|stream``）；
        ``{id}`` 也接受 ``qa_`` paper_id（服务端解析成最高 arXiv 版本，
-       DOI-only 论文走 DOI 管线）
+       DOI-only 论文走 DOI 管线）；元数据回填 DOI 的 arXiv 论文在 DOI
+       命名空间无资产时自动回落 arXiv 身份服务
    * - GET
      - ``/api/papers/{id}/markdown/status``
      - Markdown 转换进度（LRO 轮询）
