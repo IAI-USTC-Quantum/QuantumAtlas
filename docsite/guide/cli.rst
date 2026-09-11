@@ -29,8 +29,9 @@
      - 管理各服务器的 PAT / 会话令牌（``login`` 走 OAuth Device Flow）
    * - ``qatlas paper``
      - 从服务器取论文资产：``get markdown`` / ``get images`` /
-       ``get metadata`` / ``status`` / ``mineru-lease``；缓存未命中时
-       自动触发服务端抓取与转换（LRO 轮询）。PDF 分发已停用
+       ``get metadata`` / ``status`` / ``mineru-lease``；目录检索
+       ``list`` / ``lookup``；批量下载 ``fetch`` 与进度 ``jobs``；
+       缓存未命中时自动触发服务端抓取与转换（LRO 轮询）。PDF 分发已停用
        （``/pdf`` 恒 410），没有 ``get pdf`` 子命令
    * - ``qatlas contrib``
      - 贡献者工作流：``contrib pdf`` 上传 PDF；``contrib mineru`` 用自己的
@@ -105,8 +106,8 @@
    * - ``--insecure``
      - 跳过 TLS 校验（仅自签名开发证书）
 
-``qatlas paper`` — 论文资产获取
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+``qatlas paper`` — 论文资产获取与下载
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: bash
 
@@ -114,6 +115,10 @@
    qatlas paper get images   ID_OR_DOI [--output FILE]
    qatlas paper get metadata ID_OR_DOI
    qatlas paper status       ID_OR_DOI [--kind markdown]
+   qatlas paper list         [--has-md true] [--status …] [-q …] [--json]
+   qatlas paper lookup       REF... [--json]
+   qatlas paper fetch        ID|DOI|URL... [--file FILE] [--json]
+   qatlas paper jobs         [--remote] [--watch] [--json]
    qatlas paper mineru-lease ID_OR_DOI [--ttl-seconds N]
    qatlas paper mineru-lease release ID_OR_DOI CLAIM_ID
 
@@ -122,6 +127,27 @@
 - ``--ttl-seconds``：MinerU 租约时长（服务端有默认值与上限）；
 - 服务端 ``paper_access`` 的默认值提示输出在 stderr，用 ``--quiet-notes``
   关闭。
+
+``qatlas paper list`` — 目录检索（``GET /api/papers``，需 ``papers:read``）：
+``--has-md true|false``、``--status pending|ready|failed``、``-q``（标题子串）、
+``--arxiv-id / --doi / --paper-id``（精确身份过滤）、
+``--page / --per-page / --sort created_at|updated_at`` 分页排序；
+默认表格输出 paper_id / has_md / status / 标题，``--json`` 输出原始响应。
+
+``qatlas paper lookup`` — 批量引用解析（``GET /api/papers/lookup``，
+``papers:read``）：接受 ``arxiv:`` / ``doi:`` / ``openalex:`` 引用，
+单次至多 200 条；每项报告 resolved / hosted / has_md 与元数据，
+是批量核对「有没有 markdown」的官方入口。
+
+``qatlas paper fetch`` — 批量提交下载（``POST /api/downloader/fetch``，
+需 ``papers:write``）：混合 DOI / arXiv ID / 论文链接，单次至多 50 条，
+可 ``--file FILE`` 从文件读（``#`` 注释行忽略）；输出逐项入队结果与
+``enqueued`` 汇总。入队不等于 PDF 已归档。
+
+``qatlas paper jobs`` — 下载进度（``papers:read``）：默认打印本地任务
+快照与 counters；``--remote`` 查询持久化 outbound fleet 快照；
+``--watch`` 轮询至空闲（Ctrl-C 提前退出码 130）；``--json`` 机器可读
+（watch 模式为 JSON lines 流）。
 
 ``qatlas contrib`` — 贡献者工作流
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -160,12 +186,55 @@ PDF 下载；产物默认落在 ``./papers``。
      - 说明
    * - ``qatlas search``
      - ``qatlas-search``
-     - agentic 多源学术搜索（默认走 qatlasd 代理，``--direct`` 本地跑）
+     - agentic 多源学术搜索（默认走 qatlasd 代理，``--direct`` 本地跑）；
+       子命令 ``survey``（规则化综述检索）与 ``multi``（逐平台原始结果）
    * - ``qatlas rag``
      - ``qatlas-rag``
      - 语义检索（qatlas-rag 微服务的 CLI 前端）
 
 未安装时会提示安装方法，不影响其他命令。
+
+插件协议（CLI plugin API v2）
+-----------------------------
+
+第三方包通过 entry-point 组 ``qatlas.plugins`` 向 CLI 贡献命令（协议定义在
+``qatlas/client/plugins/base.py``）：
+
+.. code-block:: toml
+
+   # 插件包自己的 pyproject.toml
+   [project.entry-points."qatlas.plugins"]
+   myplugin = "my_package.qatlas_plugin:plugin"
+
+插件类继承 ``QatlasPlugin``，从两个挂载点贡献命令：顶层
+``top_level_commands()``（``qatlas <name>``）与 ``contrib_subcommands()``
+（``qatlas contrib <name>``）。``available()`` 控制命令是否出现；
+插件导入失败只影响自己，不拖垮 CLI。
+
+**协议 v2 要点**：
+
+- ``CommandSpec.handler`` 支持两种签名：v1 的 ``handler(argv) -> int``
+  与 v2 的 ``handler(ctx, argv) -> int``（CLI 按签名探测分发，旧插件
+  无需改动）；
+- ``ctx`` 是 ``CliContext``（已解析的 ``server_base_url`` / ``token`` /
+  ``request_timeout`` / ``insecure`` / ``client_version``），与内置命令
+  读同一份 ``~/.config/qatlas/config.yaml`` 与 hosts.yml；
+- ``qatlas.client.pluginsupport`` 是插件的公共 HTTP 层：
+  ``server_request(ctx, method, path, ...)`` 自动带 PAT、
+  ``X-Qatlas-Client-Version`` 协商头、超时与 TLS 选项；
+  ``format_api_error(resp)`` 统一错误渲染；``poll_lro(ctx, path, ...)``
+  提供 LRO 轮询。插件不应再自行实现这些；
+- 退出码约定与核心一致：0 成功、1 传输/服务端错误、2 输入非法、
+  4 版本协商硬失败（写操作对更新服务端）；
+- 插件可声明 ``cli_api_version``；声明版本高于当前 CLI 提供的
+  ``PLUGIN_API_VERSION`` 时跳过其命令并在 stderr 给一行警告
+  （``QATLAS_QUIET=1`` 静默）；
+- ``CommandSpec.usage`` 可选字段会在 ``qatlas --help`` 里额外展示一行
+  用法。
+
+内置命令优先于插件命令；``search`` / ``rag`` 未安装时 CLI 给出安装提示
+（提示表在 ``qatlas/client/plugins/registry.py`` 的
+``KNOWN_STANDALONE_PLUGINS``）。
 
 示例
 ----
@@ -205,6 +274,17 @@ PDF 下载；产物默认落在 ``./papers``。
 
    # 本地直跑（不走服务端，需要自己配 key）
    qatlas search "graph neural network" --direct --tools arxiv,openalex,crossref
+
+   # 规则化综述检索（/api/search/survey）：按作者/年份/引用量过滤，
+   # 覆盖为 post-filter bounded（过滤已检索元数据，非穷尽）
+   qatlas search survey "topological qubits" \
+     --author "Felix von Oppenheim" --year-from 2020 --min-citations 50
+   qatlas search survey "surface codes" --query "surface code threshold" \
+     --query "mbqec" --sort citations --json
+
+   # 逐平台原始结果（/api/search/multi）：各平台自身排序，不做融合；
+   # 个人 backend key 由服务端注入
+   qatlas search multi "quantum error correction" --sources arxiv,openalex
 
 论文 ID 支持多种形式（服务端自动补全）：带版本 arXiv ID（``0811.3171v3``）、
 裸 arXiv ID（补最新版本）、裸旧式编号（补 ``quant-ph/`` 分类）、DOI。
