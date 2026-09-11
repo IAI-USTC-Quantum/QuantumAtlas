@@ -862,9 +862,43 @@ export function adminDownloaderEnrollment(): Promise<DownloaderEnrollment> {
 // Ops surface over the object-store bytes behind each registry paper.
 // search finds papers that have assets; list enumerates a paper's stored
 // objects; url mints a short-lived presigned S3 URL (1h TTL). /api/*
-// authenticates via the Authorization bearer header only, so <a>/iframe
-// navigations (which cannot carry headers) must go through the presigned
-// URL rather than the download/inline endpoints.
+// authenticates via the Authorization bearer header only, and presigned
+// URLs point at the internal object-store endpoint unless
+// s3.public_endpoint is configured — so <a>/<iframe> navigations can use
+// neither directly. Preview and download therefore STREAM the bytes
+// through the proxy endpoints (fetch attaches the bearer header) into a
+// blob object URL; the presigned url endpoint remains for copyable
+// direct links where the deployment exposes a public endpoint.
+
+export function assetInlinePath(paperId: string, kind: string): string {
+  return `/api/admin/assets/${encodeURIComponent(paperId)}/${encodeURIComponent(kind)}/inline`
+}
+
+export function assetDownloadPath(paperId: string, kind: string): string {
+  return `/api/admin/assets/${encodeURIComponent(paperId)}/${encodeURIComponent(kind)}/download`
+}
+
+// Fetch asset bytes through the bearer-authenticated proxy endpoint.
+export async function fetchAssetBlob(url: string): Promise<Blob> {
+  const response = await fetch(url, { headers: { ...authHeaders() } })
+  if (!response.ok) {
+    throw new Error(`${response.status} ${response.statusText}`)
+  }
+  return response.blob()
+}
+
+// Trigger a browser download for an in-memory blob and release the
+// object URL immediately after the anchor click.
+export function saveBlob(blob: Blob, filename: string): void {
+  const objectURL = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = objectURL
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  URL.revokeObjectURL(objectURL)
+}
 
 export type AdminAssetEntry = {
   kind: 'pdf' | 'markdown'

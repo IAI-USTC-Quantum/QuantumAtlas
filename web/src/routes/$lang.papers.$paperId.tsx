@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -12,7 +12,14 @@ import { Panel } from '@/components/panel'
 import { StatusBlock } from '@/components/status-block'
 import { useLang } from '@/hooks/use-lang'
 import { useAdminWhoami, usePaperDetail } from '@/lib/queries'
-import { adminAssetURL, authHeaders } from '@/lib/api'
+import {
+  adminAssetURL,
+  assetDownloadPath,
+  assetInlinePath,
+  authHeaders,
+  fetchAssetBlob,
+  saveBlob,
+} from '@/lib/api'
 import { PaperAcquisition } from '@/components/paper-acquisition'
 
 export const Route = createFileRoute('/$lang/papers/$paperId')({
@@ -194,17 +201,27 @@ function AdminAssetPreview({ paperId }: { paperId: string }) {
   const [pdfUrl, setPdfUrl] = useState('')
   const [previewError, setPreviewError] = useState('')
 
+  // Release the blob behind the previous object URL whenever it is
+  // replaced or the component goes away.
+  useEffect(() => {
+    return () => {
+      if (pdfUrl.startsWith('blob:')) URL.revokeObjectURL(pdfUrl)
+    }
+  }, [pdfUrl])
+
   if (!isAdmin) return null
 
   // /api/* authenticates via the Authorization bearer header only, so
-  // fetches attach it explicitly and <iframe>/download navigations go
-  // through a freshly minted presigned object-store URL.
+  // every fetch attaches it explicitly. Preview and download STREAM the
+  // bytes through the inline/download proxy endpoints into a blob object
+  // URL — <iframe>/<a> navigations cannot carry the header, and presigned
+  // object-store URLs would point at the internal endpoint unless
+  // s3.public_endpoint is configured.
   const fetchMd = async (kind: string) => {
     try {
-      const resp = await fetch(
-        `/api/admin/assets/${encodeURIComponent(paperId)}/${kind}/inline`,
-        { headers: { ...authHeaders() } },
-      )
+      const resp = await fetch(assetInlinePath(paperId, kind), {
+        headers: { ...authHeaders() },
+      })
       if (!resp.ok) throw new Error(`${resp.status} ${resp.statusText}`)
       setMdText(await resp.text())
     } catch (err) {
@@ -212,10 +229,10 @@ function AdminAssetPreview({ paperId }: { paperId: string }) {
     }
   }
 
-  const fetchPdfUrl = async () => {
+  const fetchPdfBlob = async () => {
     try {
-      const res = await adminAssetURL(paperId, 'pdf')
-      setPdfUrl(res.url)
+      const blob = await fetchAssetBlob(assetInlinePath(paperId, 'pdf'))
+      setPdfUrl(URL.createObjectURL(blob))
     } catch (err) {
       setPreviewError(err instanceof Error ? err.message : String(err))
     }
@@ -229,14 +246,14 @@ function AdminAssetPreview({ paperId }: { paperId: string }) {
     if (kind === 'markdown') {
       void fetchMd(kind)
     } else {
-      void fetchPdfUrl()
+      void fetchPdfBlob()
     }
   }
 
   const download = async (kind: 'pdf' | 'markdown') => {
     try {
-      const res = await adminAssetURL(paperId, kind)
-      window.open(res.url, '_blank', 'noopener,noreferrer')
+      const blob = await fetchAssetBlob(assetDownloadPath(paperId, kind))
+      saveBlob(blob, `${paperId}.${kind === 'pdf' ? 'pdf' : 'md'}`)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
     }

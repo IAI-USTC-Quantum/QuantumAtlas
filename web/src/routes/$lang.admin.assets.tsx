@@ -30,7 +30,10 @@ import { PageHeader } from '@/components/page-header'
 import { StatusBlock } from '@/components/status-block'
 import {
   adminAssetURL,
+  assetDownloadPath,
   authHeaders,
+  fetchAssetBlob,
+  saveBlob,
   type AdminAssetEntry,
   type AdminAssetSearchResponse,
   type AdminAssetURLResponse,
@@ -88,9 +91,11 @@ function AdminAssetsPage() {
   const [preview, setPreview] = useState<PreviewTarget | null>(null)
   const [urlTarget, setUrlTarget] = useState<URLTarget | null>(null)
 
-  // Markdown previews stream through the inline endpoint as text (the
-  // fetch carries the bearer header); PDFs render in an <iframe>, which
-  // cannot send headers, so they use a presigned object-store URL.
+  // Markdown previews stream through the inline endpoint as text; PDFs
+  // stream through the same endpoint as a blob object URL (the fetch
+  // carries the bearer header). A presigned object-store URL would depend
+  // on a publicly reachable s3.public_endpoint, which this deployment
+  // does not expose.
   const previewText = useQuery({
     queryKey: ['admin-asset-preview', preview?.paperId, preview?.kind],
     queryFn: () => fetchAssetText(assetInlineURL(preview!.paperId, preview!.kind)),
@@ -98,12 +103,23 @@ function AdminAssetsPage() {
     retry: false,
   })
 
-  const previewURL = useQuery({
-    queryKey: ['admin-asset-preview-url', preview?.paperId, preview?.kind],
-    queryFn: () => adminAssetURL(preview!.paperId, preview!.kind),
+  const previewBlobURL = useQuery({
+    queryKey: ['admin-asset-preview-blob', preview?.paperId, preview?.kind],
+    queryFn: async () => {
+      const blob = await fetchAssetBlob(assetInlineURL(preview!.paperId, preview!.kind))
+      return URL.createObjectURL(blob)
+    },
     enabled: preview !== null && preview.kind === 'pdf',
     retry: false,
   })
+
+  // Release the previous object URL when a new one replaces it (or on
+  // unmount) so the blob behind it can be garbage-collected.
+  useEffect(() => {
+    return () => {
+      if (previewBlobURL.data) URL.revokeObjectURL(previewBlobURL.data)
+    }
+  }, [previewBlobURL.data])
 
   const presignedURL = useQuery({
     queryKey: ['admin-asset-url', urlTarget?.paperId, urlTarget?.entry.kind],
@@ -214,7 +230,7 @@ function AdminAssetsPage() {
       <PreviewDialog
         preview={preview}
         text={previewText}
-        url={previewURL}
+        blobURL={previewBlobURL}
         onClose={() => setPreview(null)}
       />
 
@@ -359,8 +375,11 @@ function AssetRow({
   async function download() {
     setDownloading(true)
     try {
-      const { url } = await adminAssetURL(paperId, entry.kind)
-      window.open(url, '_blank', 'noopener,noreferrer')
+      // Stream through the bearer-authenticated proxy endpoint — <a>
+      // navigations can't carry the header, and presigned URLs would
+      // point at the internal object-store endpoint.
+      const blob = await fetchAssetBlob(assetDownloadPath(paperId, entry.kind))
+      saveBlob(blob, `${paperId}.${entry.kind === 'pdf' ? 'pdf' : 'md'}`)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error))
     } finally {
@@ -405,8 +424,8 @@ function AssetRow({
           >
             <Eye className="size-3.5" /> {t('assets.preview')}
           </Button>
-          {/* Browser navigations can't carry the bearer header, so the
-              download goes through a freshly minted presigned URL. */}
+          {/* The download streams the bytes through the authenticated
+              proxy endpoint into a blob (see download() below). */}
           <Button
             type="button"
             size="sm"
@@ -430,18 +449,18 @@ function AssetRow({
   )
 }
 
-// Preview dialog: PDFs render in an <iframe> pointed at a presigned
-// object-store URL; markdown is fetched as text (with the bearer header)
-// and shown verbatim in a <pre>.
+// Preview dialog: PDFs stream through the inline endpoint (bearer
+// header on the fetch) into a blob object URL rendered by an <iframe>;
+// markdown is fetched as text and shown verbatim in a <pre>.
 function PreviewDialog({
   preview,
   text,
-  url,
+  blobURL,
   onClose,
 }: {
   preview: PreviewTarget | null
   text: UseQueryResult<string, Error>
-  url: UseQueryResult<AdminAssetURLResponse, Error>
+  blobURL: UseQueryResult<string, Error>
   onClose: () => void
 }) {
   const { t } = useTranslation('admin')
@@ -459,13 +478,13 @@ function PreviewDialog({
         </DialogHeader>
         {preview?.kind === 'pdf' ? (
           <StatusBlock
-            loading={url.isLoading}
-            error={url.error?.message ?? ''}
+            loading={blobURL.isLoading}
+            error={blobURL.error?.message ?? ''}
             empty={false}
           >
-            {url.data && (
+            {blobURL.data && (
               <iframe
-                src={url.data.url}
+                src={blobURL.data}
                 title={t('assets.previewTitle', { kind: preview.kind })}
                 className="w-full rounded-md border border-border"
                 style={{ height: 600 }}
