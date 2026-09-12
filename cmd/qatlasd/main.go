@@ -1566,6 +1566,11 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// internal/routes/search.go.
 	routes.RegisterSearch(se, searchEngine, registryStore, enforcer)
 
+	// qatlas-rag query relay — POST /api/rag/retrieve + /api/rag/evidence.
+	// ragClient == nil (rag.remote disabled) leaves both routes mounted but
+	// answering 503. See internal/routes/rag.go.
+	routes.RegisterRagProxy(se, ragClient, enforcer)
+
 	// Per-user third-party search API keys (dashboard CRUD + injection
 	// into the multi/agentic proxy calls). Encrypted at rest with a key
 	// derived from the system PAT token; disabled (writes 503) when the

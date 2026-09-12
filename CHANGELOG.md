@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## v0.34.0 (2026-09-12)
+
+### Feat
+
+- **papers**: 论文资产读取面新增四个端点。`GET /api/papers/{id}/figures`：图注索引——`internal/paperassets.ExtractFigures` 从 MinerU markdown 归组图片引用（连续图片行=多面板图，图注先向下 12 行、再向上 4 行匹配 `FIG/Fig/Figure/图 N`），按图返回 `fig_no/caption/context` 与图片文件（大小取自 images zip 的 central directory 或旧式目录列举，不解压成员），未归组图片进 `unmatched_images`；无 markdown 时 200 + `markdown_ready:false`。`GET /api/papers/{id}/images/{name}`：单图下载（文件名白名单 sha256+常见图片扩展名，zip 内存解成员 / 目录直读，`Cache-Control: public, max-age=86400`），qa_/arXiv/DOI 三种 id 形态均可寻址。`GET /api/papers/status/batch?ids=`：批量资产状态（≤200 个 id，去重；逐条复用 markdown/status 的状态机与版本号默认规则，未收录记 `error:"not found"`，单条失败不拖垮整批）。`POST /api/rag/retrieve` 与 `POST /api/rag/evidence`：qatlas-rag 查询代理——请求体 ≤64KiB 透传、响应原样回传（schema 归 qatlas-rag 仓库），rag.remote 未启用 503，上游非 2xx 原状态转发；`internal/rag.RemoteClient` 新增 `Retrieve/Evidence` 与 `ErrNotConfigured`。全部走 papers:read scope，OpenAPI 注解同步重生成。
+
 ## v0.33.0 (2026-09-12)
 
 ### Feat

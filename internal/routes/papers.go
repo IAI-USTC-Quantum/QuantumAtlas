@@ -112,19 +112,32 @@ func RegisterPapers(
 		if raw == "stats" {
 			return paperStatsHandler(re, catalog)
 		}
+		// Batch asset-status probe (same path-only special-case family
+		// as stats / lookup): GET /api/papers/status/batch?ids=...
+		if raw == "status/batch" {
+			return paperStatusBatchHandler(re, catalog, rawStore, converter)
+		}
 		// Batch reference resolver (ADR 0007): GET /api/papers/lookup?ids=...
 		// is a path-only special case (like stats / needs-mineru), resolving
 		// namespaced kind:id refs against the local OpenAlex corpus.
 		if raw == "lookup" {
 			return paperLookupHandler(re, catalog, corpus, corpusLoader)
 		}
-		// Paper detail by surrogate id: GET /api/papers/qa_<ulid>, and the
-		// on-demand image listing: GET /api/papers/qa_<ulid>/images.
+		// Paper detail by surrogate id: GET /api/papers/qa_<ulid>, the
+		// on-demand image listing: GET /api/papers/qa_<ulid>/images, the
+		// figure/caption index: GET /api/papers/qa_<ulid>/figures, and
+		// the single-image download: GET /api/papers/qa_<ulid>/images/<name>.
 		// "qa_" never collides with an arXiv id / DOI, so it dispatches
 		// ahead of the asset-download handlers below.
 		if strings.HasPrefix(raw, "qa_") {
 			if id, ok := strings.CutSuffix(raw, "/images"); ok && !strings.Contains(id, "/") {
 				return paperImagesHandler(re, catalog, rawStore, id)
+			}
+			if id, ok := strings.CutSuffix(raw, "/figures"); ok && !strings.Contains(id, "/") {
+				return paperFiguresHandler(re, catalog, rawStore, id)
+			}
+			if id, name, ok := splitQAImagesMember(raw); ok {
+				return paperImageGetHandler(re, catalog, rawStore, id, name)
 			}
 			if !strings.Contains(raw, "/") {
 				return paperDetailHandler(re, catalog, raw, ingester, converter)
@@ -178,6 +191,9 @@ func RegisterPapers(
 			// last-slash rule leaves action="zip" with "/images"
 			// glued onto the id.
 			arxivPart, action = peelImagesZipAction(arxivPart, action)
+			// .../images/<sha>.<ext> peels the same way into the
+			// single-image download action.
+			arxivPart, action = peelImagesMemberAction(arxivPart, action)
 			requestedID := arxivPart
 			bareIDPostDOI := arxivPart
 			forceArxiv := parseForceArxivQuery(re)
@@ -209,7 +225,7 @@ func RegisterPapers(
 					// DOI-only paper (no arXiv identity): serve from
 					// the DOI namespace directly.
 					applyDOICanonicalHeaders(re, requestedID, target.DOI, "")
-					return dispatchGETDOIHandlers(re, cfg, rawStore, converter, target.DOI, action, statusKind, raw, "")
+					return dispatchGETDOIHandlers(re, cfg, rawStore, catalog, converter, target.DOI, action, statusKind, raw, "")
 				}
 				// arXiv identity: rewrite arxivPart to the version the
 				// catalog already holds (highest ingested arXiv asset
@@ -279,7 +295,7 @@ func RegisterPapers(
 					switch outcome {
 					case doiServeDOI:
 						applyDOICanonicalHeaders(re, requestedID, doi, "")
-						return dispatchGETDOIHandlers(re, cfg, rawStore, converter, doi, action, statusKind, raw, "")
+						return dispatchGETDOIHandlers(re, cfg, rawStore, catalog, converter, doi, action, statusKind, raw, "")
 					case doiServeArxiv:
 						// Mirror of the HasPublishedAsset guard the
 						// arXiv-input shape (b) applies before
@@ -325,7 +341,7 @@ func RegisterPapers(
 							}
 							if hit {
 								applyDOICanonicalHeaders(re, requestedID, doi, "")
-								return dispatchGETDOIHandlers(re, cfg, rawStore, converter, doi, action, statusKind, raw, "")
+								return dispatchGETDOIHandlers(re, cfg, rawStore, catalog, converter, doi, action, statusKind, raw, "")
 							}
 							// Catalog reachable + no local DOI node + no
 							// OpenAlex arxiv twin + no OA PDF → genuine 404.
@@ -358,7 +374,7 @@ func RegisterPapers(
 							})
 						}
 						applyDOICanonicalHeaders(re, requestedID, doi, "")
-						return dispatchGETDOIHandlers(re, cfg, rawStore, converter, doi, action, statusKind, raw, res.OAPdfURL)
+						return dispatchGETDOIHandlers(re, cfg, rawStore, catalog, converter, doi, action, statusKind, raw, res.OAPdfURL)
 					}
 					bareIDPostDOI = res.ArxivID
 					arxivPart = res.ArxivID
@@ -387,7 +403,7 @@ func RegisterPapers(
 					// the caller expects.
 					if hasPub, err := catalog.HasPublishedAsset(ctx, doi); err == nil && hasPub {
 						applyDOICanonicalHeaders(re, requestedID, doi, arxivPart)
-						return dispatchGETDOIHandlers(re, cfg, rawStore, converter, doi, action, statusKind, raw, "")
+						return dispatchGETDOIHandlers(re, cfg, rawStore, catalog, converter, doi, action, statusKind, raw, "")
 					}
 				}
 				// catalog down / lookup error / no DOI twin: fall
@@ -437,6 +453,10 @@ func RegisterPapers(
 				return pdfHandler(re, cfg, rawStore, converter, arxivPart)
 			case action == "images/zip":
 				return imagesZipHandler(re, rawStore, arxivPart)
+			case action == "figures":
+				return paperFiguresHandler(re, catalog, rawStore, arxivPart)
+			case isImagesMemberAction(action):
+				return paperImageGetHandler(re, catalog, rawStore, arxivPart, strings.TrimPrefix(action, "images/"))
 			}
 		}
 		return re.JSON(http.StatusNotFound, map[string]string{
@@ -565,9 +585,10 @@ type paperCatalog interface {
 
 // isKnownGETAction reports whether the trailing path segment(s) of raw
 // name one of the asset dispatcher's actions (markdown / pdf / images /
-// images/zip / the .../markdown/status + .../pdf/status variants, or a
-// bare status). It applies the same peeling the dispatcher does so the
-// two can never disagree about what counts as an action.
+// images/zip / figures / the single-image .../images/<name> member / the
+// .../markdown/status + .../pdf/status variants, or a bare status). It
+// applies the same peeling the dispatcher does so the two can never
+// disagree about what counts as an action.
 func isKnownGETAction(raw string) bool {
 	arxivPart, action := splitPapersPath(raw)
 	arxivPart = normalizeIDForDispatch(arxivPart)
@@ -578,11 +599,12 @@ func isKnownGETAction(raw string) bool {
 		}
 	}
 	arxivPart, action = peelImagesZipAction(arxivPart, action)
+	arxivPart, action = peelImagesMemberAction(arxivPart, action)
 	switch action {
-	case "markdown", "pdf", "images", "images/zip", "status":
+	case "markdown", "pdf", "images", "images/zip", "figures", "status":
 		return true
 	}
-	return false
+	return isImagesMemberAction(action)
 }
 
 // dispatchDetailByIdentifier serves GET /api/papers/<identifier> for
@@ -876,6 +898,9 @@ func applyDOICanonicalHeaders(re *core.RequestEvent, requestedID, doi, arxivTwin
 // Centralised so both shape (a) and shape (b) of the canonical-DOI
 // redirect go through the same handler-selection logic.
 //
+// catalog feeds the registry-backed handlers (figures index, single-image
+// download), which resolve the DOI onto the paper's default asset.
+//
 // rawPath is the original "{id}/{action}" path component, used solely
 // for the 404 fallback message when an unknown action sneaks through
 // (shouldn't happen in practice but the parser leaves it observable).
@@ -888,6 +913,7 @@ func dispatchGETDOIHandlers(
 	re *core.RequestEvent,
 	cfg *config.Config,
 	store objstore.Store,
+	catalog paperCatalog,
 	converter *mineru.Converter,
 	doi, action, statusKind, rawPath, oaPdfURL string,
 ) error {
@@ -902,6 +928,10 @@ func dispatchGETDOIHandlers(
 		return getPDFByDOIHandler(re, cfg, store, converter, doi)
 	case action == "images/zip":
 		return imagesZipByDOIHandler(re, store, doi)
+	case action == "figures":
+		return paperFiguresHandler(re, catalog, store, doi)
+	case isImagesMemberAction(action):
+		return paperImageGetHandler(re, catalog, store, doi, strings.TrimPrefix(action, "images/"))
 	case action == "status":
 		return re.JSON(http.StatusOK, map[string]any{
 			"status": "available",

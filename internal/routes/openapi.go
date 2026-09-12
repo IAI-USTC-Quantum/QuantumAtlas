@@ -636,6 +636,90 @@ func docPaperPDFStatus() {}
 // @Router      /api/papers/{id_or_doi}/images/zip [get]
 func docPaperImagesZip() {}
 
+// paperFigures returns the figure/caption index extracted from the
+// paper's MinerU markdown.
+//
+// @Summary     Get paper figures index
+// @Description Groups the markdown's image references into figures:
+// @Description consecutive `![](images/<sha256>.<ext>)` lines form one
+// @Description multi-panel figure sharing a caption (searched up to 12
+// @Description lines below the group, then 4 lines above). Each figure
+// @Description reports its number, caption, the preceding prose line as
+// @Description context (≤200 runes) and its image files with sizes plus
+// @Description per-image download URLs; images no figure references come
+// @Description back as unmatched_images, and image_count is the total
+// @Description listed. Sizes come from the images zip's central
+// @Description directory (no member decompression) or the legacy
+// @Description per-paper directory listing. A paper with no markdown
+// @Description answers 200 with markdown_ready:false and empty figures
+// @Description (its conversion has not produced markdown yet). The id
+// @Description may be a qa_ surrogate, an arXiv id, or a DOI; arXiv/DOI
+// @Description forms are only dispatched when
+// @Description QATLAS_PAPER_ACCESS_ENABLED=true.
+// @Tags        Papers
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id path string true "paper id: qa_... | arXiv id | DOI"
+// @Success     200 {object} map[string]interface{} "{paper_id, resolved_id, markdown_ready, figures:[{fig_no, caption, context, images:[{name,size,url}]}], unmatched_images:[{name,size,url}], image_count}"
+// @Failure     400 {object} map[string]string "unrecognized paper id"
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Failure     404 {object} map[string]string "no such paper"
+// @Failure     503 {object} map[string]string "registry unavailable"
+// @Router      /api/papers/{id}/figures [get]
+func docPaperFigures() {}
+
+// paperImageGet streams one extracted image of a paper.
+//
+// @Summary     Get paper image
+// @Description Serves a single MinerU-extracted image (content-addressed
+// @Description `<sha256>.<jpg|jpeg|png|gif|webp>`) without downloading
+// @Description the whole images zip — the URLs in the figures index and
+// @Description the images listing point here. Bytes come from the
+// @Description paper's images zip (member extracted in memory) or its
+// @Description legacy per-paper directory. Responses are immutable
+// @Description content-addressed files and carry
+// @Description `Cache-Control: public, max-age=86400`. The id may be a
+// @Description qa_ surrogate, an arXiv id, or a DOI; arXiv/DOI forms are
+// @Description only dispatched when QATLAS_PAPER_ACCESS_ENABLED=true.
+// @Tags        Papers
+// @Produce     image/jpeg
+// @Security    BearerAuth
+// @Param       id path string true "paper id: qa_... | arXiv id | DOI"
+// @Param       name path string true "image file name: <sha256-hex>.<jpg|jpeg|png|gif|webp>"
+// @Success     200 {file} binary "image bytes with the per-extension Content-Type"
+// @Failure     400 {object} map[string]string "name is not a whitelisted image file name"
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Failure     404 {object} map[string]string "no such paper, or the paper's images hold no such member"
+// @Failure     503 {object} map[string]string "registry unavailable"
+// @Router      /api/papers/{id}/images/{name} [get]
+func docPaperImageGet() {}
+
+// paperStatusBatch probes asset readiness for up to 200 papers at once.
+//
+// @Summary     Batch paper asset status
+// @Description Folds the .../markdown/status agent-decision surface into
+// @Description one request: for each comma-separated id (qa_ surrogate,
+// @Description arXiv id, or DOI — de-duplicated, max 200) the entry
+// @Description carries requested_id, the resolved serving id (bare
+// @Description arXiv inputs pin to the highest ingested asset version),
+// @Description md_ready / pdf_ready store probes, the converter
+// @Description state machine's state/phase labels, the default asset's
+// @Description image_count, and an error field ("not found" for ids the
+// @Description registry does not host; "catalog unavailable" when
+// @Description PostgreSQL is down — per-entry, never failing the batch).
+// @Tags        Papers
+// @Produce     json
+// @Security    BearerAuth
+// @Param       ids query string true "comma-separated paper ids (qa_... | arXiv id | DOI; max 200)"
+// @Success     200 {object} map[string]interface{} "{results:[{requested_id, resolved_id, md_ready, pdf_ready, image_count, phase, state, error}]}"
+// @Failure     400 {object} map[string]string "missing or over-limit ids list"
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Router      /api/papers/status/batch [get]
+func docPaperStatusBatch() {}
+
 // uploadPDF stores a paper PDF.
 //
 // @Summary     Upload paper PDF (arXiv id or DOI)
@@ -1165,6 +1249,7 @@ func docAdminAssetURL() {}
 // @Router      /api/admin/assets/search [get]
 func docAdminAssetSearch() {}
 
+// searchSurveyDoc is the bounded survey-search surface.
 // searchSurvey godoc
 // @Summary Plan and execute a bounded academic survey search
 // @Description Keywords, author/year/venue/citation rules and agentic planning are owned by qatlas-search. Rules filter a bounded retrieved set, not an exhaustive corpus. Per-user backend keys are injected by qatlasd and cannot be supplied by callers.
@@ -1178,3 +1263,56 @@ func docAdminAssetSearch() {}
 // @Failure 503 {object} map[string]string
 // @Router /api/search/survey [post]
 func searchSurveyDoc() {}
+
+// --- RAG ----------------------------------------------------------------------
+
+// ragRetrieve relays one semantic-retrieval query to the qatlas-rag
+// microservice.
+//
+// @Summary     RAG retrieve (proxied)
+// @Description Forwards the request body verbatim to qatlas-rag's
+// @Description POST /v1/retrieve (the retrieve request/response schema
+// @Description belongs to the qatlas-rag repository — qatlasd only
+// @Description authenticates the caller and relays, so schema changes
+// @Description never need a qatlasd release) and streams the reply back
+// @Description as-is. Bodies are capped at 64 KiB. rag.remote disabled →
+// @Description 503 "rag service not configured"; microservice
+// @Description unreachable → 503 "rag unreachable: …"; a non-2xx
+// @Description upstream reply is forwarded with its own status + body so
+// @Description clients see the rag error schema. Requires the
+// @Description papers:read scope.
+// @Tags        RAG
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body body object true "retrieve query (qatlas-rag /v1/retrieve schema)"
+// @Success     200 {object} map[string]interface{} "the microservice's reply, relayed verbatim"
+// @Failure     400 {object} map[string]string "body read failed"
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Failure     413 {object} map[string]string "body exceeds 64 KiB"
+// @Failure     503 {object} map[string]string "rag.remote disabled / microservice unreachable"
+// @Router      /api/rag/retrieve [post]
+func docRagRetrieve() {}
+
+// ragEvidence relays one evidence lookup to the qatlas-rag microservice.
+//
+// @Summary     RAG evidence (proxied)
+// @Description Same relay contract as /api/rag/retrieve but targeting
+// @Description qatlas-rag's POST /v1/evidence: body forwarded verbatim,
+// @Description reply streamed back as-is, 64 KiB cap, upstream errors
+// @Description forwarded with their own status. Requires the papers:read
+// @Description scope.
+// @Tags        RAG
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body body object true "evidence query (qatlas-rag /v1/evidence schema)"
+// @Success     200 {object} map[string]interface{} "the microservice's reply, relayed verbatim"
+// @Failure     400 {object} map[string]string "body read failed"
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Failure     413 {object} map[string]string "body exceeds 64 KiB"
+// @Failure     503 {object} map[string]string "rag.remote disabled / microservice unreachable"
+// @Router      /api/rag/evidence [post]
+func docRagEvidence() {}

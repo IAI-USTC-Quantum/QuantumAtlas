@@ -1579,6 +1579,68 @@
                 }
             }
         },
+        "/api/papers/status/batch": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Folds the .../markdown/status agent-decision surface into\none request: for each comma-separated id (qa_ surrogate,\narXiv id, or DOI — de-duplicated, max 200) the entry\ncarries requested_id, the resolved serving id (bare\narXiv inputs pin to the highest ingested asset version),\nmd_ready / pdf_ready store probes, the converter\nstate machine's state/phase labels, the default asset's\nimage_count, and an error field (\"not found\" for ids the\nregistry does not host; \"catalog unavailable\" when\nPostgreSQL is down — per-entry, never failing the batch).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Papers"
+                ],
+                "summary": "Batch paper asset status",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "comma-separated paper ids (qa_... | arXiv id | DOI; max 200)",
+                        "name": "ids",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{results:[{requested_id, resolved_id, md_ready, pdf_ready, image_count, phase, state, error}]}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "missing or over-limit ids list",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/papers/{arxiv_id}/mineru-claim": {
             "post": {
                 "security": [
@@ -2346,6 +2408,172 @@
                 }
             }
         },
+        "/api/papers/{id}/figures": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Groups the markdown's image references into figures:\nconsecutive `![](images/\u003csha256\u003e.\u003cext\u003e)` lines form one\nmulti-panel figure sharing a caption (searched up to 12\nlines below the group, then 4 lines above). Each figure\nreports its number, caption, the preceding prose line as\ncontext (≤200 runes) and its image files with sizes plus\nper-image download URLs; images no figure references come\nback as unmatched_images, and image_count is the total\nlisted. Sizes come from the images zip's central\ndirectory (no member decompression) or the legacy\nper-paper directory listing. A paper with no markdown\nanswers 200 with markdown_ready:false and empty figures\n(its conversion has not produced markdown yet). The id\nmay be a qa_ surrogate, an arXiv id, or a DOI; arXiv/DOI\nforms are only dispatched when\nQATLAS_PAPER_ACCESS_ENABLED=true.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Papers"
+                ],
+                "summary": "Get paper figures index",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "paper id: qa_... | arXiv id | DOI",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{paper_id, resolved_id, markdown_ready, figures:[{fig_no, caption, context, images:[{name,size,url}]}], unmatched_images:[{name,size,url}], image_count}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "unrecognized paper id",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "no such paper",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "registry unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/papers/{id}/images/{name}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Serves a single MinerU-extracted image (content-addressed\n`\u003csha256\u003e.\u003cjpg|jpeg|png|gif|webp\u003e`) without downloading\nthe whole images zip — the URLs in the figures index and\nthe images listing point here. Bytes come from the\npaper's images zip (member extracted in memory) or its\nlegacy per-paper directory. Responses are immutable\ncontent-addressed files and carry\n`Cache-Control: public, max-age=86400`. The id may be a\nqa_ surrogate, an arXiv id, or a DOI; arXiv/DOI forms are\nonly dispatched when QATLAS_PAPER_ACCESS_ENABLED=true.",
+                "produces": [
+                    "image/jpeg"
+                ],
+                "tags": [
+                    "Papers"
+                ],
+                "summary": "Get paper image",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "paper id: qa_... | arXiv id | DOI",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "image file name: \u003csha256-hex\u003e.\u003cjpg|jpeg|png|gif|webp\u003e",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "image bytes with the per-extension Content-Type",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "400": {
+                        "description": "name is not a whitelisted image file name",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "no such paper, or the paper's images hold no such member",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "registry unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/papers/{paper_id}": {
             "get": {
                 "security": [
@@ -2617,6 +2845,176 @@
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/rag/evidence": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Same relay contract as /api/rag/retrieve but targeting\nqatlas-rag's POST /v1/evidence: body forwarded verbatim,\nreply streamed back as-is, 64 KiB cap, upstream errors\nforwarded with their own status. Requires the papers:read\nscope.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "RAG"
+                ],
+                "summary": "RAG evidence (proxied)",
+                "parameters": [
+                    {
+                        "description": "evidence query (qatlas-rag /v1/evidence schema)",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "the microservice's reply, relayed verbatim",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "body read failed",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "413": {
+                        "description": "body exceeds 64 KiB",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "rag.remote disabled / microservice unreachable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/rag/retrieve": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Forwards the request body verbatim to qatlas-rag's\nPOST /v1/retrieve (the retrieve request/response schema\nbelongs to the qatlas-rag repository — qatlasd only\nauthenticates the caller and relays, so schema changes\nnever need a qatlasd release) and streams the reply back\nas-is. Bodies are capped at 64 KiB. rag.remote disabled →\n503 \"rag service not configured\"; microservice\nunreachable → 503 \"rag unreachable: …\"; a non-2xx\nupstream reply is forwarded with its own status + body so\nclients see the rag error schema. Requires the\npapers:read scope.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "RAG"
+                ],
+                "summary": "RAG retrieve (proxied)",
+                "parameters": [
+                    {
+                        "description": "retrieve query (qatlas-rag /v1/retrieve schema)",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "the microservice's reply, relayed verbatim",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "body read failed",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "413": {
+                        "description": "body exceeds 64 KiB",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "rag.remote disabled / microservice unreachable",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {

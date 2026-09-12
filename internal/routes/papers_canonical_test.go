@@ -170,7 +170,7 @@ func TestDispatchGETDOIHandlersStatusAction(t *testing.T) {
 	)
 
 	cfg := &config.Config{}
-	if err := dispatchGETDOIHandlers(re, cfg, canonicalNoopStore{}, nil, doi, "status", "", doi+"/status", ""); err != nil {
+	if err := dispatchGETDOIHandlers(re, cfg, canonicalNoopStore{}, nil, nil, doi, "status", "", doi+"/status", ""); err != nil {
 		t.Fatalf("handler: %v", err)
 	}
 	if rec.Code != http.StatusOK {
@@ -190,7 +190,7 @@ func TestDispatchGETDOIHandlersUnknownAction(t *testing.T) {
 	)
 
 	cfg := &config.Config{}
-	if err := dispatchGETDOIHandlers(re, cfg, canonicalNoopStore{}, nil, doi, "totally-unknown", "", doi+"/totally-unknown", ""); err != nil {
+	if err := dispatchGETDOIHandlers(re, cfg, canonicalNoopStore{}, nil, nil, doi, "totally-unknown", "", doi+"/totally-unknown", ""); err != nil {
 		t.Fatalf("handler: %v", err)
 	}
 	if rec.Code != http.StatusNotFound {

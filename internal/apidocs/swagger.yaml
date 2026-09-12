@@ -1767,6 +1767,142 @@ paths:
       summary: Get PDF fetch status
       tags:
       - Papers
+  /api/papers/{id}/figures:
+    get:
+      description: |-
+        Groups the markdown's image references into figures:
+        consecutive `![](images/<sha256>.<ext>)` lines form one
+        multi-panel figure sharing a caption (searched up to 12
+        lines below the group, then 4 lines above). Each figure
+        reports its number, caption, the preceding prose line as
+        context (≤200 runes) and its image files with sizes plus
+        per-image download URLs; images no figure references come
+        back as unmatched_images, and image_count is the total
+        listed. Sizes come from the images zip's central
+        directory (no member decompression) or the legacy
+        per-paper directory listing. A paper with no markdown
+        answers 200 with markdown_ready:false and empty figures
+        (its conversion has not produced markdown yet). The id
+        may be a qa_ surrogate, an arXiv id, or a DOI; arXiv/DOI
+        forms are only dispatched when
+        QATLAS_PAPER_ACCESS_ENABLED=true.
+      parameters:
+      - description: 'paper id: qa_... | arXiv id | DOI'
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{paper_id, resolved_id, markdown_ready, figures:[{fig_no,
+            caption, context, images:[{name,size,url}]}], unmatched_images:[{name,size,url}],
+            image_count}'
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: unrecognized paper id
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: no such paper
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: registry unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get paper figures index
+      tags:
+      - Papers
+  /api/papers/{id}/images/{name}:
+    get:
+      description: |-
+        Serves a single MinerU-extracted image (content-addressed
+        `<sha256>.<jpg|jpeg|png|gif|webp>`) without downloading
+        the whole images zip — the URLs in the figures index and
+        the images listing point here. Bytes come from the
+        paper's images zip (member extracted in memory) or its
+        legacy per-paper directory. Responses are immutable
+        content-addressed files and carry
+        `Cache-Control: public, max-age=86400`. The id may be a
+        qa_ surrogate, an arXiv id, or a DOI; arXiv/DOI forms are
+        only dispatched when QATLAS_PAPER_ACCESS_ENABLED=true.
+      parameters:
+      - description: 'paper id: qa_... | arXiv id | DOI'
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 'image file name: <sha256-hex>.<jpg|jpeg|png|gif|webp>'
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - image/jpeg
+      responses:
+        "200":
+          description: image bytes with the per-extension Content-Type
+          schema:
+            type: file
+        "400":
+          description: name is not a whitelisted image file name
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: no such paper, or the paper's images hold no such member
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: registry unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get paper image
+      tags:
+      - Papers
   /api/papers/{paper_id}:
     get:
       description: |-
@@ -2053,6 +2189,57 @@ paths:
       summary: Paper statistics
       tags:
       - Papers
+  /api/papers/status/batch:
+    get:
+      description: |-
+        Folds the .../markdown/status agent-decision surface into
+        one request: for each comma-separated id (qa_ surrogate,
+        arXiv id, or DOI — de-duplicated, max 200) the entry
+        carries requested_id, the resolved serving id (bare
+        arXiv inputs pin to the highest ingested asset version),
+        md_ready / pdf_ready store probes, the converter
+        state machine's state/phase labels, the default asset's
+        image_count, and an error field ("not found" for ids the
+        registry does not host; "catalog unavailable" when
+        PostgreSQL is down — per-entry, never failing the batch).
+      parameters:
+      - description: comma-separated paper ids (qa_... | arXiv id | DOI; max 200)
+        in: query
+        name: ids
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{results:[{requested_id, resolved_id, md_ready, pdf_ready,
+            image_count, phase, state, error}]}'
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: missing or over-limit ids list
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Batch paper asset status
+      tags:
+      - Papers
   /api/pat:
     get:
       produces:
@@ -2145,6 +2332,132 @@ paths:
       summary: PAT scopes
       tags:
       - PAT
+  /api/rag/evidence:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Same relay contract as /api/rag/retrieve but targeting
+        qatlas-rag's POST /v1/evidence: body forwarded verbatim,
+        reply streamed back as-is, 64 KiB cap, upstream errors
+        forwarded with their own status. Requires the papers:read
+        scope.
+      parameters:
+      - description: evidence query (qatlas-rag /v1/evidence schema)
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: the microservice's reply, relayed verbatim
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: body read failed
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "413":
+          description: body exceeds 64 KiB
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: rag.remote disabled / microservice unreachable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: RAG evidence (proxied)
+      tags:
+      - RAG
+  /api/rag/retrieve:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Forwards the request body verbatim to qatlas-rag's
+        POST /v1/retrieve (the retrieve request/response schema
+        belongs to the qatlas-rag repository — qatlasd only
+        authenticates the caller and relays, so schema changes
+        never need a qatlasd release) and streams the reply back
+        as-is. Bodies are capped at 64 KiB. rag.remote disabled →
+        503 "rag service not configured"; microservice
+        unreachable → 503 "rag unreachable: …"; a non-2xx
+        upstream reply is forwarded with its own status + body so
+        clients see the rag error schema. Requires the
+        papers:read scope.
+      parameters:
+      - description: retrieve query (qatlas-rag /v1/retrieve schema)
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: the microservice's reply, relayed verbatim
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: body read failed
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "413":
+          description: body exceeds 64 KiB
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: rag.remote disabled / microservice unreachable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: RAG retrieve (proxied)
+      tags:
+      - RAG
   /api/search:
     post:
       consumes:

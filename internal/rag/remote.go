@@ -13,6 +13,9 @@
 //	req:  {"paper_id": "<arxiv_id or DOI>"}   — triggers the index
 //	      build for that paper; idempotent
 //	resp: task-status JSON (any 2xx = accepted)
+//	POST {url}/v1/retrieve, /v1/evidence   Authorization: Bearer {token}
+//	req/resp: qatlas-rag's own JSON schema, proxied verbatim by
+//	      qatlasd's POST /api/rag/* routes (Retrieve / Evidence)
 //	GET  {url}/healthz    → 200 {"status":"ok",...}
 package rag
 
@@ -20,6 +23,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -27,9 +31,9 @@ import (
 	"time"
 )
 
-// RemoteClient is the client for the qatlas-rag microservice. It only
-// pushes index builds (PushIndex); Healthz backs the plugin-status
-// probe and is never on the push path.
+// RemoteClient is the client for the qatlas-rag microservice. PushIndex
+// drives index builds; Retrieve / Evidence relay the query surface for
+// the /api/rag proxy routes; Healthz backs the plugin-status probe.
 type RemoteClient struct {
 	client  *http.Client
 	baseURL string // trimmed of trailing slashes; /v1/index is appended
@@ -78,6 +82,70 @@ func (c *RemoteClient) Healthz(ctx context.Context) error {
 		return fmt.Errorf("rag remote healthz: status %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// ErrNotConfigured is returned by Retrieve / Evidence when the client has
+// no base URL (rag.remote disabled). The proxy route maps it onto 503.
+var ErrNotConfigured = errors.New("rag remote: not configured")
+
+// UpstreamError marks a non-2xx reply from the microservice. The proxy
+// route forwards the upstream status and body verbatim instead of
+// collapsing it into a generic 503, so rag clients see their own error
+// schema.
+type UpstreamError struct {
+	Status int
+	Body   []byte
+}
+
+func (e *UpstreamError) Error() string {
+	return fmt.Sprintf("rag remote: status %d: %s", e.Status, strings.TrimSpace(string(e.Body)))
+}
+
+// Retrieve proxies one POST {base}/v1/retrieve call. body is forwarded
+// verbatim (the retrieve request/response schema belongs to the qatlas-rag
+// repository; qatlasd only authenticates and relays) and the response
+// body bytes are returned as-is.
+func (c *RemoteClient) Retrieve(ctx context.Context, body []byte) ([]byte, error) {
+	return c.proxyQuery(ctx, "/v1/retrieve", body)
+}
+
+// Evidence proxies one POST {base}/v1/evidence call, same passthrough
+// contract as Retrieve.
+func (c *RemoteClient) Evidence(ctx context.Context, body []byte) ([]byte, error) {
+	return c.proxyQuery(ctx, "/v1/evidence", body)
+}
+
+// proxyQuery is the shared Retrieve/Evidence driver: POST path with the
+// bearer token, stream the request bytes, return the response bytes.
+// Network failures wrap the underlying error; non-2xx replies come back
+// as *UpstreamError carrying the status and body.
+func (c *RemoteClient) proxyQuery(ctx context.Context, path string, body []byte) ([]byte, error) {
+	// Nil receiver: same typed-nil guard as Healthz — a disabled
+	// rag.remote yields a nil *RemoteClient the route layer may hold.
+	if c == nil || c.baseURL == "" {
+		return nil, ErrNotConfigured
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("rag remote: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, fmt.Errorf("rag remote: read body: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return raw, &UpstreamError{Status: resp.StatusCode, Body: raw}
+	}
+	return raw, nil
 }
 
 // PushIndex asks qatlas-rag to build the index for paperID (an arXiv
