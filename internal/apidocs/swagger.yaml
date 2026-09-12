@@ -1923,6 +1923,73 @@ paths:
       summary: Resolve references (batch, exact)
       tags:
       - Papers
+  /api/papers/match:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Decides whether papers (qatlas-id / DOI / arXiv id /
+        OpenAlex id / paper URL / title) are already inside the
+        qatlas registry and returns the unified qa_… id.
+        Precision-first: identifiers match exactly after strict
+        normalization (trim / lowercase / known URL prefix /
+        arXiv vN); titles match only when EVERY word matches
+        (case-insensitive, order-insensitive). Merged papers
+        resolve to the surviving paper. Free-form `inputs` are
+        auto-detected per entry; the typed fields force a kind;
+        author/year narrow ambiguous title matches.
+      parameters:
+      - description: '{inputs: [string], doi?, arxiv_id?, openalex_id?, qatlas_id?,
+          url?, title?, author?, year?}'
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{results: [{input, kind, normalized, matched, qatlas_id, method,
+            ambiguous, paper, candidates, truncated, reason}]}'
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "502":
+          description: Bad Gateway
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Match paper identities against the registry
+      tags:
+      - Papers
   /api/papers/needs-mineru:
     get:
       parameters:

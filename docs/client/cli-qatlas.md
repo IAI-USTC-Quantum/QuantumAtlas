@@ -334,11 +334,14 @@ qatlas auth token  [-s | --server-url <URL>]
 |---|---|---|
 | `qatlas search` | qatlas-search | 多源论文搜索（agentic 微服务，含本地语义检索 backend）|
 | `qatlas rag` | qatlas-rag | 直接查询 qatlas-rag 语义检索服务（`POST /v1/retrieve`），支持 `--server` / `--token` / `--max-results` / `--json` |
+| `qatlas match` | qatlas-match | 论文身份高精度匹配：判定 qatlas-id / DOI / arXiv / OpenAlex / URL / 标题是否已入库并返回统一 `qa_…` id（标题必须每个单词都匹配；`--author` / `--year` 消歧，`--json`、部署机 `--direct`）|
 
-两个插件仓库均为私有仓（IAI-USTC-Quantum/qatlas-search、
-IAI-USTC-Quantum/qatlas-rag），按提示中的 `uv tool install --from git+ssh://...`
-方式安装。`qatlas rag` 需要能访问 qatlas-rag 服务（默认 `127.0.0.1:8801`，
-即部署该服务的主机或可达的内网地址）。
+三个插件仓库均为私有仓（IAI-USTC-Quantum/qatlas-search、
+IAI-USTC-Quantum/qatlas-rag、IAI-USTC-Quantum/qatlas-match），按提示中的
+`uv tool install --from git+ssh://...` 方式安装。`qatlas rag` 需要能访问
+qatlas-rag 服务（默认 `127.0.0.1:8801`，即部署该服务的主机或可达的内网
+地址）；`qatlas match` 默认经 qatlasd 的 `POST /api/papers/match` 代理调用
+（需 `papers:read` scope 的 PAT），`--direct` 仅面向部署机就地连库。
 
 ## 运维 / 兼容性命令（不常用）
 

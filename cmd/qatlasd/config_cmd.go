@@ -298,6 +298,14 @@ func effectiveConfigYAML(cfg *config.Config, redact bool) ([]byte, error) {
 				"timeout": cfg.RAGRemoteTimeout.String(),
 			},
 		},
+		"match": map[string]any{
+			"remote": map[string]any{
+				"enabled": cfg.MatchRemoteEnabled,
+				"url":     cfg.MatchRemoteURL,
+				"token":   mask(cfg.MatchRemoteToken),
+				"timeout": cfg.MatchRemoteTimeout.String(),
+			},
+		},
 		"plugins": map[string]any{
 			"dir":                cfg.PluginsDir,
 			"enabled":            cfg.PluginsEnabled,

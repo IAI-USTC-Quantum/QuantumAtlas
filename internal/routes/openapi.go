@@ -413,6 +413,34 @@ func docNeedsMineru() {}
 // @Router      /api/papers/lookup [get]
 func docPaperLookup() {}
 
+// paperMatch is the paper identity matching surface (proxied to the
+// qatlas-match microservice when match.remote is enabled).
+//
+// @Summary     Match paper identities against the registry
+// @Description Decides whether papers (qatlas-id / DOI / arXiv id /
+// @Description OpenAlex id / paper URL / title) are already inside the
+// @Description qatlas registry and returns the unified qa_… id.
+// @Description Precision-first: identifiers match exactly after strict
+// @Description normalization (trim / lowercase / known URL prefix /
+// @Description arXiv vN); titles match only when EVERY word matches
+// @Description (case-insensitive, order-insensitive). Merged papers
+// @Description resolve to the surviving paper. Free-form `inputs` are
+// @Description auto-detected per entry; the typed fields force a kind;
+// @Description author/year narrow ambiguous title matches.
+// @Tags        Papers
+// @Accept      json
+// @Produce     json
+// @Param       request body object true "{inputs: [string], doi?, arxiv_id?, openalex_id?, qatlas_id?, url?, title?, author?, year?}"
+// @Success     200 {object} map[string]interface{} "{results: [{input, kind, normalized, matched, qatlas_id, method, ambiguous, paper, candidates, truncated, reason}]}"
+// @Security    BearerAuth
+// @Failure     400 {object} map[string]string
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Failure     502 {object} map[string]string
+// @Failure     503 {object} map[string]string
+// @Router      /api/papers/match [post]
+func docPaperMatch() {}
+
 // paperResources stanzas were removed in v0.9.0 — the server no longer
 // serves PDF or image bytes outbound by default. paperMarkdown /
 // paperMarkdownStatus / paperPDF / paperPDFStatus / paperImagesZip are

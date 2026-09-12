@@ -155,6 +155,19 @@
 #     token: ""          # must equal the microservice's service_token
 #     timeout: 30s
 
+# ─── Paper identity matching (qatlas-match microservice; optional) ─────
+# High-precision matching ("is this work already in qatlas, and what is
+# its unified qa_… id?") lives in the standalone qatlas-match
+# microservice. When enabled, POST /api/papers/match proxies to it
+# (user auth stays on the qatlasd route). Disabled: the route answers
+# 503. The microservice reads the SAME PostgreSQL registry read-only.
+# match:
+#   remote:
+#     enabled: false
+#     url: ""            # e.g. http://qatlas-match:8601
+#     token: ""          # must equal the microservice's match.service_token
+#     timeout: 15s
+
 # ─── Paper access + server-side MinerU (self-hosted opt-in) ────────────
 # Default off: qatlasd does not serve PDF / markdown bytes. Flipping on
 # registers /api/papers/{id}/{markdown,pdf} (+ /status) and accepts the

@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## Unreleased
 
+### Feat
+
+- **match**: 新增 qatlas-match 微服务接入（独立仓库 IAI-USTC-Quantum/qatlas-match）：按 qatlas-id / DOI / arXiv id / OpenAlex id / 论文 URL / 标题高精度判定论文是否已入库并返回统一 `qa_…` id。qatlasd 侧新增 `match.remote` 配置段与 `POST /api/papers/match` 代理路由（scopeGuard `papers:read`，不计量），`internal/match` 为其 HTTP 客户端；`match-remote` builtin 插件 manifest + 30s healthz 探针与 search-remote / rag-remote 同构。微服务只读访问同一个 PostgreSQL registry，归一化规则逐条镜像 `internal/paperassets` / `internal/registry`（只允许 strip / 小写 / 已知 URL 前缀 / arXiv vN 剥离；标题必须每个单词都匹配）；`merged_into:` 论文透明解析到幸存者。CLI 子命令 `qatlas match` 由 qatlas-match 仓库以 `qatlas.plugins` 插件提供。
+
 ### Fix
 
 - **papers**: 按 DOI 取资产时先校验 DOI 命名空间确有可服务字节（published 资产或 `doi/` 键对象），否则回落到同一论文的 arXiv 身份服务——与 arXiv 输入侧重定向到 DOI 前的 `HasPublishedAsset` 守卫互为镜像。修复「元数据回填 DOI 的 arXiv 论文」按 DOI 取 markdown 恒 202 → `ErrNoDOISource` 的问题（lookup 却报 `has_md=true`）：markdown 一直都在，只是躺在 arXiv 资产键下。真 DOI-only 论文行为不变。

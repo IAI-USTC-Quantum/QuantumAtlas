@@ -71,6 +71,10 @@ qatlas-cli 覆盖用户侧「搜论文 → 拿内容 → 做贡献」的完整�
   ``paper jobs``（本地 / 远程进度，``--watch`` 轮询）。
 - **语义检索**：插件 ``qatlas rag``，直接查询 qatlas-rag 向量检索服务
   （bge-m3 混合检索 + 重排）。
+- **论文身份匹配**：插件 ``qatlas match``，按 qatlas-id / DOI / arXiv /
+  OpenAlex / URL / 标题判定是否已入库并返回统一 ``qa_…`` id（只在内部
+  registry 精确匹配，与 search 的外部检索互补）。详见下文
+  `论文匹配（qatlas match）`_。
 - **贡献上传**：``contrib pdf`` 上传本地 PDF；``contrib mineru`` 用自己的
   MinerU 配额本地转换并回传（队列 / 单篇 / ``--watch`` 守护）；DOI-only
   论文可 ``--zip`` 上传现成 MinerU 产物。
@@ -340,6 +344,67 @@ PDF 下载；产物默认落在 ``./papers``。
 其他平台。需要 key 但未配置的源会被跳过或禁用——用 ``--list-tools`` 查看
 哪些已就绪。
 
+论文匹配（qatlas match）
+------------------------
+
+``qatlas match`` 由独立插件包 ``qatlas-match`` 提供（entry-point 组
+``qatlas.plugins`` 自动挂载）。与 search 的本质区别：match **只在内部
+registry 里查找**——判定一篇论文（qatlas-id / DOI / arXiv id / OpenAlex
+id / 论文 URL / 标题）是否已在 qatlas 入库，命中则返回统一的
+``qa_…`` 论文 id。精度优先，宁缺毋滥：
+
+- **标识符精确匹配**：只做极简归一化——strip、转小写、剥离已知 URL
+  前缀（``https://doi.org/`` 等）、arXiv id 剥 ``arXiv:`` 前缀与尾部
+  ``vN`` 版本号。归一化后与库内存储值完全相等才算命中，没有任何模糊
+  匹配。
+- **URL 白名单**：只识别 arxiv.org（``/abs/``、``/pdf/``）、doi.org、
+  openalex.org 三类域名，化归为内嵌标识符后按上述规则匹配；其他域名
+  一律不命中。
+- **标题必须每个单词都匹配**：小写、按字母数字切词后，查询与库内
+  标题的词集完全一致（顺序无关）；多一个词或少一个词都不命中。标题
+  撞车多篇时返回全部候选并标记 ``ambiguous``，用 ``--author`` /
+  ``--year`` 消歧。
+- **合并论文透明解析**：已并入其他论文（``merged_into:``）的条目一路
+  追到幸存者，返回的永远是当前规范 id。
+
+.. code-block:: bash
+
+   uv tool install --from git+ssh://git@github.com/IAI-USTC-Quantum/qatlas-match.git qatlas-match
+
+.. code-block:: bash
+
+   qatlas match 2401.12345 10.1103/physrevlett.123.070501   # 自动识别 kind
+   qatlas match https://arxiv.org/abs/quant-ph/9508027       # URL 化归
+   qatlas match --title "Quantum Error Correction for Beginners" --author Nielsen
+   qatlas match --doi "https://doi.org/10.1103/PhysRevA.12.010101" --json
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 74
+
+   * - 标志
+     - 说明
+   * - ``INPUT...``
+     - 自由格式标识符（位置参数，可多个）：``qa_`` id、DOI、arXiv id、
+       OpenAlex id、论文 URL 或多词标题，逐条自动识别；含空格的自由文本
+       才会按标题处理，单词不会被误当标题
+   * - ``--doi / --arxiv / --openalex / --qatlas-id / --url / --title``
+     - 强制指定 kind（避免自动识别歧义）
+   * - ``--author`` / ``--year``
+     - 标题消歧提示（第一作者姓氏 / 年份）；给出后视为断言，排除全部
+       候选即不命中
+   * - ``--json``
+     - 输出服务端原始响应（``results`` 数组含 ``matched`` / ``qatlas_id``
+       / ``method`` / ``paper`` / ``candidates`` / ``reason``）
+   * - ``--direct``
+     - 部署机上就地连库直跑（读本机 ``~/.qatlas/match.yaml``），不经
+       qatlasd
+
+认证（服务器模式）：复用 qatlas 客户端配置的 PAT，需要 ``papers:read``
+scope；请求经 qatlasd 的 ``POST /api/papers/match`` 代理（用户鉴权在
+qatlasd 完成，qatlas-match 微服务只走内网）。退出码为 grep 风格便于脚本
+判断：``0`` 至少一条命中、``1`` 全部未命中、``2`` 用法 / 配置错误。
+
 其他插件命令
 ------------
 
@@ -354,6 +419,10 @@ PDF 下载；产物默认落在 ``./papers``。
      - ``qatlas-rag``
      - 语义检索（qatlas-rag 微服务的 CLI 前端；``--server`` / ``--token``
        / ``--max-results`` / ``--json``）
+   * - ``qatlas match``
+     - ``qatlas-match``
+     - 论文身份匹配（高精度判定 DOI / arXiv / OpenAlex / URL / 标题是否
+       已入库并返回统一 ``qa_…`` id；详见 `论文匹配（qatlas match）`_ 一节）
 
 未安装时 CLI 会提示安装方法，不影响其他命令。
 

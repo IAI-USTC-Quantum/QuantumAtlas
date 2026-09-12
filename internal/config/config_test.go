@@ -281,6 +281,12 @@ rag:
     url: http://qatlas-rag:8700
     token: rt
     timeout: 45s
+match:
+  remote:
+    enabled: true
+    url: http://qatlas-match:8601
+    token: mt
+    timeout: 12s
 plugins:
   dir: /srv/plugins
   enabled: [graph, lean]
@@ -355,6 +361,10 @@ system_pat:
 		{"RAGRemoteURL", cfg.RAGRemoteURL, "http://qatlas-rag:8700"},
 		{"RAGRemoteToken", cfg.RAGRemoteToken, "rt"},
 		{"RAGRemoteTimeout", cfg.RAGRemoteTimeout, 45 * time.Second},
+		{"MatchRemoteEnabled", cfg.MatchRemoteEnabled, true},
+		{"MatchRemoteURL", cfg.MatchRemoteURL, "http://qatlas-match:8601"},
+		{"MatchRemoteToken", cfg.MatchRemoteToken, "mt"},
+		{"MatchRemoteTimeout", cfg.MatchRemoteTimeout, 12 * time.Second},
 		{"PluginsDir", cfg.PluginsDir, "/srv/plugins"},
 		{"PluginsEnabled", strings.Join(cfg.PluginsEnabled, ","), "graph,lean"},
 		{"PluginsDisabled", strings.Join(cfg.PluginsDisabled, ","), "rag"},
@@ -493,6 +503,57 @@ func TestLoad_RAGRemoteDefaults(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// match.remote (qatlas-match identity matching proxy)
+// ---------------------------------------------------------------------------
+
+func TestLoad_MatchRemote(t *testing.T) {
+	clearConfigEnv(t)
+	path := writeConfig(t, `
+match:
+  remote:
+    enabled: true
+    url: http://qatlas-match:8601
+    token: match-svc-token
+    timeout: 10s
+`)
+	cfg := mustLoad(t, path)
+
+	if !cfg.MatchRemoteEnabled {
+		t.Error("MatchRemoteEnabled = false, want true")
+	}
+	if cfg.MatchRemoteURL != "http://qatlas-match:8601" {
+		t.Errorf("MatchRemoteURL = %q", cfg.MatchRemoteURL)
+	}
+	if cfg.MatchRemoteToken != "match-svc-token" {
+		t.Errorf("MatchRemoteToken = %q", cfg.MatchRemoteToken)
+	}
+	if cfg.MatchRemoteTimeout != 10*time.Second {
+		t.Errorf("MatchRemoteTimeout = %v, want 10s", cfg.MatchRemoteTimeout)
+	}
+}
+
+func TestLoad_MatchRemoteDefaults(t *testing.T) {
+	clearConfigEnv(t)
+	path := writeConfig(t, "{}\n")
+	cfg := mustLoad(t, path)
+
+	if cfg.MatchRemoteEnabled {
+		t.Error("MatchRemoteEnabled = true by default, want false")
+	}
+	if cfg.MatchRemoteTimeout != 15*time.Second {
+		t.Errorf("MatchRemoteTimeout = %v, want 15s default", cfg.MatchRemoteTimeout)
+	}
+}
+
+func TestLoad_MatchRemoteRejectsMalformedTimeout(t *testing.T) {
+	clearConfigEnv(t)
+	path := writeConfig(t, "match:\n  remote:\n    timeout: banana\n")
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected error for malformed match.remote.timeout")
+	}
+}
+
 func TestLoad_RAGRemoteRejectsMalformedTimeout(t *testing.T) {
 	clearConfigEnv(t)
 	path := writeConfig(t, "rag:\n  remote:\n    timeout: banana\n")
@@ -618,6 +679,7 @@ func TestLoad_Defaults(t *testing.T) {
 		{"CorpusEnsureIndexes", cfg.CorpusEnsureIndexes, true},
 		{"SearchProviders", strings.Join(cfg.SearchProviders, ","), "catalog,arxiv,openalex"},
 		{"RAGRemoteTimeout", cfg.RAGRemoteTimeout, 30 * time.Second},
+		{"MatchRemoteTimeout", cfg.MatchRemoteTimeout, 15 * time.Second},
 		{"ArxivFetchConcurrent", cfg.ArxivFetchConcurrent, 2},
 		{"ArxivFetchRPS", cfg.ArxivFetchRPS, 0.33},
 		{"PaperAccessEnabled", cfg.PaperAccessEnabled, false},

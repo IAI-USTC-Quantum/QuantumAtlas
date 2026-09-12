@@ -37,6 +37,7 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/healthz"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/hostapi"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/ingest"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/match"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineru"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/openalex"
@@ -754,6 +755,11 @@ func main() {
 		remoteProvider := buildRemoteProvider(cfg)
 		searchEngine := buildSearchEngine(cfg, pgPool, registryStore, lazyOnMint(downloaderModule, ingester), remoteProvider)
 
+		// qatlas-match proxy client (match.remote). nil when disabled;
+		// POST /api/papers/match then answers 503. User auth stays on the
+		// qatlasd route; the microservice only sees network-internal calls.
+		matchClient := buildMatchRemoteClient(cfg)
+
 		// Optional local agentic backend (search.agentic.backend: local) —
 		// the claude-CLI runner behind POST /api/search/agentic, replacing
 		// the remote microservice when configured. nil when disabled or
@@ -816,7 +822,7 @@ func main() {
 				}
 			}
 
-			registerRoutes(se, app, cfg, rawStore, registryStore, corpus, searchEngine, remoteProvider, ragClient, localAgentic, usageStore, enforcer, mineruConverter, mineruScheduler, ingester, doiResolver, arxivFetcher, downloaderRoutes, serverStarted)
+			registerRoutes(se, app, cfg, rawStore, registryStore, corpus, searchEngine, remoteProvider, ragClient, matchClient, localAgentic, usageStore, enforcer, mineruConverter, mineruScheduler, ingester, doiResolver, arxivFetcher, downloaderRoutes, serverStarted)
 
 			// Docs sites (/doc public, /devdoc behind the admin ticket
 			// gate): disk override under ~/.qatlas/docs first, embedded
@@ -1117,6 +1123,27 @@ func buildRAGRemoteClient(cfg *config.Config) *rag.RemoteClient {
 	return rag.NewRemoteClient(cfg.RAGRemoteURL, cfg.RAGRemoteToken, cfg.RAGRemoteTimeout)
 }
 
+// matchBackendFor adapts the remote client to the routes' MatchBackend
+// interface, mapping "not configured" (nil client) to a nil interface
+// value so the route's `backend == nil` 503 branch works (a nil
+// *match.RemoteClient wrapped in an interface is NOT nil).
+func matchBackendFor(c *match.RemoteClient) routes.MatchBackend {
+	if c == nil {
+		return nil
+	}
+	return c
+}
+
+// buildMatchRemoteClient constructs the qatlas-match microservice client
+// behind POST /api/papers/match. Returns nil unless match.remote is
+// enabled AND carries a URL.
+func buildMatchRemoteClient(cfg *config.Config) *match.RemoteClient {
+	if !cfg.MatchRemoteEnabled || strings.TrimSpace(cfg.MatchRemoteURL) == "" {
+		return nil
+	}
+	return match.NewRemoteClient(cfg.MatchRemoteURL, cfg.MatchRemoteToken, cfg.MatchRemoteTimeout)
+}
+
 // compile-time check: the local runner is an agentic backend.
 var _ routes.AgenticBackend = (*agentic.Runner)(nil)
 
@@ -1235,7 +1262,7 @@ func ensureBucketVersioning(rawStore objstore.Store) {
 // registerRoutes wires the QuantumAtlas /api/* surface. Most endpoints are
 // implemented under internal/routes/ and pulled in by their respective
 // Register* helpers as we migrate each module in subsequent phases.
-func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawStore objstore.Store, registryStore *registry.Store, corpus *openalexcorpus.Store, searchEngine *search.Engine, remoteProvider *search.RemoteProvider, ragClient *rag.RemoteClient, localAgentic *agentic.Runner, usageStore *usage.Store, enforcer *casbin.Enforcer, mineruConverter *mineru.Converter, mineruScheduler *mineru.Scheduler, ingester *ingest.Ingester, doiResolver *openalex.Resolver, arxivFetcher *arxiv.Fetcher, downloaderRoutes routes.Downloader, started time.Time) {
+func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawStore objstore.Store, registryStore *registry.Store, corpus *openalexcorpus.Store, searchEngine *search.Engine, remoteProvider *search.RemoteProvider, ragClient *rag.RemoteClient, matchClient *match.RemoteClient, localAgentic *agentic.Runner, usageStore *usage.Store, enforcer *casbin.Enforcer, mineruConverter *mineru.Converter, mineruScheduler *mineru.Scheduler, ingester *ingest.Ingester, doiResolver *openalex.Resolver, arxivFetcher *arxiv.Fetcher, downloaderRoutes routes.Downloader, started time.Time) {
 	probes := healthz.Probes{
 		Cfg:      cfg,
 		RawStore: rawStore,
@@ -1418,6 +1445,18 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 			Capabilities: []string{"rag"},
 		},
 	}
+	// The qatlas-match microservice (paper identity matching) follows the
+	// same pattern: builtin manifest mirroring match.remote.enabled.
+	matchRemoteManifest := qplugin.Manifest{
+		ID:         "match-remote",
+		Name:       "Paper identity matching (qatlas-match microservice)",
+		Version:    Version,
+		ABIVersion: qplugin.HostABIVersion,
+		Kind:       qplugin.KindBuiltin,
+		Contributes: qplugin.Contributes{
+			Capabilities: []string{"match"},
+		},
+	}
 	// The robust downloader is the third builtin: an internal module
 	// (internal/downloader) surfaced through the plugin registry so the
 	// SPA can gate the Robust Downloader page on its enabled state.
@@ -1438,13 +1477,16 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	if !cfg.RAGRemoteEnabled {
 		pluginDisabled = append(append([]string(nil), pluginDisabled...), "rag-remote")
 	}
+	if !cfg.MatchRemoteEnabled {
+		pluginDisabled = append(append([]string(nil), pluginDisabled...), "match-remote")
+	}
 	if downloaderRoutes == nil {
 		pluginDisabled = append(append([]string(nil), pluginDisabled...), "downloader")
 	}
 	pluginRegistry, err := qplugin.LoadDir(cfg.PluginsDir, qplugin.Options{
 		Enabled:  cfg.PluginsEnabled,
 		Disabled: pluginDisabled,
-		Builtins: append(qplugin.BuiltinManifests(), searchRemoteManifest, ragRemoteManifest, downloaderManifest),
+		Builtins: append(qplugin.BuiltinManifests(), searchRemoteManifest, ragRemoteManifest, matchRemoteManifest, downloaderManifest),
 	})
 	if err != nil {
 		slog.Warn("plugins: failed to load plugin manifests", "dir", cfg.PluginsDir, "error", err)
@@ -1480,6 +1522,18 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 		go probeRAGRemote(probeCtx, pluginRegistry, ragClient)
 	}
 
+	// And for the qatlas-match microservice (match-remote plugin summary):
+	// a disconnected qatlas-match only means POST /api/papers/match
+	// answers 502, never that qatlasd refuses to start.
+	if matchClient != nil {
+		probeCtx, stopProbe := context.WithCancel(context.Background())
+		app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
+			stopProbe()
+			return e.Next()
+		})
+		go probeHealthz(probeCtx, pluginRegistry, "match-remote", matchClient.Healthz)
+	}
+
 	// Builtin plugins register through ONE platform hook (ADR 0003): each
 	// implements routes.BuiltinPlugin; pull plugins also implement
 	// routes.GitPullPlugin, so the platform mounts a uniform
@@ -1501,6 +1555,12 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// /markdown + /markdown/status come back when the operator opts
 	// in via paper_access.enabled: true.
 	routes.RegisterPapers(se, cfg, rawStore, registryStore, corpus, enforcer, mineruConverter, ingester, doiResolver, arxivFetcher)
+
+	// Paper identity matching — POST /api/papers/match, proxied to the
+	// qatlas-match microservice (match.remote). matchClient == nil
+	// (match.remote disabled) leaves the route mounted but answering
+	// 503. See internal/routes/papers_match.go.
+	routes.RegisterPaperMatch(se, matchBackendFor(matchClient), enforcer)
 
 	// Multi-provider paper search — POST /api/search. See
 	// internal/routes/search.go.

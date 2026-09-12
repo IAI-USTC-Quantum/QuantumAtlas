@@ -262,6 +262,31 @@ type Config struct {
 	// RAGRemoteTimeout bounds each /v1/index call. Default 30s.
 	RAGRemoteTimeout time.Duration
 
+	// --- Paper identity matching (qatlas-match microservice) ---------
+	//
+	// High-precision matching ("is this work already in qatlas, and what
+	// is its unified qa_… id?") lives in the standalone qatlas-match
+	// microservice. When match.remote is enabled, qatlasd proxies
+	// authenticated user calls (POST /api/papers/match) to it.
+
+	// MatchRemoteEnabled is the master switch for the qatlas-match
+	// proxy. False (default) leaves the route answering 503, even when
+	// a URL is set.
+	MatchRemoteEnabled bool
+
+	// MatchRemoteURL — qatlas-match base URL (e.g.
+	// "http://qatlas-match:8601"). qatlasd calls /v1/match here; the
+	// /healthz probe is anonymous.
+	MatchRemoteURL string
+
+	// MatchRemoteToken — bearer the microservice requires. Must equal
+	// the microservice's match.service_token.
+	MatchRemoteToken string
+
+	// MatchRemoteTimeout bounds each /v1/match call. Default 15s (a
+	// couple of indexed lookups — far lighter than search).
+	MatchRemoteTimeout time.Duration
+
 	// OpenAlexMailto is the contact email folded into the polite-pool
 	// User-Agent for OpenAlex API calls and outbound arxiv.org PDF
 	// fetches. Required when PaperAccessEnabled=true AND any
@@ -503,6 +528,15 @@ type fileConfig struct {
 			Timeout string `yaml:"timeout"`
 		} `yaml:"remote"`
 	} `yaml:"rag"`
+
+	Match struct {
+		Remote struct {
+			Enabled bool   `yaml:"enabled"`
+			URL     string `yaml:"url"`
+			Token   string `yaml:"token"`
+			Timeout string `yaml:"timeout"`
+		} `yaml:"remote"`
+	} `yaml:"match"`
 
 	Plugins struct {
 		Dir               string   `yaml:"dir"`
@@ -785,6 +819,9 @@ func (fc *fileConfig) toConfig(anchor string) (*Config, error) {
 		RAGRemoteEnabled:                  fc.RAG.Remote.Enabled,
 		RAGRemoteURL:                      fc.RAG.Remote.URL,
 		RAGRemoteToken:                    fc.RAG.Remote.Token,
+		MatchRemoteEnabled:                fc.Match.Remote.Enabled,
+		MatchRemoteURL:                    fc.Match.Remote.URL,
+		MatchRemoteToken:                  fc.Match.Remote.Token,
 		PluginsEnabled:                    fc.Plugins.Enabled,
 		PluginsDisabled:                   fc.Plugins.Disabled,
 		PluginConnectSecret:               fc.Plugins.ConnectSecret,
@@ -865,6 +902,9 @@ func (fc *fileConfig) toConfig(anchor string) (*Config, error) {
 		return nil, fmt.Errorf("downloader.agent.backend must be \"\", \"openai\" or \"claude\", got %q", cfg.DownloaderAgentBackend)
 	}
 	if cfg.RAGRemoteTimeout, err = parseDuration(fc.RAG.Remote.Timeout, 30*time.Second, "rag.remote.timeout"); err != nil {
+		return nil, err
+	}
+	if cfg.MatchRemoteTimeout, err = parseDuration(fc.Match.Remote.Timeout, 15*time.Second, "match.remote.timeout"); err != nil {
 		return nil, err
 	}
 	if cfg.AgenticLocalTimeout, err = parseDuration(fc.Search.Agentic.Local.Timeout, 5*time.Minute, "search.agentic.local.timeout"); err != nil {

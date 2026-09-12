@@ -121,6 +121,39 @@ services:
       # persist updates back to this file.
       - ${HOME}/.qatlas/search.yaml:/etc/qatlas-search/config.yaml
 
+  # ── qatlas-match: paper identity matching microservice ─────────────────
+  # Optional. Lives in the separate repository IAI-USTC-Quantum/qatlas-match;
+  # its release workflow publishes the image to ghcr (deploy hosts pull,
+  # never build). Pin the version via QATLAS_MATCH_VERSION in .env.
+  # Bring it online with:  docker compose --profile match up -d
+  #
+  # High-precision registry matching ("is this work already in qatlas,
+  # what is its unified qa_… id?") for DOIs / arXiv ids / OpenAlex ids /
+  # paper URLs / titles. The microservice reads the SAME PostgreSQL
+  # registry qatlasd uses (read-only connection), so it must be able to
+  # reach the postgres container — shared-infra membership covers that.
+  #
+  # Deliberately NO ports mapping: the only legitimate caller is qatlasd
+  # (which owns user auth on POST /api/papers/match). Point qatlasd at it
+  # via ~/.qatlas/config.yaml:
+  #   match:
+  #     remote: { enabled: true, url: "http://qatlas-match:8601", token: "..." }
+  # The token must match `match.service_token` in the microservice's own
+  # config file (~/.qatlas/match.yaml, mounted below).
+  qatlas-match:
+    image: ghcr.io/iai-ustc-quantum/qatlas-match:${QATLAS_MATCH_VERSION:-latest}
+    container_name: qatlas-match
+    restart: unless-stopped
+    profiles: ["match"]
+    networks:
+      - shared-infra
+    volumes:
+      # Own config file (same reasoning as qatlas-search above). Read-only:
+      # the match service exposes no admin config endpoint. Only the
+      # `match:` section is consumed (service_token, service_port,
+      # postgres.dsn).
+      - ${HOME}/.qatlas/match.yaml:/etc/qatlas-match/config.yaml:ro
+
   # ── qatlas-rag: GPU semantic-retrieval microservice ───────────────────
   # Optional. Lives in the separate repository IAI-USTC-Quantum/qatlas-rag;
   # its release workflow publishes the image to ghcr (deploy hosts pull,

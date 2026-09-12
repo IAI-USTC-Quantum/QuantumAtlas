@@ -1399,6 +1399,91 @@
                 }
             }
         },
+        "/api/papers/match": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Decides whether papers (qatlas-id / DOI / arXiv id /\nOpenAlex id / paper URL / title) are already inside the\nqatlas registry and returns the unified qa_… id.\nPrecision-first: identifiers match exactly after strict\nnormalization (trim / lowercase / known URL prefix /\narXiv vN); titles match only when EVERY word matches\n(case-insensitive, order-insensitive). Merged papers\nresolve to the surviving paper. Free-form `inputs` are\nauto-detected per entry; the typed fields force a kind;\nauthor/year narrow ambiguous title matches.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Papers"
+                ],
+                "summary": "Match paper identities against the registry",
+                "parameters": [
+                    {
+                        "description": "{inputs: [string], doi?, arxiv_id?, openalex_id?, qatlas_id?, url?, title?, author?, year?}",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{results: [{input, kind, normalized, matched, qatlas_id, method, ambiguous, paper, candidates, truncated, reason}]}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/papers/needs-mineru": {
             "get": {
                 "security": [
