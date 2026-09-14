@@ -1,9 +1,8 @@
-"""Fail-closed GitHub release gates used only by release.yml (stdlib only)."""
+"""Strict tag validation and fail-closed GitHub release gates (stdlib only)."""
 
 import argparse
 import json
 import os
-from pathlib import Path
 import re
 import urllib.error
 import urllib.request
@@ -14,7 +13,7 @@ import urllib.request
 SEMVER = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?")
 
 
-def validate_version(tag, version_file):
+def validate_version(tag):
     version = tag.removeprefix("v")
     match = SEMVER.fullmatch(version)
     if not tag.startswith("v") or not match:
@@ -22,8 +21,6 @@ def validate_version(tag, version_file):
     prerelease = match[4]
     if prerelease and any(part.isdigit() and len(part) > 1 and part[0] == "0" for part in prerelease.split(".")):
         raise ValueError("numeric prerelease identifiers must not have leading zeroes")
-    if version != Path(version_file).read_text().strip():
-        raise ValueError("release tag does not match root VERSION")
     return version, bool(prerelease)
 
 
@@ -118,9 +115,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("version", "guard", "publish", "public-stable", "latest", "status"))
     parser.add_argument("tag")
-    parser.add_argument("--version-file", default="VERSION")
     args = parser.parse_args()
-    version, prerelease = validate_version(args.tag, args.version_file)
+    version, prerelease = validate_version(args.tag)
     if args.command == "version":
         emit("version", version)
         emit("tag", args.tag)

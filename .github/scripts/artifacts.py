@@ -12,6 +12,8 @@ import tarfile
 import tempfile
 import zipfile
 
+from release_gate import emit, validate_version
+
 
 PLATFORMS = ("linux_amd64", "linux_arm64", "darwin_arm64")
 REQUIRED_UI = ("index.html", "doc/index.html", "devdoc/dev/index.html")
@@ -20,6 +22,25 @@ MAX_BUNDLE_SIZE = 64 << 20
 MAX_EXPANDED_SIZE = 256 << 20
 MAX_FILE_SIZE = 16 << 20
 MAX_BUNDLE_FILES = 20000
+
+
+def ui_version(release_tag, source_sha):
+    """Exact release tag, or a SHA-only identifier for unpublished CI fixtures."""
+    if not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", source_sha):
+        raise ValueError("source SHA must be a full lowercase 40/64-digit Git commit ID")
+    version = validate_version(release_tag)[0] if release_tag else f"0.0.0-ci.g{source_sha}"
+    # No shell interpolation or tag discovery: branches/PRs need no existing
+    # tags, and a release must use the caller's exact tag even with many at HEAD.
+    def resolve(ref):
+        return subprocess.check_output(
+            ["git", "rev-parse", "--verify", ref], text=True, timeout=30,
+        ).strip()
+
+    if resolve("HEAD") != source_sha:
+        raise ValueError("checkout HEAD does not match source SHA")
+    if release_tag and resolve(f"refs/tags/{release_tag}^{{commit}}") != source_sha:
+        raise ValueError("release tag commit does not match checkout HEAD/source SHA")
+    return version
 
 
 def digest(path):
@@ -72,7 +93,7 @@ def unique_ui_archive(archive, version):
     expected = f"qatlasd_{version}_web.zip"
     matches = list(archive.parent.glob("qatlasd_*_web.zip"))
     if archive.name != expected or matches != [archive]:
-        raise ValueError(f"require exactly one UI zip for the source VERSION: {expected}")
+        raise ValueError(f"require exactly one UI zip for the selected version: {expected}")
 
 
 def restore_ui(archive, destination, version):
@@ -187,6 +208,7 @@ def smoke(directory, version, platform):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("ui-version", help="select UI version from RELEASE_TAG and SOURCE_SHA environment")
     diff = sub.add_parser("compare")
     diff.add_argument("first")
     diff.add_argument("second")
@@ -203,7 +225,9 @@ def main():
     native.add_argument("version")
     native.add_argument("platform", choices=PLATFORMS)
     args = parser.parse_args()
-    if args.command == "compare":
+    if args.command == "ui-version":
+        emit("version", ui_version(os.environ.get("RELEASE_TAG", ""), os.environ["SOURCE_SHA"]))
+    elif args.command == "compare":
         compare(args.first, args.second)
     elif args.command == "restore-ui":
         unique_ui_archive(args.archive, args.version)

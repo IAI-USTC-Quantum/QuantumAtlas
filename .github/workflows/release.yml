@@ -39,7 +39,7 @@ jobs:
         run: |
           test "$(git rev-parse "refs/tags/$GITHUB_REF_NAME^{commit}")" = "$(git rev-parse HEAD)"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-      - name: Validate SemVer tag against root VERSION
+      - name: Validate canonical SemVer release tag
         id: version
         run: python3 .github/scripts/release_gate.py version "$GITHUB_REF_NAME"
       - name: Refuse already-public releases (API failures fail closed)
@@ -55,6 +55,7 @@ jobs:
     uses: ./.github/workflows/go.yml
     with:
       source_sha: ${{ needs.prep.outputs.source_sha }}
+      release_tag: ${{ needs.prep.outputs.tag }}
 
   release:
     runs-on: ubuntu-latest
@@ -97,6 +98,8 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          # v2.18.1 otherwise sorts all tags at HEAD; bind the validated exact tag.
+          GORELEASER_CURRENT_TAG: ${{ needs.prep.outputs.tag }}
       - name: Verify default manifest includes exactly three archives and the UI zip
         id: manifest
         env:

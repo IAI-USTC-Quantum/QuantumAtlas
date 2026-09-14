@@ -20,7 +20,6 @@ Python 命令行客户端由独立仓库 ``IAI-USTC-Quantum/qatlas-cli`` 维护�
    ├── tests/                  部署结构、离线 fixture 与显式启用的生产冒烟
    ├── .github/scripts/        CI 归档/发布门禁与 Python 标准库 fixture
    ├── go.mod / go.sum         Go 工具链门槛、依赖与 Go tool 声明
-   ├── VERSION                 服务端发布版本来源
    └── config.example.yaml     服务器配置完整 schema 参考
 
 服务器（Go）

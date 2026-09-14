@@ -147,7 +147,7 @@ CGO_ENABLED=0 go build -tags embedui -o build/qatlasd ./cmd/qatlasd
 ./build/qatlasd serve --http=127.0.0.1:4200
 ```
 
-Plain `go build` and `go test` work without any generated frontend files. A local `dev` binary needs `embedui` to serve UI, because unreleased source has no corresponding public Release. Git stores only source; never commit `web/dist`, generated docs, caches or release archives.
+Plain `go build` and `go test` work without any generated frontend files. Local build info may contain a tag, pseudo-version, or `+dirty` marker; `dev` is the fallback when usable version metadata is absent. A binary without a corresponding public Release needs `embedui` to serve UI. Git stores only source; never commit `web/dist`, generated docs, caches or release archives.
 
 Default entry points:
 
@@ -224,7 +224,6 @@ QuantumAtlas/
 ├── scripts/               bootstrap and maintenance scripts
 ├── tests/                 test suite
 ├── docs/                  documentation
-├── VERSION                server version (currently 0.34.0)
 ├── go.mod / go.sum        Go module, pinned dependencies and tool declarations
 └── docsite/               Sphinx user/developer documentation source
 ```
@@ -258,7 +257,7 @@ Contributions welcome in these areas:
 - Improving parsing, ingestion, search providers, and the API.
 - Tests, documentation fixes, and collaboration UX.
 
-Please use Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`). Server releases use the root `VERSION` (currently `0.34.0`) + a `v<version>` tag and publish only server Go/GitHub/Docker artifacts, never PyPI packages. CLI development and releases belong in [qatlas-cli](https://github.com/IAI-USTC-Quantum/qatlas-cli). See [docs/contributing.md](docs/contributing.md) for the server release process.
+Please use Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`); they do not automatically bump versions. All official main-repository versions come solely from Git tags: maintainers choose an unpublished SemVer, check/commit/review the candidate source, create an annotated `vX.Y.Z[-rc.N]` tag on the approved SHA, and push only that tag to the existing CI/GoReleaser workflow. No root version file, version-only bump commit, or Go source version edit is required; PEP 440 and `+build` release tags are not supported. Releases publish only server Go/GitHub/Docker artifacts, never PyPI packages. This workflow change does not publish a new release or alter historical `v0.34.0`. CLI development and releases belong in [qatlas-cli](https://github.com/IAI-USTC-Quantum/qatlas-cli). See [docs/contributing.md](docs/contributing.md) for the server release process.
 
 The [final `quantum-atlas 0.21.0` release](https://github.com/IAI-USTC-Quantum/QuantumAtlas/releases/tag/quantum-atlas-v0.21.0) is complete. Its immutable [historical tag](https://github.com/IAI-USTC-Quantum/QuantumAtlas/tree/quantum-atlas-v0.21.0) retains the package metadata, one-time checker/tests, and publishing workflow for audit. They are not an ongoing main-branch workflow. The root Python/Pixi manifests and obsolete wiki batch tools have been removed; Python remains only for documentation and small CI helpers. GoReleaser explicitly ignores that historical Python tag, and no further legacy package versions will be published.
 

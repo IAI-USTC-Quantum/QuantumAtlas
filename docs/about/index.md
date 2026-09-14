@@ -23,7 +23,6 @@ QuantumAtlas/
 ├── scripts/               初始化与维护脚本（rustfs_bootstrap.sh 等）
 ├── tests/                 测试套件
 ├── docs/                  本文档（你正在看的）
-├── VERSION                服务端版本唯一来源
 ├── docsite/               Sphinx 使用/开发文档
 └── go.mod / go.sum        原生 Go 模块、依赖与工具版本声明
 ```

@@ -27,7 +27,7 @@ QuantumAtlas server 是单个 Go 二进制 `qatlasd`，自带 PocketBase + SQLit
 
 !!! warning "先确认新流程的公开 tag"
 
-    下文 `TAG=vX.Y.Z` / `@vX.Y.Z` 是显式占位符，必须替换为已经采用新流程且所需附件已公开的 tag。当前仓库 `VERSION=0.34.0` 不代表旧 tag 已有新格式产物，不要直接替换成它或假定 latest 已迁移。
+    下文 `TAG=vX.Y.Z` / `@vX.Y.Z` 是显式占位符，必须替换为已经采用新流程且所需附件已公开的 tag。这套流程变更本身不是一次新发行，历史 `v0.34.0` 不会补发新格式产物；不要直接替换成它或假定 latest 已迁移。
 
 #### A. 同 tag 安装脚本（推荐）
 

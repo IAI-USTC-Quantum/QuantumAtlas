@@ -12,19 +12,20 @@ import (
 // A checkout/module zip must expose the Go toolchain, not a retired root Python
 // application or a second Pixi dependency graph. Python docs/CI helpers are
 // explicitly retained, as is the permanent old-package migration notice.
+// Release versions come only from Git tags, never a hand-maintained root file.
 func TestGoNativeRepositoryBoundary(t *testing.T) {
 	root := composeRoot(t)
 	for _, name := range []string{
 		"pyproject.toml", "uv.lock", "pixi.lock", "setup.py", "setup.cfg",
 		".github/workflows/pytest.yml", "qatlas/__init__.py",
-		"scripts/wiki_pipeline/merge_concepts.py",
+		"scripts/wiki_pipeline/merge_concepts.py", "VERSION",
 	} {
 		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(name))); !errors.Is(err, fs.ErrNotExist) {
 			t.Errorf("retired root tooling/source %s must not be present (stat: %v)", name, err)
 		}
 	}
 	for _, name := range []string{
-		"go.mod", "go.sum", "VERSION", ".goreleaser.yaml", "PYPI_README.md",
+		"go.mod", "go.sum", ".goreleaser.yaml", "PYPI_README.md",
 		"docsite/conf.py", "docsite/requirements.txt", "docs/requirements.txt",
 		"hooks/openapi_spec.py", ".github/scripts/artifacts.py", ".github/scripts/release_gate.py",
 	} {

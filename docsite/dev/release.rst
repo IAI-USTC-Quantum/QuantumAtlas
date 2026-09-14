@@ -21,14 +21,14 @@ app 微服务之间的 HTTP 接口协议。主仓还包含独立部署的下载 
      - 发布触发
      - 产物
    * - ``qatlasd``\ （本仓库）
-     - 根目录 ``VERSION`` + ``v*`` tag（release.yml prep 强校验一致）
+     - 唯一取自已审核的 Git release tag ``vX.Y.Z[-rc.N]``，去 ``v`` 派生版本
      - push tag ``v*.*.*``
      - ghcr 镜像 ``:{vX.Y.Z, X.Y.Z, latest}`` + 三平台二进制 +
        GitHub Release；不再发布旧 PyPI 包
    * - ``qatlas-cli``
-     - 其仓库 ``pyproject.toml``\ （commitizen）
-     - ``cz bump`` 打 tag ``v*``
-     - PyPI ``qatlas-cli``\ （trusted publishing）
+     - 由 qatlas-cli 独立仓库管理
+     - 按该仓库的发布流程执行
+     - PyPI ``qatlas-cli``\ （独立仓库 CI 发布）
    * - app 微服务（qatlas-search 等）
      - 其仓库根目录 ``VERSION`` + ``v*`` tag（release.yml prep 强校验一致）
      - push tag ``v*.*.*``
@@ -49,7 +49,7 @@ app 微服务之间的 HTTP 接口协议。主仓还包含独立部署的下载 
      - 当前无独立 CI 发布通道；按指定 checkout 手动构建
      - ``Dockerfile.downloaderworker`` 镜像或 Go 二进制；不假定已有 ghcr tag
    * - ``downloaderproxy``\（主仓 ``cmd/downloaderproxy``，旧协议）
-     - 跟随主仓 ``VERSION``\（同一 tag）
+     - 跟随主仓同一 Git tag 派生的版本
      - 主仓 push tag ``v*.*.*``\（无独立 release 产物）
      - **无 registry 产物**：部署方在 campus-egress 主机上用主仓
        ``Dockerfile.downloaderproxy`` 现场构建（见下文例外与
@@ -74,8 +74,8 @@ app 微服务之间的 HTTP 接口协议。主仓还包含独立部署的下载 
 Sphinx/MkDocs hook 与 CI 标准库辅助脚本继续维护。
 
 常规 ``v*`` 服务端流程继续发布二进制、镜像和 GitHub Release，不包含
-PyPI 产物。这次旧包退役没有发布服务端或容器，服务端 ``VERSION`` 及
-GitHub Latest 保持为 ``0.34.0`` / ``v0.34.0``。
+PyPI 产物。这次旧包退役没有发布服务端或容器，当时服务端最新发行及
+GitHub Latest 保持为 ``v0.34.0``；本次主仓版本流程调整也不构成新发行。
 
 下载执行端的当前分发边界
 ----------------------------
@@ -104,15 +104,42 @@ GitHub Latest 保持为 ``0.34.0`` / ``v0.34.0``。
 不为旧裸二进制附件添加兼容层、不重发 ``v0.34.0``。
 ``.goreleaser.yaml`` 的 ``git.ignore_tags`` 精确忽略
 ``quantum-atlas-v0.21.0``，这是 OSS 精确匹配，不是 glob 匹配；保留历史 tag
-不移动、不删除。工具链/文档清理不递增 ``VERSION``，也不构成新发行授权。
+不移动、不删除。工具链/文档清理不构成新发行或发布授权。
 
-发布流程：tag/VERSION/SemVer/已公开 Release 保护检查 → 同 SHA 的
+主仓正式版本唯一从 Git release tag 派生，不维护根版本文件，不需要版本文件
+bump commit，也不为版本专门修改 Go 源码/版本字段。维护者先人工选择尚未发布的
+SemVer（``MAJOR.MINOR.PATCH[-prerelease]``，不使用 PEP 440 或 ``+build`` 元数据），
+完成待发源码与必要迁移文档的检查、提交和 review，确认候选 commit 的 CI 全绿，
+再在该已审核 SHA 上创建 annotated ``vX.Y.Z[-rc.N]`` tag。Conventional Commits
+只约定提交格式，不自动决定/bump 版本或触发发布。只推送这一个已审核 tag，
+不批量推送历史 tag；完整命令见
+`贡献指南 / 服务端发版 <https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/docs/contributing.md#release>`_。
+
+现行和后续服务端 Release 正文统一由 GoReleaser 生成：
+``changelog.use: git`` 使用 previous..current tags 的 commit 标题与 SHA，
+输出到 ``dist/CHANGELOG.md`` 并用于 Release 正文。根 ``CHANGELOG.md``
+已删除，不再维护或作为输入；不另写手工 notes、header/footer 或覆盖正文。
+生成内容不包含 commit body/footer，breaking change 需在标题中明确标记
+（如 ``feat(api)!: ...``），并在对应版本的功能/部署文档中说明迁移步骤。
+历史 Git tags 与已发布 Release 保留原样，不追溯重写。
+
+发布流程由现有 ``release.yml`` + GoReleaser 执行：
+SemVer tag / 已公开 Release 保护检查 → 将精确 ``release_tag`` 传入同 SHA 的
 ``go.yml``（gofmt、隔离 Go test/vet、integration 编译检查、OpenAPI、
 前端与两文档站双干净构建一致性）及独立 MkDocs 检查 →
+从该 tag 去 ``v`` 派生正式 UI 版本，确认 tag 所指提交 SHA = source SHA = ``HEAD`` →
 上传唯一 UI 包 → GoReleaser 创建 draft、嵌入此包解出的同一树 →
 归档校验与 attestation、三平台原生运行 ``--version``、Docker 发布并验证 →
 公开 Release → 仅稳定版更新 GitHub/GHCR latest。原生 smoke 只下载与运行，
 不重复编译；Docker 保留独立 job，仅承诺 ``linux/amd64``。
+``release_gate.py version "$TAG"`` 只校验 tag 并输出去 ``v`` 后的派生版本，
+不读取根版本文件。GoReleaser 的 ``GORELEASER_CURRENT_TAG`` 绑定真实触发 tag，
+不从最近旧 tag 或同 SHA 的其他 tag 猜测待发版本。
+
+普通 branch/PR 的 ``go.yml`` 仍执行 UI 打包与恢复验证，但使用
+``0.0.0-ci.g<完整Git提交SHA>`` 作为仅限 CI 的临时 SemVer 包标识；
+``g`` 避免全数字 SHA 形成带前导零的非法数值标识。此路径不创建 tag、版本文件，
+也不发布；不能把这个标识当作正式 Release 版本。
 
 Git **只保存源码**，不提交 ``web/dist``、``web/public/doc``、
 ``web/public/devdoc``、根 ``dist/`` / ``build/``、缓存或 ELF 可执行文件；
@@ -135,9 +162,13 @@ Go 工具链门槛唯一读 ``go.mod``；Node 使用 ``web/.node-version``，npm
 设置 ``SOURCE_DATE_EPOCH`` 为提交时间、
 ``TZ=UTC`` / ``PYTHONHASHSEED=0``，doctree 缓存放 ``build/`` 而非 bundle。
 修改文档或前端后必须重新构建用于验证的资源，但只提交源码。
-本地完整 UI/包准备后运行 ``goreleaser check`` 和
-``goreleaser release --snapshot --clean``；snapshot 不是正式 Release，
-其运行版本与 VERSION 不同，不用于普通源码安装的资源发现。
+本地无正式 tag 时，用 ``UI_VERSION="0.0.0-ci.g$(git rev-parse HEAD)"``
+显式传给 ``uibundle -version``，只做打包/恢复验证，不创建 tag、版本文件，也不发布。
+只有 checkout 干净且已核验的正式 ``TAG`` 指向候选 SHA / ``HEAD`` 时，
+才可用 ``UI_VERSION="${TAG#v}"``；
+不要把最近旧 tag 当作待发版本。完整 UI/包准备后运行 ``goreleaser check`` 和
+``goreleaser release --snapshot --clean``；snapshot 的运行版本由 GoReleaser
+生成，不是正式 Release 版本，不用于普通源码安装的资源发现。
 
 校验清单覆盖三个归档和 UI 包，attestation 的验证对象也是 **归档**：
 ``gh attestation verify ./qatlasd_<version>_linux_amd64.tar.gz --repo IAI-USTC-Quantum/QuantumAtlas``。
@@ -178,11 +209,12 @@ GitHub 与 GHCR 不是原子事务：失败要分别核对 draft/镜像状态，
 app 微服务的发布基建（以 qatlas-search 为例）
 ---------------------------------------------
 
-qatlas-search 已按本方案接入标准化发布流程（首个 release：``v0.1.0``）：
+qatlas-search 已按本方案接入标准化发布流程（首个 release：``v0.1.0``）。
+以下 ``VERSION`` 均属于独立 app 仓库；其既有约定不随主仓的 tag-only 调整改变：
 
-1. 仓库根目录的 ``VERSION`` 文件是版本唯一来源，发布由 push tag
+1. 该 app 仓库根目录的 ``VERSION`` 文件是版本唯一来源，发布由 push tag
    ``v*.*.*`` 触发；
-2. ``.github/workflows/release.yml`` 复用主仓的 prep + docker 模式：
+2. 该 app 的 ``.github/workflows/release.yml`` 沿用早期主仓的 prep + docker 模式：
    workflow 先校验 tag == ``VERSION``，然后构建多架构镜像并推送到
    ``ghcr.io/iai-ustc-quantum/qatlas-search:{vX.Y.Z, X.Y.Z, latest}``，
    最后创建 GitHub Release。注意：**私有仓库的 SLSA attestation 是
@@ -240,11 +272,13 @@ sphinx 站点并直接写入文档目录。
 
 前置检查（每次必做）：
 
-- 运维方应阅读目标版本的 CHANGELOG / Release notes，确认是否有
-  BREAKING CHANGE 以及前置条件（如 v0.22.0 要求 PostgreSQL 先行就绪）；
+- 运维方应阅读目标版本的
+  `GitHub Release <https://github.com/IAI-USTC-Quantum/QuantumAtlas/releases>`_
+  及对应版本的迁移/部署文档，确认 breaking change 与前置条件
+  （如 v0.22.0 要求 PostgreSQL 先行就绪）；生成的提交列表不能替代迁移说明；
 - 运维方应备份数据目录（``data/``，即 ``pb_data`` 和 ``raw``）；
 - 运维方应确认当前版本与目标版本之间的兼容协议允许直接跳到目标版本
-  （qatlasd 跨 minor 升级时应逐段检查 changelog）。
+  （qatlasd 跨 minor 升级时应逐版本检查 Release 与迁移文档）。
 
 升级（在部署机上执行）：
 
@@ -287,8 +321,9 @@ sphinx 站点并直接写入文档目录。
 - **minor**：新功能、接口协议的 expand（新增端点或可选字段）、依赖的
   大版本升级；
 - **pre-1.0 阶段的 breaking change 也发布 minor 版本**，但开发者必须在
-  CHANGELOG 的 ``BREAKING CHANGE`` 小节中写明前置条件与迁移步骤，
-  部署方按上文的前置检查执行。
+  commit 标题中明确标记 breaking change，并在对应功能/部署文档中写明
+  前置条件与迁移步骤；不能依赖默认生成正文不会展示的 commit footer。
+  部署方按上文的前置检查执行；1.0 之后的不兼容变更按 SemVer 升 major。
 
 服务端发版 checklist
 ----------------------
@@ -299,17 +334,21 @@ sphinx 站点并直接写入文档目录。
 
    * - 步骤
      - 验收
-   * - 本地 CI mirror
+   * - 人工选版本
+     - 审核兼容性，选择未发布的 SemVer；不使用 PEP 440 或 ``+build``，不自动 bump
+   * - 待发源码本地 CI mirror
      - gofmt、隔离 Go test/vet（含 web 与 tests）、integration 仅编译、
        OpenAPI 同步、CI Python 标准库 fixture、独立 MkDocs 与完整 UI 双构建，
        GoReleaser check/snapshot 全绿；发布也复用同 SHA 的检查
-   * - ``VERSION`` + CHANGELOG
-     - ``## vX.Y.Z (YYYY-MM-DD)`` 段落；breaking 写明迁移步骤
-   * - tag
-     - annotated ``vX.Y.Z``，与 ``VERSION`` 完全一致
+   * - 完成源码提交/review
+     - breaking 标记在 commit 标题，迁移步骤在对应功能/部署文档；
+       候选 SHA 已 review 且 CI 全绿，不另造版本 bump commit
+   * - 创建并推送 tag
+     - 在已审核候选 SHA 上创建 annotated ``vX.Y.Z[-rc.N]``，核对指向后
+       只推送这一个 tag；正式版本唯一从它派生
    * - release workflow
-     - draft、归档证明、三平台运行与镜像验证通过后公开；稳定版才更新
-       ``:latest``，RC 仅版本 tag
+     - GoReleaser 从 Git 提交生成正文；draft、归档证明、三平台运行与
+       镜像验证通过后公开；稳定版才更新 ``:latest``，RC 仅版本 tag
    * - 部署
      - pin 版本 → pull → up -d → ``/api/health`` 版本与探针正确 →
        冒烟通过

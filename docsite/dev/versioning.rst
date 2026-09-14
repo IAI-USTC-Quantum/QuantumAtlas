@@ -17,13 +17,13 @@ QuantumAtlas 由两个独立演进的组件构成：服务端 ``qatlasd`` （本
      - 版本唯一来源
      - 发布方式
    * - ``qatlasd`` （本仓库）
-     - 仓库根目录的 ``VERSION`` 文件 + 形如 ``v<version>`` 的 git tag
-       （release.yml 的 prep job 会强校验二者一致，不一致直接失败）
-     - 手动编辑 ``VERSION`` → commit → ``git tag v<version>`` → push tag，
-       release.yml 自动出二进制 / 镜像 / GitHub Release
+     - 唯一取自 Git release tag ``vX.Y.Z[-rc.N]``，去掉前导 ``v`` 派生版本；
+       不维护根版本文件
+     - 人工选 SemVer → 待发源码检查/提交/review → 在已审核 SHA 上创建
+       annotated tag → 只推该 tag；release.yml + GoReleaser 生成正文与产物
    * - ``qatlas-cli``
-     - 它自己仓库的 ``pyproject.toml`` （commitizen 管理）
-     - ``cz bump`` 打 tag 后由该仓 CI 发 PyPI（``uv tool install qatlas-cli``）
+     - 由 qatlas-cli 独立仓库管理
+     - 按该仓库的发布流程发 PyPI（``uv tool install qatlas-cli``）
 
 旧 PyPI 包 ``quantum-atlas 0.21.0`` 的最终迁移版已发布；此后不再发布
 旧包版本。它仅含元数据与迁移说明，没有运行时依赖、``qatlas`` Python
@@ -39,25 +39,38 @@ QuantumAtlas 由两个独立演进的组件构成：服务端 ``qatlasd`` （本
 ``pyproject.toml`` / ``uv.lock`` / ``pixi.lock`` 或旧包构建后端。
 Go 工具链门槛唯一取自 ``go.mod``，Node 唯一取自 ``web/.node-version``；
 Python 只用于独立 Sphinx/MkDocs requirements 和 CI 标准库辅助脚本。
-常规服务端发版仍以 ``VERSION`` 与 ``v<version>`` 为准，并且没有 PyPI
-产物；旧包退役没有改变 ``VERSION``（仍为 ``0.34.0``），也不参与
-客户端/服务端版本协商。发布历史说明见 :doc:`release`。
+常规服务端正式版本仅从 ``v<version>`` Git tag 派生，没有 PyPI 产物；
+不需要版本文件 bump commit，也不为版本专门修改 Go 源码/版本字段。
+旧包退役没有发布服务端或容器，当时 GitHub Latest 保持为 ``v0.34.0``，
+也不参与客户端/服务端版本协商；本次流程调整不构成新发行。
+发布历史说明见 :doc:`release`。
 
 运行时版本与 UI 绑定
 --------------------
 
 运行时版本依次使用 GoReleaser 默认注入的 ``main.version``、
-``debug.ReadBuildInfo().Main.Version``（带版本的 ``go install``）、
-``dev``。仅去掉开头的 ``v``，保留预发布与有意义的构建标记。
+``debug.ReadBuildInfo().Main.Version``、``dev``。Go 1.24+（含本仓使用的
+Go 1.26.2）在源码 checkout 构建时也可能提供 tag、伪版本及 ``+dirty``，
+不只带版本的 ``go install`` 才有 build info；缺少可用版本元数据才回退 ``dev``。
+仅去掉开头的 ``v``，保留预发布与有意义的构建标记。
 解析在 ``--version`` 之前完成，不加载配置、不访问数据库或网络；CLI、
 health、server-info 与响应头共享同一个值。Docker 自行编译时也注入
 ``main.version``；Go、Node 或文档工具的版本都不是服务端运行版本。
-GoReleaser snapshot 使用生成的快照版本，可以不同于源码 ``VERSION``，
+GoReleaser snapshot 使用生成的快照版本，不是正式发布版本，
 不能以快照运行结果代替正式 tag 与运行版本的精确核验。
 
 新服务端 tag 使用有效 SemVer，例如 ``v0.35.0-rc.1``，不使用 Python
-风格 ``v0.35.0a1``。``VERSION`` 不因本次实现而递增，也不重发
-``v0.34.0``。预发布不会覆盖稳定版 Latest。
+风格 ``v0.35.0a1`` 或 ``+build`` 元数据；这不改变上述普通 Go 构建的版本解析。
+不自动 bump 版本，本次流程调整不创建新发行，也不重发 ``v0.34.0``。
+预发布不会覆盖稳定版 Latest。
+
+正式 UI 包的版本从 ``release.yml`` 传给 ``go.yml`` 的精确 ``release_tag``
+去掉前导 ``v`` 派生，并检查 tag 所指提交 SHA = source SHA = ``HEAD``。
+GoReleaser 使用绑定到触发 tag 的 ``GORELEASER_CURRENT_TAG``，不从最近旧 tag
+或同 SHA 的其他 tag 猜测版本。普通 branch/PR CI 仍执行完整 UI 打包与恢复验证，
+但只用 ``0.0.0-ci.g<完整Git提交SHA>`` 临时标识，不创建 tag、版本文件，也不发布。
+本地无正式 tag 时同样使用该验证标识，见 :doc:`development`；
+``uibundle -version`` 始终需要显式 SemVer，不给它伪造一个旧 Release 版本。
 
 普通 Go 构建、测试及精确 tag 的 ``go install`` 均不要求 UI 产物，也不运行 npm。
 已发布精确 tag 的源码安装首次 ``serve`` 自动获取 **自身精确版本** 的 Release
@@ -95,5 +108,11 @@ draft 不阻止 Go 模块安装。GitHub/GHCR 非原子，失败状态须分别�
   然后继续执行；
 - 响应没有版本头（0.8.0 之前的老服务端）：客户端跳过版本协商。
 
-主仓 ``CHANGELOG.md`` 的 Unreleased 段记录 qatlasd 的变更；qatlas-cli
-的变更记录在它自己仓库的 ``CHANGELOG.md`` 中。
+主仓不再维护根手写变更日志。现行和后续服务端 Release 正文由 GoReleaser
+按 previous..current tags 的 Git commit 标题与 SHA 自动生成；
+``dist/CHANGELOG.md`` 是构建输出，不是受版本控制的输入。
+Conventional Commits 不自动推导版本；维护者按兼容性人工决定 SemVer。
+升级时查看 `GitHub Releases <https://github.com/IAI-USTC-Quantum/QuantumAtlas/releases>`_
+和对应版本的迁移文档；默认正文不含 commit footer，breaking change 要在
+标题中标记、在功能/部署文档中说明。历史 tags 与已发布 Release 保持不变，
+完整发版流程见 :doc:`release`。qatlas-cli 的版本与发布记录由其独立仓库管理。

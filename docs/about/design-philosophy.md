@@ -78,13 +78,12 @@ Wiki 是**公开仓库**（GitHub 上人人可见）。论文本身也是公开�
 
 ## 决定 6：客户端和服务端独立可演化
 
-`qatlas` Python 客户端和 `qatlasd` Go 服务端在**两个不同的 release artifact**里。意味着：
+`qatlas` Python 客户端和 `qatlasd` Go 服务端在**两个不同的 release artifact**里。早期两者曾由同一仓库按 `0.2.x` 发布，这是历史布局，不是当前发版步骤：
 
-- 客户端在 PyPI 滚 `0.2.x`
-- 服务端在 GitHub Release 滚 `v0.2.x` binary
-- 同一份代码 repo（QuantumAtlas）出，version 同步 bump
+- 客户端现由 `qatlas-cli` 独立仓库在 PyPI 发布，独立维护版本。
+- 服务端由 QuantumAtlas 主仓发布 GitHub Release / Go 归档与容器；正式版本唯一从已审核的 `v<version>` Git tag 派生，不维护根版本文件或要求版本文件 bump commit。
 
-但是**API 是稳定的协议**：升级其中一个组件不强制升级另一个组件。CI / 长跑 agent 可以钉死 server 用 `v0.2.7`，client 用 `0.2.9`，照样工作。
+**API 兼容协议**决定如何配对，而不是要求两个组件同步发版：客户端和服务端的 `(major, minor)` 相同，patch 可独立演进。当前发布步骤见[贡献指南](../contributing.md#release)；早期版本示例不表示这些旧版本支持当前 UI 分发流程。
 
 ## 决定 7：多边缘 active-active
 

@@ -202,7 +202,20 @@ go tool swag init -g main.go -d ./cmd/qatlasd,./internal/routes \
   校验 SHA256、包内版本及完整性后按版本缓存，后续启动仍校验缓存，不回退 latest。
   `dev` / 伪版本必须完整构建两文档站和前端，再使用 `embedui`。
 - GoReleaser tar.gz 中的程序已经内嵌与独立 `_web.zip` 一致的 UI 资源。
-  本地 UI 构建不是发布授权；不改 `VERSION`、不重发 `v0.34.0`，不修改历史 tag。
+  正式版本仅从已审核的 `v<version>` Git tag 派生，不维护根版本文件或为版本单独提交 bump。
+  本地 UI 构建不是发布授权；不重发 `v0.34.0`，不修改历史 tag。
+- `uibundle -version` 要求显式 SemVer。完成完整 UI 构建后，无正式 tag 时在仓库根执行：
+
+  ```bash
+  UI_VERSION="0.0.0-ci.g$(git rev-parse HEAD)"
+  go run ./internal/cmd/uibundle -version "$UI_VERSION" -output build/ui
+  ```
+
+  此完整 SHA 标识只用于本地/普通 branch、PR CI 的打包和恢复验证，不是发布版本，
+  不创建 tag、版本文件，也不发布；`g` 前缀避免全数字 SHA 形成非法 SemVer。
+  正式 CI 只从传入的精确 `release_tag` 去 `v` 取版本，并验证 tag 所指提交 SHA = source SHA = `HEAD`。
+  本地也只有 checkout 干净且已核验的正式 `TAG` 指向候选 SHA / `HEAD` 时才可用 `UI_VERSION="${TAG#v}"`，
+  不从最近旧 tag 推断待发版本；完整步骤见[开发入门](../docsite/dev/development.rst)。
 - Git 不提交 `web/dist`、`web/public/doc`、`web/public/devdoc`、根 `dist/` /
   `build/`、`node_modules`、缓存或 ELF。`/devdoc` HTTP 门控要求管理员，
   但公开 bundle 可直接读取开发文档，文档不能存放秘密。

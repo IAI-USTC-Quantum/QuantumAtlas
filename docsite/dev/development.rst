@@ -36,8 +36,10 @@
    ./build/qatlasd --version
 
 普通 ``go build`` / ``go test`` 不需要 Node、Sphinx 或 ``web/dist``，也不需要
-``embedui`` tag。源码 checkout 通常显示 ``dev``；``--version`` 不加载业务配置、
-不连接数据库，也不下载 UI。**构建成功不表示这个 dev 二进制能直接 serve**。
+``embedui`` tag。版本优先取 ``main.version``，其次取 Go build info：Go 1.24+
+（包括本仓使用的 Go 1.26.2）在源码 checkout 构建时也可能记录 tag、伪版本及
+``+dirty``；缺少可用版本元数据才回退 ``dev``。``--version`` 不加载业务配置、
+不连接数据库，也不下载 UI。**构建成功不表示无对应公开 Release 的二进制能直接 serve**。
 
 测试前先隔离环境
 ----------------
@@ -168,8 +170,16 @@ Sphinx 的 ``/doc``、``/devdoc`` 虽随 Web/Go 资源一起分发，仍是独�
    # 打包前确认当前 shell 和所有会加载的 .env 文件都没有 token
    (cd web && npm run build)
    CGO_ENABLED=0 go build -tags embedui -o build/qatlasd ./cmd/qatlasd
-   SERVER_VERSION="$(tr -d '[:space:]' < VERSION)"
-   go run ./internal/cmd/uibundle -version "$SERVER_VERSION" -output build/ui
+   # 无正式 tag 时只使用本地/CI 验证标识，不是发布版本
+   UI_VERSION="0.0.0-ci.g$(git rev-parse HEAD)"
+   go run ./internal/cmd/uibundle -version "$UI_VERSION" -output build/ui
+
+``uibundle -version`` 必须显式传入 SemVer。这个临时标识含完整 Git SHA，
+``g`` 前缀避免全数字 SHA 被解释为带前导零的非法数值标识；它只用于本地/普通
+branch、PR CI 的打包与恢复验证，不创建 tag、版本文件，也不发布或改变
+普通 Go 构建的运行时版本。若正式 ``TAG`` 已核验、checkout 干净且该 tag 指向
+候选 SHA / 当前 ``HEAD``，才可用 ``UI_VERSION="${TAG#v}"``；
+不要从最近旧 tag 推断待发版本。
 
 再在隔离环境验证内嵌资源；不能直接继承带真实目标的联调终端环境：
 
@@ -194,6 +204,9 @@ Sphinx 的 ``/doc``、``/devdoc`` 虽随 Web/Go 资源一起分发，仍是独�
 Doctree/pickle 缓存放 ``build/doctrees``，不能随 UI 发行。CI 对同一提交做两次
 干净的双站和前端构建，比较整个树的路径与字节（包括缺失、隐藏文件及时间信息），
 再验证 UI ZIP 的恢复树与嵌入树一致；不要靠忽略 diff 或保留旧文件通过检查。
+正式发布由 ``release.yml`` 向 ``go.yml`` 显式传入 ``release_tag``，UI 版本仅从
+该 tag 去 ``v`` 派生，并校验 tag 所指提交 SHA = source SHA = ``HEAD``；普通 branch/PR
+检查用上面的临时标识，不发布。GoReleaser 绑定真实触发 tag，不从旧 tag 猜版本。
 
 Git 只保存源码与必要锁文件。不要提交 ``web/dist``、``web/public/doc``、
 ``web/public/devdoc``、根 ``dist/`` / ``build/``、MkDocs ``site/``、
@@ -222,10 +235,14 @@ GoReleaser 的 ``.tar.gz`` 内程序已嵌入 UI，独立 ``_web.zip`` 来自同
 验证过的树，二者内容一致，不是两套 UI。GoReleaser OSS v2.18.1 保留默认
 names、flags、ldflags，``git.ignore_tags`` **精确匹配** 忽略
 ``quantum-atlas-v0.21.0``；不是 OSS glob 匹配，不移动或删除历史 tag。
-Snapshot 版本可不同于源码 ``VERSION``，不代表正式版本可用。
+本地 snapshot 可复用上面的临时 UI 包标识：完成打包后运行
+``goreleaser check`` 与 ``goreleaser release --snapshot --clean``。
+Snapshot 的运行版本由 GoReleaser 生成，不是正式发布版本，也不代表对应 Release 可用。
 
-``VERSION`` 是服务端发布版本来源；工具链清理不递增它，不重发 ``v0.34.0``，
-不发布旧 PyPI 包或独立 ``qatlas-cli``。保留 ``PYPI_README.md`` 与固定历史 tag
+所有主仓正式版本仅从已审核的 Git release tag 派生，不维护根版本文件，
+不需要版本文件 bump commit 或为版本专门改 Go 源码/版本字段。
+工具链清理不是发版；不重发 ``v0.34.0``，不发布旧 PyPI 包或独立 ``qatlas-cli``。
+保留 ``PYPI_README.md`` 与固定历史 tag
 用于退役说明及审计。推送 Git tag 后 Go 模块可能已经可见，GitHub draft 不会
 阻挡模块安装；UI 附件尚未公开时首次启动会明确失败。GitHub/GHCR 也不是原子
 发布事务；本地构建验收不授权创建 tag、Release、镜像或升级生产。

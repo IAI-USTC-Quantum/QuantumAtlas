@@ -22,7 +22,7 @@
 
 ??? question "项目处于什么阶段？"
 
-    Alpha。主线打通，但 still moving fast。version `0.2.x` 里随时可能有 schema 变动（会在 CHANGELOG.md 标 BREAKING）。
+    Alpha，仍处于 pre-1.0 快速演进阶段，可能有不兼容的接口或 schema 变动。升级前查看 [GitHub Releases](https://github.com/IAI-USTC-Quantum/QuantumAtlas/releases) 和对应版本的迁移/部署文档。现行发布由 GoReleaser 从 Git 提交标题与 SHA 生成正文，breaking change 会在标题中标记；生成的提交列表不能替代迁移说明。
 
 ??? question "维护者是谁？"
 

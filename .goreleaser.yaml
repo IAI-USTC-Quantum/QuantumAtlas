@@ -6,6 +6,11 @@ project_name: qatlasd
 git:
   ignore_tags: [quantum-atlas-v0.21.0]
 
+# Release bodies come only from GoReleaser's tag-range Git log (commit titles/SHA).
+# dist/CHANGELOG.md is generated output, never a hand-maintained root input.
+changelog:
+  use: git
+
 builds:
   - main: ./cmd/qatlasd
     env: [CGO_ENABLED=0]
@@ -16,7 +21,7 @@ builds:
 # checksums. Both entries are needed: one signs/checksums the UI, one uploads it.
 # The validated UI artifact lives outside dist, which --clean removes.
 # CI requires exactly the tag's zip before release. The glob also permits a
-# local snapshot (whose generated version differs) to use the source VERSION UI.
+# local snapshot (whose generated version differs) to use a Git-SHA CI fixture UI.
 checksum:
   extra_files:
     - glob: build/ui/qatlasd_*_web.zip

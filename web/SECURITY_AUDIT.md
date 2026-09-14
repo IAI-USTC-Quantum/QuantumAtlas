@@ -22,7 +22,7 @@
 后续所有安装、审计均使用可写缓存；没有关闭 audit、过滤 severity 或添加漏洞豁免。
 
 **未使用 `npm audit fix`（包括 `--force`）、`--legacy-peer-deps` 或 `overrides`。**
-不修改 Node、TypeScript、React 主版本、服务端 `VERSION`、生产配置或历史 Release。
+不修改 Node、TypeScript、React 主版本、服务端正式版本、生产配置或历史 Release；当前主仓正式版本仅从已审核的 Git tag 派生。
 
 ## 依赖链、可利用条件与处理
 
@@ -110,7 +110,7 @@ esbuild 的 0.x minor 变化由新版 Vite 明确支持，并经过真实打包�
 - Vite 实际开发服务器启动、主入口/论文详情 TSX 转换：通过；无代理目标或凭据，非允许 Host 返回 403，测试后关闭服务器。
 - 两次从零构建 Sphinx 公共站 + 开发站（`-W --keep-going`），各接一次 `npm run build`：通过。
 - `artifacts.py compare`：两次完整 UI 树 **175 条目**（包含隐藏文件/目录）路径、字节一致。
-- `uibundle` 生成源码 VERSION 0.34.0 的本地 ZIP；`restore-ui` 后与 `web/dist` 比较：175 条目一致。
+- **历史实测（`77cadfd`）**：当时 `uibundle` 使用根 `VERSION` 中的 `0.34.0` 生成本地 ZIP；`restore-ui` 后与 `web/dist` 比较：175 条目一致。这不是当前取版本的步骤；现在正式包从精确 release tag 派生版本，本地/普通 CI 验证使用临时包标识，见[开发入门](../docsite/dev/development.rst)。
 - `go test ./internal/... ./cmd/... ./web ./tests/...`、同范围 `go vet`：通过。
 - `go test -tags=integration ./internal/... ./cmd/... ./web ./tests/... -run '^$'`：仅编译通过，未执行真实集成测试。
 - `go test -tags=e2e ./tests/e2e -run '^TestSmokeFixture' -count=1`：通过；未跑真实生产 smoke。

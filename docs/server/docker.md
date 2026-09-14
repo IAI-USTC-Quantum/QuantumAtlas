@@ -230,7 +230,7 @@ docker compose up -d
 QATLAS_VERSION=v0.15.0 docker compose up -d qatlasd
 ```
 
-由于 qatlasd 升级**不**触 pb_data schema（PocketBase migration 在 server 内部 idempotent）+ S3 数据完全跟 binary 解耦，回滚永远安全。**唯一例外**是 release notes 明确警告 "schema breaking change" 的版本，那时遵循 changelog 指引。
+回滚前先检查目标版本的 [GitHub Release](https://github.com/IAI-USTC-Quantum/QuantumAtlas/releases) 和对应版本的迁移/部署文档。现行 Release 正文由 GoReleaser 从 Git 提交生成，不等于完整的 schema 兼容性说明。换回旧镜像只回滚程序，**不会逆转 PocketBase/goose 数据迁移**，即使 patch 版本也不能保证回滚安全。升级前备份数据库与相关状态；必要时停止服务并从备份恢复，确认版本守卫允许后再启动。
 
 ### 升级 RustFS / PostgreSQL
 

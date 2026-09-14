@@ -2,8 +2,11 @@
 
 import io
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import os
 from pathlib import Path
 import stat
+import subprocess
+import sys
 import tarfile
 import tempfile
 import threading
@@ -17,27 +20,13 @@ import release_gate
 
 
 class VersionAndReleaseTests(unittest.TestCase):
-    def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temporary.cleanup)
-        self.version = Path(self.temporary.name) / "VERSION"
-
-    def validate(self, version):
-        self.version.write_text(version + "\n")
-        return release_gate.validate_version("v" + version, self.version)
-
     def test_semver_not_pep440(self):
         for version, prerelease in (("0.35.0", False), ("1.2.3-rc.1", True), ("1.2.3-alpha.beta-2", True)):
             with self.subTest(version=version):
-                self.assertEqual(self.validate(version), (version, prerelease))
-        for version in ("1.2.3a1", "01.2.3", "1.2.3-rc.01", "1.2.3+build", "1.2.3-", "1.2.3\ninjected=yes"):
-            with self.subTest(version=version), self.assertRaises(ValueError):
-                self.validate(version)
-        self.version.write_text("0.35.0")
-        with self.assertRaises(ValueError):
-            release_gate.validate_version("v0.34.0", self.version)
-        with self.assertRaises(ValueError):
-            release_gate.validate_version("0.35.0", self.version)
+                self.assertEqual(release_gate.validate_version("v" + version), (version, prerelease))
+        for tag in ("v1.2.3a1", "v01.2.3", "v1.2.3-rc.01", "v1.2.3+build", "v1.2.3-", "v1.2.3\ninjected=yes", "1.2.3", "vv1.2.3", " v1.2.3", "v1.2.3\n"):
+            with self.subTest(tag=tag), self.assertRaises(ValueError):
+                release_gate.validate_version(tag)
 
     def release(self, draft=True, prerelease=False):
         return {"id": 123, "tag_name": "v0.35.0", "draft": draft, "prerelease": prerelease, "html_url": "https://example.test/release"}
@@ -127,6 +116,146 @@ class VersionAndReleaseTests(unittest.TestCase):
             api.request.assert_not_called()
         api.find.return_value = self.release(draft=False)
         self.assertEqual(release_gate.public_stable(api, "v0.35.0"), api.find.return_value)
+
+
+class UIVersionCLITests(unittest.TestCase):
+    """Real isolated Git histories: no edits/tags in the working repository."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name) / "repo"
+        self.home = Path(temporary.name) / "home"
+        self.root.mkdir()
+        self.home.mkdir()
+        self.output = Path(temporary.name) / "github-output"
+        # Neither user's Git hooks/config/signing nor business/API credentials
+        # may enter the CLI fixtures. All commits and tags are local and empty.
+        self.env = {
+            "PATH": os.defpath, "HOME": str(self.home), "XDG_CONFIG_HOME": str(self.home),
+            "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
+            "PYTHONDONTWRITEBYTECODE": "1", "GITHUB_OUTPUT": str(self.output),
+        }
+        self.git("-c", "init.defaultBranch=fixture", "init", "-q", "--object-format=sha1")
+        self.git("commit", "--allow-empty", "-qm", "fixture source")
+        self.sha = self.git("rev-parse", "HEAD").strip()
+
+    def git(self, *args):
+        return subprocess.check_output(
+            ["git", "-c", "user.name=Offline fixture", "-c", "user.email=fixture@example.invalid",
+             "-c", "core.hooksPath=" + os.devnull, "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", *args],
+            cwd=self.root, env=self.env, text=True, timeout=30,
+        )
+
+    def cli(self, script, *args, **env):
+        self.output.write_text("")
+        return subprocess.run(
+            [sys.executable, str(Path(__file__).resolve().parent / script), *args],
+            cwd=self.root, env=self.env | env, capture_output=True, text=True, timeout=30,
+        )
+
+    def select(self, tag="", sha=None):
+        result = self.cli("artifacts.py", "ui-version", RELEASE_TAG=tag, SOURCE_SHA=self.sha if sha is None else sha)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        expected = tag[1:] if tag else f"0.0.0-ci.g{self.sha if sha is None else sha}"
+        self.assertEqual(result.stdout, f"version={expected}\n")
+        self.assertEqual(self.output.read_text(), result.stdout)
+        self.assertFalse((self.root / "VERSION").exists())
+        return expected
+
+    def reject(self, tag, sha=None):
+        result = self.cli("artifacts.py", "ui-version", RELEASE_TAG=tag, SOURCE_SHA=self.sha if sha is None else sha)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(self.output.read_text(), "")
+        return result.stderr
+
+    def test_tag_only_version_cli_needs_no_file_or_api(self):
+        result = self.cli("release_gate.py", "version", "v1.2.3-rc.1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "version=1.2.3-rc.1\ntag=v1.2.3-rc.1\nis_prerelease=true\n")
+        self.assertEqual(self.output.read_text(), result.stdout)
+        self.assertFalse((self.root / "VERSION").exists())
+        obsolete = self.cli("release_gate.py", "version", "v1.2.3", "--version-file", "VERSION")
+        self.assertNotEqual(obsolete.returncode, 0)
+        self.assertIn("unrecognized arguments", obsolete.stderr)
+
+    def test_branch_without_tags_still_selects_and_packages_ci_version(self):
+        self.assertEqual(self.git("tag", "--list"), "")
+        self.restore_selected_zip(self.select())
+        self.assertEqual(self.git("tag", "--list"), "")
+        # A normal branch run must not silently become a release at a tagged SHA.
+        self.git("tag", "v9.9.9")
+        self.assertEqual(self.select(), f"0.0.0-ci.g{self.sha}")
+
+    def test_exact_lightweight_or_annotated_tag_even_with_multiple_at_head(self):
+        self.git("tag", "v1.2.3")
+        self.git("tag", "-a", "v1.2.4-rc.1", "-m", "annotated fixture")
+        self.git("tag", "v9.9.9")
+        self.assertNotEqual(self.git("rev-parse", "refs/tags/v1.2.4-rc.1").strip(), self.sha)
+        for tag in ("v1.2.3", "v1.2.4-rc.1"):
+            with self.subTest(tag=tag):
+                self.assertEqual(self.select(tag), tag[1:])
+
+    def test_checkout_tag_and_source_sha_must_all_agree(self):
+        self.git("tag", "v1.2.3")
+        old_sha = self.sha
+        self.git("commit", "--allow-empty", "-qm", "different source")
+        self.sha = self.git("rev-parse", "HEAD").strip()
+        self.assertIn("release tag commit", self.reject("v1.2.3"))
+        self.assertIn("checkout HEAD", self.reject("v1.2.3", old_sha))
+        self.assertIn("checkout HEAD", self.reject("", old_sha))
+        self.reject("v8.8.8")  # nonexistent tag, never fall back to nearest tag
+
+    def test_malformed_inputs_cannot_inject_outputs_or_shell_commands(self):
+        for tag in ("1.2.3", "v1.2.3a1", "v1.2.3+build", "v1.2.3-rc.01", "v01.2.3", "v1.2.3\ninjected=yes", "v1.2.3;touch injected", "v1.2.3$(touch injected)"):
+            with self.subTest(tag=tag):
+                self.reject(tag)
+        for sha in ("", self.sha[:12], "A" * 40, "0" * 39, "0" * 41, "0" * 63, "0" * 65, self.sha + "\ninjected=yes"):
+            with self.subTest(sha=sha):
+                self.assertIn("source SHA", self.reject("", sha))
+        self.assertFalse((self.root / "injected").exists())
+
+    def test_sha1_sha256_and_numeric_hashes_form_canonical_ci_semver(self):
+        # Fake Git covers SHA-256 and improbable numeric hashes without mining
+        # commits. The 'g' prefix prevents leading-zero numeric identifiers.
+        for sha in ("a1" * 20, "a1" * 32, "0" + "1" * 39, "0" + "1" * 63):
+            with self.subTest(sha=sha), patch("artifacts.subprocess.check_output", return_value=sha + "\n") as git:
+                version = artifacts.ui_version("", sha)
+                self.assertEqual(version, f"0.0.0-ci.g{sha}")
+                self.assertEqual(release_gate.validate_version("v" + version), (version, True))
+                git.assert_called_once_with(["git", "rev-parse", "--verify", "HEAD"], text=True, timeout=30)
+
+    def restore_selected_zip(self, version):
+        archive = self.root / f"qatlasd_{version}_web.zip"
+        with zipfile.ZipFile(archive, "w") as bundle:
+            bundle.comment = f"qatlas-ui-v1:{version}".encode()
+            for name in (*artifacts.REQUIRED_UI, "assets/app.js", "doc/.buildinfo"):
+                bundle.writestr(name, "offline UI fixture " + name)
+        restored = self.root / "restored"
+        result = self.cli("artifacts.py", "restore-ui", str(archive), str(restored), version)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        artifacts.tree(restored)
+        return archive
+
+    def test_zip_name_and_metadata_require_exact_tag_derived_version(self):
+        self.git("tag", "v1.2.3-rc.1")
+        version = self.select("v1.2.3-rc.1")
+        archive = self.restore_selected_zip(version)
+        destination = self.root / "rejected"
+        # A correct comment cannot compensate for a different archive name.
+        result = self.cli("artifacts.py", "restore-ui", str(archive), str(destination), "1.2.3")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("exactly one UI zip", result.stderr)
+        # A correct archive name cannot compensate for a different ZIP comment.
+        for wrong in ("1.2.3", "v" + version, f"0.0.0-ci.g{self.sha}"):
+            with self.subTest(comment=wrong):
+                with zipfile.ZipFile(archive, "a") as bundle:
+                    bundle.comment = f"qatlas-ui-v1:{wrong}".encode()
+                result = self.cli("artifacts.py", "restore-ui", str(archive), str(destination), version)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("version/comment mismatch", result.stderr)
+                self.assertFalse(destination.exists())
 
 
 class ArtifactTests(unittest.TestCase):
@@ -315,6 +444,72 @@ class ArtifactTests(unittest.TestCase):
 
 
 class SourceContractTests(unittest.TestCase):
+    def test_no_handwritten_root_changelog_or_version(self):
+        root = Path(__file__).resolve().parents[2]
+        for name in ("CHANGELOG.md", "VERSION"):
+            with self.subTest(name=name):
+                path = root / name
+                self.assertFalse(path.exists() or path.is_symlink())
+        # Deliberately root-only: GoReleaser's dist/CHANGELOG.md, historical
+        # build output, docs commit stamps and third-party files are not inputs.
+
+    def test_current_configs_scripts_and_docs_have_no_legacy_version_tooling(self):
+        root = Path(__file__).resolve().parents[2]
+        # Only current first-party policy surfaces. Do not traverse root build/
+        # dist/, web/node_modules or generated web/public documentation.
+        paths = set(root.glob("*")) | set((root / "web").glob("*"))
+        for directory in (".github", "docs", "docsite", "hooks", "scripts", "deploy"):
+            paths.update((root / directory).rglob("*"))
+        text_suffixes = {".md", ".rst", ".toml", ".yaml", ".yml", ".json", ".cfg", ".ini", ".py", ".sh", ".txt", ".pages"}
+        for path in sorted(paths):
+            if not path.is_file() or path.name.startswith("test_"):
+                continue  # regression fixtures name the forbidden tools on purpose
+            with self.subTest(path=str(path.relative_to(root))):
+                self.assertNotRegex(path.name.lower(), r"^\.?cz(?:\.|rc|$)|commitizen")
+                if path.suffix in text_suffixes:
+                    self.assertNotRegex(path.read_text(), r"(?i)commitizen|\bcz\b|\bcz_conventional_commits\b")
+
+    def test_release_body_is_goreleaser_git_output_only(self):
+        root = Path(__file__).resolve().parents[2]
+        config = (root / ".goreleaser.yaml").read_text()
+        self.assertRegex(config, r"(?m)^changelog:\n  use: git\n(?:\n|$)")
+        for forbidden in ("header:", "footer:"):
+            self.assertNotIn(forbidden, config)
+        # Production workflows/helpers must not supply manual notes or replace
+        # the generated body. No blanket ban on the word 'changelog' in docs.
+        paths = list((root / ".github/workflows").glob("*.y*ml"))
+        paths += [p for p in (root / ".github/scripts").iterdir() if p.suffix in {".py", ".sh"} and not p.name.startswith("test_")]
+        for path in paths:
+            content = path.read_text()
+            with self.subTest(path=str(path.relative_to(root))):
+                self.assertNotRegex(content, r"--(?:release-(?:notes|header|footer)|notes(?:-file|-from-tag)?|generate-notes)\b")
+                self.assertNotRegex(content, r"(?:generate_release_notes|release_notes|body_path)\s*:|[\"']?body[\"']?\s*:")
+                self.assertNotRegex(content, r"(?i)(?<![\w./-])(?:\./)?CHANGELOG\.md\b")
+
+    def test_tag_version_and_validated_goreleaser_chain_remain_connected(self):
+        root = Path(__file__).resolve().parents[2]
+        workflow = (root / ".github/workflows/release.yml").read_text()
+        self.assertNotIn("--version-file", (root / ".github/scripts/release_gate.py").read_text())
+        self.assertIn('git rev-parse "refs/tags/$GITHUB_REF_NAME^{commit}"', workflow)
+        self.assertIn("release_tag: ${{ needs.prep.outputs.tag }}", workflow)
+        self.assertIn("GORELEASER_CURRENT_TAG: ${{ needs.prep.outputs.tag }}", workflow)
+        for required in (
+            "tags: ['v*.*.*']",
+            'run: python3 .github/scripts/release_gate.py version "$GITHUB_REF_NAME"',
+            "uses: ./.github/workflows/go.yml",
+            "needs: [prep, checks]",
+            "uses: goreleaser/goreleaser-action@v6",
+            "version: v2.18.1",
+            "args: release --clean\n",
+            "fetch-depth: 0",
+            "needs: [prep, release, native-smoke, docker-image]",
+            'run: python3 .github/scripts/release_gate.py publish "$GITHUB_REF_NAME"',
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, workflow)
+        self.assertGreaterEqual(workflow.count('release_gate.py guard "$GITHUB_REF_NAME"'), 3)
+        self.assertIn("draft: true", (root / ".goreleaser.yaml").read_text())
+
     def test_docker_reuses_complete_ui_and_keeps_runtime_contract(self):
         root = Path(__file__).resolve().parents[2]
         dockerfile = (root / "Dockerfile").read_text()
@@ -344,6 +539,15 @@ class SourceContractTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[2]
         workflow = (root / ".github/workflows/go.yml").read_text()
         self.assertIn("workflow_call:", workflow)
+        self.assertRegex(workflow, r"release_tag:\n        description: [^\n]+\n        type: string\n        required: false\n        default: ''")
+        self.assertIn("RELEASE_TAG: ${{ inputs.release_tag }}", workflow)
+        self.assertIn("python3 .github/scripts/artifacts.py ui-version", workflow)
+        self.assertIn("VERSION: ${{ steps.source.outputs.version }}", workflow)
+        self.assertNotIn("< VERSION", workflow)
+        self.assertIn("fetch-depth: 0", workflow.split("  web:\n", 1)[1])
+        self.assertIn('go run ./internal/cmd/uibundle -version "$VERSION" -output build/ui', workflow)
+        self.assertIn('artifacts.py restore-ui "build/ui/qatlasd_${VERSION}_web.zip" build/ui-restored "$VERSION"', workflow)
+        self.assertIn("artifacts.py compare web/dist build/ui-restored", workflow)
         self.assertEqual(workflow.count("ref: ${{ inputs.source_sha || github.sha }}"), 3)
         self.assertEqual(workflow.count('test "$(git rev-parse HEAD)" = "$SOURCE_SHA"'), 3)
         self.assertIn("git ls-files -z -- '*.go' | xargs -0 -r gofmt -l", workflow)

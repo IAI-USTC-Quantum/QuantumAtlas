@@ -63,7 +63,7 @@ docs(deployment): add Caddy template for dual-endpoint RustFS
 chore(deps): bump pocketbase to v0.38.2
 ```
 
-**BREAKING CHANGE** 用 footer 或 type 后的 `!` 标记；版本调整由 maintainer 按发布对象审核：
+**Breaking change 必须在提交标题的 type/scope 后用 `!` 标记**，可用 `BREAKING CHANGE` footer 补充背景，但迁移步骤应写入对应文档。GoReleaser 默认正文只展示标题与 SHA、不展示 footer；版本调整由 maintainer 按发布对象审核：
 
 ```
 feat(api)!: rename /api/papers/upload to /api/papers/upload-pdf
@@ -73,7 +73,7 @@ BREAKING CHANGE: clients before 0.2.0 must update to use the new path.
 
 ### 版本与发布边界
 
-Conventional Commits 是提交约定，不会自动触发发布。主仓只发布服务端，使用根目录 `VERSION` + `v<version>` tag；CLI 由 `qatlas-cli` 独立仓库维护和发版。旧 PyPI 包的最终迁移版 `quantum-atlas 0.21.0` 已发布，不再有后续版本或 main 上的发布入口。不要用 `cz bump` 驱动服务端或递增旧包版本。服务端发布命令见下方 [Release 流程](#release)。
+Conventional Commits 是提交约定，不会自动推导或 bump 版本，也不会触发发布。主仓只发布服务端，所有正式版本仅从 Git tag 派生：维护者人工选择 SemVer，完成待发源码的检查、提交与 review 后，在已审核 SHA 上创建 annotated `vX.Y.Z[-rc.N]`，只推这个 tag。无需根版本文件、版本文件 bump commit，或为版本专门改 Go 源码/版本字段；CLI 按 `qatlas-cli` 独立仓库的发布流程维护和发版。旧 PyPI 包的最终迁移版 `quantum-atlas 0.21.0` 已发布，不再有后续版本或 main 上的发布入口。服务端发布命令见下方 [Release 流程](#release)。
 
 ---
 
@@ -122,10 +122,12 @@ build/venv-sphinx/bin/sphinx-build \
 # 打包环境及会加载的 .env 文件不得携带 VITE_DEV_API_PAT 等 token
 (cd web && npm run build)
 CGO_ENABLED=0 go build -tags embedui -o build/qatlasd ./cmd/qatlasd
-# 在相同树上打包；GoReleaser tar.gz 内嵌 UI 与独立 ZIP 资源内容一致
-SERVER_VERSION="$(tr -d '[:space:]' < VERSION)"
-go run ./internal/cmd/uibundle -version "$SERVER_VERSION" -output build/ui
+# 无正式 tag 时，用仅限本地/CI 验证的临时 SemVer 打包；不是发布版本
+UI_VERSION="0.0.0-ci.g$(git rev-parse HEAD)"
+go run ./internal/cmd/uibundle -version "$UI_VERSION" -output build/ui
 ```
+
+`uibundle -version` 必须显式传入 SemVer；临时标识包含完整 Git SHA，`g` 前缀避免全数字 SHA 成为带前导零的非法数值标识。它只用于本地/普通 branch、PR CI 的打包与恢复验证，不创建 tag、版本文件，也不发布或改变普通 Go 构建的运行时版本。若正式 `TAG` 已核验、checkout 干净且该 tag 指向的 commit 正是候选 SHA / 当前 `HEAD`，才可用 `UI_VERSION="${TAG#v}"` 打正式 UI 包；不得拿最近的旧 tag 冒充待发版本。
 
 提交前只提交源码。CI 执行两次干净的完整构建、比较所有路径及字节，检查不得跟踪生成目录；不靠忽略 diff、dirty 发布或只比较现有文件来掩盖漂移。文档改完后也必须重新生成用于验收的 UI。开发文档会随公开 Release 发布，HTTP 管理员鉴权不是内容保密机制，不要放入凭据或私有部署信息。
 
@@ -316,23 +318,42 @@ qatlas contrib mineru --watch
 
 | 发布对象 | 版本来源 | 唯一对应 tag | 产物 |
 |---|---|---|---|
-| 服务端 `qatlasd` | 根目录 `VERSION`（当前 `0.34.0`） | `v<version>` | Go binaries、服务端 GitHub Release、Docker 镜像 |
+| 服务端 `qatlasd` | 唯一从 Git release tag 去 `v` 派生 | annotated `vX.Y.Z[-rc.N]` | Go binaries、服务端 GitHub Release、Docker 镜像 |
 | 客户端 `qatlas-cli` | [独立仓库](https://github.com/IAI-USTC-Quantum/qatlas-cli) | 由该仓库管理 | [PyPI `qatlas-cli`](https://pypi.org/project/qatlas-cli/) |
 
 ### 服务端发版
 
-根目录 `VERSION` 是服务端版本唯一来源；最终迁移包的 `0.21.0` **不能写回** `VERSION`，此次退役不改变服务端 `0.34.0`。以后发布服务端时，先按需更新 `VERSION` 和服务端 changelog、提交并 review，再执行：
+主仓所有正式版本仅从 Git release tag 派生，不维护根版本文件，不需要版本文件 bump commit，也不为版本专门改 Go 源码/版本字段。最终迁移包的 `0.21.0` 属于已退役的独立发布线；这次流程调整不代表已发布新服务端版本，历史 `v0.34.0` 与旧 Python tag 均保持不变。后续发版由维护者执行：
+
+1. 人工审核变更与兼容性，选择尚未发布的 SemVer（`MAJOR.MINOR.PATCH[-prerelease]`，例如 `0.35.0-rc.1`；不使用 PEP 440 或 `+build` 元数据）。提交类型不自动决定或 bump 版本。
+2. 将必要迁移步骤写入对应功能/部署文档，完成待发布源码的检查、提交与 review；确认候选 commit 的 CI 全绿，记录已审核的完整 SHA。源码已就绪时，不另造只改版本的 commit。
+3. 在该已审核 SHA 上创建 annotated `vX.Y.Z[-rc.N]` tag，核对指向后只推这个 tag，触发现有 `release.yml` + GoReleaser：
 
 ```bash
-# 在已审核的 release commit 上；tag 必须与该 commit 的 VERSION 一致
-SERVER_VERSION="$(tr -d '[:space:]' < VERSION)"
-git tag -a "v${SERVER_VERSION}" -m "Release qatlasd ${SERVER_VERSION}"
-git show --stat "v${SERVER_VERSION}"
-# 确认后只推这个 tag
-git push origin "refs/tags/v${SERVER_VERSION}"
+set -euo pipefail
+TAG=vX.Y.Z # 替换为本次人工选定的未发布 tag，例如 v0.35.0-rc.1
+REVIEWED_SHA="<已review且CI全绿的完整提交SHA>" # 必须替换；不是浮动分支名
+# 当前 checkout 必须就是该候选提交，且所有待发源码已提交
+test -z "$(git status --porcelain)"
+test "$(git rev-parse HEAD)" = "$REVIEWED_SHA"
+# 仅校验 tag 并输出去 v 后的派生版本，不读写版本文件
+python3 .github/scripts/release_gate.py version "$TAG"
+git tag -a "$TAG" "$REVIEWED_SHA" -m "Release qatlasd ${TAG#v}"
+git show --stat "$TAG"
+test "$(git rev-parse "${TAG}^{commit}")" = "$REVIEWED_SHA"
 ```
 
-[`release.yml`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.github/workflows/release.yml) 校验 SemVer tag 与 `VERSION` 一致，并调用同一 SHA 的 Go CI。固定 GoReleaser **v2.18.1**，默认命名的三个平台归档（`linux/{amd64,arm64}` + `darwin/arm64`）、`qatlasd_<version>_web.zip` 与默认 `*_checksums.txt` 进入 draft；checksum 和 attestation 覆盖归档/UI 包。原生 runner 只下载、校验、解包并运行 `--version`，不重新编译。Docker 继续单独发布并验证 `linux/amd64` 镜像，复用同一 UI 包。全部通过才公开 Release，仅稳定版更新 Latest 和镜像 latest；已公开同 tag 拒绝重新上传。**不构建或发布旧 Python 包，也不发布独立 `qatlas-cli`。**
+检查上面的 tag 内容与指向，人工确认后只推这个 tag：
+
+```bash
+git push origin "refs/tags/$TAG"
+```
+
+[`release.yml`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.github/workflows/release.yml) 校验 SemVer tag 与已公开 Release 保护条件，将精确 `release_tag` 传给同一 SHA 的 `go.yml`。正式 UI 包从这个 tag 去 `v` 派生版本，并检查 tag 所指提交 SHA = source SHA = `HEAD`；普通 branch/PR CI 仍打包和恢复验证，但使用 `0.0.0-ci.g<完整Git提交SHA>`，不创建 tag、版本文件，也不发布。`release_gate.py version "$TAG"` 仅校验 tag 并输出派生版本，不再读根版本文件。
+
+固定 GoReleaser **v2.18.1**，通过 `GORELEASER_CURRENT_TAG` 绑定真实触发 tag，不从最近旧 tag 或同 SHA 的其他 tag 猜测版本。默认命名的三个平台归档（`linux/{amd64,arm64}` + `darwin/arm64`）、`qatlasd_<version>_web.zip` 与默认 `*_checksums.txt` 进入 draft；checksum 和 attestation 覆盖归档/UI 包。原生 runner 只下载、校验、解包并运行 `--version`，不重新编译。Docker 继续单独发布并验证 `linux/amd64` 镜像，复用同一 UI 包。全部通过才公开 Release，仅稳定版更新 Latest 和镜像 latest；已公开同 tag 拒绝重新上传。**不构建或发布旧 Python 包，也不发布独立 `qatlas-cli`。**
+
+**Release 正文唯一由 GoReleaser 生成**：`.goreleaser.yaml` 显式使用 `changelog.use: git`，按 previous..current tags 的 Git commit 标题和 SHA 生成正文及构建产物 `dist/CHANGELOG.md`。主仓不再维护或读取根 `CHANGELOG.md`，不另写手工 release notes、header/footer，也不覆盖生成正文。默认正文不包含 commit body/footer，因此 breaking change 必须在提交标题中用 `!` 等明确标记；迁移前置条件和步骤写入对应功能/部署文档供读者按提交追溯，不能只藏在 `BREAKING CHANGE` footer 中。升级时查阅 [GitHub Releases](https://github.com/IAI-USTC-Quantum/QuantumAtlas/releases) 及对应版本文档。现行和后续发版统一走此生成链，已经发布的历史 Release 与 Git tags 保持不变。
 
 GoReleaser 的 `.goreleaser.yaml` 使用 `git.ignore_tags` **精确匹配**忽略 `quantum-atlas-v0.21.0`，不是 OSS glob；不移动或删除历史 tag。继续使用默认 archive/checksum names、flags 和 ldflags，tar.gz 中内嵌的 UI 与独立 ZIP 来自同一份验证过的资源树。
 
@@ -343,7 +364,7 @@ goreleaser check
 goreleaser release --snapshot --clean # 使用 v2.18.1；不发布
 ```
 
-Snapshot 版本由 GoReleaser 生成，不等于 `VERSION`；真实 tag 与 runtime 版本在正式流程中精确核对。未获发布授权前，不推 tag、不改生产。新归档格式从未来新版本启用，不能重发 `v0.34.0`；首次迁移安装器必须从同一新 tag 的仓库路径取，不要使用旧服务返回的安装脚本。
+无正式 tag 时，本地 snapshot 复用上面 `0.0.0-ci.g<完整Git提交SHA>` 的临时 UI 包；GoReleaser 自行生成 snapshot 运行版本，它不是正式发布版本，不用于普通源码安装的 Release UI 发现。真实 tag 与 runtime 版本在正式流程中精确核对。未获发布授权前，不推 tag、不改生产。新归档格式从未来新版本启用，不能重发 `v0.34.0`；首次迁移安装器必须从同一新 tag 的仓库路径取，不要使用旧服务返回的安装脚本。
 
 **双发布边界**：Git tag 推送后 Go 模块可能已经可安装，但 draft UI 附件对普通用户尚不可见；此时首次 `serve` 明确失败，发布完成后重试即可。必须在打 tag 前验证源码可编译、UI 可重建。GitHub/GHCR 不是原子事务，失败时分别报告 draft/镜像状态，不移动 tag 或自动升级生产。
 
@@ -355,7 +376,7 @@ Snapshot 版本由 GoReleaser 生成，不等于 `VERSION`；真实 tag 与 runt
 
 固定历史 tag [`quantum-atlas-v0.21.0`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/tree/quantum-atlas-v0.21.0) 保留发布时的包元数据、一次性检查器、测试及 workflow，供追溯和审计；不要移动、删除或覆盖该 tag。main 保留 `PYPI_README.md` 退役说明入口，但移除一次性工具、旧包发布入口和根 Python 项目/uv/Pixi 锁文件，不再维护旧包版本或构建后端。**没有后续旧包发版流程，也不会再发布新的 `quantum-atlas` 版本。**
 
-旧包最终发布未改变服务端 `VERSION` 或 GitHub Latest（分别为 `0.34.0`、`v0.34.0`）；服务端继续按上面的常规流程发布，CLI 后续开发和发版只在 `qatlas-cli` 仓库进行。
+旧包最终发布没有发布服务端或容器，当时服务端最新发行及 GitHub Latest 均保持为 `v0.34.0`；本次版本流程调整也不构成新发行或授权重发旧 tag。服务端后续按上面的 tag-only 流程发布，CLI 后续开发和发版只在 `qatlas-cli` 仓库进行。
 
 ## 行为准则
 
