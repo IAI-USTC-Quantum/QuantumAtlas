@@ -119,6 +119,27 @@ flag。混合测试文件不整体排除，其离线测试仍默认运行。S3 �
 前端 API 类型在 ``web/src/lib/api.ts`` 手动维护；未配置的旧 ``gen:api`` 命令与
 OpenAPI 前端生成器已移除，不存在自动同步链。
 
+Markdown 与公式渲染
+------------------------------
+
+三套界面的渲染管线相互独立：
+
+- **主 Web**：``web/`` 的 React 预览使用 unified/remark 在可终止的 Worker 中
+  解析 Markdown，并用 KaTeX 排版公式；输出受控 HAST 语法树，经主线程独立校验后
+  转为 React 元素，不注入原始 HTML。公式 JS、CSS 和字体按 npm 锁定版本本地打包。
+  原文模式、超时与安全边界详见仓库 ``web/MARKDOWN_PREVIEW.md``。
+- **MkDocs**：``docs/`` 的 Markdown 经 Python Markdown 与 ``pymdownx.arithmatex``
+  处理，再由浏览器中的 KaTeX auto-render 渲染公式。目前公式资源来自
+  ``unpkg.com/katex@0`` 的浮动 CDN 版本，由 ``mkdocs.yml`` 和
+  ``docs/javascripts/katex.js`` 独立配置。
+- **Sphinx**：``docsite/`` 使用 reStructuredText；``:math:`` 和 ``.. math::``
+  创建数学节点，HTML 构建器默认使用 MathJax，含公式的页面按需加载其脚本。
+  当前 ``docsite/conf.py`` 未自定义数学引擎。
+
+Sphinx 的 ``/doc``、``/devdoc`` 虽随 Web/Go 资源一起分发，仍是独立静态页面，
+不经过 React 预览器。修改主 Web 渲染逻辑或通过 npm 审计，不代表文档站及其 CDN
+资源也已同步更新或验证。
+
 完整 UI：两套 Sphinx → npm → embedui
 -------------------------------------
 
