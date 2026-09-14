@@ -68,7 +68,7 @@ header、以及 [README.md](https://github.com/IAI-USTC-Quantum/QuantumAtlas#数
 
 - [uv](https://github.com/astral-sh/uv) / [pixi](https://pixi.sh/) — 包管理
 - [Commitizen](https://commitizen-tools.github.io/commitizen/) — 版本管理 / Conventional Commits
-- [pytest](https://docs.pytest.org/) + [Go testing](https://pkg.go.dev/testing) — 测试
+- [Go testing](https://pkg.go.dev/testing) — 主仓单元、部署结构及生产冒烟测试
 - [mkdocs](https://www.mkdocs.org/) + [mkdocs-material](https://squidfunk.github.io/mkdocs-material/) — 这份文档
 
 ### 基础设施

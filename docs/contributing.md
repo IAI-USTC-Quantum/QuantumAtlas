@@ -86,41 +86,41 @@ Conventional Commits 是提交约定，不会自动触发发布。主仓只发�
 git clone https://github.com/IAI-USTC-Quantum/QuantumAtlas.git
 cd QuantumAtlas
 
-# 一次性同步全栈依赖（Python + npm + 前端 build + Go build）
+# Go 编译需要先生成 go:embed 使用的前端资源
+(cd web && npm ci && npm run build)
 pixi run build
-# 单独装主仓 Python 开发 / 测试工具
+# 可选：剩余 Python 文档辅助脚本的格式化 / 类型检查工具
 uv sync --locked --group dev
 ```
 
-根目录 `pyproject.toml` 是仅用于开发环境、不分发 Python 包的 uv 项目：开发依赖由 `[dependency-groups].dev` 管理，不包含旧包的发行元数据或构建后端，也不提供 `quantum-atlas[dev]` extra。`uv sync` 只准备开发依赖，不构建或安装主仓为 Python 包。主仓不含 `qatlas/` 客户端代码；需要服务端联调时单独安装 `qatlas-cli`，修改客户端代码、测试或发版请到 [qatlas-cli 仓库](https://github.com/IAI-USTC-Quantum/qatlas-cli)。
+根目录 `pyproject.toml` 是仅用于开发环境、不分发 Python 包的 uv 项目：`[dependency-groups].dev` 只保留 Python 辅助脚本的开发工具，不再依赖 pytest。文档构建依赖仍分别由 `docsite/requirements.txt`（Sphinx）和 `docs/requirements.txt`（MkDocs）管理。`uv sync` 不构建或安装主仓为 Python 包。主仓不含 `qatlas/` 客户端代码；需要服务端联调时单独安装 `qatlas-cli`，修改客户端代码、测试或发版请到 [qatlas-cli 仓库](https://github.com/IAI-USTC-Quantum/qatlas-cli)。
 
 ### 跑测试
 
-主仓 Python 测试保留 `tests/test_docker_compose.py` 的离线部署结构检查，以及 `tests/integration/test_production_smoke.py` 中标记为 `network` / `e2e` 的生产冒烟；后者通过 nightly workflow 单独配置目标和凭据。一次性旧包构建与迁移检查只保留在最终历史 tag，不再加入日常 CI。
+主仓测试统一使用 Go：`tests/compose_test.go` 检查部署结构，`tests/e2e/` 包含本地 `httptest` 冒烟 fixture；真实生产检查位于带 `e2e` build tag 的 `production_smoke_test.go`。普通测试不会读取部署 `.env` 或访问线上服务。一次性旧包检查只保留在最终历史 tag，不再加入日常 CI。
 
 ```bash
-# 主仓部署模板结构测试（离线，不启动容器或服务）
-uv run --locked --group dev pytest -m "not network and not e2e"
+# 部署结构 + 本地 HTTP fixture（离线，不启动 Docker/业务服务）
+go test ./tests/...
 
-# Go 测试（必须通过 pixi 跑，自带 cgo + 工具链）
+# 完整 Go 测试；需先按上文构建前端资源
 pixi run test-go
-# 或：pixi run -- go test ./internal/... ./cmd/...
+# 或使用满足 go.mod 的原生 Go 工具链：
+CGO_ENABLED=0 go test ./internal/... ./cmd/... ./tests/...
 
-# 前端 build + type check
-cd web && npm run build
+# 只编译 e2e 路径并运行本地 fixture，仍不访问生产
+go test -tags=e2e ./tests/e2e -run '^TestSmokeFixture' -count=1
 ```
 
-!!! warning "Go 必须 CGO_ENABLED=1（2026-05 起）"
-    自 paperindex 包引入 `marcboeker/go-duckdb` 后，**整个 qatlasd build 强制需要 cgo**（libduckdb 是 C++ 库）。`pixi run build/test-go/vet` 已经在 `[tool.pixi.activation.env]` 里 export `CGO_ENABLED=1`，直接用 pixi 就行。
+生产冒烟只能由操作者显式启用，nightly workflow 沿用仓库 secret `QATLAS_SERVER_TARGETS`：逗号/换行分隔的 `URL[|insecure][|token=...][|token-env=NAME]`。不要把真实目标和 token 提交到 Git。授权健康详情需要 system PAT 或 session JWT，普通用户 PAT 不授予该层；未提供 token 时会明确跳过授权详情子项。可选 `QATLAS_EXPECTED_VERSION`（nightly 中为 repository variable）用于精确核对部署版本；未设置时只检查非空、非 dev，不代表已核对最新发布版。
 
-    如果你想脱离 pixi 直接 `go build`，先确保用户级 env 不强制关 cgo：
+```bash
+# 仅在明确配置测试目标并获准访问后执行；缺目标会失败
+# -count=1 禁止生产检查使用测试缓存
+go test -tags=e2e ./tests/e2e -count=1 -timeout=10m
+```
 
-    ```bash
-    go env -u CGO_ENABLED   # 清掉 ~/.config/go/env 里 CGO_ENABLED=0（如果之前设过）
-    # 或直接 go env -w CGO_ENABLED=1
-    ```
-
-    Conda gcc (`gxx` 包) 在 `pixi shell` 里在 PATH，但脱离 pixi 时不在，需要系统装 `gcc` 才能跑 cgo build。
+当前主仓不再依赖旧 DuckDB/cgo 路径，正式发布使用 `CGO_ENABLED=0`。无需为运行上述测试修改全局 `go env`；Sphinx/MkDocs 仍只是文档构建工具。
 
 ### 仓库结构
 
@@ -129,7 +129,7 @@ internal/              Go server 内部包（registry / search / ingest / objsto
 cmd/qatlasd/           Go server 入口 (main + cobra subcommands)
 web/                   React SPA (Vite + TanStack Router)
 scripts/               运维脚本
-tests/                 Python 测试
+tests/                 Go 部署结构测试、离线 HTTP fixture 与显式启用的生产冒烟
 docs/                  这份文档
 ```
 
@@ -141,7 +141,7 @@ docs/                  这份文档
 4. 跑相关测试 + 现有测试别 break
 5. push 你 fork：`git push -u origin feat/some-thing`
 6. 在 GitHub 网页发 PR 到 `IAI-USTC-Quantum/QuantumAtlas:main`
-7. CI 跑（pytest + go test + 前端 build）
+7. CI 跑（Go 单元/部署/离线 fixture 测试 + 前端 build）
 8. review + 修改
 9. squash merge
 

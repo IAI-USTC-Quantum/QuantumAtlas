@@ -123,13 +123,13 @@ qatlas-search 在主仓库中的接入位置（供对照）：
 ~~~~~~~~~~~~~
 
 开发者在 ``deploy/docker-compose.yml`` 中增加 app 服务，并遵循
-qatlas-search 已有的约束（``tests/test_docker_compose.py`` 会强制检查
+qatlas-search 已有的约束（``tests/compose_test.go`` 会强制检查
 这些约束）：
 
 .. code-block:: yaml
 
    qatlas-<name>:
-     image: qatlas-<name>:local        # 在 app 仓库自行构建
+     image: ghcr.io/iai-ustc-quantum/qatlas-<name>:${QATLAS_APP_VERSION:?set release tag}
      restart: unless-stopped
      profiles: ["<name>"]              # profile 隔离，默认 up 不带它
      networks:
@@ -140,11 +140,13 @@ qatlas-search 已有的约束（``tests/test_docker_compose.py`` 会强制检查
 - 服务**不声明** ``ports:``，即不暴露宿主机端口，app 的唯一合法调用方
   是 qatlasd；
 - 服务只接入 ``shared-infra`` 外部网络（与 qatlasd 互通）；
-- app 自有的配置文件以**读写**方式挂载（去掉 ``:ro``），这样管理端点
-  （``PUT /v1/admin/config``）才能把修改持久化回文件；
-- 注意：``tests/test_docker_compose.py`` 目前硬断言 compose 中只允许
-  ``qatlasd`` 和 ``qatlas-search`` 两个服务。新增 app 时，开发者必须
-  同步放宽该测试，并为新 app 补上同样的 profile-gated / no-ports 断言。
+- 需要管理端点 ``PUT /v1/admin/config`` 回写的 app（如 search/rag），
+  配置以**读写**方式挂载；无回写契约的 app（如 match）使用 ``:ro``；
+- 将上面示例的版本变量替换成应用自己的变量，并同步部署样例；镜像由 app
+  仓库发布到 registry，部署模板不使用现场 build 或本地镜像；
+- ``tests/compose_test.go`` 目前允许 ``qatlasd``、``qatlas-search``、
+  ``qatlas-match``、``qatlas-rag``。新增 app 时同步更新 ``composeServices``
+  及挂载契约，并覆盖 profile 隔离、无宿主端口和版本变量断言。
 
 启动方式：
 
@@ -285,7 +287,7 @@ qatlas-search 依赖 qatlas-rag（语义检索是搜索 fan-out 的一个 backen
    * - ``deploy/docker-compose.yml``
      - profile-gated、无 ``ports:``、只接 ``shared-infra``、
        配置文件读写挂载
-   * - ``tests/test_docker_compose.py``
+   * - ``tests/compose_test.go``
      - 放宽服务集合断言；为新 app 补 profile / no-ports 断言
    * - ``docsite/``
      - 本文档登记新 app；``guide/`` 补用户使用页

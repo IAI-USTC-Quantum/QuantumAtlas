@@ -159,11 +159,12 @@
     git clone https://github.com/IAI-USTC-Quantum/QuantumAtlas.git
     cd QuantumAtlas
 
-    # 一次性同步 Python + npm + 前端 build + Go build
+    # 先构建 go:embed 所需的前端资源，再构建 Go 服务
+    (cd web && npm ci && npm run build)
     pixi run build
     ```
 
-    Python 测试工具从 `pyproject.toml [dependency-groups].dev` 安装：`uv sync --locked --group dev`，不再使用 `quantum-atlas[dev]` extra。这不会安装 `qatlas`；需要 CLI 联调时，按上面的独立客户端安装步骤操作。CLI 自身的代码修改与测试请到 [qatlas-cli 仓库](https://github.com/IAI-USTC-Quantum/qatlas-cli)。
+    主仓的单元、部署结构和冒烟 fixture 测试使用 Go，不再需要 pytest。`pyproject.toml` 只保留 Python 辅助脚本的开发工具；Sphinx/MkDocs 的文档依赖仍独立保留。这不会安装 `qatlas`；需要 CLI 联调时，按上面的独立客户端安装步骤操作。CLI 自身的代码修改与测试请到 [qatlas-cli 仓库](https://github.com/IAI-USTC-Quantum/qatlas-cli)。
 
     **2. 起本地 Web 服务：**
 
@@ -188,14 +189,15 @@
     **4. 跑测试：**
 
     ```bash
-    # 主仓 Python 工具 / 契约测试（不是 CLI 实现测试）
-    uv run --group dev pytest
+    # 部署结构与本地 HTTP fixture：离线，不启动容器/业务服务
+    go test ./tests/...
 
-    # Go 测试（必须通过 pixi 跑：cgo + 工具链都在 pixi env 里）
+    # 完整 Go 测试（包含上面的 tests/，生产 e2e 默认不编译）
     pixi run test-go
+    # 或：CGO_ENABLED=0 go test ./internal/... ./cmd/... ./tests/...
 
     # 前端 build + type check
-    cd web && npm run build
+    (cd web && npm run build)
     ```
 
     **下一步：**

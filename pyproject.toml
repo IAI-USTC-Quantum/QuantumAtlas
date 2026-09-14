@@ -9,31 +9,14 @@ requires-python = ">=3.11"
 [tool.uv]
 package = false
 
-# Repository tests/tooling only; there is no Python package to install or publish.
+# Formatting/type-checking tools for the remaining documentation helpers.
+# Server, deployment, and smoke tests use Go; there is no Python package to publish.
 [dependency-groups]
 dev = [
-    "requests>=2.31.0,<3",
-    "pyyaml>=6.0.1,<7",
-    "pytest>=8.0.0",
-    "pytest-asyncio>=0.24",
     "black>=24.0.0",
     "isort>=5.13.0",
     "mypy>=1.7.0",
     "ruff>=0.8.0",
-]
-
-# Pytest
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py", "*_test.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
-asyncio_mode = "auto"
-addopts = ["-v", "--tb=short", "--strict-markers"]
-markers = [
-    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-    "network: tests that require outbound network access (e.g. arXiv API)",
-    "e2e: end-to-end tests that load the repository .env and exercise real external services",
 ]
 
 [tool.black]
@@ -91,8 +74,8 @@ ignore_missing_imports = true
 #   pixi install        # one-time, creates .pixi/ env
 #   pixi shell          # enter env for ad-hoc commands
 #   pixi run build      # build the server binary
-#   pixi run test-go    # run Go test suite
-#   pixi run test-py    # run Python (pytest) suite
+#   pixi run test-go    # run offline Go unit/deployment/smoke-fixture tests
+# Live production smoke is opt-in: go test -tags=e2e ./tests/e2e -count=1
 
 [tool.pixi.workspace]
 name = "QuantumAtlas"
@@ -163,26 +146,10 @@ gxx = "*"
 
 [tool.pixi.tasks]
 build = "go build -o build/qatlasd ./cmd/qatlasd"
-test-go = "go test ./internal/... ./cmd/..."
-test-py = "uv run pytest -m 'not e2e and not network'"
-# `go vet ./internal/... ./cmd/...` is intentionally scoped to *our*
-# packages, not the conventional `./...`. Reasoning:
-#
-# `go vet`'s analyzer phase only runs on the packages you ask for, but
-# its typecheck phase (a lightweight build) has to compile every
-# transitive import. PocketBase pulls in ~200 indirect deps, so the
-# cold-cache typecheck of `./...` takes 10+ minutes; even after the
-# build cache (.gocache/build, ~540MB) is warm, running analyzers
-# against test-only packages adds noise without catching production
-# bugs.
-#
-# Narrowing to ./internal/... ./cmd/... gives:
-#   cold cache: 15s  (typecheck deps once, populate cache)
-#   warm cache: 0.15s (cache hit, analyzers fly)
-#
-# CI (when we add it) can afford `./...` with actions/cache; daily
-# local dev cannot.
-vet = "go vet ./internal/... ./cmd/..."
+test-go = "go test ./internal/... ./cmd/... ./tests/..."
+# Include deployment contracts and offline HTTP fixtures in both tasks.
+# Live production probes are excluded without the explicit e2e build tag.
+vet = "go vet ./internal/... ./cmd/... ./tests/..."
 # Regenerate the OpenAPI spec from the swaggo annotations in
 # internal/routes/openapi.go (+ general info in cmd/qatlasd/main.go).
 # Output lands in internal/apidocs/, which is blank-imported by main.go and

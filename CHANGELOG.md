@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Maintenance
 
+- Migrate deployment-template contracts and production smoke checks from pytest to Go `testing`. Ordinary `go test ./tests/...` runs only local fixtures; live probes require `-tags=e2e`, configured `QATLAS_SERVER_TARGETS`, and `-count=1`. Update probes to the current health/paper API, bound requests, refuse redirects/cross-origin assets, and keep credentials out of diagnostics. Optional `QATLAS_EXPECTED_VERSION` verifies the exact deployed version.
+- Include deployment and fixture tests in Go CI, switch nightly checks to Go, and remove the pytest workflow and unused Python test dependencies. Sphinx/MkDocs tooling and production deployment configuration remain unchanged.
+
 - After publishing and verifying `quantum-atlas 0.21.0`, remove its one-time validator, dedicated tests, build dependencies, and Python build/publish jobs from `main`. The immutable [`quantum-atlas-v0.21.0` tag](https://github.com/IAI-USTC-Quantum/QuantumAtlas/tree/quantum-atlas-v0.21.0) preserves the final release source and validation history.
 - Keep `PYPI_README.md` as the permanent migration link. The root Python configuration now describes only a non-distributed development environment (`quantum-atlas-dev`), not a CLI/library release. Normal server tests and `VERSION` remain unchanged; this cleanup does not publish another package or server version.
 

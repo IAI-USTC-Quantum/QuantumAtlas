@@ -1,37 +1,24 @@
 name: Nightly production smoke
 
-# Hits the live qatlasd through every configured edge every night.
-# Scope is deliberately narrow — only things that REAL deployment can
-# verify (auth-aware health tier wiring, system PAT end-to-end, SPA +
-# Caddy stack). Everything else is covered by Go / pytest unit suites
-# that run on every push.
+# Black-box checks of the real Go service and its embedded Web assets.
+# Ordinary Go CI runs only the offline fixtures in tests/e2e/; the live
+# checks require the explicit e2e build tag and configured targets.
 #
-# This workflow has exactly ONE knob: the QATLAS_SERVER_TARGETS repo
-# secret. URL list, per-target tokens, insecure-TLS flags, even how
-# many edges exist — all of it lives inside that one encrypted blob.
-# Adding / removing / rotating an edge or its PAT = edit one secret,
-# never touch this YAML. Prod URLs / topology / tokens never leak.
-#
-# Format: comma- or newline-separated entries, each `URL[|FLAG]*`.
-# Flags:
-#   * `insecure`             — disable TLS verification (Caddy `tls internal`).
-#   * `token=PLAINTEXT`      — per-target system PAT bearer (CI default).
-#   * `token-env=VAR_NAME`   — pull bearer from $VAR_NAME instead (local dev).
-# See _parse_targets in tests/integration/test_production_smoke.py.
-#
-# Example (paste verbatim into the secret value, NOT into this YAML):
-#   https://quantum-atlas.ai|token=qat_xxxxxxxxxxxxxxxxxxxx
-#   https://example.com|token=qat_yyyyyyyyyyyyyyyyyyyyyyyy
-#   https://192.0.2.10|insecure|token=qat_zzzzzzzzzzzzzzzzz
-#
-# Failure to set the secret = the suite collects 0 tests (the fixture
-# self-skips) and we fail the job below with a clear hint, NOT a
-# silent green that hides the misconfig.
+# QATLAS_SERVER_TARGETS is the existing repository secret: comma- or
+# newline-separated URL[|insecure][|token=...][|token-env=NAME] entries.
+# Use a system PAT or session JWT for authenticated health details;
+# regular user PATs do not grant that tier. Do not print the secret.
+# Missing/invalid targets fail the live test instead of silently skipping.
+# QATLAS_EXPECTED_VERSION is an optional repository variable: when set,
+# both health and server-info must report that exact application version.
 
 on:
   schedule:
-    - cron: '0 18 * * *'   # UTC 18:00 = 北京时间次日 02:00
-  workflow_dispatch:        # 也允许手动从 Actions 页面触发
+    - cron: '0 18 * * *' # UTC 18:00 = 北京时间次日 02:00
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   smoke:
@@ -42,41 +29,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-go@v5
         with:
-          enable-cache: true
+          go-version-file: go.mod
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install dependencies
-        run: uv sync --locked
-
-      - name: Validate required secret
-        # Fail loudly + immediately if the operator forgot to set the
-        # secret. Without this guard, the test suite would self-skip
-        # every parametrisation and the job would appear green —
-        # exactly the silent-misconfig failure mode the nightly is
-        # supposed to catch.
+      - name: Run production smoke against configured targets
         env:
           QATLAS_SERVER_TARGETS: ${{ secrets.QATLAS_SERVER_TARGETS }}
-        run: |
-          set -e
-          if [ -z "$QATLAS_SERVER_TARGETS" ]; then
-            echo "::error::missing required nightly secret: QATLAS_SERVER_TARGETS"
-            echo "Set it at https://github.com/${{ github.repository }}/settings/secrets/actions"
-            echo "See .github/workflows/nightly.yml header for the format."
-            exit 1
-          fi
-          echo "QATLAS_SERVER_TARGETS is set"
-
-      - name: Run production smoke against every configured edge
-        env:
-          QATLAS_SERVER_TARGETS: ${{ secrets.QATLAS_SERVER_TARGETS }}
-        run: uv run pytest -rs -m "e2e and not legacy"
-
-
-
+          QATLAS_EXPECTED_VERSION: ${{ vars.QATLAS_EXPECTED_VERSION }}
+        run: go test -tags=e2e ./tests/e2e -count=1 -timeout=10m

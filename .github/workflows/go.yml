@@ -6,6 +6,11 @@ on:
     paths:
       - 'cmd/**'
       - 'internal/**'
+      - 'tests/**'
+      - 'deploy/**'
+      - 'Dockerfile'
+      - 'web/**'
+      - '.github/workflows/nightly.yml'
       - 'go.mod'
       - 'go.sum'
       - 'pyproject.toml'
@@ -16,6 +21,11 @@ on:
     paths:
       - 'cmd/**'
       - 'internal/**'
+      - 'tests/**'
+      - 'deploy/**'
+      - 'Dockerfile'
+      - 'web/**'
+      - '.github/workflows/nightly.yml'
       - 'go.mod'
       - 'go.sum'
       - 'pyproject.toml'
@@ -71,9 +81,9 @@ jobs:
           npm ci
           npm run build
 
-      # 'pixi run vet' is scoped to ./internal/... ./cmd/... so it
-      # finishes fast even on cold cache. 'pixi run test-go' runs the
-      # unit suite (no network, no e2e). 'pixi run build' confirms the
+      # 'pixi run vet' and 'pixi run test-go' include ./tests/... for
+      # deployment contracts and local HTTP smoke fixtures. Production
+      # smoke is excluded without the e2e build tag. 'pixi run build' confirms the
       # binary still links — caught in the past when go.mod's minimum
       # Go version drifted above what conda-forge had available.
       - name: pixi run vet

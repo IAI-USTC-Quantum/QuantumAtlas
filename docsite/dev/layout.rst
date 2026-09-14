@@ -109,13 +109,15 @@ React + TanStack Router 的 SPA，路由带语言前缀（``/zh``、``/en``）�
   qatlasd ``~/.qatlas/config.yaml``；独立 ``downloaderworker`` 则使用
   ``DL_WORKER_*`` 环境变量与非凭据 flags，不能把主进程约束推广到执行节点；
 - 根目录 ``pyproject.toml`` 仅管理不分发的 uv 开发环境与 Pixi 工具链，
-  没有旧包发行元数据或构建后端。Python 开发依赖位于
-  ``[dependency-groups].dev``；``uv sync`` 不把主仓构建或安装成 Python 包。
-  本仓 Python 离线测试只检查部署模板结构，不启动容器或服务：
-  ``uv run --locked --group dev pytest -m "not e2e and not network" tests/``。
-  标记为 ``network`` / ``e2e`` 的服务端生产冒烟按 nightly workflow 配置
-  单独运行；一次性旧包检查器与测试仅保留在最终历史 tag。Go 测试：
-  ``go test ./internal/... ./cmd/...``（或 ``pixi run test-go``）；
+  没有旧包发行元数据或构建后端。Python 开发依赖仅供剩余文档辅助脚本使用，
+  不再包含 pytest；``uv sync`` 不把主仓安装成 Python 包。
+  本仓测试统一为 Go：``tests/compose_test.go`` 检查部署模板，
+  ``tests/e2e/`` 的普通 fixture 只使用本地 ``httptest``。
+  ``go test ./internal/... ./cmd/... ./tests/...``（或 ``pixi run test-go``）
+  不编译带 ``e2e`` build tag 的生产检查。
+  真正的生产冒烟由 nightly 单独运行：
+  ``go test -tags=e2e ./tests/e2e -count=1 -timeout=10m``，必须显式配置
+  ``QATLAS_SERVER_TARGETS``；缺目标会失败。一次性旧包检查仅保留在历史 tag；
 - 文档站：公开站 ``/doc`` 与开发站 ``/devdoc``（管理员票据鉴权）由
   ``.github/workflows/docs.yml`` 独立构建并发布为 ghcr 上的
   ``qatlas-docs`` 镜像；部署机运行 ``deploy/update-docs.sh`` 把新文档写入

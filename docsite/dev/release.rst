@@ -127,7 +127,7 @@ qatlas-search 已按本方案接入标准化发布流程（首个 release：``v0
 3. 主仓 ``deploy/docker-compose.yml`` 的 qatlas-search 服务引用
    ``ghcr.io/iai-ustc-quantum/qatlas-search:${QATLAS_SEARCH_VERSION}``，
    版本在 ``deploy/.env`` 中显式 pin（样例见 ``.env.docker.example``）；
-   ``tests/test_docker_compose.py`` 中的结构测试锁定了 ghcr 来源与
+   ``tests/compose_test.go`` 中的结构测试锁定了 ghcr 来源与
    插值约定；
 4. app 仓库的 README 记录了接口协议的版本化说明（从哪个 app 版本
    开始提供哪个端点或字段）。
@@ -235,8 +235,7 @@ sphinx 站点并直接写入文档目录。
    * - 步骤
      - 验收
    * - 本地 CI mirror
-     - ``go vet`` / ``go test ./internal/... ./cmd/...`` /
-       ``uv run --group dev pytest -m "not e2e and not network"`` /
+     - ``go vet`` / ``go test ./internal/... ./cmd/... ./tests/...`` /
        ``cd web && npm run build`` / ``swagger-check`` 全绿
        （release.yml 不跑测试，发版前自行保证）
    * - ``VERSION`` + CHANGELOG
