@@ -1,0 +1,9 @@
+# GoReleaser supplies the prebuilt binary for each target platform, including UI.
+FROM gcr.io/distroless/static-debian12:nonroot
+ARG TARGETPLATFORM
+COPY $TARGETPLATFORM/qatlasd /qatlasd
+VOLUME ["/data/raw", "/data/pb_data"]
+EXPOSE 4200
+USER nonroot:nonroot
+ENTRYPOINT ["/qatlasd"]
+CMD ["serve", "--http=0.0.0.0:4200"]

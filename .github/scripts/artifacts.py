@@ -1,21 +1,16 @@
-"""CI-only artifact checks. No build framework and no network/production access."""
+"""CI-only UI handoff helpers. Release validation/publishing belongs to GoReleaser."""
 
 import argparse
 import hashlib
 import os
 from pathlib import Path, PurePosixPath
 import re
-import shutil
 import stat
 import subprocess
-import tarfile
 import tempfile
 import zipfile
 
-from release_gate import emit, validate_version
 
-
-PLATFORMS = ("linux_amd64", "linux_arm64", "darwin_arm64")
 REQUIRED_UI = ("index.html", "doc/index.html", "devdoc/dev/index.html")
 # Match web/bundle.go: a CI-accepted zip must be usable by go install clients.
 MAX_BUNDLE_SIZE = 64 << 20
@@ -24,13 +19,21 @@ MAX_FILE_SIZE = 16 << 20
 MAX_BUNDLE_FILES = 20000
 
 
+def emit(key, value):
+    print(f"{key}={value}")
+    if output := os.environ.get("GITHUB_OUTPUT"):
+        with open(output, "a") as stream:
+            stream.write(f"{key}={value}\n")
+
+
 def ui_version(release_tag, source_sha):
-    """Exact release tag, or a SHA-only identifier for unpublished CI fixtures."""
+    """Use GoReleaser's version spelling, or a SHA-only unpublished CI fixture."""
     if not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", source_sha):
         raise ValueError("source SHA must be a full lowercase 40/64-digit Git commit ID")
-    version = validate_version(release_tag)[0] if release_tag else f"0.0.0-ci.g{source_sha}"
-    # No shell interpolation or tag discovery: branches/PRs need no existing
-    # tags, and a release must use the caller's exact tag even with many at HEAD.
+    # Deliberately no parallel SemVer parser or release policy here. GoReleaser
+    # strips one leading v; the UI handoff must retain that exact version text.
+    version = release_tag.removeprefix("v") if release_tag else f"0.0.0-ci.g{source_sha}"
+
     def resolve(ref):
         return subprocess.check_output(
             ["git", "rev-parse", "--verify", ref], text=True, timeout=30,
@@ -38,8 +41,11 @@ def ui_version(release_tag, source_sha):
 
     if resolve("HEAD") != source_sha:
         raise ValueError("checkout HEAD does not match source SHA")
-    if release_tag and resolve(f"refs/tags/{release_tag}^{{commit}}") != source_sha:
-        raise ValueError("release tag commit does not match checkout HEAD/source SHA")
+    if release_tag:
+        # Require a literal ref, not a revision expression such as tag^{}.
+        subprocess.run(["git", "check-ref-format", f"refs/tags/{release_tag}"], check=True, timeout=30)
+        if resolve(f"refs/tags/{release_tag}^{{commit}}") != source_sha:
+            raise ValueError("release tag commit does not match checkout HEAD/source SHA")
     return version
 
 
@@ -139,72 +145,6 @@ def restore_ui(archive, destination, version):
         stage.rename(destination)
 
 
-def checksums(directory):
-    manifests = list(Path(directory).glob("*_checksums.txt"))
-    if len(manifests) != 1:
-        raise ValueError(f"expected exactly one default *_checksums.txt, got {len(manifests)}")
-    records = {}
-    for line in manifests[0].read_text().splitlines():
-        match = re.fullmatch(r"([0-9a-f]{64})  ([A-Za-z0-9_.+-]+)", line)
-        if not match or match[2] in records:
-            raise ValueError("invalid or duplicate checksum record")
-        records[match[2]] = match[1]
-    if not records:
-        raise ValueError("empty checksums")
-    return manifests[0], records
-
-
-def verify_file(path, records):
-    path = Path(path)
-    if path.name not in records or digest(path) != records[path.name]:
-        raise ValueError(f"missing or mismatched checksum: {path.name}")
-
-
-def verify_release(directory, ui_directory, version):
-    manifest, records = checksums(directory)
-    expected = {f"qatlasd_{version}_{platform}.tar.gz" for platform in PLATFORMS}
-    ui_name = f"qatlasd_{version}_web.zip"
-    expected.add(ui_name)
-    if set(records) != expected:
-        raise ValueError(f"unexpected release asset set: {sorted(records)}; want {sorted(expected)}")
-    for name in sorted(expected):
-        base = ui_directory if name == ui_name else directory
-        verify_file(Path(base) / name, records)
-    return manifest
-
-
-def smoke(directory, version, platform):
-    _, records = checksums(directory)
-    archive = Path(directory) / f"qatlasd_{version}_{platform}.tar.gz"
-    verify_file(archive, records)
-    with tempfile.TemporaryDirectory() as temporary, tarfile.open(archive, "r:gz") as bundle:
-        seen, binary = set(), None
-        for member in bundle:
-            name = safe_name(member.name)
-            if name in seen or not (member.isfile() or member.isdir()):
-                raise ValueError(f"duplicate or non-regular archive member: {name}")
-            seen.add(name)
-            if name == "qatlasd":
-                if not member.isfile() or member.size > 512 * 1024 * 1024:
-                    raise ValueError("invalid qatlasd archive member")
-                binary = Path(temporary) / "qatlasd"
-                with bundle.extractfile(member) as source, binary.open("xb") as target:
-                    shutil.copyfileobj(source, target)
-                binary.chmod(0o755)
-        if binary is None:
-            raise ValueError("archive missing root-level qatlasd binary")
-        # No config/DB/server invocation. A HOME with no user settings also
-        # catches accidental initialization before the --version fast path.
-        # Draft download needs a privileged token, but the executable must
-        # inherit neither it nor runner configuration/production credentials.
-        env = {"PATH": os.defpath, "HOME": temporary, "XDG_CONFIG_HOME": temporary, "XDG_CACHE_HOME": temporary}
-        actual = subprocess.check_output([str(binary), "--version"], env=env, cwd=temporary, text=True, timeout=30).strip()
-        expected = f"qatlasd version {version}"
-        if actual != expected:
-            raise ValueError(f"binary version {actual!r}, expected {expected!r}")
-        print(actual)
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -216,26 +156,14 @@ def main():
     restore.add_argument("archive")
     restore.add_argument("destination")
     restore.add_argument("version")
-    verify = sub.add_parser("verify-release")
-    verify.add_argument("directory")
-    verify.add_argument("ui_directory")
-    verify.add_argument("version")
-    native = sub.add_parser("smoke")
-    native.add_argument("directory")
-    native.add_argument("version")
-    native.add_argument("platform", choices=PLATFORMS)
     args = parser.parse_args()
     if args.command == "ui-version":
         emit("version", ui_version(os.environ.get("RELEASE_TAG", ""), os.environ["SOURCE_SHA"]))
     elif args.command == "compare":
         compare(args.first, args.second)
-    elif args.command == "restore-ui":
+    else:
         unique_ui_archive(args.archive, args.version)
         restore_ui(args.archive, args.destination, args.version)
-    elif args.command == "verify-release":
-        print(verify_release(args.directory, args.ui_directory, args.version))
-    else:
-        smoke(args.directory, args.version, args.platform)
 
 
 if __name__ == "__main__":

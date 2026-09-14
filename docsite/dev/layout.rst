@@ -18,7 +18,10 @@ Python 命令行客户端由独立仓库 ``IAI-USTC-Quantum/qatlas-cli`` 维护�
    ├── docs/                   MkDocs 源码与独立 requirements.txt
    ├── hooks/                  MkDocs 文档构建 hook
    ├── tests/                  部署结构、离线 fixture 与显式启用的生产冒烟
-   ├── .github/scripts/        CI 归档/发布门禁与 Python 标准库 fixture
+   ├── .github/scripts/        CI 资源校验与 Python 标准库 fixture
+   ├── .goreleaser.yaml        服务端归档、GitHub Release 与 GHCR 发布
+   ├── Dockerfile.goreleaser   封装 GoReleaser 预编译二进制的发布镜像
+   ├── Dockerfile              本地从源码构建完整服务端镜像
    ├── go.mod / go.sum         Go 工具链门槛、依赖与 Go tool 声明
    └── config.example.yaml     服务器配置完整 schema 参考
 
@@ -86,8 +89,9 @@ Git 仅存源码，不提交 ``web/dist`` 或 Sphinx 生成的
 ``web/public/doc`` / ``web/public/devdoc``。固定 Node 版本见
 ``web/.node-version``；Sphinx 两站构建后再运行 ``npm ci`` / ``npm run build``。
 
-``web/embed.go`` 仅在 ``embedui`` build tag 下编译：GoReleaser 和
-Docker 构建嵌入完整 dist；普通 Go 模块构建使用 ``embed_none.go``，
+``web/embed.go`` 仅在 ``embedui`` build tag 下编译：GoReleaser 嵌入完整
+dist，``dockers_v2`` 通过 ``Dockerfile.goreleaser`` 复用该二进制发布镜像；
+原 ``Dockerfile`` 仍支持本地从源码构建。普通 Go 模块构建使用 ``embed_none.go``，
 即使没有 Node、Sphinx、dist 也能完成 ``go install``。
 ``web.Resolve`` 在首次 serve 时优先内置资源，否则校验版本缓存，缺缓存才从
 对应 GitHub Release 下载 UI ZIP 与 SHA256 清单；不使用 latest 回退。

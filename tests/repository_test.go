@@ -27,7 +27,7 @@ func TestGoNativeRepositoryBoundary(t *testing.T) {
 	for _, name := range []string{
 		"go.mod", "go.sum", ".goreleaser.yaml", "PYPI_README.md",
 		"docsite/conf.py", "docsite/requirements.txt", "docs/requirements.txt",
-		"hooks/openapi_spec.py", ".github/scripts/artifacts.py", ".github/scripts/release_gate.py",
+		"hooks/openapi_spec.py", ".github/scripts/artifacts.py", "Dockerfile.goreleaser",
 	} {
 		if info, err := os.Stat(filepath.Join(root, filepath.FromSlash(name))); err != nil || !info.Mode().IsRegular() {
 			t.Errorf("required source/documentation tool %s missing: %v", name, err)

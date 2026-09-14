@@ -16,7 +16,7 @@ on:
         required: false
         default: ''
       release_tag:
-        description: Exact SemVer release tag (empty for unpublished branch/PR UI fixtures)
+        description: Exact release tag (empty for unpublished branch/PR UI fixtures)
         type: string
         required: false
         default: ''
@@ -76,7 +76,7 @@ jobs:
           test -z "$(git status --porcelain --untracked-files=all -- internal/apidocs)"
       - name: Plain Go build without UI
         run: go build -o build/qatlasd ./cmd/qatlasd
-      - name: CI-only artifact and release guard fixtures (no pytest)
+      - name: CI-only UI handoff and release configuration fixtures (no pytest)
         run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
       - name: Check GoReleaser configuration
         uses: goreleaser/goreleaser-action@v6

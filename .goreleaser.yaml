@@ -18,7 +18,7 @@ builds:
     targets: [linux_amd64, linux_arm64, darwin_arm64]
 
 # In v2.18.1 release.extra_files are added only during publishing, AFTER
-# checksums. Both entries are needed: one signs/checksums the UI, one uploads it.
+# checksums. Both entries are needed: one checksums the UI, one uploads it.
 # The validated UI artifact lives outside dist, which --clean removes.
 # CI requires exactly the tag's zip before release. The glob also permits a
 # local snapshot (whose generated version differs) to use a Git-SHA CI fixture UI.
@@ -27,7 +27,17 @@ checksum:
     - glob: build/ui/qatlasd_*_web.zip
 
 release:
-  draft: true
   prerelease: auto
   extra_files:
     - glob: build/ui/qatlasd_*_web.zip
+
+# Reuse the embedded-UI binaries above; buildx defaults to linux/amd64+arm64.
+# Publication and preflight otherwise use GoReleaser's defaults.
+dockers_v2:
+  - images:
+      - ghcr.io/iai-ustc-quantum/qatlasd
+    dockerfile: Dockerfile.goreleaser
+    tags:
+      - "{{ .Tag }}"
+      - "{{ .Version }}"
+      - "{{ if and (not .Prerelease) (not .IsSnapshot) }}latest{{ end }}"

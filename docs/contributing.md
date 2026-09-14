@@ -174,7 +174,7 @@ go test -tags=e2e ./tests/e2e -count=1 -timeout=10m
 
 当前主仓不再依赖旧 DuckDB/cgo 路径，正式发布使用 `CGO_ENABLED=0`。无需为运行上述测试修改全局 `go env`；Sphinx/MkDocs 仍只是文档构建工具。
 
-`.github/scripts` 的少量 CI 专用 Python 归档/发布门禁脚本只用标准库 fixture；它们不需要 pytest 或 Sphinx/MkDocs requirements，也不是服务端 Python 包或新的构建框架。一次性旧包检查仅保留在历史 tag。
+`.github/scripts` 的少量 CI 专用 Python 资源校验脚本只用标准库 fixture；它们不需要 pytest 或 Sphinx/MkDocs requirements，也不是服务端 Python 包或新的构建框架。一次性旧包检查仅保留在历史 tag。
 
 ### 格式化与 OpenAPI
 
@@ -314,7 +314,7 @@ qatlas contrib mineru --watch
 
 ## Release 流程 { #release }
 
-仅 maintainer 操作。发布前先确认目标 commit 的 CI 全绿并 review 变更；**推送 tag 才是发布动作**，普通分支提交不会自动发布。不要使用 `--tags` / `--follow-tags` 顺带推送未经审核的 tag。
+仅 maintainer 操作。发布前先确认目标 commit 的 CI 全绿并 review 变更；**推送 tag 或手动在 tag 上运行 release workflow 都是发布动作**，普通分支提交不会自动发布。不要使用 `--tags` / `--follow-tags` 顺带推送未经审核的 tag。
 
 | 发布对象 | 版本来源 | 唯一对应 tag | 产物 |
 |---|---|---|---|
@@ -336,8 +336,6 @@ REVIEWED_SHA="<已review且CI全绿的完整提交SHA>" # 必须替换；不是�
 # 当前 checkout 必须就是该候选提交，且所有待发源码已提交
 test -z "$(git status --porcelain)"
 test "$(git rev-parse HEAD)" = "$REVIEWED_SHA"
-# 仅校验 tag 并输出去 v 后的派生版本，不读写版本文件
-python3 .github/scripts/release_gate.py version "$TAG"
 git tag -a "$TAG" "$REVIEWED_SHA" -m "Release qatlasd ${TAG#v}"
 git show --stat "$TAG"
 test "$(git rev-parse "${TAG}^{commit}")" = "$REVIEWED_SHA"
@@ -349,9 +347,13 @@ test "$(git rev-parse "${TAG}^{commit}")" = "$REVIEWED_SHA"
 git push origin "refs/tags/$TAG"
 ```
 
-[`release.yml`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.github/workflows/release.yml) 校验 SemVer tag 与已公开 Release 保护条件，将精确 `release_tag` 传给同一 SHA 的 `go.yml`。正式 UI 包从这个 tag 去 `v` 派生版本，并检查 tag 所指提交 SHA = source SHA = `HEAD`；普通 branch/PR CI 仍打包和恢复验证，但使用 `0.0.0-ci.g<完整Git提交SHA>`，不创建 tag、版本文件，也不发布。`release_gate.py version "$TAG"` 仅校验 tag 并输出派生版本，不再读根版本文件。
+[`release.yml`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.github/workflows/release.yml) 由 push tag `v*.*.*` 或手动选择 tag 运行触发：先复用同 SHA 的 `go.yml` checks，再调用 GoReleaser。正式 UI 包仍从精确 `release_tag` 去掉前导 `v` 派生版本，并检查 tag 所指提交 SHA = source SHA = `HEAD`；普通 branch/PR CI 使用 `0.0.0-ci.g<完整Git提交SHA>` 做打包和恢复验证，不创建 tag、版本文件，也不发布。
 
-固定 GoReleaser **v2.18.1**，通过 `GORELEASER_CURRENT_TAG` 绑定真实触发 tag，不从最近旧 tag 或同 SHA 的其他 tag 猜测版本。默认命名的三个平台归档（`linux/{amd64,arm64}` + `darwin/arm64`）、`qatlasd_<version>_web.zip` 与默认 `*_checksums.txt` 进入 draft；checksum 和 attestation 覆盖归档/UI 包。原生 runner 只下载、校验、解包并运行 `--version`，不重新编译。Docker 继续单独发布并验证 `linux/amd64` 镜像，复用同一 UI 包。全部通过才公开 Release，仅稳定版更新 Latest 和镜像 latest；已公开同 tag 拒绝重新上传。**不构建或发布旧 Python 包，也不发布独立 `qatlas-cli`。**
+固定 GoReleaser **v2.18.1**，通过 `GORELEASER_CURRENT_TAG` 绑定真实触发 tag，不从最近旧 tag 或同 SHA 的其他 tag 猜测版本。发布校验由 GoReleaser 原生 Git/SemVer 检查与 preflight 接管；preflight 沿用默认只警告，不设置 `fail_on_error: true`。移除自定义 gate 不代表任意 tag 都能用于 Go 模块、UI 或 Docker；这些消费者仍有各自约束，推荐标准 `vX.Y.Z[-rc.N]`，不用 PEP 440 或 `+build` 标签。
+
+GoReleaser 默认直接发布三个平台归档（`linux/{amd64,arm64}` + `darwin/arm64`）、`qatlasd_<version>_web.zip` 与默认 `*_checksums.txt`，保留 `prerelease: auto`。不再维护手动 draft/public/latest 状态机、独立 Docker/report job、三平台原生 smoke 或 GitHub attestation；发布不等待外部 smoke。GitHub Latest 交给 GoReleaser/平台默认处理，不另写晋升逻辑。**不构建或发布旧 Python 包，也不发布独立 `qatlas-cli`。**
+
+Docker 发布改用 `dockers_v2`，默认 `linux/amd64` + `linux/arm64`，镜像为 `ghcr.io/iai-ustc-quantum/qatlasd`。`Dockerfile.goreleaser` 复用已内嵌 UI 的 GoReleaser 二进制，保留 distroless nonroot 与运行参数；原 `Dockerfile` 保留为本地源码构建路径。标签使用 `.Tag`、`.Version`；仅非 prerelease 且非 snapshot 时，在同一次镜像发布中更新 `latest`。这不是按版本大小排序，也不等待后续外部验证；RC 不更新 `latest`。真实多架构镜像仍需单独实际构建、拉取并验证运行。
 
 **Release 正文唯一由 GoReleaser 生成**：`.goreleaser.yaml` 显式使用 `changelog.use: git`，按 previous..current tags 的 Git commit 标题和 SHA 生成正文及构建产物 `dist/CHANGELOG.md`。主仓不再维护或读取根 `CHANGELOG.md`，不另写手工 release notes、header/footer，也不覆盖生成正文。默认正文不包含 commit body/footer，因此 breaking change 必须在提交标题中用 `!` 等明确标记；迁移前置条件和步骤写入对应功能/部署文档供读者按提交追溯，不能只藏在 `BREAKING CHANGE` footer 中。升级时查阅 [GitHub Releases](https://github.com/IAI-USTC-Quantum/QuantumAtlas/releases) 及对应版本文档。现行和后续发版统一走此生成链，已经发布的历史 Release 与 Git tags 保持不变。
 
@@ -361,14 +363,14 @@ GoReleaser 的 `.goreleaser.yaml` 使用 `git.ignore_tags` **精确匹配**忽�
 
 ```bash
 goreleaser check
-goreleaser release --snapshot --clean # 使用 v2.18.1；不发布
+goreleaser release --snapshot --clean --skip=docker # 使用 v2.18.1；不发布、不构建镜像
 ```
 
-无正式 tag 时，本地 snapshot 复用上面 `0.0.0-ci.g<完整Git提交SHA>` 的临时 UI 包；GoReleaser 自行生成 snapshot 运行版本，它不是正式发布版本，不用于普通源码安装的 Release UI 发现。真实 tag 与 runtime 版本在正式流程中精确核对。未获发布授权前，不推 tag、不改生产。新归档格式从未来新版本启用，不能重发 `v0.34.0`；首次迁移安装器必须从同一新 tag 的仓库路径取，不要使用旧服务返回的安装脚本。
+`--skip=docker` 跳过本地 buildx 镜像构建；否则 snapshot 虽不发布，仍需要 Docker/buildx 与基础镜像。离线运行还需预先缓存工具链与依赖，此命令不构成镜像验收。无正式 tag 时复用上面的临时 UI 包，GoReleaser 自行生成 snapshot 运行版本，不用于普通源码安装的 Release UI 发现。正式流程仍需核对 tag、运行版本及 UI 一致。未获发布授权前，不推 tag、不改生产。新归档格式从未来新版本启用，不能重发 `v0.34.0`；首次迁移安装器必须从同一新 tag 的仓库路径取，不要使用旧服务返回的安装脚本。
 
-**双发布边界**：Git tag 推送后 Go 模块可能已经可安装，但 draft UI 附件对普通用户尚不可见；此时首次 `serve` 明确失败，发布完成后重试即可。必须在打 tag 前验证源码可编译、UI 可重建。GitHub/GHCR 不是原子事务，失败时分别报告 draft/镜像状态，不移动 tag 或自动升级生产。
+**发布边界**：Git tag 推送后 Go 模块可能已经可安装，不等待 GitHub/GHCR 完成；UI 附件尚不可下载时首次 `serve` 明确失败，可用后重试。必须在打 tag 前验证源码可编译、UI 可重建。移除旧保护后，不再承诺拒绝所有已公开 Release 重传；preflight 的警告也不是无副作用保证。GitHub/GHCR 不是原子事务，失败时分别核对 Release、附件、镜像和标签状态，再决定恢复方案，不盲目重跑、移动 tag 或自动升级生产。
 
-完成后检查 Actions、GitHub Release 与镜像产物，并在测试环境验证 `qatlasd --version` 与健康检查；不要通过安装旧 PyPI 包验证服务端。
+完成后检查 Actions、GitHub Release 与实际双架构镜像产物，并在隔离测试环境验证 `qatlasd --version`、UI 与健康检查；这些外部验证不再是默认发布门禁，不要通过安装旧 PyPI 包验证服务端。
 
 ### 旧 PyPI 包退役记录
 

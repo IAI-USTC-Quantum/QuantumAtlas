@@ -111,7 +111,7 @@ flag。混合测试文件不整体排除，其离线测试仍默认运行。S3 �
    # CI 要求生成后没有漂移；有意改 API 时一并提交生成的源码/spec
    git diff --exit-code -- internal/apidocs
 
-   # CI 归档/发布门禁的纯标准库 fixture，不是 pytest 或 Python 应用测试
+   # CI 资源校验的纯标准库 fixture，不是 pytest 或 Python 应用测试
    python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
    git diff --check
 
@@ -236,16 +236,20 @@ GoReleaser 的 ``.tar.gz`` 内程序已嵌入 UI，独立 ``_web.zip`` 来自同
 names、flags、ldflags，``git.ignore_tags`` **精确匹配** 忽略
 ``quantum-atlas-v0.21.0``；不是 OSS glob 匹配，不移动或删除历史 tag。
 本地 snapshot 可复用上面的临时 UI 包标识：完成打包后运行
-``goreleaser check`` 与 ``goreleaser release --snapshot --clean``。
+``goreleaser check`` 与 ``goreleaser release --snapshot --clean --skip=docker``。
+``--skip=docker`` 用于跳过新增的本地 buildx 镜像构建；否则 snapshot 虽不发布，
+仍会构建镜像，需要 Docker/buildx 与基础镜像。源码和工具依赖也须预先缓存才能离线运行。
 Snapshot 的运行版本由 GoReleaser 生成，不是正式发布版本，也不代表对应 Release 可用。
+此检查不验证真实双架构镜像，镜像构建、manifest 与运行须另行实际验证。
 
 所有主仓正式版本仅从已审核的 Git release tag 派生，不维护根版本文件，
 不需要版本文件 bump commit 或为版本专门改 Go 源码/版本字段。
 工具链清理不是发版；不重发 ``v0.34.0``，不发布旧 PyPI 包或独立 ``qatlas-cli``。
 保留 ``PYPI_README.md`` 与固定历史 tag
-用于退役说明及审计。推送 Git tag 后 Go 模块可能已经可见，GitHub draft 不会
-阻挡模块安装；UI 附件尚未公开时首次启动会明确失败。GitHub/GHCR 也不是原子
-发布事务；本地构建验收不授权创建 tag、Release、镜像或升级生产。
+用于退役说明及审计。推送 Git tag 后 Go 模块可能已经可见，不等待 GitHub/GHCR
+发布完成；UI 附件尚不可下载时首次启动会明确失败。发布现在由 GoReleaser 默认
+直接执行，不等待外部 smoke，不再承诺拒绝所有已公开 Release 重传或失败无副作用。
+GitHub/GHCR 不是原子发布事务；本地构建验收不授权创建 tag、Release、镜像或升级生产。
 
 本地服务与 Vite 联调
 --------------------

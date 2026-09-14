@@ -25,20 +25,19 @@
 
 ## 镜像与标签
 
-每个 release tag 都会推一份多架构（`linux/amd64` + `linux/arm64`）镜像到 GitHub Container Registry，**三个 tag 并存**：
+服务端镜像由 GoReleaser `dockers_v2` 构建并发布到 GitHub Container Registry，默认平台为 `linux/amd64` + `linux/arm64`。版本标签来自 `.Tag` 和 `.Version`；只有非 prerelease 且非 snapshot 时另更新 `latest`：
 
 ```
 ghcr.io/iai-ustc-quantum/qatlasd:vX.Y.Z   # 带 v 前缀的精确版本
-ghcr.io/iai-ustc-quantum/qatlasd:X.Y.Z    # 裸版本，compose interpolation 友好
-ghcr.io/iai-ustc-quantum/qatlasd:latest   # 永远跟最新 release tag
+ghcr.io/iai-ustc-quantum/qatlasd:X.Y.Z    # 去 v 的版本
+ghcr.io/iai-ustc-quantum/qatlasd:latest   # 每次非预发布、非快照的镜像发布时更新
 ```
 
-镜像基于 **`gcr.io/distroless/static-debian12:nonroot`** —— 约 50 MB，无 shell，默认 UID 65532。每个 image 都自带 [SLSA build provenance attestation](https://slsa.dev/)，可选验证：
+例如 `vX.Y.Z-rc.N` 只更新两个版本标签，不更新 `latest`。`latest` 不按版本大小排序，也不等待外部 smoke；GitHub Latest 另由 GoReleaser/平台默认处理，两者不是原子发布。部署应固定已核验的 tag 或 digest，不能把流程成功或 `latest` 更新当作生产运行验证。
 
-```bash
-gh attestation verify oci://ghcr.io/iai-ustc-quantum/qatlasd:vX.Y.Z \
-    --repo IAI-USTC-Quantum/QuantumAtlas
-```
+`Dockerfile.goreleaser` 复用已经内嵌 UI/文档的 GoReleaser 预编译二进制，不重复源码编译；原 `Dockerfile` 保留为本地源码构建路径。发布镜像仍基于 **`gcr.io/distroless/static-debian12:nonroot`**，无 shell、默认 UID 65532，保留现有运行参数。真实多架构 manifest、拉取与运行仍须单独验证。
+
+当前流程不再生成 GitHub attestation，不能假定每个镜像带有可供 `gh attestation verify` 验证的来源证明。历史发行已有的证明保持不变。
 
 ## A. compose 全家桶（推荐起手式）
 

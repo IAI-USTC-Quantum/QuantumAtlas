@@ -1,6 +1,5 @@
 name: Publish qatlasd release
 
-# Server tags only. No retired Python/PyPI publishing or standalone CLI release.
 on:
   workflow_dispatch:
   push:
@@ -9,62 +8,40 @@ on:
 permissions:
   contents: read
 
-# Serialize across tags too: two stable runs must not race either latest pointer.
 concurrency:
   group: qatlasd-server-release
   cancel-in-progress: false
 
 jobs:
   prep:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # GitHub only exposes drafts to callers with push access; read-only
-    # listing can silently make an existing draft look absent.
-    permissions:
-      contents: write
     outputs:
-      version: ${{ steps.version.outputs.version }}
-      tag: ${{ steps.version.outputs.tag }}
-      is_prerelease: ${{ steps.version.outputs.is_prerelease }}
       source_sha: ${{ steps.source.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-          ref: ${{ github.sha }}
-          fetch-depth: 0
-      - name: Resolve immutable tag commit
-        id: source
-        run: |
-          test "$(git rev-parse "refs/tags/$GITHUB_REF_NAME^{commit}")" = "$(git rev-parse HEAD)"
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-      - name: Validate canonical SemVer release tag
-        id: version
-        run: python3 .github/scripts/release_gate.py version "$GITHUB_REF_NAME"
-      - name: Refuse already-public releases (API failures fail closed)
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 .github/scripts/release_gate.py guard "$GITHUB_REF_NAME"
+          ref: ${{ github.ref }}
+      # Resolve annotated tags to a commit for the reusable source/UI checks.
+      - id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-  # This performs all normal Go/Web/OpenAPI/fixture checks on the same commit.
-  # UI generation happens here only: two clean builds for reproducibility,
-  # then ONE zip. Neither GoReleaser nor Docker rebuilds Node/Sphinx assets.
   checks:
     needs: prep
     uses: ./.github/workflows/go.yml
     with:
       source_sha: ${{ needs.prep.outputs.source_sha }}
-      release_tag: ${{ needs.prep.outputs.tag }}
+      release_tag: ${{ github.ref_name }}
 
   release:
-    runs-on: ubuntu-latest
     needs: [prep, checks]
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: write
-      id-token: write
-      attestations: write
+      packages: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -78,19 +55,19 @@ jobs:
         with:
           name: ${{ needs.checks.outputs.ui_artifact }}
           path: build/ui
-      - name: Restore exact checked UI (kept outside GoReleaser dist)
-        env:
-          VERSION: ${{ needs.prep.outputs.version }}
-          SOURCE_SHA: ${{ needs.checks.outputs.source_sha }}
+      - name: Restore checked UI for the shared release binaries
         run: |
-          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          VERSION="${GITHUB_REF_NAME#v}"
           python3 .github/scripts/artifacts.py restore-ui "build/ui/qatlasd_${VERSION}_web.zip" web/dist "$VERSION"
-          test -z "$(git status --porcelain --untracked-files=all)"
-      - name: Recheck draft guard immediately before upload
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 .github/scripts/release_gate.py guard "$GITHUB_REF_NAME"
-      - name: GoReleaser creates/uploads draft (default tar.gz and checksums)
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      # Native Git/SemVer validation, default preflight, GitHub Release and GHCR
+      # publishing all belong to GoReleaser. There is no separate promotion gate.
+      - name: Publish release and container images with GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
@@ -98,214 +75,5 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          # v2.18.1 otherwise sorts all tags at HEAD; bind the validated exact tag.
-          GORELEASER_CURRENT_TAG: ${{ needs.prep.outputs.tag }}
-      - name: Verify default manifest includes exactly three archives and the UI zip
-        id: manifest
-        env:
-          VERSION: ${{ needs.prep.outputs.version }}
-        run: |
-          MANIFEST="$(python3 .github/scripts/artifacts.py verify-release dist build/ui "$VERSION")"
-          echo "path=$MANIFEST" >> "$GITHUB_OUTPUT"
-      - name: Attest archives AND UI from the default checksums file
-        uses: actions/attest-build-provenance@v3
-        with:
-          subject-checksums: ${{ steps.manifest.outputs.path }}
-      - name: Verify the UI actually uploaded as a draft Release asset
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.prep.outputs.version }}
-        run: |
-          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
-            --pattern "qatlasd_${VERSION}_web.zip" --dir build/published-ui
-          cmp "build/ui/qatlasd_${VERSION}_web.zip" "build/published-ui/qatlasd_${VERSION}_web.zip"
-
-  native-smoke:
-    name: Native archive smoke (${{ matrix.platform }})
-    needs: [prep, release]
-    timeout-minutes: 10
-    # Needed to see/download the draft, not to execute write API calls.
-    # The candidate runs with a fresh environment (artifacts.py).
-    permissions:
-      contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: linux_amd64
-            runner: ubuntu-latest
-          - platform: linux_arm64
-            runner: ubuntu-24.04-arm
-          - platform: darwin_arm64
-            runner: macos-latest
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-          ref: ${{ needs.prep.outputs.source_sha }}
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      # No Go/Node/Sphinx setup, rebuilding, server start or production targets.
-      - name: Download, checksum, safely unpack and run --version only
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.prep.outputs.version }}
-          PLATFORM: ${{ matrix.platform }}
-        run: |
-          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
-            --pattern "qatlasd_${VERSION}_${PLATFORM}.tar.gz" \
-            --pattern '*_checksums.txt' --dir build/download
-          python3 .github/scripts/artifacts.py smoke build/download "$VERSION" "$PLATFORM"
-
-  docker-image:
-    runs-on: ubuntu-latest
-    needs: [prep, checks, release]
-    timeout-minutes: 30
-    permissions:
-      contents: write # draft visibility for the guard (no release writes here)
-      packages: write
-      id-token: write
-      attestations: write
-    outputs:
-      digest: ${{ steps.build.outputs.digest }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-          ref: ${{ needs.prep.outputs.source_sha }}
-      - uses: actions/download-artifact@v4
-        with:
-          name: ${{ needs.checks.outputs.ui_artifact }}
-          path: build/ui
-      - name: Restore the same complete UI tree used by GoReleaser
-        env:
-          VERSION: ${{ needs.prep.outputs.version }}
-        run: python3 .github/scripts/artifacts.py restore-ui "build/ui/qatlasd_${VERSION}_web.zip" web/dist "$VERSION"
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ github.token }}
-      - name: Refuse a release made public since validation
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 .github/scripts/release_gate.py guard "$GITHUB_REF_NAME"
-      - name: Build and push versioned linux/amd64 image (never latest here)
-        id: build
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          platforms: linux/amd64
-          push: true
-          build-args: |
-            VERSION=${{ needs.prep.outputs.version }}
-          tags: |
-            ghcr.io/iai-ustc-quantum/qatlasd:${{ needs.prep.outputs.tag }}
-            ghcr.io/iai-ustc-quantum/qatlasd:${{ needs.prep.outputs.version }}
-          provenance: true
-          sbom: true
-      - name: Check pushed image by digest without network or production config
-        env:
-          DIGEST: ${{ steps.build.outputs.digest }}
-          VERSION: ${{ needs.prep.outputs.version }}
-        run: |
-          IMAGE="ghcr.io/iai-ustc-quantum/qatlasd@$DIGEST"
-          docker pull --platform linux/amd64 "$IMAGE"
-          ACTUAL="$(docker run --rm --network none --platform linux/amd64 "$IMAGE" --version)"
-          test "$ACTUAL" = "qatlasd version $VERSION"
-      - name: Attest image build provenance
-        uses: actions/attest-build-provenance@v3
-        with:
-          subject-name: ghcr.io/iai-ustc-quantum/qatlasd
-          subject-digest: ${{ steps.build.outputs.digest }}
-          push-to-registry: true
-
-  publish:
-    needs: [prep, release, native-smoke, docker-image]
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-          ref: ${{ needs.prep.outputs.source_sha }}
-      - name: Publish validated draft WITHOUT changing latest yet
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 .github/scripts/release_gate.py publish "$GITHUB_REF_NAME"
-
-  latest:
-    needs: [prep, docker-image, publish]
-    if: needs.prep.outputs.is_prerelease == 'false'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: write
-      packages: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-          ref: ${{ needs.prep.outputs.source_sha }}
-      - name: Require an already-public stable release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 .github/scripts/release_gate.py public-stable "$GITHUB_REF_NAME"
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ github.token }}
-      - name: Promote verified image digest to latest (no rebuild)
-        env:
-          DIGEST: ${{ needs.docker-image.outputs.digest }}
-        run: |
-          docker buildx imagetools create --tag ghcr.io/iai-ustc-quantum/qatlasd:latest \
-            "ghcr.io/iai-ustc-quantum/qatlasd@$DIGEST"
-      - name: Promote GitHub stable release to latest
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 .github/scripts/release_gate.py latest "$GITHUB_REF_NAME"
-
-  report:
-    if: always() && startsWith(github.ref, 'refs/tags/v')
-    needs: [prep, checks, release, native-smoke, docker-image, publish, latest]
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: write # observe actual draft state rather than a read-only empty list
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-          ref: ${{ github.sha }}
-      - name: Report actual release state and non-atomic failure boundaries
-        env:
-          GH_TOKEN: ${{ github.token }}
-          JOB_RESULTS: ${{ toJSON(needs) }}
-          IMAGE_DIGEST: ${{ needs.docker-image.outputs.digest }}
-        run: |
-          {
-            echo '## Release state and recovery boundary'
-            echo 'GitHub/GHCR are not atomic. A failed run may leave draft assets or versioned images.'
-            echo 'A failure after publication may leave a public release with one latest pointer unchanged.'
-            echo 'Already-public tags reject re-upload. Recovery requires operator review; never move tags or alter production automatically.'
-            echo 'Pushed Go tags may already be visible to go install even while the GitHub Release is draft.'
-            printf '\nReported image digest (empty does NOT prove no image was pushed): `%s`\n' "$IMAGE_DIGEST"
-            echo '```json'
-            printf '%s\n' "$JOB_RESULTS"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-          if STATE="$(python3 .github/scripts/release_gate.py status "$GITHUB_REF_NAME")"; then
-            printf '\nGitHub: `%s`\n' "$STATE" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo 'GitHub state UNKNOWN: query failed; do not assume absent/draft or retry uploads blindly.' >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          fi
+          # Do not select a different version when several tags share a commit.
+          GORELEASER_CURRENT_TAG: ${{ github.ref_name }}

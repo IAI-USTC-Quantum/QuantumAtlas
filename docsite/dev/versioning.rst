@@ -54,15 +54,20 @@ Go 1.26.2）在源码 checkout 构建时也可能提供 tag、伪版本及 ``+di
 不只带版本的 ``go install`` 才有 build info；缺少可用版本元数据才回退 ``dev``。
 仅去掉开头的 ``v``，保留预发布与有意义的构建标记。
 解析在 ``--version`` 之前完成，不加载配置、不访问数据库或网络；CLI、
-health、server-info 与响应头共享同一个值。Docker 自行编译时也注入
-``main.version``；Go、Node 或文档工具的版本都不是服务端运行版本。
+health、server-info 与响应头共享同一个值。发布镜像复用 GoReleaser 的
+预编译二进制；本地 ``Dockerfile`` 源码构建仍注入 ``main.version``。
+Go、Node 或文档工具的版本都不是服务端运行版本。
 GoReleaser snapshot 使用生成的快照版本，不是正式发布版本，
 不能以快照运行结果代替正式 tag 与运行版本的精确核验。
 
-新服务端 tag 使用有效 SemVer，例如 ``v0.35.0-rc.1``，不使用 Python
-风格 ``v0.35.0a1`` 或 ``+build`` 元数据；这不改变上述普通 Go 构建的版本解析。
+新服务端 tag 推荐标准 ``vX.Y.Z[-rc.N]``，例如 ``v0.35.0-rc.1``，不用 Python
+风格 ``v0.35.0a1`` 或 ``+build`` 标签。移除自定义 gate 后，发布采用 GoReleaser
+原生 Git/SemVer 校验与 preflight（默认只警告）；不表示任意 tag 都能用于
+Go 模块、UI 包或 Docker，这些消费者仍有各自约束。上述普通 Go 构建的版本解析不变。
 不自动 bump 版本，本次流程调整不创建新发行，也不重发 ``v0.34.0``。
-预发布不会覆盖稳定版 Latest。
+``prerelease: auto`` 保留，GitHub Latest 由 GoReleaser/平台默认处理；GHCR
+``latest`` 仅在非 prerelease、非 snapshot 的镜像发布时更新，不等待外部 smoke，
+也不按版本大小排序。
 
 正式 UI 包的版本从 ``release.yml`` 传给 ``go.yml`` 的精确 ``release_tag``
 去掉前导 ``v`` 派生，并检查 tag 所指提交 SHA = source SHA = ``HEAD``。
@@ -82,9 +87,11 @@ UI，校验 SHA256、包内版本与完整性后按版本缓存，后续启动�
 
 GoReleaser OSS v2.18.1 的 ``git.ignore_tags`` 精确忽略
 ``quantum-atlas-v0.21.0`` （不是 glob），不会修改该历史 tag。
-Go tag 可被发现不等于 Release UI 已公开：draft 发布窗口内缺附件会明确报错，
-draft 不阻止 Go 模块安装。GitHub/GHCR 非原子，失败状态须分别核对，不移动
-已推 tag、不覆盖公开附件，也不以修复发布为由擅自升级生产。
+Go tag 可被发现不等于 Release UI 已可下载：缺附件会明确报错，Go 模块安装
+不等待 GitHub/GHCR 发布完成。现在默认直接发布，不等待外部 smoke；移除旧保护后，
+不再保证拒绝所有已公开 Release 的重传，也不保证失败无副作用。
+GitHub/GHCR 非原子，失败后须分别核对附件、镜像与标签状态；不要盲目重跑、移动
+已推 tag 或以修复发布为由擅自升级生产。
 
 兼容协议
 --------

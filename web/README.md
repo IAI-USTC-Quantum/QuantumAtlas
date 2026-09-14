@@ -201,8 +201,10 @@ go tool swag init -g main.go -d ./cmd/qatlasd,./internal/routes \
   安装不运行 npm。首次 `serve` 从同一 Release 下载 UI ZIP 与 SHA256 清单，
   校验 SHA256、包内版本及完整性后按版本缓存，后续启动仍校验缓存，不回退 latest。
   `dev` / 伪版本必须完整构建两文档站和前端，再使用 `embedui`。
-- GoReleaser tar.gz 中的程序已经内嵌与独立 `_web.zip` 一致的 UI 资源。
+- GoReleaser tar.gz 中的程序已经内嵌与独立 `_web.zip` 一致的 UI 资源；
+  `dockers_v2` 通过 `Dockerfile.goreleaser` 复用同一预编译二进制，原 `Dockerfile` 保留本地源码构建路径。
   正式版本仅从已审核的 `v<version>` Git tag 派生，不维护根版本文件或为版本单独提交 bump。
+  推荐标准 `vX.Y.Z[-rc.N]`；移除自定义发布 gate 不取消 Go 模块、UI、Docker 各自的版本约束。
   本地 UI 构建不是发布授权；不重发 `v0.34.0`，不修改历史 tag。
 - `uibundle -version` 要求显式 SemVer。完成完整 UI 构建后，无正式 tag 时在仓库根执行：
 
@@ -216,6 +218,8 @@ go tool swag init -g main.go -d ./cmd/qatlasd,./internal/routes \
   正式 CI 只从传入的精确 `release_tag` 去 `v` 取版本，并验证 tag 所指提交 SHA = source SHA = `HEAD`。
   本地也只有 checkout 干净且已核验的正式 `TAG` 指向候选 SHA / `HEAD` 时才可用 `UI_VERSION="${TAG#v}"`，
   不从最近旧 tag 推断待发版本；完整步骤见[开发入门](../docsite/dev/development.rst)。
+  打包后做不构建镜像的本地验证时使用 `goreleaser release --snapshot --clean --skip=docker`；
+  否则 snapshot 也会启动本地 buildx 构建。跳过 Docker 不代表真实发布镜像已验证。
 - Git 不提交 `web/dist`、`web/public/doc`、`web/public/devdoc`、根 `dist/` /
   `build/`、`node_modules`、缓存或 ELF。`/devdoc` HTTP 门控要求管理员，
   但公开 bundle 可直接读取开发文档，文档不能存放秘密。

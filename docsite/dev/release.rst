@@ -22,9 +22,9 @@ app 微服务之间的 HTTP 接口协议。主仓还包含独立部署的下载 
      - 产物
    * - ``qatlasd``\ （本仓库）
      - 唯一取自已审核的 Git release tag ``vX.Y.Z[-rc.N]``，去 ``v`` 派生版本
-     - push tag ``v*.*.*``
-     - ghcr 镜像 ``:{vX.Y.Z, X.Y.Z, latest}`` + 三平台二进制 +
-       GitHub Release；不再发布旧 PyPI 包
+     - push tag ``v*.*.*``，或在该 tag 上手动运行 release.yml
+     - ghcr 双架构镜像（版本标签，非预发布另更新 ``latest``）+
+       三平台二进制 + UI ZIP + GitHub Release；不再发布旧 PyPI 包
    * - ``qatlas-cli``
      - 由 qatlas-cli 独立仓库管理
      - 按该仓库的发布流程执行
@@ -108,9 +108,10 @@ GitHub Latest 保持为 ``v0.34.0``；本次主仓版本流程调整也不构成
 
 主仓正式版本唯一从 Git release tag 派生，不维护根版本文件，不需要版本文件
 bump commit，也不为版本专门修改 Go 源码/版本字段。维护者先人工选择尚未发布的
-SemVer（``MAJOR.MINOR.PATCH[-prerelease]``，不使用 PEP 440 或 ``+build`` 元数据），
-完成待发源码与必要迁移文档的检查、提交和 review，确认候选 commit 的 CI 全绿，
-再在该已审核 SHA 上创建 annotated ``vX.Y.Z[-rc.N]`` tag。Conventional Commits
+SemVer，推荐标准 ``vX.Y.Z[-rc.N]``，不使用 PEP 440 或 ``+build`` 标签。
+移除自定义 gate 不代表任意 tag 都能用于 Go 模块、UI 或 Docker；这些消费者仍有
+各自约束。完成待发源码与必要迁移文档的检查、提交和 review，确认候选 commit
+的 CI 全绿，再在该已审核 SHA 上创建 annotated tag。Conventional Commits
 只约定提交格式，不自动决定/bump 版本或触发发布。只推送这一个已审核 tag，
 不批量推送历史 tag；完整命令见
 `贡献指南 / 服务端发版 <https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/docs/contributing.md#release>`_。
@@ -123,18 +124,27 @@ SemVer（``MAJOR.MINOR.PATCH[-prerelease]``，不使用 PEP 440 或 ``+build`` �
 （如 ``feat(api)!: ...``），并在对应版本的功能/部署文档中说明迁移步骤。
 历史 Git tags 与已发布 Release 保留原样，不追溯重写。
 
-发布流程由现有 ``release.yml`` + GoReleaser 执行：
-SemVer tag / 已公开 Release 保护检查 → 将精确 ``release_tag`` 传入同 SHA 的
-``go.yml``（gofmt、隔离 Go test/vet、integration 编译检查、OpenAPI、
-前端与两文档站双干净构建一致性）及独立 MkDocs 检查 →
-从该 tag 去 ``v`` 派生正式 UI 版本，确认 tag 所指提交 SHA = source SHA = ``HEAD`` →
-上传唯一 UI 包 → GoReleaser 创建 draft、嵌入此包解出的同一树 →
-归档校验与 attestation、三平台原生运行 ``--version``、Docker 发布并验证 →
-公开 Release → 仅稳定版更新 GitHub/GHCR latest。原生 smoke 只下载与运行，
-不重复编译；Docker 保留独立 job，仅承诺 ``linux/amd64``。
-``release_gate.py version "$TAG"`` 只校验 tag 并输出去 ``v`` 后的派生版本，
-不读取根版本文件。GoReleaser 的 ``GORELEASER_CURRENT_TAG`` 绑定真实触发 tag，
-不从最近旧 tag 或同 SHA 的其他 tag 猜测待发版本。
+``release.yml`` 在 push tag ``v*.*.*`` 或手动选择 tag 运行时，先复用同 SHA 的
+``go.yml`` checks（Go test/vet、integration 编译检查、OpenAPI、MkDocs、
+前端与两文档站双干净构建一致性），再由 GoReleaser 构建和发布。
+正式 UI 版本从传入的精确 ``release_tag`` 去掉前导 ``v`` 派生，仍确认
+tag 所指提交 SHA = source SHA = ``HEAD``，并复用唯一验证过的 UI 包。
+GoReleaser 的 ``GORELEASER_CURRENT_TAG`` 绑定真实触发 tag，不从最近旧 tag
+或同 SHA 的其他 tag 猜测待发版本。
+
+发布检查交给 GoReleaser 原生 Git/SemVer 校验与 preflight；preflight 沿用
+默认只警告，不设置 ``fail_on_error: true``。不再维护自定义 release gate、
+draft → public → latest 状态机、独立 Docker/report job 或 GitHub attestation。
+GoReleaser 默认直接发布，保留 ``prerelease: auto``；不等待三平台原生 smoke
+或其他外部 smoke，GitHub Latest 采用 GoReleaser/平台默认行为。
+
+镜像也由 ``.goreleaser.yaml`` 的 ``dockers_v2`` 管理，默认构建
+``linux/amd64`` + ``linux/arm64``。``Dockerfile.goreleaser`` 复用上述
+``embedui`` 预编译二进制，保留 distroless nonroot 与运行参数；原 ``Dockerfile``
+仅保留为本地源码构建路径。GHCR 镜像使用 ``.Tag``、``.Version`` 两个版本标签，
+每次非 prerelease 且非 snapshot 的镜像发布同时更新 ``latest``，不等待外部验证；
+预发布不更新 ``latest``。它不是按版本大小排序的指针，也不与 GitHub Latest
+构成同一套状态机。实际镜像构建、多架构 manifest 与运行仍需单独验证。
 
 普通 branch/PR 的 ``go.yml`` 仍执行 UI 打包与恢复验证，但使用
 ``0.0.0-ci.g<完整Git提交SHA>`` 作为仅限 CI 的临时 SemVer 包标识；
@@ -167,12 +177,13 @@ Go 工具链门槛唯一读 ``go.mod``；Node 使用 ``web/.node-version``，npm
 只有 checkout 干净且已核验的正式 ``TAG`` 指向候选 SHA / ``HEAD`` 时，
 才可用 ``UI_VERSION="${TAG#v}"``；
 不要把最近旧 tag 当作待发版本。完整 UI/包准备后运行 ``goreleaser check`` 和
-``goreleaser release --snapshot --clean``；snapshot 的运行版本由 GoReleaser
-生成，不是正式 Release 版本，不用于普通源码安装的资源发现。
+``goreleaser release --snapshot --clean --skip=docker``；不加 ``--skip=docker``
+会触发本地 buildx 镜像构建。离线验证还需预先缓存工具链与依赖，跳过 Docker 的
+snapshot 不构成镜像验收。快照运行版本由 GoReleaser 生成，不是正式 Release 版本，
+不用于普通源码安装的资源发现。
 
-校验清单覆盖三个归档和 UI 包，attestation 的验证对象也是 **归档**：
-``gh attestation verify ./qatlasd_<version>_linux_amd64.tar.gz --repo IAI-USTC-Quantum/QuantumAtlas``。
-同源 SHA256 是完整性检查，不是独立签名；证明来源也不保证源码无漏洞。
+校验清单仍覆盖三个归档和 UI 包，但当前流程不再生成 GitHub attestation。
+同源 SHA256 是完整性检查，不是独立签名，也不证明源码安全。
 公开的开发文档可从包直接读取，不得包含机密。
 
 迁移时安装脚本必须取自 **同一新 tag** 的
@@ -180,10 +191,11 @@ Go 工具链门槛唯一读 ``go.mod``；Node 使用 ``web/.node-version``，npm
 再传入 ``--version <tag>``。旧线上实例内嵌的脚本不识别新归档，只有
 维护者验证并授权升级后该入口才切换。安装器不改配置、注册服务或重启生产。
 
-Git tag 一旦推送便可能被 Go proxy 发现，draft 不能阻挡模块安装；
-UI 尚未公开时首次启动会明确失败，公开后重试。正确性检查必须在打 tag 前完成。
-GitHub 与 GHCR 不是原子事务：失败要分别核对 draft/镜像状态，不能移动 tag、
-覆盖公开 Release 或擅自升级线上。
+Git tag 一旦推送便可能被 Go proxy 发现，不等待 GitHub/GHCR 发布完成；
+UI 尚不可下载时首次启动会明确失败，可用后重试。正确性检查必须在打 tag 前完成。
+移除旧保护后，不再承诺拒绝所有已公开 Release 的重传，也不保证失败无副作用。
+GitHub 与 GHCR 不是原子事务：失败后分别核对 Release、附件、镜像与标签状态，
+再决定恢复方案；不要盲目重跑、移动已推 tag 或擅自升级线上。
 
 标准化原则
 ----------
@@ -347,8 +359,11 @@ sphinx 站点并直接写入文档目录。
      - 在已审核候选 SHA 上创建 annotated ``vX.Y.Z[-rc.N]``，核对指向后
        只推送这一个 tag；正式版本唯一从它派生
    * - release workflow
-     - GoReleaser 从 Git 提交生成正文；draft、归档证明、三平台运行与
-       镜像验证通过后公开；稳定版才更新 ``:latest``，RC 仅版本 tag
+     - 同 SHA checks → GoReleaser 默认发布；Git 生成正文，preflight 默认只警告；
+       双架构镜像稳定版发布时更新 GHCR ``latest``，RC 仅版本标签
+   * - 产物验证
+     - 单独核对归档、UI、镜像 manifest 与实际运行；外部 smoke 不阻挡默认发布，
+       无自动 GitHub attestation；失败后逐项核对远端状态
    * - 部署
      - pin 版本 → pull → up -d → ``/api/health`` 版本与探针正确 →
        冒烟通过

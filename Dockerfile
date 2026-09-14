@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1.7
 # ── stage 1: go binary ─────────────────────────────────────────────────
-# Prepare the COMPLETE web/dist (Sphinx public + dev docs, then npm build)
-# before docker build. Release CI restores the already-validated UI zip;
-# no Node/Sphinx build runs here, and no generated assets are committed.
+# Local source builds: prepare the COMPLETE web/dist (Sphinx public + dev docs,
+# then npm build) before docker build. Release CI uses Dockerfile.goreleaser to
+# copy prebuilt binaries instead; no generated assets are committed.
 FROM golang:1.26.2-bookworm AS builder
 WORKDIR /src
 COPY go.mod go.sum ./

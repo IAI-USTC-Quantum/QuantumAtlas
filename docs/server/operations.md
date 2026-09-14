@@ -59,8 +59,8 @@ sh install-qatlasd.sh --version "$TAG"
 Sphinx 两站 + npm 产物，首次运行无需下载 UI。目标机不需要 Go / Node / Sphinx，
 但安装器需要 curl 或 GNU wget、tar、SHA256 工具和标准命令行工具；BusyBox wget
 会被拒绝，可改用 curl。依赖与可调超时详见[安装文档](install.md)。
-SHA256 用于完整性检查，同源清单不是签名；如需来源证明，attestation 应验证
-**tar.gz / zip 本身**，不是解出的 binary，且 provenance 不等于源码安全。
+SHA256 用于完整性检查，同源清单不是签名，也不证明源码安全。
+当前发布流程不再生成 GitHub attestation，不能假定新产物有来源证明。
 详见[安装与校验](install.md)。
 
 #### B. `go install`

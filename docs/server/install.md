@@ -86,7 +86,7 @@ curl -fL "$BASE/qatlasd_${VERSION}_checksums.txt" -o "qatlasd_${VERSION}_checksu
 sha256sum "$ARTIFACT"          # macOS 可用 shasum -a 256 "$ARTIFACT"
 ```
 
-如需验证构建来源，用 GitHub CLI 核验该 tag 发布的 SLSA build provenance：
+**当前发布流程不再生成 GitHub attestation**，不能假定新归档或镜像带有 SLSA build provenance。只有核对历史 tag 确实发布过相应证明时，才可用 GitHub CLI 验证历史产物：
 
 ```bash
 gh attestation verify "./$ARTIFACT" --repo IAI-USTC-Quantum/QuantumAtlas
