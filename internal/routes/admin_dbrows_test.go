@@ -5,7 +5,7 @@
 //     admin session reaches the handler (503 on the harness's nil pool,
 //     same convention as /api/admin/db/schema)
 //   - fetchDBRows against a live PostgreSQL, gated on
-//     QATLAS_TEST_PG_DSN (same skip convention as admin_test.go):
+//     -tags integration + QATLAS_TEST_PG_DSN (same as admin_test.go):
 //     happy-path page over a probe table with bytea/timestamptz/NULL
 //     value normalization, plus the unknown-table 404 sentinel
 package routes
@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/testutil"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -54,6 +55,9 @@ func TestAPI_Admin_DBRowsNilPool(t *testing.T) {
 // TestFetchDBRows_LivePostgres exercises the happy path and the
 // unknown-table sentinel against a real Postgres.
 func TestFetchDBRows_LivePostgres(t *testing.T) {
+	if !testutil.IntegrationEnabled {
+		t.Skip("requires -tags integration and explicit live-service environment variables")
+	}
 	dsn := os.Getenv("QATLAS_TEST_PG_DSN")
 	if dsn == "" {
 		t.Skip("QATLAS_TEST_PG_DSN unset; skipping live-PostgreSQL integration test")
@@ -64,7 +68,8 @@ func TestFetchDBRows_LivePostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	defer pool.Close()
+	// Cleanup callbacks are LIFO: drop probe tables before closing the pool.
+	t.Cleanup(pool.Close)
 
 	if _, err := pool.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS admin_rows_probe (

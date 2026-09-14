@@ -387,10 +387,10 @@ func TestNormaliseSha256Hex(t *testing.T) {
 		{"  ", ""},
 		{"deadbeef", ""}, // too short
 		{strings.Repeat("a", 64), strings.Repeat("a", 64)},
-		{"  " + strings.Repeat("A", 64) + "  ", strings.Repeat("a", 64)},                 // trimmed + lowercased
-		{strings.Repeat("a", 63) + "Z", ""},                                              // bad char
-		{strings.Repeat("a", 65), ""},                                                    // too long
-		{"DEADBEEF" + strings.Repeat("0", 56), "deadbeef" + strings.Repeat("0", 56)},     // upper hex OK
+		{"  " + strings.Repeat("A", 64) + "  ", strings.Repeat("a", 64)},             // trimmed + lowercased
+		{strings.Repeat("a", 63) + "Z", ""},                                          // bad char
+		{strings.Repeat("a", 65), ""},                                                // too long
+		{"DEADBEEF" + strings.Repeat("0", 56), "deadbeef" + strings.Repeat("0", 56)}, // upper hex OK
 		{testSha, testSha},
 	}
 	for _, tc := range cases {
@@ -400,4 +400,3 @@ func TestNormaliseSha256Hex(t *testing.T) {
 		}
 	}
 }
-

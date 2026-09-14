@@ -8,16 +8,20 @@ Python 命令行客户端由独立仓库 ``IAI-USTC-Quantum/qatlas-cli`` 维护�
 .. code-block:: text
 
    QuantumAtlas/
-   ├── cmd/qatlasd/            Go 服务器入口（内嵌 PocketBase + SPA + 本文档站）
-   ├── cmd/downloaderworker/   主动接入的下载节点（独立浏览器与持久暂存）
-   ├── cmd/downloaderproxy/    旧单代理服务（仅兼容路径）
+   ├── cmd/qatlasd/             Go 服务入口（PocketBase；完整构建内嵌 UI/文档）
+   ├── cmd/downloaderworker/    主动接入的下载节点（独立浏览器与持久暂存）
+   ├── cmd/downloaderproxy/     旧单代理服务（仅兼容路径）
    ├── internal/               Go 服务器内部包（见下表）
-   ├── web/                React SPA 前端
-   ├── deploy/             docker-compose 部署模板
-   ├── docsite/            本文档站源码（Sphinx + Furo）
-   ├── tests/              部署模板结构测试与生产冒烟测试
-   ├── pyproject.toml      不分发的 uv 开发环境、依赖组与 Pixi 工具链配置
-   └── config.example.yaml 服务器配置完整 schema 参考
+   ├── web/                    React SPA；.node-version + package-lock.json
+   ├── deploy/                 docker-compose 部署模板
+   ├── docsite/                双站源码（Sphinx + Furo，独立 requirements.txt）
+   ├── docs/                   MkDocs 源码与独立 requirements.txt
+   ├── hooks/                  MkDocs 文档构建 hook
+   ├── tests/                  部署结构、离线 fixture 与显式启用的生产冒烟
+   ├── .github/scripts/        CI 归档/发布门禁与 Python 标准库 fixture
+   ├── go.mod / go.sum         Go 工具链门槛、依赖与 Go tool 声明
+   ├── VERSION                 服务端发布版本来源
+   └── config.example.yaml     服务器配置完整 schema 参考
 
 服务器（Go）
 ------------
@@ -90,7 +94,11 @@ Docker 构建嵌入完整 dist；普通 Go 模块构建使用 ``embed_none.go``�
 对应 GitHub Release 下载 UI ZIP 与 SHA256 清单；不使用 latest 回退。
 ZIP 不解压到缓存目录，校验路径、类型、重复项、版本、尺寸与内容后以
 支持 seek 的 ``fs.FS`` 提供，静态服务、SPA fallback 与业务路由共用。
-``internal/cmd/uibundle`` 从同一 dist 打包，确保两种安装的 UI 内容一致。
+``internal/cmd/uibundle`` 从同一 dist 打包，确保 GoReleaser tar.gz 中内嵌的
+UI 与独立 ZIP 的 UI 内容一致。``dev`` / Go 伪版本没有精确 Release 可下载，
+需先构建 Sphinx 两站和 npm 资源，再用 ``-tags embedui`` 构建或运行。
+普通 ``go build`` / ``go test`` 无此资源前置条件，完整命令见 :doc:`development`。
+根 ``dist/`` / ``build/``、生成站点、缓存和 ELF 也不提交 Git。
 
 两文档站也在完整 bundle 中：``/doc`` 公开，``/devdoc`` 仍需管理员票据。
 既有 ``~/.qatlas/docs`` 显式磁盘覆盖保持不变，详见"约定"一节。
@@ -120,22 +128,25 @@ ZIP 不解压到缓存目录，校验路径、类型、重复项、版本、尺�
 - 主客户端与主服务配置使用 YAML：客户端 ``~/.config/qatlas/config.yaml``，
   qatlasd ``~/.qatlas/config.yaml``；独立 ``downloaderworker`` 则使用
   ``DL_WORKER_*`` 环境变量与非凭据 flags，不能把主进程约束推广到执行节点；
-- 根目录 ``pyproject.toml`` 仅管理不分发的 uv 开发环境与 Pixi 工具链，
-  没有旧包发行元数据或构建后端。Python 开发依赖仅供剩余文档辅助脚本使用，
-  不再包含 pytest；``uv sync`` 不把主仓安装成 Python 包。
-  本仓测试统一为 Go：``tests/compose_test.go`` 检查部署模板，
+- 开发命令直接使用 ``go``、``go tool swag``、``npm`` 和文档工具，
+  完整步骤见 :doc:`development`。没有根 Python 项目或 ``uv sync`` 流程，
+  不引入 Pixi、Makefile、Taskfile 或新构建框架。Go 工具链门槛只读 ``go.mod``；
+  Sphinx/MkDocs 依赖分别由 ``docsite/requirements.txt``、``docs/requirements.txt``
+  管理；``.github/scripts`` 的 Python fixture 仅用标准库，不用 pytest。
+- 服务端测试使用 Go：``tests/compose_test.go`` 检查部署模板，
   ``tests/e2e/`` 的普通 fixture 只使用本地 ``httptest``。
-  ``go test ./internal/... ./cmd/... ./web ./tests/...``（或 ``pixi run test-go``）
-  不编译带 ``e2e`` build tag 的生产检查。
-  真正的生产冒烟由 nightly 单独运行：
-  ``go test -tags=e2e ./tests/e2e -count=1 -timeout=10m``，必须显式配置
-  ``QATLAS_SERVER_TARGETS``；缺目标会失败。一次性旧包检查仅保留在历史 tag；
+  ``CGO_ENABLED=0 go test ./internal/... ./cmd/... ./web ./tests/...``
+  不需 UI 产物，也不启用真实目标测试。真实 PG/Fleet/MinerU/OpenAlex 测试需
+  ``-tags integration`` 编译期开关及原有环境目标/flag 双门禁，S3 文件已有
+  ``integration`` tag；混合文件保留离线测试。生产冒烟由 nightly 单独选择
+  ``e2e`` tag 与 ``QATLAS_SERVER_TARGETS``，缺目标会失败。
+  即使已有门禁，开发检查仍清除真实目标与凭据、使用临时 HOME/XDG 目录，
+  只显式复用 PATH 和 Go 缓存，避免误读默认配置；见 :doc:`development`；
 - 文档站：公开站 ``/doc`` 与开发站 ``/devdoc``（管理员票据鉴权）由
   ``.github/workflows/docs.yml`` 独立构建并发布为 ghcr 上的
   ``qatlas-docs`` 镜像；部署机运行 ``deploy/update-docs.sh`` 把新文档写入
   ``~/.qatlas/docs``，qatlasd 从该目录取材（目录缺失或为空时回落到
   当前版本 bundle 的副本，来源可为内嵌或缓存，见 ``internal/routes/docs.go``）。
-  已选磁盘目录内部更新不需重启；改变来源仍需重启。本地预览时开发者仍可直接运行两套 sphinx 构建：
-  公开站 ``sphinx-build -b html docsite web/public/doc``，开发站
-  ``sphinx-build -b html -t devdocs -D root_doc=dev/index docsite
-  web/public/devdoc``；
+  已选磁盘目录内部更新不需重启；改变来源仍需重启。本地构建公开站和开发站
+  的直接命令见 :doc:`development`，使用独立 ``build/doctrees`` 缓存与可复现
+  时间环境；不要把 Sphinx 缓存混入发行资源。

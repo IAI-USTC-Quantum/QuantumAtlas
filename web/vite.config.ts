@@ -12,13 +12,12 @@ import { TanStackRouterVite } from '@tanstack/router-plugin/vite'
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const proxyTarget = env.VITE_DEV_API_TARGET
-  // dev-only: a server-side system PAT (QATLAS_SYSTEM_PAT on the target
-  // qatlasd) so the proxied /api/* reads carry a real bearer. Without
-  // it every read endpoint 401s now that the backend locks reads behind
-  // authGuard. Injected only on /api (NOT /_ PocketBase admin or /share)
-  // and only in `vite dev` — `vite build` never reads this branch, so the
-  // token can't leak into a production bundle. Keep it in
-  // .env.development.local (gitignored via *.local).
+  // Optional TEST bearer for the development proxy; a system PAT is configured
+  // in the target's YAML system_pat.token, not a server environment variable.
+  // It is injected into /api only; read/write authority still follows scopes.
+  // VITE_ variables are client-exposable: never put real credentials in a build
+  // environment or assume the prefix is a secret store. Use an isolated local
+  // backend and gitignored .env.development.local (see web/README.md).
   const apiPat = env.VITE_DEV_API_PAT
   const apiAuthHeaders = apiPat ? { Authorization: `Bearer ${apiPat}` } : undefined
   const allowedHosts = env.VITE_DEV_ALLOWED_HOSTS

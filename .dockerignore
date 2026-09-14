@@ -35,12 +35,9 @@ data
 wiki
 
 # Local secrets / per-machine config. Never bake these into an image.
-# .env.example is whitelisted because the image references it as the
-# canonical reference template (and `qatlasd config init` embeds a
-# trimmed version, which lives in cmd/qatlasd/templates/).
+# qatlasd embeds templates/config.yaml, not a legacy .env template.
 .env
 .env.*
-!.env.example
 
 # Documentation isn't needed at runtime — saves a few MB in the build
 # context. (README.md is whitelisted because some tooling looks for it.)

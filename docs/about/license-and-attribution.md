@@ -122,7 +122,7 @@ X-Attribution: OpenAlex (CC0), Crossref (CC0), arXiv
 - 部署在受控范围（私有团队、内部站点、教育机构 IP allowlist）；
 - 公开实例（互联网开放）维持开关默认 OFF。
 
-详细 env 字段见 [Env Vars 参考 · 论文访问开关](../reference/env-vars.md#server-论文访问开关-self-hosted-可选)。
+当前 YAML 配置边界见[配置参考 · 论文访问开关](../reference/env-vars.md#server-论文访问开关-self-hosted-可选)。
 实施进度跟踪：[#8](https://github.com/IAI-USTC-Quantum/QuantumAtlas/issues/8)。
 
 ## 撤稿 / 删除请求

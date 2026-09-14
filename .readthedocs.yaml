@@ -1,12 +1,7 @@
-# Read the Docs build config —— 抄 QuantumAlgorithm 的 mkdocs + RTD 模式。
-#
-# 与 qalgo 的差异：
-#  - 单独 `docs/requirements.txt`（不混进运行时 deps，QA 已有自己的 pyproject 体系）
-#  - mkdocs 配置入口仍是仓库根的 mkdocs.yml
-#  - post_checkout 把 shallow clone 拉成 full clone，让
-#    git-revision-date-localized-plugin 能拿到真实 commit time
-#
-# 触发：RTD 自己挂 GitHub App，仓库内不另起 docs CI。
+# Read the Docs publishes the MkDocs site with its own documentation-only
+# requirements; the repository is a Go module, not a Python distribution.
+# PR/branch validation also runs in go.yml; independent Sphinx content images
+# are built by docs.yml. RTD publication does not publish a Python package.
 
 version: 2
 

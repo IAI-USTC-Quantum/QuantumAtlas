@@ -34,7 +34,7 @@ QuantumAtlas 主仓库正在收敛为**核心的论文基础设施**：主仓库
    * - 服务插件平台（服务端）
      - ``internal/plugin``\（manifest / registry / external JSON-RPC）
        + ``internal/hostapi`` 宿主 API + 配置驱动的启用开关。内置
-       （kind=builtin）插件现有三个，manifest 在
+       （kind=builtin）插件现有四个，manifest 在
        ``cmd/qatlasd/main.go`` 构造：
 
        - ``search-remote``\（capability ``search``）：qatlas-search
@@ -44,6 +44,8 @@ QuantumAtlas 主仓库正在收敛为**核心的论文基础设施**：主仓库
        - ``rag-remote``\（capability ``rag``）：qatlas-rag 索引推送
          客户端，enabled 镜像 ``rag.remote.enabled``，同样受
          healthz 探测；
+       - ``match-remote``：独立 qatlas-match 的进程内客户端，
+         enabled 镜像 ``match.remote.enabled``；
        - ``downloader``\（capability ``download``）：内部模块
          ``internal/downloader`` 经插件面暴露，SPA 的 Robust
          Downloader 页面据其状态提供本地下载；启用 ``downloader.remote``

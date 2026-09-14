@@ -24,14 +24,14 @@ QuantumAtlas/
 ├── tests/                 测试套件
 ├── docs/                  本文档（你正在看的）
 ├── VERSION                服务端版本唯一来源
-├── pyproject.toml         不分发的 uv 开发环境 + Python 依赖组 + pixi 工具链
-└── go.mod                 Go 项目
+├── docsite/               Sphinx 使用/开发文档
+└── go.mod / go.sum        原生 Go 模块、依赖与工具版本声明
 ```
 
-客户端代码不在此目录树中；主仓的 uv 项目仅用于开发环境，不把主仓构建或安装成 Python 发行包。需要 `qatlas` 命令请使用独立的 `qatlas-cli`。主仓旧 `qatlas/` helpers 已退役，不再作为 parser 库保留。最终发行元数据、检查器、测试和 workflow 留在固定历史 tag [`quantum-atlas-v0.21.0`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/tree/quantum-atlas-v0.21.0) 供审计，main 仅保留迁移说明及常规服务端流程。
+客户端代码不在此目录树中；主仓已移除根 Python/Pixi 聚合环境，使用原生 Go 模块开发。Python 只用于独立的文档构建和 CI 辅助脚本，不形成 Python 发行包。需要 `qatlas` 命令请使用独立的 `qatlas-cli`。主仓旧 `qatlas/` helpers 已退役，不再作为 parser 库保留。最终发行元数据、检查器、测试和 workflow 留在固定历史 tag [`quantum-atlas-v0.21.0`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/tree/quantum-atlas-v0.21.0) 供审计，main 仅保留迁移说明及常规服务端流程。
 
 !!! info "状态目录不在仓库里"
-    `raw/`、`data/`、`pb_data/` 已**不在**仓库内——默认落到 `${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/` 之下，可通过 `.env` 显式覆盖。详见 [存储布局迁移](../server/migration-storage-layout.md)。
+    `raw/`、`data/`、`pb_data/` 已**不在**仓库内——默认落到 `${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/` 之下，可通过 YAML 的 `paths.*` 显式覆盖。详见 [存储布局迁移](../server/migration-storage-layout.md)。
 
 ## 这一节的内容
 

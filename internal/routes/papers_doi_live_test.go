@@ -1,12 +1,12 @@
 package routes
 
 // Live end-to-end tests for the DOI fetch pipeline (plan §A). Gated by
-// QATLAS_TEST_LIVE=1 — they hit the REAL OpenAlex API and the REAL
-// arxiv.org / publisher PDF hosts. MinerU is the only stubbed leg
+// -tags integration plus QATLAS_TEST_LIVE=1 — they hit the REAL OpenAlex
+// API and the REAL arxiv.org / publisher PDF hosts. MinerU is the only stubbed leg
 // (httptest), because burning real MinerU quota in CI is not the point;
 // the fetch chain is.
 //
-//	QATLAS_TEST_LIVE=1 go test ./internal/routes/ -run TestLiveDOI -v
+//	QATLAS_TEST_LIVE=1 go test -tags integration ./internal/routes/ -run TestLiveDOI -v
 //
 // Optional: QATLAS_OPENALEX_MAILTO to use a real polite-pool contact.
 
@@ -22,6 +22,7 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineru"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/openalex"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperassets"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/testutil"
 )
 
 const (
@@ -38,6 +39,9 @@ const (
 
 func liveSkipUnlessEnabled(t *testing.T) {
 	t.Helper()
+	if !testutil.IntegrationEnabled {
+		t.Skip("requires -tags integration and explicit live-service environment variables")
+	}
 	if os.Getenv("QATLAS_TEST_LIVE") != "1" {
 		t.Skip("set QATLAS_TEST_LIVE=1 to run live OpenAlex/PDF-fetch tests")
 	}

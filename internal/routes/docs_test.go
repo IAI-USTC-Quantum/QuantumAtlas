@@ -22,10 +22,10 @@ import (
 // both docs subtrees populated.
 func embeddedDist() fstest.MapFS {
 	return fstest.MapFS{
-		"doc/index.html":          &fstest.MapFile{Data: []byte("<h1>embedded user docs</h1>")},
-		"doc/guide/index.html":    &fstest.MapFile{Data: []byte("<h1>embedded guide</h1>")},
-		"devdoc/dev/index.html":   &fstest.MapFile{Data: []byte("<h1>embedded dev docs</h1>")},
-		"index.html":              &fstest.MapFile{Data: []byte("<h1>spa</h1>")},
+		"doc/index.html":           &fstest.MapFile{Data: []byte("<h1>embedded user docs</h1>")},
+		"doc/guide/index.html":     &fstest.MapFile{Data: []byte("<h1>embedded guide</h1>")},
+		"devdoc/dev/index.html":    &fstest.MapFile{Data: []byte("<h1>embedded dev docs</h1>")},
+		"index.html":               &fstest.MapFile{Data: []byte("<h1>spa</h1>")},
 		"assets/index-deadbeef.js": &fstest.MapFile{Data: []byte("// js")},
 	}
 }

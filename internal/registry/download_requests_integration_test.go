@@ -9,11 +9,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/testutil"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestDownloadAdmissionPostgresRecovery(t *testing.T) {
+	if !testutil.IntegrationEnabled {
+		t.Skip("requires -tags integration and explicit live-service environment variables")
+	}
 	dsn := os.Getenv("TEST_DOWNLOADFLEET_DATABASE_URL")
 	if dsn == "" {
 		t.Skip("set TEST_DOWNLOADFLEET_DATABASE_URL to a disposable PostgreSQL database")

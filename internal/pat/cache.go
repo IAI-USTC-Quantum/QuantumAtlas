@@ -97,11 +97,11 @@ var DefaultVerifyCacheConfig = VerifyCacheConfig{
 // no bcrypt hash, no plaintext, only the identifiers Lookup needs to
 // short-circuit. Embedded by value into the LRU; ~120 bytes per entry.
 type verifyCacheEntry struct {
-	PATRecordID    string    // pat_tokens.id
-	UserID         string    // users.id (linked record)
-	ScopesRaw      string    // pat_tokens.scopes (JSON-encoded list)
-	PATExpiresAt   time.Time // pat_tokens.expires_at; we re-check on each hit
-	CachedAt       time.Time // for TTL comparison
+	PATRecordID  string    // pat_tokens.id
+	UserID       string    // users.id (linked record)
+	ScopesRaw    string    // pat_tokens.scopes (JSON-encoded list)
+	PATExpiresAt time.Time // pat_tokens.expires_at; we re-check on each hit
+	CachedAt     time.Time // for TTL comparison
 }
 
 // verifyCache is the in-memory LRU+TTL store. It is created by

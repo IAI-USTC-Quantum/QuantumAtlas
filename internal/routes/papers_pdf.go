@@ -28,8 +28,8 @@ const pdfGoneDetail = "PDF delivery is disabled; use the markdown endpoint inste
 //
 // Response codes:
 //
-//   400  malformed arxiv id
-//   410  always (PDF delivery disabled)
+//	400  malformed arxiv id
+//	410  always (PDF delivery disabled)
 //
 // Routing: only registered when cfg.PaperAccessEnabled is true. Auth:
 // gated by scopeGuard("papers", "read") at the route layer.

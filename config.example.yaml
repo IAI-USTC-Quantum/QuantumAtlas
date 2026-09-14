@@ -41,8 +41,8 @@
 #   allowed_logins: [your-gh-login, teammate-gh-login]
 #   admin_logins: [your-gh-login]
 #   # Logins promoted to is_superadmin on the users record at every
-#   # boot (see auth-model.md §DB 角色). Seed/recovery path for the
-#   # role-management API; never demotes.
+#   # boot (see docs/concepts/auth-model.md §DB 角色). Seed/recovery
+#   # path for the role-management API; never demotes.
 #   superadmin_logins: [your-gh-login]
 #   # Self-hosted Gitea/Forgejo as a second login provider. gitea_url is
 #   # the instance origin; authorize/token/userinfo endpoints are derived
@@ -93,10 +93,10 @@
 
 # ─── Docs override directory (not a config key) ────────────────────────
 # ~/.qatlas/docs is NOT configured here — it is a fixed location. When it
-# holds doc/ and/or devdoc/ subdirectories (populated by
-# deploy/update-docs.sh), qatlasd serves /doc and /devdoc from disk
-# instead of the docs embedded in the binary, so docs updates need no
-# restart. Leave it empty/absent to keep serving the embedded copies.
+# holds nonempty doc/ and/or devdoc/ subdirectories at startup, qatlasd
+# selects those instead of the versioned UI bundle (embedded or cached).
+# Updates within the selected disk tree need no restart; changing the
+# selected source does. Leave absent to use the bundled baseline.
 
 # ─── System PAT (operator breakglass; optional) ────────────────────────
 # Single bearer token, never lands in pb_data. Send as
@@ -216,6 +216,8 @@
 #                                    # bot walls (Cloudflare/IEEE WAF),
 #                                    # via an already-running Chromium's
 #                                    # DevTools endpoint.
+#     cdp_url: ""
+#     timeout: 45s
 #   proxy:                          # delegate to a standalone
 #                                    # downloaderproxy (cmd/downloaderproxy,
 #                                    # Dockerfile.downloaderproxy) deployed

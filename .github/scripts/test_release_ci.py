@@ -337,6 +337,47 @@ class SourceContractTests(unittest.TestCase):
             self.assertNotIn(forbidden, config)
         self.assertEqual(config.count("glob: build/ui/qatlasd_*_web.zip"), 2)
         self.assertIn("tags: [embedui]", config)
+        self.assertIn("ignore_tags: [quantum-atlas-v0.21.0]", config)
+        self.assertNotIn("quantum-atlas-*", config)
+
+    def test_reusable_ci_checks_go_formatting_and_both_docs_systems(self):
+        root = Path(__file__).resolve().parents[2]
+        workflow = (root / ".github/workflows/go.yml").read_text()
+        self.assertIn("workflow_call:", workflow)
+        self.assertEqual(workflow.count("ref: ${{ inputs.source_sha || github.sha }}"), 3)
+        self.assertEqual(workflow.count('test "$(git rev-parse HEAD)" = "$SOURCE_SHA"'), 3)
+        self.assertIn("git ls-files -z -- '*.go' | xargs -0 -r gofmt -l", workflow)
+        self.assertIn("go test -tags=integration ./internal/... ./cmd/... -run '^$'", workflow)
+        self.assertIn("run: go mod tidy -diff", workflow)
+        self.assertIn("dist build qatlasd downloaderproxy downloaderworker", workflow)
+        self.assertIn("python -m mkdocs build --strict --site-dir build/mkdocs", workflow)
+        self.assertIn("cache-dependency-path: docs/requirements.txt", workflow)
+        self.assertIn("cache-dependency-path: docsite/requirements.txt", workflow)
+        self.assertEqual(workflow.count("run: bash .github/scripts/build-docs.sh"), 2)
+        release = (root / ".github/workflows/release.yml").read_text()
+        self.assertIn("uses: ./.github/workflows/go.yml", release)
+        self.assertIn("source_sha: ${{ needs.prep.outputs.source_sha }}", release)
+        self.assertIn("needs: [prep, checks]", release)
+
+    def test_docs_image_reuses_clean_sphinx_build_without_legacy_publish(self):
+        root = Path(__file__).resolve().parents[2]
+        workflow = (root / ".github/workflows/docs.yml").read_text()
+        self.assertIn("'.github/scripts/build-docs.sh'", workflow)
+        self.assertIn('SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"', workflow)
+        self.assertIn("export SOURCE_DATE_EPOCH\n", workflow)
+        self.assertIn("bash .github/scripts/build-docs.sh", workflow)
+        self.assertNotIn("sphinx-build ", workflow)
+        self.assertIn("cp -a web/public/doc web/public/devdoc docs-dist/", workflow)
+        builder = (root / ".github/scripts/build-docs.sh").read_text()
+        self.assertEqual(builder.count("sphinx-build -W --keep-going -b html"), 2)
+        self.assertIn("ghcr.io/iai-ustc-quantum/qatlas-docs:latest", workflow)
+        self.assertIn("timeout-minutes:", workflow)
+        self.assertIn("concurrency:", workflow)
+        for path in (root / ".github/workflows").glob("*.yml"):
+            content = path.read_text()
+            for forbidden in ("pypa/gh-action-pypi-publish", "uv publish", "uv build", "python -m build", "twine upload"):
+                with self.subTest(workflow=path.name, forbidden=forbidden):
+                    self.assertNotIn(forbidden, content)
 
 
 if __name__ == "__main__":

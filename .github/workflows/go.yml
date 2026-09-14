@@ -43,16 +43,27 @@ jobs:
           SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
         run: |
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-          test -z "$(git ls-files -- web/dist web/public/doc web/public/devdoc dist build)"
+          test -z "$(git ls-files -- web/dist web/public/doc web/public/devdoc dist build qatlasd downloaderproxy downloaderworker)"
           test ! -d web/dist
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      # Ordinary Go builds/tests do not need Node, Pixi or any embedded UI.
+      # Ordinary Go builds/tests do not need Node, Python packages or embedded UI.
+      - name: Go formatting (tracked source only)
+        run: |
+          UNFORMATTED="$(git ls-files -z -- '*.go' | xargs -0 -r gofmt -l)"
+          if [ -n "$UNFORMATTED" ]; then
+            printf 'Run gofmt on these tracked files:\n%s\n' "$UNFORMATTED"
+            exit 1
+          fi
+      - name: Go module graph synchronization
+        run: go mod tidy -diff
       - name: Go vet
         run: go vet ./internal/... ./cmd/... ./tests/... ./web
       - name: Offline Go tests (including deployment and HTTP fixtures)
         run: go test ./internal/... ./cmd/... ./tests/... ./web
+      - name: Compile opt-in integration tests without running live checks
+        run: go test -tags=integration ./internal/... ./cmd/... -run '^$'
       - name: OpenAPI synchronization
         run: |
           go tool swag init -g main.go -d ./cmd/qatlasd,./internal/routes -o internal/apidocs --parseInternal --parseDepth 1
@@ -68,6 +79,34 @@ jobs:
           distribution: goreleaser
           version: v2.18.1
           args: check
+
+  docs:
+    name: MkDocs (strict build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha || github.sha }}
+          # The existing revision-date plugin needs file history.
+          fetch-depth: 0
+      - name: Verify exact documentation source
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: docs/requirements.txt
+      - name: Install MkDocs toolchain
+        run: python -m pip install -r docs/requirements.txt
+      - name: Build MkDocs (RTD remains the publishing service)
+        run: python -m mkdocs build --strict --site-dir build/mkdocs
+      - name: Require a source-only clean checkout after documentation build
+        run: |
+          git diff --exit-code
+          test -z "$(git status --porcelain --untracked-files=all)"
 
   web:
     name: Web and complete UI reproducibility

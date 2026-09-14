@@ -265,20 +265,20 @@ func Lookup(app core.App, plaintext string) (*core.Record, *core.Record, error) 
 // Implementation note: we issue a single-column UPDATE rather than
 // calling app.Save(rec). Reasons:
 //
-//   1. app.Save() re-serialises the whole record, bumping the
-//      auto-managed `updated` timestamp and firing OnRecordUpdate*
-//      hooks. Two concurrent requests with the same PAT would race
-//      on those side-effects, jittering `updated` and potentially
-//      double-firing audit hooks.
+//  1. app.Save() re-serialises the whole record, bumping the
+//     auto-managed `updated` timestamp and firing OnRecordUpdate*
+//     hooks. Two concurrent requests with the same PAT would race
+//     on those side-effects, jittering `updated` and potentially
+//     double-firing audit hooks.
 //
-//   2. UPDATE last_used_at = ? WHERE id = ? is a single atomic SQL
-//      statement that any number of concurrent calls can collapse
-//      onto without contention beyond the per-row lock SQLite already
-//      manages.
+//  2. UPDATE last_used_at = ? WHERE id = ? is a single atomic SQL
+//     statement that any number of concurrent calls can collapse
+//     onto without contention beyond the per-row lock SQLite already
+//     manages.
 //
-//   3. Skips the validation cost of Save (which re-runs every field
-//      validator on the record) — meaningful for high-traffic CI PATs
-//      where MarkUsed fires once per authenticated request.
+//  3. Skips the validation cost of Save (which re-runs every field
+//     validator on the record) — meaningful for high-traffic CI PATs
+//     where MarkUsed fires once per authenticated request.
 func MarkUsed(app core.App, rec *core.Record) error {
 	if rec == nil {
 		return errors.New("pat: nil record")

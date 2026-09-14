@@ -4,7 +4,7 @@ QuantumAtlas 默认只暴露**一条** MinerU 路径——**贡献者本地解�
 公开实例（quantum-atlas.ai）上 server 端**不**提供"读 markdown / server 用自身配额
 静默转换"的端点，也**不**通过 API 对外分发 PDF / markdown 字节。
 
-> **Self-hosted 部署**可以通过 `QATLAS_PAPER_ACCESS_ENABLED=true`
+> **Self-hosted 部署**可以通过服务端 YAML 的 `paper_access.enabled: true`
 > 在受控范围内**额外**开启 server-side on-demand conversion，详见
 > [License & Attribution · 论文访问开关](../about/license-and-attribution.md#论文访问开关-self-hosted)
 > 与 [env-vars · Server-side MinerU](../reference/env-vars.md#server-side-mineru)。

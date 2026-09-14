@@ -1,13 +1,34 @@
 # QuantumAtlas — Context
 
-QuantumAtlas is the knowledge + verification host for quantum-algorithm papers: it catalogs
-papers, surfaces a reviewable knowledge base, and hosts plugins (graph, RAG, wiki, theorems)
-that read through their respective backends — the last two via server-side `git pull --ff-only`
-of upstream content repos.
+QuantumAtlas is a Go paper-collection, search and registry host with a React Web UI.
+It keeps paper identities/assets in PostgreSQL, raw content in object storage, and auth
+in PocketBase. Search/RAG/matching apps and Lean/Wiki content have independent owners;
+do not recreate retired Python, graph, wiki or theorem implementations in this module.
+
+## Development and distribution boundary
+
+- `go.mod` / `go.sum` define the Go toolchain/dependency graph; `web/.node-version`
+  and the npm lock define frontend inputs. There is no root Python/Pixi project.
+- Python files still present are documentation or CI helpers, not a Python package.
+  `PYPI_README.md` remains the permanent migration notice to independent `qatlas-cli`.
+- Git stores source, not executables or generated `web/dist`. Normal Go builds work
+  without Node/Sphinx; release builds use `embedui` after generating complete UI/docs.
+  Tagged `go install` binaries fetch and verify ONLY their matching Release UI.
+- Normal tests skip real-service paths even if live environment flags are inherited.
+  `-tags integration` plus explicit test targets enables DB/API fixtures; `-tags e2e`
+  separately enables production smoke. Never use real deployment targets by default.
+- Start at [the developer guide](docsite/dev/development.rst) or
+  [contributing](docs/contributing.md). Current config is YAML-only, not `.env`.
+- Historical tags/ADRs are audit records. The final Python tag is excluded from
+  GoReleaser tag selection; it is not deleted, moved or republished.
 
 ## Language
 
-### Formalization pipeline (`paper → claim → theorem → verification`)
+### External formalization terminology (`paper → claim → theorem → verification`)
+
+These terms describe the external Lean/content integration and historical design,
+not active claim-authoring collections in this Go host. ADR 0008 moved authoring to
+the Lean repository; preserve the vocabulary without restoring the removed subsystem.
 
 **Paper**:
 A source of record (arXiv / DOI work) that results are extracted from.
@@ -16,9 +37,9 @@ A source of record (arXiv / DOI work) that results are extracted from.
 A single pre-proof natural-language statement extracted from a Paper — a candidate for
 formalization (paper-of-record + near-verbatim NL + stated/implicit assumptions). Owns the
 namespace `claim_id = <paper_id>:<slug>`. A Paper may yield several Claims; a Claim formalizes
-into 0..1 Theorem. The Claim is the only thing QuantumAtlas models and produces — QA's world ends
-at filing the issue (`claim_id` in the trailing issue marker); what happens after (the prover's
-work units, the proof closure) is qatlas-lean's internal concern, not QA's.
+into 0..1 Theorem. Claim authoring, issue filing, prover work units and proof closure now
+belong to qatlas-lean/content tooling, not this Go host. QuantumAtlas supplies the paper
+catalog and lookup API; it does not create new host-level Claim storage.
 _Avoid_: "theorem" (a Claim is pre-proof), proposition, unit / unit_id (a prover-side work/registry
 id that lives after the issue — not a QA concept; most lean registry entries are proof-closure
 lemmas/definitions with no Claim at all).
@@ -47,12 +68,14 @@ domain words from any specific Plugin (no `claim`, `theorem`, `verification`, `p
 A capability module the host loads via a manifest. A Plugin **owns its domain end-to-end**: its
 vocabulary, its persistent collections (PocketBase migrations the plugin's package registers),
 its REST routes under `/api/<plugin_id>/*`, its hostapi methods (under the plugin's namespace,
-e.g. `theorems.verifications.submit`), and its in-memory caches. The four first-party Plugins are
-graph, rag, wiki, theorems.
+e.g. an external verification capability), and its in-memory caches. Current runtime
+builtin manifests are `search-remote`, `rag-remote`, `match-remote`, and `downloader`
+(registered in `cmd/qatlasd/main.go`); they are not the removed graph/wiki/theorems modules.
 
 **Builtin**:
-A first-party Plugin compiled into qatlasd, running in-process (Go). The `kind` of all four core
-plugins.
+A first-party Plugin compiled into qatlasd, running in-process (Go). A builtin may be
+an in-process CLIENT to an independently deployed app; it does not move that app's
+implementation or release into this repository.
 _Avoid_: in-process-go (former manifest value), in-process.
 
 **External**:
@@ -70,8 +93,8 @@ paper catalog.
 
 > 中文：**MinerU 处理租约**——一份限时独占凭证，授权某个 worker 把一篇有 PDF、还没 Markdown
 > 的论文转成 Markdown。同一时刻只能一个 worker 持有；过期后自动作废，其他 worker 可重抢。
-> 在 PostgreSQL `paper_works` 表上用 row lock + `lease_id`/`leased_by`/`lease_expires_at`
-> 三个字段实现。
+> 当前保留的是论文默认资产的处理租约，按事务与 row lock 协调竞争；持久化契约见
+> `internal/registry/lease.go` 与相应 migration，而不是旧的 `paper_works` 单表模型。
 
 _Avoid_: claim, claim_id, claimed_by (renamed — "claim" now means the formalization statement above).
 
@@ -79,8 +102,8 @@ _Avoid_: claim, claim_id, claimed_by (renamed — "claim" now means the formaliz
 
 **Paper catalog**:
 The host-core index of the Papers QuantumAtlas hosts — asset status (PDF / Markdown / DOI),
-MinerU lease — derived from and rebuildable off the asset buckets. Backed by the `paper_works`
-table in the central PostgreSQL.
+MinerU lease — derived from and rebuildable off the asset buckets. Backed by `papers`,
+`paper_assets`, `paper_identities` and related tables in the central PostgreSQL (ADR 0009).
 _Avoid_: "the database" / "the catalog" used loosely (the same PostgreSQL also holds the OpenAlex
 corpus, a different thing).
 

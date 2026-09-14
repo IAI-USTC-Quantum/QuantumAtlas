@@ -81,9 +81,9 @@ func TestValidateDOIRejectsDoubleUnderscoreSuffix(t *testing.T) {
 	cases := []string{
 		"10.5555/foo__bar",
 		"10.5555/double__under__score",
-		"10.5555/foo/bar__baz",                          // nested slash + literal __ together
-		"https://doi.org/10.5555/foo__bar",              // URL-prefixed form
-		"10.1103/PhysRevLett.123__supplement",           // realistic-looking suffix
+		"10.5555/foo/bar__baz",                // nested slash + literal __ together
+		"https://doi.org/10.5555/foo__bar",    // URL-prefixed form
+		"10.1103/PhysRevLett.123__supplement", // realistic-looking suffix
 	}
 	for _, doi := range cases {
 		if norm, ok := ValidateDOI(doi); ok {
@@ -144,10 +144,10 @@ func TestDOIKeyNamespaceDisjointFromArxiv(t *testing.T) {
 // node UpsertPDFByDOI / UpsertMDByDOI created.
 func TestDOIDecodeStem(t *testing.T) {
 	cases := map[string]string{
-		"":             "",
-		"foo":          "foo",
-		"foo__bar":     "foo/bar",
-		"a__b__c":      "a/b/c",
+		"":              "",
+		"foo":           "foo",
+		"foo__bar":      "foo/bar",
+		"a__b__c":       "a/b/c",
 		"already/slash": "already/slash", // pass-through; sync feeds us the post-extension-strip stem
 	}
 	for in, want := range cases {

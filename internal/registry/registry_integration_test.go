@@ -8,14 +8,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/testutil"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// testPool connects to the disposable PostgreSQL pointed at by
-// QATLAS_TEST_PG_DSN, skipping when unset so the default `go test` stays
-// hermetic (same contract as internal/papers).
+// testPool requires -tags integration and QATLAS_TEST_PG_DSN pointing at a
+// disposable PostgreSQL. The default `go test` stays hermetic even when the
+// target environment variable is set.
 func testPool(t *testing.T) (*pgxpool.Pool, context.Context) {
 	t.Helper()
+	if !testutil.IntegrationEnabled {
+		t.Skip("requires -tags integration and explicit live-service environment variables")
+	}
 	dsn := os.Getenv("QATLAS_TEST_PG_DSN")
 	if dsn == "" {
 		t.Skip("QATLAS_TEST_PG_DSN unset; skipping live-PostgreSQL integration test")
@@ -44,7 +48,11 @@ func TestIntegrationMigrate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SchemaVersion: %v", err)
 	}
-	const wantLatest = 2 // 00001_init + 00002_usage
+	provider, err := newProvider(pool)
+	if err != nil {
+		t.Fatalf("newProvider: %v", err)
+	}
+	wantLatest := latestSourceVersion(provider)
 	if v != wantLatest {
 		t.Errorf("SchemaVersion = %d, want %d", v, wantLatest)
 	}

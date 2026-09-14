@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/registry"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/testutil"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -62,12 +63,15 @@ func TestStore_NilPool(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Live-PostgreSQL integration tests (QATLAS_TEST_PG_DSN-gated, like
+// Live-PostgreSQL integration tests (-tags integration + QATLAS_TEST_PG_DSN, like
 // internal/registry). Default `go test` skips them.
 // ---------------------------------------------------------------------------
 
 func testPool(t *testing.T) (*pgxpool.Pool, context.Context) {
 	t.Helper()
+	if !testutil.IntegrationEnabled {
+		t.Skip("requires -tags integration and explicit live-service environment variables")
+	}
 	dsn := os.Getenv("QATLAS_TEST_PG_DSN")
 	if dsn == "" {
 		t.Skip("QATLAS_TEST_PG_DSN unset; skipping live-PostgreSQL integration test")

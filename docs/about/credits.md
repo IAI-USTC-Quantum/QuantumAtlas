@@ -35,25 +35,19 @@ header、以及 [README.md](https://github.com/IAI-USTC-Quantum/QuantumAtlas#数
 
 ### Server
 
-- [Go](https://go.dev/) 1.23+ — 主语言
+- [Go](https://go.dev/) — 主语言，工具链要求以根 `go.mod` 为准（当前 1.26.2）
 - [PocketBase](https://pocketbase.io/) v0.38 — 内嵌 BaaS (SQLite + Auth + Realtime + Admin UI)
 - [PostgreSQL](https://www.postgresql.org/) + [pgx](https://github.com/jackc/pgx) — paper catalog / claim / DOI 状态
 - [jackc/pgx](https://github.com/jackc/pgx) v5 — PostgreSQL driver（paper registry + OpenAlex corpus）
 - [minio-go](https://github.com/minio/minio-go) v7 — S3 兼容存储 client
 - [casbin/v2](https://github.com/casbin/casbin) — PAT scope enforcer
-- [godotenv](https://github.com/joho/godotenv) — .env 加载
+- [yaml.v3](https://pkg.go.dev/gopkg.in/yaml.v3) — 严格 YAML 配置解析
 - [kardianos/service](https://github.com/kardianos/service) — 跨平台 systemd / launchd / SCM 安装
 - [modernc.org/sqlite](https://gitlab.com/cznic/sqlite) — 纯 Go SQLite（CGO-free）
 
-### Client
+### 独立客户端
 
-- [Python](https://www.python.org/) 3.11+
-- [Pydantic](https://docs.pydantic.dev/) v2 + pydantic-settings — 数据模型 / 配置
-- [Requests](https://requests.readthedocs.io/) — HTTP client
-- [PyYAML](https://pyyaml.org/) — Wiki frontmatter
-- [Qiskit](https://qiskit.org/) — 量子电路（codegen / validator）
-- [QPanda](https://github.com/OriginQ/QPanda-2) — 同上
-- [MinerU](https://mineru.net/) — PDF → Markdown 解析
+Python 客户端由 [qatlas-cli](https://github.com/IAI-USTC-Quantum/qatlas-cli) 维护，其依赖、版本要求和许可证以该仓库为准，不是主仓的运行依赖。旧 `quantum-atlas` 包已退役；保留的迁移说明不是 Python 包发行入口。
 
 ### Frontend
 
@@ -66,8 +60,10 @@ header、以及 [README.md](https://github.com/IAI-USTC-Quantum/QuantumAtlas#数
 
 ### Tooling
 
-- [uv](https://github.com/astral-sh/uv) / [pixi](https://pixi.sh/) — 包管理
-- [Commitizen](https://commitizen-tools.github.io/commitizen/) — 版本管理 / Conventional Commits
+- Go modules / npm — Go 与前端依赖
+- [GoReleaser](https://goreleaser.com/) — 默认格式的 Go 预编译发布
+- [Sphinx](https://www.sphinx-doc.org/) / Furo — 使用与开发文档
+- [uv](https://github.com/astral-sh/uv) — 可选的隔离文档工具运行器（不是主仓包环境）
 - [Go testing](https://pkg.go.dev/testing) — 主仓单元、部署结构及生产冒烟测试
 - [mkdocs](https://www.mkdocs.org/) + [mkdocs-material](https://squidfunk.github.io/mkdocs-material/) — 这份文档
 
@@ -78,7 +74,8 @@ header、以及 [README.md](https://github.com/IAI-USTC-Quantum/QuantumAtlas#数
 - [EasyTier](https://easytier.cn/) — 跨地域 mesh networking
 - [Read the Docs](https://readthedocs.org/) — 文档托管
 - [GitHub Actions](https://github.com/features/actions) — CI / release pipeline
-- [PyPI](https://pypi.org/) — Python 包分发
+- [GitHub Releases](https://github.com/IAI-USTC-Quantum/QuantumAtlas/releases) — 服务端归档与 UI 包
+- [PyPI](https://pypi.org/) — 独立客户端与文档工具的分发，不再发布主仓 Python 包
 
 ## 学术参考
 
@@ -110,7 +107,7 @@ QuantumAtlas 的 Wiki 模板和 schema 受这几篇影响：
 - **代码**：[Apache-2.0 License](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/LICENSE)
 - **文档**：Apache-2.0（同 repo）
 - **Wiki 内容**：[QuantumAtlas-Wiki repo](https://github.com/IAI-USTC-Quantum/QuantumAtlas-Wiki) 自己的 LICENSE（同样 Apache-2.0）
-- **第三方依赖**：各自原 license（看 `go.sum` / `pyproject.toml` / `package.json`）
+- **第三方依赖**：各自原 license（见 `go.mod` / `go.sum`、`web/package.json` 和独立文档 requirements）
 
 ---
 

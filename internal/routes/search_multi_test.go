@@ -256,8 +256,8 @@ func TestAPI_SearchMulti_EnrichmentOmittedWithoutRegistry(t *testing.T) {
 	fake := &fakeMultiBackend{
 		multiResp: search.RemoteMultiResponse{
 			Results: map[string][]search.RemoteHit{
-				"arxiv":  {{Title: "Anchored", DOI: "10.1234/qa", Source: "arxiv"}},
-				"web":    {{Title: "Title only", Source: "wikipedia"}},
+				"arxiv": {{Title: "Anchored", DOI: "10.1234/qa", Source: "arxiv"}},
+				"web":   {{Title: "Title only", Source: "wikipedia"}},
 			},
 		},
 	}

@@ -89,7 +89,7 @@ func newConfigInitCommand(shared *configPathOpts) *cobra.Command {
 Default target path is ~/.qatlas/config.yaml (override with --config).
 The file is created with mode 0600 so secrets don't leak via group/other read.
 
-The template lists every supported key, commented out — uncomment + fill
+The template lists supported configuration sections, commented out — uncomment + fill
 the ones you need.`,
 		Example: `  # Write to the default location
   qatlasd config init

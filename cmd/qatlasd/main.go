@@ -1,15 +1,16 @@
-// Command qatlasd is the Go + PocketBase rewrite of the QuantumAtlas
-// FastAPI server. It embeds PocketBase as a Go library and exposes the same
-// /api/* surface that the existing Python CLI consumes.
+// Command qatlasd hosts QuantumAtlas's Web UI and API using PocketBase.
+// The separately maintained qatlas-cli and browser SPA consume its HTTP API.
+// Release builds embed the UI; Go module installs resolve a verified bundle
+// from the matching Release before starting the same Web service.
 //
 // Usage:
 //
-//	qatlasd serve --http=0.0.0.0:4200
-//	qatlasd migrate up
-//	qatlasd superuser upsert <email> <password>
+//	qatlasd config init
+//	qatlasd --config /path/to/config.yaml serve --http=127.0.0.1:4200
+//	qatlasd --help
 //
-// All standard PocketBase subcommands are inherited. QuantumAtlas-specific
-// business routes are registered via the OnServe hook.
+// Business routes are registered through OnServe. Only explicitly registered
+// PocketBase commands are exposed; use --help for the current command set.
 package main
 
 import (
@@ -277,7 +278,7 @@ func main() {
 	app.RootCmd.AddCommand(usersCmd)
 
 	// Mount the `config` subcommand group (`config init` writes a
-	// default .env template; `config path` / `config show` inspect
+	// default YAML template; `config path` / `config show` inspect
 	// what qatlasd would load). Same cobra registration timing
 	// constraint as the other subcommand mounts above.
 	//

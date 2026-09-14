@@ -8,11 +8,14 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/testutil"
 )
 
 // TestLiveUploadChannel is a REAL end-to-end check against mineru.net's
 // upload channel (POST /api/v4/file-urls/batch → PUT bytes → poll
-// /api/v4/extract-results/batch/{id}). It is skipped unless:
+// /api/v4/extract-results/batch/{id}). It requires `go test -tags integration`
+// and is skipped unless:
 //
 //	MINERU_LIVE_TEST=1       opt-in gate
 //	MINERU_API_TOKEN=...     a real MinerU API token (never logged)
@@ -23,6 +26,9 @@ import (
 // logs every observed state transition, and — on success — downloads the
 // result zip and reports whether it contains markdown + images.
 func TestLiveUploadChannel(t *testing.T) {
+	if !testutil.IntegrationEnabled {
+		t.Skip("requires -tags integration and explicit live-service environment variables")
+	}
 	if os.Getenv("MINERU_LIVE_TEST") != "1" {
 		t.Skip("set MINERU_LIVE_TEST=1 (and MINERU_API_TOKEN) to run the live MinerU upload check")
 	}

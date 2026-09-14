@@ -6,7 +6,7 @@
 // endpoint. They are NOT part of the default `go test ./...` run —
 // invoke with:
 //
-//	pixi run go test -tags=integration ./internal/objstore/...
+//	go test -tags=integration ./internal/objstore/... -count=1
 //
 // Environment variables (all required):
 //

@@ -11,7 +11,7 @@
 
 **v0.17.0 起 client 和 server 配置完全分离**：
 
-- **Server (`qatlasd`)**: 三入口 CLI flag > OS env > `.env` 文件 > default（godotenv non-override）；项目自有字段带 `QATLAS_` 前缀，第三方 SDK 标准名（`GITHUB_CLIENT_*` 等）原样保留
+- **Server (`qatlasd`)**: YAML-only，默认 `~/.qatlas/config.yaml`，通过 `--config` 选择；旧业务环境变量会被拒绝，见[服务端配置](../server/server-config.md)。PocketBase 监听/数据目录等显式启动参数不等于逐字段 env 配置。
 - **Client (`qatlas`)**: 单入口 YAML，**首次跑任何 `qatlas <cmd>` 自动创建**模板到 [`platformdirs`](https://platformdirs.readthedocs.io/) 解析的位置（Linux `~/.config/qatlas/`、macOS `~/Library/Application Support/qatlas/`、Windows `%APPDATA%\qatlas\`）；**不读** 任何 CLI flag / OS env / `QATLAS_DOTENV`
 
 **贡献者通常只需要配 client**（不跑 server）：

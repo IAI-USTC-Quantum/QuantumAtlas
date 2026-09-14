@@ -181,11 +181,11 @@
 
 ??? question "Python 版本要求？"
 
-    3.11+。Type hints 是项目主线，老 Python 不行。
+    Go 开发和运行不需要 Python。Sphinx/MkDocs 与少量 CI 辅助脚本需要独立的 Python 工具环境（CI 使用 3.12），不恢复已退役的 Python 包。独立客户端要求见 qatlas-cli 仓库。
 
 ??? question "Go 版本？"
 
-    1.23+。CI 跑 1.23。
+    根 `go.mod` 是准绳，当前要求 Go 1.26.2；CI 从该文件选择工具链。不需要 Pixi 或过时的 DuckDB/C++ 依赖。
 
 ??? question "前端用什么？"
 
@@ -193,4 +193,4 @@
 
 ??? question "可以只贡献文档吗？"
 
-    完全可以。文档是 mkdocs-material，源在 `docs/`，提 PR 到 main，RTD 自动 build preview。详见 [贡献指南 / docs](../contributing.md#docs)。
+    可以。`docs/` 是 MkDocs/RTD 站，`docsite/` 是随 UI 分发的 Sphinx 使用/开发站；两者都由 CI 验证，构建输出不提交。详见[贡献指南 / docs](../contributing.md#docs)。

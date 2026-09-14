@@ -125,7 +125,7 @@
 
     ```bash
     qatlasd config init # ~/.qatlas/config.yaml，不覆盖已有配置
-    # 按服务器需要编辑 postgres_dsn、GitHub OAuth、对象存储等字段
+    # 按服务器需要编辑 postgres.dsn、GitHub OAuth、对象存储等字段
     qatlasd config show
     ```
 
@@ -172,14 +172,14 @@
     CGO_ENABLED=0 go build -tags embedui -o build/qatlasd ./cmd/qatlasd
     ```
 
-    主仓的单元、部署结构和冒烟 fixture 测试使用 Go，不再需要 pytest。`pyproject.toml` 只保留 Python 辅助脚本的开发工具；Sphinx/MkDocs 的文档依赖仍独立保留。这不会安装 `qatlas`；需要 CLI 联调时，按上面的独立客户端安装步骤操作。CLI 自身的代码修改与测试请到 [qatlas-cli 仓库](https://github.com/IAI-USTC-Quantum/qatlas-cli)。
+    主仓的单元、部署结构和冒烟 fixture 测试使用 Go，不再需要 pytest。根 Python/Pixi 环境已移除；Sphinx/MkDocs 和 CI 辅助脚本仅使用独立文档依赖或标准库。这不会安装 `qatlas`；需要 CLI 联调时，按上面的独立客户端安装步骤操作。CLI 自身的代码修改与测试请到 [qatlas-cli 仓库](https://github.com/IAI-USTC-Quantum/qatlas-cli)。
 
     **2. 起本地 Web 服务：**
 
     ```bash
     # 完整UI构建命令见「贡献指南 → 完整 UI 构建」，只提交源码
     ./build/qatlasd config init
-    # 编辑 ~/.qatlas/config.yaml；例如postgres_dsn（只指向测试数据库）
+    # 编辑 ~/.qatlas/config.yaml；例如postgres.dsn（只指向测试数据库）
     ./build/qatlasd serve --http=127.0.0.1:4200
     ```
 
@@ -198,9 +198,9 @@
     # 部署结构与本地 HTTP fixture：离线，不启动容器/业务服务
     go test ./tests/...
 
-    # 完整 Go 测试（包含上面的 tests/，生产 e2e 默认不编译）
-    pixi run test-go
-    # 或：CGO_ENABLED=0 go test ./internal/... ./cmd/... ./web ./tests/...
+    # 在贡献指南的临时HOME/净环境隔离块内执行
+    CGO_ENABLED=0 go test ./internal/... ./cmd/... ./web ./tests/...
+    # 真资源测试另需 -tags integration + 明确的测试目标；生产 e2e 不默认启用
 
     # 前端 build + type check
     (cd web && npm run build)

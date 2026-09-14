@@ -27,12 +27,14 @@ PocketBase 的路由是匿名闭包，没有可挂 doc 注释的具名 handler�
 改完注解后重新生成：
 
 ```bash
-pixi run swagger        # = go tool swag init -g main.go -d ./cmd/qatlasd,./internal/routes -o internal/apidocs ...
+go tool swag init -g main.go -d ./cmd/qatlasd,./internal/routes \
+  -o internal/apidocs --parseInternal --parseDepth 1
+git diff -- internal/apidocs
 ```
 
 swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成是确定性的。CI
-（`.github/workflows/go.yml`）跑 `pixi run swagger-check`——重新生成后 `git diff --exit-code`，
-注解改了但忘 `pixi run swagger` 会直接红，保证 `internal/apidocs/` 不漂移。
+（`.github/workflows/go.yml`）执行相同命令，并用 `git diff --exit-code` 与包含未跟踪文件的状态检查防漂移。
+应提交 `internal/apidocs/` 的生成源码；不能只修改注解而忘记同步 spec。
 
 > ⚠️ 注解里的 path / 参数 / 响应是**手写声明**，不是从真实闭包反射出来的——swaggo 在任何
 > 非 net/http-mux 风格路由上都这样。它和真实行为的一致性靠 code review + 这份手维护的

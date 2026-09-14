@@ -12,15 +12,16 @@ package routes
 // sanctioned "declarative comments live anywhere" pattern.
 //
 // These stubs carry NO logic; they exist solely so `swag init` can emit the
-// path entries. The CI drift-guard (see the `swagger` pixi task and the
-// generate-and-diff check) regenerates internal/apidocs and fails if these
+// path entries. The Go CI generate-and-diff check (see docs/contributing.md)
+// regenerates internal/apidocs and fails if these
 // annotations and the committed spec disagree, so the spec can never silently
 // fall behind the annotations. Keeping the annotations correct relative to the
 // actual handler behavior remains a review-time discipline (true of swaggo on
 // any router — it never introspects handler bodies).
 //
 // Each stub is grouped by @Tags matching its source file. When you add or
-// change a route, update the matching stub here and run `pixi run swagger`.
+// change a route, update the matching stub here and run `go tool swag init`
+// with the arguments in docs/contributing.md.
 
 // --- System -----------------------------------------------------------------
 

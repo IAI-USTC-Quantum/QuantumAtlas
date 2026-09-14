@@ -69,7 +69,9 @@ app 微服务之间的 HTTP 接口协议。主仓还包含独立部署的下载 
 `quantum-atlas-v0.21.0 <https://github.com/IAI-USTC-Quantum/QuantumAtlas/tree/quantum-atlas-v0.21.0>`_
 保留当时的发行元数据、一次性检查器、测试及 workflow 供审计，不能移动
 或覆盖该 tag。main 已移除这些一次性工具和旧包发布入口，不再发布后续
-``quantum-atlas`` 版本；根目录 uv 项目仅用于开发，不分发 Python 包。
+``quantum-atlas`` 版本；保留 ``PYPI_README.md`` 的退役说明入口，不保留
+根 Python 项目、uv/Pixi 锁文件或旧包构建后端。文档的独立 requirements、
+Sphinx/MkDocs hook 与 CI 标准库辅助脚本继续维护。
 
 常规 ``v*`` 服务端流程继续发布二进制、镜像和 GitHub Release，不包含
 PyPI 产物。这次旧包退役没有发布服务端或容器，服务端 ``VERSION`` 及
@@ -100,25 +102,37 @@ GitHub Latest 保持为 ``0.34.0`` / ``v0.34.0``。
 不自定义 archive/checksum 的命名、flags 或 ldflags；通过
 ``tags: [embedui]`` 显式内嵌完整 UI，版本适配默认 ``main.version``。
 不为旧裸二进制附件添加兼容层、不重发 ``v0.34.0``。
+``.goreleaser.yaml`` 的 ``git.ignore_tags`` 精确忽略
+``quantum-atlas-v0.21.0``，这是 OSS 精确匹配，不是 glob 匹配；保留历史 tag
+不移动、不删除。工具链/文档清理不递增 ``VERSION``，也不构成新发行授权。
 
 发布流程：tag/VERSION/SemVer/已公开 Release 保护检查 → 同 SHA 的
-``go.yml``（Go test/vet、OpenAPI、前端与两文档站双干净构建一致性）→
+``go.yml``（gofmt、隔离 Go test/vet、integration 编译检查、OpenAPI、
+前端与两文档站双干净构建一致性）及独立 MkDocs 检查 →
 上传唯一 UI 包 → GoReleaser 创建 draft、嵌入此包解出的同一树 →
 归档校验与 attestation、三平台原生运行 ``--version``、Docker 发布并验证 →
 公开 Release → 仅稳定版更新 GitHub/GHCR latest。原生 smoke 只下载与运行，
 不重复编译；Docker 保留独立 job，仅承诺 ``linux/amd64``。
 
-Git **不保存前端构建产物**，Go 模块也不包含 dist。消费者执行
+Git **只保存源码**，不提交 ``web/dist``、``web/public/doc``、
+``web/public/devdoc``、根 ``dist/`` / ``build/``、缓存或 ELF 可执行文件；
+Go 模块也不包含 dist。消费者执行
 ``go install github.com/IAI-USTC-Quantum/QuantumAtlas/cmd/qatlasd@vX.Y.Z``
-后，首次 ``serve`` 自动从对应 Release 下载并校验 UI，保存在
-``os.UserCacheDir()/qatlas/ui/v<version>``；后续校验缓存后离线启动。
-GoReleaser 二进制已经内嵌该 UI，不需首次联网。两条路径最终进入相同的
+后，首次 ``serve`` 自动从自身精确版本的 Release 下载 UI ZIP 与 SHA256 清单，
+校验 SHA256、包内版本与完整性后保存在
+``os.UserCacheDir()/qatlas/ui/v<version>``；后续校验缓存后离线启动，不回退 latest。
+只有附件已公开的新格式 Release 支持这条路径；``dev`` / Go 伪版本需完整构建
+Sphinx 两站和 npm，再用 ``-tags embedui``。普通 Go build/test 不需要 UI。
+GoReleaser tar.gz 内的二进制已经嵌入与独立 ZIP 相同的 UI，不需首次联网。
+两条路径最终进入相同的
 ``fs.FS`` 静态服务与 SPA fallback，没有两套业务服务。
 
 资源生成顺序仍是 Sphinx 两站 → npm Web build → 完整性检查 →
 ``go run ./internal/cmd/uibundle -version <version> -output build/ui``。
-Node 使用 ``web/.node-version``，npm 使用锁文件，Sphinx 依赖使用
-``docsite/requirements.txt``；设置 ``SOURCE_DATE_EPOCH`` 为提交时间、
+Go 工具链门槛唯一读 ``go.mod``；Node 使用 ``web/.node-version``，npm 使用
+锁文件，Sphinx 依赖使用 ``docsite/requirements.txt``。完整本地命令见
+:doc:`development`，不通过 Pixi 或根 Python 项目构建。
+设置 ``SOURCE_DATE_EPOCH`` 为提交时间、
 ``TZ=UTC`` / ``PYTHONHASHSEED=0``，doctree 缓存放 ``build/`` 而非 bundle。
 修改文档或前端后必须重新构建用于验证的资源，但只提交源码。
 本地完整 UI/包准备后运行 ``goreleaser check`` 和
@@ -191,9 +205,10 @@ qatlas-search 已按本方案接入标准化发布流程（首个 release：``v0
 文档站（公开站 ``/doc`` 与开发站 ``/devdoc``）的更新与 qatlasd 的发布
 相互独立，更新文档不需要重新部署服务。qatlasd 启动时检查文档目录
 ``~/.qatlas/docs``：目录中存在非空的 ``doc/`` 或 ``devdoc/`` 子目录时，
-qatlasd 从磁盘的目录取材；目录缺失或为空时，qatlasd 回落到二进制
-内嵌的文档副本（实现见 ``internal/routes/docs.go``，compose 模板把
-该目录以只读方式挂载进容器）。
+qatlasd 从磁盘的目录取材；目录缺失或为空时，qatlasd 回落到当前版本 UI
+bundle 的文档副本（内嵌或校验后的缓存；实现见 ``internal/routes/docs.go``，
+compose 模板把该目录以只读方式挂载进容器）。开发站的管理员限制只是 HTTP
+门控，公开 bundle 可直接读取内容，不能存放秘密。
 
 文档产物由 ``.github/workflows/docs.yml`` 独立构建：main 分支上
 ``docsite/`` 发生变更时，workflow 构建两个 sphinx 站点，并把它们打成
@@ -285,7 +300,8 @@ sphinx 站点并直接写入文档目录。
    * - 步骤
      - 验收
    * - 本地 CI mirror
-     - Go test/vet（含 web 与 tests）、OpenAPI 同步、完整 UI 双构建一致，
+     - gofmt、隔离 Go test/vet（含 web 与 tests）、integration 仅编译、
+       OpenAPI 同步、CI Python 标准库 fixture、独立 MkDocs 与完整 UI 双构建，
        GoReleaser check/snapshot 全绿；发布也复用同 SHA 的检查
    * - ``VERSION`` + CHANGELOG
      - ``## vX.Y.Z (YYYY-MM-DD)`` 段落；breaking 写明迁移步骤

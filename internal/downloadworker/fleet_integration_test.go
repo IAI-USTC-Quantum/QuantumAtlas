@@ -20,15 +20,20 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/downloadfleet"
 	worker "github.com/IAI-USTC-Quantum/QuantumAtlas/internal/downloadworker"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/registry"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/testutil"
 	wp "github.com/IAI-USTC-Quantum/QuantumAtlas/internal/workerprotocol"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Opt-in integration uses only a disposable DB's unique schema, a loopback
-// httptest master, and synthetic PDFs. No publisher/browser network is used.
+// Requires -tags integration and TEST_DOWNLOADFLEET_DATABASE_URL. Uses only a
+// disposable DB's unique schema, a loopback httptest master, and synthetic PDFs.
+// No publisher/browser network is used.
 func integrationMaster(t *testing.T) (*downloadfleet.Service, *pgxpool.Pool) {
 	t.Helper()
+	if !testutil.IntegrationEnabled {
+		t.Skip("requires -tags integration and explicit live-service environment variables")
+	}
 	dsn := os.Getenv("TEST_DOWNLOADFLEET_DATABASE_URL")
 	if dsn == "" {
 		t.Skip("set TEST_DOWNLOADFLEET_DATABASE_URL to an isolated disposable PostgreSQL database")

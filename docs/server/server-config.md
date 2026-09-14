@@ -1,623 +1,144 @@
-# qatlasd 服务端环境变量
+# qatlasd 服务端配置（YAML）
 
-本文档描述 **`qatlasd` server**（Go binary）当前如何加载 / 解析 / 使用环境变量。
+`qatlasd` 是 Go 程序。业务配置只从 **YAML 文件**读取，默认 `~/.qatlas/config.yaml`，用 `--config /path/to/config.yaml` 选择其他文件。旧的 Python/Go dotenv 模式已经移除：没有 `CLI > env > .env` 的业务配置优先级，也没有 `--postgres-dsn`、`--system-pat`、`--dotenv-path` 等旧参数。
 
-!!! warning "现行配置已是 YAML-only（本页 env 部分为历史参考）"
-    qatlasd 现在**只从 YAML 配置文件读配置**（默认 `~/.qatlas/config.yaml`，
-    `qatlasd config init` 生成；`--config <path>` 覆盖）。进程环境里出现任何
-    `QATLAS_*` / `MINERU_*` / `GITHUB_CLIENT_*` 配置变量会**启动即失败**（错误
-    信息点名肇事变量；`QATLAS_TEST_*` / `QATLAS_VERSION` 等工具变量除外）。
-    Docker 部署把 config.yaml 只读 bind-mount 进容器。
+完整字段由 [`config.example.yaml`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/config.example.yaml) 与 `internal/config/config.go` 定义；`qatlasd config init` 的内嵌模板与根示例同步检查。不要把本页示例当成需要全部填写的生产配置。
 
-    完整 schema 见仓库根 [`config.example.yaml`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/config.example.yaml)；
-    本页下方新增章节收录 v0.26.0–v0.28.0 引入的 `downloader:` 与
-    `search.remote` 段。本页其余 env 内容保留为 pre-YAML 部署（v0.21 之前）
-    的历史参考，字段语义迁移时大多平移为 YAML 键名（`QATLAS_POSTGRES_DSN` →
-    `postgres.dsn` 等）。
+## 配置文件与命令 { #8-qatlasd-config-子命令 }
 
-> **Client / Server 配置完全分离**：
->
-> - **Server** (`qatlasd`): 三入口 **CLI flag > OS env > `.env` 文件 > default**（本页主题）
-> - **Client** (`qatlas` Python CLI): **只读 YAML** `~/.config/qatlas/config.yaml`，首次跑任意 `qatlas <cmd>` 自动创建模板（不再支持 CLI flag / OS env / `QATLAS_DOTENV`，自 v0.17.0 起）
->
-> 设计哲学：server 是 long-lived daemon，运维要同时支持 systemd / docker / k8s / nohup 多形态，所以三入口；client 是 short-lived 命令，用户配置一次长期复用，YAML 单入口最简单。client 配置参考见 [`qatlas config` reference](../client/cli-qatlas.md#qatlas-config)。
+```bash
+# 创建默认模板，mode 0600；已有文件时拒绝覆盖
+qatlasd config init
+# 或在调用者有写权限的目录创建
+qatlasd config init --config /path/to/config.yaml
 
----
-
-## 0. YAML 配置段参考（`downloader:` 与 `search.remote`）
-
-v0.26.0–v0.28.0 引入的两个 config.yaml 段。逐字段语义如下；模块行为详见
-[Robust Downloader](downloader.md)。
-
-### `downloader:`（Robust Downloader，v0.26.0；`proxy:` v0.27.0）
-
-仅当 `paper_access.enabled: true` 时激活（复用其 fetcher/resolver/对象存储
-接线）；注册为 builtin `downloader` 插件。任一开关关闭时 `/api/downloader/*`
-仍注册但返回 503。
-
-```yaml
-downloader:
-  enabled: true                # 总开关（默认 true；还需 paper_access.enabled）
-  concurrency: 2               # 并行下载 job 数（默认 2）
-  unpaywall_email: ""          # Unpaywall 联系邮箱；空则回落 paper_access.openalex_mailto
-  s2_api_key: ""               # 可选 Semantic Scholar key（免费档，客户端 1 req/s 限速）——
-                               # 稳定最高召回的 OA resolver，避开共享池 429
-  respect_robots: false        # robots.txt 门控（默认 false：按需 entitled fetch 不是爬虫；
-                               # 多家出版社 blanket Disallow "*" 反 AI 爬虫，开启会误杀）
-  browser:                     # CDP 浏览器 lane：指向已在运行的 Chromium 的 DevTools 端点
-                               # （如 ws://browser:9222）。cdp_url 空 = 关闭该 lane；
-                               # 出版社登录态存在那个浏览器 profile 里（人工登一次）
-    cdp_url: ""
-    timeout: 45s               # 默认 45s
-  proxy:                       # 委托给独立 downloaderproxy（cmd/downloaderproxy，
-                               # Dockerfile.downloaderproxy），部署在有直连出版社
-                               # entitlement 的机器（如校园出口工作站）。设置后
-                               # 优先于本地浏览器 lane；返回字节仍过本地验证管线
-    url: ""                    # e.g. http://ag-workstation:8602
-    token: ""                  # 与代理机 DL_PROXY_TOKEN 同值
-    timeout: 5m                # 默认 5m（submit→poll→fetch 全程）
-  agent:                       # LLM 兜底链接提取器；backend 空 = 关闭
-    backend: ""                # "" | "openai" | "claude"
-    base_url: ""               # openai：OpenAI 兼容端点（e.g. https://llm.example.com/v1）
-    api_key: ""                # openai 端点 key
-    model: ""                  # 模型名
-    max_tokens: 1024           # 默认 1024
-    claude_bin: claude         # claude：本机 headless claude CLI 路径（需已 OAuth 登录）
-    claude_model: ""           # 空 = claude 默认模型
-    timeout: 120s              # 默认 120s
-    max_budget_usd: 0          # claude 专用；0 = 不加 --max-budget-usd
+# 查看选择的路径和有效配置（敏感值默认脱敏）
+qatlasd config path --config /path/to/config.yaml
+qatlasd config show --config /path/to/config.yaml
+# 编辑好以后启动
+qatlasd --config /path/to/config.yaml serve
 ```
 
-### `search:`（providers / remote / agentic）
+- 配置路径只由 `--config` 或默认路径决定，不搜索工作目录中的 `.env`。
+- YAML 未知字段、错误类型/启用部分的非法数值或时长会报错，不能靠拼写错误默默使用默认值。
+- 空文件或全注释模板应用默认值；文件不存在会提示 `config init`。
+- `paths.*` 等路径按配置文件所在目录解析相对值；生产建议绝对路径。
+- PocketBase 的显式 `--http`、`--dir` 优先于 YAML 注入的对应启动参数。这不意味着所有业务字段都有 flag。
+- 修改业务配置后需要重启。用户必须自行决定并授权生产的重启/迁移操作。
 
-`search.remote` 接入外部 qatlas-search 微服务：启用后 `search.providers` 可
-加 `remote`，并解锁 `POST /api/search/agentic`（计量 + LLM 总结）、
-`POST /api/search/multi`（逐平台原始结果）与 `GET /api/search/backends`
-（backend 目录）。**v0.26.0 起 `search.remote` 同时是 multi 搜索与 backend
-picker 的依赖**；用户第三方 key 的加密存储见
-[REST API · Personal Search Keys](rest-api.md)。
+## 最小本地实例
+
+使用已安装的发布版本，或已经按[开发指南](../contributing.md)构建完整内嵌 UI 的本地程序：
+
+```yaml
+http_addr: 127.0.0.1:4200
+paths:
+  raw_dir: ./state/raw
+  data_dir: ./state/data
+  pb_data_dir: ./state/pb_data
+```
+
+没有 PostgreSQL/S3/OAuth 时可以启动本地进程并查看匿名健康与 UI；这不是完整生产配置。未配置 registry 的端点会按各自契约降级；没有登录配置也不等于自动授予论文或管理权限。
+
+## 常用配置段
+
+| 段/键 | 用途 | 边界 |
+|---|---|---|
+| `http_addr` | HTTP 监听，默认 `127.0.0.1:4200` | 对外访问应配置反向代理；Docker 的 CMD 显式覆盖容器内监听 |
+| `public_url` | 对外 canonical origin | OAuth 回调和公开链接使用，不是监听地址 |
+| `paths.raw_dir/data_dir/pb_data_dir` | 对象本地后端、业务状态、PocketBase 数据目录 | 默认 `${XDG_DATA_HOME:-~/.local/share}/qatlasd/{raw,data,pb_data}` |
+| `postgres` | paper registry 与 OpenAlex corpus | 配置后启动可能应用数据库迁移，只指向已授权数据库 |
+| `s3` | 三类资产桶与服务账号 | 六个核心字段必须全部填写或全部省略；半配置会阻止 serve |
+| `auth` | GitHub/Gitea OAuth 与登录/管理名单 | OAuth secret 不进入前端资源；GitHub 空 allowlist 默认拒绝登录 |
+| `system_pat` | 可选运维 bearer 与 scope | token 至少 16 字符，需保护配置文件；不是 Vite 前端配置 |
+| `search` | 本地/上游检索与可选远程 app | 查询可能访问外部 API；自托管 app 有独立配置 |
+| `rag.remote` / `match.remote` | 可选外部服务 | 不配置时功能降级，不在主仓发布这些 app |
+| `paper_access` | 自托管论文访问与服务端转换 | 启用会改变资源访问和外部 API 使用边界 |
+| `downloader` | 本机、旧 proxy、主动 worker fleet | 详见[下载器](downloader.md)与[worker](downloader-workers.md) |
+| `plugins` | 插件发现、连接与 RPC 配置 | 不把外部插件的业务配置放进主服务 |
+| `force_tcp4` / `skip_pb_data_lock` | 特定环境诊断开关 | 不建议在生产绕过数据目录锁 |
+
+### PostgreSQL 与存储
+
+```yaml
+postgres:
+  dsn: postgres://qatlas:REPLACE_ME@127.0.0.1:5432/qatlas_test?sslmode=disable
+  max_conns: 10
+  corpus_ensure_indexes: true
+```
+
+DSN 示例仅供一次性本地测试库。正式环境应按部署策略使用 TLS 与最小权限；不要在聊天、日志或 Git 中保存真实凭据。paper registry 与 OpenAlex corpus 共用连接池，但不是同一类数据。已有大型 corpus 的索引策略见 [ADR 0013](../adr/0013-corpus-schema-base-index-split.md)。
+
+S3 的核心键是 `endpoint`、`bucket_pdf`、`bucket_md`、`bucket_images`、`access_key_id`、`secret_access_key`。全部省略时使用 `paths.raw_dir` 的本地存储；部分填写时 `serve` 拒绝启动。`s3.public_endpoint` 是可选的公开预签名 URL 入口，不代替服务端连接端点。
+
+### OAuth 与运维权限
+
+```yaml
+public_url: https://atlas.example.com
+auth:
+  github_client_id: REPLACE_ME
+  github_client_secret: REPLACE_ME
+  allowed_logins: [your-login]
+  admin_logins: [your-login]
+```
+
+OAuth app 的回调为 `https://<server>/auth/callback`。GitHub 的 `allowed_logins` / `admin_logins` 均为空时默认拒绝 GitHub 登录；Gitea 的账号准入由该实例策略决定，两个提供方的管理名单分开配置。详见[鉴权模型](../concepts/auth-model.md)与[OAuth](github-oauth.md)。
+
+可选运维 token 使用 `system_pat.token` 与 `system_pat.scopes`，普通调用者应使用自己账号的 PAT。配置与用户权限要分开：前端 fake-auth 只绕过 UI 登录显示，不授予后端权限。
+
+### 搜索与论文访问 { #server-side-mineru }
 
 ```yaml
 search:
-  providers: [catalog, arxiv, openalex]   # POST /api/search 的 fan-out 列表；
-                                          # 加 "remote" 接入 qatlas-search 微服务
+  providers: [catalog, arxiv, openalex]
   remote:
     enabled: false
-    url: ""            # e.g. http://qatlas-search:8600（内网，不做端口映射）
-    token: ""          # 必须与微服务的 search.service_token 同值
-    timeout: 60s       # agentic 调用可能带 LLM——留足
+    url: ""
+    token: ""
+    timeout: 60s
   agentic:
-    daily_limit: 10000   # 默认 per-user 日限额（无 plan 行的用户的默认值）
-    price_per_mtok: 0.0  # USD / 1M LLM tokens；仅 admin 成本展示
-    backend: remote      # remote = qatlas-search 微服务；local = 本机 claude CLI
-    local:               # 仅 backend: local 时生效（字段见 config.example.yaml）
-      claude_bin: claude
-      # model / sandbox_dir / timeout / retention / max_budget_usd / prompt_template
+    backend: remote
+    daily_limit: 10000
+    price_per_mtok: 0
+paper_access:
+  enabled: false
 ```
 
----
+`search.remote` 接入独立 `qatlas-search`，支持 multi/backend 与 agentic 路径；本地 agentic 后端的 `search.agentic.local` 详见完整 YAML 模板。`paper_access.mineru` 下的 `api_tokens`、`api_base_url`、模型、轮询和并发设置仅供服务端，不是独立客户端的配置文件。启用转换会消耗外部服务额度；默认测试不应使用这些真实资源。PDF 的对外交付仍以当前 API 契约为准，不能因开启此配置就假定 PDF 下载已恢复。
 
-## 1. 加载机制
+### 下载器与 worker fleet
 
-`qatlasd` 用 [`joho/godotenv`](https://github.com/joho/godotenv) 在启动早期把 `.env` 文件内容灌进 `os.Environ`，之后所有字段读取统一走 `os.Getenv`。代码入口：
+`downloader.enabled` 与 `paper_access.enabled` 共同控制下载器。可选路径：
 
-```
-cmd/qatlasd/main.go::loadDotEnv()          # 找并 load .env
-internal/config/config.go::Load(dotenv)    # 从 os.Environ 读出 Config 结构体
-```
+- `downloader.browser.cdp_url` / `timeout`：连接已获授权的 Chromium CDP 实例。
+- `downloader.proxy.url/token/timeout`：兼容旧的主服务主动调用代理。
+- `downloader.remote.enabled`：启用主动出站 worker，需 PostgreSQL；不能同时配置旧 proxy URL。
+- `downloader.remote.max_in_flight`、`max_worker_in_flight`、`max_worker_attempts` 及超时/租约字段：约束 fleet 执行容量，不等于本地下载槽位。
+- `downloader.remote.spool_dir/spool_max_bytes`：归档暂存及容量，部署时必须持久化相应目录。
+- `downloader.agent`：可选 LLM/Claude 链接提取后备路径，凭据与权限属于运行该后端的实例。
 
-### 1.1 .env 文件查找顺序
+不要把独立 `downloaderworker` 的 `DL_WORKER_*` 环境变量当作主服务 YAML；二者配置边界与运行身份不同。完整说明见[下载节点](downloader-workers.md)。
 
-`loadDotEnv` 按以下顺序检查文件是否存在；**第一个找到的文件被 load**，后续不再尝试：
+## UI、文档与版本不是业务配置项
 
-| # | 来源 | 何时使用 |
-|---|---|---|
-| 1 | `$QATLAS_DOTENV` 环境变量指向的路径 | systemd unit 通过 `Environment=QATLAS_DOTENV=<path>` 注入；docker 容器 mount config 时 |
-| 2 | `./.env`（启动时 `os.Getwd()`） | 手动 / nohup 直接跑、dev 机器、`pixi run server` |
-| — | 都没找到 | 完全靠进程已有 env（systemd `Environment=KEY=val` 单条注入、docker `-e`、shell `export`） |
+- 程序优先使用内嵌 UI；普通 Go 源码安装自动获取自身精确版本的 Release UI、校验并缓存。无需在 YAML 指定资源路径、版本或 URL。见[两种安装方式](install.md)。
+- 运行版本来自 GoReleaser 的 `main.version` 或 Go 模块 build info，不从 YAML 或已退役的 Python 包版本推导。
+- `~/.qatlas/docs/doc` 与 `devdoc` 是已有运维文档覆盖机制，不是首次安装必须准备的资源目录。每站在启动时选择非空磁盘目录，否则用当前 UI bundle；更新已选目录内部内容不需重启，切换来源需要重启。
+- `/devdoc` 有 HTTP 管理员门控，但公开二进制/UI 包包含可直接读取的文档，不能存放机密。
 
-### 1.2 godotenv 覆盖语义
+## 环境变量拒绝与旧配置迁移
 
-`godotenv.Load()` 的 **non-override** 模式：**进程里已经存在的 env var 不被 .env 文件覆盖**。所以效果上的优先级是：
+主进程遇到旧业务环境变量会明确报错，包含变量**名称**而不输出值。包括 `QATLAS_*`（明确的工具/测试白名单除外）、`MINERU_*`、`NEO4J_*`、`POSTGRES_*` 和旧的 `GITHUB_CLIENT_ID` 等。
 
-1. **已存在的 OS env var**（systemd `Environment=` 单条注入、docker `-e`、shell `export`）
-2. **.env 文件里的值**（通过 1.1 找到的那一个）
-3. **代码里的 default**（见 §2 各字段「默认」列）
-
-> ⚠️ **non-override 的调试陷阱**：在 shell 里 `export QATLAS_POSTGRES_DSN=postgres://test` 跑过一次后，**之后改 `.env` 里的 `QATLAS_POSTGRES_DSN=` 不会生效**——shell 残留的值赢。如果改 .env 后行为没变，先 `unset` 该 env 再启动，或开新 shell。systemd 不受影响（每次启动是干净 env）。
->
-> 我们故意选 non-override 而不是 override，理由是 CI / 容器场景里 `docker -e KEY=val` 应该胜过 image 里 baked-in 的 `.env`——这是 dotenv 生态的事实标准（python-dotenv / Node dotenv / Ruby dotenv 默认全是 non-override）。
-
-### 1.3 .env 路径作为相对路径锚点
-
-`Config.RawDir` 等"路径型"字段如果填的是**相对路径**，**相对 .env 文件所在的目录解析**，不是相对 CWD 或 systemd `WorkingDirectory`。
-
-```go
-// internal/config/config.go::Load
-anchor := ""
-if dotenvPath != "" {
-    anchor = filepath.Dir(dotenvPath)
-}
-// 路径型字段都按 anchor 展开（示意）：
-// cfg.RawDir = expandPath(defaultIfEmpty(cfg.RawDir, defaultRawDir()), anchor)
-```
-
-如果通过 OS env var 而非 .env 注入，且值是相对路径，**没有锚点** —— 行为是相对 CWD。**推荐总是用绝对路径**避免歧义。
-
-### 1.4 字段读取风格
-
-`internal/config/config.go` 用 3 个 helper 读 env，**不引入 viper / envconfig 等第三方 config 库**：
-
-```go
-firstEnv("QATLAS_PUBLIC_URL")                        // 返回第一个非空，否则 ""
-firstEnvDefault("4200", "QATLAS_SERVER_PORT", ...)   // 同上但带 fallback
-firstEnvIntDefault(0, "SOME_INT_VAR")                // 同上但 int
-```
-
-支持**多 alias**（老名字保留为后备，新代码用第一个）。
-
----
-
-## 2. 完整 env 列举
-
-按域分组。所有项目自有变量带 `QATLAS_` 前缀；第三方 SDK 标准名（`GITHUB_*`）保留原始命名。
-
-### 2.1 进程绑定 / 标识
-
-| Env | 默认 | 用途 |
-|---|---|---|
-| `QATLAS_HTTP_ADDR` | — | 直接给 `host:port`（若设，覆盖下面 `_HOST` / `_PORT`） |
-| `QATLAS_SERVER_HOST` (alias `SERVER_HOST`) | `127.0.0.1` | bind host |
-| `QATLAS_SERVER_PORT` (alias `SERVER_PORT`) | `4200` | bind port |
-| `QATLAS_FORCE_TCP4` | — | `1` / `true` / `yes` 强制 IPv4 socket（绕过 dual-stack 行为） |
-| `QATLAS_EDGE_NAME` | — | 折进 S3 client User-Agent，用于 S3 事件审计区分多 edge 写入方 |
-| `QATLAS_USER_HEADER` (alias `USER_HEADER`) | — | 反代注入的审计 header 名（caddy-security 时代遗留，可与 PocketBase auth 并行） |
-
-### 2.2 文件系统路径
-
-| Env | 默认 | 用途 |
-|---|---|---|
-| `QATLAS_DOTENV` | — | **显式 .env 文件路径**；查找顺序见 §1.1 |
-| `QATLAS_RAW_DIR` | `${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/raw` | LocalStore 文件后端目录；S3 backend 启用时不读 |
-| `QATLAS_DATA_DIR` | `${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/data` | 业务派生数据（claim leases 等） |
-| `QATLAS_PB_DATA_DIR` | `${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/pb_data` | PocketBase SQLite + collections + uploads。通过 `--dir=` 自动注入 PocketBase cobra 根命令 |
-| `XDG_DATA_HOME` | `~/.local/share` | 上面 3 个 dir 默认值的 base |
-
-### 2.3 公开 URL
-
-| Env | 默认 | 用途 |
-|---|---|---|
-| `QATLAS_PUBLIC_URL` | — | server 自报的对外 canonical URL（scheme+host[+port]，反代场景下用户看到的形式）。**必填**——用于构造 OAuth 回调、share 链接等需要绝对 URL 的地方。v0.19.0 改名（旧名 `QATLAS_SERVER_URL` / `PUBLIC_BASE_URL` 在服务端不再读，启动时也不再做 deprecation warn——直接 silently ignore）；改名是为了准确反映"我对外公布的 URL"语义。Client 完全不读 env，跟这一项无关。 |
-
-### 2.4 S3 / RustFS 后端（**all-or-nothing 6 字段**）
-
-下表前 6 个字段：要么**全部填**走 `S3Store`，要么**全部空**走 `LocalStore(RawDir)` fallback。**半填启动 fatal**，错误消息列出哪几个 set 哪几个 unset。第 7 个（OpenAlex bucket）可选。
-
-| Env | 默认 | 用途 |
-|---|---|---|
-| `QATLAS_S3_ENDPOINT` | — | S3 兼容 endpoint（必须含 scheme `http://` / `https://`） |
-| `QATLAS_S3_PUBLIC_ENDPOINT` | — | 给客户端签 presigned URL 用的"公网入口"；空 ⇒ 用 internal endpoint 签（dev 模式） |
-| `QATLAS_S3_BUCKET_PDF` | — | per-kind bucket (`pdf/<yymm>/<id>v<n>.pdf`) |
-| `QATLAS_S3_BUCKET_MD` | — | per-kind bucket (`md/<yymm>/<id>v<n>.md`) |
-| `QATLAS_S3_BUCKET_IMAGES` | — | per-kind bucket (`images/<yymm>/<id>v<n>/<filename>`) |
-| `QATLAS_S3_ACCESS_KEY_ID` | — | svcacct access key（**绝不用 root key**） |
-| `QATLAS_S3_SECRET_ACCESS_KEY` | — | svcacct secret |
-| `QATLAS_S3_BUCKET_OPENALEX_SNAPSHOT` | — | 可选第 7 字段；缺失时 server 仍 serve，只是 `openalex` 子命令拒跑 |
-
-**已被 fail-fast 拒绝的旧字段**（设了就启动失败）：
-
-| Env | 状态 |
+| 旧配置示意（不能继续 export） | 当前 YAML |
 |---|---|
-| `QATLAS_S3_BUCKET` | v0.6.0 单桶时代名；`rejectLegacyS3Bucket` 见到这个 env 立刻 fail-fast（任何子命令，含 `qatlasd pat list`；唯一例外是 root help：`qatlasd --help` / `-h` / `help` 完全跳过 .env 加载），错误文案指引迁移到 per-kind 三字段 |
-
-### 2.5 PostgreSQL（paper registry + OpenAlex corpus）
-
-| Env | 默认 | 用途 |
-|---|---|---|
-| `QATLAS_POSTGRES_DSN` | — | 连接串（例：`postgres://qatlas:secret@pg.internal:5432/qatlas?sslmode=disable`）。未设时 registry 功能 disabled，相关 API endpoint 降级为 `{available:false}`；goose migrations 在 boot 时自动 apply |
-| `QATLAS_POSTGRES_MAX_CONNS` | `10` | 连接池上限 |
-| `QATLAS_CORPUS_ENSURE_INDEXES` | `true` | OpenAlex 语料重索引门控（ADR 0013）；指向已预置索引的大型共享 corpus 时设 `false` |
-
-### 2.6 鉴权 / 白名单
-
-| Env | 默认 | 用途 |
-|---|---|---|
-| `GITHUB_CLIENT_ID` | — | OAuth2 provider 启动时注入 users collection 的 OAuth2 providers |
-| `GITHUB_CLIENT_SECRET` | — | OAuth2 provider 启动时注入 |
-| `QATLAS_ALLOWED_GITHUB_LOGINS` | — | CSV，登录白名单（大小写不敏感）。`OnRecordAuthWithOAuth2Request` 钩子强制校验。**fail-closed**：此项 ∪ `_ADMIN_` 同时为空 ⇒ 谁都登不了 |
-| `QATLAS_ADMIN_GITHUB_LOGINS` | — | CSV，admin 提权白名单；隐式视为允许登录（并进 ALLOWED 白名单） |
-| `QATLAS_SYSTEM_PAT` | — | 系统 PAT 明文（CI / ops 脚本用，bypass 浏览器 OAuth）。`internal/pat/system_pat.go` 启动时读 |
-| `QATLAS_SYSTEM_PAT_SCOPES` | — | CSV scope 列；不设时默认全 scope |
-
-### 2.7 已弃用（设了**没有效果**，纯 noop）
-
-| 旧名 | 状态 |
-|---|---|
-| `QATLAS_WRITE_TOKEN` / `QATLAS_SESSION_SECRET` / `QATLAS_POCKETBASE_URL` / `QATLAS_REQUIRE_RELEASE_TAG` / `CLI_TOKEN_*` / `QATLAS_SERVER_DEBUG` | 已删，无效果 |
-| 无 `QATLAS_` 前缀的 alias（`WIKI_DIR` / `RAW_DIR` / `DATA_DIR` / `PB_DATA_DIR` / `SERVER_HOST` / `SERVER_PORT` / `USER_HEADER`） | 已移除，改用 `QATLAS_` 前缀名 |
-| `QATLAS_SERVER_URL` / `PUBLIC_BASE_URL` | 服务端已改名为 `QATLAS_PUBLIC_URL` |
-
-> `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` 仍然有效，但只用于 client 侧 `qatlas extractor` 实验性子命令；qatlasd server 从未读过它们，所以不在 server 启动 env 范围里。
-
-### 2.8 pb_data 多进程防护（v0.17.0+）
-
-PocketBase + SQLite 的多写者语义是"WAL 允许多 reader / 单 writer"——两个 qatlasd 进程指同一份 `pb_data` 时，**不会启动失败**但**几乎必然数据腐败**（schema migration 撞，`_collections` / `_externalAuths` 写撞）。
-
-自 v0.17.0 起 server 启动时在 `<pb_data>/qatlasd.lock` 上取**OS 级 advisory flock**（`flock(2)`，库 `github.com/gofrs/flock`）。第二个 qatlasd 启动撞到锁 → fatal exit，错误信息含 pb_data 路径 + lock 路径 + 两条出路（换 pb_data 目录 / 紧急绕过）。
-
-- 进程崩溃 / `kill -9` / OOM → **内核自动释放 lock**，下次重启正常（不像 pid 文件可能 stale）
-- 操作员子命令（`qatlasd pat mint` / `users list` 等）**不**取这个 lock —— 它们走 SQLite 自己的短读事务，可以跟 running `serve` 共存
-- 紧急绕过：`QATLAS_SKIP_PB_DATA_LOCK=1`（**仅** disaster recovery / 实验，**不要**用于生产）
-
-要真跑两个 qatlasd，必须**两份不同的 `QATLAS_PB_DATA_DIR`**（其余 `QATLAS_S3_*` / `QATLAS_POSTGRES_DSN` 等都可以共享，多边缘 active-active 本来就是这套）。
-
-### 2.9 CLI flag 接口（v0.17.0+，easytier 风格）
-
-`qatlasd serve` 自带 20 个项目自有 flag（加上 PocketBase 继承的 `--http` / `--https` / `--origins` / `--dir` / `--encryptionEnv`），每个都标 `[env: QATLAS_FOO=]`：
-
-```bash
-qatlasd serve --help    # 看完整列表
-```
-
-```
---public-url string             [env: QATLAS_PUBLIC_URL=]
---user-header string            [env: QATLAS_USER_HEADER=]
---edge-name string              [env: QATLAS_EDGE_NAME=]
---force-tcp4                    [env: QATLAS_FORCE_TCP4=]
---raw-dir string                [env: QATLAS_RAW_DIR=]
---data-dir string               [env: QATLAS_DATA_DIR=]
---pb-data-dir string            [env: QATLAS_PB_DATA_DIR=]
---system-pat string             [env: QATLAS_SYSTEM_PAT=]
---system-pat-scopes strings     [env: QATLAS_SYSTEM_PAT_SCOPES=]
---postgres-dsn string           [env: QATLAS_POSTGRES_DSN=]
---postgres-max-conns string     [env: QATLAS_POSTGRES_MAX_CONNS=]
---s3-endpoint string            [env: QATLAS_S3_ENDPOINT=]
---s3-public-endpoint string     [env: QATLAS_S3_PUBLIC_ENDPOINT=]
---s3-bucket-pdf string          [env: QATLAS_S3_BUCKET_PDF=]
---s3-bucket-md string           [env: QATLAS_S3_BUCKET_MD=]
---s3-bucket-images string       [env: QATLAS_S3_BUCKET_IMAGES=]
---s3-bucket-openalex string     [env: QATLAS_S3_BUCKET_OPENALEX_SNAPSHOT=]
---s3-access-key-id string       [env: QATLAS_S3_ACCESS_KEY_ID=]
---s3-secret-access-key string   [env: QATLAS_S3_SECRET_ACCESS_KEY=]
-```
-
-**优先级**：CLI flag > OS env > `.env` 文件 > 内置 default。跟 easytier / clap / viper 习惯一致。
-
-**典型用法**：docker run 一行起，不用 `.env`：
-
-```bash
-docker run -it --rm \
-    -p 4200:4200 \
-    -v /srv/qatlas/pb_data:/data \
-    ghcr.io/iai-ustc-quantum/qatlasd:v0.17.0 serve \
-        --http 0.0.0.0:4200 \
-        --pb-data-dir /data \
-        --postgres-dsn postgres://qatlas:secret@pg.example:5432/qatlas?sslmode=disable \
-        --s3-endpoint https://rustfs.example \
-        --s3-bucket-pdf qatlas-pdf \
-        --s3-bucket-md qatlas-md \
-        --s3-bucket-images qatlas-images \
-        --s3-access-key-id ... \
-        --s3-secret-access-key ...
-```
-
-**已知限制 — OAuth credentials 必须用 env**：`GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` / `QATLAS_ALLOWED_GITHUB_LOGINS` / `QATLAS_ADMIN_GITHUB_LOGINS` **没有** CLI flag。原因：PocketBase 的 Bootstrap 阶段（mount OAuth provider 到 settings table）跑在 cobra parse argv **之前**，CLI flag 来不及。这四个仅通过 env（`.env` / `Environment=` / `docker -e`）配置生效。
-
----
-
-## 3. 不同部署形态下的注入方式
-
-`qatlasd` 是 long-lived daemon，部署形态影响 env 注入接口。下面列出当前生产 / dev 支持的所有形态。
-
-### 3.1 systemd 单元
-
-systemd 部署有**两条等价路径**——选你团队习惯的，不要混用：
-
-#### 3.1.a Inline `Environment=`（v0.17.0+ 推荐：单文件无外部依赖）
-
-把每个字段直接写进 unit 文件的 `Environment=`，**不需要任何 .env 文件**：
-
-```ini
-[Service]
-ExecStart=/home/qatlas/.local/bin/qatlasd serve --http=127.0.0.1:4200
-User=qatlas
-Group=qatlas
-WorkingDirectory=/home/qatlas
-
-Environment=QATLAS_PB_DATA_DIR=/home/qatlas/.local/share/qatlasd/pb_data
-Environment=QATLAS_POSTGRES_DSN=postgres://qatlas:secret@pg.internal:5432/qatlas?sslmode=disable
-Environment=QATLAS_S3_ENDPOINT=http://s3.internal:9000
-Environment=QATLAS_S3_BUCKET_PDF=qatlas-pdf
-Environment=QATLAS_S3_BUCKET_MD=qatlas-md
-Environment=QATLAS_S3_BUCKET_IMAGES=qatlas-images
-Environment=QATLAS_S3_ACCESS_KEY_ID=...
-Environment=QATLAS_S3_SECRET_ACCESS_KEY=...
-Environment=GITHUB_CLIENT_ID=...
-Environment=GITHUB_CLIENT_SECRET=...
-Environment=QATLAS_ALLOWED_GITHUB_LOGINS=alice,bob
-Environment=QATLAS_ADMIN_GITHUB_LOGINS=alice
-```
-
-**优点**：unit 文件是 single source of truth；`systemctl cat qatlasd` 一眼看完；不依赖文件 mode / 路径。
-**缺点**：unit 文件 644 给 root 可见，secret 在 `systemctl show qatlasd` 输出里——同主机上其它用户可读。生产敏感字段建议改 `LoadCredential=`（systemd 250+，可配 0600 文件）。
-
-#### 3.1.b 外部 .env + `QATLAS_DOTENV=`（v0.16 之前默认；适合多 unit 共享配置）
-
-```ini
-[Service]
-ExecStart=/home/qatlas/.local/bin/qatlasd serve --http=127.0.0.1:4200
-Environment=QATLAS_DOTENV=/home/qatlas/QuantumAtlas/.env
-User=qatlas
-Group=qatlas
-WorkingDirectory=/home/qatlas/QuantumAtlas
-```
-
-也可以让 systemd 自己 load .env（不经 godotenv），用 `EnvironmentFile=`：
-
-```ini
-EnvironmentFile=/etc/qatlasd/qatlasd.env
-```
-
-三种方式区别：
-
-| 方式 | 相对路径锚点（如 `QATLAS_RAW_DIR=../foo`） | 修改后生效需要 |
-|---|---|---|
-| `Environment=` inline | **无锚点**（相对 CWD） | `systemctl daemon-reload && systemctl restart qatlasd` |
-| `Environment=QATLAS_DOTENV=...` + godotenv | **.env 所在目录** 是锚点（§1.3） | 改 .env 后直接 `systemctl restart qatlasd` |
-| `EnvironmentFile=...` + systemd | **无锚点**（相对 CWD） | 改文件后 `systemctl restart qatlasd` |
-
-**生产**：推荐绝对路径，三种方式没差别。
-**dev**：相对路径只在 `Environment=QATLAS_DOTENV=...` 模式可控（锚点稳定），其它两种推荐绝对路径避免歧义。
-
-#### 3.1.c 混合：CLI flag 覆盖 unit env
-
-`Environment=` / `.env` 里写一份 baseline，`ExecStart` 用 flag 覆盖个别字段——典型场景是同一份配置在两台 edge 跑、只 edge name / port 不同：
-
-```ini
-ExecStart=/home/qatlas/.local/bin/qatlasd serve \
-  --http=127.0.0.1:4200 \
-  --edge-name=edge-b \
-  --force-tcp4
-Environment=QATLAS_DOTENV=/etc/qatlasd/shared.env
-```
-
-CLI flag > OS env > .env 文件，所以 `--edge-name=edge-b` 总是赢，无论 .env 里写没写 `QATLAS_EDGE_NAME=`。
-
-### 3.2 直接跑 / nohup
-
-```bash
-# 跑在当前目录，自动捡 ./.env
-cd /path/to/config && nohup ./qatlasd serve > qatlasd.log 2>&1 &
-
-# 显式指 .env，不依赖 CWD
-QATLAS_DOTENV=/etc/qatlasd/.env nohup ./qatlasd serve > qatlasd.log 2>&1 &
-
-# 完全不要 .env，env vars 单条 export
-export QATLAS_HTTP_ADDR=127.0.0.1:4200
-export QATLAS_S3_ENDPOINT=https://s3.example.com
-# ... 其它字段
-nohup ./qatlasd serve > qatlasd.log 2>&1 &
-
-# 一次性临时 override（覆盖 .env 里的字段）
-QATLAS_SERVER_PORT=8080 ./qatlasd serve
-```
-
-### 3.3 Docker / OCI
-
-```bash
-# env 列表注入
-docker run \
-  -e QATLAS_HTTP_ADDR=0.0.0.0:4200 \
-  -e QATLAS_S3_ENDPOINT=... \
-  -e QATLAS_POSTGRES_DSN=... \
-  ghcr.io/<org>/qatlasd:v0.x.y serve
-
-# env file 注入（docker --env-file 跟 godotenv 语法兼容）
-docker run --env-file ./prod.env ghcr.io/<org>/qatlasd:v0.x.y serve
-
-# Mount .env 让 godotenv 自己读
-docker run \
-  -v $PWD/prod.env:/etc/qatlasd/.env:ro \
-  -e QATLAS_DOTENV=/etc/qatlasd/.env \
-  ghcr.io/<org>/qatlasd:v0.x.y serve
-```
-
-### 3.4 Kubernetes
-
-```yaml
-spec:
-  containers:
-  - name: qatlasd
-    image: ghcr.io/<org>/qatlasd:v0.x.y
-    env:
-    - name: QATLAS_HTTP_ADDR
-      value: "0.0.0.0:4200"
-    envFrom:
-    - configMapRef:
-        name: qatlasd-config        # 非密字段
-    - secretRef:
-        name: qatlasd-secrets       # 含 QATLAS_POSTGRES_DSN / S3 keys 等
-```
-
-### 3.5 `qatlasd service install` 子命令
-
-辅助生成 systemd unit 的交互式 cobra 子命令。当前默认生成 §3.1.b（`Environment=QATLAS_DOTENV=` 引用外部 .env）形式：
-
-```bash
-qatlasd service install --dotenv-path /home/qatlas/QuantumAtlas/.env --force
-```
-
-`--dotenv-path` 优先级：CLI flag > `$QATLAS_DOTENV` > 自动检测 `~/QuantumAtlas/.env` → `./.env`（TTY 时会列出找到的候选并要求确认）。
-
-#### 生成的 unit 跟 .env 的绑定关系
-
-跑完后命令会**显式告诉你绑定到哪个 .env**——这是以后改配置的唯一入口：
-
-```text
-$ sudo qatlasd service install --mode system --dotenv-path /etc/quantum-atlas/.env --force
-... rendered unit ...
-Installed service qatlasd (mode=system).
-The unit reads runtime config from /etc/quantum-atlas/.env via Environment=QATLAS_DOTENV=.
-Edit that file and `systemctl restart qatlasd` to apply config changes.
-Started service qatlasd. Manage via `qatlasd service status` or `systemctl status qatlasd`.
-```
-
-意思是：
-
-- 改 `/etc/quantum-atlas/.env` → `sudo systemctl restart qatlasd` 生效
-- **不要**再到 systemd unit 文件里加 `Environment=KEY=...`（除非紧急 override；CLI flag > env > .env 优先级仍然适用，但读多份配置源易乱）
-
-如果你删了那个 .env / 改名了，下次 restart qatlasd 时 `loadDotEnv` 找不到文件，**不会 fatal**——只会 log 一条 `no .env located; relying on process environment alone`，然后用 systemd unit 里 `Environment=` 段的值跑。
-
-#### 没有 .env 时（v0.17.0a1+ 行为）
-
-如果跑 `service install` 时 **`$QATLAS_DOTENV` 没设、`~/QuantumAtlas/.env` 不存在、`./.env` 也不存在**，命令**不再 fatal**（v0.17.0a0 及更早是 fatal），而是生成一个**不带** `Environment=QATLAS_DOTENV=` 的 unit，并 print：
-
-```text
-No .env auto-detected (tried: /home/you/QuantumAtlas/.env, /pwd/.env).
-The generated unit will NOT set QATLAS_DOTENV — qatlasd will start with whatever
-env the operator inlines into the unit. Inject config via `Environment=KEY=...`
-lines, `EnvironmentFile=`, or rerun with --dotenv-path to pin a specific .env file.
-...
-Installed service qatlasd (mode=system).
-The unit does NOT pin a .env file (none auto-detected, none supplied).
-Configure runtime fields by:
-  - editing the rendered unit's `[Service]` section to add inline `Environment=KEY=VAL` lines, or
-  - adding `EnvironmentFile=/path/to/env` to the unit, or
-  - rerunning `qatlasd service install --dotenv-path /path/to/.env --force` to pin one
-```
-
-适合**不想用 .env 流派**的部署（§3.1.a 的 inline `Environment=` 风格）：先 `service install` 出骨架 unit + start，再手工 `systemctl edit qatlasd` 加 `Environment=QATLAS_POSTGRES_DSN=...` 等 drop-in。
-
-> 想直接生成 §3.1.a（inline `Environment=` 完整 unit）形式吗？目前 `service install` 没有 `--inline-env` 选项 —— 装出 baseline unit 后用 `systemctl edit qatlasd` 手工加 drop-in `Environment=KEY=VAL`。
-
----
-
-## 4. 启动时验证
-
-`internal/config/config.go::Load` 启动时执行以下校验，**任何一项失败立即 fatal**：
-
-| 校验 | 触发条件 |
-|---|---|
-| **S3 all-or-nothing** | 6 个 S3 字段（含 3 个 per-kind bucket + 4 个连接字段，其中 access/secret 二选一计为 2）半填 |
-| **`QATLAS_S3_BUCKET` legacy sentinel** | 该 env var 被设（任何非空值） |
-| **`QATLAS_S3_ENDPOINT` scheme** | 缺 `http://` / `https://` 前缀 |
-| **PAT scope enforcer build** | `pat.NewEnforcer()` 构造失败（编译时静态 policy，正常不会失败） |
-| **`QATLAS_PB_DATA_DIR` 路径** | 如果设了，flag injection 时检查路径可写 |
-
-启动成功后，下列事实会写进 stdout / journal log，可用来确认 env 是否真生效：
-
-| log 行 | 含义 |
-|---|---|
-| `loaded .env path=/home/qatlas/QuantumAtlas/.env` | 确认 godotenv 找到的文件路径 |
-| `no .env located; relying on process environment alone` | 完全靠 OS env vars 跑 |
-| `raw store: S3 backend http://s3.internal:9000/qatlas-pdf` | S3 backend 启用；**每个 bucket 一行**（PDF/MD/Images 必有 3 行；OpenAlex 配了再多 1 行） |
-| `raw store: S3 backend <internal> (presign via <public>)` | dual-endpoint 模式生效 |
-| `raw store: LocalStore /path/to/raw` | S3 fallback 到本地文件后端 |
-| `bucket versioning: enabled (was: ...)` | 每个 per-kind bucket 启动时 `SetBucketVersioning(Enabled)` |
-| `system PAT enabled length=N scopes=[*]` | `QATLAS_SYSTEM_PAT` 已加载 |
-| `mineru claim granted arxiv_id=... claim_id=... ...` | mineru-claim 端点被调时的审计 log |
-
----
-
-## 5. 跨工具 .env 文件格式兼容性
-
-`qatlasd` 用的 `joho/godotenv` 解析格式跟下列工具**互相兼容**（同一份 .env 可被多个工具读）：
-
-- Ruby `dotenv` (rb)
-- Node `dotenv` (js)
-- Python `python-dotenv`（qatlas client 用）
-- Docker `--env-file` / docker-compose `env_file:`
-- systemd `EnvironmentFile=`（注意：systemd 不支持变量展开，只支持 `KEY=VAL` 字面值）
-
-**支持**：`KEY=VAL`、`KEY="quoted"`、`KEY='single quoted'`、`#` 注释、跨行（双引号内）、空行、变量内插 `${OTHER_KEY}`（双引号 / 无引号时展开；单引号字面）。
-
-**不支持**：shell-style export `export KEY=VAL`（被忽略前缀）、shell expansion `$(cmd)` 或 `~/`（字面值）。
-
----
-
-## 6. 相关源码
-
-| 文件 | 内容 |
-|---|---|
-| `cmd/qatlasd/main.go::loadDotEnv` | .env 文件查找 + load |
-| `internal/config/config.go::Load` | 从 os.Environ 读出 Config struct |
-| `internal/config/config.go::firstEnv / firstEnvDefault / firstEnvIntDefault` | helper 函数 |
-| `internal/config/config.go::rejectLegacyS3Bucket` | legacy `QATLAS_S3_BUCKET` 拒（在 `Load` 内调用，所有子命令都触发） |
-| `internal/config/config.go::validatePartialS3Config` / `(*Config).ValidateForServe` | S3 quartet + 3 buckets all-or-nothing 校验。`Load` 只 `slog.Warn`（让 `--help` / `pat list` 能跑）；`serve` 在 `validateServeCfgAfterFlags` 调 `ValidateForServe` 转 fatal |
-| `internal/config/config.go::defaultXDGSubdir` | 默认路径 |
-| `internal/pat/system_pat.go::LoadSystemPAT` | 读 `QATLAS_SYSTEM_PAT` / `_SCOPES` |
-| `cmd/qatlasd/service_cmd.go` | `qatlasd service install` 子命令；TTY 模式检测 .env |
-| `cmd/qatlasd/main.go::injectPBDataDirFlag` | `QATLAS_PB_DATA_DIR` → PocketBase `--dir=` 注入 |
-
----
-
-## 7. 完整 .env 模板
-
-参见 [`.env.example`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.env.example) —— 含所有字段 + 每个字段的角色注释（client 用 / server 用 / 共用）。
-
-## 8. `qatlasd config` 子命令
-
-binary 自带三个 config 工具，复刻 code-server / kubectl / gh 的常见用法。**全部 short-circuit 在 main 早期跑**——不依赖 .env / PostgreSQL / S3 配置正确，即便配置半填、PostgreSQL 没起、S3 字段缺失也能跑（这是它存在的意义之一）。
-
-### `qatlasd config init`
-
-写一份最小化默认 `.env` 模板（embed 在 binary 内的 [`cmd/qatlasd/templates/default.env`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/cmd/qatlasd/templates/default.env)，含 GitHub OAuth / PostgreSQL / S3 / SystemPAT 等最常用字段）到磁盘。完整字段参考仍是 repo 根的 `.env.example`。
-
-```bash
-# 写到 XDG 默认位置（$XDG_CONFIG_HOME/qatlasd/.env 或 ~/.config/qatlasd/.env）
-qatlasd config init
-
-# 写到指定路径（典型生产）
-sudo qatlasd config init --path /etc/quantum-atlas/.env
-
-# 已存在不覆盖（exit 1）；要覆盖加 --force
-qatlasd config init --path /etc/quantum-atlas/.env --force
-```
-
-文件 mode 强制 **0600**，避免 secret 被 group/other 读到。写完后会提示用 `qatlasd serve` 或 `qatlasd service install --dotenv-path ...` 把它接进 systemd。
-
-> 模板特意不全 —— 只列必填 / 强烈推荐字段。要看所有 alias / dev-only flag / 第三方 SDK 字段，去看 [`.env.example`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.env.example)。
-
-### `qatlasd config path`
-
-打印**当前进程**会 load 的 .env 路径（resolve 顺序跟 §1.1 一致）。找不到任何文件时 exit 1 + stderr 报错。
-
-```bash
-qatlasd config path
-# /etc/quantum-atlas/.env
-```
-
-适合 systemd 单元 / shell 脚本里调试"server 真的读到这个 .env 吗"。
-
-### `qatlasd config show`
-
-按 KEY=VALUE 形式打印**当前进程**可见的 QuantumAtlas 相关 env vars（按 name 排序，空值跳过，前缀过滤到 `QATLAS_*` / `MINERU_*` / `OPENAI_*` / `ANTHROPIC_*` / `GITHUB_CLIENT_*`）。
-
-```bash
-qatlasd config show
-# QATLAS_POSTGRES_DSN=***
-# QATLAS_S3_ENDPOINT=https://rustfs.example.com
-# QATLAS_S3_SECRET_ACCESS_KEY=***
-# QATLAS_PUBLIC_URL=https://atlas.example.com
-```
-
-**默认脱敏**：name 含 `TOKEN` / `SECRET` / `KEY` / `PASSWORD`（大小写不敏感）的 value 替成 `***`。要看明文（debug 用，仅在私有终端）：
-
-```bash
-qatlasd config show --no-redact
-```
-
-⚠️ **`show` 反映的是 `qatlasd config show` 这次调用看到的 env，不会自动 source 任何 .env**。要查"server 真起来时会看到什么"，先 source 那份 .env：
-
-```bash
-set -a; . /etc/quantum-atlas/.env; set +a
-qatlasd config show
-```
-
-或者直接登上 systemd 单元的 env：
-
-```bash
-sudo systemctl show qatlasd -p Environment
-```
-
+| `QATLAS_POSTGRES_DSN` | `postgres.dsn` |
+| `QATLAS_PUBLIC_URL` | `public_url` |
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | `auth.github_client_id` / `auth.github_client_secret` |
+| `QATLAS_RAW_DIR` / `QATLAS_PB_DATA_DIR` | `paths.raw_dir` / `paths.pb_data_dir` |
+| `QATLAS_SYSTEM_PAT` | `system_pat.token` |
+| `MINERU_API_TOKENS` | `paper_access.mineru.api_tokens`（列表） |
+
+先备份旧配置并填写新的 YAML，再移除服务环境中对应变量；不要 `source` 旧 `.env` 后启动。Docker 要挂载 YAML，不用 `--env-file` 传业务配置；服务注册使用 `--config`，不是 `--dotenv-path`。历史配置可从旧 tag 查看，本仓当前说明不再将旧命令作为可执行示例。
+
+安装器、Compose 镜像版本、Vite、本地测试和下载 worker 的环境变量仍各有用途，但不是主服务的业务配置接口，见[环境变量边界](../reference/env-vars.md)。

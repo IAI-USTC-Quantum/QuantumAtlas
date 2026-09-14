@@ -1,6 +1,11 @@
 version: 2
 project_name: qatlasd
 
+# OSS supports exact ignored tags; wildcard matching is a Pro feature.
+# Keep the immutable Python retirement tag out of server version selection.
+git:
+  ignore_tags: [quantum-atlas-v0.21.0]
+
 builds:
   - main: ./cmd/qatlasd
     env: [CGO_ENABLED=0]

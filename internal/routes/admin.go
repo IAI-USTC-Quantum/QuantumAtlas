@@ -150,10 +150,10 @@ func adminWhoamiHandler(cfg *config.Config) func(re *core.RequestEvent) error {
 			}
 		}
 		return re.JSON(http.StatusOK, map[string]any{
-			"login":          login,
-			"is_admin":       envAdmin,
-			"is_user_admin":  isUserAdmin,
-			"is_superadmin":  isSuper,
+			"login":         login,
+			"is_admin":      envAdmin,
+			"is_user_admin": isUserAdmin,
+			"is_superadmin": isSuper,
 		})
 	}
 }

@@ -68,8 +68,8 @@ func RegisterPAT(se *core.ServeEvent, app core.App) {
 			})
 		}
 		return re.JSON(http.StatusOK, map[string]any{
-			"scopes":           entries,
-			"max_expiry_days":  MaxPATExpiryDays,
+			"scopes":          entries,
+			"max_expiry_days": MaxPATExpiryDays,
 		})
 	})
 }

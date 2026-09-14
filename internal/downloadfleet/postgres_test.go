@@ -19,15 +19,20 @@ import (
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/downloader"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/registry"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/testutil"
 	wp "github.com/IAI-USTC-Quantum/QuantumAtlas/internal/workerprotocol"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Opt-in only. Uses a uniquely named temporary schema, never public tables or
-// goose migration state. Run against a disposable PostgreSQL test database.
+// Requires -tags integration and TEST_DOWNLOADFLEET_DATABASE_URL. Uses a
+// uniquely named temporary schema, never public tables or goose migration state.
+// Run against a disposable PostgreSQL test database.
 func postgresService(t *testing.T) *Service {
 	t.Helper()
+	if !testutil.IntegrationEnabled {
+		t.Skip("requires -tags integration and explicit live-service environment variables")
+	}
 	url := os.Getenv("TEST_DOWNLOADFLEET_DATABASE_URL")
 	if url == "" {
 		t.Skip("set TEST_DOWNLOADFLEET_DATABASE_URL to a disposable PostgreSQL database")

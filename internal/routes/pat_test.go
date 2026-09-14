@@ -59,9 +59,9 @@ import (
 // the result) so it stays correct even when PocketBase's request
 // pipeline grows new hooks.
 type patHarness struct {
-	t     testing.TB
-	app   *tests.TestApp
-	mux   http.Handler
+	t   testing.TB
+	app *tests.TestApp
+	mux http.Handler
 }
 
 func newPATHarness(t testing.TB) *patHarness {
@@ -402,4 +402,3 @@ func asString(v any) string {
 	s, _ := v.(string)
 	return s
 }
-

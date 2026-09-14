@@ -3,7 +3,6 @@
 > A paper collection, multi-paradigm search, and registry database for quantum algorithm research.
 
 [![Go 1.26.2+](https://img.shields.io/badge/go-1.26.2+-00ADD8?style=flat&logo=go&logoColor=white)](https://go.dev/)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![PocketBase v0.38](https://img.shields.io/badge/PocketBase-v0.38-B8DBE4?style=flat&logo=pocketbase&logoColor=black)](https://pocketbase.io/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16+-336791?style=flat&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
@@ -144,7 +143,7 @@ For a checkout (including unreleased commits), first build the complete UI using
 ```bash
 CGO_ENABLED=0 go build -tags embedui -o build/qatlasd ./cmd/qatlasd
 ./build/qatlasd config init
-# Edit ~/.qatlas/config.yaml, e.g. postgres_dsn and GitHub OAuth settings.
+# Edit ~/.qatlas/config.yaml, e.g. postgres.dsn and GitHub OAuth settings.
 ./build/qatlasd serve --http=127.0.0.1:4200
 ```
 
@@ -226,12 +225,13 @@ QuantumAtlas/
 ├── tests/                 test suite
 ├── docs/                  documentation
 ├── VERSION                server version (currently 0.34.0)
-└── pyproject.toml         development-only uv project + dependency groups + Pixi toolchain
+├── go.mod / go.sum        Go module, pinned dependencies and tool declarations
+└── docsite/               Sphinx user/developer documentation source
 ```
 
 > State directories (`raw/`, `data/`, `pb_data/`) are **not** in the repo —
 > they default to `${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/` or can be
-> overridden via `.env` to a mounted disk / `/var/lib/...`. See
+> overridden via YAML `paths.*` to a mounted disk / `/var/lib/...`. See
 > [docs/server/migration-storage-layout.md](docs/server/migration-storage-layout.md).
 
 ## Current status
@@ -260,11 +260,11 @@ Contributions welcome in these areas:
 
 Please use Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`). Server releases use the root `VERSION` (currently `0.34.0`) + a `v<version>` tag and publish only server Go/GitHub/Docker artifacts, never PyPI packages. CLI development and releases belong in [qatlas-cli](https://github.com/IAI-USTC-Quantum/qatlas-cli). See [docs/contributing.md](docs/contributing.md) for the server release process.
 
-The [final `quantum-atlas 0.21.0` release](https://github.com/IAI-USTC-Quantum/QuantumAtlas/releases/tag/quantum-atlas-v0.21.0) is complete. Its immutable [historical tag](https://github.com/IAI-USTC-Quantum/QuantumAtlas/tree/quantum-atlas-v0.21.0) retains the package metadata, one-time checker/tests, and publishing workflow for audit. They are not an ongoing main-branch workflow: the root uv project is development-only, and no further legacy package versions will be published.
+The [final `quantum-atlas 0.21.0` release](https://github.com/IAI-USTC-Quantum/QuantumAtlas/releases/tag/quantum-atlas-v0.21.0) is complete. Its immutable [historical tag](https://github.com/IAI-USTC-Quantum/QuantumAtlas/tree/quantum-atlas-v0.21.0) retains the package metadata, one-time checker/tests, and publishing workflow for audit. They are not an ongoing main-branch workflow. The root Python/Pixi manifests and obsolete wiki batch tools have been removed; Python remains only for documentation and small CI helpers. GoReleaser explicitly ignores that historical Python tag, and no further legacy package versions will be published.
 
 ## Acknowledgements
 
-QuantumAtlas builds on the Go, PocketBase, PostgreSQL, Pydantic, and arXiv / OpenAlex open ecosystems.
+QuantumAtlas builds on the Go, PocketBase, PostgreSQL, React, and arXiv / OpenAlex open ecosystems.
 
 Full open-source credits, inspiration sources, and the maintainer list are in [Credits](https://quantum-atlas.readthedocs.io/zh-cn/latest/about/credits/).
 

@@ -1,7 +1,8 @@
 """MkDocs hook: bridge the swaggo-generated OpenAPI spec into the docs site.
 
 The single source of truth for the API spec is ``internal/apidocs/swagger.json``,
-generated from the swaggo annotations by ``pixi run swagger`` and compiled into
+generated from the swaggo annotations by ``go tool swag init`` (see the
+contributing guide for arguments) and compiled into
 the qatlasd binary (served live at ``/swagger``). To avoid committing a
 second copy that could silently drift, we do NOT keep a copy under ``docs/``.
 Instead this hook copies the committed spec into ``docs/server/openapi.json``
@@ -18,7 +19,7 @@ import shutil
 from pathlib import Path
 
 # Resolved at runtime from the mkdocs config file path so the hook works
-# regardless of the process cwd (RTD, pixi, local serve).
+# regardless of the process cwd (RTD, CI, local serve).
 _SPEC_REL = Path("internal/apidocs/swagger.json")
 _DEST_REL = Path("docs/server/openapi.json")
 
@@ -32,7 +33,8 @@ def on_pre_build(config, **kwargs) -> None:
     spec, dest = _paths(config)
     if not spec.is_file():
         raise FileNotFoundError(
-            f"OpenAPI spec not found at {spec}. Run `pixi run swagger` to "
+            f"OpenAPI spec not found at {spec}. Run `go tool swag init` with the "
+            "arguments in docs/contributing.md to "
             "regenerate it before building the docs."
         )
     dest.parent.mkdir(parents=True, exist_ok=True)

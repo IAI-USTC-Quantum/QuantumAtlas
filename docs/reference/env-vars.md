@@ -1,392 +1,68 @@
-# 环境变量参考
+# 环境变量与配置边界
 
-> **本页只描述 server (`qatlasd`) 的 env / .env 字段**。client (`qatlas` Python CLI) 自 v0.17.0 起**不再读任何 env / .env**，所有配置写在平台原生 user-config 路径下的 `config.yaml`（Linux `~/.config/qatlas/`、macOS `~/Library/Application Support/qatlas/`、Windows `%APPDATA%\qatlas\`；首次运行自动创建），见 [`qatlas config` reference](../client/cli-qatlas.md#qatlas-config)。
+主服务 **`qatlasd` 的业务配置是 YAML-only**，不是旧 Python 包的 `.env` 模式。默认文件为 `~/.qatlas/config.yaml`，通过 `qatlasd config init` 创建、`--config` 选择；完整字段见[服务端配置](../server/server-config.md)。旧 `QATLAS_*` 业务变量、`MINERU_*`、`POSTGRES_*` 等残留会触发明确错误，不会默默覆盖 YAML。
 
-QuantumAtlas server（Go `qatlasd` 二进制）通过三入口读配置：
+本页只保留目前仍有用途的环境变量类别，以及从旧配置迁移的入口。环境变量属于哪个进程，必须先分清。
 
-**CLI flag > OS env > `.env` 文件 > 内置 default**
+## 进程/工具矩阵
 
-server 端项目自有变量带 `QATLAS_` 前缀；第三方 SDK 标准名（`GITHUB_CLIENT_*`）保留原始命名。每个字段都有等价 CLI flag（除了 OAuth 4 字段，详见 [issue #6](https://github.com/IAI-USTC-Quantum/QuantumAtlas/issues/6)），完整 flag 列见 [cli-qatlasd.md §serve](../server/cli-qatlasd.md#serve)。
-
-> 完整 server `.env` 模板：[`.env.example`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.env.example)
-
-## 角色矩阵速查
-
-| 字段 | client (YAML) | server (env / .env / flag) |
+| 使用方 | 配置入口 | 说明 |
 |---|---|---|
-| `server_url` (client `config.yaml`) — "我要联系的 server" | ✅ 必填 | — |
-| `QATLAS_PUBLIC_URL` (server env / flag) — "我对外公布的 canonical URL" | — | ✅ 必填 |
-| `insecure` (client only) | ✅ | — |
-| `mineru_*` / `MINERU_*` | ✅（本地跑 mineru）| ✅ 仅 self-hosted + 启用论文访问开关时 |
-| `QATLAS_RAW_DIR` / `DATA_DIR` / `PB_DATA_DIR` | — | ✅ |
-| `QATLAS_HTTP_ADDR` / `QATLAS_FORCE_TCP4` | — | ✅ |
-| `QATLAS_POSTGRES_DSN` / `_MAX_CONNS` | — | ✅ |
-| `QATLAS_SEARCH_PROVIDERS` | — | ✅（默认 `catalog,arxiv,openalex`）|
-| `QATLAS_S3_*` | — | ✅ |
-| `QATLAS_USER_HEADER` | — | ✅ |
-| `QATLAS_PAPER_ACCESS_ENABLED` | — | ✅ self-hosted 可选 |
-| `QATLAS_OPENALEX_MAILTO` | — | ✅（开了 PAPER_ACCESS 后要求填）|
-| `QATLAS_ARXIV_FETCH_CONCURRENT` / `_RPS` | — | ✅ |
-| `QATLAS_PLUGINS_*` / `QATLAS_RPC_WS_BIND` | — | ✅ |
-| `GITHUB_CLIENT_ID` / `SECRET` | — | ✅（只能走 env，无 CLI flag） |
-| `QATLAS_SYSTEM_PAT` / `_SCOPES` | — | ✅ |
-| `QATLAS_EDGE_NAME` | — | ✅ |
+| 主服务 `qatlasd` | `~/.qatlas/config.yaml` 或 `--config` | OAuth、PG、S3、搜索和下载器均在 YAML；仅保留 PocketBase 启动参数等明确例外 |
+| 独立 `qatlas` CLI | 由 `qatlas-cli` 管理的用户 YAML 与凭据文件 | 不安装于主仓，详见其独立仓库/CLI 文档 |
+| `install-qatlasd.sh` | `--version`、`--dir` 与安装器工具变量 | 安装目标/超时，不是运行服务的设置 |
+| Docker Compose | `deploy/.env` 镜像版本插值 | 只选择镜像，服务内仍挂载 YAML |
+| `downloaderworker` / 旧 proxy | `DL_WORKER_*` / `DL_PROXY_*` | 独立程序的运行配置，不传进主服务 |
+| Vite dev server | `web/.env.development.local` | 本地代理/HMR/调试；不是生产配置 |
+| Go 集成测试 | build tag + 显式测试变量 | 不默认运行，不读取部署 `.env` |
+| 文档刷新工具 | `DOCS_*` | 作用于明确的文档输出/覆盖目录，不选择安装所需 UI |
 
-> **client 写入 hosts.yml，没有 `token:` YAML 字段**（v0.19.0 移除——它会静默盖住 hosts.yml 的所有 per-host token）。CI 路径用 `echo "$TOKEN" \| qatlas auth login -s <server> --with-token` 把 PAT 写进 hosts.yml。
+## 安装器与 Compose
 
-> **没有 client/server 共用的 env 名了**（v0.19.0 起）。client 完全不读 env（v0.17.0 起所有 client 配置走 `~/.config/qatlas/config.yaml`，本表 `server_url` 那一列指的是 YAML 字段名，不是 env）。server 端 env 用 `QATLAS_PUBLIC_URL`——名字明确表达"我对外公布的"含义，跟 client 侧 YAML 的 `server_url:`（"我要联系的"）在概念上独立。
-
-> 重要变化（v0.17.0+）：**client 端不再读任何 OS env**。如果之前在 shell 里 `export QATLAS_SERVER_URL=...` 给 client 用，现在那些 env 对 `qatlas` 不再生效——必须搬到 `~/.config/qatlas/config.yaml`（字段名小写化去前缀：`QATLAS_SERVER_URL` → `server_url`、`MINERU_API_TOKEN` → `mineru_api_tokens`（列表形式）等）。
-
-## Server (qatlasd) 配置入口
-
-### `QATLAS_PUBLIC_URL`
-
-- **历史名**: `QATLAS_SERVER_URL` / `PUBLIC_BASE_URL`（v0.19.0 起服务端**不再读**）
-- **格式**: 完整 URL，带 scheme（`https://atlas.example.com`）
-- **作用**: server 自报的对外 canonical URL；用于构造 OAuth 回调、share link 等需要绝对 URL 的地方（反代场景下 server bind 在 localhost，无法从 request 推断对外 URL，必须显式告诉它）。改名是为了准确反映"我对外公布的 URL"语义
-
-### `QATLAS_THEOREMS_DIR`
-
-- **默认**: `<.env 所在目录>/../qatlas-lean`（兄弟 Git checkout；theorems 插件的过渡期 pull 目标，最终指向 content-only 的 `QuantumAtlas-Theorems`）
-- **作用**: theorems builtin 插件读 `artifacts/registry.json` + `artifacts/audit_records/certified.json` + Lean 源文件的路径；`POST /api/theorems/sync/pull` 在此目录跑 `git pull --ff-only`
-
-### `QATLAS_USER_HEADER`
-
-- **Alias**: `USER_HEADER`（**⚠️ v0.17.0 移除**）
-- **默认**: — （不启用 header-based 审计）
-- **作用**: 反代注入的审计用户头名，如 `X-Token-Subject`（caddy-security 时代遗留，可与 PocketBase auth 并行）
-
-## Server: 存储路径
-
-三者都默认到 XDG 数据目录：
-
-| 变量 | Alias（⚠️ v0.17.0 移除） | 默认 |
+| 变量 | 使用方 | 用途 |
 |---|---|---|
-| `QATLAS_RAW_DIR` | `RAW_DIR` | `${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/raw` |
-| `QATLAS_DATA_DIR` | `DATA_DIR` | `${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/data` |
-| `QATLAS_PB_DATA_DIR` | `PB_DATA_DIR` | `${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/pb_data` |
+| `QATLAS_VERSION` | 安装器 / Compose | 安装版本或镜像 tag；不设置运行中程序的版本 |
+| `QATLAS_INSTALL_DIR` | 安装器 | 可写的安装目录，默认 `~/.local/bin` |
+| `QATLAS_REPO` | 安装器 | GitHub owner/repo，默认官方仓库 |
+| `QATLAS_INSTALL_TIMEOUT` | 安装器 | 每次下载/归档步骤时限，默认 60 秒，1..300 |
+| `QATLAS_INSTALL_VERSION_TIMEOUT` | 安装器 | 候选程序 `--version` 时限，默认 10 秒，1..300 |
+| `QATLAS_SEARCH_VERSION` / `QATLAS_MATCH_VERSION` / `QATLAS_RAG_VERSION` | Compose | 独立 app 镜像版本，仅由 Compose 插值 |
 
-- 想覆盖到挂载盘 / `/var/lib/`？显式赋绝对路径
-- `QATLAS_PB_DATA_DIR` 被自动注入为 PocketBase `--dir=`——**不要**在 systemd `ExecStart` 里再硬写 `--dir=`
-- **`QATLAS_RAW_DIR` 是 dev-only fallback**：启用 S3 / RustFS 时 server 完全不读它；生产部署强烈建议配 S3，把 LocalStore 留给 dev / CI
+只在相应工具的一次调用中设置需要的变量，避免长期 export 后误传给主服务。不能用 `QATLAS_VERSION` 伪造 `qatlasd --version`，也不能用安装器 repo 覆盖主服务的 UI 下载来源；源码安装始终使用自身精确版本的官方 Release。
 
-详见 [Migration: 存储布局](../server/migration-storage-layout.md)。
+## Go 开发和集成测试
 
-## Server: HTTP 绑定
+Go 版本由根 `go.mod` 决定；`GOCACHE`、`GOMODCACHE`、`GOPATH` 可以按开发环境设置。不要关闭 `GOSUMDB` 或用修改 tag 绕过源码校验。正常发布使用 `CGO_ENABLED=0`，`-race` 则另需本机 C 编译器和 `CGO_ENABLED=1`，与已移除的 DuckDB 无关。
 
-| 变量 | Alias（⚠️ v0.17.0 移除） | 默认 |
+| 真资源 | 编译选择 | 仍需显式提供 |
 |---|---|---|
-| `QATLAS_HTTP_ADDR` | — | 用下面两个组装 |
-| `QATLAS_SERVER_HOST` | `SERVER_HOST` | `127.0.0.1` |
-| `QATLAS_SERVER_PORT` | `SERVER_PORT` | `4200` |
-| `QATLAS_FORCE_TCP4` | — | `0`（off）—— 仅 WSL2 + Windows portproxy 场景启用 |
+| PostgreSQL registry/corpus/usage/admin | `-tags integration` | `QATLAS_TEST_PG_DSN`，只指向可丢弃测试库 |
+| Fleet/worker/归档回调 PostgreSQL | `-tags integration` | `TEST_DOWNLOADFLEET_DATABASE_URL`，只指向可丢弃测试库 |
+| S3 测试桶 | `-tags integration` | `QATLAS_S3_TEST_ENDPOINT/BUCKET/ACCESS_KEY_ID/SECRET_ACCESS_KEY` |
+| MinerU 真上传/转换 | `-tags integration` | `MINERU_LIVE_TEST=1` 及测试 token；会消耗额度 |
+| OpenAlex/出版商真请求 | `-tags integration` | `QATLAS_TEST_LIVE=1` 等测试配置 |
+| 生产协议冒烟 | `-tags e2e` | `QATLAS_SERVER_TARGETS`；可选 `QATLAS_EXPECTED_VERSION` |
 
-`--http=` flag 优先级更高。
+普通测试中 `internal/testutil.IntegrationEnabled` 固定为 false；环境变量残留不能单独打开 internal/cmd 的真服务测试。加 tag 后仍需原有目标/开关。S3 真测试和生产冒烟还分别由自己的文件 build tag 隔离。
 
-## Server: PocketBase / OAuth
+开发时仍应清除真实目标和凭据、使用临时 HOME，避免误读配置或传播 token。只检查集成路径是否可编译，可以使用 `go test -tags=integration ./internal/... ./cmd/... -run '^$'`；完整说明见[贡献指南](../contributing.md)。不要把以上真实测试接入普通 PR 的必跑检查。
 
-| 变量 | 必填 | 作用 |
-|---|---|---|
-| `GITHUB_CLIENT_ID` | OAuth 启用时必填 | GitHub OAuth App client id |
-| `GITHUB_CLIENT_SECRET` | OAuth 启用时必填 | GitHub OAuth App secret |
-| `QATLAS_ADMIN_GITHUB_LOGINS` | 否 | 逗号分隔 GitHub username 白名单（未来 admin 自动提权用，当前 handler 未实现）|
+## Vite 与下载节点
 
-OAuth callback URL 必须填成 `https://<your-server>/api/oauth2-redirect`。
+Vite 使用 `VITE_DEV_API_TARGET`、`VITE_DEV_FAKE_AUTH`、`VITE_DEV_ALLOWED_HOSTS` 及可选测试 PAT；语义和风险见 [`web/README.md`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/web/README.md)。`VITE_` 是客户端可暴露前缀，不能把真实凭据放入构建环境；fake-auth 不授予 API 权限。仅连接本地或明确获准的测试实例。
 
-## Server: 论文访问开关 (self-hosted 可选)
+下载节点的完整环境契约见[worker 配置](../server/downloader-workers.md)。这些独立进程仍使用环境配置，不等于主服务恢复了 dotenv 模式。
 
-QuantumAtlas qatlasd **默认不**通过 API 对外 serve PDF / Markdown 字节。
-Self-hosted 部署在受控范围（私有团队、内部站点）可以启用对内下载——
-**quantum-atlas.ai 等公开实例保持默认（关闭）**。
+## Server：论文访问开关（self-hosted 可选） { #server-论文访问开关-self-hosted-可选 }
 
-| 变量 | 默认 | 含义 |
-|---|---|---|
-| `QATLAS_PAPER_ACCESS_ENABLED` | `false` | 启用后：(1) 注册 `GET /api/papers/{id}/markdown` + `markdown/status` 端点（受 `papers:read` 保护）；(2) server 读下面的 server-side MinerU 字段；(3) `/markdown` 缓存未命中时按需触发 MinerU 转换（server 把 PDF 通过 presign URL 提供给配置的 MinerU 后端）。`false`（默认）时上述端点未注册（404），server 不读 MinerU 字段 |
+当前使用 YAML 的 `paper_access.enabled`，默认 false。启用前确认版权、访问权限与外部服务预算；PDF 对外交付仍按当前 API 契约保持禁用，不因启用转换而自动恢复。见[版权与资源访问](../about/license-and-attribution.md)。
 
-启用前请阅 [License & Attribution · 论文访问开关](../about/license-and-attribution.md#论文访问开关-self-hosted)
-——arxiv 论文版权归原作者，对外二次分发由部署方自负责任。
-Contributor 流程（`qatlas contrib mineru` → `POST /api/papers/{id}/upload-mineru`）
-与本开关**无关**，开关 OFF 时也照常工作。
+### Server-side MinerU { #server-side-mineru }
 
-### Server-side MinerU（仅当 `QATLAS_PAPER_ACCESS_ENABLED=true` 时生效） { #server-side-mineru }
+配置位于 `paper_access.mineru`：`api_tokens` 是 YAML 列表，模型、语言、OCR、并发与超时也在该段。不是进程 `MINERU_*` 环境变量，更不是客户端的用户配置。具体字段见[服务端配置](../server/server-config.md#server-side-mineru)。
 
-启用论文访问开关后，server 在 `GET /api/papers/{id}/markdown` 缓存未命中时会
-用下面这组**服务端**配置（独立于 contributor 端 `qatlas contrib mineru` 的 YAML 配置）
-透明触发 MinerU 转换：
+## Client：qatlas 配置 { #client-qatlas-配置yaml-onlyv0170 }
 
-| 变量 | 默认 | 作用 |
-|---|---|---|
-| `MINERU_API_TOKENS` | — | **必填**（CSV：`tok-a,tok-b,...`；缺失或全空时 server-side conversion `Enabled() == false`，`/markdown` 缓存未命中时返回 503）|
-| `MINERU_API_BASE_URL` | `https://mineru.net` | 自部署 MinerU 实例时改 |
-| `MINERU_MODEL_VERSION` | `vlm` | `vlm` / `pipeline` |
-| `MINERU_LANGUAGE` | `ch` | 主语言 hint |
-| `MINERU_IS_OCR` | `false` | 强制 OCR |
-| `MINERU_ENABLE_FORMULA` | `true` | 公式识别 |
-| `MINERU_ENABLE_TABLE` | `true` | 表格识别 |
-| `MINERU_POLL_INTERVAL` | `3.0` | 单 task 轮询间隔（秒）|
-| `MINERU_TIMEOUT` | `1800` | 单篇总超时（秒，30 分钟）|
-| `MINERU_MAX_CONCURRENT_JOBS` | `4` | 并发处理上限（必须 ≥ 1；超出阈值的请求排队，由 converter 调度。建议根据所配 token 数和 MinerU 单 key 配额拍）|
+客户端由 [qatlas-cli](https://github.com/IAI-USTC-Quantum/qatlas-cli) 独立维护，通过 `qatlas config path/show` 查看实际配置。其 `server_url` 表示“我要连接谁”，与服务端 YAML 的 `public_url`（“我的公开入口”）不同；其认证与本地 MinerU 配置也不共享主服务配置文件。参见[CLI 配置参考](../client/cli-qatlas.md#qatlas-config)。
 
-开关 `false` 时**这组字段全部被忽略**——server 不实例化 MinerU client，
-也不会因为漏配而 fail-loud。
-
-### Silent fetch from arxiv.org（仅当 `QATLAS_PAPER_ACCESS_ENABLED=true` 时生效）
-
-启用论文访问开关后，server 在 `GET /api/papers/{id}/markdown` 缓存未命中时会
-**异步**从 arxiv.org 拉对应 PDF，写入对象存储后再触发 MinerU 转换。注意 PDF
-**分发**已停用——`GET /pdf` 恒返 410（设计性禁用），PDF 抓取仅作为 markdown
-转换管线的内部阶段存在。整个流程符合 Long-Running Operation 协议：
-
-1. 首次 GET 立即返回 `202 Accepted` + `Operation-Location` + `Retry-After`。
-2. Client poll `/markdown/status`（`/pdf/status` 保留为内部抓取管线的 debug
-   探针）拿到结构化进度（`state` / `phase` / `pdf_ready` / `md_ready` /
-   `fetch.bytes_received` / `convert.stage` ...），side-effect-free。
-3. `state == cached` 后重新 GET 拿字节（200）。
-
-多并发同 id 请求被 server 内部去重为单次 fetch / convert，所有调用方
-观察到同一份 Job snapshot。
-
-OpenAlex DOI 解析（path 头匹配 `^10\.\d{4,9}/` 时自动触发）和 arxiv fetch
-共用 `QATLAS_OPENALEX_MAILTO` 作为 polite-pool 联系邮箱；缺失时 DOI 端点
-返回 503，silent fetch 仍可运行但 User-Agent 不带 mailto（不推荐）。
-
-| 变量 | 默认 | 作用 |
-|---|---|---|
-| `QATLAS_OPENALEX_MAILTO` | — | OpenAlex polite-pool 联系邮箱；同时被 arxiv fetch User-Agent 共用。**缺失时 DOI 端点返回 503**（`detail: DOI resolution unavailable: QATLAS_OPENALEX_MAILTO is not configured`），日志中 emit WARN |
-| `QATLAS_ARXIV_FETCH_CONCURRENT` | `2` | 并行 arxiv fetch 上限（与 `MINERU_MAX_CONCURRENT_JOBS` 独立——fetch 是 I/O bound，MinerU 是 API+GPU bound，两条管线互不阻塞）|
-| `QATLAS_ARXIV_FETCH_RPS` | `0.33` | token-bucket 速率（req/s, 支持小数）。默认 ≈ 每 3 秒一次，配合 burst 2 严格满足 arxiv 「bulk_data#etiquette」要求。多 edge 共享同一公网 NAT 时应**调低**让聚合速率仍 ≤ 1/3s |
-
-## Server: PostgreSQL catalog
-
-论文 catalog（arxiv/DOI 元数据、PDF/Markdown 状态、MinerU lease 租约）使用
-PostgreSQL；登录态仍由 PocketBase 独立管理。
-
-| 变量 | 必填 | 默认 |
-|---|---|---|
-| `QATLAS_POSTGRES_DSN` | paper catalog 启用时必填 | — |
-| `QATLAS_POSTGRES_MAX_CONNS` | 否 | `10` |
-| `QATLAS_CORPUS_ENSURE_INDEXES` | 否 | `true` |
-
-## Server: Search providers
-
-| 变量 | 默认 | 作用 |
-|---|---|---|
-| `QATLAS_SEARCH_PROVIDERS` | `catalog,arxiv,openalex` | `POST /api/search` 的 provider fan-out 列表（CSV）。`catalog` = 本地 Postgres paper registry；`arxiv` / `openalex` = 上游在线查询。语义向量检索由独立的 qatlas-rag 微服务提供（config.yaml 的 `rag.remote` 段接入），不再是本服务的 provider |
-
-## Server: plugin platform
-
-QuantumAtlas plugins share one manifest and capability model. A plugin's type
-is two orthogonal axes (`kind` × `transport`):
-
-- `kind=builtin`: first-party plugins compiled into `qatlasd`, running
-  in-process as Go (for example Graph and RAG). They are controlled by the
-  plugin registry but do not open a WebSocket connection and carry no
-  `transport`.
-- `kind=external`: third-party plugins running as a separate process speaking
-  JSON-RPC to the host. Their `transport` is either `socket` (the plugin dials
-  into `QATLAS_RPC_WS_BIND` and authenticates with a connect secret) or `stdio`
-  (the host spawns the plugin from `spawn.command` and talks over its
-  stdin/stdout, the LSP model).
-
-| 变量 | 默认 | 作用 |
-|---|---|---|
-| `QATLAS_PLUGINS_DIR` | `${XDG_CONFIG_HOME:-$HOME/.config}/qatlasd/plugins` | 插件清单目录；扫描其一级子目录的 `plugin.json` |
-| `QATLAS_PLUGINS_ENABLED` | 空 | CSV 白名单；空表示所有插件都可启用；同时门控清单插件与内置 theorems |
-| `QATLAS_PLUGINS_DISABLED` | 空 | CSV 黑名单；与 enabled 同时命中时 disabled 胜；同样作用于内置插件 |
-| `QATLAS_PLUGIN_CONNECT_SECRET` | 空 | 外部 `transport=socket` 插件 initialize 握手 secret；空表示仅依赖 loopback 监听 |
-| `QATLAS_RPC_WS_BIND` | `127.0.0.1:8799` | 外部 JSON-RPC WebSocket 插件拨入的监听地址 |
-| `QATLAS_EVENT_RETENTION` | `7d` | 插件断连事件缓冲保留时间；支持 Go duration（如 `168h`）或 `Nd` |
-| `QATLAS_PLUGIN_RPC_TIMEOUT_MS` | `30000` | 单次 host↔plugin RPC 超时（毫秒）|
-| `QATLAS_PLUGIN_RECONNECT_MS` | `5000` | 外部插件重连退避基数（毫秒）|
-| `QATLAS_DEADLETTER_DIR` | `${XDG_STATE_HOME:-$HOME/.local/state}/qatlasd/dead` | 事件缓冲溢出死信目录 |
-
-未配 → paper catalog 端点降级：`/api/papers/stats` 和 needs-mineru 返回
-`available:false`；上传对象仍落 S3/LocalStore，并用 `X-Catalog-Sync: deferred`
-标记后续可通过 `qatlasd papers sync --full --from-rustfs` 从对象存储重建。
-
-推荐给 qatlasd 单独 database 和 role；DSN 示例：
-
-```env
-QATLAS_POSTGRES_DSN=postgres://qatlasd:<password>@postgres.internal:5432/qatlas?sslmode=disable
-QATLAS_POSTGRES_MAX_CONNS=10
-```
-
-`QATLAS_CORPUS_ENSURE_INDEXES`（默认 `true`，ADR 0013）门控 OpenAlex 语料 `openalex_works` 上
-**重索引**的启动建过程：boot 时先建 base 表（快，`CREATE TABLE IF NOT EXISTS` 对已存在的大表
-是 no-op），再在后台用 `CREATE INDEX CONCURRENTLY` 建重索引（`record` / citation-array /
-tsvector 三个 GIN + 若干 btree 热列）。当一台 edge 指向**已预置好索引**的大型共享 corpus
-（如 10⁸ 行 / 353 GB）时设为 `false`——只连不建索引，避免重复的并发建索引 I/O 抢占正在跑的
-bootstrap；base schema 无论开关如何都会在 boot 时保证。`qatlasd openalex bootstrap-pg` 批量灌完
-后也会自行建这些索引。
-
-## Server: S3 / RustFS（连接字段 + 三桶 all-or-nothing）
-
-连接字段（endpoint + 双 key）**加上三个 asset bucket 必须同时填或同时不填**——半填启动直接报错。v0.7.0 起对象存储按 asset kind 拆成三个独立 bucket（`objstore.Router` 路由），旧的单桶 `QATLAS_S3_BUCKET` 已**废弃**（残留会让 server fail-loud 提示迁移）。
-
-| 变量 | 必填 | 含义 |
-|---|---|---|
-| `QATLAS_S3_ENDPOINT` | ✅ | server↔RustFS 流量走的 endpoint，必含 scheme (`http://<rustfs-internal-host>:9000`)|
-| `QATLAS_S3_BUCKET_PDF` | ✅ | PDF 桶（如 `qatlas-pdf`），object key = `<yymm>/<arxiv_id>.pdf` |
-| `QATLAS_S3_BUCKET_MD` | ✅ | MinerU markdown 桶（如 `qatlas-md`）|
-| `QATLAS_S3_BUCKET_IMAGES` | ✅ | 抽出图片桶（如 `qatlas-images`）|
-| `QATLAS_S3_ACCESS_KEY_ID` | ✅ | svcacct access key（**不要用 root key**）|
-| `QATLAS_S3_SECRET_ACCESS_KEY` | ✅ | svcacct secret |
-| `QATLAS_S3_PUBLIC_ENDPOINT` | ❌（强烈建议）| client 端 presign URL 用的公网 host；留空 = 用 internal endpoint 签 |
-| `QATLAS_S3_BUCKET_OPENALEX_SNAPSHOT` | ❌ | OpenAlex snapshot 桶；仅 `openalex bootstrap` 用，不参与三桶 all-or-nothing |
-
-启动 log 出三行 `raw store: S3 backend .../<bucket>` 各一桶确认启用；dual endpoint 模式额外有 `(presign via ...)`。`/api/health` 的 `rawstore` check 报 `backend: s3-router` + `buckets: [...]`。
-
-> 注意：v0.7.0 删除了 RustFS notification webhook（`/api/_rustfs/event` + `QATLAS_RUSTFS_EVENT_TOKEN`）。应用对 bucket 独占写，registry 由上传写路径直接同步进 PostgreSQL，无需外部事件回灌。
-
-详见 [RustFS 部署](../server/rustfs.md)。
-
-## Server: 写入留痕（T10）
-
-| 变量 | 必填 | 默认 | 含义 |
-|---|---|---|---|
-| `QATLAS_EDGE_NAME` | ❌ | — | 这台 edge 的名字（如 `us-east` / `cn-shanghai`）；折进 S3 client UA `qatlasd/<ver>/<edge>`，让 RustFS notify 事件流里正规 server 写与直连 mc/boto3 一眼可分。**UA 可伪造，仅辅助标识，绝不用于鉴权** |
-
-这是 qatlasd 端**唯一**与写入留痕相关的 env。sink 本身**不在我们的 binary / `.env` 里**——由一个通用、零后端约定的日志转发器（Fluent Bit）作为 sidecar 跑在 NAS 上 RustFS 旁边，接 RustFS notify webhook（per-bucket subscribe，5 个资产桶 PUT/DELETE 推到 sink）、写进 `qatlas-s3-events` 桶。sink 用的 svcacct key（`qatlas-s3-events-writer`）、桶名、订阅列表全在 NAS 侧 Fluent Bit / RustFS compose 配置里，与 server 解耦——这样 dumb 存储层不被我们演进中的后端约定绑死。判定主键是 SigV4 `accessKey`（不可伪造）。整套部署见 [RustFS 部署 · 写入留痕](../server/rustfs.md#写入留痕-audit-sink-t10)。
-
-## Server: System PAT（运维兜底 bearer）
-
-可选的、与 PocketBase 完全无关的 bearer token，**直接从 env 加载、永不落 pb_data**。给"pb_data 不可用 / 还没人登录 / CI 不想绑具体人"等运维兜底场景。完整设计见 [鉴权模型 § System PAT](../concepts/auth-model.md#system-pat)。
-
-| 变量 | 必填 | 默认 | 含义 |
-|---|---|---|---|
-| `QATLAS_SYSTEM_PAT` | ❌ | unset（功能关闭） | 单个全局 bearer 的明文；HTTP 请求带 `Authorization: Bearer <这串>` 即过 authGuard。设了启动 log 会有 `system PAT enabled (length=N scopes=[...])` 一行（**不打明文**）|
-| `QATLAS_SYSTEM_PAT_SCOPES` | ❌ | `*`（master，等价 session）| CSV 限定该 token 能调什么；词表跟 user PAT 一致，额外允许 `*`。少数运维想 least-privilege 时用，例如 `papers:read,theorems:read`|
-
-启动时长度 < 16 字符**直接 fatal**——防止有人填了 `secret` / 空格 / 之类 placeholder 上 prod。生成办法：
-
-```bash
-openssl rand -base64 32         # 推荐
-python -c 'import secrets; print(secrets.token_urlsafe(32))'
-uuidgen
-```
-
-前缀格式随意，不强制 `qats_` 之类。能读 .env 的人 = superuser-equivalent，但 .env 早就有 S3 / PostgreSQL / GitHub 同等敏感的 secret，新增 system PAT 不扩大现有攻击面。
-
-## Server: 反代审计
-
-| 变量 | Alias（⚠️ v0.17.0 移除） | 默认 | 作用 |
-|---|---|---|---|
-| `QATLAS_USER_HEADER` | `USER_HEADER` | — | 反代注入的审计用户头名，如 `X-Token-Subject` |
-
-## 第三方 SDK 标准名
-
-### MinerU（contributor client — `qatlas contrib mineru` 子命令读）
-
-这组字段由独立 [qatlas-cli 仓库](https://github.com/IAI-USTC-Quantum/qatlas-cli)维护的 Python client 在
-contributor 本地跑 `qatlas contrib mineru` 时读取并转发给 MinerU API；走的是
-contributor 自己的 MinerU 配额。**v0.17.0+ 只能放 `~/.config/qatlas/config.yaml`**，
-不再支持 env / `MINERU_*` env var。
-
-> server-side（qatlasd）启用论文访问开关后**也**会读 MinerU 字段，但走
-> [独立的环境变量](#server-side-mineru)
-> 而**不**读 contributor 的 YAML。两条路径互不影响：contributor 用自己的
-> token 在自己机器上跑、把成品 upload 给 server；启用论文访问开关后 server
-> 用部署方配置的 token 代客户端跑。
-
-| YAML key | 默认 | 作用 |
-|---|---|---|
-| `mineru_api_tokens` | `[]` | **必填**（用户本地跑 `qatlas contrib mineru` 调 MinerU API 的 bearer JWT 池；CSV 字符串或 YAML 列表都接受）|
-| `mineru_api_base_url` | `https://mineru.net` | 自部署 MinerU 实例时改 |
-| `mineru_model_version` | `vlm` | `vlm` / `pipeline` |
-| `mineru_language` | `ch` | 主语言 hint |
-| `mineru_is_ocr` | `false` | 强制 OCR |
-| `mineru_enable_formula` | `true` | 公式识别 |
-| `mineru_enable_table` | `true` | 表格识别 |
-| `mineru_poll_interval` | `3.0` | 轮询间隔（秒）|
-| `mineru_timeout` | `1800` | 单篇总超时（秒，30 分钟）|
-
-> 用户本地 `qatlas contrib mineru` 流程把自己机器上的 PDF 上传给 MinerU
-> （contributor 拿自己的 MinerU 配额走完转换）。**默认部署的 qatlasd 不**
-> 对外 serve PDF 字节，也**不**以服务端身份代客户做 MinerU 转换——
-> contributor 流程是 server 获取 markdown 的唯一路径。
-> Self-hosted 部署若启用 `QATLAS_PAPER_ACCESS_ENABLED`，则 server
-> 会**额外**用自己配置的 `MINERU_API_TOKENS` 在 `GET /markdown` 缓存未命中时
-> 透明触发转换；公开实例（quantum-atlas.ai）保持默认（关闭）。
-> `QATLAS_S3_PUBLIC_ENDPOINT` 的用途是给已授权的内部工具签 presigned
-> URL，与公开 MinerU 服务无关。
-
-## Client (`qatlas`) 配置（YAML-only，v0.17.0+）
-
-client 现在**完全独立于 server**：
-
-- **只读** 平台原生 user-config 路径下的 `config.yaml`：
-  - **Linux**: `~/.config/qatlas/config.yaml`（honors `XDG_CONFIG_HOME`）
-  - **macOS**: `~/Library/Application Support/qatlas/config.yaml`
-  - **Windows**: `%APPDATA%\qatlas\config.yaml`
-  - 由 [`platformdirs`](https://platformdirs.readthedocs.io/) 解析；不确定具体路径 → `qatlas config path`
-- **首次跑任何 `qatlas <cmd>` 自动创建模板**——不用 `qatlas config init`
-- **不**支持 CLI flag（`--base-url` / `--token` / `--insecure` 全删）
-- **不**支持 OS env（`QATLAS_*` 等 env 对 client 不生效）
-- **不**支持 `$QATLAS_DOTENV` / `$QATLAS_CONFIG`
-
-完整优先级（高 → 低）：
-
-1. 平台原生 user-config 路径下的 `config.yaml`（auto-created on first run；用 `qatlas config set/unset` 改）
-2. 内置 Field default
-
-要换文件位置 → 用平台标准 env（Linux `XDG_CONFIG_HOME`、Windows `APPDATA`；macOS 没标准 env，symlink 就好）。
-
-具体子命令见 [`qatlas config` reference](../client/cli-qatlas.md#qatlas-config)。
-
-### YAML schema
-
-**Flat snake_case** — 字段名由独立 [qatlas-cli 仓库](https://github.com/IAI-USTC-Quantum/qatlas-cli)中的客户端配置模型定义，不再对应 QuantumAtlas 主仓的 Python 模块。
-首次跑 `qatlas` 子命令时这个 yaml 模板会自动写到磁盘。
-
-```yaml
-# config.yaml — auto-created on first qatlas invocation (path per platform; see above)
-
-# Server endpoint + auth
-server_url: https://atlas.example.com
-token: qat_...                          # sensitive, file is mode 0600
-insecure: false
-
-# MinerU (qatlas contrib mineru)
-mineru_api_tokens: [jwt-a, jwt-b]
-mineru_api_base_url: https://mineru.net
-mineru_model_version: vlm
-mineru_is_ocr: false
-mineru_enable_formula: true
-mineru_enable_table: true
-mineru_poll_interval: 3.0
-mineru_timeout: 1800
-mineru_language: ch
-```
-
-设计要点：
-
-- **扁平 schema**：所有字段在 yaml top level，不分 `server: / mineru: / extractor:` 嵌套——pydantic-settings 自带的 `YamlConfigSettingsSource` 直接 map 到 `ServerConfig` snake_case 字段，没有 hand-maintained 映射表。
-- **第三方 SDK 标准名保留**：`mineru_api_tokens`（沿用 MinerU SDK 命名）。
-- **`qatlas config set` 重写整个文件**：PyYAML round-trip 不保留注释，跟 `gh` / `kubectl config set` 一致。要永久注释直接编辑文件不用 `set`。
-- **schema 比 server `.env` 窄**：server-only 字段（`QATLAS_POSTGRES_DSN` / `QATLAS_S3_*` / `GITHUB_*`）**不能**用 `qatlas config set` 设，会被 typo guard 拒绝。这些字段在 `qatlasd serve` 的等价 flag 或 server 的 `.env` 里维护。
-
-## 弃用的变量（不要再用）
-
-| 旧名 | 状态 |
-|---|---|
-| `QATLAS_WRITE_TOKEN` | 已删——Phase-A 临时共享密钥，被 PocketBase auth 替代 |
-| `QATLAS_SESSION_SECRET` | 已删 |
-| `QATLAS_POCKETBASE_URL` | 已删——server 自带 PocketBase |
-| `QATLAS_REQUIRE_RELEASE_TAG` | 已删——旧 FastAPI 的 release-tag 启动护栏 |
-| `CLI_TOKEN_*` | 已删——更早的 token 字段族 |
-| `QATLAS_SERVER_DEBUG` | 从未被读过的幽灵字段；v0.16.0 从 `.env.example` 清理 |
-| 无 `QATLAS_` 前缀的 server alias（`RAW_DIR` / `DATA_DIR` / `PB_DATA_DIR` / `SERVER_HOST` / `SERVER_PORT` / `USER_HEADER`） | **v0.17.0 移除**——用对应 `QATLAS_*` 名 |
-| `QATLAS_WIKI_DIR` / `WIKI_DIR` | **已删**——wiki 子系统整体移除 |
-| `NEO4J_*` | **已删**——Neo4j 图谱子系统移除；论文关系查询走 PostgreSQL registry + `POST /api/search` |
-| `PUBLIC_BASE_URL`（服务端）| **v0.19.0 移除**——服务端的"对外 canonical URL"改用 `QATLAS_PUBLIC_URL` |
-| `QATLAS_SERVER_URL`（服务端）| **v0.19.0 重命名为 `QATLAS_PUBLIC_URL`**——服务端历史叫 `QATLAS_SERVER_URL` 但语义是"我对外公布的 canonical URL"，叫 `PUBLIC_URL` 更准确。Client 端从未读过 env，没有"client 的 QATLAS_SERVER_URL"这回事 |
-| client 侧的所有 `QATLAS_TOKEN` / `QATLAS_INSECURE` 等 env | **v0.17.0 client 完全不读 env**——搬到 `~/.config/qatlas/config.yaml` |
-| client 侧 `--base-url` / `--token` / `--insecure` CLI flag | **v0.17.0 移除**——搬到 config.yaml |
-| client 侧 `qatlas auth login -s / --host` | **v0.19.0 重命名为 `-s` / `--server-url`**——跟其它工具（gh 的 `--hostname`）对齐，避免短形 `-H` 冲突 |
-| client 侧 `qatlas config set token` / config.yaml `token:` 字段 | **v0.19.0 移除**——会静默盖住 hosts.yml 里所有 per-host token。改走 `echo "$T" \| qatlas auth login -s <host> --with-token`（写 hosts.yml） |
-| client 侧 `--base-url` / `--token` / `--insecure` CLI flag | **v0.17.0 移除**——搬到 config.yaml |
-| `$QATLAS_DOTENV` / `$QATLAS_CONFIG`（client 端） | **v0.17.0 移除**——client 不再有 dotenv / config 路径 override；用 `XDG_CONFIG_HOME=` 切位置 |
-| `qatlas config init` 子命令 | **v0.17.0 移除**——首次跑任何 `qatlas` 子命令自动创建 |
-
-设这些字段（已删类）**没有效果**也**不报错**——纯 noop。
+旧 `quantum-atlas 0.21.0` 仅是退役通知，不会安装新客户端，也不提供这些旧环境变量的兼容层。历史例子留在不可变 tag，不再作为 main 的可执行开发说明。

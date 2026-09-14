@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development. Server release versions come from `VERSION` and reviewed Git tags.
 
 ## Unreleased
 
@@ -14,6 +14,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Installer format change:** the installer now verifies the default tar.gz, rejects unsafe archives, checks the staged executable's exact version and atomically replaces it without changing config or services. For the first new-format release, obtain the installer from that same new tag; old running servers still embed the old-format script. Binary replacement does not roll back database migrations.
 
 ### Maintenance
+
+- Finish the Go-native development cleanup: remove the root Python/Pixi development manifests and lockfiles, unused Wiki content-batch tools, the unused mkdocstrings dependency, and the tracked downloaderproxy executable. Keep documentation/CI Python helpers and the permanent PyPI retirement notice; do not alter historical tags or published packages.
+- Exclude the exact `quantum-atlas-v0.21.0` tag from GoReleaser server version selection. Add tracked-source formatting and same-SHA strict MkDocs checks; keep Sphinx doctrees out of published documentation images.
+- Require the `integration` build tag AND explicit target/environment opt-ins for real database/API tests, including archive callbacks. Preserve offline cases, update the migration-version assertion from bundled migrations, and close PostgreSQL test pools after table cleanup.
+- Add a complete Go developer guide; remove current Pixi/dotenv/Python-package development instructions, document UI/CLI boundaries and test isolation, and synchronize the config-init template with the root YAML example.
 
 - Migrate deployment-template contracts and production smoke checks from pytest to Go `testing`. Ordinary `go test ./tests/...` runs only local fixtures; live probes require `-tags=e2e`, configured `QATLAS_SERVER_TARGETS`, and `-count=1`. Update probes to the current health/paper API, bound requests, refuse redirects/cross-origin assets, and keep credentials out of diagnostics. Optional `QATLAS_EXPECTED_VERSION` verifies the exact deployed version.
 - Include deployment and fixture tests in Go CI, switch nightly checks to Go, and remove the pytest workflow and unused Python test dependencies. Sphinx/MkDocs tooling and production deployment configuration remain unchanged.

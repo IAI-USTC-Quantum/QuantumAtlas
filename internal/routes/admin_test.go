@@ -12,7 +12,7 @@
 //     reach them
 //   - /api/admin/whoami: any session gets {login, is_admin}; non-admin
 //     gets is_admin:false rather than a 403
-//   - fetchDBSchema: live-PostgreSQL test gated on QATLAS_TEST_PG_DSN
+//   - fetchDBSchema: live-PostgreSQL test gated on -tags integration + QATLAS_TEST_PG_DSN
 //     (same skip convention as internal/registry integration tests)
 //
 // The harness mirrors patHarness (see pat_test.go): one mux built from
@@ -34,6 +34,7 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/pat"
 	qplugin "github.com/IAI-USTC-Quantum/QuantumAtlas/internal/plugin"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/search"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/testutil"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/usage"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -274,6 +275,9 @@ func TestAPI_Admin_RejectsPATAuthEvenForAdmin(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFetchDBSchema_LivePostgres(t *testing.T) {
+	if !testutil.IntegrationEnabled {
+		t.Skip("requires -tags integration and explicit live-service environment variables")
+	}
 	dsn := os.Getenv("QATLAS_TEST_PG_DSN")
 	if dsn == "" {
 		t.Skip("QATLAS_TEST_PG_DSN unset; skipping live-PostgreSQL integration test")
@@ -284,7 +288,8 @@ func TestFetchDBSchema_LivePostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	defer pool.Close()
+	// Cleanup callbacks are LIFO: drop probe tables before closing the pool.
+	t.Cleanup(pool.Close)
 
 	// A throwaway table exercising every reported feature: pk column,
 	// non-null default, secondary index, CHECK + UNIQUE constraints.

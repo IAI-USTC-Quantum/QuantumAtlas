@@ -81,41 +81,49 @@ Conventional Commits 是提交约定，不会自动触发发布。主仓只发�
 
 ### 环境
 
+完整的中文 [Go 原生开发入门](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/docsite/dev/development.rst)覆盖隔离测试、完整 UI 和本地联调。下面命令在仓库根目录的 Bash 中执行。
+
+- Go 工具链门槛**唯一取自 `go.mod` 的 `go` 指令**；CI 同样读取该文件，不另维护版本要求。普通 Go 构建和测试不需要 Node、Sphinx 或 UI 产物。
+- 前端与完整分发资源使用 `web/.node-version` 指定的 Node、npm 和 `web/package-lock.json`。
+- Python 仅用于独立文档工具及 CI 辅助脚本：Sphinx 用 `docsite/requirements.txt`，MkDocs 用 `docs/requirements.txt`，CI 文档环境为 Python 3.12。
+
 ```bash
-# clone
 git clone https://github.com/IAI-USTC-Quantum/QuantumAtlas.git
 cd QuantumAtlas
-
-# 普通源码构建/测试不需要 Node、Sphinx 或 web/dist
+go version
+go mod download
 CGO_ENABLED=0 go build -o build/qatlasd ./cmd/qatlasd
-# 本地 dev 版本要启动 UI，请先执行下方「完整 UI 构建」
-# 可选：剩余 Python 文档辅助脚本的格式化 / 类型检查工具
-uv sync --locked --group dev
+./build/qatlasd --version
+# 本地 dev 版本要 serve，先执行下方「完整 UI 构建」，不能直接省略 embedui
 ```
 
-根目录 `pyproject.toml` 是仅用于开发环境、不分发 Python 包的 uv 项目：`[dependency-groups].dev` 只保留 Python 辅助脚本的开发工具，不再依赖 pytest。文档构建依赖仍分别由 `docsite/requirements.txt`（Sphinx）和 `docs/requirements.txt`（MkDocs）管理。`uv sync` 不构建或安装主仓为 Python 包。主仓不含 `qatlas/` 客户端代码；需要服务端联调时单独安装 `qatlas-cli`，修改客户端代码、测试或发版请到 [qatlas-cli 仓库](https://github.com/IAI-USTC-Quantum/qatlas-cli)。
+主仓不再有根 `pyproject.toml`、`uv.lock`、`pixi.lock`，不执行 `uv sync` 或 `pip install .`，不引入 Makefile、Taskfile、Pixi 或新的构建框架。保留 Sphinx/MkDocs、文档 hooks 和 CI Python 标准库 helper 不代表仍有 Python 应用。主仓不含 `qatlas/` 客户端代码；客户端开发、测试与发版请到 [qatlas-cli 独立仓库](https://github.com/IAI-USTC-Quantum/qatlas-cli)。
 
 ### 完整 UI 构建 { #full-ui-build }
 
-Git **只保存源码**。`web/dist`、`web/public/doc`、`web/public/devdoc` 和根 `dist` 都是忽略的构建产物。普通 `go install ...@vX.Y.Z` 安装时不运行 npm；首次 `serve` 自动下载同一版本的 Release UI 并校验缓存。没有对应 Release 的 dev/伪版本不能自动选择其他版本。
+Git **只保存源码**。`web/dist`、`web/public/doc`、`web/public/devdoc`、根 `dist/` / `build/`、MkDocs `site/`、缓存和 ELF 可执行文件不提交 Git。Go 输出显式放在 `build/`，不要放到仓库根再强制 add。安装采用新格式且附件已公开的精确 tag：`go install github.com/IAI-USTC-Quantum/QuantumAtlas/cmd/qatlasd@vX.Y.Z`（替换为实际 tag）时不运行 npm；首次 `serve` 自动下载同一 Release 的 UI ZIP 与 SHA256 清单，校验 SHA256、包内版本与完整性，缓存到 `os.UserCacheDir()/qatlas/ui/v<version>`，后续仍校验缓存。没有对应 Release 的 dev/伪版本不会回退 latest，必须完成 Sphinx 两站、npm 构建，再使用 `-tags embedui`；不要假定旧 `v0.34.0` 已有新格式 UI。
 
 开发/发布资源使用 `web/.node-version` 的 Node 版本、`web/package-lock.json` 和 `docsite/requirements.txt`；不要顺手升级依赖。Sphinx 仍生成两套站点，MkDocs 是独立文档体系。
 
 ```bash
-# 先用你的 Node 版本管理器选择 web/.node-version 指定的版本
-export SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)
+# 一次性准备独立 Sphinx 环境；先选择 web/.node-version 指定的 Node
+python3 -m venv build/venv-sphinx
+build/venv-sphinx/bin/python -m pip install -r docsite/requirements.txt
+(cd web && npm ci)
+export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
 export TZ=UTC PYTHONHASHSEED=0
 # 清理的都是可再生输出；在仓库根执行
-rm -rf web/public/doc web/public/devdoc web/dist build/doctrees
-uv run --with-requirements docsite/requirements.txt -- sphinx-build \
+rm -rf web/public/doc web/public/devdoc web/dist build/doctrees web/node_modules/.tmp
+build/venv-sphinx/bin/sphinx-build \
   -b html -d build/doctrees/public docsite web/public/doc
-uv run --with-requirements docsite/requirements.txt -- sphinx-build \
+build/venv-sphinx/bin/sphinx-build \
   -b html -d build/doctrees/dev -t devdocs -D root_doc=dev/index \
   -D html_title="QuantumAtlas 开发文档" docsite web/public/devdoc
-(cd web && npm ci && npm run build)
+# 打包环境及会加载的 .env 文件不得携带 VITE_DEV_API_PAT 等 token
+(cd web && npm run build)
 CGO_ENABLED=0 go build -tags embedui -o build/qatlasd ./cmd/qatlasd
-# 在相同树上打包；与程序内嵌的资源内容完全一致
-SERVER_VERSION=$(tr -d '[:space:]' < VERSION)
+# 在相同树上打包；GoReleaser tar.gz 内嵌 UI 与独立 ZIP 资源内容一致
+SERVER_VERSION="$(tr -d '[:space:]' < VERSION)"
 go run ./internal/cmd/uibundle -version "$SERVER_VERSION" -output build/ui
 ```
 
@@ -123,21 +131,36 @@ go run ./internal/cmd/uibundle -version "$SERVER_VERSION" -output build/ui
 
 ### 跑测试
 
-服务端、部署结构与安装器测试使用 Go：`tests/compose_test.go` 检查部署结构，`tests/e2e/` 包含本地 `httptest` 冒烟 fixture；真实生产检查位于带 `e2e` build tag 的 `production_smoke_test.go`。普通测试不会读取部署 `.env` 或访问线上服务。一次性旧包检查只保留在最终历史 tag，不再加入日常 CI。
+服务端、部署结构与安装器测试使用 Go：`tests/compose_test.go` 检查部署结构，`tests/e2e/` 包含本地 `httptest` 冒烟 fixture。PG/Fleet/MinerU/OpenAlex 真目标测试通过 `testutil.IntegrationEnabled` 编译期开关门控，需 `-tags integration` **及**原有显式环境目标/flag；混合文件中的离线测试仍默认运行。S3 文件已有 `integration` tag。真实生产检查位于独立 `e2e` tag 的 `production_smoke_test.go`，不能与普通 fixture 混为一谈。
+
+即使默认测试已有门禁，仍要清除 `QATLAS_TEST_PG_DSN`、`TEST_DOWNLOADFLEET_DATABASE_URL`、`MINERU_LIVE_TEST`、`MINERU_API_TOKEN`、`QATLAS_TEST_LIVE`、`QATLAS_S3_TEST_*`、`QATLAS_SERVER_TARGETS` 及其引用的凭据；不加载部署 `.env`，不借用默认业务配置。以下 `env -i` 白名单只保留 PATH 与 Go 缓存，临时 HOME/XDG 隔离默认配置和数据。工具链/模块下载仍可能联网，但这些测试只使用离线数据或本地 HTTP fixture，不访问真实业务目标。
 
 ```bash
-# 部署结构 + 本地 HTTP fixture（离线，不启动 Docker/业务服务）
-go test ./tests/...
-
-# 完整 Go 测试与静态检查（不需要先构建 UI）
-CGO_ENABLED=0 go test ./internal/... ./cmd/... ./web ./tests/...
-CGO_ENABLED=0 go vet ./internal/... ./cmd/... ./web ./tests/...
-# 完整 UI 构建之后，再测内嵌资源与下载包字节一致
-CGO_ENABLED=0 go test -tags embedui ./web
-
-# 只编译 e2e 路径并运行本地 fixture，仍不访问生产
-go test -tags=e2e ./tests/e2e -run '^TestSmokeFixture' -count=1
+(
+  set -euo pipefail
+  TEST_HOME="$(mktemp -d)"
+  trap 'rm -rf "$TEST_HOME"' EXIT
+  env -i PATH="$PATH" HOME="$TEST_HOME" \
+    XDG_CONFIG_HOME="$TEST_HOME/.config" \
+    XDG_DATA_HOME="$TEST_HOME/.local/share" \
+    XDG_STATE_HOME="$TEST_HOME/.local/state" \
+    XDG_CACHE_HOME="$TEST_HOME/.cache" \
+    GOPATH="$(go env GOPATH)" GOCACHE="$(go env GOCACHE)" \
+    GOMODCACHE="$(go env GOMODCACHE)" CGO_ENABLED=0 \
+    bash -eu -c '
+      go test ./internal/... ./cmd/... ./web ./tests/...
+      go vet ./internal/... ./cmd/... ./web ./tests/...
+      # 只检查 integration 编译，不运行真目标测试
+      go test -tags=integration ./internal/... ./cmd/... ./web ./tests/... -run "^$"
+      # e2e 只选本地 fixture；不可去掉 -run 后作为默认检查
+      go test -tags=e2e ./tests/e2e -run "^TestSmokeFixture" -count=1
+      # 已完成完整 UI 构建时，在这个隔离块内额外运行：
+      # go test -tags embedui ./web ./cmd/qatlasd/...
+    '
+)
 ```
+
+真实集成测试可能迁移、写入或清理数据库、修改 bucket、消耗外部服务额度；只在明确授权的可丢弃测试资源上单独开启，不以残留环境变量代替授权。
 
 生产冒烟只能由操作者显式启用，nightly workflow 沿用仓库 secret `QATLAS_SERVER_TARGETS`：逗号/换行分隔的 `URL[|insecure][|token=...][|token-env=NAME]`。不要把真实目标和 token 提交到 Git。授权健康详情需要 system PAT 或 session JWT，普通用户 PAT 不授予该层；未提供 token 时会明确跳过授权详情子项。可选 `QATLAS_EXPECTED_VERSION`（nightly 中为 repository variable）用于精确核对部署版本；未设置时只检查非空、非 dev，不代表已核对最新发布版。
 
@@ -149,7 +172,25 @@ go test -tags=e2e ./tests/e2e -count=1 -timeout=10m
 
 当前主仓不再依赖旧 DuckDB/cgo 路径，正式发布使用 `CGO_ENABLED=0`。无需为运行上述测试修改全局 `go env`；Sphinx/MkDocs 仍只是文档构建工具。
 
-`.github/scripts` 的少量 CI 专用 Python 归档/发布门禁脚本另用标准库 fixture 检查：`python3 -m unittest discover -s .github/scripts -p 'test_*.py'`。它们不需要 pytest，也不是服务端 Python 包或新的构建框架。
+`.github/scripts` 的少量 CI 专用 Python 归档/发布门禁脚本只用标准库 fixture；它们不需要 pytest 或 Sphinx/MkDocs requirements，也不是服务端 Python 包或新的构建框架。一次性旧包检查仅保留在历史 tag。
+
+### 格式化与 OpenAPI
+
+```bash
+# 无输出表示格式符合要求；修复时改为 -w，并审核 diff
+# 新建未跟踪文件请另外 gofmt -w path/to/new.go
+git ls-files -z -- '*.go' | xargs -0 gofmt -l
+
+# 直接使用 go.mod 登记的工具，无需额外任务封装或全局安装 swag
+go tool swag init -g main.go -d ./cmd/qatlasd,./internal/routes \
+  -o internal/apidocs --parseInternal --parseDepth 1
+git diff -- internal/apidocs
+git diff --exit-code -- internal/apidocs
+python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
+git diff --check
+```
+
+有意修改 API 时同步提交 `internal/apidocs` 的生成源码/spec；CI 检查生成后无漂移。`web/src/routeTree.gen.ts` 也按约定跟踪并由前端构建生成，这两类生成源码不属于禁止提交的分发目录。
 
 ### 仓库结构
 
@@ -170,7 +211,7 @@ docs/                  这份文档
 4. 跑相关测试 + 现有测试别 break
 5. push 你 fork：`git push -u origin feat/some-thing`
 6. 在 GitHub 网页发 PR 到 `IAI-USTC-Quantum/QuantumAtlas:main`
-7. CI 跑（Go 单元/部署/离线 fixture 测试 + 前端 build）
+7. CI 跑（gofmt、Go test/vet、integration 仅编译、OpenAPI、CI 标准库 fixture、MkDocs、Sphinx 两站与前端双干净构建）
 8. review + 修改
 9. squash merge
 
@@ -179,7 +220,7 @@ docs/                  这份文档
 - **client 新命令** → 到 [qatlas-cli 仓库](https://github.com/IAI-USTC-Quantum/qatlas-cli)开发；本仓只保留服务端 API / 集成文档
 - **server 新 endpoint** → 在 `internal/routes/` 加 handler，并在 `cmd/qatlasd/main.go::registerRoutes` 中注册
 - **加 PAT scope** → 改 `internal/pat/scopes.go`（必须重新部署，**不可热加载**）
-- **新 PocketBase migration** → 放 `pb_migrations/`，下次启动自动跑
+- **数据库变更** → PostgreSQL goose migration 放 `internal/registry/migrations/`；PocketBase 集合变更参考对应领域包的 `migrations.go` 与 bootstrap hooks，勿误建不存在的统一 `pb_migrations/` 流程
 - **前端新页面** → 在 `web/src/routes/` 加 file，TanStack Router 自动生成路由
 - **文档** → 改 `docs/`（详见下面）
 
@@ -190,10 +231,13 @@ docs/                  这份文档
 ### 本地预览（推荐）
 
 ```bash
-uv run --with-requirements docs/requirements.txt -- mkdocs serve
+python3 -m venv build/venv-mkdocs
+build/venv-mkdocs/bin/python -m pip install -r docs/requirements.txt
+build/venv-mkdocs/bin/mkdocs build --strict --site-dir build/mkdocs
+build/venv-mkdocs/bin/mkdocs serve --dev-addr 127.0.0.1:8000
 ```
 
-打开 <http://127.0.0.1:8000>。改 `.md` 立刻 hot reload。
+打开 <http://127.0.0.1:8000>。改 `.md` 立刻 hot reload。MkDocs 与 Sphinx 双站是独立体系，不能只构建其中一套冒充全部文档验收。保留 `hooks/openapi_spec.py` 等 hook；不再需要旧 Python 包或 `mkdocstrings` Python API 自动文档插件。
 
 ### 文档结构
 
@@ -290,6 +334,8 @@ git push origin "refs/tags/v${SERVER_VERSION}"
 
 [`release.yml`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.github/workflows/release.yml) 校验 SemVer tag 与 `VERSION` 一致，并调用同一 SHA 的 Go CI。固定 GoReleaser **v2.18.1**，默认命名的三个平台归档（`linux/{amd64,arm64}` + `darwin/arm64`）、`qatlasd_<version>_web.zip` 与默认 `*_checksums.txt` 进入 draft；checksum 和 attestation 覆盖归档/UI 包。原生 runner 只下载、校验、解包并运行 `--version`，不重新编译。Docker 继续单独发布并验证 `linux/amd64` 镜像，复用同一 UI 包。全部通过才公开 Release，仅稳定版更新 Latest 和镜像 latest；已公开同 tag 拒绝重新上传。**不构建或发布旧 Python 包，也不发布独立 `qatlas-cli`。**
 
+GoReleaser 的 `.goreleaser.yaml` 使用 `git.ignore_tags` **精确匹配**忽略 `quantum-atlas-v0.21.0`，不是 OSS glob；不移动或删除历史 tag。继续使用默认 archive/checksum names、flags 和 ldflags，tar.gz 中内嵌的 UI 与独立 ZIP 来自同一份验证过的资源树。
+
 本地验证（先完成上面的完整 UI 构建和打包）：
 
 ```bash
@@ -307,7 +353,7 @@ Snapshot 版本由 GoReleaser 生成，不等于 `VERSION`；真实 tag 与 runt
 
 [`quantum-atlas 0.21.0` 最终迁移版](https://github.com/IAI-USTC-Quantum/QuantumAtlas/releases/tag/quantum-atlas-v0.21.0) 已发布到 PyPI 和 GitHub。它只含退役说明和发行元数据，不含 Python 模块、parser 库、命令入口或运行时依赖，也不会自动安装 `qatlas-cli`。用户仍可按[迁移指南](getting-started.md#migrate-quantum-atlas)手动切换，保留已有配置。
 
-固定历史 tag [`quantum-atlas-v0.21.0`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/tree/quantum-atlas-v0.21.0) 保留发布时的包元数据、一次性检查器、测试及 workflow，供追溯和审计；不要移动或覆盖该 tag。main 已移除这些一次性工具与旧包发布入口，根目录 `pyproject.toml` 只管理不分发的开发环境，不维护旧包版本或构建后端。**没有后续旧包发版流程，也不会再发布新的 `quantum-atlas` 版本。**
+固定历史 tag [`quantum-atlas-v0.21.0`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/tree/quantum-atlas-v0.21.0) 保留发布时的包元数据、一次性检查器、测试及 workflow，供追溯和审计；不要移动、删除或覆盖该 tag。main 保留 `PYPI_README.md` 退役说明入口，但移除一次性工具、旧包发布入口和根 Python 项目/uv/Pixi 锁文件，不再维护旧包版本或构建后端。**没有后续旧包发版流程，也不会再发布新的 `quantum-atlas` 版本。**
 
 旧包最终发布未改变服务端 `VERSION` 或 GitHub Latest（分别为 `0.34.0`、`v0.34.0`）；服务端继续按上面的常规流程发布，CLI 后续开发和发版只在 `qatlas-cli` 仓库进行。
 

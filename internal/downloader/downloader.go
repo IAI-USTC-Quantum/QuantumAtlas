@@ -230,19 +230,19 @@ func New(reg registryWriter, store objstore.Store, fetcher *arxiv.Fetcher, oa DO
 	}
 	runCtx, runCancel := context.WithCancel(context.Background())
 	d := &Downloader{
-		runCtx: runCtx,
-		runCancel: runCancel,
+		runCtx:       runCtx,
+		runCancel:    runCancel,
 		shutdownDone: make(chan struct{}),
-		cfg:      cfg,
-		log:      slog.Default(),
-		fetch:    fetchClient,
-		arxiv:    fetcher,
-		oa:       oa,
-		reg:      reg,
-		store:    store,
-		jobs:     make(chan job, 128),
-		done:     make(chan struct{}),
-		progress: make(map[string]*Progress),
+		cfg:          cfg,
+		log:          slog.Default(),
+		fetch:        fetchClient,
+		arxiv:        fetcher,
+		oa:           oa,
+		reg:          reg,
+		store:        store,
+		jobs:         make(chan job, 128),
+		done:         make(chan struct{}),
+		progress:     make(map[string]*Progress),
 	}
 	d.epmc = NewEuropePMC("", cfg.Fetch.RequestTimeout)
 	d.unpaywall = NewUnpaywall("", cfg.UnpaywallEmail, cfg.Fetch.RequestTimeout)
@@ -369,7 +369,9 @@ func (d *Downloader) FetchPDF(ctx context.Context, ref registry.PaperRef) (*Fetc
 		if d.cfg.Remote != nil && d.cfg.Remote.Enabled() && d.tryRemote(ctx, ref, out) {
 			return out, nil
 		}
-		if out.Pending { return out, ErrRemotePending }
+		if out.Pending {
+			return out, ErrRemotePending
+		}
 		return out, fmt.Errorf("%w (arxiv fetch failed and no DOI)", ErrNoPDF)
 	}
 
@@ -453,7 +455,9 @@ func (d *Downloader) FetchPDF(ctx context.Context, ref registry.PaperRef) (*Fetc
 		}
 	}
 
-	if out.Pending { return out, ErrRemotePending }
+	if out.Pending {
+		return out, ErrRemotePending
+	}
 
 	// Browser lane: replay the publisher PDF/landing URLs through a
 	// real Chromium when the plain-HTTP attempts hit bot walls — the
@@ -495,7 +499,9 @@ func (d *Downloader) FetchPDF(ctx context.Context, ref registry.PaperRef) (*Fetc
 		}
 	}
 
-	if out.Pending { return out, ErrRemotePending }
+	if out.Pending {
+		return out, ErrRemotePending
+	}
 	return out, fmt.Errorf("%w (%d attempts, doi=%s)", ErrNoPDF, len(out.Trace), doi)
 }
 

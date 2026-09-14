@@ -91,6 +91,13 @@
 #   data_dir: ""
 #   pb_data_dir: ""
 
+# ─── Docs override directory (not a config key) ────────────────────────
+# ~/.qatlas/docs is NOT configured here — it is a fixed location. When it
+# holds nonempty doc/ and/or devdoc/ subdirectories at startup, qatlasd
+# selects those instead of the versioned UI bundle (embedded or cached).
+# Updates within the selected disk tree need no restart; changing the
+# selected source does. Leave absent to use the bundled baseline.
+
 # ─── System PAT (operator breakglass; optional) ────────────────────────
 # Single bearer token, never lands in pb_data. Send as
 # `Authorization: Bearer <token>`. Must be ≥16 chars or boot fails.
@@ -105,6 +112,14 @@
 # microservice (requires search.remote below to be enabled). Semantic
 # retrieval is served by qatlas-search (backed by qatlas-rag), never by
 # qatlasd itself.
+#
+# search.remote also powers POST /api/search/multi (per-backend raw
+# results) and GET /api/search/backends (the SPA's backend picker).
+# Users' own third-party keys for key-requiring backends (IEEE, Scopus,
+# Tavily, ...) are stored encrypted in the search_api_keys PocketBase
+# collection — the AES key is derived from the system_pat token above,
+# so no extra config key is needed. Rotating the system PAT invalidates
+# stored user keys (users re-enter them).
 # search:
 #   providers: [catalog, arxiv, openalex]
 #   remote:
@@ -115,6 +130,18 @@
 #   agentic:
 #     daily_limit: 10000   # default per-user daily limit (users with no plan row)
 #     price_per_mtok: 0.0  # USD / 1M LLM tokens; admin cost display only
+#     backend: remote      # remote = qatlas-search microservice (above);
+#                          # local = in-process claude CLI (headless `claude -p`)
+#     local:               # only used when backend: local
+#       claude_bin: claude   # PATH lookup; must be OAuth-logged-in on this host
+#       model: ""            # empty = claude's default model
+#       sandbox_dir: ""      # empty = <paths.data_dir>/agentic; per-request
+#                            # sandboxes land here and are reaped after `retention`
+#       timeout: 5m          # per claude call
+#       retention: 24h       # sandbox audit retention (janitor sweep)
+#       max_budget_usd: 0    # 0 = no --max-budget-usd flag
+#       prompt_template: ""  # empty = embedded template; placeholders:
+#                            # {{.Query}} {{.MaxResults}} {{.ResultsFile}}
 
 # ─── RAG index push (qatlas-rag microservice; optional) ────────────────
 # Semantic retrieval moved out of qatlasd into the standalone qatlas-rag
@@ -127,6 +154,19 @@
 #     url: ""            # e.g. http://qatlas-rag:8700
 #     token: ""          # must equal the microservice's service_token
 #     timeout: 30s
+
+# ─── Paper identity matching (qatlas-match microservice; optional) ─────
+# High-precision matching ("is this work already in qatlas, and what is
+# its unified qa_… id?") lives in the standalone qatlas-match
+# microservice. When enabled, POST /api/papers/match proxies to it
+# (user auth stays on the qatlasd route). Disabled: the route answers
+# 503. The microservice reads the SAME PostgreSQL registry read-only.
+# match:
+#   remote:
+#     enabled: false
+#     url: ""            # e.g. http://qatlas-match:8601
+#     token: ""          # must equal the microservice's match.service_token
+#     timeout: 15s
 
 # ─── Paper access + server-side MinerU (self-hosted opt-in) ────────────
 # Default off: qatlasd does not serve PDF / markdown bytes. Flipping on
@@ -148,6 +188,69 @@
 #     poll_interval: 3s
 #     timeout: 30m
 #     max_concurrent_jobs: 4
+
+# ─── Robust downloader (multi-paradigm PDF acquisition) ────────────────
+# The "Robust Downloader" (POST /api/downloader/* + the SPA page):
+# given a DOI / arXiv id / paper URL it runs a strategy ladder —
+# arXiv direct → OpenAlex arXiv-twin → OA metadata APIs (Europe PMC,
+# Unpaywall, OpenAlex, Semantic Scholar) → publisher URL patterns →
+# landing-page citation_pdf_url mining (incl. green-OA repository
+# pages and the IEEE stamp flow) → optional LLM agent fallback —
+# validating every candidate (%PDF- magic, %%EOF, size bounds,
+# bot-challenge/paywall classification) before storing + triggering
+# MinerU. Only active when paper_access.enabled: true; registered as
+# the builtin "downloader" plugin.
+# downloader:
+#   enabled: true
+#   concurrency: 2                  # parallel download jobs
+#   unpaywall_email: ""             # falls back to paper_access.openalex_mailto
+#   s2_api_key: ""                  # optional Semantic Scholar key (free,
+#                                    # 1 rps) — stabilizes the highest-recall
+#                                    # OA resolver against shared-pool 429s
+#   respect_robots: false           # on-demand entitled fetches are not
+#                                    # crawling; several publishers
+#                                    # blanket-disallow "*" as an anti-AI
+#                                    # measure, which would break legit
+#                                    # downloads. Enable for strict parity.
+#   browser:                        # CDP-driven real-Chromium lane for
+#                                    # bot walls (Cloudflare/IEEE WAF),
+#                                    # via an already-running Chromium's
+#                                    # DevTools endpoint.
+#     cdp_url: ""
+#     timeout: 45s
+#   proxy:                          # delegate to a standalone
+#                                    # downloaderproxy (cmd/downloaderproxy,
+#                                    # Dockerfile.downloaderproxy) deployed
+#                                    # on a machine with direct publisher
+#                                    # entitlement, e.g. a campus-egress
+#                                    # workstation. Preferred over the
+#                                    # local browser lane when set.
+#     url: http://ag-workstation:8602
+#     token: ""
+#     timeout: 5m
+#   remote:                         # outbound worker fleet; cannot combine with proxy.url
+#     enabled: false                # requires paper_access, downloader and PostgreSQL
+#     max_in_flight: 6              # fleet execution capacity, separate from local slots
+#     max_worker_in_flight: 2       # server-enforced per-worker ceiling
+#     max_worker_attempts: 3        # different workers per paper, no parallel duplicate fetch
+#     task_timeout: 15m
+#     worker_timeout: 6m
+#     lease_duration: 60s
+#     spool_dir: ""                 # defaults to <pb_data>/downloader-spool; persist this directory
+#     spool_max_bytes: 2147483648   # 2 GiB staged-upload quota
+#                                    # Nodes enroll outbound and require admin approval at
+#                                    # /en/admin/downloader-workers (or /zh/...).
+#                                    # See docs/server/downloader-workers.md.
+#   agent:                          # LLM fallback link extractor
+#     backend: ""                   # "" = off | "openai" | "claude"
+#     base_url: ""                  # openai: e.g. https://llm.example.com/v1
+#     api_key: ""
+#     model: ""
+#     max_tokens: 1024
+#     claude_bin: claude            # claude: must be OAuth-logged-in here
+#     claude_model: ""              # empty = claude default
+#     timeout: 120s
+#     max_budget_usd: 0             # claude only; 0 = no budget flag
 
 # ─── Edge label (multi-edge audit only) ────────────────────────────────
 # Folded into the S3 client User-Agent. Cosmetic; never for auth.

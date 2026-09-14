@@ -13,9 +13,9 @@
     打开你部署的 `https://<your-server>/swagger/` 即可。
 
 !!! info "spec 怎么保持同步"
-    单一数据源是 `internal/apidocs/swagger.json`（`pixi run swagger` 生成、编译进
-    二进制）。文档构建时由 `hooks/openapi_spec.py` 拷进本页渲染，不另存提交副本；
-    CI（`pixi run swagger-check`）对注解与 spec 做 generate-and-diff 防漂移。
+    单一数据源是 `internal/apidocs/swagger.json`（通过根 `go.mod` 声明的
+    `go tool swag init` 生成，编译进二进制）。文档构建时由 `hooks/openapi_spec.py`
+    拷进本页渲染，不另存提交副本；Go CI 对注解与 spec 做 generate-and-diff 防漂移。
     详见 [REST API 总览 › 交互式 API 文档](rest-api.md#swagger-ui)。
 
 <swagger-ui src="openapi.json"/>

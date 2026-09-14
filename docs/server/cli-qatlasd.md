@@ -1,390 +1,136 @@
 # `qatlasd` 服务端 CLI 参考
 
-`qatlasd` 是 Go binary，单文件 ~30 MB，自带 SPA + PocketBase + SQLite。继承 PocketBase 全部命令 + QuantumAtlas 自有的 `service` / `pat` / `storage` / `downloader` 子命令树。
+`qatlasd` 是本仓的 Go 服务端；独立 Python 客户端 `qatlas` 来自 `qatlas-cli`，两者命令与配置文件不同。预编译发行程序内嵌完整 UI，源码安装按版本自动补齐 UI，详见[安装说明](install.md)。
 
-```
+```text
 qatlasd [global flags] <subcommand> [args...]
 ```
 
-## 全局 flag（PocketBase 内置）
+当前主命令为 `config`、`serve`、`service`、`pat`、`storage`、`papers`、`openalex`、`users`、`downloader`、`superuser`。以安装版本的 `--help` 为准，不假定 PocketBase 的所有可选命令都已注册。
 
-| Flag | 默认 | 含义 |
-|---|---|---|
-| `--dir <path>` | `<binary_dir>/pb_data` | PocketBase data 目录（自动从 `QATLAS_PB_DATA_DIR` 注入）|
-| `--debug` | false | 详细日志 |
-| `--encryptionEnv <var>` | — | DB 加密 key 来源 env var |
-| `--queryTimeout <sec>` | 30 | SQL 查询超时 |
-| `--version` | — | 打印版本 |
+## 全局参数与配置
 
-!!! tip "`--dir` 自动注入"
-    server 启动时会按 `QATLAS_PB_DATA_DIR` 自动把 `--dir=<path>` 插到 cobra 命令行第一个位置——所以你**不需要**也**不应该**在 systemd unit 的 ExecStart 里硬写 `--dir=`。直接在 `.env` 改 `QATLAS_PB_DATA_DIR=` 就好。
+| 参数 | 用途 |
+|---|---|
+| `--config <path>` | YAML 文件；默认 `~/.qatlas/config.yaml` |
+| `--dir <path>` | 显式覆盖 PocketBase 数据目录；未给时由 YAML `paths.pb_data_dir` 注入 |
+| `--dev` | PocketBase 开发日志/SQL 输出；不要在生产启用 |
+| `--encryptionEnv <name>` | PocketBase 设置加密 key 所在的环境变量名，属于上游明确保留的接口 |
+| `--queryTimeout <seconds>` | PocketBase SELECT 查询超时，默认 30 秒 |
+| `--version` / `version` | 打印服务版本；独立于配置、数据库与 UI 下载 |
+| `--help` / `-h` | 命令帮助 |
 
----
+业务配置不再提供逐字段的 env 或 CLI 覆盖。`--postgres-dsn`、`--system-pat`、`--raw-dir`、`--dotenv-path` 等旧参数已移除；请使用[当前 YAML 配置](server-config.md)。凭据不要放入命令行参数或 shell 历史。
+
+## `config`：初始化和检查 YAML { #config }
+
+```bash
+qatlasd config init
+qatlasd config init --config /path/to/config.yaml
+qatlasd config path --config /path/to/config.yaml
+qatlasd config show --config /path/to/config.yaml
+```
+
+`init` 默认拒绝覆盖；只有明确要替换且已备份时才使用 `--force`。新文件为 `0600`。`show` 默认脱敏，非默认服务用户还需核对文件读权限。默认模板和仓库根 `config.example.yaml` 保持同步，但启动逻辑始终以 Go 配置结构与校验为准。
 
 ## `serve`：启动 HTTP server { #serve }
 
-```
-qatlasd serve [domain(s)] [flags]
-```
-
-### 全局 / 继承 flag（PocketBase 内置）
-
-| Flag | 默认 | 含义 |
-|---|---|---|
-| `--http <host:port>` | `127.0.0.1:8090` 或域名 → `0.0.0.0:80` | HTTP bind |
-| `--https <host:port>` | 域名时 `0.0.0.0:443`，否则空 | HTTPS bind + 自动 LE |
-| `--origins <list>` | `[*]` | CORS 允许的 origin |
-| `--dir <path>` | `<binary_dir>/pb_data` | PocketBase data 目录（**会被 `QATLAS_PB_DATA_DIR` 自动覆盖**） |
-| `--encryptionEnv <var>` | — | DB 加密 key 来源 env var |
-| `--queryTimeout <sec>` | 30 | SQL 查询超时 |
-| `--dev` | false | dev 模式（**不要在生产用**） |
-
-### qatlasd 自有 flag（easytier 风格）
-
-每个 flag 旁标 `[env: QATLAS_FOO=]`，等价 env var 名 = `qatlasd serve --help` 看到的标注：
-
-| Flag | 等价 env | 默认 |
-|---|---|---|
-| `--public-url <url>` | `QATLAS_PUBLIC_URL` | — |
-| `--user-header <name>` | `QATLAS_USER_HEADER` | — |
-| `--edge-name <name>` | `QATLAS_EDGE_NAME` | — |
-| `--force-tcp4` | `QATLAS_FORCE_TCP4` | false |
-| `--raw-dir <path>` | `QATLAS_RAW_DIR` | `${XDG_DATA_HOME}/qatlasd/raw` |
-| `--data-dir <path>` | `QATLAS_DATA_DIR` | `${XDG_DATA_HOME}/qatlasd/data` |
-| `--pb-data-dir <path>` | `QATLAS_PB_DATA_DIR` | `${XDG_DATA_HOME}/qatlasd/pb_data` |
-| `--system-pat <token>` | `QATLAS_SYSTEM_PAT` | — |
-| `--system-pat-scopes <csv>` | `QATLAS_SYSTEM_PAT_SCOPES` | `*`（全 scope） |
-| `--postgres-dsn <dsn>` | `QATLAS_POSTGRES_DSN` | —（空 = registry 功能关闭）|
-| `--postgres-max-conns <n>` | `QATLAS_POSTGRES_MAX_CONNS` | `10` |
-| `--s3-endpoint <url>` | `QATLAS_S3_ENDPOINT` | — |
-| `--s3-public-endpoint <url>` | `QATLAS_S3_PUBLIC_ENDPOINT` | — |
-| `--s3-bucket-pdf <name>` | `QATLAS_S3_BUCKET_PDF` | — |
-| `--s3-bucket-md <name>` | `QATLAS_S3_BUCKET_MD` | — |
-| `--s3-bucket-images <name>` | `QATLAS_S3_BUCKET_IMAGES` | — |
-| `--s3-bucket-openalex <name>` | `QATLAS_S3_BUCKET_OPENALEX_SNAPSHOT` | — |
-| `--s3-access-key-id <id>` | `QATLAS_S3_ACCESS_KEY_ID` | — |
-| `--s3-secret-access-key <sec>` | `QATLAS_S3_SECRET_ACCESS_KEY` | — |
-
-**优先级**：CLI flag > OS env > `.env` 文件 > 内置 default。
-
-!!! warning "OAuth 4 字段没有 CLI flag"
-    `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` / `QATLAS_ALLOWED_GITHUB_LOGINS` / `QATLAS_ADMIN_GITHUB_LOGINS` 只能走 env / .env。原因：auth provider 在 PocketBase Bootstrap 阶段注册，跑在 cobra parse argv **之前**，CLI flag 来不及。详见 [issue #6](https://github.com/IAI-USTC-Quantum/QuantumAtlas/issues/6)。
-
-例子：
-
 ```bash
-# 默认 127.0.0.1:8090
-qatlasd serve
-
-# 监听公网（前面必须有反代）
-qatlasd serve --http=0.0.0.0:4200
-
-# docker 一行起，不要 .env
-docker run --rm -p 4200:4200 \
-  -v /srv/qatlas/pb_data:/data \
-  ghcr.io/iai-ustc-quantum/qatlasd:v0.17.0 serve \
-    --http 0.0.0.0:4200 \
-    --pb-data-dir /data \
-    --postgres-dsn postgres://qatlas:secret@pg.example:5432/qatlas?sslmode=disable \
-    --s3-endpoint https://rustfs.example \
-    --s3-bucket-pdf qatlas-pdf --s3-bucket-md qatlas-md \
-    --s3-bucket-images qatlas-images \
-    --s3-access-key-id ... --s3-secret-access-key ...
-
-# 显式 .env 路径
-QATLAS_DOTENV=/etc/quantum-atlas/.env qatlasd serve
+qatlasd --config /path/to/config.yaml serve
+qatlasd --config /path/to/config.yaml serve --http=127.0.0.1:4200
 ```
 
-完整字段语义见 [`server-config.md`](server-config.md)。
-
----
+- 应用默认 `http_addr` 为 `127.0.0.1:4200`；PocketBase 的通用帮助可能列出其自身默认值，真正的应用启动会注入 YAML 设置。
+- `--http`、`--https`、`--origins` 等继承选项见 `serve --help`；显式 `--http` / `--dir` 胜过对应 YAML 值。
+- 无内嵌资源时，serve 在监听之前校验/准备精确版本 UI。其他命令不为 UI 联网；本地 dev 构建需要先完成完整 UI 构建并使用 `-tags embedui`。
+- 后端连接、迁移和后台任务只在服务启动路径按配置初始化。不要为了查看版本而启动生产服务。
+- OAuth、PG、S3 等真实配置写 YAML；Docker 挂载该文件，不使用旧 `--env-file` 业务配置方式。
 
 ## `service`：管理 systemd / launchd 服务
 
-跨平台 service 管理（用 [kardianos/service](https://github.com/kardianos/service)）。
-
-```
+```text
 qatlasd service <install|uninstall|start|stop|restart|status>
 ```
 
 ### `service install`
 
+```bash
+# 只看将要写入的配置（非TTY也需mode和force）
+qatlasd service install --mode user --config /path/to/config.yaml --dry-run --force
+# 审阅并授权后，去掉dry-run才会注册并启动服务
+qatlasd service install --mode user --config /path/to/config.yaml --force
 ```
-qatlasd service install [--name qatlasd] [--mode user|system]
-                              [--dotenv-path <path>] [--bind <host:port>]
-                              [--dry-run] [--force]
-```
 
-| Flag | 默认 | 含义 |
-|---|---|---|
-| `--name` | `qatlasd` | service unit 名（Linux 上是 `<name>.service`）|
-| `--mode user\|system` | TTY 下交互式询问；非 TTY 必填 | user-level systemd unit vs system-level（system 需要 sudo）|
-| `--dotenv-path` | `$QATLAS_DOTENV` → `~/QuantumAtlas/.env` → `./.env` | 写入 unit 的 `Environment=QATLAS_DOTENV=` |
-| `--bind` | `127.0.0.1:4200` | `serve --http=` 的值 |
-| `--dry-run` | false | 渲染 unit 到 stdout，不写盘 |
-| `--force` | false | 已有同名 unit 直接覆盖（**非 TTY 必填**）|
+| 参数 | 默认/行为 |
+|---|---|
+| `--name` | `qatlasd` |
+| `--mode user\|system` | TTY 询问；非 TTY 必填 |
+| `--config` | 已存在的默认 YAML 或显式路径；写进 unit 的程序参数 |
+| `--bind` | `127.0.0.1:4200`，作为 serve 的 `--http` |
+| `--dry-run` | 只显示，不写 unit、不 reload、不启动 |
+| `--force` | 跳过确认、允许覆盖 unit；不是绕过 YAML 校验 |
 
-行为：
+system mode 需要相应权限；从预定服务用户的 shell 运行 `sudo /absolute/path/qatlasd ... --mode system`，不要混用 `sudo ... --mode user`。具体身份/属主与迁移注意事项见[安装与 service 注册](install.md)。安装器本身不注册或重启服务。
 
-1. 解析 mode（user / system）
-2. 解析 .env 路径
-3. 渲染 unit 内容（含 [hardening](#systemd-hardening)）
-4. TTY 模式下问 `[Y/n]` 确认
-5. 写 unit + `systemctl daemon-reload` + `systemctl start`
+### systemd hardening { #systemd-hardening }
 
-**非交互模式**（CI / `curl|sh` 后跑）：
+生成的 unit 包括 `NoNewPrivileges`、`PrivateTmp`、`ProtectSystem=full` 等，数据路径来自已解析的服务身份与配置路径。`ReadWritePaths` 中的目录要预先存在；自定义 YAML 存储路径或额外 sandbox 要自行核对。无内嵌 UI 的安装还需要运行用户的缓存目录可写，见安装文档。
+
+### 管理已安装服务
 
 ```bash
-sudo qatlasd service install \
-    --mode system \
-    --dotenv-path /etc/quantum-atlas/.env \
-    --force
+qatlasd service status --mode user
+qatlasd service restart --mode user
+# system服务明确选system，不要误查user unit
+sudo qatlasd service status --mode system
 ```
 
-### `service install` 的 systemd hardening { #systemd-hardening }
+`stop` / `uninstall` 会影响正在运行的服务；卸载不会删除配置、数据库、对象存储或 UI 缓存。它们不是离线开发检查命令。
 
-Linux 上渲染的 unit 自带这些 sandbox 选项：
+## `pat`：本机 PAT 维护
 
-```ini
-[Service]
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=full
-ProtectHome=no
-LockPersonality=true
-RestrictRealtime=true
-ReadWritePaths=<.env dir> <data dir>
-```
-
-!!! warning "ReadWritePaths 缺一会让 restart 失败"
-    `ReadWritePaths=` 里列的**任何目录不存在都会让 service restart 拿 `status=226/NAMESPACE`**。改 `.env` 的存储路径后必须确保新路径存在 + `systemctl daemon-reload`。
-
-### `service start|stop|restart|status`
+直接访问此服务的数据目录，和浏览器 `/api/pat` 的操作边界不同。用 `qatlasd pat --help` 查看当前参数；示例：
 
 ```bash
-qatlasd service start
-qatlasd service stop
-qatlasd service restart
-qatlasd service status
+qatlasd --config /path/to/config.yaml pat scopes
+qatlasd --config /path/to/config.yaml pat list --json
+# mint / revoke 会创建或删除凭据，只在明确授权后执行
 ```
 
-跟 `systemctl <op> qatlasd` 100% 等价（library 是 systemctl 的薄 wrapper）。
+`mint` 的明文仅输出一次，应安全保存；不要提交日志或将它用于不受控的 Vite 代理。scope 以当前输出为准，不再把已迁出的 theorem/wiki scope 当作主仓必备项。
 
-### `service uninstall`
+## `storage`、`papers` 与 `openalex`
+
+- `storage`：S3/RustFS 维护，包括版本清理。`storage prune` 默认预览；真正删除需要明确 `--yes`，见 [RustFS](rustfs.md#prune)。
+- `papers`：PostgreSQL registry 维护、对象存储导入/迁移相关操作；具体命令见 `qatlasd papers --help`。
+- `openalex`：OpenAlex corpus 导入；连接数据库、下载快照或创建索引会产生实际资源消耗，不属于默认单元测试。
 
 ```bash
-qatlasd service uninstall
+qatlasd --config /path/to/config.yaml storage prune --older-than 90d --keep-last 5
+qatlasd --config /path/to/config.yaml papers --help
+qatlasd --config /path/to/config.yaml openalex --help
 ```
 
-停服务 + 删 unit 文件 + `daemon-reload`。**不会删 pb_data / raw / data**——那是数据，需要你手动 trash-put。
+## `downloader probe`：明确的在线诊断 { #downloader-probe }
 
----
+`qatlasd downloader probe` 会对论文执行真实的 OA/API/出版商策略链，可能调用浏览器、代理或 LLM。它不是本地 fixture，不因名字为 probe 就无需授权。需要 `paper_access.enabled` 等相关配置，参数见当前版本的 `downloader probe --help`，行为见[下载器说明](downloader.md)。
 
-## `pat`：直接操作 PAT（救急用）
+不要把在线 probe 加入普通 Go CI；其接入目标、凭据和可消耗额度须由操作者明确指定。
 
-绕开 `/api/pat` 直接读写 pb_data。**需要在 server 主机上跑**（因为依赖 PocketBase DB 文件）。
+## `users`、`superuser` 与数据库迁移
 
-```
-qatlasd pat <mint|list|revoke|scopes>
-```
+`users` 检查此实例的 PocketBase 用户；`superuser` 管理 PocketBase 管理员。创建/修改管理员需要运维授权，密码不要写成可复制的固定示例。
 
-### `pat mint`
+主仓的 PocketBase 迁移在各领域 Go 包中注册；PostgreSQL goose SQL 位于 `internal/registry/migrations/`。当前主命令没有通用的 `qatlasd migrate down` 回滚入口，也没有主仓 `pb_migrations/` 源码目录。数据库降级必须按版本说明和一致性备份处理，换回旧 binary 不代表回滚了 schema。
 
-```
-qatlasd pat mint --user <email|id> --name <name>
-                       --scopes <s1,s2,...> --expires-in-days <N>
-                       [--description <text>]
-```
-
-| Flag | 必填 | 含义 |
-|---|---|---|
-| `--user` | ✅ | 目标用户（email 或 users record id）|
-| `--name` | ✅ | token 显示名（≤80 字符）|
-| `--scopes` | ✅ | 逗号分隔的 scope，如 `papers:write,theorems:read` |
-| `--expires-in-days` | ✅ | 1–365 |
-| `--description` | ❌ | 备注（≤200 字符）|
-
-输出包含明文（仅一次）。
-
-### `pat list`
-
-```
-qatlasd pat list [--user <email|id>] [--json]
-```
-
-按 user 过滤；`--json` 出机读格式。**不包含明文 / 哈希**——只有 prefix + 元数据。
-
-### `pat revoke`
-
-```
-qatlasd pat revoke <id>
-```
-
-硬删除该 PAT record，下次该 token 调任何端点立刻 401。
-
-### `pat scopes`
-
-打印当前编译进 binary 的 scope 词表（同 `GET /api/pat/scopes` 返回内容，但不用起 HTTP）：
+## 查看准确帮助
 
 ```bash
-qatlasd pat scopes
-# papers:read     Read paper catalog metadata (stats, needs-mineru) + POST /api/search
-# papers:write    Upload paper PDFs / Markdown and run MinerU jobs (implies papers:read)
-# theorems:read   Read the theorems registry (builtin plugin)
-```
-
----
-
-## `storage`：对象存储维护
-
-仅 S3 / RustFS 后端可用。
-
-```
-qatlasd storage <prune> [options...]
-```
-
-### `storage prune`
-
-删除 noncurrent S3 object versions（即被 `--overwrite` 覆盖掉的旧版本）。
-
-```
-qatlasd storage prune [--prefix <key-prefix>] [--older-than <duration>]
-                            [--keep-last <N>] [--yes] [--dry-run] [--json]
-```
-
-| Flag | 默认 | 含义 |
-|---|---|---|
-| `--prefix <path>` | "" (整个 bucket) | 只处理这个 key 前缀 |
-| `--older-than <dur>` | "" (不限) | 仅删比此年龄更老的版本（Go duration 或 `30d` / `1y`）|
-| `--keep-last <N>` | 0 (不限) | 每个 key 保留最近 N 个 noncurrent 版本 |
-| `--yes` | **false** | 真删（不带 = dry-run）|
-| `--dry-run` | true | 干跑预览；**没有 `--yes` 即使 `--dry-run=false` 也不删** |
-| `--json` | false | 每行一个 JSON 对象（机读）|
-
-!!! warning "默认 dry-run + `--yes` 双保险"
-    `storage prune` 默认 dry-run。要真删必须 `--yes`，避免手抖删数据。
-
-**示例**：
-
-```bash
-# 预览：删 90 天前的所有 noncurrent
-qatlasd storage prune --older-than 90d
-
-# 真删，每个 key 保留最近 5 个 noncurrent，超出的删
-qatlasd storage prune --keep-last 5 --yes
-
-# 只处理 2025-11 的 cohort
-qatlasd storage prune --prefix pdf/2511/ --older-than 30d --yes
-```
-
-**永远不会删的对象**：current version、delete marker、metadata sidecar（LocalStore）。
-
-详见 [RustFS 部署](rustfs.md#prune)。
-
----
-
-## `downloader`：Robust Downloader 工具
-
-围绕 [Robust Downloader](downloader.md)（`internal/downloader`；server 侧
-`POST /api/downloader/*`）的运维子命令树。
-
-```
-qatlasd downloader <probe>
-```
-
-### `downloader probe` { #downloader-probe }
-
-对真实论文跑完整策略阶梯（arXiv 直下 → OA 元数据 API → 出版社 URL 模板 →
-落地页 → agent 兜底）的**在线健壮性压测**。逐篇输出结果表 + 失败分类学汇总；
-**任一论文失败即 exit 1**，供脚本 / 自动调试循环分支。probe 不写 registry、
-不写对象存储——验证管线与 server 路径完全一致，但结果只进 stdout。
-要求 `paper_access.enabled: true`（否则直接报错退出）。
-
-```
-qatlasd downloader probe [identifier ...] [flags]
-```
-
-`identifier` 是 DOI / arXiv id / 论文 URL（`arXiv:2401.12345`、
-`10.1038/s41586-024-07806-9` 均可）；解析不了的会被跳过并在 stderr 提示。
-
-| Flag | 默认 | 含义 |
-|---|---|---|
-| `--random <N>` | 0 | 从 OpenAlex 抽 N 篇随机 works（`has_doi:true`；无 `--search` 时用 `sample=N` 均匀抽样，每次全新）代替位置参数 |
-| `--search <q>` | — | `--random` 的 OpenAlex 检索过滤（如 `"quantum computing"`）|
-| `--agent` | false | 强制启用 agent 兜底（仍需 config 里 `downloader.agent.backend` 已配；未配则 stderr 提示并保持关闭）|
-| `--browser <url>` | — | 浏览器 lane CDP 端点 override（如 `ws://127.0.0.1:9222`；给出即隐含 `--browser-on`）|
-| `--browser-on` | false | 用 config 里 `downloader.browser.cdp_url` 启用浏览器 lane |
-| `--proxy <url>` | — | downloaderproxy URL override（如 `http://ag-workstation:8602`；缺省回落 config 的 `downloader.proxy.url`）|
-| `--proxy-token <t>` | — | downloaderproxy Bearer token |
-| `--concurrency <N>` | 3 | 并行论文数 |
-| `--timeout <dur>` | 4m | 单篇阶梯预算 |
-| `--json` | false | 机读 JSON 输出（`{results:[{input, ok, strategy, url, size, sha256, error, attempts[]}]}`）替代表格 |
-
-```bash
-# 指定标识符
-qatlasd downloader probe 10.1038/s41586-024-07806-9 arXiv:2401.12345
-
-# 随机抽 30 篇量子计算论文压测
-qatlasd downloader probe --random 30 --search "quantum computing"
-
-# 连 campus-egress 代理机一起验
-qatlasd downloader probe --random 10 --proxy http://ag-workstation:8602 \
-    --proxy-token "$DL_PROXY_TOKEN" --json
-```
-
-输出示例（表格模式；失败行下面缩进展开完整 attempt trace）：
-
-```text
-OK    10.1038/s41586-024-07806-9        strategy=oa:unpaywall     4200000 B  https://...
-FAIL  10.1109/CVPR.2024.00123           no PDF after ladder (9 attempts, doi=...) [pattern: bot challenge]
-
-summary: 29/30 ok
-  strategy oa:unpaywall                12
-  strategy arxiv                        9
-  failure  bot_challenge                 1
-```
-
-失败分类学桶：`bot_challenge` / `paywall` / `robots_blocked` / `not_pdf` /
-`404` / `403` / `rate_limited` / `no_candidates` / `other`。
-
----
-
-## `superuser`：PocketBase 内置
-
-```
-qatlasd superuser upsert <email> <password>
-qatlasd superuser create <email> <password>
-qatlasd superuser delete <email>
-```
-
-管理 PocketBase admin UI 登录（`/_/`）。日常运维**不依赖** admin UI，仅在需要看 DB 结构或临时调试时用：
-
-```bash
-# 改密码（已有就改，没有就建）
-qatlasd superuser upsert admin@example.com NewSecurePass!
-```
-
----
-
-## `migrate`：PocketBase 数据库迁移
-
-```
-qatlasd migrate up
-qatlasd migrate down [N]
-qatlasd migrate collections
-```
-
-迁移文件在 `pb_migrations/`（迁移目录默认在 pb_data 旁）。**每次启动 server 时自动跑 pending migrations**，所以手工调用通常不必要。
-
----
-
-## `--help` / `-h`
-
-每个 subcommand 都有 `--help`，输出真实当前版本的 flag 集合（这份文档可能滞后于代码）：
-
-```bash
+qatlasd --version
 qatlasd --help
-qatlasd serve --help
-qatlasd service install --help
-qatlasd storage prune --help
+# 子命令帮助可能需要可读YAML，但不会执行serve/管理动作
+qatlasd --config /path/to/config.yaml serve --help
+qatlasd --config /path/to/config.yaml service install --help
 ```
+
+开发与测试入口见[贡献指南](../contributing.md)；独立客户端命令见 [`qatlas` 参考](../client/cli-qatlas.md)。

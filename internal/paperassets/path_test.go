@@ -40,8 +40,8 @@ func TestValidateUploadID(t *testing.T) {
 		{"no version suffix new", "2401.0001", ""},
 		{"no version suffix old", "9508027", ""},
 		{"no version subject only", "quant-ph/9508027", ""},
-		{"bad length bare", "950802v1", ""},   // 6 digits not 7
-		{"too long bare", "95080277v1", ""},   // 8 digits not 7
+		{"bad length bare", "950802v1", ""}, // 6 digits not 7
+		{"too long bare", "95080277v1", ""}, // 8 digits not 7
 		{"non-digit bare", "950abc7v1", ""},
 		{"random string", "foobar", ""},
 		{"empty", "", ""},

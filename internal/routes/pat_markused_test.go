@@ -129,4 +129,3 @@ func TestPATMarkUsed_ConcurrentCallsDoNotRace(t *testing.T) {
 		t.Error("after 20 concurrent MarkUsed, last_used_at still zero")
 	}
 }
-

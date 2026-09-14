@@ -20,13 +20,13 @@ import (
 //
 // State machine driven by the converter snapshot:
 //
-//   200  cache hit — default: stream markdown bytes (text/markdown); ?format=link returns a RustFS link
-//   202  conversion queued or running — Operation-Location + Retry-After
-//   400  malformed arxiv id (canonical version-suffix check failed)
-//   404  asset endpoints disabled (switch off — never reachable here
-//        because RegisterPapers gates the route; included for safety)
-//   502  conversion failed (fatal / retryable / daily-limit)
-//   503  converter disabled / cache-only mode and no cached bytes
+//	200  cache hit — default: stream markdown bytes (text/markdown); ?format=link returns a RustFS link
+//	202  conversion queued or running — Operation-Location + Retry-After
+//	400  malformed arxiv id (canonical version-suffix check failed)
+//	404  asset endpoints disabled (switch off — never reachable here
+//	     because RegisterPapers gates the route; included for safety)
+//	502  conversion failed (fatal / retryable / daily-limit)
+//	503  converter disabled / cache-only mode and no cached bytes
 //
 // Auth: gated by scopeGuard("papers", "read") at the route layer.
 // Routing: only invoked when cfg.PaperAccessEnabled is true.
@@ -117,10 +117,10 @@ func markdownHandler(re *core.RequestEvent, cfg *config.Config, store objstore.S
 //
 // Response codes:
 //
-//   200  status payload
-//   400  malformed arxiv id
-//   404  paper unknown — no record AND silent fetch unavailable
-//        (router didn't know it, store didn't have a PDF, fetcher disabled)
+//	200  status payload
+//	400  malformed arxiv id
+//	404  paper unknown — no record AND silent fetch unavailable
+//	     (router didn't know it, store didn't have a PDF, fetcher disabled)
 func markdownStatusHandler(re *core.RequestEvent, cfg *config.Config, store objstore.Store, converter *mineru.Converter, arxivID string) error {
 	canonical, ok := paperassets.ValidateUploadID(arxivID)
 	if !ok {

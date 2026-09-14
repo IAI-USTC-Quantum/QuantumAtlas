@@ -9,18 +9,22 @@ import (
 	"time"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/openalex"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/testutil"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // TestIntegrationUpsert exercises the real upsert path (pgx array encoding,
 // the text[]::jsonb[] cast, generated columns, NULL arxiv_id, citation
 // edges, stats) against a live PostgreSQL with pgvector. It is skipped
-// unless QATLAS_TEST_PG_DSN points at a disposable database, so CI and the
-// default `go test` stay hermetic.
+// unless -tags integration is set and QATLAS_TEST_PG_DSN points at a
+// disposable database, so CI and the default `go test` stay hermetic.
 //
 // It writes only rows under a unique "WITEST_<ts>" id prefix and deletes
 // them at the end, so it is safe to run against the shared central corpus.
 func TestIntegrationUpsert(t *testing.T) {
+	if !testutil.IntegrationEnabled {
+		t.Skip("requires -tags integration and explicit live-service environment variables")
+	}
 	dsn := os.Getenv("QATLAS_TEST_PG_DSN")
 	if dsn == "" {
 		t.Skip("QATLAS_TEST_PG_DSN unset; skipping live-PostgreSQL integration test")

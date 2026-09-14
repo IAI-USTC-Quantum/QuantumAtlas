@@ -15,6 +15,7 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperassets"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/registry"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/testutil"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -22,6 +23,9 @@ import (
 // This tests the REAL archive callback against all registry migrations and the
 // filesystem store, complementing runner/fleet tests with synthetic callbacks.
 func TestDownloadArchiveRealRegistryAndAdmission(t *testing.T) {
+	if !testutil.IntegrationEnabled {
+		t.Skip("requires -tags integration and a disposable PostgreSQL target")
+	}
 	dsn := os.Getenv("TEST_DOWNLOADFLEET_DATABASE_URL")
 	if dsn == "" {
 		t.Skip("disposable PostgreSQL required")

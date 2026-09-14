@@ -35,8 +35,10 @@ QuantumAtlas 由两个独立演进的组件构成：服务端 ``qatlasd`` （本
 固定历史 tag
 `quantum-atlas-v0.21.0 <https://github.com/IAI-USTC-Quantum/QuantumAtlas/tree/quantum-atlas-v0.21.0>`_
 保留发布时的元数据、检查器、测试及 workflow 供审计，不再是 main 的
-发布入口。根目录 ``pyproject.toml`` 现在仅用于不分发的 uv 开发环境、
-依赖组与 Pixi 工具链，不维护旧包版本或构建后端。
+发布入口。main 保留 ``PYPI_README.md`` 作为退役说明入口，但不再有根
+``pyproject.toml`` / ``uv.lock`` / ``pixi.lock`` 或旧包构建后端。
+Go 工具链门槛唯一取自 ``go.mod``，Node 唯一取自 ``web/.node-version``；
+Python 只用于独立 Sphinx/MkDocs requirements 和 CI 标准库辅助脚本。
 常规服务端发版仍以 ``VERSION`` 与 ``v<version>`` 为准，并且没有 PyPI
 产物；旧包退役没有改变 ``VERSION``（仍为 ``0.34.0``），也不参与
 客户端/服务端版本协商。发布历史说明见 :doc:`release`。
@@ -49,17 +51,27 @@ QuantumAtlas 由两个独立演进的组件构成：服务端 ``qatlasd`` （本
 ``dev``。仅去掉开头的 ``v``，保留预发布与有意义的构建标记。
 解析在 ``--version`` 之前完成，不加载配置、不访问数据库或网络；CLI、
 health、server-info 与响应头共享同一个值。Docker 自行编译时也注入
-``main.version``，不能把 ``pyproject.toml`` 的工具版本当服务端版本。
+``main.version``；Go、Node 或文档工具的版本都不是服务端运行版本。
+GoReleaser snapshot 使用生成的快照版本，可以不同于源码 ``VERSION``，
+不能以快照运行结果代替正式 tag 与运行版本的精确核验。
 
 新服务端 tag 使用有效 SemVer，例如 ``v0.35.0-rc.1``，不使用 Python
 风格 ``v0.35.0a1``。``VERSION`` 不因本次实现而递增，也不重发
 ``v0.34.0``。预发布不会覆盖稳定版 Latest。
 
-普通源码安装首次 ``serve`` 自动获取 **自身精确版本** 的 Release UI，
-校验后按版本缓存。``dev``、空版本及 Go 伪版本没有可靠的对应 UI Release，
-会报错而不是下载 latest；开发者需构建 UI 后使用 ``-tags embedui``。
-GoReleaser 预编译程序已经内嵌同一 UI，首次启动无需联网补资源。
-Go tag 可被发现不等于 Release UI 已公开：draft 发布窗口内缺附件会明确报错。
+普通 Go 构建、测试及精确 tag 的 ``go install`` 均不要求 UI 产物，也不运行 npm。
+已发布精确 tag 的源码安装首次 ``serve`` 自动获取 **自身精确版本** 的 Release
+UI，校验 SHA256、包内版本与完整性后按版本缓存，后续启动同样验证缓存。
+``dev``、空版本及 Go 伪版本没有可靠的对应 UI Release，会报错而不是下载 latest；
+开发者需完整构建 Sphinx 两站及 npm UI 后使用 ``-tags embedui``，见
+:doc:`development`。GoReleaser tar.gz 中的程序已经内嵌与独立 UI ZIP 相同的
+资源，首次启动无需联网补资源。
+
+GoReleaser OSS v2.18.1 的 ``git.ignore_tags`` 精确忽略
+``quantum-atlas-v0.21.0`` （不是 glob），不会修改该历史 tag。
+Go tag 可被发现不等于 Release UI 已公开：draft 发布窗口内缺附件会明确报错，
+draft 不阻止 Go 模块安装。GitHub/GHCR 非原子，失败状态须分别核对，不移动
+已推 tag、不覆盖公开附件，也不以修复发布为由擅自升级生产。
 
 兼容协议
 --------
