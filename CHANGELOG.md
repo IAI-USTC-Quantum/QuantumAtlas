@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## Unreleased
+
+### Maintenance
+
+- After publishing and verifying `quantum-atlas 0.21.0`, remove its one-time validator, dedicated tests, build dependencies, and Python build/publish jobs from `main`. The immutable [`quantum-atlas-v0.21.0` tag](https://github.com/IAI-USTC-Quantum/QuantumAtlas/tree/quantum-atlas-v0.21.0) preserves the final release source and validation history.
+- Keep `PYPI_README.md` as the permanent migration link. The root Python configuration now describes only a non-distributed development environment (`quantum-atlas-dev`), not a CLI/library release. Normal server tests and `VERSION` remain unchanged; this cleanup does not publish another package or server version.
+
 ## quantum-atlas 0.21.0 — final PyPI migration release (2026-09-14)
 
 ### Breaking changes

@@ -73,7 +73,7 @@ BREAKING CHANGE: clients before 0.2.0 must update to use the new path.
 
 ### 版本与发布边界
 
-Conventional Commits 是提交约定，不会自动触发发布。服务端使用根目录 `VERSION` + `v<version>` tag；旧 PyPI 包仅保留一次性最终迁移版 `quantum-atlas 0.21.0`，使用独立 tag `quantum-atlas-v0.21.0`。不要再用 `cz bump` 驱动服务端或继续递增旧包版本。发布命令统一见下方 [Release 流程](#release)。
+Conventional Commits 是提交约定，不会自动触发发布。主仓只发布服务端，使用根目录 `VERSION` + `v<version>` tag；CLI 由 `qatlas-cli` 独立仓库维护和发版。旧 PyPI 包的最终迁移版 `quantum-atlas 0.21.0` 已发布，不再有后续版本或 main 上的发布入口。不要用 `cz bump` 驱动服务端或递增旧包版本。服务端发布命令见下方 [Release 流程](#release)。
 
 ---
 
@@ -92,13 +92,15 @@ pixi run build
 uv sync --locked --group dev
 ```
 
-Python 开发依赖由 `pyproject.toml [dependency-groups].dev` 管理，不再使用 `quantum-atlas[dev]` 项目 extra，也不是最终迁移包的运行时依赖。主仓不含 `qatlas/` 客户端代码；安装主仓不会提供 `qatlas` 命令。需要服务端联调时单独安装 `qatlas-cli`；修改客户端代码、测试或发版请到 [qatlas-cli 仓库](https://github.com/IAI-USTC-Quantum/qatlas-cli)。
+根目录 `pyproject.toml` 是仅用于开发环境、不分发 Python 包的 uv 项目：开发依赖由 `[dependency-groups].dev` 管理，不包含旧包的发行元数据或构建后端，也不提供 `quantum-atlas[dev]` extra。`uv sync` 只准备开发依赖，不构建或安装主仓为 Python 包。主仓不含 `qatlas/` 客户端代码；需要服务端联调时单独安装 `qatlas-cli`，修改客户端代码、测试或发版请到 [qatlas-cli 仓库](https://github.com/IAI-USTC-Quantum/qatlas-cli)。
 
 ### 跑测试
 
+主仓 Python 测试保留 `tests/test_docker_compose.py` 的离线部署结构检查，以及 `tests/integration/test_production_smoke.py` 中标记为 `network` / `e2e` 的生产冒烟；后者通过 nightly workflow 单独配置目标和凭据。一次性旧包构建与迁移检查只保留在最终历史 tag，不再加入日常 CI。
+
 ```bash
-# 主仓 Python 工具 / 契约测试（不是 CLI 实现测试）
-uv run --group dev pytest
+# 主仓部署模板结构测试（离线，不启动容器或服务）
+uv run --locked --group dev pytest -m "not network and not e2e"
 
 # Go 测试（必须通过 pixi 跑，自带 cgo + 工具链）
 pixi run test-go
@@ -242,7 +244,6 @@ qatlas contrib mineru --watch
 | 发布对象 | 版本来源 | 唯一对应 tag | 产物 |
 |---|---|---|---|
 | 服务端 `qatlasd` | 根目录 `VERSION`（当前 `0.34.0`） | `v<version>` | Go binaries、服务端 GitHub Release、Docker 镜像 |
-| 旧 PyPI 包最终迁移版 | `pyproject.toml [project].version = "0.21.0"` | **仅 `quantum-atlas-v0.21.0`** | metadata-only wheel / sdist、独立迁移 GitHub Release、PyPI |
 | 客户端 `qatlas-cli` | [独立仓库](https://github.com/IAI-USTC-Quantum/qatlas-cli) | 由该仓库管理 | [PyPI `qatlas-cli`](https://pypi.org/project/qatlas-cli/) |
 
 ### 服务端发版
@@ -262,22 +263,13 @@ git push origin "refs/tags/v${SERVER_VERSION}"
 
 完成后检查 Actions、GitHub Release 与镜像产物，并在测试环境验证 `qatlasd --version` 与健康检查；不要通过安装旧 PyPI 包验证服务端。
 
-### 一次性最终迁移包发版
+### 旧 PyPI 包退役记录
 
-`quantum-atlas 0.21.0` 只保留退役说明和发行元数据，**不含 `qatlas` 模块、parser 库或任何 console entry，没有运行时依赖，也不通过依赖自动安装 `qatlas-cli`**。主仓残留 Python helpers 已退役，客户端用户按[迁移指南](getting-started.md#migrate-quantum-atlas)手动切换。
+[`quantum-atlas 0.21.0` 最终迁移版](https://github.com/IAI-USTC-Quantum/QuantumAtlas/releases/tag/quantum-atlas-v0.21.0) 已发布到 PyPI 和 GitHub。它只含退役说明和发行元数据，不含 Python 模块、parser 库、命令入口或运行时依赖，也不会自动安装 `qatlas-cli`。用户仍可按[迁移指南](getting-started.md#migrate-quantum-atlas)手动切换，保留已有配置。
 
-在已审核的退役 commit 上确认最终包版本、构建产物内容和迁移安装测试通过，且根目录 `VERSION` 仍为 `0.34.0`。只在准备正式发布这一次迁移版时执行：
+固定历史 tag [`quantum-atlas-v0.21.0`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/tree/quantum-atlas-v0.21.0) 保留发布时的包元数据、一次性检查器、测试及 workflow，供追溯和审计；不要移动或覆盖该 tag。main 已移除这些一次性工具与旧包发布入口，根目录 `pyproject.toml` 只管理不分发的开发环境，不维护旧包版本或构建后端。**没有后续旧包发版流程，也不会再发布新的 `quantum-atlas` 版本。**
 
-```bash
-git tag -a quantum-atlas-v0.21.0 -m "Retire quantum-atlas on PyPI at 0.21.0"
-git show --stat quantum-atlas-v0.21.0
-# 确认后仅推最终迁移 tag，不推服务端 tag
-git push origin refs/tags/quantum-atlas-v0.21.0
-```
-
-此 tag 仍由 **`.github/workflows/release.yml`** 处理，但走独立 Python 构建 / 发布 job，不运行服务端 binary、文档或 Docker 构建。保留现有 PyPI Trusted Publisher 的 workflow filename **`release.yml`** 和 GitHub environment **`pypi`**（OIDC 身份不变）。迁移 GitHub Release 设置 **`make_latest: false`**，不抢占服务端 Latest，也不影响默认 `install-qatlasd.sh` 下载。
-
-发布后核对 PyPI 项目页的迁移说明、wheel / sdist 确实无 Python 模块 / 命令入口 / `Requires-Dist`，且服务端 Latest 未变化。不要为重试修改已经发布的版本或移动已推送 tag；需要重试时在 Actions 针对同一最终 tag 重跑。旧包没有后续常规发版流程，CLI 后续开发和发版只在 `qatlas-cli` 仓库进行。
+旧包最终发布未改变服务端 `VERSION` 或 GitHub Latest（分别为 `0.34.0`、`v0.34.0`）；服务端继续按上面的常规流程发布，CLI 后续开发和发版只在 `qatlas-cli` 仓库进行。
 
 ## 行为准则
 

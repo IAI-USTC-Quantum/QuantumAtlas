@@ -25,11 +25,6 @@ app 微服务之间的 HTTP 接口协议。主仓还包含独立部署的下载 
      - push tag ``v*.*.*``
      - ghcr 镜像 ``:{vX.Y.Z, X.Y.Z, latest}`` + 三平台二进制 +
        GitHub Release；不再发布旧 PyPI 包
-   * - ``quantum-atlas``\ （旧包最后一次迁移发布）
-     - 本仓库 ``pyproject.toml`` 固定版本 ``0.21.0``
-     - 仅精确 tag ``quantum-atlas-v0.21.0``
-     - PyPI 元数据/迁移说明包 + 独立 GitHub Release
-       （``make_latest: false``）；不构建或发布服务端/容器
    * - ``qatlas-cli``
      - 其仓库 ``pyproject.toml``\ （commitizen）
      - ``cz bump`` 打 tag ``v*``
@@ -60,36 +55,25 @@ app 微服务之间的 HTTP 接口协议。主仓还包含独立部署的下载 
        ``Dockerfile.downloaderproxy`` 现场构建（见下文例外与
        :doc:`prod-deploy` 的 runbook）
 
-旧包的最后一次迁移发布
-------------------------
+旧 PyPI 包退役记录
+----------------------
 
-``quantum-atlas 0.21.0`` 是旧 PyPI 名称的最终迁移说明版本，不是新 CLI
-或 parser 库。wheel 只应包含发行元数据及说明，不包含 ``qatlas/``、
-console scripts 或运行时依赖，尤其不能通过 ``Requires-Dist`` 自动安装
-``qatlas-cli``，也不能提供调用新 CLI 的转发入口。旧帮助库的退役不等于
-已把它们的 Python API 搬到独立客户端。
+`quantum-atlas 0.21.0 最终迁移版
+<https://github.com/IAI-USTC-Quantum/QuantumAtlas/releases/tag/quantum-atlas-v0.21.0>`_
+已发布到 PyPI 和 GitHub。它只含元数据与迁移说明，不含 ``qatlas`` 模块、
+命令入口或运行时依赖，也不会自动安装 ``qatlas-cli``。旧帮助库已退役，
+不承诺在独立 CLI 中提供等价 Python API；CLI 用户应先卸载旧包，再安装
+``qatlas-cli``，保留已有配置。
 
-该发布沿用 ``.github/workflows/release.yml``，但与常规服务端发布严格隔离：
+固定历史 tag
+`quantum-atlas-v0.21.0 <https://github.com/IAI-USTC-Quantum/QuantumAtlas/tree/quantum-atlas-v0.21.0>`_
+保留当时的发行元数据、一次性检查器、测试及 workflow 供审计，不能移动
+或覆盖该 tag。main 已移除这些一次性工具和旧包发布入口，不再发布后续
+``quantum-atlas`` 版本；根目录 uv 项目仅用于开发，不分发 Python 包。
 
-- 仅精确 tag ``quantum-atlas-v0.21.0`` 进入旧包的最终发布路径，
-  不用 ``v0.21.0`` 代替；``v*.*.*`` 与根目录 ``VERSION`` 仍只管理
-  qatlasd 的常规发布，迁移不修改 ``VERSION``（迁移时为 ``0.34.0``）；
-- 最终发布路径只构建 Python 迁移包、发布 PyPI，并创建该专用 tag 的
-  独立 GitHub Release。它不运行服务端二进制、容器构建或发布 job；
-- 该 GitHub Release 必须设置 ``make_latest: false``，不覆盖
-  qatlasd 的 latest release；
-- PyPI Trusted Publisher 继续匹配仓库 ``IAI-USTC-Quantum/QuantumAtlas``、
-  workflow 文件名 ``release.yml`` 和 environment ``pypi``，无需把
-  OIDC 发布身份迁到另一个 workflow；
-- 本仓库不再配置 Commitizen，也不继续为旧包执行 ``cz bump``。
-  独立 ``qatlas-cli`` 仓库的版本管理不受影响。
-
-推送最终 tag 前，应独立验收 wheel 与 sdist 的文件清单、元数据中的
-``Name: quantum-atlas`` / ``Version: 0.21.0``、无 ``Requires-Dist``、
-无 ``qatlas/`` 命名空间与命令入口，并检查迁移说明明确要求用户手动
-卸载旧包、再安装 ``qatlas-cli``。发布后核对 PyPI 产物及专用 GitHub
-Release，并确认服务器 latest 与容器标签没有因本次迁移变化；不能仅以
-某个 job 变绿代替这些检查。服务端继续按下文常规流程独立发布。
+常规 ``v*`` 服务端流程继续发布二进制、镜像和 GitHub Release，不包含
+PyPI 产物。这次旧包退役没有发布服务端或容器，服务端 ``VERSION`` 及
+GitHub Latest 保持为 ``0.34.0`` / ``v0.34.0``。
 
 下载执行端的当前分发边界
 ----------------------------

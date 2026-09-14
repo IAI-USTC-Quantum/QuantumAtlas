@@ -63,10 +63,11 @@ qatlasd service install \
 
 ### Install the client (`qatlas` CLI)
 
-> **Old package retirement:** the final `quantum-atlas 0.21.0` release is
-> metadata-only. It contains no `qatlas` module, parser library, or console entry
-> point, has no runtime dependencies, and does **not** automatically install
-> `qatlas-cli`. Installing this repository does not provide the `qatlas` command.
+> **Old package retirement:** the final [`quantum-atlas 0.21.0`](https://pypi.org/project/quantum-atlas/0.21.0/)
+> has been published as a metadata-only migration notice. It contains no `qatlas`
+> module, parser library, console entry point, or runtime dependencies, and does
+> **not** automatically install `qatlas-cli`. There will be no further legacy releases.
+> This repository is not a Python distribution and does not provide the `qatlas` command.
 > For a new installation, choose one command below. Existing `quantum-atlas`
 > users must [migrate first](#migrate-from-quantum-atlas).
 
@@ -201,7 +202,7 @@ Full CLI options, auth details (PAT scopes / bearer tokens), and the recommended
 - [docs/concepts/storage-architecture.md](docs/concepts/storage-architecture.md): how raw assets, metadata, and the registry are split, and why; bucket layout; reconciliation and rebuild.
 - [docs/server/rustfs.md](docs/server/rustfs.md): qatlas ↔ RustFS ops guide (env vars, IAM policy, bucket versioning, `qatlasd storage prune`, troubleshooting).
 - [docs/server/](docs/server/index.md): local startup, single-host deployment, systemd, environment variables, reverse proxy, and auth examples.
-- [docs/contributing.md](docs/contributing.md): dev commands, Conventional Commits, server releases and the one-time legacy PyPI retirement release, testing conventions.
+- [docs/contributing.md](docs/contributing.md): dev commands, Conventional Commits, normal server releases, testing conventions, and the legacy package's retirement record.
 
 ## Repository overview
 
@@ -215,7 +216,7 @@ QuantumAtlas/
 ├── tests/                 test suite
 ├── docs/                  documentation
 ├── VERSION                server version (currently 0.34.0)
-└── pyproject.toml         retired package metadata + development dependency groups
+└── pyproject.toml         development-only uv project + dependency groups + Pixi toolchain
 ```
 
 > State directories (`raw/`, `data/`, `pb_data/`) are **not** in the repo —
@@ -247,7 +248,9 @@ Contributions welcome in these areas:
 - Improving parsing, ingestion, search providers, and the API.
 - Tests, documentation fixes, and collaboration UX.
 
-Please use Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`). Server releases use the root `VERSION` (currently `0.34.0`) + a `v<version>` tag and publish only server Go/GitHub/Docker artifacts. The one-time final `quantum-atlas 0.21.0` package uses only `quantum-atlas-v0.21.0` in `release.yml`, with a separate build/release path and `make_latest: false`; server tags never publish it. Do not use Commitizen to bump the server or continue the retired package's releases. CLI development and releases belong in [qatlas-cli](https://github.com/IAI-USTC-Quantum/qatlas-cli). See [docs/contributing.md](docs/contributing.md) for the distinct release commands.
+Please use Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`). Server releases use the root `VERSION` (currently `0.34.0`) + a `v<version>` tag and publish only server Go/GitHub/Docker artifacts, never PyPI packages. CLI development and releases belong in [qatlas-cli](https://github.com/IAI-USTC-Quantum/qatlas-cli). See [docs/contributing.md](docs/contributing.md) for the server release process.
+
+The [final `quantum-atlas 0.21.0` release](https://github.com/IAI-USTC-Quantum/QuantumAtlas/releases/tag/quantum-atlas-v0.21.0) is complete. Its immutable [historical tag](https://github.com/IAI-USTC-Quantum/QuantumAtlas/tree/quantum-atlas-v0.21.0) retains the package metadata, one-time checker/tests, and publishing workflow for audit. They are not an ongoing main-branch workflow: the root uv project is development-only, and no further legacy package versions will be published.
 
 ## Acknowledgements
 

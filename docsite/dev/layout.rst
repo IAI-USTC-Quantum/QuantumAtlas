@@ -15,7 +15,8 @@ Python 命令行客户端由独立仓库 ``IAI-USTC-Quantum/qatlas-cli`` 维护�
    ├── web/                React SPA 前端
    ├── deploy/             docker-compose 部署模板
    ├── docsite/            本文档站源码（Sphinx + Furo）
-   ├── tests/              Python 测试套件
+   ├── tests/              部署模板结构测试与生产冒烟测试
+   ├── pyproject.toml      不分发的 uv 开发环境、依赖组与 Pixi 工具链配置
    └── config.example.yaml 服务器配置完整 schema 参考
 
 服务器（Go）
@@ -92,8 +93,11 @@ React + TanStack Router 的 SPA，路由带语言前缀（``/zh``、``/en``）�
 工作流；客户端测试也在该仓库运行。本仓库只保留相关的使用与协议文档，
 不再包含 ``qatlas/`` Python 命名空间。
 
-旧 PyPI 包 ``quantum-atlas`` 的最后一个版本 ``0.21.0`` 仅保留元数据与
-迁移说明，没有运行时依赖或命令入口，也不会转发安装 ``qatlas-cli``。
+旧 PyPI 包 ``quantum-atlas`` 的最终迁移版 ``0.21.0`` 已发布，没有运行时
+依赖或命令入口，也不会转发安装 ``qatlas-cli``；此后不再发布旧包版本。
+发布时的元数据、检查器、测试与 workflow 保留在固定历史 tag
+`quantum-atlas-v0.21.0 <https://github.com/IAI-USTC-Quantum/QuantumAtlas/tree/quantum-atlas-v0.21.0>`_
+中供审计，不再属于 main 的开发与发布流程。
 原来的 ``qatlas.paper_assets`` 和 ``qatlas.parser.doi`` 帮助库已退役，
 不属于独立 CLI 的等价迁移承诺。服务端资产路径与 DOI 处理仍由
 ``internal/paperassets``、``internal/openalex`` 等 Go 包实现，保持不变。
@@ -104,10 +108,13 @@ React + TanStack Router 的 SPA，路由带语言前缀（``/zh``、``/en``）�
 - 主客户端与主服务配置使用 YAML：客户端 ``~/.config/qatlas/config.yaml``，
   qatlasd ``~/.qatlas/config.yaml``；独立 ``downloaderworker`` 则使用
   ``DL_WORKER_*`` 环境变量与非凭据 flags，不能把主进程约束推广到执行节点；
-- 本仓 Python 测试覆盖部署模板与服务端生产冒烟；开发依赖位于
-  ``pyproject.toml`` 的 ``[dependency-groups].dev``，不是发行包的 runtime deps。
-  离线测试：``uv run --group dev pytest -m "not e2e and not network" tests/``；
-  生产冒烟按 nightly workflow 的配置单独运行。Go 测试：
+- 根目录 ``pyproject.toml`` 仅管理不分发的 uv 开发环境与 Pixi 工具链，
+  没有旧包发行元数据或构建后端。Python 开发依赖位于
+  ``[dependency-groups].dev``；``uv sync`` 不把主仓构建或安装成 Python 包。
+  本仓 Python 离线测试只检查部署模板结构，不启动容器或服务：
+  ``uv run --locked --group dev pytest -m "not e2e and not network" tests/``。
+  标记为 ``network`` / ``e2e`` 的服务端生产冒烟按 nightly workflow 配置
+  单独运行；一次性旧包检查器与测试仅保留在最终历史 tag。Go 测试：
   ``go test ./internal/... ./cmd/...``（或 ``pixi run test-go``）；
 - 文档站：公开站 ``/doc`` 与开发站 ``/devdoc``（管理员票据鉴权）由
   ``.github/workflows/docs.yml`` 独立构建并发布为 ghcr 上的

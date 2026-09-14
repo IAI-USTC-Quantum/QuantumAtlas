@@ -1,37 +1,19 @@
+# Local development environment only, not a Python distribution.
+# This name/version identifies tooling, not qatlasd (see VERSION) or the CLI.
+# The retired PyPI package is preserved at tag quantum-atlas-v0.21.0.
 [project]
-name = "quantum-atlas"
-version = "0.21.0"
-description = "Retired package: install qatlas-cli for the qatlas command (no automatic redirect)"
-readme = "PYPI_README.md"
-license = { text = "Apache-2.0" }
+name = "quantum-atlas-dev"
+version = "0.0.0"
 requires-python = ">=3.11"
-authors = [{ name = "IAI-USTC-Quantum" }]
-keywords = ["quantum", "papers", "search", "registry", "arxiv"]
-classifiers = [
-    "Development Status :: 7 - Inactive",
-    "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: Apache Software License",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
-    "Topic :: Scientific/Engineering :: Physics",
-]
-# Final, metadata-only release: no CLI, import package, or forwarding dependency.
-dependencies = []
 
-[project.urls]
-"Migration guide" = "https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/PYPI_README.md"
-"CLI source" = "https://github.com/IAI-USTC-Quantum/qatlas-cli"
-"CLI on PyPI" = "https://pypi.org/project/qatlas-cli/"
-"Server source" = "https://github.com/IAI-USTC-Quantum/QuantumAtlas"
+[tool.uv]
+package = false
 
-# Repository tooling is not part of the retired distribution's dependencies.
+# Repository tests/tooling only; there is no Python package to install or publish.
 [dependency-groups]
 dev = [
     "requests>=2.31.0,<3",
     "pyyaml>=6.0.1,<7",
-    "build>=1.2",
-    "hatchling>=1.24",
-    "twine>=6",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.24",
     "black>=24.0.0",
@@ -39,18 +21,6 @@ dev = [
     "mypy>=1.7.0",
     "ruff>=0.8.0",
 ]
-
-[build-system]
-requires = ["hatchling>=1.24"]
-build-backend = "hatchling.build"
-
-[tool.hatch.build.targets.wheel]
-# Intentionally emit only .dist-info; never occupy qatlas-cli's namespace.
-bypass-selection = true
-
-[tool.hatch.build.targets.sdist]
-# Do not upload the server tree, tests, or retired Python helpers to PyPI.
-only-include = ["pyproject.toml", "PYPI_README.md", "LICENSE"]
 
 # Pytest
 [tool.pytest.ini_options]
@@ -125,6 +95,7 @@ ignore_missing_imports = true
 #   pixi run test-py    # run Python (pytest) suite
 
 [tool.pixi.workspace]
+name = "QuantumAtlas"
 channels = ["conda-forge"]
 # All four target platforms for which we publish qatlasd binaries
 # in the release workflow. Adding a platform here just tells pixi to
