@@ -109,17 +109,20 @@ GitHub/GHCR/证明登记非原子，证明失败时 Release 可能已公开：�
   同 ``x.y`` 线的最新 patch 即可）；
 - qatlasd ``0.23.0`` ↔ qatlas-cli ``0.22.x``：不兼容（``minor`` 不同）。
 
-运行时握手：qatlas-cli 发出的每个请求都带 ``X-Qatlas-Client-Version``
-头，qatlasd 返回的每个响应都带 ``X-Qatlas-Server-Version`` 头。客户端
-按上面的协议比较：
+运行时握手：qatlas-cli 每个请求带 ``X-Qatlas-Client-Version``，
+qatlasd 每个响应带 ``X-Qatlas-Server-Version``。明确写操作先探测
+``GET /api/server/info``（同一凭证、超时与 TLS，无业务载荷），通过后再
+发业务请求：
 
-- ``(major, minor)`` 一致：客户端静默通过（patch 差异不影响兼容）；
-- server 更新且当前为写操作：客户端硬失败（exit code 4），并提示用户
-  执行 ``uv tool upgrade qatlas-cli``；
-- server 更新且当前为读操作：客户端在 stderr 警告一次，然后继续执行；
-- client 更新：客户端在 stderr 警告一次（提示运维方升级 qatlasd），
-  然后继续执行；
-- 响应没有版本头（0.8.0 之前的老服务端）：客户端跳过版本协商。
+- ``(major, minor)`` 一致：静默通过（patch 差异不影响兼容）；
+- 服务端更新且为写：探测阶段硬失败（exit code 4），提示
+  ``uv tool upgrade qatlas-cli``，**不发送写请求**。探测失败（非 2xx；
+  404 除外）同样不发送。写请求已经发出后，版本变化只警告，不表示写入被
+  拒绝或未发出；
+- 服务端更新且为读：stderr 警告一次后继续；
+- 客户端更新：stderr 警告一次（提示升级 qatlasd）后继续；
+- 无版本头或无法解析（0.8.0 前）：跳过协商。info 接口 404 视为老服务端，
+  仍允许写。
 
 主仓不再维护根手写变更日志。现行和后续服务端 Release 正文由 GoReleaser
 按 previous..current tags 的 Git commit 标题与 SHA 自动生成；

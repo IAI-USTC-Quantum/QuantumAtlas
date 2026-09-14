@@ -492,7 +492,7 @@ qatlasd 完成，qatlas-match 微服务只走内网）。退出码为 grep 风�
   ``format_api_error(resp)`` 统一错误渲染；``poll_lro(ctx, path, ...)``
   提供 LRO 轮询。插件不应再自行实现这些；
 - 退出码约定与核心一致：0 成功、1 传输/服务端错误、2 输入非法、
-  4 版本协商硬失败（写操作对更新服务端）；
+  4 版本协商硬失败（写前探测到更新服务端，写请求未发出）；
 - 插件可声明 ``cli_api_version``；声明版本高于当前 CLI 提供的
   ``PLUGIN_API_VERSION`` 时跳过其命令并在 stderr 给一行警告
   （``QATLAS_QUIET=1`` 静默）；

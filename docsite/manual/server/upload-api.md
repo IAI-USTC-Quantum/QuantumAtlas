@@ -264,10 +264,12 @@ has with a SQL store. See README.md for the wider design rationale.
 
 ## 客户端 / 服务端版本偏移
 
-Client-server version skew: the `X-Qatlas-Server-Version` response
-header (added in v0.8.0) lets the `qatlas` CLI detect when it's
-talking to a newer server and refuse writes (hard fail) / warn on
-reads. Old clients that don't inspect the header simply ignore it.
+Client-server version skew: `X-Qatlas-Server-Version` (v0.8.0+) lets
+qatlas-cli compare `(major, minor)`. Explicit writes probe
+`GET /api/server/info` first and hard-fail (exit 4) without sending the
+mutation when the server is newer or the probe fails (404 still allows
+legacy servers). After a write has been sent, version drift only warns.
+Reads warn and continue. Old clients ignore the header.
 
 ## Contributing by DOI
 
