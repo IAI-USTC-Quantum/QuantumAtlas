@@ -118,6 +118,22 @@ class UIVersionCLITests(unittest.TestCase):
         self.git("branch", "v8.8.8")
         self.reject("v8.8.8")  # never fall back to a branch or nearest tag
 
+    def test_event_checkout_resolves_annotated_object_to_commit(self):
+        self.git("tag", "-a", "v1.2.3-rc.1", "-m", "event fixture")
+        event_object = self.git("rev-parse", "refs/tags/v1.2.3-rc.1").strip()
+        self.assertNotEqual(event_object, self.sha)
+        self.git("checkout", "--quiet", "--detach", event_object)
+        self.assertEqual(self.git("rev-parse", "HEAD").strip(), self.sha)
+        self.assertEqual(self.select("v1.2.3-rc.1"), "1.2.3-rc.1")
+
+    def test_moved_tag_cannot_replace_the_pinned_event_commit(self):
+        self.git("tag", "v1.2.3")
+        event_sha = self.sha
+        self.git("commit", "--allow-empty", "-qm", "later source")
+        self.git("tag", "--force", "v1.2.3")
+        self.git("checkout", "--quiet", "--detach", event_sha)
+        self.assertIn("release tag commit", self.reject("v1.2.3", event_sha))
+
     def test_invalid_git_refs_cannot_select_revisions_or_inject_outputs(self):
         self.git("tag", "v1.2.3")
         # Some invalid tag names are valid rev-parse expressions. Checking a
@@ -377,9 +393,10 @@ class SourceContractTests(unittest.TestCase):
         self.assertIn("tags: ['v*.*.*']", workflow)
         self.assertIn("cancel-in-progress: false", workflow)
         self.assertIn("if: github.ref_type == 'tag'", prep)
-        # Checkout resolves an annotated tag to its commit; hand off that HEAD,
-        # not github.sha (which can be a tag object), to every reusable check.
-        self.assertIn("ref: ${{ github.ref }}", prep)
+        # Pin the event object instead of looking up a potentially moved tag,
+        # then hand off the resolved commit to every reusable check.
+        self.assertIn("ref: ${{ github.sha }}", prep)
+        self.assertNotIn("ref: ${{ github.ref }}", prep)
         self.assertIn('run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"', prep)
         self.assertIn("source_sha: ${{ steps.source.outputs.sha }}", prep)
         for required in (
@@ -409,10 +426,28 @@ class SourceContractTests(unittest.TestCase):
         )
         self.assertEqual([release.index(step) for step in steps], sorted(release.index(step) for step in steps))
         self.assertEqual(release.count("uses: goreleaser/goreleaser-action@v6"), 1)
-        for forbidden in ("release_gate.py", "verify-release", "artifacts.py smoke", "docker/build-push-action", "actions/attest"):
+        for forbidden in ("release_gate.py", "verify-release", "artifacts.py smoke", "docker/build-push-action"):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, workflow)
-        self.assertNotRegex(workflow, r"(?m)^\s*(?:attestations|id-token):")
+
+    def test_official_attestations_follow_publish_with_default_manifest_names(self):
+        workflow = self.configuration_text(".github/workflows/release.yml")
+        release = workflow.split("  release:\n", 1)[1]
+        self.assertIn("id-token: write", release)
+        self.assertIn("attestations: write", release)
+        self.assertIn('echo "version=$VERSION" >> "$GITHUB_OUTPUT"', release)
+        self.assertIn("id: ui", release)
+        self.assertEqual(release.count("uses: actions/attest@v4.2.2"), 2)
+        self.assertLess(release.index("uses: goreleaser/goreleaser-action@v6"), release.index("uses: actions/attest@v4.2.2"))
+        self.assertIn("subject-checksums: dist/qatlasd_${{ steps.ui.outputs.version }}_checksums.txt", release)
+        self.assertIn("subject-checksums: dist/digests.txt", release)
+        # Official defaults register attestations in GitHub, without a second
+        # registry upload or optional artifact storage records/permissions.
+        for extra in ("push-to-registry:", "create-storage-record:", "artifact-metadata:", "continue-on-error:"):
+            self.assertNotIn(extra, release)
+        config = self.configuration_text(".goreleaser.yaml")
+        self.assertNotIn("name_template:", config)
+        self.assertNotIn("docker_digest:", config)
 
     def test_local_docker_builds_source_with_complete_ui_and_keeps_runtime_contract(self):
         root = Path(__file__).resolve().parents[2]

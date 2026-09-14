@@ -86,7 +86,7 @@ curl -fL "$BASE/qatlasd_${VERSION}_checksums.txt" -o "qatlasd_${VERSION}_checksu
 sha256sum "$ARTIFACT"          # macOS 可用 shasum -a 256 "$ARTIFACT"
 ```
 
-**当前发布流程不再生成 GitHub attestation**，不能假定新归档或镜像带有 SLSA build provenance。只有核对历史 tag 确实发布过相应证明时，才可用 GitHub CLI 验证历史产物：
+后续采用新 workflow 的版本会在 GoReleaser 发布后，由官方 `actions/attest` 生成签名构建证明并默认登记到 GitHub；归档与 UI ZIP 仍取自默认版本化 `qatlasd_<version>_checksums.txt` 清单。已发布的 `v0.35.0-rc.1` 不追溯补签，不能视作已有这套新 GitHub 证明。选用新 workflow 的产物时，确认对应 attestation 步骤成功，再用 GitHub CLI 验证：
 
 ```bash
 gh attestation verify "./$ARTIFACT" --repo IAI-USTC-Quantum/QuantumAtlas
@@ -94,7 +94,7 @@ gh attestation verify "./$ARTIFACT" --repo IAI-USTC-Quantum/QuantumAtlas
 gh attestation verify "./qatlasd_${VERSION}_web.zip" --repo IAI-USTC-Quantum/QuantumAtlas
 ```
 
-**证明对象是 `tar.gz` / `zip` 归档本身，不是解出的 `qatlasd`。** 检查验证结果里的仓库、workflow、tag / commit 是否符合预期。Provenance 证明特定构建身份与产物摘要的关联，**不保证源码无恶意、依赖无漏洞或有源码写权限的攻击者无法发版**。安装器和运行时 UI 下载器不会自动执行这一步 attestation 核验。
+**证明对象是 `tar.gz` / `zip` 归档本身，不是解出的 `qatlasd`。** 检查验证结果里的仓库、workflow、tag / commit 是否符合预期。Provenance 证明特定构建身份与产物摘要的关联，**不保证源码 / 依赖安全或程序无 bug**。安装器和运行时 UI 下载器不会自动执行这一步 attestation 核验。新 Release 先 draft、附件全部上传成功后自动公开，再生成证明；若证明步骤失败，Release 可能已公开，维护者须先核对实际状态，不直接重跑覆盖。
 
 ## 用 Go 原生安装
 

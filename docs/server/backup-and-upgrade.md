@@ -184,9 +184,10 @@ sh install-qatlasd.sh --version "$TAG" --dir "$HOME/.local/bin"
 替换任一步失败，不改旧 binary / 配置；停止排查，不要强行启动未经验证的目标。
 脚本不自动 sudo、注册或重启服务，也不会重写 YAML。
 
-同源 checksum 只是完整性校验，不是签名，也不证明源码 / 依赖安全。
-当前发布流程不再生成 GitHub attestation，不能假定新产物有来源证明；
-校验方法与历史证明的适用边界见[安装文档](install.md)。
+同源 checksum 只是完整性校验，不是来源签名，也不证明源码 / 依赖安全或程序无 bug。
+后续采用新 workflow 的版本在 GoReleaser 发布后生成 GitHub 签名构建证明，
+可用 `gh attestation verify` 核验；已发布的 `v0.35.0-rc.1` 不追溯补签。
+证明失败时 Release 可能已公开，先核对实际状态；校验方法见[安装文档](install.md)。
 
 **5. 显式启动新版本并验证。** 若说明要求新增 YAML 字段，按说明合并，
 **不要用 `config init --force` 覆盖已有配置**。若旧 unit 仍使用 dotenv，先迁移到

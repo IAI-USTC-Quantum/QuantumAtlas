@@ -69,8 +69,10 @@ Go 模块、UI 包或 Docker，这些消费者仍有各自约束。上述普通 
 ``latest`` 仅在非 prerelease、非 snapshot 的镜像发布时更新，不等待外部 smoke，
 也不按版本大小排序。
 
-正式 UI 包的版本从 ``release.yml`` 传给 ``go.yml`` 的精确 ``release_tag``
-去掉前导 ``v`` 派生，并检查 tag 所指提交 SHA = source SHA = ``HEAD``。
+``release.yml`` 的 prep 固定 checkout 事件的 ``github.sha``，再将 ``HEAD``
+解析为提交 SHA，供 checks 与发布共用，不重新解析浮动 tag 来选择源码。
+正式 UI 包的版本从传给 ``go.yml`` 的精确 ``release_tag`` 去掉前导 ``v`` 派生，
+并检查 tag 所指提交 SHA = source SHA = ``HEAD``。
 GoReleaser 使用绑定到触发 tag 的 ``GORELEASER_CURRENT_TAG``，不从最近旧 tag
 或同 SHA 的其他 tag 猜测版本。普通 branch/PR CI 仍执行完整 UI 打包与恢复验证，
 但只用 ``0.0.0-ci.g<完整Git提交SHA>`` 临时标识，不创建 tag、版本文件，也不发布。
@@ -88,10 +90,14 @@ UI，校验 SHA256、包内版本与完整性后按版本缓存，后续启动�
 GoReleaser OSS v2.18.1 的 ``git.ignore_tags`` 精确忽略
 ``quantum-atlas-v0.21.0`` （不是 glob），不会修改该历史 tag。
 Go tag 可被发现不等于 Release UI 已可下载：缺附件会明确报错，Go 模块安装
-不等待 GitHub/GHCR 发布完成。现在默认直接发布，不等待外部 smoke；移除旧保护后，
-不再保证拒绝所有已公开 Release 的重传，也不保证失败无副作用。
-GitHub/GHCR 非原子，失败后须分别核对附件、镜像与标签状态；不要盲目重跑、移动
-已推 tag 或以修复发布为由擅自升级生产。
+不等待 GitHub/GHCR 发布完成。新 Release 内部先 draft、全部附件上传成功后自动公开，
+不等待外部 smoke。默认不覆盖同名附件，对 immutable Release 的实际发布会硬拒绝。
+后续采用新 workflow 的版本在 GoReleaser 发布后生成 GitHub 签名构建证明，
+可用 ``gh attestation verify`` 核验；已发布的 ``v0.35.0-rc.1`` 不追溯补签。
+默认版本化 ``qatlasd_<version>_checksums.txt`` 不变，源码安装的 UI 下载器也依赖它；
+SHA256 完整性不是来源签名，来源证明也不保证程序无 bug。
+GitHub/GHCR/证明登记非原子，证明失败时 Release 可能已公开：先分别核对 Release、
+附件、镜像、标签与证明状态，不直接重跑覆盖、移动已推 tag 或擅自升级生产。
 
 兼容协议
 --------

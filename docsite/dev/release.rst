@@ -96,7 +96,7 @@ GitHub Latest 保持为 ``v0.34.0``；本次主仓版本流程调整也不构成
 服务端源码与预编译分发
 ------------------------
 
-从采用此流程的下一个新版本开始，GoReleaser OSS **v2.18.1** 发布
+服务端分发由 GoReleaser OSS **v2.18.1** 发布
 ``qatlasd_<version>_<os>_<arch>.tar.gz``（Linux amd64/arm64、Darwin arm64），
 以及 ``qatlasd_<version>_web.zip`` 和默认 ``qatlasd_<version>_checksums.txt``。
 不自定义 archive/checksum 的命名、flags 或 ldflags；通过
@@ -124,9 +124,11 @@ SemVer，推荐标准 ``vX.Y.Z[-rc.N]``，不使用 PEP 440 或 ``+build`` 标�
 （如 ``feat(api)!: ...``），并在对应版本的功能/部署文档中说明迁移步骤。
 历史 Git tags 与已发布 Release 保留原样，不追溯重写。
 
-``release.yml`` 在 push tag ``v*.*.*`` 或手动选择 tag 运行时，先复用同 SHA 的
-``go.yml`` checks（Go test/vet、integration 编译检查、OpenAPI、MkDocs、
-前端与两文档站双干净构建一致性），再由 GoReleaser 构建和发布。
+``release.yml`` 在 push tag ``v*.*.*`` 或手动选择 tag 运行时，prep 固定 checkout
+事件的 ``github.sha``，再把 ``HEAD`` 解析为提交 SHA，供 checks 和发布共用；
+不重新解析浮动 tag 来选择源码。先复用同 SHA 的 ``go.yml`` checks（Go test/vet、
+integration 编译检查、OpenAPI、MkDocs、前端与两文档站双干净构建一致性），
+再由 GoReleaser 构建和发布。
 正式 UI 版本从传入的精确 ``release_tag`` 去掉前导 ``v`` 派生，仍确认
 tag 所指提交 SHA = source SHA = ``HEAD``，并复用唯一验证过的 UI 包。
 GoReleaser 的 ``GORELEASER_CURRENT_TAG`` 绑定真实触发 tag，不从最近旧 tag
@@ -134,8 +136,9 @@ GoReleaser 的 ``GORELEASER_CURRENT_TAG`` 绑定真实触发 tag，不从最近�
 
 发布检查交给 GoReleaser 原生 Git/SemVer 校验与 preflight；preflight 沿用
 默认只警告，不设置 ``fail_on_error: true``。不再维护自定义 release gate、
-draft → public → latest 状态机、独立 Docker/report job 或 GitHub attestation。
-GoReleaser 默认直接发布，保留 ``prerelease: auto``；不等待三平台原生 smoke
+手动 draft → public → latest 状态机或独立 Docker/report job。
+新 GitHub Release 内部先建 draft，全部附件上传成功后自动公开；
+原生 Summary 默认已有，保留 ``prerelease: auto``。不等待三平台原生 smoke
 或其他外部 smoke，GitHub Latest 采用 GoReleaser/平台默认行为。
 
 镜像也由 ``.goreleaser.yaml`` 的 ``dockers_v2`` 管理，默认构建
@@ -182,8 +185,15 @@ Go 工具链门槛唯一读 ``go.mod``；Node 使用 ``web/.node-version``，npm
 snapshot 不构成镜像验收。快照运行版本由 GoReleaser 生成，不是正式 Release 版本，
 不用于普通源码安装的资源发现。
 
-校验清单仍覆盖三个归档和 UI 包，但当前流程不再生成 GitHub attestation。
-同源 SHA256 是完整性检查，不是独立签名，也不证明源码安全。
+后续采用新 workflow 的版本在 GoReleaser 发布之后，用两个官方
+``actions/attest@v4.2.2`` 步骤生成签名构建证明：``subject-checksums`` 分别读取
+``dist/qatlasd_<version>_checksums.txt``（三个归档与 UI ZIP）和
+``dist/digests.txt``（镜像），默认登记到 GitHub，可用 ``gh attestation verify``
+核验。不推送 registry bundle，只增加 ``id-token: write`` / ``attestations: write``
+权限。checksum 保持默认版本化名称，不能改成 ``checksums.txt``，源码安装的 UI
+下载器也依赖它。同源 SHA256 是完整性检查，不是来源签名；来源证明也不保证程序无 bug。
+此修复尚未执行新发布，不为已发布的 ``v0.35.0-rc.1`` 追溯补签；该 RC 已验证的
+BuildKit 双架构 SBOM/provenance 不受影响，不能视作新增 GitHub 证明。
 公开的开发文档可从包直接读取，不得包含机密。
 
 迁移时安装脚本必须取自 **同一新 tag** 的
@@ -193,9 +203,10 @@ snapshot 不构成镜像验收。快照运行版本由 GoReleaser 生成，不�
 
 Git tag 一旦推送便可能被 Go proxy 发现，不等待 GitHub/GHCR 发布完成；
 UI 尚不可下载时首次启动会明确失败，可用后重试。正确性检查必须在打 tag 前完成。
-移除旧保护后，不再承诺拒绝所有已公开 Release 的重传，也不保证失败无副作用。
-GitHub 与 GHCR 不是原子事务：失败后分别核对 Release、附件、镜像与标签状态，
-再决定恢复方案；不要盲目重跑、移动已推 tag 或擅自升级线上。
+GoReleaser 默认不覆盖同名附件，对 immutable Release 的实际发布会硬拒绝；
+preflight 警告不保证失败无副作用。GitHub、GHCR 与证明登记不是原子事务：
+attestation 失败时 Release 可能已公开、镜像已推送。先分别核对 Release、附件、
+镜像、标签与证明状态，再决定恢复方案；不要直接重跑覆盖、移动已推 tag 或擅自升级线上。
 
 标准化原则
 ----------
@@ -359,11 +370,11 @@ sphinx 站点并直接写入文档目录。
      - 在已审核候选 SHA 上创建 annotated ``vX.Y.Z[-rc.N]``，核对指向后
        只推送这一个 tag；正式版本唯一从它派生
    * - release workflow
-     - 同 SHA checks → GoReleaser 默认发布；Git 生成正文，preflight 默认只警告；
-       双架构镜像稳定版发布时更新 GHCR ``latest``，RC 仅版本标签
+     - 事件提交 SHA checks → GoReleaser 发布 → GitHub 签名构建证明；
+       Git 生成正文，preflight 默认只警告；稳定镜像推送更新 ``latest``，RC 仅版本标签
    * - 产物验证
-     - 单独核对归档、UI、镜像 manifest 与实际运行；外部 smoke 不阻挡默认发布，
-       无自动 GitHub attestation；失败后逐项核对远端状态
+     - 核对归档、UI、镜像 manifest、GitHub 证明与实际运行；外部 smoke 不阻挡发布，
+       证明失败可能发生在 Release 公开之后，先逐项核对远端状态
    * - 部署
      - pin 版本 → pull → up -d → ``/api/health`` 版本与探针正确 →
        冒烟通过

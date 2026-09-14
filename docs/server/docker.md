@@ -37,7 +37,14 @@ ghcr.io/iai-ustc-quantum/qatlasd:latest   # 每次非预发布、非快照的镜
 
 `Dockerfile.goreleaser` 复用已经内嵌 UI/文档的 GoReleaser 预编译二进制，不重复源码编译；原 `Dockerfile` 保留为本地源码构建路径。发布镜像仍基于 **`gcr.io/distroless/static-debian12:nonroot`**，无 shell、默认 UID 65532，保留现有运行参数。真实多架构 manifest、拉取与运行仍须单独验证。
 
-当前流程不再生成 GitHub attestation，不能假定每个镜像带有可供 `gh attestation verify` 验证的来源证明。历史发行已有的证明保持不变。
+后续采用新 workflow 的版本在 GoReleaser 发布后，由官方 `actions/attest` 读取 `dist/digests.txt` 生成签名构建证明，默认登记到 GitHub，不推送 registry bundle。对已核对的镜像 digest，可用 GitHub CLI 验证：
+
+```bash
+gh attestation verify 'oci://ghcr.io/iai-ustc-quantum/qatlasd@sha256:<digest>' \
+  --repo IAI-USTC-Quantum/QuantumAtlas
+```
+
+来源证明关联构建身份与镜像摘要，不保证程序无 bug。已发布的 `v0.35.0-rc.1` 不补签新 GitHub 证明；其已验证的 BuildKit 双架构 SBOM/provenance 不受影响，两类证明不能混同。attestation 失败时 Release 和镜像可能已公开，应先核对实际状态，不直接重跑覆盖；稳定版推送时更新 `latest` 的条件不因此改变。
 
 ## A. compose 全家桶（推荐起手式）
 
