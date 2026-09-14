@@ -27,7 +27,9 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { PageHeader } from '@/components/page-header'
+import { MarkdownPreview } from '@/components/markdown-preview'
 import { StatusBlock } from '@/components/status-block'
+import { useAuth } from '@/lib/auth'
 import {
   adminAssetURL,
   assetDownloadPath,
@@ -69,8 +71,8 @@ function assetInlineURL(paperId: string, kind: string): string {
 
 // Text fetch for the markdown preview. /api/* authenticates via the
 // Authorization bearer header only, so attach it explicitly.
-async function fetchAssetText(url: string): Promise<string> {
-  const response = await fetch(url, { headers: { ...authHeaders() } })
+async function fetchAssetText(url: string, signal: AbortSignal): Promise<string> {
+  const response = await fetch(url, { headers: { ...authHeaders() }, signal })
   if (!response.ok) {
     throw new Error(`${response.status} ${response.statusText}`)
   }
@@ -78,8 +80,15 @@ async function fetchAssetText(url: string): Promise<string> {
 }
 
 function AdminAssetsPage() {
+  const auth = useAuth()
+  // Close dialogs and discard local preview state on in-place account changes.
+  return <AdminAssetsForAccount key={auth.user?.id} />
+}
+
+function AdminAssetsForAccount() {
   const { t } = useTranslation('admin')
   const { lang } = Route.useParams()
+  const auth = useAuth()
   const whoami = useAdminWhoami()
   const isAdmin = whoami.data?.is_admin ?? false
 
@@ -97,19 +106,20 @@ function AdminAssetsPage() {
   // on a publicly reachable s3.public_endpoint, which this deployment
   // does not expose.
   const previewText = useQuery({
-    queryKey: ['admin-asset-preview', preview?.paperId, preview?.kind],
-    queryFn: () => fetchAssetText(assetInlineURL(preview!.paperId, preview!.kind)),
-    enabled: preview !== null && preview.kind === 'markdown',
+    queryKey: ['admin-asset-preview', auth.user?.id, preview?.paperId, preview?.kind],
+    queryFn: ({ signal }) => fetchAssetText(assetInlineURL(preview!.paperId, preview!.kind), signal),
+    enabled: isAdmin && preview !== null && preview.kind === 'markdown',
+    gcTime: 0,
     retry: false,
   })
 
   const previewBlobURL = useQuery({
-    queryKey: ['admin-asset-preview-blob', preview?.paperId, preview?.kind],
+    queryKey: ['admin-asset-preview-blob', auth.user?.id, preview?.paperId, preview?.kind],
     queryFn: async () => {
       const blob = await fetchAssetBlob(assetInlineURL(preview!.paperId, preview!.kind))
       return URL.createObjectURL(blob)
     },
-    enabled: preview !== null && preview.kind === 'pdf',
+    enabled: isAdmin && preview !== null && preview.kind === 'pdf',
     retry: false,
   })
 
@@ -122,9 +132,9 @@ function AdminAssetsPage() {
   }, [previewBlobURL.data])
 
   const presignedURL = useQuery({
-    queryKey: ['admin-asset-url', urlTarget?.paperId, urlTarget?.entry.kind],
+    queryKey: ['admin-asset-url', auth.user?.id, urlTarget?.paperId, urlTarget?.entry.kind],
     queryFn: () => adminAssetURL(urlTarget!.paperId, urlTarget!.entry.kind),
-    enabled: urlTarget !== null,
+    enabled: isAdmin && urlTarget !== null,
     retry: false,
   })
 
@@ -228,14 +238,14 @@ function AdminAssetsPage() {
       </StatusBlock>
 
       <PreviewDialog
-        preview={preview}
+        preview={isAdmin ? preview : null}
         text={previewText}
         blobURL={previewBlobURL}
         onClose={() => setPreview(null)}
       />
 
       <URLDialog
-        target={urlTarget}
+        target={isAdmin ? urlTarget : null}
         query={presignedURL}
         onCopy={copy}
         onClose={() => setUrlTarget(null)}
@@ -451,7 +461,8 @@ function AssetRow({
 
 // Preview dialog: PDFs stream through the inline endpoint (bearer
 // header on the fetch) into a blob object URL rendered by an <iframe>;
-// markdown is fetched as text and shown verbatim in a <pre>.
+// Markdown is fetched as text and rendered by the shared safe math preview,
+// with an unmodified source view available alongside it.
 function PreviewDialog({
   preview,
   text,
@@ -492,15 +503,13 @@ function PreviewDialog({
             )}
           </StatusBlock>
         ) : preview ? (
-          <StatusBlock
-            loading={text.isLoading}
-            error={text.error?.message ?? ''}
-            empty={false}
-          >
-            <pre className="max-h-[600px] overflow-auto rounded-md border border-border bg-muted/30 p-4 text-xs leading-5 break-words whitespace-pre-wrap">
-              {text.data}
-            </pre>
-          </StatusBlock>
+          text.isLoading ? (
+            <p role="status" className="text-sm text-muted-foreground">{t('common:status.loading')}</p>
+          ) : (
+            <StatusBlock loading={false} error={text.error?.message ?? ''} empty={false}>
+              {text.data !== undefined && <MarkdownPreview key={preview.paperId} content={text.data} />}
+            </StatusBlock>
+          )
         ) : null}
       </DialogContent>
     </Dialog>

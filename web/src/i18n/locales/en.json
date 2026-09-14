@@ -31,6 +31,16 @@
       "active": "Active",
       "missing": "Missing"
     },
+    "markdown": {
+      "viewLabel": "Markdown view",
+      "rendered": "Rendered",
+      "source": "Source",
+      "rendering": "Rendering Markdown and formulas…",
+      "empty": "This document is empty.",
+      "failed": "Preview could not be completed. Switch to Source or download the file.",
+      "tooLarge": "This document exceeds the 200,000-character rendering limit. View Source or download the file.",
+      "safetyNote": "Supports Markdown and LaTeX math; raw HTML is not executed and images are not loaded automatically."
+    },
     "actions": {
       "search": "Search",
       "copy": "Copy",

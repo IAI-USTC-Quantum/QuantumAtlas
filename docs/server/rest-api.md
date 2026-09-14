@@ -215,7 +215,7 @@ Admin 端点全部走 `adminGuard`：**session token + admin 白名单**（`auth
 #### Admin Asset Browser（`/api/admin/assets/*`）
 
 SPA 页面 `/$lang/admin/assets`：防抖搜索 → 论文卡片 → 可展开资产表，每行
-Preview（Dialog iframe/pre）、Download、Copy Presigned URL + Copy S3 Key。
+Preview（PDF viewer / Markdown 与 LaTeX 渲染预览，可切换原文）、Download、Copy Presigned URL + Copy S3 Key。
 `{kind}` 取 `pdf` 或 `markdown`（别名 `md`）。
 
 | Method | Path | 用途 |
@@ -223,7 +223,7 @@ Preview（Dialog iframe/pre）、Download、Copy Presigned URL + Copy S3 Key。
 | `GET` | `/api/admin/assets/{paper_id}` | 资产清单：每个 asset 的 S3 object key / size / sha256 / content-type |
 | `GET` | `/api/admin/assets/{paper_id}/{kind}` | 单资产详情；`?presign=true&ttl=1h` 附带 presigned URL |
 | `GET` | `/api/admin/assets/{paper_id}/{kind}/download` | 代理流式下载（`Content-Disposition: attachment`）|
-| `GET` | `/api/admin/assets/{paper_id}/{kind}/inline` | 代理流式预览（`Content-Disposition: inline`；PDF 进 iframe viewer，markdown 按 text 渲染）|
+| `GET` | `/api/admin/assets/{paper_id}/{kind}/inline` | 代理流式预览（`Content-Disposition: inline`；PDF 进 iframe viewer，Markdown 作为文本获取后由 SPA 安全渲染，保留原文模式）|
 | `GET` | `/api/admin/assets/{paper_id}/{kind}/url` | presigned S3 URL JSON——浏览器直连 S3，绕过 qatlasd 代理。TTL **1 分钟–24 小时**（默认 1h），超出区间截断 |
 | `GET` | `/api/admin/assets/batch?paper_ids=a,b,c` | 批量资产清单（**≤50 篇**）|
 | `GET` | `/api/admin/assets/batch/download?paper_ids=a,b,c&kind=pdf` | 流式 ZIP 打包下载（**≤20 篇**）|

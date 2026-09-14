@@ -31,6 +31,16 @@
       "active": "正常",
       "missing": "缺失"
     },
+    "markdown": {
+      "viewLabel": "Markdown 查看方式",
+      "rendered": "渲染预览",
+      "source": "原文",
+      "rendering": "正在渲染 Markdown 和公式…",
+      "empty": "文档为空。",
+      "failed": "预览未能完成。请切换到“原文”查看，或下载文件。",
+      "tooLarge": "文档超过 200,000 字符的渲染上限。请查看原文或下载文件。",
+      "safetyNote": "支持 Markdown 和 LaTeX 公式；原始 HTML 不执行，图片不自动加载。"
+    },
     "actions": {
       "search": "搜索",
       "copy": "复制",

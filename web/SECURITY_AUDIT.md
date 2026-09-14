@@ -1,5 +1,11 @@
 # 前端依赖安全修复记录（2026-09-14）
 
+> **历史范围**：下文记录 `77cadfd` 清理闲置依赖时的实现与验证结果，不是后续功能的现状。
+> 后续按明确需求重新接入了有调用者的 Markdown / LaTeX 渲染，再迁移为 unified/remark
+> 与单版本 KaTeX 的 Worker → HAST → React 方案；marked 与 DOMPurify 已无调用者并移除。
+> 当前的树验证、Worker 隔离、原文模式与持续测试见 [Markdown 与公式预览](MARKDOWN_PREVIEW.md)。
+> 下文“纯文本预览”“无源码调用”的描述仅适用于该历史提交。
+
 ## 范围与结果
 
 基线：`d98fc73` 的 `web/package-lock.json`，Node **24.20.0**、npm **11.19.0**，

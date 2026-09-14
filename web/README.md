@@ -16,9 +16,11 @@ QuantumAtlas 的 React SPA；API、PocketBase、静态资源和文档由 Go 服�
   `components.json`、`src/index.css` 管理组件路径及主题变量。
 - PocketBase JS SDK 管理会话；`react-i18next` / `i18next-browser-languagedetector`
   负责语言；`next-themes`、`lucide-react`、`sonner` 分别提供主题、图标与通知。
-- 论文与管理员资产的 Markdown 预览使用 React `<pre>` 输出纯文本，不执行 HTML。
-  旧 wiki 渲染链（`marked`、DOMPurify、KaTeX）已移除；不要为渲染富文本直接使用
-  `dangerouslySetInnerHTML`，新功能需单独选型、消毒和 XSS 回归。
+- 论文详情和管理员资产共用 Markdown / LaTeX 预览，保留原文切换；实现与安全边界见
+  [Markdown 与公式预览](MARKDOWN_PREVIEW.md)。unified/remark/KaTeX 在可终止的 Worker 中
+  生成有界 HAST；主线程独立验证树后转换为 React 元素，不注入 HTML。
+  原始 HTML 仅作可见文本，图片不自动加载；无需 marked 或 DOMPurify。
+  KaTeX 脚本、CSS 和字体均从同一 npm 锁版本本地打包，不依赖 CDN。
 - `@/*` 对应 `src/*`，配置位于 `vite.config.ts`、`tsconfig.json` 和
   `tsconfig.app.json`。Go 工具链门槛以根 `go.mod` 为准，不另设 Go 版本。
 
@@ -172,7 +174,10 @@ cp web/.env.development.example web/.env.development.local
 npm ci
 npm run dev -- --host 127.0.0.1
 npm run lint
+npm test       # jsdom 下的 Markdown / 公式 / XSS 单元测试，不加载应用代理配置
 npm run build  # tsr generate && tsc -b && vite build
+npm exec -- playwright install chromium  # 首次安装测试浏览器
+npm run test:browser  # 本机静态构建 + 显式 API fixture，无生产连接
 npm run preview -- --host 127.0.0.1
 ```
 

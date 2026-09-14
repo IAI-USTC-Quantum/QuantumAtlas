@@ -357,6 +357,9 @@ class SourceContractTests(unittest.TestCase):
         # Audit the full locked graph, not only browser/runtime dependencies.
         self.assertIn("working-directory: web\n        run: npm audit\n", workflow)
         self.assertIn("working-directory: web\n        run: npm run lint\n", workflow)
+        self.assertIn("working-directory: web\n        run: npm test\n", workflow)
+        self.assertIn("run: npm exec -- playwright install --with-deps chromium", workflow)
+        self.assertIn("working-directory: web\n        run: npm run test:browser\n", workflow)
         release = (root / ".github/workflows/release.yml").read_text()
         self.assertIn("uses: ./.github/workflows/go.yml", release)
         self.assertIn("source_sha: ${{ needs.prep.outputs.source_sha }}", release)

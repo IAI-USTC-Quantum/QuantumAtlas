@@ -1,6 +1,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { useAuth } from './auth'
 import {
   adminAcquisitionFailures,
   adminAssetList,
@@ -107,9 +108,14 @@ export function usePapersList(params: PapersListParams) {
 // every sidebar render doesn't hit the server; retry disabled because a
 // 401/403 here just means "not a browser session" — hide, don't retry.
 export function useAdminWhoami() {
+  const auth = useAuth()
   return useQuery({
-    queryKey: ['admin-whoami'],
+    // An in-place/cross-tab account switch must not reuse another user's role.
+    // Never put bearer tokens themselves in query keys or developer tools.
+    queryKey: ['admin-whoami', auth.user?.id],
     queryFn: (): Promise<AdminWhoami> => adminWhoami(),
+    enabled: auth.isAuthed,
+    gcTime: 0,
     staleTime: 5 * 60_000,
     retry: false,
   })

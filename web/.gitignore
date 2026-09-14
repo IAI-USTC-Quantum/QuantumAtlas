@@ -29,3 +29,7 @@ dist-ssr
 # Sphinx-built docs site (source: ../docsite, built by sphinx-build)
 public/doc/
 public/devdoc/
+
+# Browser regression reports (source tests are tracked)
+test-results/
+playwright-report/

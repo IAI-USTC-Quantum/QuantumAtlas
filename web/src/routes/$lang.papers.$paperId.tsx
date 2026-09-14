@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -6,11 +7,13 @@ import { ArrowLeft, Download, Eye, FileText, Link2 } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { PageHeader } from '@/components/page-header'
+import { MarkdownPreview } from '@/components/markdown-preview'
 import { Panel } from '@/components/panel'
 import { StatusBlock } from '@/components/status-block'
 import { useLang } from '@/hooks/use-lang'
+import { useAuth } from '@/lib/auth'
 import { useAdminWhoami, usePaperDetail } from '@/lib/queries'
 import {
   adminAssetURL,
@@ -28,6 +31,7 @@ export const Route = createFileRoute('/$lang/papers/$paperId')({
 
 function PaperDetailPage() {
   const { t } = useTranslation('papers')
+  const auth = useAuth()
   const lang = useLang()
   const { paperId } = Route.useParams()
   const detail = usePaperDetail(paperId || null)
@@ -90,7 +94,7 @@ function PaperDetailPage() {
               <PaperAcquisition acquisition={paper.acquisition} />
             </Panel>
 
-            <AdminAssetPreview paperId={paper.paper_id} />
+            <AdminAssetPreview key={auth.user?.id} paperId={paper.paper_id} />
 
             <Panel
               title={t('detail.assets')}
@@ -192,14 +196,31 @@ function formatBytes(size?: number): string {
 // for admins on the paper detail page. Hidden for non-admin users.
 function AdminAssetPreview({ paperId }: { paperId: string }) {
   const { t } = useTranslation('papers')
+  const auth = useAuth()
   const whoami = useAdminWhoami()
   const isAdmin = whoami.data?.is_admin ?? false
   const [previewKind, setPreviewKind] = useState<'pdf' | 'markdown' | null>(null)
   const [urlKind, setUrlKind] = useState<'pdf' | 'markdown' | null>(null)
   const [presignedUrl, setPresignedUrl] = useState('')
-  const [mdText, setMdText] = useState('')
   const [pdfUrl, setPdfUrl] = useState('')
   const [previewError, setPreviewError] = useState('')
+  // Key by paper and consume the AbortSignal: a late response from a closed
+  // preview must never overwrite another paper's content. Empty text is data,
+  // not a loading sentinel.
+  const markdown = useQuery({
+    queryKey: ['admin-asset-preview', auth.user?.id, previewKind === 'markdown' ? paperId : null, 'markdown'],
+    queryFn: async ({ signal }) => {
+      const response = await fetch(assetInlinePath(paperId, 'markdown'), {
+        headers: { ...authHeaders() },
+        signal,
+      })
+      if (!response.ok) throw new Error(`${response.status} ${response.statusText}`)
+      return response.text()
+    },
+    enabled: isAdmin && previewKind === 'markdown',
+    gcTime: 0,
+    retry: false,
+  })
 
   // Release the blob behind the previous object URL whenever it is
   // replaced or the component goes away.
@@ -217,18 +238,6 @@ function AdminAssetPreview({ paperId }: { paperId: string }) {
   // URL — <iframe>/<a> navigations cannot carry the header, and presigned
   // object-store URLs would point at the internal endpoint unless
   // s3.public_endpoint is configured.
-  const fetchMd = async (kind: string) => {
-    try {
-      const resp = await fetch(assetInlinePath(paperId, kind), {
-        headers: { ...authHeaders() },
-      })
-      if (!resp.ok) throw new Error(`${resp.status} ${resp.statusText}`)
-      setMdText(await resp.text())
-    } catch (err) {
-      setPreviewError(err instanceof Error ? err.message : String(err))
-    }
-  }
-
   const fetchPdfBlob = async () => {
     try {
       const blob = await fetchAssetBlob(assetInlinePath(paperId, 'pdf'))
@@ -241,13 +250,8 @@ function AdminAssetPreview({ paperId }: { paperId: string }) {
   const openPreview = (kind: 'pdf' | 'markdown') => {
     setPreviewKind(kind)
     setPreviewError('')
-    setMdText('')
     setPdfUrl('')
-    if (kind === 'markdown') {
-      void fetchMd(kind)
-    } else {
-      void fetchPdfBlob()
-    }
+    if (kind === 'pdf') void fetchPdfBlob()
   }
 
   const download = async (kind: 'pdf' | 'markdown') => {
@@ -304,16 +308,17 @@ function AdminAssetPreview({ paperId }: { paperId: string }) {
 
       {previewKind && (
         <Dialog open onOpenChange={() => setPreviewKind(null)}>
-          <DialogContent className="max-w-4xl">
+          <DialogContent className="min-w-0 sm:max-w-4xl">
             <DialogHeader>
               <DialogTitle>
                 {previewKind === 'pdf'
                   ? t('adminAssets.pdfPreview')
                   : t('adminAssets.mdPreview')}
               </DialogTitle>
+              <DialogDescription className="break-all font-mono">{paperId}</DialogDescription>
             </DialogHeader>
-            {previewError ? (
-              <p className="text-sm text-destructive">{previewError}</p>
+            {previewKind === 'pdf' && previewError ? (
+              <p role="alert" className="text-sm text-destructive">{previewError}</p>
             ) : previewKind === 'pdf' ? (
               pdfUrl ? (
                 <iframe
@@ -326,10 +331,12 @@ function AdminAssetPreview({ paperId }: { paperId: string }) {
                   {t('adminAssets.loading')}
                 </p>
               )
+            ) : markdown.isLoading ? (
+              <p role="status" className="text-sm text-muted-foreground">{t('adminAssets.loading')}</p>
             ) : (
-              <pre className="max-h-[600px] overflow-auto rounded-md border border-border bg-muted/30 p-4 text-sm leading-relaxed">
-                {mdText || t('adminAssets.loading')}
-              </pre>
+              <StatusBlock loading={false} error={markdown.error?.message ?? ''} empty={false}>
+                {markdown.data !== undefined && <MarkdownPreview key={paperId} content={markdown.data} />}
+              </StatusBlock>
             )}
           </DialogContent>
         </Dialog>

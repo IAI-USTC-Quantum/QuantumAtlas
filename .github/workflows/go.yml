@@ -154,11 +154,20 @@ jobs:
       - name: Lint web source
         working-directory: web
         run: npm run lint
+      - name: Markdown and math security regression tests
+        working-directory: web
+        run: npm test
       - name: First clean Sphinx build (both sites)
         run: bash .github/scripts/build-docs.sh
       - name: First clean web build
         working-directory: web
         run: npm run build
+      - name: Install Chromium for isolated UI tests
+        working-directory: web
+        run: npm exec -- playwright install --with-deps chromium
+      - name: Browser math previews (mock APIs, loopback only)
+        working-directory: web
+        run: npm run test:browser
       - name: Preserve entire first output tree
         run: cp -a web/dist build/ui-first
       - name: Second clean Sphinx build (both sites, no doctree reuse)
