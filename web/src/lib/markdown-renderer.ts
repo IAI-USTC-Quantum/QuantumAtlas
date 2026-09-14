@@ -1,27 +1,36 @@
 import katex from 'katex'
-import { unified } from 'unified'
-import remarkParse from 'remark-parse'
 import remarkGfm from 'remark-gfm'
-import remarkRehype, { type Options } from 'remark-rehype'
 import { fromHtml } from 'hast-util-from-html'
-import type { Element, Properties, Root } from 'hast'
-import type { Definition, Link, RootContent, Nodes } from 'mdast'
+import type { Options } from 'react-markdown'
+import type { Processor } from 'unified'
+import type { Element, Root } from 'hast'
+import type { Root as MarkdownRoot, RootContent, Nodes } from 'mdast'
 import remarkMathCompat from './remark-math-compat'
-import { MAX_MARKDOWN_LENGTH, MAX_RENDERED_TREE_LENGTH } from './markdown-protocol'
-import { isAllowedMarkdownLink, validateMarkdownTree } from './markdown-tree'
-
-export { MAX_MARKDOWN_LENGTH } from './markdown-protocol'
-const MAX_FORMULA_LENGTH = 10_000
+import {
+  MAX_MARKDOWN_LENGTH, MAX_FORMULA_LENGTH, MAX_FORMULAS, MAX_MATH_HTML_LENGTH, MAX_RENDERED_NODES,
+} from './markdown-limits'
+import { checkMarkdownTreeBudget, isAllowedMarkdownLink } from './markdown-policy'
 
 /**
- * DOM-free, synchronous pipeline, used ONLY in a disposable Worker in the UI.
- * Markdown is parsed once, not converted to HTML and then reparsed. Only the
- * public KaTeX output is parsed as HTML (parse5, no DOM/jsdom/browser requests).
- * No rehype-raw, MDX, code-fence math autodetection or shared macros/config.
+ * Options for the actual react-markdown component, not an alternative parser or
+ * React renderer. Keep only the app's syntax, URL and resource policies here.
+ * KaTeX stays at the same version as the former Worker for a fair comparison.
  */
-export function renderMarkdownToTree(source: string): Root {
+export function createMarkdownOptions(source: string): Options {
   if (source.length > MAX_MARKDOWN_LENGTH) throw new RangeError('Markdown input too large')
+  // Fail cheaply before tokenization on a storm of unmatched TeX openers. This
+  // conservative lexical budget also counts openers in code; it is NOT a formula
+  // parser or source rewrite. Escaped backslashes are skipped, Source unchanged.
+  let texOpeners = 0
+  for (let i = 0; i < source.length; i++) {
+    if (source[i] !== '\\') continue
+    if (source[i + 1] === '\\') { i++; continue }
+    if ((source[i + 1] === '(' || source[i + 1] === '[') && ++texOpeners > MAX_FORMULAS) {
+      throw new RangeError('Too many TeX delimiter openers')
+    }
+  }
   let mathOutputLength = 0
+  let mathNodes = 0
   function formula(node: Extract<RootContent, { type: 'math' | 'inlineMath' }>): Element[] {
     const start = node.position?.start.offset
     const end = node.position?.end.offset
@@ -40,68 +49,47 @@ export function renderMarkdownToTree(source: string): Root {
       return fallback()
     }
     mathOutputLength += html.length
-    if (mathOutputLength > MAX_RENDERED_TREE_LENGTH) throw new RangeError('Math output too large')
-    // Adapt only the fixed public KaTeX API, not its unstable internal DOM tree.
-    // Validation also strips parse5 source metadata before Worker serialization.
-    return validateMarkdownTree(fromHtml(html, { fragment: true })).children as Element[]
+    if (mathOutputLength > MAX_MATH_HTML_LENGTH) throw new RangeError('Math output too large')
+    // Only KaTeX's public output enters this parser, never authored HTML or
+    // exception messages. No rehype-raw/MDX or code-fence math autodetection.
+    const tree = fromHtml(html, { fragment: true })
+    mathNodes += checkMarkdownTreeBudget(tree)
+    if (mathNodes > MAX_RENDERED_NODES) throw new RangeError('Math structure too large')
+    return tree.children as Element[]
   }
-  function allowedDestination(node: Link | Definition): boolean {
-    // micromark replaces literal NUL with U+FFFD before constructing mdast.
-    // Do not let that lossy normalization turn a rejected control URL into a link.
-    const raw = source.slice(node.position?.start.offset, node.position?.end.offset)
-    return !raw.includes('\0') && isAllowedMarkdownLink(node.url)
-  }
-  const handlers: NonNullable<Options['handlers']> = {
-    math: (_state, node) => formula(node),
-    inlineMath: (_state, node) => formula(node),
-    // Visible literal HTML, NOT skipHtml (which silently discards authored text).
-    html: (_state, node) => ({ type: 'text', value: node.value }),
-    image: (_state, node) => ({ type: 'element', tagName: 'span', properties: { className: ['markdown-image'] },
-      children: [{ type: 'text', value: `[Image: ${node.alt ?? ''}]` }] }),
-    imageReference: (_state, node) => ({ type: 'element', tagName: 'span', properties: { className: ['markdown-image'] },
-      children: [{ type: 'text', value: `[Image: ${node.alt ?? ''}]` }] }),
-    linkReference: (state, node) => {
-      const definition = state.definitionById.get(node.identifier.toUpperCase())
-      const properties: Properties = definition && allowedDestination(definition)
-        ? { href: definition.url, ...(definition.title ? { title: definition.title } : {}) } : {}
-      return { type: 'element', tagName: properties.href ? 'a' : 'span', properties, children: state.all(node) }
-    },
-    link: (state, node) => {
-      // Check mdast's decoded destination BEFORE URI normalization could hide
-      // control characters. The independent receiver check uses the same policy.
-      const properties: Properties = allowedDestination(node)
-        ? { href: node.url, ...(node.title ? { title: node.title } : {}) } : {}
-      return { type: 'element', tagName: properties.href ? 'a' : 'span', properties, children: state.all(node) }
-    },
-    code: (_state, node) => ({ type: 'element', tagName: 'pre', properties: {}, children: [{
-      type: 'element', tagName: 'code',
-      properties: node.lang && /^[a-z\d_+-]{1,32}$/i.test(node.lang) ? { className: [`language-${node.lang}`] } : {},
-      children: [{ type: 'text', value: node.value + '\n' }],
-    }] }),
-  }
-  const processor = unified().use(remarkParse).use(remarkGfm).use(remarkMathCompat)
-    .use(function previewSyntax() {
-      // The old preview has no footnote IDs/backlinks; leave that extra GFM
-      // syntax literal rather than introduce DOM IDs, forms or English labels.
-      const data = this.data()
-      ;(data.micromarkExtensions ??= []).push({ disable: { null: ['gfmFootnoteDefinition', 'gfmFootnoteCall'] } })
-      return (tree: Nodes) => {
-        function tasks(node: Nodes) {
-          if (node.type === 'listItem' && typeof node.checked === 'boolean') {
-            const prefix = node.checked ? '[x] ' : '[ ] '
-            const first = node.children[0]
-            if (first?.type === 'paragraph') first.children.unshift({ type: 'text', value: prefix })
-            else node.children.unshift({ type: 'paragraph', children: [{ type: 'text', value: prefix }] })
-            delete node.checked
-          }
-          if ('children' in node) node.children.forEach(tasks)
+
+  function previewPolicy(this: Processor) {
+    const data = this.data()
+    ;(data.micromarkExtensions ??= []).push({ disable: { null: ['gfmFootnoteDefinition', 'gfmFootnoteCall'] } })
+    return (tree: MarkdownRoot) => {
+      // A single options object can be reused by StrictMode or a parent render.
+      // Reset on EVERY processing run, not only when constructing the options.
+      mathOutputLength = 0
+      mathNodes = 0
+      checkMarkdownTreeBudget(tree, true)
+      const pending: Nodes[] = [tree]
+      while (pending.length) {
+        const node = pending.pop()!
+        if (node.type === 'link' || node.type === 'definition') {
+          // Check decoded mdast BEFORE the official handlers URI-normalize it.
+          // Literal NUL is replaced by micromark: check its source span as well.
+          const raw = source.slice(node.position?.start.offset, node.position?.end.offset)
+          if (raw.includes('\0') || !isAllowedMarkdownLink(node.url)) node.url = ''
         }
-        tasks(tree)
+        if (node.type === 'code' && node.lang && !/^[a-z\d_+-]{1,32}$/i.test(node.lang)) delete node.lang
+        if ('children' in node) pending.push(...node.children)
       }
-    })
-    .use(remarkRehype, { handlers })
-  const tree = validateMarkdownTree(processor.runSync(processor.parse(source)))
-  // Also bound the complete wire representation (including node/prop overhead).
-  if (JSON.stringify(tree).length > MAX_RENDERED_TREE_LENGTH) throw new RangeError('Tree output too large')
-  return tree
+    }
+  }
+
+  return {
+    remarkPlugins: [remarkGfm, remarkMathCompat, previewPolicy],
+    remarkRehypeOptions: {
+      handlers: { math: (_state, node) => formula(node), inlineMath: (_state, node) => formula(node) },
+    },
+    rehypePlugins: [() => (tree: Root) => { checkMarkdownTreeBudget(tree) }],
+    // Official react-markdown handles raw HTML as visible text by default.
+    // Its default URL transform allows app-relative paths; this app does not.
+    urlTransform: (url, key) => key === 'href' && isAllowedMarkdownLink(url) ? url : undefined,
+  }
 }

@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test'
 import {
-  test, expect, deferred, labels, openPreview, selectAssetPreview, expectExactSource, controlMarkdownWorkers,
+  test, expect, deferred, labels, openPreview, selectAssetPreview, expectExactSource,
   MARKDOWN, PAPER_ID, SECOND_PAPER_ID, TITLE, SECOND_TITLE,
   type EntryPoint, type MarkdownResponse,
 } from './fixtures'
@@ -12,69 +12,6 @@ const variants = [
   { language: 'zh', theme: 'light', viewport: { width: 390, height: 844 } },
   { language: 'zh', theme: 'dark', viewport: { width: 1440, height: 1050 } },
 ] as const
-
-// Deliberately independent of the production validator: these are untrusted
-// Worker replies, not trees pre-approved by the renderer under test.
-function treeReply(...children: unknown[]) {
-  return { ok: true, treeJson: JSON.stringify({ type: 'root', children }) }
-}
-
-function headingReply(text: string) {
-  return treeReply({ type: 'element', tagName: 'h1', properties: {}, children: [{ type: 'text', value: text }] })
-}
-
-const invalidTreeReplies = [
-  { name: 'invalid tree JSON', reply: () => ({ ok: true, treeJson: '{"type":"root","children":[' }) },
-  { name: 'raw HTML nodes', reply: () => treeReply({ type: 'raw', value: '<img data-xss="worker-raw" src="https://markdown-fixture.invalid/worker.png" onerror="window.__markdownXss=1">' }) },
-  { name: 'MDX JSX nodes', reply: () => treeReply({ type: 'mdxJsxFlowElement', name: 'script', attributes: [], children: [] }) },
-  ...[
-    { name: 'onClick', properties: { onClick: 'window.__markdownXss=1' } },
-    { name: 'dangerouslySetInnerHTML', properties: { dangerouslySetInnerHTML: { __html: '<img data-xss="worker-prop" src="https://markdown-fixture.invalid/worker-prop.png">' } } },
-    { name: 'is', properties: { is: 'markdown-untrusted-element' } },
-  ].map(({ name, properties }) => ({
-    name: `unsafe ${name} props`,
-    reply: () => treeReply({ type: 'element', tagName: 'span', properties, children: [] }),
-  })),
-]
-
-const overBudgetTrees = [
-  { name: '2,000,000-character serialized reply', reply: () => {
-    const reply = treeReply({ type: 'text', value: 'x'.repeat(2_000_000) })
-    expect(reply.treeJson.length).toBeGreaterThan(2_000_000)
-    return reply
-  } },
-  { name: '20,000-node tree', reply: () => {
-    const branch = () => ({
-      type: 'element', tagName: 'span', properties: {},
-      children: Array.from({ length: 10_000 }, () => ({ type: 'text', value: 'x' })),
-    })
-    const reply = treeReply(branch(), branch())
-    // Each child array and the serialized length fit their caps; the cumulative
-    // 20,003 nodes must still exceed the independent whole-tree node budget.
-    expect(reply.treeJson.length).toBeLessThan(2_000_000)
-    return reply
-  } },
-  { name: '64-level tree depth', reply: () => {
-    let node: unknown = { type: 'text', value: 'Deep Worker tree' }
-    for (let depth = 0; depth < 65; depth++) {
-      node = { type: 'element', tagName: 'span', properties: {}, children: [node] }
-    }
-    const reply = treeReply(node)
-    expect(reply.treeJson.length).toBeLessThan(2_000_000)
-    return reply
-  } },
-]
-
-async function expectBusyWorker(workers: Awaited<ReturnType<typeof controlMarkdownWorkers>>, source: string) {
-  let pending: Awaited<ReturnType<typeof workers.snapshots>> = []
-  await expect.poll(async () => {
-    pending = (await workers.snapshots()).filter((worker) => worker.source === source && worker.terminationCalls === 0)
-    return pending
-  }, 'The real Markdown Worker must receive the expected source job').toHaveLength(1)
-  // Return the same successful observation. A second read can race cleanup and
-  // return undefined, hiding the real native Worker error behind a test TypeError.
-  return pending[0]
-}
 
 async function expectRendered(page: Page) {
   const rendered = page.getByTestId('markdown-rendered')
@@ -242,143 +179,54 @@ for (const entry of entries) {
       await expect(page.getByTestId('markdown-rendered')).toHaveCount(0)
     })
 
-    test('Worker startup failure leaves exact Source available', async ({ page, context }) => {
+    test('uses react-markdown even when Worker construction is unavailable', async ({ page, context }) => {
       await context.addInitScript(() => {
         window.Worker = new Proxy(window.Worker, {
-          construct() { throw new Error('Synthetic Worker startup failure') },
+          construct() { throw new Error('Workers deliberately unavailable') },
         })
       })
-      const preview = await openPreview(page, entry, 'en')
-      await expect(preview.getByRole('alert')).toBeVisible()
-      await expect(preview.getByRole('status')).toHaveCount(0)
+      await openPreview(page, entry, 'en')
+      const rendered = await expectRendered(page)
+      await expect(rendered).toHaveAttribute('data-renderer', 'react-markdown')
       await expectExactSource(page, 'en', MARKDOWN)
     })
 
-    for (const scenario of [...invalidTreeReplies, ...overBudgetTrees]) {
-      test(`rejects ${scenario.name} from a Worker and preserves exact Source`, async ({ page }) => {
-        const workers = await controlMarkdownWorkers(page)
+    // Real source inputs, not forged Worker replies: this renderer no longer has
+    // a Worker trust boundary or an interruptible five-second parsing deadline.
+    for (const scenario of [
+      { name: 'formula count', source: '$x$ '.repeat(201) },
+      { name: 'unmatched TeX opener count', source: '\\('.repeat(10_000) },
+      { name: 'Markdown depth', source: '> '.repeat(70) + 'Deep quote' },
+      { name: 'Markdown node count', source: '# Heading\n\n'.repeat(10_000) },
+      { name: 'expanded math output', source: (String.raw`$\sqrt{\frac{x}{y}}+\overrightarrow{AB}+\begin{pmatrix}a&b\\c&d\end{pmatrix}$` + '\n\n').repeat(200) },
+    ]) {
+      test(`${scenario.name} guard keeps Source and recovers on a new document`, async ({ page, api }) => {
+        expect(scenario.source.length).toBeLessThanOrEqual(200_000)
+        api.documents[PAPER_ID].markdown = scenario.source
         const preview = await openPreview(page, entry, 'en')
-        const worker = await expectBusyWorker(workers, MARKDOWN)
-        await workers.reply(worker.id, scenario.reply())
         await expect(preview.getByRole('alert')).toBeVisible()
         await expect(preview.getByRole('status')).toHaveCount(0)
         await expect(preview.getByTestId('markdown-rendered')).toHaveCount(0)
-        await expect(preview.locator('[data-xss], [is], script, img, iframe')).toHaveCount(0)
-        expect(await page.evaluate(() => Reflect.get(window, '__markdownXss') ?? 0)).toBe(0)
-        await expect.poll(async () => (await workers.snapshots()).find(({ id }) => id === worker.id)?.terminationCalls,
-          'An invalid tree must stop its native Worker before switching to Source').toBeGreaterThan(0)
-        await expect(preview.getByRole('tab', { name: 'Source', exact: true })).toBeEnabled()
+        await expectExactSource(page, 'en', scenario.source)
+        await page.keyboard.press('Escape')
+        await expect(page.getByRole('dialog')).toHaveCount(0)
+        api.documents[PAPER_ID].markdown = MARKDOWN
+        // Stay on the same page: a full reload would conceal stale boundary state.
+        if (entry === 'assets') await selectAssetPreview(page, 'en', PAPER_ID)
+        else await page.getByRole('button', { name: 'Preview Markdown', exact: true }).click()
+        await expectRendered(page)
         await expectExactSource(page, 'en', MARKDOWN)
       })
     }
 
-    test('an unsafe Worker-supplied href becomes inert rendered text and preserves Source', async ({ page }) => {
-      const workers = await controlMarkdownWorkers(page)
-      const preview = await openPreview(page, entry, 'en')
-      const worker = await expectBusyWorker(workers, MARKDOWN)
-      await workers.reply(worker.id, treeReply({
-        type: 'element', tagName: 'a', properties: { href: 'javascript:window.__markdownXss=1' },
-        children: [{ type: 'text', value: 'Unsafe Worker link' }],
-      }))
-      const rendered = preview.getByTestId('markdown-rendered')
-      await expect(rendered).toBeVisible()
-      const label = rendered.getByText('Unsafe Worker link', { exact: true })
-      await expect(label).toBeVisible()
-      expect(await label.evaluate((element) => element.tagName)).toBe('SPAN')
-      await expect(rendered.locator('a, [href], [target]')).toHaveCount(0)
-      await expect(preview.getByRole('alert')).toHaveCount(0)
-      await expect(preview.getByRole('status')).toHaveCount(0)
-      const originalURL = page.url()
-      await label.click()
-      expect(page.url()).toBe(originalURL)
-      expect(await page.evaluate(() => Reflect.get(window, '__markdownXss') ?? 0)).toBe(0)
-      // The unchanged automatic fixture also rejects external or unexpected
-      // local/API requests, including any triggered by this inert label.
-      await expect.poll(async () => (await workers.snapshots()).find(({ id }) => id === worker.id)?.terminationCalls).toBeGreaterThan(0)
-      await expectExactSource(page, 'en', MARKDOWN)
-    })
-
-    test('unresponsive Worker times out without losing Source or accepting a stale reply', async ({ page }) => {
-      const workers = await controlMarkdownWorkers(page)
-      const preview = await openPreview(page, entry, 'en')
-      await expect(preview.getByRole('status')).toBeVisible()
-      const worker = await expectBusyWorker(workers, MARKDOWN)
-      await expect(preview.getByRole('tab', { name: 'Source', exact: true })).toBeEnabled()
-      // Keep Rendered selected: switching to Source intentionally cancels work.
-      await expect(preview.getByRole('alert')).toBeVisible({ timeout: 12_000 })
-      await expect(preview.getByRole('status')).toHaveCount(0)
-      await expect.poll(async () => (await workers.snapshots()).find(({ id }) => id === worker.id)?.terminationCalls,
-        'Timeout must call native Worker.terminate(), not merely hide the spinner').toBeGreaterThan(0)
-      const stopped = (await workers.snapshots()).find(({ id }) => id === worker.id)!
-      expect(worker.postedAt).not.toBeNull()
-      expect(stopped.terminatedAt).not.toBeNull()
-      // Measure in the browser's monotonic clock, not navigation/test duration.
-      // A fast Worker startup error must never satisfy this five-second timeout.
-      expect(stopped.terminatedAt! - worker.postedAt!, 'The parse deadline must actually elapse before termination').toBeGreaterThanOrEqual(4_900)
-      await workers.reply(worker.id, headingReply('Stale reply after timeout'), true)
-      await expect(preview.getByRole('alert')).toBeVisible()
-      await expect(preview.getByTestId('markdown-rendered')).toHaveCount(0)
-      await expect(preview).not.toContainText('Stale reply after timeout')
-      await expectExactSource(page, 'en', MARKDOWN)
-    })
-
-    test('Source is immediately usable and terminates the busy Worker on tab switch', async ({ page }) => {
-      const workers = await controlMarkdownWorkers(page)
-      const preview = await openPreview(page, entry, 'en')
-      await expect(preview.getByRole('status')).toBeVisible()
-      const worker = await expectBusyWorker(workers, MARKDOWN)
-      await expectExactSource(page, 'en', MARKDOWN)
-      await expect.poll(async () => (await workers.snapshots()).find(({ id }) => id === worker.id)?.terminationCalls,
-        'Switching to Source must terminate the running parser').toBeGreaterThan(0)
-      await workers.reply(worker.id, headingReply('Stale reply after tab switch'), true)
-      await expect(preview.getByRole('tab', { name: 'Source', exact: true })).toHaveAttribute('aria-selected', 'true')
-      await expect(preview.getByTestId('markdown-rendered')).toHaveCount(0)
-      await expectExactSource(page, 'en', MARKDOWN)
-    })
-
-    test('closing the dialog terminates its Worker and an old reply cannot replace a reopened preview', async ({ page }) => {
-      const workers = await controlMarkdownWorkers(page)
-      await openPreview(page, entry, 'en')
-      const oldWorker = await expectBusyWorker(workers, MARKDOWN)
-      await page.keyboard.press('Escape')
-      await expect(page.getByRole('dialog')).toHaveCount(0)
-      await expect.poll(async () => (await workers.snapshots()).find(({ id }) => id === oldWorker.id)?.terminationCalls,
-        'Unmounting the preview must terminate the parser').toBeGreaterThan(0)
-      // Reopen in this same browser document so the obsolete callback survives.
-      if (entry === 'assets') await selectAssetPreview(page, 'en', PAPER_ID)
-      else await page.getByRole('button', { name: 'Preview Markdown', exact: true }).click()
-      const preview = page.getByTestId('markdown-preview')
-      const newWorker = await expectBusyWorker(workers, MARKDOWN)
-      expect(newWorker.id).not.toBe(oldWorker.id)
-      await workers.reply(newWorker.id, headingReply('Fresh Worker tree'))
-      await expect(preview.getByTestId('markdown-rendered').getByRole('heading', { name: 'Fresh Worker tree', exact: true })).toBeVisible()
-      await expect.poll(async () => (await workers.snapshots()).find(({ id }) => id === newWorker.id)?.terminationCalls,
-        'A successful reply must also release its disposable Worker').toBeGreaterThan(0)
-      await workers.reply(oldWorker.id, headingReply('Obsolete Worker tree'), true)
-      expect((await workers.snapshots()).find(({ id }) => id === oldWorker.id)?.replies).toBe(1)
-      await expect(preview.getByTestId('markdown-rendered').getByRole('heading', { name: 'Fresh Worker tree', exact: true })).toBeVisible()
-      await expect(preview).not.toContainText('Obsolete Worker tree')
-      await expect(preview.getByRole('alert')).toHaveCount(0)
-      await expectExactSource(page, 'en', MARKDOWN)
-    })
-
-    test('oversized Markdown stays readable without starting a parser Worker', async ({ page, context, api }) => {
+    test('oversized Markdown stays readable without invoking the renderer', async ({ page, api }) => {
       const oversized = '# Large document\n' + 'Synthetic plain text.\n'.repeat(10_000)
       expect(oversized.length).toBeGreaterThan(200_000)
       api.documents[PAPER_ID].markdown = oversized
-      await context.addInitScript(() => {
-        Reflect.set(window, '__markdownWorkerStarts', 0)
-        window.Worker = class extends Worker {
-          constructor(url: string | URL, options?: WorkerOptions) {
-            Reflect.set(window, '__markdownWorkerStarts', Number(Reflect.get(window, '__markdownWorkerStarts')) + 1)
-            super(url, options)
-          }
-        }
-      })
       const preview = await openPreview(page, entry, 'en')
       await expect(preview.getByRole('status')).toContainText('200,000-character')
+      await expect(preview.getByTestId('markdown-rendered')).toHaveCount(0)
       await expectExactSource(page, 'en', oversized)
-      expect(await page.evaluate(() => Reflect.get(window, '__markdownWorkerStarts'))).toBe(0)
     })
   })
 }

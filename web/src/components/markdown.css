@@ -55,9 +55,7 @@
   text-align: start;
 }
 .markdown-content th { background: var(--muted); font-weight: 650; }
-.markdown-content :is(th, td)[align="left"] { text-align: left; }
-.markdown-content :is(th, td)[align="center"] { text-align: center; }
-.markdown-content :is(th, td)[align="right"] { text-align: right; }
+/* react-markdown preserves GFM alignment as inline textAlign on table cells. */
 .markdown-content hr { margin: 1.5em 0; border-color: var(--border); }
 .markdown-content .katex-display {
   max-width: 100%;

@@ -3,8 +3,8 @@ import { useTranslation } from 'react-i18next'
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
-// Parser/KaTeX runs in a separately bundled worker. The tree decoder, styles and
-// local fonts also stay off the normal page path until a preview is opened.
+// react-markdown, KaTeX and local CSS/fonts load only when a preview is opened.
+// Lazy loading does not make subsequent main-thread parsing cancellable.
 const MarkdownRendered = lazy(() => import('./markdown-rendered'))
 
 class RenderBoundary extends Component<
@@ -33,7 +33,7 @@ export function MarkdownPreview({ content }: { content: string }) {
         </TabsList>
         <TabsContent value="rendered" className="min-w-0">
           <div className="max-h-[min(60vh,600px)] overflow-auto rounded-md border border-border bg-background p-4">
-            <RenderBoundary fallback={<p role="alert" className="text-sm text-destructive">{t('markdown.failed')}</p>}>
+            <RenderBoundary key={content} fallback={<p role="alert" className="text-sm text-destructive">{t('markdown.failed')}</p>}>
               <Suspense fallback={<p role="status" className="text-sm text-muted-foreground">{t('markdown.rendering')}</p>}>
                 <MarkdownRendered content={content} />
               </Suspense>

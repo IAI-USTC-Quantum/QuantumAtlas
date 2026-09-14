@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { MAX_MARKDOWN_LENGTH, renderMarkdownToTree } from '../src/lib/markdown-renderer'
-import { markdownReplyToReact } from '../src/lib/markdown-react'
+import { MarkdownDocument } from '../src/components/markdown-document'
+import { MAX_MARKDOWN_LENGTH } from '../src/lib/markdown-limits'
 
 function renderHtml(source: string): string {
-  return renderToStaticMarkup(markdownReplyToReact({ ok: true, treeJson: JSON.stringify(renderMarkdownToTree(source)) }))
+  return renderToStaticMarkup(createElement(MarkdownDocument, { content: source }))
 }
 
 function fragment(html: string): DocumentFragment {
@@ -30,7 +31,7 @@ function expectInert(root: DocumentFragment): void {
 
 afterEach(() => vi.unstubAllGlobals())
 
-describe('pure Markdown and KaTeX rendering', () => {
+describe('react-markdown component and KaTeX rendering', () => {
   it('renders inline math adjacent to Chinese without spaces', () => {
     const root = render('能量$E=mc^2$守恒，向量$\\vec{x}$结束。')
     expect(root.querySelectorAll('.katex')).toHaveLength(2)
@@ -75,7 +76,14 @@ describe('pure Markdown and KaTeX rendering', () => {
     expect(root.querySelector('blockquote')?.textContent).toContain('quote')
     expect(root.querySelector('del')?.textContent).toBe('old')
     expect(root.textContent).toContain('[x] done')
+    expect(root.textContent).toContain('[ ] todo')
     expect(root.querySelector('input')).toBeNull()
+    // react-markdown's official JSX conversion changes HAST align into style.
+    expect([...root.querySelectorAll<HTMLElement>('th:first-child, td:first-child')]
+      .map((cell) => cell.style.textAlign)).toEqual(['left', 'left'])
+    expect([...root.querySelectorAll<HTMLElement>('th:last-child, td:last-child')]
+      .map((cell) => cell.style.textAlign)).toEqual(['right', 'right'])
+    expect(root.querySelector('th[align], td[align]')).toBeNull()
   })
 
   it.each(['tex', 'math'])('leaves all math delimiters and raw HTML in %s fenced code literal', (language) => {
@@ -120,11 +128,15 @@ describe('pure Markdown and KaTeX rendering', () => {
     expect(renderHtml(source)).toBe(html)
   })
 
-  it('produces deterministic plain serializable HAST, without raw nodes or source metadata', () => {
-    const tree = renderMarkdownToTree('<b>raw</b> and $x$')
-    expect(JSON.parse(JSON.stringify(tree))).toEqual(tree)
-    expect(JSON.stringify(tree)).not.toMatch(/"(?:position|data|raw|mdxJsxFlowElement)":/)
-    expect(renderMarkdownToTree('<b>raw</b> and $x$')).toEqual(tree)
+  it('produces deterministic React markup without exposing source metadata as DOM attributes', () => {
+    const source = '<b>raw</b> and $x$'
+    const html = renderHtml(source)
+    expect(renderHtml(source)).toBe(html)
+    const root = fragment(html)
+    expect(root.textContent).toContain('<b>raw</b> and ')
+    expect(root.querySelector('b, [node], [position], [data-sourcepos]')).toBeNull()
+    expect(root.querySelector('.katex')).not.toBeNull()
+    expect(source).toBe('<b>raw</b> and $x$')
   })
 
   it('leaves footnote notation literal without generated IDs or an English footnote section', () => {
@@ -138,6 +150,13 @@ describe('pure Markdown and KaTeX rendering', () => {
     expect(render('[x][ref]\n\n[ref]: https://example.test').querySelector('a')).not.toBeNull()
     expect(render('[x][ref]').querySelector('a')).toBeNull()
   })
+
+  it('renders the actual component when Worker construction is unavailable', () => {
+    const worker = vi.fn(function () { throw new Error('Workers unavailable') })
+    vi.stubGlobal('Worker', worker)
+    expect(render('# Direct component\n\n$x$').querySelector('h1')?.textContent).toBe('Direct component')
+    expect(worker).not.toHaveBeenCalled()
+  })
 })
 
 describe('bounded and isolated untrusted TeX', () => {
@@ -147,6 +166,22 @@ describe('bounded and isolated untrusted TeX', () => {
     expect(root.querySelector('.math-error')?.textContent).toBe(bad)
     expect(root.querySelectorAll('.katex')).toHaveLength(1)
     expect(root.textContent).not.toContain('ParseError')
+    expectInert(root)
+  })
+
+  it.each([
+    '$  \\noSuchCommand  $',
+    '$$\r\n \\noSuchCommand{<b>x</b>}\r\n$$',
+    '\\(  \\noSuchCommand  \\)',
+    '\\[\r\n \\noSuchCommand \r\n\\]',
+  ])('preserves the exact delimiters and whitespace in invalid math: %s', (source) => {
+    const html = renderHtml(source)
+    // Compare the exact React text serialization first: reparsing an HTML string
+    // through template.innerHTML normalizes CRLF, unlike React's live text nodes.
+    expect(html).toContain(renderToStaticMarkup(createElement('code', { className: 'math-error' }, source)))
+    const root = fragment(html)
+    expect(root.querySelector('.math-error')?.textContent).toBe(source.replace(/\r\n?/g, '\n'))
+    expect(root.querySelector('.katex')).toBeNull()
     expectInert(root)
   })
 

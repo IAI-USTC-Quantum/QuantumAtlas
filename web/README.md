@@ -17,8 +17,8 @@ QuantumAtlas 的 React SPA；API、PocketBase、静态资源和文档由 Go 服�
 - PocketBase JS SDK 管理会话；`react-i18next` / `i18next-browser-languagedetector`
   负责语言；`next-themes`、`lucide-react`、`sonner` 分别提供主题、图标与通知。
 - 论文详情和管理员资产共用 Markdown / LaTeX 预览，保留原文切换；实现与安全边界见
-  [Markdown 与公式预览](MARKDOWN_PREVIEW.md)。unified/remark/KaTeX 在可终止的 Worker 中
-  生成有界 HAST；主线程独立验证树后转换为 React 元素，不注入 HTML。
+  [Markdown 与公式预览](MARKDOWN_PREVIEW.md)。直接使用 `react-markdown` 解析并生成 React
+  元素，KaTeX 负责公式排版；有输入/结构/公式预算，但主线程同步解析没有可抢占的超时。
   原始 HTML 仅作可见文本，图片不自动加载；无需 marked 或 DOMPurify。
   KaTeX 脚本、CSS 和字体均从同一 npm 锁版本本地打包，不依赖 CDN。
 - `@/*` 对应 `src/*`，配置位于 `vite.config.ts`、`tsconfig.json` 和

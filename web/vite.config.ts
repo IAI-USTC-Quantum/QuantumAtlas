@@ -1,5 +1,4 @@
 import { fileURLToPath } from 'node:url'
-import { createRequire } from 'node:module'
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
@@ -69,11 +68,6 @@ export default defineConfig(({ mode }) => {
     resolve: {
       alias: {
         '@': fileURLToPath(new URL('./src', import.meta.url)),
-        // Vite selects the `browser` export even inside a browser Worker. That
-        // decoder accesses document at module startup. Resolve THIS package's
-        // public default (DOM-free entity table) export, without changing global
-        // conditions or patching node_modules. Also applies to dev Worker loads.
-        'decode-named-character-reference': createRequire(import.meta.url).resolve('decode-named-character-reference'),
       },
     },
     build: {

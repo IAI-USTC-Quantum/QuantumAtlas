@@ -1,18 +1,40 @@
 # Markdown 与 LaTeX 预览
 
 论文详情页和管理员资产浏览共用 `src/components/markdown-preview.tsx`。
-仍然只有管理员能使用现有资产预览入口；本功能不改变后端鉴权、资产下载 API 或存储内容。
+仍只有管理员能使用这些资产预览入口；本功能不改变后端鉴权、下载 API 或存储内容。
 
-## 使用方式
+## 当前方案：直接使用 react-markdown
 
-默认打开 **渲染预览 / Rendered**，可随时切换 **原文 / Source**。
-原文按 React 文本节点显示获取到的字符串，不经 Markdown/公式解析，也不修改下载内容。
-空文档与“正在加载”是不同状态。解析失败不会使整个页面崩溃，仍可查看原文或下载。
+`markdown-document.tsx` 直接渲染官方 **react-markdown 10.1.0** 组件，
+Markdown 解析、unified 插件管线以及语法树到 React 的转换均由该组件执行。
+不是给旧渲染器改名，也没有另行解析 Markdown 或手动调用 JSX 转换器。
 
-支持标题、列表、引用、GFM 表格、删除线、任务文本、代码块以及：
+```text
+鉴权获取原始 Markdown
+  ├─ 原文：React <pre> 文本节点
+  └─ 按需加载 react-markdown、KaTeX、CSS 和字体
+       react-markdown：remark-parse → remark 插件 → remark-rehype → rehype 插件 → React
+          本项目插件/选项：GFM、数学分隔符兼容、URL/资源预算、受限 KaTeX 数学 handler
+```
+
+此前 `5c55fbe` 的 Worker/JSON 传输、独立树解码器及手动 HAST→JSX 路径已删除。
+默认 HTML 转义、常规 Markdown 节点处理和 React 输出使用库的实现；不再维护第二套通用渲染器。
+组件按内容 memo，避免无关父组件更新触发解析；**memo、Suspense 和异步 hooks 都不是后台线程**。
+
+react-markdown 是成熟的默认选择，默认在主线程解析不代表其机制不好。
+此次迁移以实际浏览器结果评估取舍；通过回归测试不等于证明某个方案普遍更快或更安全。
+
+## 使用方式与兼容性
+
+默认打开 **渲染预览 / Rendered**，可切换 **原文 / Source**。
+原文逐字符显示获取到的字符串，不参与 Markdown/公式处理，也不修改下载内容。
+空响应与加载状态分开；异常或预算超限由错误边界接住，仍保留原文/下载入口。
+更换内容会重置错误边界，不能让上一份失败文档污染下一份。
+
+支持标题、列表、引用、GFM 表格对齐、删除线、任务文本和代码块，以及：
 
 ```markdown
-行内公式：$E=mc^2$，也支持 \(\alpha+\beta\)。
+行内 $E=mc^2$，或者 \(\alpha+\beta\)。
 
 $$
 \lvert\psi\rangle = \frac{\lvert 0\rangle + \lvert 1\rangle}{\sqrt{2}}
@@ -23,133 +45,126 @@ $$
 \]
 ```
 
-`$$x$$` 同行形式、中文旁的 `\[x\]` 同样使用展示公式排版。
-代码块（包括标记为 `math` 的代码块）、行内代码和转义的 `\$` 保持文本，
-不扫描整篇源码或整个页面 DOM 做正则替换。
-KaTeX 是数学排版器，**不是完整 LaTeX 文档编译器**；不支持的命令或无效公式回退为
-带原始分隔符的公式源码，而不是显示包含未经转义源码的异常 HTML。
+- 保留同行 `$$x$$` 展示公式、中文旁的公式以及 `\(...\)`/`\[...\]`。
+  `remark-math-compat.ts` 是 micromark/mdast 语法扩展，不是另一个 Markdown parser；
+  不对整篇源码或 DOM 作正则替换。单美元和 `\(...\)` 不跨行，未闭合公式不吞掉余下文档。
+- 所有代码块（包括标记为 `math` 的代码块）、行内代码和转义分隔符保持文本。
+- KaTeX **不是完整 `.tex` 编译器**；无效/不支持/过长公式回退到带原始分隔符的代码文本。
+- 任务项仍显示 `[x]` / `[ ]` 文本，不生成交互 input；脚注保留文字，不新增 ID/反链。
+- react-markdown 将表格对齐转换为内联 `textAlign`；浏览器检查实际 computed style。
 
-## 渲染与信任边界
+## 安全与资源边界
 
-```text
-鉴权获取 Markdown 文本（Query key 按账号/论文区分，使用 AbortSignal）
-  ├─ 原文：React <pre> 文本节点
-  └─ 渲染：一次性 Web Worker
-       remark-parse + remark-gfm + micromark 数学兼容扩展 → mdast
-       → remark-rehype 受控 handlers → HAST
-         仅数学节点：受限 KaTeX 公共 API → parse5 转为 HAST
-       → 严格树验证/规范化 → 有大小上限的 JSON 字符串
-       → 主线程独立校验消息、节点/深度/标签/属性/URL/样式
-       → hast-util-to-jsx-runtime → React 元素
-```
+- **原始 HTML 可见但不执行**：使用 react-markdown 默认转义，不开启 `skipHtml`、
+  `rehype-raw`、MDX 或任意外部组件/插件。生产代码没有 `dangerouslySetInnerHTML`。
+- **图片不自动请求**：`components.img` 只输出 alt 文本占位，直接图片、引用图片一样处理；
+  不生成 `<img>` 或 React 图片预加载，也不把相对图片地址请求到应用/API。
+- **链接按业务策略收紧**：只允许 HTTP/HTTPS、mailto、本页 fragment。
+  remark 插件在 URI 规范化前检查直接链接和引用定义，防止控制字符被编码后绕过检查；
+  再通过 `urlTransform` 与只挑选必要属性的链接组件过滤。拒绝相对/API 路径、协议相对地址、
+  控制字符与凭据 URL。外链固定 `noopener noreferrer nofollow`、`no-referrer` 和 `_blank`。
+- **受限数学排版**：每个公式独立 `macros: {}`，使用 `trust: false`、`strict: error`、
+  `throwOnError: true`、`maxExpand: 1000`、`maxSize: 20`；不允许跨公式/跨文档宏污染或
+  信任命令加载资源。`htmlAndMathml` 保留辅助技术使用的 MathML。
+- **只有 KaTeX 的输出转为 HAST**：小型数学 handler 使用公共 `renderToString` 与
+  `hast-util-from-html`；作者 HTML、异常消息不会送进该 HTML parser。
+  KaTeX 输出安全依赖该维护中的库及受限选项，不再用自制 SVG/MathML 属性解码器替代它。
+- **DOMPurify 不再需要**：没有 HTML 注入显示通道，也没有接收外部 AST 的 Worker 边界。
+  如未来引入 raw HTML、MDX、外部插件或用户 AST，须重新评审信任边界，不能直接套用本结论。
+- **账号与响应隔离不变**：Query key 按账号/论文区分，不包含 token；消耗 AbortSignal，
+  关闭预览后清除 Markdown 缓存，账号切换关闭预览并重查权限，旧响应不能覆盖新文档。
 
-- **Markdown 只解析一次**：解析和数学排版留在可终止 Worker 内，主线程不再次解析
-  Markdown，不存在解析器失败后在主线程重试的后门。
-- **没有 HTML 显示通道**：生产代码不使用 `dangerouslySetInnerHTML`、`innerHTML`、
-  `rehype-raw`、MDX 或自定义组件。原始 HTML 的 mdast handler 输出文本节点，
-  因而标签、注释可见但不执行；不是 `skipHtml` 式静默删除。
-- **Worker 不可信**：`markdown-tree.ts` 先检查字符串大小，再 JSON 解码，重建一个
-  最小 HAST 子集。任何未知节点、活动标签、未知属性或错误类型使预览失败关闭；
-  位置/扩展元数据不复制。不把 Worker 对象、style 对象或未知 props 展开给 React。
-  Worker 自身也执行同一验证，主线程不会因此省略独立检查。
-- **明确的 HTML / MathML / SVG 边界**：仅允许阅读结构、数学布局 span、必要的
-  presentation MathML 和 SVG path/line；不允许 MathML/SVG 内嵌 HTML、
-  `annotation-xml`、`foreignObject`、媒体、表单、事件、`is`、DOM clobbering
-  的 `id`/`name`、React 特殊属性、任意 data/ARIA 属性。
-  保留 `htmlAndMathml`、`aria-hidden` 和 TeX annotation；浏览器测试验证真实 DOM 命名空间。
-- **样式不是任意 CSS**：仅保留已知数学布局类、代码语言类、图片/错误占位类；
-  内联样式限于必要数值/颜色布局属性与无函数的值语法。禁止 `url()`、CSS 转义、
-  变量、表达式、`!important` 与任意属性。SVG/MathML 的颜色也不允许 URL paint。
-- **公式不受信任**：`trust: false`、`strict: error`；不允许 `\includegraphics`、
-  `\href`、`\htmlStyle` 等信任命令加载资源或修改 HTML。
-  每个公式使用新的宏对象；不允许 `\gdef` 跨公式或跨文档影响后续内容。
-  只调用 KaTeX 的公开 `renderToString`，不依赖私有 DOM 树 API。
-- **无自动内容网络请求**：Markdown 图片（含引用式图片）显示替代文本占位，
-  不创建 `<img>`；不把论文相对路径误当作应用路径，也不请求外部图片或内部 API。
-  未来图片支持须通过受控资产映射/鉴权通道，不能直接放开任意 `src`。
-- **链接白名单**：只允许 HTTP/HTTPS、mailto 和本页 fragment；拒绝危险协议、
-  协议相对 URL、应用/API 相对路径、控制字符和凭据 URL。检查 mdast 已解码、
-  尚未 URI 规范化的目标（包括引用链接），主线程再次检查。
-  外部链接固定 `noopener noreferrer nofollow`、`referrerpolicy=no-referrer`、
-  `target=_blank`；不预取、不自动跳转。非法链接保留文本但不创建 anchor。
-- **本地完整资源**：KaTeX JS 在 Worker bundle，CSS 和字体随渲染组件懒加载；
-  全部来自同一个锁定 npm 版本，随 Vite/Go UI 分发，无公式 CDN 请求。
-  较小字体也输出为独立同源文件，不用 `data:` 内联，兼容 `font-src 'self'`。
-
-### 资源与生命周期限制
-
-| 限制 | 当前值 / 行为 |
+| 预览预算 | 行为 |
 | --- | --- |
-| 整篇渲染输入 | 200,000 个 UTF-16 code units；超出只提供原文/下载 |
-| 单公式 | 10,000 个 UTF-16 code units；超出回退该公式原文 |
-| KaTeX 宏展开 | `maxExpand: 1000` |
-| KaTeX 显式尺寸 | `maxSize: 20` em |
-| Worker 时间预算 | 5 秒，包括模块启动；超时终止并保留原文入口 |
-| 公式 HTML 中间结果累计 | 2,000,000 个 UTF-16 code units；超过不继续 HTML→树转换 |
-| 完整树 JSON 消息 | 2,000,000 个 UTF-16 code units，含节点/属性开销；解码前检查 |
-| 树节点 / 深度 | 20,000 个节点（含 root/text）；root 深度 0，最大 64 |
-| 每节点属性 / class token | 最多 40 个属性 / 16 个 class token；无嵌套属性对象 |
+| 输入 | 最多 200,000 UTF-16 code units；超过不调用 react-markdown，只提供原文/下载 |
+| 单公式 | 最多 10,000 UTF-16 code units；超过回退该公式原文 |
+| 公式数量 | 最多 200 个 math/inlineMath 节点；在 KaTeX 前检查 |
+| TeX 开始标记预检 | 最多 200 个未被双反斜杠转义的 `\(`/`\[`；在 Markdown 解析前线性计数 |
+| Markdown / 最终 HAST | 每棵树最多 20,000 节点，root 深度 0、最大深度 64 |
+| 公式累计输出 | HTML 最多 2,000,000 code units；转换中累计检查数学节点数量 |
+| 最终树内容 | 文本、raw 值与字符串/数组属性累计最多 2,000,000 code units |
 
-JSON/节点/深度限制是 AST 架构新增的主线程资源边界，不按源码字符数假定展开结果很小。
-主线程只执行有界 JSON 解码、验证、JSX 分配与 React DOM 更新；这部分同步工作没有可抢占
-超时。Worker 超时也不是整个浏览器的内存沙箱。复杂大文档可能在达到源码阈值前回退；
-可下载原文，未来可增加分段渲染，而不是解除预算。
+预算由迭代遍历检查：先检查 mdast，再在公式转换过程中累计，最后在库递归生成 React 前检查 HAST。
+每次处理都重置计数（包括 StrictMode 和复用同一 options 的重复渲染），而非在模块全局累计。
+公式数量上限按密集样本的实测收紧，避免先花数秒排版再被节点预算拒绝。TeX 开始标记预检
+用于廉价拒绝大量未闭合兼容分隔符；它不是语法解析，保守地连代码中的这类标记也计数，
+超限时仍可看完整原文，不会改写代码或把它当公式渲染。
+这些是应用保护阈值，不是 react-markdown 的固有限制，也不是性能 SLA。
 
-切换到原文、关闭对话框或更换内容会终止旧 Worker；旧异步结果不能覆盖新文档。
-管理员身份检查和 Markdown 查询按账号区分，不将 token 放进 Query key；账号切换时
-关闭资产预览并清空组件状态，重新检查权限。Markdown 缓存不在最后一个观察者卸载后保留。
-这些是预览限制，不是下载/资产保存限制。
+**不再承诺 5 秒强行终止或解析中立即取消。** Markdown/KaTeX 在主线程同步执行，
+定时器、切换标签和关闭按钮不能抢占正在执行的同步代码。加载懒模块期间可用原文，
+解析返回或失败后也可切换，但长任务期间仍可能短暂失去响应。输入/结构预算不是硬时间或内存沙箱。
+高密度公式可能在达到输入长度上限前被拒绝；对超限文档使用原文/下载，不截断内容冒充完整渲染。
 
-## 依赖与架构选择
+## 长文档性能实测
 
-运行时固定：unified 11.0.5、remark-parse 11.0.0、remark-gfm 4.0.1、remark-rehype 11.1.2、
-hast-util-from-html 2.0.3、hast-util-to-jsx-runtime 2.3.6、decode-named-character-reference 1.3.0、
-KaTeX 0.18.7。标准 math/inlineMath 节点类型来自仅开发期的 mdast-util-math 3.0.0。
-确切传递版本以 `package-lock.json` 为准，CI 审计完整依赖图。
+对照旧 Worker 构建（源码 `5c55fbe`）与当前直接组件；保持 KaTeX 0.18.7、语法、样本
+和浏览器相同。每版 **27 项语义测试 / 54 次打开**：42 次完整渲染、12 次明确拒绝。
+不把拒绝计作成功，也没有省略文档末尾或公式来换速度。
 
-代价不是零：本次构建的独立 Worker 约 621 kB（minified、未压缩），此前 marked Worker
-约 310 kB；懒加载 React 渲染 JS 约 37 kB（此前约 34 kB），公式 CSS/字体不变。
-新增的语法树工具链、DOM-free HTML parser 与实体表换来明确的结构边界，但并非包体优化；
-它们仍只在打开预览时加载。另需维护受测试约束的数学语法兼容层和窄树解码策略。
+环境：Linux x64，报告 CPU 为 Xeon Gold 5118 / 48 logical CPUs，Node 24.20.0，
+Playwright 1.62.0 / Chromium 151.0.7922.34，1280×900；每个案例新 context，重复 3 次。
+首次打开含懒模块/文档获取/字体；再次打开仅模块和字体已热，Markdown **仍重新获取**。
+计时由浏览器实际点击开始，到 DOM 就绪、字体就绪及双 rAF 的“绘制机会”为止，
+不等于所有屏外像素完成栅格化。DOM/公式/终点标记和原文保真在计时窗外检查。
 
-- **为什么不再用 marked**：阅读界面可以直接从受控语法树构造 React 元素，不必将整篇
-  Markdown 序列化为 HTML 再交给浏览器解释；原文、安全策略与结构化回归更容易分层。
-- **为什么不直接套 react-markdown 组件**：它默认在调用线程解析字符串。这里使用相同
-  unified/HAST→JSX 生态，但把解析搬到 Worker，避免丢失超时/取消或主线程重复解析。
-  `hast-util-to-jsx-runtime` 也是 `rehype-react` 的底层转换器，已有 HAST 无需额外包装。
-- **为何是小型 KaTeX adapter**：本次重新核对 npm registry，`rehype-katex` 7.0.1
-  仍声明 KaTeX `^0.16.0`，当前 KaTeX 为 0.18.7。未用 `overrides` 强行跨版本，
-  未保留两个公式/CSS版本。adapter 只在真正 math 节点调用受限公共 API，再用
-  DOM-free 的 `hast-util-from-html`（parse5）转换公式输出；不把 Node-only DOM/jsdom
-  或依赖浏览器 document 的 HTML parser 带进生产 Worker。
-- **兼容语法的维护代价**：remark-math 默认不支持 `\(...\)`/`\[...\]`，
-  同行 `$$x$$` 默认也是 inline，且单美元允许跨行。`remark-math-compat.ts` 用
-  micromark 的 token/state 与 mdast 扩展覆盖这些差异；代码、转义、容器和 GFM 仍交给
-  维护中的上游 parser。只支持单/双美元，不新增任意长度美元 fence 或未闭合公式。
-  由于兼容层已替换 stock 数学语法，**不再注册或依赖 remark-math**：其传递依赖
-  micromark-extension-math 自带 KaTeX `^0.16.0`，保留不用的解析器会引入第二版本。
-  升级 micromark/标准 math 节点类型时须重跑语法测试；本扩展只用于阅读，不提供源码回写。
-- **Worker 的条件导出**：decode-named-character-reference 的 `browser` export 在加载时
-  使用 `document`，浏览器 Worker 没有这个对象。Vite 配置仅对该包用 Node resolver 选择
-  包公开的 DOM-free default export（与它的 worker export 相同），开发/构建均适用；
-  不全局修改解析条件、不 patch node_modules、不引入 DOM polyfill。
-  Node 单测无法发现 browser 条件分支错误，必须保留真实构建后 Chromium 回归。
-- **DOMPurify 已移除**：所有 HTML 显示调用者均已删除，不再需要 DOM 消毒库。
-  不以“AST 天然安全”为理由删除防线：用严格树解码器取代原 HTML 消毒边界，
-  接收器独立验证 URL、样式、命名空间、类型与资源预算。
-  没有采用通用 `rehype-sanitize` 的宽泛后处理/数学白名单顺序；未知元素/属性直接拒绝，
-  仅规范化明确允许的布局和链接属性，随后交给库转换为 JSX。新增插件不得绕过此末端边界。
+下表单位 **ms，中位数 / 最大值，n=3**。这是应用组合的合成技术文档测量，不是裸库排名。
 
-GFM 任务保持 `[x]` / `[ ]` 文本，无可交互 input；脚注扩展保持原样文本，不新增
-ID、反链或未本地化的脚注区。正常渲染不会人为添加旧 HTML serializer 的尾部换行；
-原文模式仍逐字符保真。
+| 样本与 CPU / 打开方式 | Worker 完成 | react-markdown 完成 | Worker 最长主线程任务 | react-markdown 最长主线程任务 |
+| --- | ---: | ---: | ---: | ---: |
+| 混合 10k，6 公式，本机首次 | 819 / 839 | 583 / 714 | 117 / 172 | 166 / 186 |
+| 混合 50k，36 公式，本机首次 | 1172 / 1198 | 1224 / 1252 | 209 / 230 | 396 / 411 |
+| 混合 100k，75 公式，本机首次 | 1655 / 1753 | 1454 / 1488 | 442 / 470 | 468 / 517 |
+| 混合 200k，153 公式，本机首次 | 2135 / 2486 | 3015 / 3066 | 618 / 786 | 1059 / 1081 |
+| 混合 200k，本机再次打开 | 1421 / 1638 | 1324 / 1583 | 327 / 422 | 1164 / 1452 |
+| 纯文本 200k，本机首次 | 1103 / 1195 | 966 / 1159 | 285 / 290 | 301 / 362 |
+| 混合 50k，4×降速首次 | 1804 / 1847 | 3899 / 3941 | 514 / 516 | 1696 / 1715 |
+| 混合 200k，4×降速首次 | 4203 / 4371 | 5769 / 9410 | 1819 / 1823 | 2776 / 4615 |
+| 混合 200k，4×降速再次打开 | 3100 / 3306 | 4379 / 5223 | 1448 / 1506 | 3989 / 4671 |
 
-这不是回滚 `77cadfd`：当时清除无调用者依赖是合理的；此次继续保留依赖审计成果，
-按功能需求迁移现有预览。旧 marked 类型适配和路径映射随库一起删除。
-**其他文档站独立**：MkDocs 的 KaTeX CDN 和 Sphinx 构建路径不属于此 npm 渲染器；
-本次不迁移它们。`npm audit` 为零不覆盖这些 CDN 或整个部署的安全状态。
+成功渲染时，混合 200k 有 **10,203 个 DOM 元素和 153 个公式**，纯文本 200k 仅有
+168 个元素。长度都为 200k，负载并不相同。4×混合 200k 再次打开的 heartbeat gap
+中位数从约 2195 ms 增至 4210 ms，最大约 4927 ms，不能称为交互流畅。
 
-## 持续验证
+**结论：小文档、本机部分场景和部分热模块重开更快，但长富文本及慢 CPU 会明显阻塞；
+没有全面性能提升，也不以这些结果宣称官方库机制不好或定制方案普遍更好。** Worker 基线
+也有主线程 DOM/布局卡顿；直接组件省掉传输/二次遍历，却将解析/排版放到主线程。
+本次按需求选择官方组件的维护方式，同时保留预算并公开这项交互代价。若需要大型文档
+持续流畅交互，后续应评估明确的渲染 opt-in、分段/虚拟化或服务端预处理，而非加一个无效定时器。
+
+密集 50k 样本含 **399 个公式**，两版都拒绝渲染，原文均完整可用。初版直接组件会先展开
+再撞节点上限，4×再次打开时最长任务中位数/最大值为 2578 / 4070 ms；将数量预检收紧为
+200 后降为 **1656 / 1676 ms**。这只是拒绝路径的改善，仍存在同步 Markdown 解析成本，
+不是“成功支持了 399 个公式”或“拒绝已无卡顿”。正常对照样本最多 153 个公式，不受数量收紧影响。
+
+测量时没有并行运行本会话的构建/其他测试，但不是独占硬件实验；只有三次重复，波动明显，
+不能推断 p95/p99 或统计显著性。CDP 4×是模拟，不能等同于某款手机或保证 Worker 线程也按同倍率降速。
+fixture 不覆盖真实论文分布、网络延迟或生产后端，不把实验毫秒数作为通用 SLA。
+完整方法与命令见 `tests/performance/README.md`。
+
+本地原始记录：`build/react-markdown-results/worker-baseline/`、`react-markdown-final/`；
+最终比较为 `comparison-worker-baseline-vs-react-markdown-final.md` / `.json`。
+`react-markdown/` 是收紧密度预算前的探索记录，不替代最终结果；诊断中止的运行不计入基线。
+样本含精确 UTF-16 长度、UTF-8 bytes、SHA256；报告含构建资源指纹，比较器拒绝不一致的输入/环境。
+
+最终懒加载渲染 JS 约 **600 kB**（minified、未压缩），旧 Worker 约 621 kB 加 UI 约 37 kB；
+KaTeX 字体版本不变。包体变小不等于主线程更流畅；Vite 的 >500 kB 提示保留，未调高阈值。
+
+## 依赖与其他文档站
+
+直接组件固定 `react-markdown` **10.1.0**，数学排版固定 KaTeX **0.18.7**，GFM 为
+`remark-gfm` **4.0.1**；完整版本以 package.json/lock 为准。KaTeX JS/CSS/字体使用同一版本，
+均本地打包、按需加载；小字体也保留为独立同源文件，兼容 `font-src 'self'`。
+
+迁移和性能对照没有同时更换数学引擎。`rehype-katex` 7.0.1 及 `remark-math` 的传递图
+仍带 KaTeX `^0.16.0`；本次不引入第二版本或强行 overrides，继续保留受测试覆盖的
+数学分隔符兼容层和小型公共 API adapter。其维护成本仍存在，不声称所有代码都是官方插件。
+
+MkDocs 独立使用 Python Markdown/arithmatex 和 CDN KaTeX auto-render；Sphinx 使用
+reStructuredText 数学节点，HTML 默认 MathJax。即使 Sphinx 静态页随 Web/Go 一起分发，
+也不经过 React 预览器。本次不迁移这两套引擎；npm 审计不覆盖其 CDN 或整个部署。
+
+## 验证与复现
 
 在 `web/`，使用 `.node-version` 指定的 Node：
 
@@ -159,39 +174,27 @@ npm audit
 npm run lint
 npm test
 npm run build
-npm exec -- playwright install chromium
-npm run test:browser
+npx --no-install playwright test
+# 单独运行计时，不和构建/其他测试并行：
+MARKDOWN_BENCH_LABEL=react-markdown npm run test:performance
 ```
 
-- `tests/markdown.test.ts`：公式、所有分隔符、代码、GFM、HTML/图片文本、
-  URL/实体/控制字符、信任命令、宏隔离、边界大小与公式结构。
-- `tests/math-syntax.test.ts`：语法 token 与位置、中文、CR/LF/CRLF、容器/代码/转义、
-  不闭合/相邻公式；升级插件不能用新默认值静默替换原契约。
-- `tests/markdown-dependencies.test.ts`：单版本 KaTeX/CSS、旧依赖移除、无 HTML sink、
-  无主线程 parser fallback 和 DOM-free 构建约束。
-- `tests/markdown-tree.test.ts`：不经 Markdown renderer，直接注入伪造 Worker 树；
-  覆盖活动标签、React 特殊 props、原始 HTML/MDX、对象属性、命名空间、CSS/URL、
-  节点数/深度/消息大小、重复验证和失败关闭。
-- `tests/browser/`：真正 Chromium 渲染构建后的 Worker/React 资源；两处入口、中英文、
-  明暗主题、窄屏、键盘切换、原文保真、MathML/SVG/本地字体、非管理员、空文档、
-  失败/超时、Worker 终止、非法消息、账号切换与旧响应竞争。
-- 浏览器测试启动 loopback-only 的静态 Vite preview，关闭配置/.env 读取和代理，
-  全部 OAuth/业务 API 使用明确 synthetic fixture；未知 API、外部请求、CSP 违规均失败。
-  **这不代表生产 OAuth、数据库、S3 或后端鉴权集成测试已通过。**
-- 报告和截图位于被忽略的 `web/test-results/`，不提交构建资源。
-  CI 第一次构建后执行浏览器回归，再做第二次双文档站/Web 构建和完整 UI 一致性比较。
-  `.github/scripts/build-docs.sh` 会清除 `web/dist`，不可和浏览器测试并行执行。
+首次运行浏览器前可用 `npm exec -- playwright install chromium` 安装测试浏览器。
+性能测试固定浏览器版本并要求新基线后才能更换，具体 pin/方法见其 README。
 
-本次 AST 迁移的本地验证记录：`build/markdown-ast-results/verification.md`。
-`build/math-test-results/verification.md` 仅记录此前 marked 实现，不用于证明本次迁移通过。
-本地验证不代表线上已更新；提交、推送和部署须分别获得授权。
+- 单元回归直接渲染实际 `MarkdownDocument`：公式/代码/HTML/图片/URL、宏隔离、预算、
+  重复 options/StrictMode，以及确实使用官方组件且无第二套渲染器的依赖契约。
+- Chromium 使用真实构建、两个现有入口、独立 synthetic OAuth/API fixture；覆盖中英文/主题/窄屏、
+  MathML/SVG 命名空间、字体、表格对齐、原文、复杂度失败恢复、账号/旧响应隔离。
+  Worker 消息/终止测试已改为真实输入预算与不依赖 Worker 的测试，不用已删除机制的测试数量包装结果。
+- 浏览器只访问 loopback 的无代理静态 preview；外部/未知请求、CSP 违规、资源失败和未捕获异常均失败。
+  **这不代表生产 OAuth、数据库、S3 或后端鉴权集成验证通过。**
+- 普通 CI 运行类型、lint、单元和浏览器回归；计时基准是显式 opt-in，不把受机器影响的毫秒数设为 CI 门禁。
+  `.github/scripts/build-docs.sh` 会清除 `web/dist`，不能在浏览器/性能测试期间运行。
 
-## 官方依据
+本地新证据位于 `build/react-markdown-results/`，截图/普通浏览器报告位于 `web/test-results/`。
+此前 `build/markdown-ast-results/` 记录的是 Worker 方案，不是当前实现的验收报告。
+构建产物/原始计时记录不提交；提交、推送和部署是独立操作，本地通过不表示线上已更新。
 
-- [react-markdown 的架构与安全边界](https://github.com/remarkjs/react-markdown)
-- [remark-math / rehype-katex](https://github.com/remarkjs/remark-math)
-- [HAST 到 JSX runtime](https://github.com/syntax-tree/hast-util-to-jsx-runtime)
-- [DOM-free HTML 到 HAST](https://github.com/syntax-tree/hast-util-from-html)
-- [树级消毒与插件边界](https://github.com/rehypejs/rehype-sanitize)
-- [KaTeX 安全说明](https://katex.org/docs/security.html)
-- [KaTeX 参数与宏状态](https://katex.org/docs/options.html)
+参考：[react-markdown 架构与安全](https://github.com/remarkjs/react-markdown)、
+[KaTeX 安全](https://katex.org/docs/security.html)、[KaTeX 选项](https://katex.org/docs/options.html)。

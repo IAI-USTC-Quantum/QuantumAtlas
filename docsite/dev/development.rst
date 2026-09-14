@@ -126,10 +126,10 @@ Markdown 与公式渲染
 
 三套界面的渲染管线相互独立：
 
-- **主 Web**：``web/`` 的 React 预览使用 unified/remark 在可终止的 Worker 中
-  解析 Markdown，并用 KaTeX 排版公式；输出受控 HAST 语法树，经主线程独立校验后
-  转为 React 元素，不注入原始 HTML。公式 JS、CSS 和字体按 npm 锁定版本本地打包。
-  原文模式、超时与安全边界详见仓库 ``web/MARKDOWN_PREVIEW.md``。
+- **主 Web**：``web/`` 直接使用 ``react-markdown`` 组件解析 Markdown 并生成 React
+  元素，KaTeX 负责公式排版；原始 HTML 只作文本，公式 JS、CSS 和字体按 npm 锁定版本
+  本地打包。解析在主线程同步执行，不再使用 Worker，也没有可抢占的解析超时；长文档
+  的实测表现、资源预算与原文回退见仓库 ``web/MARKDOWN_PREVIEW.md``。
 - **MkDocs**：``docs/`` 的 Markdown 经 Python Markdown 与 ``pymdownx.arithmatex``
   处理，再由浏览器中的 KaTeX auto-render 渲染公式。目前公式资源来自
   ``unpkg.com/katex@0`` 的浮动 CDN 版本，由 ``mkdocs.yml`` 和
