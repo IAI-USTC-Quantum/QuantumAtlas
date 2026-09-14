@@ -1,111 +1,145 @@
 name: Go (build + vet + test)
 
+# No paths filters: docs/web/release-only changes must still satisfy required
+# checks. The reusable invocation checks the exact release commit, not main.
 on:
   push:
     branches: [main, feat/go-server]
-    paths:
-      - 'cmd/**'
-      - 'internal/**'
-      - 'tests/**'
-      - 'deploy/**'
-      - 'Dockerfile'
-      - 'web/**'
-      - '.github/workflows/nightly.yml'
-      - 'go.mod'
-      - 'go.sum'
-      - 'pyproject.toml'
-      - 'pixi.lock'
-      - '.github/workflows/go.yml'
   pull_request:
     branches: [main]
-    paths:
-      - 'cmd/**'
-      - 'internal/**'
-      - 'tests/**'
-      - 'deploy/**'
-      - 'Dockerfile'
-      - 'web/**'
-      - '.github/workflows/nightly.yml'
-      - 'go.mod'
-      - 'go.sum'
-      - 'pyproject.toml'
-      - 'pixi.lock'
-      - '.github/workflows/go.yml'
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      source_sha:
+        description: Exact commit to validate (defaults to the triggering SHA)
+        type: string
+        required: false
+        default: ''
+    outputs:
+      ui_artifact:
+        description: Complete validated UI zip, reusable without rebuilding
+        value: ${{ jobs.web.outputs.ui_artifact }}
+      source_sha:
+        description: Commit checked and embedded by this run
+        value: ${{ jobs.web.outputs.source_sha }}
+
+permissions:
+  contents: read
+
+env:
+  CGO_ENABLED: '0'
 
 jobs:
   go:
-    name: Go (pixi-managed toolchain)
+    name: Go (build + vet + test)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-
+    timeout-minutes: 20
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      # Pixi keeps the Go toolchain (+ gxx for cc shims) pinned in
-      # pyproject.toml [tool.pixi.dependencies], matching what local
-      # devs use. Reproducible across CI / dev machines.
-      - name: Install pixi
-        uses: prefix-dev/setup-pixi@v0.8.10
+      - uses: actions/checkout@v4
         with:
-          pixi-version: v0.68.0
-          cache: true
-
-      # Cache the Go module + build cache. GOCACHE/GOMODCACHE are pointed
-      # at .gocache/ via pixi's [tool.pixi.activation.env] so both live
-      # inside the repo and are cacheable by a single path entry.
-      # Key on go.sum so cache invalidates when deps change.
-      - name: Cache Go modules + build artifacts
-        uses: actions/cache@v4
-        with:
-          path: .gocache
-          key: gocache-${{ runner.os }}-${{ hashFiles('go.sum') }}
-          restore-keys: |
-            gocache-${{ runner.os }}-
-
-      # web/embed.go does //go:embed all:dist, so the entire Go build
-      # chain (vet/test/build) fails if web/dist/ is missing. Set up
-      # Node and run the SPA build first. Cached on web/package-lock.json
-      # so re-runs avoid the npm install round-trip.
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: web/package-lock.json
-
-      - name: Build web frontend (needed for go:embed all:dist)
-        working-directory: web
+          ref: ${{ inputs.source_sha || github.sha }}
+      - name: Verify exact source and no tracked build output
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
         run: |
-          npm ci
-          npm run build
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test -z "$(git ls-files -- web/dist web/public/doc web/public/devdoc dist build)"
+          test ! -d web/dist
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # Ordinary Go builds/tests do not need Node, Pixi or any embedded UI.
+      - name: Go vet
+        run: go vet ./internal/... ./cmd/... ./tests/... ./web
+      - name: Offline Go tests (including deployment and HTTP fixtures)
+        run: go test ./internal/... ./cmd/... ./tests/... ./web
+      - name: OpenAPI synchronization
+        run: |
+          go tool swag init -g main.go -d ./cmd/qatlasd,./internal/routes -o internal/apidocs --parseInternal --parseDepth 1
+          git diff --exit-code -- internal/apidocs
+          test -z "$(git status --porcelain --untracked-files=all -- internal/apidocs)"
+      - name: Plain Go build without UI
+        run: go build -o build/qatlasd ./cmd/qatlasd
+      - name: CI-only artifact and release guard fixtures (no pytest)
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
+      - name: Check GoReleaser configuration
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: v2.18.1
+          args: check
 
-      # 'pixi run vet' and 'pixi run test-go' include ./tests/... for
-      # deployment contracts and local HTTP smoke fixtures. Production
-      # smoke is excluded without the e2e build tag. 'pixi run build' confirms the
-      # binary still links — caught in the past when go.mod's minimum
-      # Go version drifted above what conda-forge had available.
-      - name: pixi run vet
-        run: pixi run vet
-
-      # Regenerate the OpenAPI spec from the swaggo annotations and fail if
-      # the committed internal/apidocs/ drifts. Generation is deterministic
-      # (verified locally), so any diff means someone edited annotations
-      # without rerunning `pixi run swagger`.
-      - name: pixi run swagger-check
-        run: pixi run swagger-check
-
-      - name: pixi run test-go
-        run: pixi run test-go
-
-      - name: pixi run build
-        run: pixi run build
-
-      - name: Upload server binary
+  web:
+    name: Web and complete UI reproducibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      ui_artifact: ${{ steps.source.outputs.ui_artifact }}
+      source_sha: ${{ steps.source.outputs.source_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha || github.sha }}
+      - name: Pin source and reproducible build environment
+        id: source
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+          echo "ui_artifact=qatlas-ui-$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+          echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
+          echo 'TZ=UTC' >> "$GITHUB_ENV"
+          echo 'PYTHONHASHSEED=0' >> "$GITHUB_ENV"
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: web/.node-version
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: docsite/requirements.txt
+      - name: Install Sphinx toolchain (not the retired Python application)
+        run: python -m pip install -r docsite/requirements.txt
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+      - name: First clean Sphinx build (both sites)
+        run: bash .github/scripts/build-docs.sh
+      - name: First clean web build
+        working-directory: web
+        run: npm run build
+      - name: Preserve entire first output tree
+        run: cp -a web/dist build/ui-first
+      - name: Second clean Sphinx build (both sites, no doctree reuse)
+        run: bash .github/scripts/build-docs.sh
+      - name: Second clean web build
+        working-directory: web
+        run: npm run build
+      - name: Compare all files including Sphinx timestamps, hidden files and removals
+        run: |
+          python3 .github/scripts/artifacts.py compare build/ui-first web/dist
+          git diff --exit-code
+          test -z "$(git status --porcelain --untracked-files=all)"
+      - name: Package the same complete tree for release and Docker
+        run: |
+          VERSION="$(tr -d '\r\n' < VERSION)"
+          go run ./internal/cmd/uibundle -version "$VERSION" -output build/ui
+          python3 .github/scripts/artifacts.py restore-ui "build/ui/qatlasd_${VERSION}_web.zip" build/ui-restored "$VERSION"
+          python3 .github/scripts/artifacts.py compare web/dist build/ui-restored
+      - name: Embedded Go build and UI tests
+        run: |
+          go test -tags=embedui ./web ./cmd/qatlasd/...
+          go build -tags=embedui -o build/qatlasd-embedui ./cmd/qatlasd
+      - name: Upload complete UI zip for this SHA
         uses: actions/upload-artifact@v4
         with:
-          name: qatlasd-binary-${{ github.sha }}
-          path: build/qatlasd
+          name: ${{ steps.source.outputs.ui_artifact }}
+          path: build/ui/qatlasd_*_web.zip
           retention-days: 7
           if-no-files-found: error

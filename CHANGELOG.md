@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## Unreleased
 
+### Build and distribution
+
+- Support source-only `go install` without Node/Sphinx or committed build output. First `serve` downloads only the exact version's GitHub Release UI ZIP and checksum, verifies version/content/limits, and atomically caches it; later starts validate and reuse that version offline. Unknown/dev/pseudo versions and broken downloads/caches fail clearly, never falling back to latest.
+- Use GoReleaser v2.18.1 with default archive/checksum names and default version injection, plus an explicit `embedui` build tag. Precompiled binaries and the versioned UI archive share the same complete Sphinx + React build. Both sources use the same static/docs/SPA handlers, including seek and conditional-request behavior.
+- Replace duplicate release builds with same-SHA Go CI, full UI reproducibility checks, draft release guards, archive/UI attestations, native version smoke and a separate linux/amd64 Docker job. Only verified stable releases promote latest. No tags or published artifacts are changed by this implementation.
+- **Installer format change:** the installer now verifies the default tar.gz, rejects unsafe archives, checks the staged executable's exact version and atomically replaces it without changing config or services. For the first new-format release, obtain the installer from that same new tag; old running servers still embed the old-format script. Binary replacement does not roll back database migrations.
+
 ### Maintenance
 
 - Migrate deployment-template contracts and production smoke checks from pytest to Go `testing`. Ordinary `go test ./tests/...` runs only local fixtures; live probes require `-tags=e2e`, configured `QATLAS_SERVER_TARGETS`, and `-count=1`. Update probes to the current health/paper API, bound requests, refuse redirects/cross-origin assets, and keep credentials out of diagnostics. Optional `QATLAS_EXPECTED_VERSION` verifies the exact deployed version.

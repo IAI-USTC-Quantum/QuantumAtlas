@@ -1,304 +1,257 @@
 # 安装与 service 注册
 
-## 选择部署流派（v0.16.0+）
+## 选择部署方式
 
-| 流派 | 适合 | 起手命令 |
+| 方式 | 适合 | 起手步骤 |
 |---|---|---|
-| **systemd（裸 binary）** | 长期生产、单机 / 多边缘、最少依赖 / 最少层 | `curl … install-qatlasd.sh \| sh && qatlasd service install` |
-| **docker compose 全家桶** | 评估、一键起完整栈（含 PostgreSQL）、k8s 友好 | `docker compose up -d`（见 [docker.md](docker.md)） |
+| **预编译 binary + systemd** | 长期生产、单机 / 多边缘、目标机无需构建工具链 | 下载同 tag 安装脚本、审阅、安装，再单独注册服务 |
+| **`go install` + systemd** | 已有 Go 工具链、希望本机编译 | 安装明确版本；首次启动自动取得同版本 UI |
+| **docker compose** | 容器部署（PostgreSQL / 对象存储保持外部） | 见 [docker.md](docker.md) |
 
-> 两套流派**完全可互换**：同一份数据（pb_data / raw / RustFS bucket / PG database）可以今天 systemd 跑，明天迁到 compose；env vars 同名同义。
+服务端业务配置统一为 **YAML**。不同部署方式可使用同一配置模型，但迁移时仍须核对路径、属主、数据库版本及一致性备份；不能同时用两个实例写同一 `pb_data`。
 
-下面默认按 systemd 流派教。docker 流派完整教程见 **[docker.md](docker.md)**。
+!!! warning "新分发格式的适用范围"
 
----
+    下文 `TAG=vX.Y.Z` 是**必须替换的占位符**：请选择已经采用新流程、且所需附件已经公开的服务端 tag。仓库当前 `VERSION=0.34.0` 不代表 `v0.34.0` 已有这些新格式产物；不要据此重发旧 tag，也不要用 `latest` 掩盖发布切换窗口。
 
-两步：
+## 安装预编译 binary（推荐）
 
-1. **`install-qatlasd.sh`** 下载 binary（不动 systemd）
-2. **`qatlasd service install`** 注册成 systemd / launchd / SCM 服务
+新流程使用 GoReleaser **v2.18.1** 的默认归档命名，支持 `linux/amd64`、`linux/arm64`、`darwin/arm64` 三个平台：
 
-两步分开是有意的——install 脚本要 POSIX sh 极简，service 注册需要交互 / 多 flag，分开后各自负责自己的事。
-
-## 一行装 binary
-
-```bash
-# 装最新 release 到 ~/.local/bin/qatlasd
-curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh
-
-# 锁定版本
-curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh -s -- --version v0.2.8
-
-# 装到指定目录
-curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh -s -- --dir /opt/qatlas/bin
-
-# 环境变量同义
-QATLAS_VERSION=v0.2.8 QATLAS_INSTALL_DIR=/opt/qatlas/bin \
-    curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh
+```text
+qatlasd_<version>_linux_amd64.tar.gz
+qatlasd_<version>_linux_arm64.tar.gz
+qatlasd_<version>_darwin_arm64.tar.gz
+qatlasd_<version>_web.zip
+qatlasd_<version>_checksums.txt
 ```
 
-支持 `linux/{amd64,arm64}` + `darwin/arm64` 三个平台。Intel Mac 故意不发预编 binary（GitHub Actions `macos-13` runner 排队 10–40 分钟），改走 `go install github.com/IAI-USTC-Quantum/QuantumAtlas/cmd/qatlasd@latest` 自编。脚本本身**不做二次哈希校验**——下载完整性靠 HTTPS（curl/wget 校验 GitHub CA 链）保证，从同一个 release 拉 `SHA256SUMS` 来比对是自签名（能改 binary 的攻击者同时改了 manifest）。需要更强保证的场景请走下面 [Release 资产的校验方式](#release-资产的校验方式)。
+`<version>` 不带前导 `v`。每个 `tar.gz` 内是普通文件 `qatlasd`（另有默认收录的说明 / 许可证），不是旧式裸附件 `qatlasd-<os>-<arch>`。官方预编译程序已内嵌完整 UI 与文档，**首次启动不需要联网下载 UI**；业务功能依赖的数据库、外部 API 等网络需求不变。
 
-!!! tip "供应链校验（opt-in）"
+### 从同一新 tag 下载脚本，审阅后执行
 
-    **v0.12.0 起**每个 release artifact 都附 [SLSA Build Provenance](https://slsa.dev/) attestation，由 GitHub OIDC + Sigstore public-good 实例**密钥学签名**。需要时一行命令验出处：
+```bash
+# 必须替换为已采用新流程且附件已公开的 tag
+TAG=vX.Y.Z
+curl -fL --proto '=https' --proto-redir '=https' \
+  "https://raw.githubusercontent.com/IAI-USTC-Quantum/QuantumAtlas/$TAG/cmd/qatlasd/install-qatlasd.sh" \
+  -o install-qatlasd.sh
+less install-qatlasd.sh
+# 审阅通过后再执行；脚本版本与安装目标必须相同
+sh install-qatlasd.sh --version "$TAG"
 
-    ```bash
-    gh attestation verify ./qatlasd-linux-amd64 --repo IAI-USTC-Quantum/QuantumAtlas
-    ```
+# 如需更换安装目录，在上述执行命令中另加：--dir /opt/qatlas/bin
+```
 
-    日常装机不需要做。完整验证流程（含纯 `curl`+`cosign` 离线方案）见下方 [Release 资产的校验方式](#release-资产的校验方式)。
+默认安装位置为 `~/.local/bin/qatlasd`。确认该目录在 `PATH` 中；指定其他目录时，调用者须自行保证写权限。脚本保留 `QATLAS_VERSION`、`QATLAS_INSTALL_DIR`、`QATLAS_REPO` 工具覆盖项，它们不是服务端业务配置；生产建议显式传 `--version` 和 `--dir`。
 
-### 脚本内部行为
+安装器需要 **curl（优先）或 GNU wget**、`tar`、`sha256sum` 或 `shasum`，以及标准命令行工具（如 `awk`、`cmp`、`mktemp`）。BusyBox wget 缺少所需的禁止自动重定向能力，会明确被拒绝；这种环境请安装 curl。脚本是 POSIX sh，但不意味着任意极简 BusyBox 环境都已具备这些工具。
 
-1. 检测 OS/arch
-2. 解析 GitHub Release 的 `latest` redirect 拿 tag（不调 API，避免限流）
-3. HTTPS 下载 `qatlasd-<os>-<arch>` 到目标目录
-4. `chmod +x`
-5. 打印 next-step 提示
+`QATLAS_INSTALL_TIMEOUT` 默认 `60` 秒，用于每次请求 / 归档处理步骤；`QATLAS_INSTALL_VERSION_TIMEOUT` 默认 `10` 秒，用于候选 binary 的版本执行检查。两者都只接受 `1..300` 的秒数，不是总升级时限。按需仅给该次安装调用设置，例如：
 
-**全 POSIX sh**（不依赖 bash），所以 Alpine / BusyBox / macOS sh 都能跑。
+```bash
+QATLAS_INSTALL_TIMEOUT=120 QATLAS_INSTALL_VERSION_TIMEOUT=20 \
+  sh install-qatlasd.sh --version "$TAG"
+```
+
+这些是安装工具参数，不要把它们写入业务 YAML 或用来配置服务环境。下载脚本失败时停止，不要执行磁盘上的残留旧脚本。
+
+!!! danger "首次迁移不能使用旧服务内嵌的安装脚本"
+
+    `/install-qatlasd.sh` 由**正在运行的 qatlasd** 内嵌提供。旧实例仍返回只认识旧附件格式的脚本，不能用它安装新格式。首次升级必须使用上面**同一新 tag 的 raw.githubusercontent.com 脚本入口**；首次升级完成后，实例提供的内嵌脚本才随新 binary 切换。本流程不提供旧格式兼容层。
+
+### 脚本的安全替换边界
+
+1. 检测支持的 OS / arch，解析目标 tag，下载对应 `tar.gz` 和 `qatlasd_<version>_checksums.txt`。
+2. 校验归档 SHA256；缺失、重复或不匹配的校验记录会失败。
+3. 严格检查 tar 成员，拒绝危险路径、链接、重复条目等；只取预期的唯一普通 `qatlasd`，不把整个归档直接解到安装目录。
+4. 在**目标文件系统**内创建临时文件、设置执行权限，并执行 `--version`，精确核对目标版本。
+5. 全部通过后才 atomic rename 替换目标。下载、校验、解包、版本检查或替换失败，不改旧 binary / `config.yaml`。
+
+脚本**不会自动 sudo、生成 / 覆盖配置、注册服务或重启服务**。替换 binary 与注册服务是两件独立的事；后者会启动服务，须在配置和数据准备好后单独执行。
 
 ### Release 资产的校验方式
 
-每次 release 都通过 [`.github/workflows/release.yml`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.github/workflows/release.yml) 自动生成两类校验产物——`SHA256SUMS` 自始即有，**SLSA build provenance attestation 自 v0.12.0 起**（更早 release 仅前者，attestation API 查 v0.11.x 及之前的 binary 会返回空）。全部走业界标准格式，可被通用工具直接消费。两条路径都是**可选**的手动操作，给愿意做额外验证的用户用。
+SHA256 校验是安装器的必经步骤，用于发现传输、落盘或镜像内容不一致。**同源 checksum 不是签名**：能同时替换归档与校验清单的攻击者可以让二者重新匹配。HTTPS 和 checksum 也不代表源码本身安全。
 
-#### 1. `SHA256SUMS`（POSIX `sha256sum` 标准格式）
-
-Release 资产里有一个 `SHA256SUMS` 文件，每行 `<sha256>  <basename>`，覆盖**全部** release 产物（3 个 binary + wheel + sdist）。**有意义的用法是跨网络/跨时段比对**——在 GitHub Release 网页上肉眼记下 hash，或在一台机器上拉 manifest、在另一台机器/镜像源拉到 binary 后本地校验：
+手动核验时，下载同 tag 清单并找到目标归档的**唯一一条**记录，再比对本地摘要：
 
 ```bash
-# Linux / WSL
-sha256sum -c --ignore-missing SHA256SUMS
-
-# macOS / BSD
-shasum -a 256 -c --ignore-missing SHA256SUMS
+TAG=vX.Y.Z                     # 替换为符合上述条件的公开 tag
+VERSION=${TAG#v}
+ARTIFACT="qatlasd_${VERSION}_linux_amd64.tar.gz"  # 按实际平台修改
+BASE="https://github.com/IAI-USTC-Quantum/QuantumAtlas/releases/download/$TAG"
+curl -fL "$BASE/$ARTIFACT" -o "$ARTIFACT"
+curl -fL "$BASE/qatlasd_${VERSION}_checksums.txt" -o "qatlasd_${VERSION}_checksums.txt"
+sha256sum "$ARTIFACT"          # macOS 可用 shasum -a 256 "$ARTIFACT"
 ```
 
-`--ignore-missing` 让校验只针对当前目录里实际存在的文件，省去预先 grep 出自己关心那一行的麻烦。能挡：跨源传输不一致、镜像投毒、本地落盘损坏。**挡不了**有 release 写权限的攻击者同时改 binary + SHA256SUMS 的"完整链替换"——那种攻击的防线是下面的 attestation。
-
-#### 2. SLSA Build Provenance Attestation（Sigstore Bundle 标准格式）
-
-每个 release artifact 在打包时同步用 [`actions/attest-build-provenance`](https://github.com/actions/attest-build-provenance) 走 GitHub OIDC + Sigstore 公开实例**密钥学签名**，把 `(artifact digest, repo, commit, workflow file, runner, timestamp)` 绑定起来。attestation 落 GitHub 自家的 Attestations API（不是 release 资产），有两种通用工具可验，都不依赖任何专属凭据：
+如需验证构建来源，用 GitHub CLI 核验该 tag 发布的 SLSA build provenance：
 
 ```bash
-# 方式 A: gh CLI（最简单，自动拉 bundle + 验签 + 验 cert identity 一气呵成）
-gh attestation verify ./qatlasd-linux-amd64 --repo IAI-USTC-Quantum/QuantumAtlas
-
-# 方式 B: 纯 curl + cosign（任何机器，零安装 gh CLI，可断网验证）
-ARTIFACT=qatlasd-linux-amd64
-DIGEST=$(sha256sum "$ARTIFACT" | awk '{print $1}')
-curl -fsSL -H "Accept: application/vnd.github+json" \
-  "https://api.github.com/repos/IAI-USTC-Quantum/QuantumAtlas/attestations/sha256:${DIGEST}" \
-  | jq -r '.attestations[0].bundle' > qatlasd.sigstore.json
-cosign verify-blob "$ARTIFACT" \
-  --bundle qatlasd.sigstore.json \
-  --certificate-identity-regexp '^https://github\.com/IAI-USTC-Quantum/QuantumAtlas/\.github/workflows/release\.yml@refs/tags/v' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+gh attestation verify "./$ARTIFACT" --repo IAI-USTC-Quantum/QuantumAtlas
+# 对已下载的 UI zip，验证对象同样是 zip 本身：
+gh attestation verify "./qatlasd_${VERSION}_web.zip" --repo IAI-USTC-Quantum/QuantumAtlas
 ```
 
-attestation 能挡的额外攻击面：源仓库写权限被劫持后的恶意 release（重新签名需要在 `IAI-USTC-Quantum/QuantumAtlas` 仓库的 release.yml workflow 里跑出 OIDC token，PAT / Personal Token 拿不到）、typosquatting fork 钓鱼（cert identity 直接绑 source repo path）。日常装机不需要这一步——SLSA attestation 是给安全敏感场景（CI/CD pipeline、企业 SRE 审计、需要 SLSA L3 合规凭证的部署）的可选强校验路径。
+**证明对象是 `tar.gz` / `zip` 归档本身，不是解出的 `qatlasd`。** 检查验证结果里的仓库、workflow、tag / commit 是否符合预期。Provenance 证明特定构建身份与产物摘要的关联，**不保证源码无恶意、依赖无漏洞或有源码写权限的攻击者无法发版**。安装器和运行时 UI 下载器不会自动执行这一步 attestation 核验。
+
+## 用 Go 原生安装
+
+Git / Go 模块只分发源码，不提交生成的 `web/dist`。安装明确的公开版本只需要符合仓库 `go.mod` 要求的 Go 工具链，**不需要 Node、npm 或 Sphinx**：
+
+```bash
+# vX.Y.Z 必须替换为已采用新流程、带公开 UI 资源的 tag
+go install github.com/IAI-USTC-Quantum/QuantumAtlas/cmd/qatlasd@vX.Y.Z
+# 默认在 ~/go/bin；若设置了 GOBIN / GOPATH，以实际位置为准
+~/go/bin/qatlasd --version
+```
+
+版本优先取有效的 `main.version` 注入值，其次取 Go build info 的 `Main.Version`；CLI / API 展示统一去掉前导 `v`（例如输出 `qatlasd version X.Y.Z`）。`--version` 不需要业务配置、数据库或 UI 下载。
+
+### 首次启动与按版本离线缓存
+
+普通 `go install` 不嵌入生成资源。首次 `serve` 在没有内嵌资源时，从程序的**精确版本**下载：
+
+```text
+https://github.com/IAI-USTC-Quantum/QuantumAtlas/releases/download/v<version>/qatlasd_<version>_web.zip
+https://github.com/IAI-USTC-Quantum/QuantumAtlas/releases/download/v<version>/qatlasd_<version>_checksums.txt
+```
+
+下载器核对 **SHA256 + zip comment 中的版本**，并验证资源结构后，缓存到：
+
+```text
+os.UserCacheDir()/qatlas/ui/v<version>/
+├── bundle.zip
+└── sha256
+```
+
+后续启动按版本重新验证本地缓存，可离线提供 UI；升级到新版本使用新的版本目录，不复用旧版本资源。Linux 通常为 `${XDG_CACHE_HOME:-$HOME/.cache}/qatlas/ui/`，macOS 通常为 `~/Library/Caches/qatlas/ui/`。以**实际服务运行用户**的缓存目录为准，不能用 root 的缓存代替普通服务用户的缓存。
+
+zip 与官方二进制内嵌资源来自**同一次 Sphinx 两站构建 + npm 构建产物**，通过统一 `fs.FS` 提供 SPA、静态文件与文档路由。资源下载和选择不新增业务 YAML 字段；现有部署仍按 `config init` 配置 PostgreSQL / OAuth / S3 等即可。
+
+`dev`、`(devel)` 或 Go pseudo-version 不能据此下载一个“差不多的 latest”：没有有效发布版本、附件尚为 draft / 不存在、校验失败都会明确报错，**不会回退 latest**。请选择带公开资源的新 tag；开发者则按[贡献指南](../contributing.md)完成 Sphinx 两站及 npm 全 UI 构建，再用 `go build -tags embedui ./cmd/qatlasd` 编译内嵌版本。仅加 build tag 不会代替资源构建。
 
 ### 常见错误
 
-!!! failure "404 release artifact"
-    指定的 tag 没有该平台的 binary。检查 [releases](https://github.com/IAI-USTC-Quantum/QuantumAtlas/releases)；通常 `v0.2.3+` 才有 binary。
+- **404 / 缺少资源**：核对 tag 是否采用新流程、Release 和对应平台归档 / UI zip / checksum 是否已公开。Git tag 可被 `go install` 发现，不代表 Release 附件已经可下载。
+- **缓存损坏 / 不完整**：启动会拒绝使用，不能跳过校验。确认服务用户和版本后，移走**该版本**缓存目录，再在可联网时重新启动；不要手改 `sha256` 让损坏资源通过。
+- **目录不可写**：安装目录和运行用户的缓存目录是两种权限。检查失败发生在哪一步，按需修正目录属主 / 服务沙箱；不要让安装器自动提权。
+- **不支持的平台**：官方仅发上述三平台；其他平台可尝试明确版本的 Go 源码安装，不等于承诺经过生产验证。
 
-!!! failure "Permission denied: ~/.local/bin"
-    `~/.local/bin` 不存在或不可写。脚本会尝试 `mkdir -p`，但如果父目录权限不对，会失败。手动 `mkdir -p ~/.local/bin` 或换 `--dir /tmp/qatlas` 测试。
+## 准备 YAML 配置
 
-!!! failure "TAG 解析出错（罕见，私库 / 网络问题）"
-    脚本 fail-loud，给出 GitHub 实际 redirect 内容。检查网络 + repo 可访问性。
+```bash
+# 默认 ~/.qatlas/config.yaml；已有文件时拒绝覆盖
+qatlasd config init
+# 或指定路径（调用者须有写权限）
+qatlasd config init --config /path/to/config.yaml
+
+# 编辑后检查路径与有效配置（secret 默认脱敏）
+qatlasd config path --config /path/to/config.yaml
+qatlasd config show --config /path/to/config.yaml
+```
+
+新建模板为 mode `0600`，按需取消注释并填写。完整字段见随 binary 提供的模板和[服务端配置](server-config.md)；不要在升级时对已有配置运行 `config init --force`。
+
+服务端**不读取 `.env` 或 process env 作为业务配置**；残留的 `QATLAS_*` 业务变量、`MINERU_*`、`GITHUB_CLIENT_*` 等旧配置变量会触发报错，须迁入 YAML 并从服务环境删除。安装工具覆盖项例外，不应用来配置业务。
+
+配置文件必须能被最终服务用户读取。若用 `sudo qatlasd config init --config /etc/quantum-atlas/config.yaml` 创建，文件由 root 拥有且为 `0600`；注册成普通用户运行的 system service 前，须明确调整属主 / 访问权限，不能只因文件存在就认为服务能读。
 
 ## 注册为系统服务
 
-binary 装好后，启动一次确认它能跑：
+`qatlasd service install` 使用**当前执行的 binary 路径**生成服务，显式传入 YAML 路径最易审计：
 
 ```bash
-qatlasd --version
-# qatlasd version 0.2.8
+# 先在前台检查；确认后 Ctrl-C，再注册服务
+qatlasd --config "$HOME/.qatlas/config.yaml" serve --http=127.0.0.1:4200
+
+# user mode，不用 sudo；非 TTY 必须同时给 --mode 和 --force
+qatlasd service install --mode user \
+  --config "$HOME/.qatlas/config.yaml" --bind 127.0.0.1:4200 --force
+
+# system mode：从预定服务用户的 shell 运行 sudo
+sudo /home/<USER>/.local/bin/qatlasd service install --mode system \
+  --config /etc/quantum-atlas/config.yaml --bind 127.0.0.1:4200 --force
 ```
 
-### 准备 .env（可选但推荐）
-
-`qatlasd serve` 完全靠 process env / `.env` 文件读配置。开两条路：
-
-**A. 用 `qatlasd config init` 写默认 .env**（推荐起手式）：
-
-```bash
-# 写到 XDG 默认 $XDG_CONFIG_HOME/qatlasd/.env（或 ~/.config/qatlasd/.env）
-qatlasd config init
-
-# 写到指定路径（生产单机常见）
-sudo qatlasd config init --path /etc/quantum-atlas/.env
-```
-
-模板 mode 0600，含 GitHub OAuth / PostgreSQL / S3 / SystemPAT 等最常用字段（commented，按需取消注释）。完整字段参考仍是 [`.env.example`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.env.example)。详见 [server-config §8](server-config.md#8-qatlasd-config-子命令)。
-
-**B. 自己拷 `.env.example`**：从 repo 根 / GitHub raw 直接 wget 拷下来再改。等价于 A，多一份 alias / dev-only 注释，新手干扰多。
-
-写完 / 改完任何 .env，随时可以：
-
-```bash
-qatlasd config path             # 显示 server 会读哪个 .env
-qatlasd config show             # 打印当前进程可见的 env（默认脱敏 secret）
-```
-
-### 注册服务
-
-然后用 `service install` 注册成 systemd：
-
-```bash
-qatlasd service install
-```
-
-交互模式会：
-
-1. 让你选 mode：**user**（systemd user unit，单用户后台）vs **system**（systemd system unit，root 跑 / 监听低端口）
-2. 让你确认 `.env` 路径（从 `$QATLAS_DOTENV` → `~/QuantumAtlas/.env` → `./.env` 自动检测）
-3. 渲染 unit 文件到 stdout 让你 review
-4. `[Y/n]` 确认 → 写盘 + `systemctl daemon-reload` + `systemctl start`
-
-### 全自动模式（CI / agent / one-liner）
-
-非 TTY 环境必须显式 `--mode` 和 `--force`：
-
-```bash
-# user mode（不需要 sudo）
-qatlasd service install \
-    --mode user \
-    --dotenv-path ~/QuantumAtlas/.env \
-    --force
-
-# system mode（需要 sudo）
-sudo qatlasd service install \
-    --mode system \
-    --dotenv-path /etc/quantum-atlas/.env \
-    --bind 127.0.0.1:4200 \
-    --force
-```
-
-!!! danger "system mode 必须用 `sudo qatlasd ...`，**不能**用 `sudo -u <user> qatlasd ...`"
-
-    System unit 写到 `/etc/systemd/system/`，需要 root 写权限——这意味着
-    `qatlasd service install --mode system` 的进程**必须**以 EUID=0 运行。
-    同时，渲染出的 unit 里的 `User=` 字段、`ReadWritePaths=` 的家目录锚点
-    都由 binary 内部从 `$SUDO_USER` 反推（见 `cmd/qatlasd/service_cmd.go::resolveSystemUser`
-    + `effectiveHomeDir`）。
-
-    | 调用方式 | EUID | `$SUDO_USER` | 结果 |
-    |---|---|---|---|
-    | `sudo qatlasd service install ...` | 0 ✓ | 你的 login user ✓ | **正确**：写得了 unit，`User=<你>` |
-    | `sudo -u alice qatlasd service install ...` | alice 的 uid ❌ | `root`（sudo 调用者） ❌ | 双重错：1）EUID≠0 写不了 `/etc/systemd/system/` 直接 `permission denied`；2）即便能写，`User=root` 进 unit，daemon 用 root 跑 |
-    | `sudo bash script.sh` 里调 `qatlasd service install ...` | 0 ✓ | 你的 login user ✓（外层 `sudo` 设的） | **正确**：跟方式 1 等价；适合写到部署脚本里 |
-
-    自动化脚本里**绝对不要**在 `sudo bash ...` 之内再套 `sudo -u`——
-    那是把"我要换运行身份"和"我要写系统文件"两个目标硬拗到一个命令上，
-    永远是冲突的。
+交互模式会提示 user / system、确认默认 `~/.qatlas/config.yaml`（若存在）、渲染 unit 并确认写入。显式 `--config` 必须指向已存在的文件；未指定且默认文件不存在时，unit 不固定 `--config`，运行时按服务用户的默认路径加载。**注册会写入并启动服务**，不是仅生成模板。
 
 | Flag | 默认 | 含义 |
 |---|---|---|
-| `--mode user\|system` | TTY 询问；非 TTY 必填 | unit 安装位置 |
-| `--dotenv-path <path>` | auto-detect | 写入 unit 的 `Environment=QATLAS_DOTENV=` |
-| `--bind <addr>` | `127.0.0.1:4200` | `serve --http=` 的值 |
-| `--name <name>` | `qatlasd` | unit 名（影响 `<name>.service`）|
-| `--dry-run` | false | 只渲染 unit，不写盘 |
-| `--force` | false | 已有同名 unit 直接覆盖；非 TTY 必填 |
+| `--mode user\|system` | TTY 询问；非 TTY 必填 | 服务安装位置与管理模式 |
+| `--config <path>` | 已存在的 `~/.qatlas/config.yaml`，否则不固定 | 写入 `qatlasd --config <绝对路径> serve` |
+| `--bind <addr>` | `127.0.0.1:4200` | 写入 `serve --http=`，优先于 YAML 的 `http_addr` |
+| `--name <name>` | `qatlasd` | 服务名 |
+| `--dry-run` | false | 只渲染，不写盘、不 reload；非 TTY 仍须 `--mode` 和 `--force` |
+| `--force` | false | 跳过确认并允许替换已有 unit；非 TTY 必填 |
 
-### 渲染出来的 unit 长什么样
+!!! danger "不要混用 sudo 与 user mode"
 
-system mode 下 unit 在 `/etc/systemd/system/qatlasd.service`，大致如下：
+    system mode 写 `/etc/systemd/system/`，需要 root 写权限，但运行用户优先由 `$SUDO_USER` 决定，并非默认必须 root 运行。应从预定运行用户的 shell 调用 `sudo qatlasd service install --mode system ...`；不要用 `sudo -u <user> ... --mode system`，也不要用 `sudo ... --mode user`。若 sudo 的 PATH 找不到 binary，使用绝对路径。
+
+### systemd unit 示例
+
+以下是 system mode 的语义示例；实际结果以 `service install --dry-run --mode system --config ... --force` 为准：
 
 ```ini title="/etc/systemd/system/qatlasd.service"
 [Unit]
-Description=QuantumAtlas server
+Description=QuantumAtlas server (Go + PocketBase)
 After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=<USER>
-Group=<USER>
-WorkingDirectory=/home/<USER>
-Environment=QATLAS_DOTENV=/etc/quantum-atlas/.env
-ExecStart=/home/<USER>/.local/bin/qatlasd serve --http=127.0.0.1:4200
+WorkingDirectory=/etc/quantum-atlas
+ExecStart=/home/<USER>/.local/bin/qatlasd --config /etc/quantum-atlas/config.yaml serve --http=127.0.0.1:4200
 Restart=on-failure
 RestartSec=5
-
-# Defense in depth
+KillSignal=SIGINT
+TimeoutStopSec=15
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=no
+ReadWritePaths=/etc/quantum-atlas /home/<USER>/.local/share/qatlasd
 LockPersonality=true
 RestrictRealtime=true
-ReadWritePaths=/etc/quantum-atlas /var/lib/quantum-atlas /home/<USER>/.local/share/qatlasd
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-!!! warning "ReadWritePaths 坑"
-    `ReadWritePaths=` 里列的目录**任何一个不存在就让 service 拿 `status=226/NAMESPACE`**，但**老进程因为 namespace 已建好不受影响**——所以坏配置可能潜伏到下次 restart 才暴露。改 `.env` 的存储路径后要：
+自动生成的 `ReadWritePaths` 包含配置目录、默认 XDG 数据目录和已存在的 `~/QuantumAtlas-Wiki`，**不会解析 YAML 中的自定义存储路径**。非默认数据路径或额外只读沙箱需要管理员核对 drop-in；无内嵌 UI 时也须确保运行用户的缓存目录可写。`ProtectSystem=full` 本身不把整个 home 设为只读。
 
-    ```bash
-    mkdir -p /var/lib/quantum-atlas/{raw,data,pb_data}     # 确认新路径存在
-    sudo systemctl daemon-reload                            # 让 systemd 重读 unit
-    sudo systemctl restart qatlasd                    # 试一次 restart
-    ```
+!!! warning "ReadWritePaths 与启动权限"
 
-### 验证
+    列出的目录不存在可能导致 `status=226/NAMESPACE`。在注册 / 重启前创建目录、核对属主与权限；修改 unit / drop-in 后要 `daemon-reload`，只改 YAML 则重启即可。不要以旧进程仍正常运行为依据跳过下一次启动验证。
+
+### 验证与管理
 
 ```bash
-# 服务状态
-qatlasd service status
-# 或等价
-systemctl status qatlasd
-
-# 看日志
+# user mode
+qatlasd service status --mode user
+journalctl --user -u qatlasd -n 50
+# system mode（不要让普通用户命令默认检查 user unit）
+sudo qatlasd service status --mode system
 journalctl -u qatlasd -n 50
-
-# 健康检查
 curl http://127.0.0.1:4200/api/health | jq
 ```
 
-应该看到 `"status": "healthy"` 或 `"degraded"`（degraded 不一定是 bug——可能只是某些 dependency 没配；看 `checks` 详情）。
+`healthy` / `degraded` 应结合 `checks` 和日志判断；还应检查首页、JS 与文档能否加载。user unit 若要未登录也常驻，需按本机权限配置 `loginctl enable-linger`。macOS 的 launchd 服务管理仍须单独验证，不能将 Linux 的 systemd 验证等同于 macOS 生产验证。
 
-## 升级 binary
+## 升级与卸载
 
-不复杂——再跑一次 install 脚本即可（脚本会覆盖旧 binary）：
+升级必须**先读目标版本说明并备份，再安全替换，最后显式重启 / 验证**。不要将“保留旧 binary”当作“可回滚数据库”的保证；完整步骤见[备份与升级](backup-and-upgrade.md)。
 
-```bash
-# 装 v0.2.9
-curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh -s -- --version v0.2.9
-
-# 让 service 用新 binary
-sudo systemctl restart qatlasd
-
-# 看新版本起来没
-curl http://127.0.0.1:4200/api/health | jq .data.version
-```
-
-详细的升级 + 备份策略见 [备份与升级](backup-and-upgrade.md)。
-
-## 卸载
+卸载时显式选择正确模式：
 
 ```bash
-# 停 + 删 unit
-qatlasd service uninstall
-
-# 删 binary
+qatlasd service uninstall --mode user
+# system mode 则用：sudo qatlasd service uninstall --mode system
 trash-put ~/.local/bin/qatlasd
-
-# pb_data / raw 不会被自动删 —— 你自己决定是否保留
-# trash-put ~/.local/share/qatlasd/
+# config.yaml、pb_data、raw 和 UI 缓存不会自动删除，另行决定保留策略
 ```
 
-## 不用 service 也行（开发 / 容器场景）
-
-直接前台跑：
-
-```bash
-QATLAS_DOTENV=/path/to/.env qatlasd serve --http=0.0.0.0:4200
-```
-
-在 Docker / systemd 别的方式管理。
+不使用 service 时，直接前台运行 `qatlasd --config /path/to/config.yaml serve --http=127.0.0.1:4200`，由容器或其他进程管理器托管即可。

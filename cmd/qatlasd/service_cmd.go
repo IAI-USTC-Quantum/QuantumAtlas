@@ -77,7 +77,7 @@ func newServiceInstallCommand() *cobra.Command {
 		Long: `Install qatlasd as a managed service.
 
 Interactive mode (default, TTY): prompts for mode (user/system), confirms
-the auto-detected .env path, renders the unit content for [Y/n] review,
+the YAML config path, renders the unit content for [Y/n] review,
 then writes the unit and starts the service.
 
 Non-interactive mode (no TTY, e.g. CI / piped stdin): --mode and --force
@@ -334,7 +334,7 @@ func validateConfigPath(path string) error {
 // matters under sudo: sudo resets $HOME to /root by default (see sudoers(5)
 // `env_reset`), so a plain os.UserHomeDir() during
 // `sudo qatlasd service install --mode system` would yield /root,
-// poisoning ReadWritePaths (and the .env autodetect candidates) with
+// poisoning ReadWritePaths (and the YAML autodetect candidates) with
 // /root/.local/share/qatlasd — a path the eventual `User=<sudo-user>`
 // daemon will never write to, making the hardening grant useless.
 //

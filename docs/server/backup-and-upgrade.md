@@ -114,70 +114,148 @@ pg_restore -d qatlas --clean /var/backups/qatlas-pg-YYYY-MM-DD.dump
 corpus（重灌 ~10⁸ 行成本高）。预算紧张时可以只 dump corpus 相关的表，或干脆
 接受"灾难后重跑 `qatlasd openalex bootstrap-pg`"。
 
-## 滚动升级 binary
+## 升级 binary
 
-### 标准流程
+### 标准流程：先说明与备份，再替换
+
+!!! warning "不要把新格式当作已经发布"
+
+    `TAG=vX.Y.Z` 必须替换为**已经采用新流程、附件已公开**的目标 tag。
+    当前仓库 `VERSION=0.34.0` 不意味着 `v0.34.0` 已有这些新格式产物。
+    不使用 `latest` 掩盖迁移窗口，也不重发旧 tag。
+
+**1. 先读目标版本说明、核对兼容性。**
 
 ```bash
-# 1. 拉新 binary（覆盖旧的）
-curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh -s -- --version v0.2.9
-
-# 2. 看升级日志（如果有 breaking change）
-gh release view v0.2.9   # 或在 GitHub 网页看
-
-# 3. （可选）备份 pb_data
-sudo cp -a /home/<USER>/.local/share/qatlasd/pb_data \
-          /var/backups/pb_data-pre-v0.2.9
-
-# 4. Restart
-sudo systemctl restart qatlasd
-
-# 5. 等 PocketBase 自动跑 pending migrations
-sleep 3
-
-# 6. 验证
-curl http://127.0.0.1:4200/api/health | jq .data.version
-# "0.2.9"
-
-# 7. 看日志确认 migration 顺利
-journalctl -u qatlasd -n 30 | grep -iE 'migration|error'
+TAG=vX.Y.Z
+VERSION=${TAG#v}
+gh release view "$TAG" --repo IAI-USTC-Quantum/QuantumAtlas
 ```
 
-总 downtime 一般 < 10 秒。
+逐版阅读从当前版本到目标版本的 release notes，确认 YAML / PocketBase /
+PostgreSQL schema / 对象存储变更、停写要求及恢复办法。即使都是 0.x 或 patch
+版本，也不能假定没有迁移。迁移和停机耗时取决于数据规模，不保证固定秒数。
 
-### 跨大版本升级（v0.x → v1.x，未来）
-
-到时候 release notes 会有专门 migration guide。当前所有 0.x 升级都是同款流程。
-
-### Rollback
+**2. 准备同一 tag 的安装器，但还不要替换。** 先按[安装文档](install.md)
+检查 curl / GNU wget、tar、SHA256 工具等依赖；BusyBox wget 需改用 curl。
+请求 / 归档步骤与候选程序版本检查都有有限超时，按需只为安装器调用设置超时覆盖。
 
 ```bash
-# 装回老版本
-curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh -s -- --version v0.2.7
+curl -fL --proto '=https' --proto-redir '=https' \
+  "https://raw.githubusercontent.com/IAI-USTC-Quantum/QuantumAtlas/$TAG/cmd/qatlasd/install-qatlasd.sh" \
+  -o install-qatlasd.sh
+less install-qatlasd.sh
+# 审阅后，先完成下面的备份，再执行安装。
+```
 
-# 恢复 pb_data（如果 migration 改了 schema）
+旧实例的 `/install-qatlasd.sh` 是旧 binary 内嵌的旧格式安装器，**不能拿它装
+新格式归档**。首次升级必须从目标新 tag 取脚本；首次升级后内嵌脚本才随 binary
+切换。新脚本不兼容旧式附件，不能用它重新安装旧格式 release。
+
+**3. 做一致性备份并保留旧程序 / 配置。**
+
+按本文前面的备份方法保存实际部署的 `pb_data`、PostgreSQL 及对象存储，检查
+备份可读、恢复路径和可接受的数据损失窗口。复制 SQLite 目录前停服务，或使用
+受支持的在线备份；不能把运行中的 `cp -a pb_data` 当作一致性备份。
+另外保存当前 binary、`config.yaml`、unit / drop-in（含实际 `ExecStart` 路径），
+并记录旧程序 `--version`。备份应放在不被此次替换覆盖的位置，密钥受访问控制。
+
+system unit 示例（user unit 对应 `systemctl --user stop qatlasd`）：
+
+```bash
 sudo systemctl stop qatlasd
-sudo rm -rf /home/<USER>/.local/share/qatlasd/pb_data
-sudo cp -a /var/backups/pb_data-pre-v0.2.9 \
-          /home/<USER>/.local/share/qatlasd/pb_data
-sudo systemctl start qatlasd
+# 现在按已审阅的备份方案完成停写 / pb_data 复制与其他状态备份。
+# 任一备份失败，停止升级；不要继续执行安装与新版本启动。
 ```
 
-**注意**：PocketBase migration 是向前的（up），通常没有 down migration。所以：
+**4. 备份完成后，安全替换 binary。** 以下在有安装目录写权限的账户下运行；
+`--dir` 必须与 unit 的实际 binary 目录一致：
 
-- 小版本回滚（v0.2.9 → v0.2.8）：通常 schema 不变，直接换 binary 就行
-- 大版本回滚（v0.3.0 → v0.2.x）：可能需要恢复 pb_data；记得**升级前先备份**
+```bash
+sh install-qatlasd.sh --version "$TAG" --dir "$HOME/.local/bin"
+"$HOME/.local/bin/qatlasd" --version  # 应为 qatlasd version X.Y.Z（去掉 tag 的 v）
+```
+
+新流程采用 GoReleaser v2.18.1 默认归档
+`qatlasd_<version>_<os>_<arch>.tar.gz`（三平台 `linux/amd64`、`linux/arm64`、
+`darwin/arm64`），内含唯一普通 binary `qatlasd`。安装器校验同 tag
+`qatlasd_<version>_checksums.txt`，严格检查 tar 成员，在**目标文件系统**暂存，
+精确执行 / 核验 `--version` 后才 atomic rename。下载、SHA256、tar、版本或
+替换任一步失败，不改旧 binary / 配置；停止排查，不要强行启动未经验证的目标。
+脚本不自动 sudo、注册或重启服务，也不会重写 YAML。
+
+同源 checksum 只是完整性校验，不是签名。如需核验构建来源，按[安装文档](install.md)
+对 **tar.gz / UI zip 归档本身**验证 attestation，不对解出的 binary 验证。
+Provenance 也不保证源码 / 依赖安全。
+
+**5. 显式启动新版本并验证。** 若说明要求新增 YAML 字段，按说明合并，
+**不要用 `config init --force` 覆盖已有配置**。若旧 unit 仍使用 dotenv，先迁移到
+`qatlasd --config /path/to/config.yaml serve ...`，移除旧业务环境变量，检查文件
+属主 / 权限；修改 unit 后 `daemon-reload`。重新执行 `service install` 会启动服务，
+须等到准备就绪，而不是只为“生成模板”随手执行。
+
+```bash
+sudo systemctl start qatlasd
+sudo systemctl status qatlasd --no-pager
+journalctl -u qatlasd -n 50
+curl -fsS http://127.0.0.1:4200/api/health | jq .data.version
+```
+
+检查实际运行版本、迁移日志、健康检查详情和首页 / JS / 文档。`--version` 成功
+只验证程序可执行，不等于迁移或业务已通过；不要只等待固定几秒就宣告升级成功。
+
+### Go 源码安装与 UI 缓存
+
+普通 `go install github.com/IAI-USTC-Quantum/QuantumAtlas/cmd/qatlasd@vX.Y.Z`
+不需要 Node / Sphinx；Git / 模块仅含源码。升级时仍钉明确的公开新 tag，并将
+候选程序装到独立暂存位置核验，不让 `go install` 直接覆盖 unit 正在引用的文件。
+版本优先取有效 `main.version`，其次 Go build info `Main.Version`，显示去前导 `v`。
+
+无内嵌 UI 的程序首次 `serve` 会下载：
+
+```text
+https://github.com/IAI-USTC-Quantum/QuantumAtlas/releases/download/v<version>/qatlasd_<version>_web.zip
+https://github.com/IAI-USTC-Quantum/QuantumAtlas/releases/download/v<version>/qatlasd_<version>_checksums.txt
+```
+
+经过 SHA256 + zip comment 版本及资源结构验证后，写入运行用户的
+`os.UserCacheDir()/qatlas/ui/v<version>/{bundle.zip,sha256}`。后续启动可按版本
+校验并离线使用；升级使用新缓存，旧缓存不能代替新版本资源。可在隔离数据目录
+和回环端口验证新版本，但不要让验证实例连接生产库或共享正在使用的 `pb_data`。
+
+`dev` / `(devel)` / pseudo-version 不回退 latest；使用已公开且带资源的新 tag，
+或开发者先构建 Sphinx 两站与 npm 全 UI，再 `go build -tags embedui ./cmd/qatlasd`。
+官方预编译程序已内嵌和 zip 相同的资源，**首次启动不需要下载 UI**。
+两种资源通过统一 `fs.FS` 提供 SPA / 文档，既有业务 YAML 不需要资源配置。
+UI 缓存可重建，不是数据库备份；若保留旧缓存用于离线恢复，也必须保留完整
+`bundle.zip` 与 `sha256`，不能混用版本或跳过验证。
+
+### Rollback 的边界
+
+**保留旧程序不等于数据库回滚。** PocketBase / PostgreSQL 的 schema 或数据
+迁移没有通用的向后兼容保证，小版本也不能默认直接换回 binary。
+
+1. 先停写 / 停服务，保留故障后的数据快照与日志，避免直接删除现场。
+2. 根据该次 release notes 判断旧程序能否读取当前数据；没有明确保证时，
+   先在隔离环境演练恢复升级前的一致性备份（可能同时涉及 SQLite、PG 和对象版本）。
+3. 需要回退程序时，使用之前保存并核验过的旧 binary，或该旧 release 对应的安装
+   方法；不要用新格式安装器下载旧格式附件。依然在目标文件系统暂存、核对版本后
+   原子替换，配置 / unit 同步恢复到兼容状态。
+4. 确认属主、权限、资源版本与服务配置后再启动，并重新做业务验证。
+
+恢复升级前备份可能丢失升级后的写入，跨存储层恢复须协调同一个一致性时间点。
+不能仅凭版本号大小决定只恢复 `pb_data`、不检查 PostgreSQL 或对象存储。
 
 ## 灾难恢复演练
 
 每季度跑一次：
 
 1. 起一台新 VPS
-2. 装 binary：`curl -fsSL ... | sh`
+2. 按[安装文档](install.md)选定公开 tag，从同 tag 下载、审阅并执行安装器；若恢复旧格式发行，使用其对应产物 / 安装方式
 3. 恢复 pb_data：`tar xzf pb_data-latest.tar.gz -C <data_dir>`
 4. 恢复 PostgreSQL：`pg_restore` 最近的 dump（或建空库让 goose migrations 重建 schema）
-5. 指向同一 RustFS bucket 和 PostgreSQL（mesh 内网 IP）
-6. `qatlasd service install --mode system --force ...`
+5. 恢复受保护的 `config.yaml`，在隔离演练环境指向恢复出的 RustFS bucket 和 PostgreSQL，避免演练实例写生产状态
+6. 检查权限后，从预定运行用户的 shell 执行 `sudo qatlasd service install --mode system --config /etc/quantum-atlas/config.yaml --force`（会启动服务）
 7. 走 [健康检查 checklist](health-and-monitoring.md#self-check)
 
 完整恢复时间应该 ≤ 30 分钟。
@@ -193,6 +271,6 @@ sudo systemctl start qatlasd
 
 ## 不要忘了备份的东西
 
-- `.env`（含 GitHub OAuth secret / PostgreSQL DSN / RustFS svcacct）—— 存到 password manager / vault
+- `config.yaml`（含 GitHub OAuth secret / PostgreSQL DSN / RustFS svcacct）—— 存到 password manager / vault，保持密钥访问控制；服务通过 `--config` 读取，不使用 `.env`
 - systemd unit（如果改过 default）—— commit 进运维仓库
 - Caddy / nginx 配置 —— 同上

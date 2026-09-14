@@ -145,11 +145,12 @@ go = "1.26.*"
 gxx = "*"
 
 [tool.pixi.tasks]
-build = "go build -o build/qatlasd ./cmd/qatlasd"
-test-go = "go test ./internal/... ./cmd/... ./tests/..."
+# Build full UI first (docs/contributing.md); plain `go build` remains source-only.
+build = "go build -tags embedui -o build/qatlasd ./cmd/qatlasd"
+test-go = "go test ./internal/... ./cmd/... ./web ./tests/..."
 # Include deployment contracts and offline HTTP fixtures in both tasks.
 # Live production probes are excluded without the explicit e2e build tag.
-vet = "go vet ./internal/... ./cmd/... ./tests/..."
+vet = "go vet ./internal/... ./cmd/... ./web ./tests/..."
 # Regenerate the OpenAPI spec from the swaggo annotations in
 # internal/routes/openapi.go (+ general info in cmd/qatlasd/main.go).
 # Output lands in internal/apidocs/, which is blank-imported by main.go and

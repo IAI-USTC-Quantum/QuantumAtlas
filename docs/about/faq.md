@@ -30,6 +30,14 @@
 
 ## 安装 / 部署
 
+??? question "go install 和预编译程序的 UI 有区别吗？"
+
+    内容与就绪后的服务行为相同。预编译程序在构建时内嵌完整 UI；`go install ...@vX.Y.Z` 仅编译源码，第一次 `serve` 自动从**相同版本** GitHub Release 下载 UI ZIP 与 SHA256 清单，校验后缓存。普通安装无需 Node/Sphinx，也无需选择资源。新分发格式从未来新版本启用，不重发旧 tag，见[安装说明](../server/install.md)。
+
+??? question "首次下载失败、缓存损坏或 dev 版本怎么办？"
+
+    程序明确报错，不使用 latest 或别的版本。确认该版本 Release 与 UI 附件已经公开，网络恢复后重试。已损坏的缓存不会静默替换：仅移走报错中指定的版本缓存目录，再启动自动下载。`dev`/Go 伪版本没有对应 UI，请安装带资源的正式 tag；开发者则完整构建 UI 后用 `-tags embedui` 编译。缓存位置为系统用户缓存目录的 `qatlas/ui/v<version>`，升级会使用新版本目录，旧缓存不影响新版本。
+
 ??? question "client 必须装 server 吗？"
 
     不必。**client 是独立的 [PyPI 包 `qatlas-cli`](https://pypi.org/project/qatlas-cli/)**，由 [qatlas-cli 仓库](https://github.com/IAI-USTC-Quantum/qatlas-cli)独立维护和发版；纯 client 用户只需要在 `~/.config/qatlas/config.yaml` 设 `server_url:` 指向远端 server（如 `https://quantum-atlas.ai`）。安装 QuantumAtlas 主仓不会提供 `qatlas`。
@@ -50,7 +58,7 @@
 
 ??? question "macOS 能跑 server 吗？"
 
-    Apple Silicon 可以——release 出 `darwin-arm64` binary。Intel Mac 没出预编 binary（GitHub Actions `macos-13` runner 排队 10–40 分钟），用 `go install github.com/IAI-USTC-Quantum/QuantumAtlas/cmd/qatlasd@latest` 自编。但 launchd 配置不如 systemd 成熟（kardianos/service 库默认配置在 macOS 跑通过没充分测试）。
+    Apple Silicon 可以——release 出 `darwin-arm64` binary。Intel Mac 没出预编 binary（GitHub Actions `macos-13` runner 排队 10–40 分钟），用 `go install github.com/IAI-USTC-Quantum/QuantumAtlas/cmd/qatlasd@vX.Y.Z`（换成已公开且带 UI 包的 tag） 自编。但 launchd 配置不如 systemd 成熟（kardianos/service 库默认配置在 macOS 跑通过没充分测试）。
 
 ??? question "我有 ARM VPS（aarch64），能装吗？"
 
@@ -58,17 +66,7 @@
 
 ??? question "Docker 镜像有吗？"
 
-    当前**没有官方 Docker 镜像**。如果你要做，参考：
-
-    ```dockerfile
-    FROM alpine:3
-    COPY qatlasd-linux-amd64 /usr/local/bin/qatlasd
-    RUN chmod +x /usr/local/bin/qatlasd
-    EXPOSE 4200
-    CMD ["qatlasd", "serve", "--http=0.0.0.0:4200"]
-    ```
-
-    pb_data / raw 用 volume mount 进容器，`.env` 用 `--env-file` 注入。pb_data 路径用 `QATLAS_PB_DATA_DIR` 控制。
+    发布流程提供 `ghcr.io/iai-ustc-quantum/qatlasd:<tag>`（当前承诺 `linux/amd64`），内嵌完整 UI。选择已通过验证的公开版本，不把 RC 当 latest。按[容器部署文档](../server/docker.md)挂载 YAML 配置与持久数据；不要用旧应用环境变量代替配置文件。
 
 ## 客户端使用
 

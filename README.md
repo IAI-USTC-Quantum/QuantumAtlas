@@ -2,7 +2,7 @@
 
 > A paper collection, multi-paradigm search, and registry database for quantum algorithm research.
 
-[![Go 1.23+](https://img.shields.io/badge/go-1.23+-00ADD8?style=flat&logo=go&logoColor=white)](https://go.dev/)
+[![Go 1.26.2+](https://img.shields.io/badge/go-1.26.2+-00ADD8?style=flat&logo=go&logoColor=white)](https://go.dev/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![PocketBase v0.38](https://img.shields.io/badge/PocketBase-v0.38-B8DBE4?style=flat&logo=pocketbase&logoColor=black)](https://pocketbase.io/)
@@ -35,30 +35,42 @@ arXiv / user uploads
 
 QuantumAtlas has two independently maintained components:
 
-- **`qatlasd`** (Go binary, single file ~30 MB, embeds the frontend SPA + PocketBase + SQLite) — the server, built and released from this repository
+- **`qatlasd`** (Go server with PocketBase + SQLite) — precompiled releases embed the complete UI; `go install` automatically fetches and caches the same UI from its exact version's GitHub Release on first start
 - **`qatlas`** (Python CLI, [`qatlas-cli` package](https://pypi.org/project/qatlas-cli/)) — the daily-driver client, maintained and released in [IAI-USTC-Quantum/qatlas-cli](https://github.com/IAI-USTC-Quantum/qatlas-cli)
 
 ### Install the server (`qatlasd`)
 
-```bash
-# One-liner: detects OS/arch, downloads the latest binary to ~/.local/bin,
-# verifies SHA256. This step only installs the binary itself.
-curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh
+Choose a published tag using the new release format. `vX.Y.Z` below is a placeholder, **not** an existing release; this change does not reissue `v0.34.0`.
 
-# Pin a version / change the install dir
-curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh -s -- --version v0.2.5
-curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh -s -- --dir /opt/qatlas/bin
+```bash
+TAG=vX.Y.Z # replace with the selected published release tag
+# Download the installer from that SAME tag, review it, then run it.
+curl -fL --proto '=https' --proto-redir '=https' \
+  "https://raw.githubusercontent.com/IAI-USTC-Quantum/QuantumAtlas/$TAG/cmd/qatlasd/install-qatlasd.sh" \
+  -o install-qatlasd.sh
+sh install-qatlasd.sh --version "$TAG" # optionally: --dir /opt/qatlas/bin
 ```
 
-Supported platforms: `linux/{amd64,arm64}` + `darwin/arm64` (Intel Macs can use the [`go install`](docs/server/install.md) path).
+The installer verifies the default GoReleaser tar.gz checksum and executable version before atomic replacement. Supported precompiled platforms: `linux/{amd64,arm64}` + `darwin/arm64`. They include the entire UI and documentation and need **no first-run UI download**. An old running server's `/install-qatlasd.sh` does not understand the new archive format; use the tag-pinned script during migration.
 
-Then register it as a systemd service **manually** (the script deliberately doesn't chain this, so it stays stable on dash / busybox streaming parsers):
+Alternatively, with Go matching `go.mod` (no Node or Sphinx required):
 
 ```bash
-qatlasd service install                    # interactive: asks for mode + .env path
-# or fully non-interactive:
-qatlasd service install \
-    --mode user --dotenv-path ~/QuantumAtlas/.env --force
+go install "github.com/IAI-USTC-Quantum/QuantumAtlas/cmd/qatlasd@$TAG"
+# Ensure $(go env GOPATH)/bin (or GOBIN) is on PATH.
+```
+
+On first `serve`, a source-installed binary downloads `qatlasd_<version>_web.zip` and the checksum list from its **exact** Release, validates them and atomically caches the bundle under the OS user cache directory's `qatlas/ui/v<version>`. Later starts use the verified cache offline; upgrades fetch a separate version. Download, validation and unsupported `dev`/pseudo-version errors stop startup—never silently fall back to `latest`. Both installation methods use the same Web service once resources are ready. See [installation and recovery](docs/server/install.md).
+
+Prepare normal server configuration, then start or explicitly register a service (the installer does neither):
+
+```bash
+qatlasd --version
+qatlasd config init # ~/.qatlas/config.yaml; refuses to overwrite an existing file
+# Edit the YAML for your backing services and credentials.
+qatlasd serve
+# Or register the background service explicitly:
+qatlasd service install --mode user --config "$HOME/.qatlas/config.yaml" --force
 ```
 
 ### Install the client (`qatlas` CLI)
@@ -127,18 +139,16 @@ remaining Python helpers are retired, not a supported library API in this repo.
 
 ### Run the server locally
 
-```bash
-# One-shot: sync Python + npm deps, build the frontend, build the Go binary
-pixi run build
+For a checkout (including unreleased commits), first build the complete UI using the pinned [development instructions](docs/contributing.md#full-ui-build), then:
 
-cp .env.example .env
-# Edit .env and set QATLAS_POSTGRES_DSN to your PostgreSQL instance
-# (team-shared / local / hosted all work). goose migrations apply
-# automatically at boot. Optionally tune QATLAS_SEARCH_PROVIDERS
-# (default: catalog,arxiv,openalex).
-# For GitHub OAuth login, also set GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET.
-./build/qatlasd serve --http=0.0.0.0:4200
+```bash
+CGO_ENABLED=0 go build -tags embedui -o build/qatlasd ./cmd/qatlasd
+./build/qatlasd config init
+# Edit ~/.qatlas/config.yaml, e.g. postgres_dsn and GitHub OAuth settings.
+./build/qatlasd serve --http=127.0.0.1:4200
 ```
+
+Plain `go build` and `go test` work without any generated frontend files. A local `dev` binary needs `embedui` to serve UI, because unreleased source has no corresponding public Release. Git stores only source; never commit `web/dist`, generated docs, caches or release archives.
 
 Default entry points:
 
@@ -146,11 +156,11 @@ Default entry points:
 - PocketBase admin UI: `http://localhost:4200/_/`
 - PAT management: `http://localhost:4200/pat` (CLI bearer tokens use PATs, with finer scope/expiry/audit)
 
-Or with Docker — the compose file brings up PostgreSQL + qatlasd (object storage stays external, e.g. RustFS on a NAS):
+Or with Docker — Compose starts qatlasd and optional app profiles; PostgreSQL and object storage remain external:
 
 ```bash
 cd deploy
-cp .env.docker.example .env   # fill POSTGRES_PASSWORD + S3 + GitHub OAuth
+cp .env.docker.example .env   # pin image versions only; app config is ~/.qatlas/config.yaml
 docker compose up -d
 ```
 

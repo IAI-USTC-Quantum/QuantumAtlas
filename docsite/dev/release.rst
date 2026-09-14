@@ -91,15 +91,65 @@ GitHub Latest 保持为 ``0.34.0`` / ``v0.34.0``。
 回退路由见 :doc:`prod-deploy`；加入 fleet/admission 迁移后，旧主服务二进制
 会被 schema-version guard 拒绝，不能笼统承诺 checkout 旧 tag 即可回退。
 
+服务端源码与预编译分发
+------------------------
+
+从采用此流程的下一个新版本开始，GoReleaser OSS **v2.18.1** 发布
+``qatlasd_<version>_<os>_<arch>.tar.gz``（Linux amd64/arm64、Darwin arm64），
+以及 ``qatlasd_<version>_web.zip`` 和默认 ``qatlasd_<version>_checksums.txt``。
+不自定义 archive/checksum 的命名、flags 或 ldflags；通过
+``tags: [embedui]`` 显式内嵌完整 UI，版本适配默认 ``main.version``。
+不为旧裸二进制附件添加兼容层、不重发 ``v0.34.0``。
+
+发布流程：tag/VERSION/SemVer/已公开 Release 保护检查 → 同 SHA 的
+``go.yml``（Go test/vet、OpenAPI、前端与两文档站双干净构建一致性）→
+上传唯一 UI 包 → GoReleaser 创建 draft、嵌入此包解出的同一树 →
+归档校验与 attestation、三平台原生运行 ``--version``、Docker 发布并验证 →
+公开 Release → 仅稳定版更新 GitHub/GHCR latest。原生 smoke 只下载与运行，
+不重复编译；Docker 保留独立 job，仅承诺 ``linux/amd64``。
+
+Git **不保存前端构建产物**，Go 模块也不包含 dist。消费者执行
+``go install github.com/IAI-USTC-Quantum/QuantumAtlas/cmd/qatlasd@vX.Y.Z``
+后，首次 ``serve`` 自动从对应 Release 下载并校验 UI，保存在
+``os.UserCacheDir()/qatlas/ui/v<version>``；后续校验缓存后离线启动。
+GoReleaser 二进制已经内嵌该 UI，不需首次联网。两条路径最终进入相同的
+``fs.FS`` 静态服务与 SPA fallback，没有两套业务服务。
+
+资源生成顺序仍是 Sphinx 两站 → npm Web build → 完整性检查 →
+``go run ./internal/cmd/uibundle -version <version> -output build/ui``。
+Node 使用 ``web/.node-version``，npm 使用锁文件，Sphinx 依赖使用
+``docsite/requirements.txt``；设置 ``SOURCE_DATE_EPOCH`` 为提交时间、
+``TZ=UTC`` / ``PYTHONHASHSEED=0``，doctree 缓存放 ``build/`` 而非 bundle。
+修改文档或前端后必须重新构建用于验证的资源，但只提交源码。
+本地完整 UI/包准备后运行 ``goreleaser check`` 和
+``goreleaser release --snapshot --clean``；snapshot 不是正式 Release，
+其运行版本与 VERSION 不同，不用于普通源码安装的资源发现。
+
+校验清单覆盖三个归档和 UI 包，attestation 的验证对象也是 **归档**：
+``gh attestation verify ./qatlasd_<version>_linux_amd64.tar.gz --repo IAI-USTC-Quantum/QuantumAtlas``。
+同源 SHA256 是完整性检查，不是独立签名；证明来源也不保证源码无漏洞。
+公开的开发文档可从包直接读取，不得包含机密。
+
+迁移时安装脚本必须取自 **同一新 tag** 的
+``https://raw.githubusercontent.com/IAI-USTC-Quantum/QuantumAtlas/<tag>/cmd/qatlasd/install-qatlasd.sh``，
+再传入 ``--version <tag>``。旧线上实例内嵌的脚本不识别新归档，只有
+维护者验证并授权升级后该入口才切换。安装器不改配置、注册服务或重启生产。
+
+Git tag 一旦推送便可能被 Go proxy 发现，draft 不能阻挡模块安装；
+UI 尚未公开时首次启动会明确失败，公开后重试。正确性检查必须在打 tag 前完成。
+GitHub 与 GHCR 不是原子事务：失败要分别核对 draft/镜像状态，不能移动 tag、
+覆盖公开 Release 或擅自升级线上。
+
 标准化原则
 ----------
 
 1. **每个组件有且只有一个版本唯一来源**；常规软件发布由 tag 触发，
    不以部署机现场 build 替代正式发布。文档的独立更新和下载执行端的
    当前构建例外见上表，后者必须记录明确的源码 revision；
-2. **产物一律进入 registry**：Docker 镜像推送到 ghcr，Python 包发布到
-   PyPI；部署机只执行 ``pull``，不执行 ``build``
-   （下载执行端 downloaderworker / 旧 downloaderproxy 是当前例外，见上表）；
+2. **按组件选择分发渠道**：Docker 镜像进入 GHCR，独立 CLI 包进入
+   PyPI；服务端预编译包和 UI 包沿用 GitHub Release，另支持 Go 模块源码
+   安装。不增加包仓库或自建 Go 模块服务；镜像部署机只需 pull。
+   下载执行端 downloaderworker / 旧 downloaderproxy 的例外见上表；
 3. **部署机的版本一律显式 pin 在** ``deploy/.env`` 中（如
    ``QATLAS_VERSION=v0.22.1``），不使用 ``latest``，这样保证部署
    可回滚、可审计；
@@ -202,10 +252,10 @@ sphinx 站点并直接写入文档目录。
 
    # 4. 冒烟：SPA 关键页面（dashboard、search）+ 一次 agentic 搜索
 
-回滚时，运维方把 ``deploy/.env`` 中的版本 pin 改回旧值，再执行
-``docker compose up -d <service>`` 即可。PocketBase 与 goose 迁移都会
-在启动时幂等 apply，因此 patch 级回滚总是安全的；跨 minor 回滚前，
-运维方必须先查看对应版本的 release notes 是否声明了 schema breaking。
+回滚前先检查目标版本的 schema 兼容性与 Release notes。修改镜像 pin
+或换回旧 binary 只回滚程序，不会逆转 PocketBase/goose 数据迁移；
+即使 patch 版本也不能保证数据库回滚安全。必要时停止服务并按升级前
+备份恢复数据库及相关状态，确认版本守卫允许后再启动。
 
 客户端（qatlas-cli）升级：
 
@@ -235,16 +285,15 @@ sphinx 站点并直接写入文档目录。
    * - 步骤
      - 验收
    * - 本地 CI mirror
-     - ``go vet`` / ``go test ./internal/... ./cmd/... ./tests/...`` /
-       ``cd web && npm run build`` / ``swagger-check`` 全绿
-       （release.yml 不跑测试，发版前自行保证）
+     - Go test/vet（含 web 与 tests）、OpenAPI 同步、完整 UI 双构建一致，
+       GoReleaser check/snapshot 全绿；发布也复用同 SHA 的检查
    * - ``VERSION`` + CHANGELOG
      - ``## vX.Y.Z (YYYY-MM-DD)`` 段落；breaking 写明迁移步骤
    * - tag
      - annotated ``vX.Y.Z``，与 ``VERSION`` 完全一致
    * - release workflow
-     - run 全绿；ghcr 出现 ``:vX.Y.Z`` / ``:X.Y.Z`` / ``:latest``
-       三个 tag
+     - draft、归档证明、三平台运行与镜像验证通过后公开；稳定版才更新
+       ``:latest``，RC 仅版本 tag
    * - 部署
      - pin 版本 → pull → up -d → ``/api/health`` 版本与探针正确 →
        冒烟通过

@@ -261,9 +261,8 @@ profile.cov
 go.work
 go.work.sum
 
-# Re-include embed targets
-!internal/webui/dist/
-!internal/webui/dist/**
+# Generated UI and Release artifacts stay ignored. The embedui build tag
+# consumes web/dist only in a prepared build; go install needs source alone.
 
 # The Python packaging dist defaults at the top of this file (lib/, build/,
 # dist/) inadvertently catch SPA source under web/src/lib/. Restore it.

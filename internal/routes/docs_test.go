@@ -60,7 +60,7 @@ func TestResolveDocsFS_DiskPreferredOverEmbedded(t *testing.T) {
 
 func TestResolveDocsFS_EmbeddedWhenNoDiskDir(t *testing.T) {
 	docFS, src := ResolveDocsFS(embeddedDist(), t.TempDir(), "doc")
-	if src != "embedded" {
+	if src != "bundle" {
 		t.Fatalf("source = %q, want embedded", src)
 	}
 	data, err := fs.ReadFile(docFS, "index.html")
@@ -77,13 +77,13 @@ func TestResolveDocsFS_EmptyDiskDirFallsBackToEmbedded(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "doc"), 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	if _, src := ResolveDocsFS(embeddedDist(), root, "doc"); src != "embedded" {
+	if _, src := ResolveDocsFS(embeddedDist(), root, "doc"); src != "bundle" {
 		t.Errorf("empty disk dir: source = %q, want embedded", src)
 	}
 }
 
 func TestResolveDocsFS_EmptyRootSkipsDisk(t *testing.T) {
-	if _, src := ResolveDocsFS(embeddedDist(), "", "doc"); src != "embedded" {
+	if _, src := ResolveDocsFS(embeddedDist(), "", "doc"); src != "bundle" {
 		t.Errorf("empty docsRoot: source = %q, want embedded", src)
 	}
 }

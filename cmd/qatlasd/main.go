@@ -72,25 +72,12 @@ import (
 // file so it can be edited as a real .sh (syntax highlighting +
 // shellcheck) and reviewed standalone.
 //
-// The script does NOT do in-band SHA256SUMS verification — see the
-// script body comment near the install step for the trust-model
-// rationale (HTTPS covers in-transit; SHA256SUMS / SLSA attestation
-// are opt-in stronger checks documented separately).
+// The script verifies the default Release archive checksum before extracting
+// and atomically replacing the executable. Provenance verification remains
+// available separately; a same-origin checksum is not a signature.
 //
 //go:embed install-qatlasd.sh
 var installScript string
-
-// Version is overridden at build time via:
-//
-//	go build -ldflags "-X main.Version=$(cat pyproject.toml ...)"
-//
-// Defaults to "dev" as a sentinel — if `qatlasd --version` or
-// /api/health reports "dev" in production, the binary was built without
-// the release pipeline's -ldflags injection (most likely a manual
-// `go build` instead of a GitHub Actions artifact). A real version
-// string like "0.2.9" should be unambiguously distinguishable from the
-// fallback so the failure mode is visible at a glance.
-var Version = "dev"
 
 // @title          QuantumAtlas API
 // @version        1.0
@@ -212,7 +199,7 @@ func main() {
 		DBConnect: qatlasDBConnect,
 	})
 
-	// Surface main.Version (set via -ldflags "-X main.Version=$VERSION")
+	// Surface the resolved version (main.version injection or Go build info)
 	// to PocketBase's cobra root command so `qatlasd --version`
 	// prints "qatlasd version 0.2.4" instead of the default
 	// "qatlasd version (untracked)". Without this, the version
@@ -343,6 +330,13 @@ func main() {
 		// HTTP handlers would silently fall back to LocalStore.
 		if err := cfg.ValidateForServe(); err != nil {
 			return fmt.Errorf("config validation: %w", err)
+		}
+
+		// Resolve once, before backend initialization/listening. Embedded and
+		// source-installed binaries enter the very same docs/SPA handlers.
+		distFS, err := qweb.Resolve(cmd.Context(), Version)
+		if err != nil {
+			return fmt.Errorf("prepare UI: %w", err)
 		}
 
 		// ── STEP 2: stamp the S3 client User-Agent. Must run before
@@ -831,7 +825,6 @@ func main() {
 			// Registered before the SPA catch-all so the more specific
 			// patterns win and the static devdoc tree is never served
 			// unauthenticated.
-			distFS := qweb.MustFS()
 			docsRoot := routes.DefaultDocsRoot()
 			docFS, docSrc := routes.ResolveDocsFS(distFS, docsRoot, "doc")
 			devdocFS, devdocSrc := routes.ResolveDocsFS(distFS, docsRoot, "devdoc")
@@ -844,7 +837,7 @@ func main() {
 			// indexFallback=true means any path that doesn't match a real
 			// file falls back to /index.html — exactly the SPA-client-router
 			// behavior the React app needs for /wiki, /graph, /token, etc.
-			se.Router.GET("/{path...}", apis.Static(qweb.MustFS(), true))
+			se.Router.GET("/{path...}", apis.Static(distFS, true))
 
 			return se.Next()
 		})

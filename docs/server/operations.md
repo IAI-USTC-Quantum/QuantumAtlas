@@ -17,147 +17,144 @@
 
 ## Go server 部署（当前路径）
 
-QuantumAtlas server 是单个 Go 二进制 `qatlasd`（~35MB，CGO-free，
-静态链接，自带 PocketBase + SQLite + 嵌入式 SPA 前端）。下游部署 =
-拿到 binary + 装 systemd unit + 反代。这里给出一份**单机部署模板**，
-路径都用占位变量（`<USER>` / `<APP_HOME>` / `<HTTP_PORT>`），运维替换后即可。
+QuantumAtlas server 是单个 Go 二进制 `qatlasd`，自带 PocketBase + SQLite。
+官方预编译产物内嵌 SPA 与文档；普通 Go 源码安装则在首次 `serve` 时取得同版本
+资源。两者使用统一 `fs.FS` 提供 SPA / 静态文件 / 文档服务。下游部署 =
+拿到 binary + 准备 YAML + 装 systemd unit + 反代。下文的 `<USER>` / `<HTTP_PORT>`
+须按实际环境替换。
 
 ### 1. 获取 binary
 
-按门槛从低到高四种方式，任选其一：
+!!! warning "先确认新流程的公开 tag"
 
-#### A. 一行 curl 装（**推荐 / 最快**）
+    下文 `TAG=vX.Y.Z` / `@vX.Y.Z` 是显式占位符，必须替换为已经采用新流程且所需附件已公开的 tag。当前仓库 `VERSION=0.34.0` 不代表旧 tag 已有新格式产物，不要直接替换成它或假定 latest 已迁移。
 
-CI release pipeline 已经把 3 平台预编译 binary（`linux/amd64`、`linux/arm64`、
-`darwin/arm64`）发到了 GitHub Release。装脚本服务在
-`<your-server>/install-qatlasd.sh`，会自动选 OS/arch、下载、SHA256 校验：
+#### A. 同 tag 安装脚本（推荐）
 
-```bash
-# 装 binary 到 ~/.local/bin/qatlasd，自动校验 SHA256
-curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh
-
-# 钉 release tag
-curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh -s -- --version v0.2.5
-
-# 改安装目录
-curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh -s -- --dir /opt/qatlas/bin
-```
-
-支持的环境变量：`QATLAS_INSTALL_DIR`（默认 `~/.local/bin`）、`QATLAS_VERSION`
-（默认 latest）、`QATLAS_REPO`（默认 `IAI-USTC-Quantum/QuantumAtlas`）。
-
-装完 binary 后**手动**注册成 systemd 服务（脚本本身刻意不链式调用 `service
-install`——见下文"为什么 install-qatlasd.sh 不自动起服务"）：
+新流程使用 GoReleaser v2.18.1 默认的
+`qatlasd_<version>_<os>_<arch>.tar.gz`，归档内为普通文件 `qatlasd`。
+预编译平台为 `linux/amd64`、`linux/arm64`、`darwin/arm64`：
 
 ```bash
-qatlasd service install                    # 交互模式，问 mode + .env path
-# 或全自动：
-qatlasd service install \
-    --mode user --dotenv-path ~/QuantumAtlas/.env --force
+TAG=vX.Y.Z  # 替换为符合上述条件的公开 tag
+curl -fL --proto '=https' --proto-redir '=https' \
+  "https://raw.githubusercontent.com/IAI-USTC-Quantum/QuantumAtlas/$TAG/cmd/qatlasd/install-qatlasd.sh" \
+  -o install-qatlasd.sh
+less install-qatlasd.sh
+# 审阅通过后，安装同一个 tag；可另加 --dir /opt/qatlas/bin
+sh install-qatlasd.sh --version "$TAG"
 ```
 
-底层就是从 `github.com/IAI-USTC-Quantum/QuantumAtlas/releases/<tag>` 下
-`qatlasd-<os>-<arch>` 那个 asset，所以**目标机不需要装任何 toolchain**——
-连 Go / npm / pixi 都不要，只要 `curl` 或 `wget` + `install`。也可以走 B/C/D
-本地编译，但只在你想钉未发布 commit、或在隔离环境里复现 build 时才需要。
+默认安装到 `~/.local/bin/qatlasd`。脚本校验同 tag 的
+`qatlasd_<version>_checksums.txt`、严格检查 tar 成员，在目标文件系统暂存并
+精确核对 `--version` 后 atomic rename；失败不改旧 binary / YAML。
+**不自动 sudo、注册或重启服务，也不覆盖配置。** 工具覆盖项
+`QATLAS_VERSION` / `QATLAS_INSTALL_DIR` / `QATLAS_REPO` 不属于业务配置。
 
-> **为什么 install-qatlasd.sh 不自动起服务**：把 `curl|sh` chain 进 `qatlasd
-> service install` 在 dash（Debian / Ubuntu 的 `/bin/sh`）上不可靠——dash 是
-> 流式 parser，会在执行到 `exec </dev/tty`
-> 切换 stdin 之前已经从 pipe 预读了大量未消费字节，切换后这些字节既不能用作
-> 脚本继续解析也不能用作终端输入，要么 hang 要么报 `Syntax error: word
-> unexpected`。bash 因为预读整个脚本不受影响，但我们不能假设目标机有 bash
-> （Alpine / BusyBox / macOS sh 都是 dash 风格的 POSIX shell）。所以拆成两步：
-> install-qatlasd.sh **只装 binary**；service install 由 cobra 程序自己稳定处理
-> TTY，没有 shell parser 冲突。
+首次从旧发行格式迁移时，**不能用旧实例 `/install-qatlasd.sh`** 安装新格式：
+它仍是旧 binary 内嵌的脚本。必须从目标新 tag 取得并审阅脚本；首次升级后，
+服务内嵌脚本才切换，不提供旧格式兼容。
+
+官方 binary 内嵌的资源和 Release `qatlasd_<version>_web.zip` 是同一份
+Sphinx 两站 + npm 产物，首次运行无需下载 UI。目标机不需要 Go / Node / Sphinx，
+但安装器需要 curl 或 GNU wget、tar、SHA256 工具和标准命令行工具；BusyBox wget
+会被拒绝，可改用 curl。依赖与可调超时详见[安装文档](install.md)。
+SHA256 用于完整性检查，同源清单不是签名；如需来源证明，attestation 应验证
+**tar.gz / zip 本身**，不是解出的 binary，且 provenance 不等于源码安全。
+详见[安装与校验](install.md)。
 
 #### B. `go install`
 
-目标机器有 Go 1.26+ toolchain 时，从 GitHub 拉源码 + 本地编译 +
-落到 `$GOBIN`（默认 `~/go/bin/`）：
+Git / Go 模块仅分发源码。准备符合 `go.mod` 要求的 Go 工具链即可，
+**普通安装不需要 Node / npm / Sphinx**：
 
 ```bash
-go install github.com/IAI-USTC-Quantum/QuantumAtlas/cmd/qatlasd@latest
-~/go/bin/qatlasd --help
+go install github.com/IAI-USTC-Quantum/QuantumAtlas/cmd/qatlasd@vX.Y.Z
+~/go/bin/qatlasd --version  # 若设置了 GOBIN / GOPATH，以实际位置为准
 ```
 
-钉版本：把 `@latest` 换成 `@v0.2.3` / `@<commit-sha>`。Go module
-proxy（`proxy.golang.org`）会自动缓存与做哈希校验。
+版本优先来自有效 `main.version` 注入值，其次为 Go build info 的
+`Main.Version`，显示时去掉前导 `v`。`--version` 不加载配置或联网。
 
-> ⚠️ `go install` **不**会把前端 SPA build 进 binary（`web/embed.go` 需要
-> `web/dist/` 存在），所以这条路装出来的 binary 跑起来 `/{path...}` 会
-> 404。需要 SPA 时用 A 或 C。
+无内嵌 UI 时，首次 `serve` 从精确版本的 GitHub Release 下载：
 
-装完挪到 systemd 引用的路径：
+```text
+https://github.com/IAI-USTC-Quantum/QuantumAtlas/releases/download/v<version>/qatlasd_<version>_web.zip
+https://github.com/IAI-USTC-Quantum/QuantumAtlas/releases/download/v<version>/qatlasd_<version>_checksums.txt
+```
+
+核对 SHA256、zip comment 版本和资源结构后，缓存到
+`os.UserCacheDir()/qatlas/ui/v<version>/{bundle.zip,sha256}`。
+后续启动重新按版本校验本地缓存，可离线提供 UI；升级建立新版本缓存。
+请按**服务运行用户**准备缓存访问权限 / 首次网络访问，而非安装时的 root 用户。
+已有损坏或不完整缓存会报错；确认版本后移走该版本目录再联网重试，不能禁用校验。
+业务 YAML 无需增加任何资源字段。
+
+`dev` / `(devel)` / pseudo-version 或尚无公开附件的版本不能自动找 latest
+凑资源；失败会明确退出。使用带公开资源的新 tag，或走下面的开发者内嵌构建。
+
+#### C. 开发者全 UI 构建 / 自带 binary
+
+Git 不保留生成的 `web/dist`。开发者按[贡献指南](../contributing.md)完成
+**Sphinx 两站 → npm UI 构建**后，再运行：
 
 ```bash
-install -m 0755 ~/go/bin/qatlasd ~/.local/bin/qatlasd
+go build -tags embedui -o build/qatlasd ./cmd/qatlasd
 ```
 
-#### C. 源码 + `pixi run build`
-
-适合贡献者、想钉本地未发布的 commit、或目标机没装 Go 但有 pixi：
-
-```bash
-git clone https://github.com/IAI-USTC-Quantum/QuantumAtlas.git
-cd QuantumAtlas
-pixi run build                 # 自动跑 npm ci + npm run build + go build
-install -m 0755 build/qatlasd ~/.local/bin/qatlasd
-```
-
-#### D. 自带预编译 binary
-
-build host 上编完再传给目标 host（典型场景：目标 host 资源紧张，跨网传输
-代替本机交叉编译）。怎么把 binary 传到目标 host 本文不规定——`scp` / `rsync`
-/ artifact 下载 / `kubectl cp` 都行。落到目标 host 后 `install -m 0755 <src>
-~/.local/bin/qatlasd` 即可。
+仅加 `embedui` 不会自动运行 Node / Sphinx。未发布 commit 的开发版本使用
+完整内嵌资源，不回退线上 latest。可在受控 build host 构建后经 `scp` / `rsync`
+等传到目标机；上线前自行核验来源、平台和版本，并按[备份与升级](backup-and-upgrade.md)
+先备份、在目标文件系统暂存验证、原子替换。不要直接覆盖正在运行的 binary。
 
 ### 2. 目录布局（推荐）
 
 按 XDG Base Directory（[freedesktop spec][xdg-spec]）+ FHS 拆分：git
-checkout 只放代码 + 配置；用户级状态去 `$XDG_DATA_HOME`（默认
-`$HOME/.local/share/`）；系统级状态去 `/var/lib/`。**不再**把
-raw / data / pb_data 默认塞进 git checkout 内。
+checkout 仅供开发，生产不需要源码目录，也不应把含密钥的配置提交到 Git。
+用户级数据去 `$XDG_DATA_HOME`（默认 `$HOME/.local/share/`），自定义系统级数据
+可放 `/var/lib/`；业务配置与可重建的 UI 缓存分开保存。
 
 [xdg-spec]: https://specifications.freedesktop.org/basedir-spec/latest/
 
-用户级（per-user systemd 或 `--user` ExecStart）：
+用户级布局（以下缓存路径为 Linux 默认值）：
 
 ```
 /home/<USER>/
-├── QuantumAtlas/                  # 仅保留 .env；源码 checkout 仅 B 路径需要
-│   └── .env                       # 运行配置；server 用 godotenv 读
-├── .local/
-│   ├── bin/qatlasd           # binary（user-writable，sudoless deploy）
-│   └── share/qatlasd/             # XDG_DATA_HOME 下，所有 stateful 状态（v0.17.0+；老 install 是 quantum-atlas/，参见 migration-storage-layout.md）
-│       ├── raw/                   # RAW_DIR 默认值（PDF / MinerU 输出）
-│       ├── data/                  # DATA_DIR 默认值（ingest claims / 运行时元数据）
-│       └── pb_data/               # PBDataDir 默认值（PocketBase SQLite）
+├── .qatlas/config.yaml             # 业务 YAML，config init 生成，0600
+├── .cache/qatlas/ui/v<version>/     # 无 embed 时的版本缓存，可重建
+│   ├── bundle.zip
+│   └── sha256
+└── .local/
+    ├── bin/qatlasd                 # 用户可写 binary
+    └── share/qatlasd/              # 默认 XDG 数据目录
+        ├── raw/                   # paths.raw_dir（PDF / MinerU 输出）
+        ├── data/                  # paths.data_dir（运行时元数据）
+        └── pb_data/               # paths.pb_data_dir（PocketBase SQLite）
 ```
 
-系统级（多用户共享，shared /var/lib 模式，类 Grafana / Gitea）：
+系统级（显式选择 shared `/var/lib` 布局时）：
 
 ```
-/etc/quantum-atlas/.env            # 配置；ExecStart 用 QATLAS_DOTENV 指过来
-/usr/local/bin/qatlasd        # 系统 binary
-/var/lib/quantum-atlas/            # FHS 状态根
+/etc/quantum-atlas/config.yaml      # ExecStart 通过 --config 指定
+/usr/local/bin/qatlasd              # 系统 binary
+/var/lib/quantum-atlas/             # YAML paths.* 显式设置的状态根
 ├── raw/
 ├── data/
 └── pb_data/
 ```
 
-两种布局都不要求显式覆盖 `.env`：server 会按 `$XDG_DATA_HOME` /
-`$HOME` 自动算出默认。**只**在需要存到非默认路径（FHS / 共享挂载点 /
-独立分区）时显式覆盖 `QATLAS_RAW_DIR` 等。
+不覆盖 `paths.*` 时，数据路径仍按服务用户的 `$XDG_DATA_HOME` / `$HOME`
+计算，**不会因为 service 是 system mode 就自动迁到 `/var/lib/`**。
+需要 FHS / 共享挂载点 / 独立分区时在 YAML 中显式设置。UI 缓存独立由
+`os.UserCacheDir()` 定位，不是 `paths.data_dir` 的子目录。
 
 binary 路径选 `~/.local/bin/` vs `/usr/local/bin/` 的取舍：
 
-- `~/.local/bin/` 归运行用户所有，**滚 binary 不需要 sudo**——`go
-  install` 默认就落在用户 `$GOBIN`，`install -m 0755 <src>
-  ~/.local/bin/qatlasd` 全程普通用户身份。配 user-mode systemd
-  单元时连 restart 也免 sudo。
-- `/usr/local/bin/` 是 root-owned，每次 binary 滚动都得 sudo install。
-  典型 system-mode 部署（FHS / 多用户共享）会这么放。
+- `~/.local/bin/` 归运行用户所有，安全替换 binary 不需要 sudo。配
+  user-mode systemd 单元时连 restart 也免 sudo；`go install` 的 `$GOBIN`
+  与 unit 所引用的路径仍须核对，不能以 PATH 中另一个 binary 的版本代替验证。
+- `/usr/local/bin/` 通常由 root 拥有，更新须由管理员授权写入。
+  安装器不会自行 sudo，典型 system-mode 部署会采用这种布局。
 - systemd 单元可以引用任意路径——`ExecStart=/home/<USER>/.local/bin/qatlasd`
   跟 `/usr/local/bin/qatlasd` 在 systemd 视角下完全等价。
 
@@ -181,25 +178,32 @@ hardening 时的参考"。
 #### 3.A `qatlasd service install`（推荐）
 
 子命令包装 [`github.com/kardianos/service`](https://github.com/kardianos/service)
-做 unit 生成 + systemctl 操作；装完之后 unit 跟原生 systemctl 100% 互通
-（`qatlasd service start` ≡ `systemctl --user start qatlasd`，
-都调同一个 systemd unit）。
+做 unit 生成 + systemctl 操作；装完之后跟原生 systemctl 管理同一 unit
+（例如 `qatlasd service start --mode user` 对应 `systemctl --user start qatlasd`）。
 
 ```bash
-# 完全交互式 — 自动检测 mode（按 uid）、自动检测 .env、渲染 unit 给你
-# [Y/n] 确认后再写
+# 首次准备 ~/.qatlas/config.yaml；已有配置不要 --force 覆盖
+qatlasd config init
+# 编辑 OAuth / PostgreSQL / S3 等字段，然后检查有效配置（默认脱敏）
+qatlasd config show --config "$HOME/.qatlas/config.yaml"
+
+# 完全交互式 — 提示 mode、确认默认 YAML 路径、渲染 unit 后确认
 qatlasd service install
 
-# CI / 脚本式 — 全显式参数，零交互
+# user mode：普通用户执行；写 unit 并启动服务
 qatlasd service install \
     --mode user \
-    --dotenv-path ~/QuantumAtlas/.env \
+    --config "$HOME/.qatlas/config.yaml" \
     --bind 127.0.0.1:4200 \
     --force
 
-# 只看会写什么（不写文件）
+# system mode：从预定服务用户的 shell 使用 sudo，配置须可被该用户读取
+sudo /home/<USER>/.local/bin/qatlasd service install --mode system \
+    --config /etc/quantum-atlas/config.yaml --bind 127.0.0.1:4200 --force
+
+# 只看会写什么（不写文件）；非 TTY 的 dry-run 同样要 --mode / --force
 qatlasd service install --dry-run --mode user \
-    --dotenv-path ~/QuantumAtlas/.env
+    --config "$HOME/.qatlas/config.yaml" --force
 ```
 
 flag 含义：
@@ -207,40 +211,48 @@ flag 含义：
 | flag | 默认 | 含义 |
 |---|---|---|
 | `--mode` | TTY 时按 uid 提示（root→system / 非 root→user）；非 TTY 必填 | `user` 或 `system` |
-| `--dotenv-path` | TTY 时按 `$QATLAS_DOTENV` → `~/QuantumAtlas/.env` → `./.env` 顺序自动检测并确认 | 传给 server 的 `.env` 路径，用作相对路径 anchor |
-| `--bind` | `127.0.0.1:4200` | server 监听地址（生产应配合 Caddy 反代用 127.0.0.1） |
+| `--config` | 默认 `~/.qatlas/config.yaml` 已存在时使用，否则不固定 | 显式路径必须存在；以绝对路径写入 `qatlasd --config <path> serve` |
+| `--bind` | `127.0.0.1:4200` | 写入 `serve --http=`，覆盖 YAML `http_addr`；反代场景保留 loopback |
 | `--name` | `qatlasd` | systemd unit 名（生成 `<name>.service`） |
-| `--dry-run` | false | 只打印渲染后的 unit，不写文件、不 reload | 
-| `--force` | false | 跳过所有交互确认（覆盖既有 unit 也不问）；非 TTY 上下文必填 |
+| `--dry-run` | false | 只打印渲染后的 unit，不写文件、不 reload |
+| `--force` | false | 跳过确认并允许替换已有 unit；非 TTY 上下文必填 |
 
-生成的 unit **跟 §3.C 手写模板字段语义完全一致**——含全部 7 条 hardening、
-`Environment=QATLAS_DOTENV=`、`RestartSec=5` / `KillSignal=SIGINT` /
-`TimeoutStopSec=15`、ReadWritePaths 自动从 .env 目录 + `$XDG_DATA_HOME` 推导。
+system mode 需要 root 写 unit，但 `User=` 优先取 `$SUDO_USER`，不意味着 daemon
+必须 root 运行。不要 `sudo ... --mode user` 或 `sudo -u <user> ... --mode system`。
+用 root 新建的 `0600` YAML 须先为最终服务用户安排访问权限。
 
-**自动检测 ReadWritePaths** 仅覆盖默认布局；如果你的 .env 显式覆盖
-`QATLAS_RAW_DIR` / `QATLAS_DATA_DIR` / `QATLAS_PB_DATA_DIR`
-到非默认目录，install 之后用 `systemctl edit qatlasd` 加 drop-in
-追加 `ReadWritePaths=...` 即可（systemd 会合并）。
+生成的 unit 固定当前 binary 路径，使用 `--config`，不再写业务 `Environment=` /
+`EnvironmentFile=`。固定配置时 `WorkingDirectory` 为配置所在目录；不固定时为
+服务用户的 home。保留 `RestartSec=5` / `KillSignal=SIGINT` / `TimeoutStopSec=15`
+及模板中的 hardening；user mode 的沙箱指令支持程度取决于本机 systemd 环境。
+
+**自动检测 ReadWritePaths** 仅包括 YAML 所在目录、默认 XDG 数据目录及已存在的
+`~/QuantumAtlas-Wiki`，不解析 YAML `paths.raw_dir` / `paths.data_dir` /
+`paths.pb_data_dir` 中的自定义路径。非默认布局需用对应模式的 `systemctl edit`
+核对 drop-in，并预先创建目录、核对属主；无 embed 时还要保证服务用户的 UI 缓存
+可写。`ProtectSystem=full` 本身不把整个 home 设为只读，但额外沙箱可能会。
 
 #### 3.B 其他管理命令
 
 ```bash
-qatlasd service status      # = systemctl --user status qatlasd（含 cgroup + journal 最近几行）
-qatlasd service start
-qatlasd service stop
-qatlasd service restart
-qatlasd service uninstall   # stop + disable + 删 unit 文件 + daemon-reload
+qatlasd service status --mode user
+qatlasd service start --mode user
+qatlasd service stop --mode user
+qatlasd service restart --mode user
+qatlasd service uninstall --mode user   # stop + 删除服务注册
+# system mode 对应：sudo qatlasd service <verb> --mode system
 ```
 
-跟原生 `systemctl [--user] <verb> qatlasd` **完全等价**——任选其一，
-不会冲突。`systemctl edit qatlasd` 添加 drop-in 文件后两边都看得到。
+这些命令与对应的 `systemctl --user <verb> qatlasd` / `sudo systemctl <verb> qatlasd`
+管理同一个 unit。默认模式按当前 uid 判断，普通用户查 system unit 时必须显式
+`--mode system`，不要误查同名 user unit。drop-in 修改对两种管理入口均生效。
 
 #### 3.C 手写 unit 模板（自定义 hardening 时的参考）
 
-`qatlasd service install` 内部用的就是下面这个模板（user/system mode
-分支几行差异）。直接手写 unit 适合需要**严格定制**的场景（额外的
-`CapabilityBoundingSet=` / `SystemCallFilter=` / `MemoryMax=` 等
-sandboxing；自定义 logging；与 monitoring agent 联动等）。
+下面是可定制的语义模板，不是生成器输出的逐字副本；实际生成内容应通过
+`service install --dry-run` 审阅。直接手写 unit 适合需要额外
+`CapabilityBoundingSet=` / `SystemCallFilter=` / `MemoryMax=`、自定义 logging
+或 monitoring agent 联动等场景。
 
 **A. user-mode** (`~/.config/systemd/user/qatlasd.service`)：
 
@@ -253,25 +265,15 @@ Wants=network-online.target
 [Service]
 Type=simple
 
-# Server 用 github.com/joho/godotenv 加载 .env。把绝对路径作为
-# QATLAS_DOTENV 传进来，server 会用它的所在目录作为相对路径 anchor。
-# 不要用 systemd 的 EnvironmentFile= 指令 —— 那个只把内容注入 env，
-# 拿不到文件路径，server 就没办法做相对路径 anchor。
-# %h 在 user-mode unit 里展开成 $HOME。
-Environment=QATLAS_DOTENV=%h/QuantumAtlas/.env
+# YAML 是业务配置唯一来源；不要用 EnvironmentFile 注入旧业务变量。
+# %h 在 user-mode unit 里展开成 $HOME，YAML 相对路径以其所在目录为 anchor。
+WorkingDirectory=%h/.qatlas
 
-# 仅在被 v4-only portproxy 包裹的 host (典型: WSL2 + Windows netsh)
-# 才设这个。Plain Linux 云 VPS 不要打开，让 server 走 PocketBase 默认
-# dual-stack v6 socket 同时服务 v4 + v6 client。
-# Environment=QATLAS_FORCE_TCP4=1
-
-WorkingDirectory=%h/QuantumAtlas
-
-# pb_data 路径只通过 .env 里的 QATLAS_PB_DATA_DIR 控制（默认
-# $XDG_DATA_HOME/qatlasd/pb_data），server 启动时自动转换为
-# PocketBase 的 --dir= 参数。**不要**在 ExecStart 里硬写 --dir=...：
-# cmdline 优先级最高，会让 .env 里的同字段失效，排障时容易踩。
-ExecStart=%h/.local/bin/qatlasd serve --http=0.0.0.0:<HTTP_PORT>
+# pb_data 用 YAML paths.pb_data_dir 控制（默认 XDG 数据目录），
+# 不要另写 --dir 覆盖；--http 会优先于 YAML http_addr。
+# WSL2 + Windows v4-only portproxy 场景按需在 YAML 写 force_tcp4: true；
+# 普通 Linux VPS 不必打开。
+ExecStart=%h/.local/bin/qatlasd --config %h/.qatlas/config.yaml serve --http=127.0.0.1:<HTTP_PORT>
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGINT
@@ -303,26 +305,22 @@ Type=simple
 User=<USER>
 Group=<USER>
 
-Environment=QATLAS_DOTENV=/home/<USER>/QuantumAtlas/.env
-# Environment=QATLAS_FORCE_TCP4=1
-
-WorkingDirectory=/home/<USER>/QuantumAtlas
-# pb_data 路径同 user-mode：靠 .env 的 QATLAS_PB_DATA_DIR 控制，
-# 不要在 ExecStart 里写 --dir=...
-ExecStart=/home/<USER>/.local/bin/qatlasd serve --http=0.0.0.0:<HTTP_PORT>
+WorkingDirectory=/etc/quantum-atlas
+# YAML 须能被 User=<USER> 读取；数据路径由 paths.* 控制，不另写 --dir。
+ExecStart=/home/<USER>/.local/bin/qatlasd --config /etc/quantum-atlas/config.yaml serve --http=127.0.0.1:<HTTP_PORT>
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGINT
 TimeoutStopSec=15
 
 # Hardening：read-only 系统目录 + 只把 stateful 路径打开写权限。
-# ReadWritePaths 必须覆盖 .env 里所有非默认目录（RAW_DIR / DATA_DIR /
-# PBDataDir），按实际部署调整。下面示例对应"全部走 XDG 默认"：
+# 按 YAML paths.* 和实际沙箱调整 ReadWritePaths，并预先创建目录。
+# 下面示例对应数据全部走 XDG 默认；额外只读策略还须考虑 UI 缓存：
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=no
-ReadWritePaths=/home/<USER>/QuantumAtlas /home/<USER>/.local/share/qatlasd
+ReadWritePaths=/etc/quantum-atlas /home/<USER>/.local/share/qatlasd
 LockPersonality=true
 RestrictRealtime=true
 
@@ -340,62 +338,49 @@ sudo systemctl status qatlasd.service
 
 ### 4. 日常 deploy 流程
 
-按你在 §1 选的获取方式分支。**首次部署**直接走 §3.A 的
-`qatlasd service install` 一键搞定（生成 unit + enable + start）。
-**后续滚 binary** 只需要 binary 替换 + 重启 service：
+**首次部署**先准备 YAML 和数据目录，前台验证后再注册 service（注册会启动）。
+**后续升级**不能只覆盖 binary 然后碰运气重启：
 
-**A. `go install` 直滚**——target 上一条命令：
+1. 确认目标是已采用新流程的公开 tag，先读 release notes / schema 迁移说明。
+2. 保存旧 binary、YAML / unit 和一致性数据备份，制定停写窗口与恢复方案。
+3. 按 §1.A 下载并审阅**同一目标 tag** 的安装脚本，再传同一个 `--version`；
+   对 `go install` / 自带 binary 使用独立暂存路径验证，不直接覆盖活动文件。
+4. 按对应模式显式重启，核验实际运行版本、日志、健康检查、首页 / JS / 文档。
+   无内嵌资源时，新版本首次启动需要其公开 UI 附件及服务用户的可写缓存。
 
-```bash
-# 在 target host 上跑
-go install github.com/IAI-USTC-Quantum/QuantumAtlas/cmd/qatlasd@latest
-install -m 0755 ~/go/bin/qatlasd ~/.local/bin/qatlasd
-qatlasd service restart       # 等价于 systemctl [--user] restart qatlasd
+安装脚本不替你重启服务、调整 YAML 或迁移服务注册。原子替换只保护 binary
+文件切换；**保留旧 binary 不等于数据库可回滚**。即使同为 0.x / patch 升级也要
+逐版检查迁移说明，完整流程见[备份与升级](backup-and-upgrade.md)。
+
+### 5. YAML 业务字段
+
+以 `qatlasd config init` 输出的模板和[服务端配置](server-config.md)为准。
+默认 `~/.qatlas/config.yaml`，自定义位置用 `--config`，secret 保持 mode `0600`。
+公网部署示例（仅按需启用相应能力）：
+
+```yaml
+public_url: https://your-domain.tld
+http_addr: 127.0.0.1:4200
+postgres:
+  dsn: postgres://qatlas:secret@127.0.0.1:5432/qatlas?sslmode=disable
+
+auth:
+  github_client_id: <oauth_app_client_id>
+  github_client_secret: <oauth_app_secret>
+  allowed_logins: [alice, bob]
+  admin_logins: [alice]
+
+# 只有需要非默认存储位置才写；否则走 XDG 默认。
+# paths:
+#   raw_dir: /srv/quantum-atlas/raw
+#   data_dir: /srv/quantum-atlas/data
+#   pb_data_dir: /var/lib/quantum-atlas/pb_data
 ```
 
-钉版本：`@latest` → `@v0.1.0` / `@<commit-sha>`。GitHub Action /
-ansible / 任何远程执行框架同样适用。
-
-**B. 自带 binary（B 或 C 路径产出的 `qatlasd`）**——target 已有
-binary 时：
-
-```bash
-# binary 已用 pixi 或 CI 编出来；用你惯用的传输方式（scp / rsync /
-# kubectl cp / S3 / artifact 下载）把它放到 target 的某个临时路径
-# /tmp/qatlasd，然后在 target host 上跑：
-install -m 0755 /tmp/qatlasd ~/.local/bin/qatlasd
-qatlasd service restart
-```
-
-`qatlasd service restart` 跟 `systemctl [--user] restart
-qatlasd` 完全等价（库内部就是调 systemctl）；任选其一不冲突。
-读 systemd 状态用 `qatlasd service status` 或
-`systemctl [--user] status qatlasd` / `journalctl [--user] -u
-qatlasd`，都不需要 sudo。
-
-### 5. .env 必填字段
-
-参考 `.env.example`。Server 侧最小集（**只有真正想覆盖默认时才写**
-`RAW_DIR` / `DATA_DIR` / `PB_DATA_DIR`）：
-
-```env
-QATLAS_PUBLIC_URL=https://your-domain.tld
-QATLAS_SERVER_HOST=0.0.0.0
-QATLAS_SERVER_PORT=4200
-QATLAS_POSTGRES_DSN=postgres://qatlas:secret@127.0.0.1:5432/qatlas?sslmode=disable
-
-# 显式覆盖示例（不写就走 XDG 默认）：
-# QATLAS_RAW_DIR=/srv/quantum-atlas/raw
-# QATLAS_DATA_DIR=/srv/quantum-atlas/data
-# QATLAS_PB_DATA_DIR=/var/lib/quantum-atlas/pb_data
-
-GITHUB_CLIENT_ID=<oauth_app_client_id>
-GITHUB_CLIENT_SECRET=<oauth_app_secret>
-# 未来 admin 提权白名单，handler 待补；现在写了也不会生效。
-# QATLAS_ADMIN_GITHUB_LOGINS=alice,bob
-```
-
-GitHub OAuth App callback URL 配 `https://your-domain.tld/api/oauth2-redirect`。
+GitHub OAuth App callback URL 配 `https://your-domain.tld/auth/callback`。
+GitHub 登录在 `allowed_logins` 与 `admin_logins` 均为空时拒绝所有登录，不能沿用
+旧文档“管理员字段尚未生效”的假设。资源缓存无需 YAML 配置。
+服务端不读 `.env`；遗留业务环境变量须迁入 YAML 并从 unit / 启动环境移除。
 
 ### 6. 从旧部署迁移到当前布局
 
@@ -414,11 +399,11 @@ raw / data / pb_data 直接放在 git checkout 里——一次性迁移思路
 
 ### 7. 对象存储（RustFS）
 
-PDF / MinerU 输出等大 blob 走 S3 兼容对象存储而不是本地 `RAW_DIR`。
-Go server 通过 `internal/objstore` 抽象层接 minio-go SDK，**填齐
-`QATLAS_S3_*` 四字段就切 RustFS，留空就 fallback 本地 `RAW_DIR`**
-（dev / CI 无外部依赖）。**注意：四字段是 all-or-nothing**——半填会
-启动直接报错退出，避免 reader / writer 跑两套后端。
+PDF / MinerU 输出等大 blob 可走 S3 兼容对象存储而不是本地 `paths.raw_dir`。
+Go server 通过 `internal/objstore` 抽象层接 minio-go SDK。YAML 的 `s3.endpoint`、
+`bucket_pdf`、`bucket_md`、`bucket_images`、`access_key_id`、`secret_access_key`
+六个连接字段须一起填写；全空则 fallback 本地 `paths.raw_dir`（dev / CI 无外部依赖），
+半填会启动报错，避免 reader / writer 使用不同后端。
 
 物理部署、bucket / IAM user / policy 的创建、rotate 流程，以及配套的
 幂等 bootstrap 脚本 [`scripts/rustfs_bootstrap.sh`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/scripts/rustfs_bootstrap.sh)
@@ -432,15 +417,22 @@ export RUSTFS_ROOT_ACCESS_KEY=<root_ak>      # 维护者密码管理器，不在
 export RUSTFS_ROOT_SECRET_KEY=<root_sk>
 bash scripts/rustfs_bootstrap.sh
 # 末尾打印出绑死单桶的 access_key / secret_key
-# 之后写进 server .env：
-#   QATLAS_S3_ENDPOINT=https://raw.your-domain.tld
-#   QATLAS_S3_BUCKET_PDF=qatlas-pdf
-#   QATLAS_S3_BUCKET_MD=qatlas-md
-#   QATLAS_S3_BUCKET_IMAGES=qatlas-images
-#   QATLAS_S3_ACCESS_KEY_ID=<上面打印的>
-#   QATLAS_S3_SECRET_ACCESS_KEY=<上面打印的>
-# 重启 server，启动 log 会打印每个 bucket 一行 `raw store: S3 backend ...` 确认切换成功
+# 上述 RUSTFS_* 仅供 bootstrap 工具使用，不是 qatlasd 配置。
 ```
+
+然后把服务账号写入 server YAML（不是 RustFS root 密钥）：
+
+```yaml
+s3:
+  endpoint: https://raw.your-domain.tld
+  bucket_pdf: qatlas-pdf
+  bucket_md: qatlas-md
+  bucket_images: qatlas-images
+  access_key_id: <bootstrap 输出的服务账号 key>
+  secret_access_key: <bootstrap 输出的服务账号 secret>
+```
+
+重启 server，检查启动日志的每桶 `raw store: S3 backend ...` 确认切换成功。
 
 切到 S3 后端后，对应的 presigned URL（5 min TTL，绕过 server 节省 VPS 带宽）
 由 server 内部签发；本地 RawDir 后端继续走 ServeFile。客户端拿到的资源 URL
@@ -451,53 +443,36 @@ bash scripts/rustfs_bootstrap.sh
 
 ## 推荐的单机生产目录
 
-代码 + 配置在 git checkout，stateful 状态走 XDG_DATA_HOME（用户级）或
-`/var/lib/`（系统级）。默认值不需要在 `.env` 里显式写——`server` 启动
-时按 `$XDG_DATA_HOME` / `$HOME` 自动算出来。只有当默认值不合适（共享
-盘 / FHS / 独立分区）才在 `.env` 里覆盖。
-
-```env
-# 一切都跑默认时，server 侧 .env 只需要这点：
-QATLAS_PUBLIC_URL=https://atlas.example.com
-QATLAS_SERVER_HOST=127.0.0.1
-QATLAS_SERVER_PORT=4200
-QATLAS_POSTGRES_DSN=postgres://qatlas:secret@127.0.0.1:5432/qatlas?sslmode=disable
-
-# 想覆盖默认时：
-# QATLAS_RAW_DIR=/srv/quantum-atlas/raw               # 默认 XDG，FHS 覆盖
-# QATLAS_DATA_DIR=/srv/quantum-atlas/data
-# QATLAS_PB_DATA_DIR=/var/lib/quantum-atlas/pb_data
-```
-
-> 无 `QATLAS_` 前缀的旧 alias（`RAW_DIR` / `DATA_DIR` / `PB_DATA_DIR` / `SERVER_HOST` / `SERVER_PORT` / `USER_HEADER`）已在 v0.17.0 移除，新部署统一用 `QATLAS_*` 前缀。`MINERU_*` 等第三方 SDK 标准名保持原样。v0.19.0 起 `QATLAS_SERVER_URL` 已重命名为 `QATLAS_PUBLIC_URL`（旧名 `QATLAS_SERVER_URL` / `PUBLIC_BASE_URL` 在服务端**不再读**——名字改成 `QATLAS_PUBLIC_URL` 是为了准确反映"我对外公布的 canonical URL"语义；client 完全不读 env，跟这一项无关）。
+配置独立于 Git checkout：默认 `~/.qatlas/config.yaml`，或用 `--config` 固定
+`/etc/quantum-atlas/config.yaml`。数据使用 XDG 默认路径，或在 YAML `paths.*`
+显式选择 `/var/lib/` / 共享盘。无内嵌 UI 的版本缓存可重建，不可代替数据备份。
 
 建议：
 
-- 应用仓库按 release tag 或受控分支部署。
-- 运行 QuantumAtlas 的服务用户应对 `RAW_DIR` / `DATA_DIR` / `PB_DATA_DIR` 有写权限。三者默认都落在 `$XDG_DATA_HOME/qatlasd/`（即 `$HOME/.local/share/qatlasd/`）下，正常的 systemd `User=<svc>` 已经自动满足；只在显式覆盖到 FHS / 独立分区时检查权限。
+- binary 和资源钉同一已公开 release tag，升级前核对说明与备份。
+- 运行用户应对 `paths.raw_dir` / `paths.data_dir` / `paths.pb_data_dir` 有写权限，
+  对 YAML 有读权限；无 embed 时还需可写的用户缓存目录。
 - PostgreSQL 仅对后端服务暴露，不直接开放到公网。
-- 公开访问统一走 `QATLAS_PUBLIC_URL`。
+- 公开访问统一走 YAML `public_url`。
 
-## 核心环境变量
+## 核心 YAML 字段
 
-字段语义、是否必填、是否分 client/server 角色等完整说明以
-[`.env.example`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.env.example) 顶部对照表为准（同时也是 client / server
-共享的 canonical 文档；Go server 的运行时默认在
-`internal/config/config.go`）。本节只列出公网部署最容易踩的几个：
+完整字段以 `qatlasd config init` 生成的模板和[服务端配置](server-config.md)为准，
+运行时默认在 `internal/config/config.go`。服务端拒绝残留的旧业务环境变量
+（例如 `QATLAS_*` 业务项、`MINERU_*`、`GITHUB_CLIENT_*`），不是静默忽略后继续启动。
+不要再使用 `.env`、`--dotenv-path` 或 `Environment=QATLAS_DOTENV=...`。
 
-| 变量 | 何时需要 | 备注 |
+| 字段 | 何时需要 | 备注 |
 |---|---|---|
-| `QATLAS_PUBLIC_URL` | 必填 | server 自报的对外 canonical URL；用于构造 OAuth 回调、外链等需要绝对 URL 的地方（反代场景必备——server bind 在 localhost，必须显式告诉它"我对外是谁"）。v0.19.0 改名（旧名 `QATLAS_SERVER_URL`），跟 client 侧的 `server_url:` YAML 字段（"我要联系的 server"）在概念上独立 |
-| `QATLAS_SERVER_HOST` / `QATLAS_SERVER_PORT` | 默认 `127.0.0.1:4200` | 直接面向公网通常改 `0.0.0.0:<port>`，反代场景保留 `127.0.0.1` |
-| `QATLAS_POSTGRES_DSN` | 生产必填 | paper registry + OpenAlex corpus；留空时 registry 功能降级 |
-| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | 启用 GitHub OAuth 登录时必填 | 启动时由 `internal/auth/oauth.go` 注入 users collection |
-| `QATLAS_USER_HEADER` | 上游反代/SSO 注入审计身份头时设 | 不参与鉴权，仅用于日志 |
-| `QATLAS_FORCE_TCP4` | WSL2 + Windows netsh portproxy 场景设 | 普通 Linux VPS 不要打开 |
+| `public_url` | 公网 / 反代部署 | 对外 canonical URL，用于回调、外链；不同于客户端 `server_url` |
+| `http_addr` | 默认 `127.0.0.1:4200` | `service install --bind` 生成的 `--http` 优先于本字段 |
+| `postgres.dsn` | paper registry + OpenAlex corpus | 留空会降级相关功能 |
+| `auth.github_client_id` / `auth.github_client_secret` | GitHub OAuth | 同时检查 `allowed_logins` / `admin_logins` |
+| `user_header` | 上游反代注入审计身份头 | 不参与鉴权，仅用于日志 |
+| `force_tcp4` | WSL2 + Windows netsh portproxy 场景 | 布尔值；普通 Linux VPS 不必打开 |
 
-其余字段（`QATLAS_POSTGRES_MAX_CONNS` / `QATLAS_SEARCH_PROVIDERS` /
-`QATLAS_RAW_DIR` / `QATLAS_DATA_DIR` /
-`QATLAS_PB_DATA_DIR` / `QATLAS_S3_*` / `MINERU_*` 等）都在
-`.env.example` 里有详细注释，按需取消注释即可。
+其余 `postgres.max_conns`、`search.providers`、`paths.*`、`s3.*`、
+`paper_access.mineru.*` 等按模板填写，不新增 UI 资源 URL / 版本选择字段。
 
 ## 反向代理与鉴权边界
 
@@ -524,7 +499,7 @@ caddy-security / oauth2-proxy 这类身份代理；反代只承担 SNI 选路 + 
 | 路径 | 鉴权层 | 反代怎么写 |
 |---|---|---|
 | `/api/health` | open | 直接 reverse_proxy；监控可读（返回 `{code, message, data:{status, version, uptime_seconds, checks{rawstore, postgres}}}`） |
-| `/install-qatlasd.sh` | open | 直接 reverse_proxy；公开的 `curl \| sh` 安装脚本 |
+| `/install-qatlasd.sh` | open | 直接 reverse_proxy；当前 binary 内嵌的脚本，首次新格式迁移须改用目标 tag 的仓库脚本 |
 | `/{path...}`、`/_/`、`/auth-with-oauth2` 等 SPA + PocketBase 内置 | open / 自管 | 直接 reverse_proxy；OAuth 由 server 自己处理 |
 | `/api/search`、`/api/papers/stats` 等读口 | server 内 `authGuard + papers:read` | 直接 reverse_proxy |
 | `/api/papers/...`、`/api/pat/...` | server 内的 `authGuard` / `scopeGuard` / `sessionGuard` | 直接 reverse_proxy；**不要**剥 `Authorization` header（server 要拿来鉴权） |
@@ -570,10 +545,10 @@ https://203.0.113.10:18443 {
 }
 ```
 
-client 端如果要走 IP + 非标端口入口，需要 `qatlas --insecure ...` 或 .env
-里 `QATLAS_INSECURE=1` 跳过证书校验；想保留真证书验证又用第二条线路，
-就在本机 hosts 把 `atlas.example.com` 覆盖到对应 IP，TLS 走 SNI 仍然信
-任原证书。
+client 端如果要走 IP + 非标端口入口，优先信任对应 CA；临时排查可用
+`qatlas --insecure ...` 跳过证书校验（不要把它当成服务端 YAML 设置）。
+想保留真证书验证又用第二条线路，就在本机 hosts 把 `atlas.example.com`
+覆盖到对应 IP，TLS 走 SNI 仍然信任原证书。
 
 ### 加 raw 对象存储反代（启用 RustFS 时）
 
@@ -593,5 +568,5 @@ raw.your-domain.tld {
   bearer 鉴权（PAT 或 session token），剥掉会全部 4xx。
 - `/api/*` 中的写口 server 已经强制鉴权；反代上不要再叠 ACL，避免双重
   401 / 403 给 debug 添麻烦。
-- 如果启用了 MinerU 并需要它回拉 PDF，`QATLAS_PUBLIC_URL` 必须能从
+- 如果启用了 MinerU 并需要它回拉 PDF，YAML `public_url` 必须能从
   MinerU 所在环境访问到。

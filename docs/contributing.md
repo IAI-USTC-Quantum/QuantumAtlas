@@ -86,27 +86,54 @@ Conventional Commits 是提交约定，不会自动触发发布。主仓只发�
 git clone https://github.com/IAI-USTC-Quantum/QuantumAtlas.git
 cd QuantumAtlas
 
-# Go 编译需要先生成 go:embed 使用的前端资源
-(cd web && npm ci && npm run build)
-pixi run build
+# 普通源码构建/测试不需要 Node、Sphinx 或 web/dist
+CGO_ENABLED=0 go build -o build/qatlasd ./cmd/qatlasd
+# 本地 dev 版本要启动 UI，请先执行下方「完整 UI 构建」
 # 可选：剩余 Python 文档辅助脚本的格式化 / 类型检查工具
 uv sync --locked --group dev
 ```
 
 根目录 `pyproject.toml` 是仅用于开发环境、不分发 Python 包的 uv 项目：`[dependency-groups].dev` 只保留 Python 辅助脚本的开发工具，不再依赖 pytest。文档构建依赖仍分别由 `docsite/requirements.txt`（Sphinx）和 `docs/requirements.txt`（MkDocs）管理。`uv sync` 不构建或安装主仓为 Python 包。主仓不含 `qatlas/` 客户端代码；需要服务端联调时单独安装 `qatlas-cli`，修改客户端代码、测试或发版请到 [qatlas-cli 仓库](https://github.com/IAI-USTC-Quantum/qatlas-cli)。
 
+### 完整 UI 构建 { #full-ui-build }
+
+Git **只保存源码**。`web/dist`、`web/public/doc`、`web/public/devdoc` 和根 `dist` 都是忽略的构建产物。普通 `go install ...@vX.Y.Z` 安装时不运行 npm；首次 `serve` 自动下载同一版本的 Release UI 并校验缓存。没有对应 Release 的 dev/伪版本不能自动选择其他版本。
+
+开发/发布资源使用 `web/.node-version` 的 Node 版本、`web/package-lock.json` 和 `docsite/requirements.txt`；不要顺手升级依赖。Sphinx 仍生成两套站点，MkDocs 是独立文档体系。
+
+```bash
+# 先用你的 Node 版本管理器选择 web/.node-version 指定的版本
+export SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)
+export TZ=UTC PYTHONHASHSEED=0
+# 清理的都是可再生输出；在仓库根执行
+rm -rf web/public/doc web/public/devdoc web/dist build/doctrees
+uv run --with-requirements docsite/requirements.txt -- sphinx-build \
+  -b html -d build/doctrees/public docsite web/public/doc
+uv run --with-requirements docsite/requirements.txt -- sphinx-build \
+  -b html -d build/doctrees/dev -t devdocs -D root_doc=dev/index \
+  -D html_title="QuantumAtlas 开发文档" docsite web/public/devdoc
+(cd web && npm ci && npm run build)
+CGO_ENABLED=0 go build -tags embedui -o build/qatlasd ./cmd/qatlasd
+# 在相同树上打包；与程序内嵌的资源内容完全一致
+SERVER_VERSION=$(tr -d '[:space:]' < VERSION)
+go run ./internal/cmd/uibundle -version "$SERVER_VERSION" -output build/ui
+```
+
+提交前只提交源码。CI 执行两次干净的完整构建、比较所有路径及字节，检查不得跟踪生成目录；不靠忽略 diff、dirty 发布或只比较现有文件来掩盖漂移。文档改完后也必须重新生成用于验收的 UI。开发文档会随公开 Release 发布，HTTP 管理员鉴权不是内容保密机制，不要放入凭据或私有部署信息。
+
 ### 跑测试
 
-主仓测试统一使用 Go：`tests/compose_test.go` 检查部署结构，`tests/e2e/` 包含本地 `httptest` 冒烟 fixture；真实生产检查位于带 `e2e` build tag 的 `production_smoke_test.go`。普通测试不会读取部署 `.env` 或访问线上服务。一次性旧包检查只保留在最终历史 tag，不再加入日常 CI。
+服务端、部署结构与安装器测试使用 Go：`tests/compose_test.go` 检查部署结构，`tests/e2e/` 包含本地 `httptest` 冒烟 fixture；真实生产检查位于带 `e2e` build tag 的 `production_smoke_test.go`。普通测试不会读取部署 `.env` 或访问线上服务。一次性旧包检查只保留在最终历史 tag，不再加入日常 CI。
 
 ```bash
 # 部署结构 + 本地 HTTP fixture（离线，不启动 Docker/业务服务）
 go test ./tests/...
 
-# 完整 Go 测试；需先按上文构建前端资源
-pixi run test-go
-# 或使用满足 go.mod 的原生 Go 工具链：
-CGO_ENABLED=0 go test ./internal/... ./cmd/... ./tests/...
+# 完整 Go 测试与静态检查（不需要先构建 UI）
+CGO_ENABLED=0 go test ./internal/... ./cmd/... ./web ./tests/...
+CGO_ENABLED=0 go vet ./internal/... ./cmd/... ./web ./tests/...
+# 完整 UI 构建之后，再测内嵌资源与下载包字节一致
+CGO_ENABLED=0 go test -tags embedui ./web
 
 # 只编译 e2e 路径并运行本地 fixture，仍不访问生产
 go test -tags=e2e ./tests/e2e -run '^TestSmokeFixture' -count=1
@@ -121,6 +148,8 @@ go test -tags=e2e ./tests/e2e -count=1 -timeout=10m
 ```
 
 当前主仓不再依赖旧 DuckDB/cgo 路径，正式发布使用 `CGO_ENABLED=0`。无需为运行上述测试修改全局 `go env`；Sphinx/MkDocs 仍只是文档构建工具。
+
+`.github/scripts` 的少量 CI 专用 Python 归档/发布门禁脚本另用标准库 fixture 检查：`python3 -m unittest discover -s .github/scripts -p 'test_*.py'`。它们不需要 pytest，也不是服务端 Python 包或新的构建框架。
 
 ### 仓库结构
 
@@ -259,7 +288,18 @@ git show --stat "v${SERVER_VERSION}"
 git push origin "refs/tags/v${SERVER_VERSION}"
 ```
 
-[`release.yml`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.github/workflows/release.yml) 校验 tag 与 `VERSION` 一致，构建服务端文档 / 前端、三个平台的 Go binary（`linux/{amd64,arm64}` + `darwin/arm64`），生成 GitHub Release / checksum / provenance，并发布服务端 Docker 镜像。**服务端 `v*` tag 不构建或发布 `quantum-atlas`，也不发布 `qatlas-cli`。**
+[`release.yml`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.github/workflows/release.yml) 校验 SemVer tag 与 `VERSION` 一致，并调用同一 SHA 的 Go CI。固定 GoReleaser **v2.18.1**，默认命名的三个平台归档（`linux/{amd64,arm64}` + `darwin/arm64`）、`qatlasd_<version>_web.zip` 与默认 `*_checksums.txt` 进入 draft；checksum 和 attestation 覆盖归档/UI 包。原生 runner 只下载、校验、解包并运行 `--version`，不重新编译。Docker 继续单独发布并验证 `linux/amd64` 镜像，复用同一 UI 包。全部通过才公开 Release，仅稳定版更新 Latest 和镜像 latest；已公开同 tag 拒绝重新上传。**不构建或发布旧 Python 包，也不发布独立 `qatlas-cli`。**
+
+本地验证（先完成上面的完整 UI 构建和打包）：
+
+```bash
+goreleaser check
+goreleaser release --snapshot --clean # 使用 v2.18.1；不发布
+```
+
+Snapshot 版本由 GoReleaser 生成，不等于 `VERSION`；真实 tag 与 runtime 版本在正式流程中精确核对。未获发布授权前，不推 tag、不改生产。新归档格式从未来新版本启用，不能重发 `v0.34.0`；首次迁移安装器必须从同一新 tag 的仓库路径取，不要使用旧服务返回的安装脚本。
+
+**双发布边界**：Git tag 推送后 Go 模块可能已经可安装，但 draft UI 附件对普通用户尚不可见；此时首次 `serve` 明确失败，发布完成后重试即可。必须在打 tag 前验证源码可编译、UI 可重建。GitHub/GHCR 不是原子事务，失败时分别报告 draft/镜像状态，不移动 tag 或自动升级生产。
 
 完成后检查 Actions、GitHub Release 与镜像产物，并在测试环境验证 `qatlasd --version` 与健康检查；不要通过安装旧 PyPI 包验证服务端。
 

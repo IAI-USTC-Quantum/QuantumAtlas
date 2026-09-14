@@ -109,30 +109,37 @@
     **1. 装 binary：**
 
     ```bash
-    # 自动下载最新 release 到 ~/.local/bin/
-    curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh
-    # 或锁定版本
-    curl -fsSL https://quantum-atlas.ai/install-qatlasd.sh | sh -s -- --version v0.2.8
+    TAG=vX.Y.Z # 替换为采用新格式的已公开版本；不是让你重装旧v0.34.0
+    curl -fL --proto '=https' --proto-redir '=https' \
+      "https://raw.githubusercontent.com/IAI-USTC-Quantum/QuantumAtlas/$TAG/cmd/qatlasd/install-qatlasd.sh" \
+      -o install-qatlasd.sh
+    # 审阅脚本后，从同一个版本安装
+    sh install-qatlasd.sh --version "$TAG"
+    # 或仅需Go（无Node/Sphinx）：
+    # go install "github.com/IAI-USTC-Quantum/QuantumAtlas/cmd/qatlasd@$TAG"
     ```
 
-    **2. 准备 .env：** 参照 [env vars 参考](reference/env-vars.md)，最小配置：
+    预编译程序已内嵌完整 UI，首次运行无需联网补资源；`go install` 首次 `serve` 自动获取精确版本 Release 的 UI、校验并缓存，后续离线复用。升级自动切换版本缓存，失败不会回退 latest。旧服务的安装脚本不识别新格式，迁移时必须从同一新 tag 取脚本。详见[安装说明](server/install.md)。
+
+    **2. 准备 YAML：**
 
     ```bash
-    QATLAS_PUBLIC_URL=https://your-domain.tld
-    QATLAS_POSTGRES_DSN=postgres://qatlas:<password>@localhost:5432/qatlas?sslmode=disable
-    GITHUB_CLIENT_ID=<from-github-oauth-app>
-    GITHUB_CLIENT_SECRET=<from-github-oauth-app>
+    qatlasd config init # ~/.qatlas/config.yaml，不覆盖已有配置
+    # 按服务器需要编辑 postgres_dsn、GitHub OAuth、对象存储等字段
+    qatlasd config show
     ```
+
+    服务端拒绝旧的应用配置环境变量，完整字段见[配置参考](server/server-config.md)。不需要手动选择或配置 UI 资源。
 
     **3. 注册成 systemd 服务：**
 
     ```bash
-    # 交互式（会让你确认 mode + .env 路径 + 渲染 unit 预览）
+    # 交互式（确认 mode + YAML 路径 + unit 预览）
     qatlasd service install
 
     # CI / 全自动
     sudo qatlasd service install --mode system \
-        --dotenv-path /etc/quantum-atlas/.env --force
+        --config "$HOME/.qatlas/config.yaml" --force
     ```
 
     **4. 验证：**
@@ -159,9 +166,10 @@
     git clone https://github.com/IAI-USTC-Quantum/QuantumAtlas.git
     cd QuantumAtlas
 
-    # 先构建 go:embed 所需的前端资源，再构建 Go 服务
-    (cd web && npm ci && npm run build)
-    pixi run build
+    # 源码编译与测试不需要前端产物
+    CGO_ENABLED=0 go build -o build/qatlasd ./cmd/qatlasd
+    # 要运行本地dev UI：先按贡献指南完成Sphinx两站+npm完整构建，再
+    CGO_ENABLED=0 go build -tags embedui -o build/qatlasd ./cmd/qatlasd
     ```
 
     主仓的单元、部署结构和冒烟 fixture 测试使用 Go，不再需要 pytest。`pyproject.toml` 只保留 Python 辅助脚本的开发工具；Sphinx/MkDocs 的文档依赖仍独立保留。这不会安装 `qatlas`；需要 CLI 联调时，按上面的独立客户端安装步骤操作。CLI 自身的代码修改与测试请到 [qatlas-cli 仓库](https://github.com/IAI-USTC-Quantum/qatlas-cli)。
@@ -169,12 +177,10 @@
     **2. 起本地 Web 服务：**
 
     ```bash
-    cp .env.example .env
-    # 编辑 .env：填 QATLAS_POSTGRES_DSN 指向你自己的 PostgreSQL
-    # （goose migrations 会在 server 启动时自动建表）
-    # 可选：QATLAS_SEARCH_PROVIDERS 默认 catalog,arxiv,openalex
-
-    ./build/qatlasd serve --http=0.0.0.0:4200
+    # 完整UI构建命令见「贡献指南 → 完整 UI 构建」，只提交源码
+    ./build/qatlasd config init
+    # 编辑 ~/.qatlas/config.yaml；例如postgres_dsn（只指向测试数据库）
+    ./build/qatlasd serve --http=127.0.0.1:4200
     ```
 
     访问：
@@ -194,7 +200,7 @@
 
     # 完整 Go 测试（包含上面的 tests/，生产 e2e 默认不编译）
     pixi run test-go
-    # 或：CGO_ENABLED=0 go test ./internal/... ./cmd/... ./tests/...
+    # 或：CGO_ENABLED=0 go test ./internal/... ./cmd/... ./web ./tests/...
 
     # 前端 build + type check
     (cd web && npm run build)

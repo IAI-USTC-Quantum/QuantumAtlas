@@ -41,6 +41,26 @@ QuantumAtlas 由两个独立演进的组件构成：服务端 ``qatlasd`` （本
 产物；旧包退役没有改变 ``VERSION``（仍为 ``0.34.0``），也不参与
 客户端/服务端版本协商。发布历史说明见 :doc:`release`。
 
+运行时版本与 UI 绑定
+--------------------
+
+运行时版本依次使用 GoReleaser 默认注入的 ``main.version``、
+``debug.ReadBuildInfo().Main.Version``（带版本的 ``go install``）、
+``dev``。仅去掉开头的 ``v``，保留预发布与有意义的构建标记。
+解析在 ``--version`` 之前完成，不加载配置、不访问数据库或网络；CLI、
+health、server-info 与响应头共享同一个值。Docker 自行编译时也注入
+``main.version``，不能把 ``pyproject.toml`` 的工具版本当服务端版本。
+
+新服务端 tag 使用有效 SemVer，例如 ``v0.35.0-rc.1``，不使用 Python
+风格 ``v0.35.0a1``。``VERSION`` 不因本次实现而递增，也不重发
+``v0.34.0``。预发布不会覆盖稳定版 Latest。
+
+普通源码安装首次 ``serve`` 自动获取 **自身精确版本** 的 Release UI，
+校验后按版本缓存。``dev``、空版本及 Go 伪版本没有可靠的对应 UI Release，
+会报错而不是下载 latest；开发者需构建 UI 后使用 ``-tags embedui``。
+GoReleaser 预编译程序已经内嵌同一 UI，首次启动无需联网补资源。
+Go tag 可被发现不等于 Release UI 已公开：draft 发布窗口内缺附件会明确报错。
+
 兼容协议
 --------
 

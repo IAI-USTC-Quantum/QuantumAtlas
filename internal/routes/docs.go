@@ -1,18 +1,14 @@
-// Docs site sourcing (/doc + /devdoc) — disk override with embedded
-// fallback.
-//
-// Both sphinx sites are baked into the qatlasd binary (web/public/doc +
-// web/public/devdoc → dist/ subtree of the embedded web FS, see
-// web/embed.go), which makes a docs refresh indistinguishable from a full
-// server redeploy. To decouple the two lifecycles, each site is sourced
-// at boot from the FIRST available of:
+// Docs site sourcing (/doc + /devdoc) — disk override with bundle fallback.
+// Both Sphinx sites belong to the same versioned UI filesystem, either embedded
+// in a release binary or fetched into a source install's verified cache.
+// To keep explicit operator docs updates working, each site is sourced at boot
+// from the FIRST available of:
 //
 //  1. ~/.qatlas/docs/<name> on disk — populated out-of-band by
 //     deploy/update-docs.sh; the file server reads from disk per
 //     request, so a docs update takes effect with NO restart;
-//  2. the embedded <name>/ subtree of the web bundle — the always-
-//     available baseline (local dev, deployments without the override
-//     directory, rollback safety net).
+//  2. the <name>/ subtree of the resolved UI bundle — the versioned baseline.
+//     Built-in and downloaded resources follow exactly the same HTTP handlers.
 //
 // /doc is the public user site (no auth); /devdoc stays behind the admin
 // ticket gate in devdoc.go — only the filesystem it serves changes.
@@ -41,8 +37,8 @@ func DefaultDocsRoot() string {
 
 // ResolveDocsFS picks the source for one docs site subtree (name is
 // "doc" or "devdoc"): the disk override <docsRoot>/<name> when that
-// directory exists and is non-empty, otherwise the embedded <name>/
-// subtree of distFS. The returned source string is "disk", "embedded"
+// directory exists and is non-empty, otherwise the versioned <name>/
+// subtree of distFS. The returned source string is "disk", "bundle"
 // or "none" (neither available) — meant for boot logging; the fs is nil
 // exactly when the source is "none".
 //
@@ -58,7 +54,7 @@ func ResolveDocsFS(distFS fs.FS, docsRoot, name string) (fs.FS, string) {
 	}
 	if sub, err := fs.Sub(distFS, name); err == nil {
 		if entries, err := fs.ReadDir(sub, "."); err == nil && len(entries) > 0 {
-			return sub, "embedded"
+			return sub, "bundle"
 		}
 	}
 	return nil, "none"

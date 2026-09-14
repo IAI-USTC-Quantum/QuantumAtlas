@@ -1,420 +1,196 @@
 name: Publish qatlasd release
 
-# Server releases only: v*.*.* tags, validated against root VERSION.
-# The final quantum-atlas PyPI release is preserved at quantum-atlas-v0.21.0;
-# its one-time build/publish jobs are intentionally absent from main.
-# CLI releases belong exclusively to IAI-USTC-Quantum/qatlas-cli.
+# Server tags only. No retired Python/PyPI publishing or standalone CLI release.
 on:
   workflow_dispatch:
   push:
-    tags:
-      - 'v*.*.*'
+    tags: ['v*.*.*']
 
-# Top-level permissions are read-only; each job opts in to what it needs.
 permissions:
   contents: read
 
+# Serialize across tags too: two stable runs must not race either latest pointer.
+concurrency:
+  group: qatlasd-server-release
+  cancel-in-progress: false
+
 jobs:
-  # --------------------------------------------------------------------
-  # 1. prep — single ubuntu job: parse version from the just-pushed tag,
-  #    sanity-check it matches the root VERSION file (qatlasd's single
-  #    source of truth), and emit it as an output other jobs depend on.
-  # --------------------------------------------------------------------
   prep:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # GitHub only exposes drafts to callers with push access; read-only
+    # listing can silently make an existing draft look absent.
+    permissions:
+      contents: write
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
       is_prerelease: ${{ steps.version.outputs.is_prerelease }}
-
+      source_sha: ${{ steps.source.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
-          # The push:tags trigger sets github.ref to refs/tags/v<X.Y.Z>;
-          # checkout the tag (not main) so we build the exact code the
-          # tag points at, not whatever moved on main since.
-          ref: ${{ github.ref }}
+          persist-credentials: false
+          ref: ${{ github.sha }}
           fetch-depth: 0
-          fetch-tags: true
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Resolve and validate release version
+      - name: Resolve immutable tag commit
+        id: source
+        run: |
+          test "$(git rev-parse "refs/tags/$GITHUB_REF_NAME^{commit}")" = "$(git rev-parse HEAD)"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Validate SemVer tag against root VERSION
         id: version
-        run: |
-          set -euo pipefail
-          # Tag was pushed by the operator — github.ref_name is e.g. "v0.4.0".
-          TAG="${GITHUB_REF_NAME}"
-          # Strip the leading 'v' for the server version and filenames.
-          VERSION="${TAG#v}"
+        run: python3 .github/scripts/release_gate.py version "$GITHUB_REF_NAME"
+      - name: Refuse already-public releases (API failures fail closed)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/release_gate.py guard "$GITHUB_REF_NAME"
 
-          # Cross-check: the root VERSION file (qatlasd's single source
-          # of truth) must match the tag. The release flow is: edit
-          # VERSION, commit, `git tag v<version>`, push the tag. If they
-          # disagree the operator pushed a tag that doesn't match the
-          # committed VERSION (hand-typed tag, or forgot to commit the
-          # VERSION bump).
-          VERSION_FILE="$(tr -d '[:space:]' < VERSION)"
-          if [ "$VERSION" != "$VERSION_FILE" ]; then
-            echo "tag $TAG (version=$VERSION) does not match VERSION file ($VERSION_FILE)" >&2
-            exit 1
-          fi
-
-          # The retired quantum-atlas distribution is NOT part of a
-          # server release. Only root VERSION gates qatlasd releases.
-
-          # PEP 440 / SemVer pre-release detection. Anything containing
-          # a, b, rc, alpha, beta, pre, or '-' in the version segment is
-          # a pre-release; we tell action-gh-release to mark it that way
-          # so /releases/latest keeps pointing at the last stable
-          # version. Critical for install-qatlasd.sh users who don't
-          # pass --version — without this, an alpha would silently
-          # become the default install.
-          IS_PRERELEASE="false"
-          case "$VERSION" in
-            *a*|*b*|*rc*|*alpha*|*beta*|*pre*|*-*) IS_PRERELEASE="true" ;;
-          esac
-
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-          echo "is_prerelease=$IS_PRERELEASE" >> $GITHUB_OUTPUT
-          echo "Resolved tag=$TAG version=$VERSION is_prerelease=$IS_PRERELEASE"
-
-  # --------------------------------------------------------------------
-  # 2. docs-build — both sphinx flavours (public /doc + admin /devdoc),
-  #     built ONCE on ubuntu-latest and handed to binary-build /
-  #     docker-image as an artifact.
-  #
-  #     Why a separate job instead of building in each consumer:
-  #     binary-build's linux targets run inside manylinux_2_28 containers
-  #     (glibc 2.28), where setup-python's standalone Python refuses to
-  #     start (needs ≥ 2.34). Building here avoids per-matrix duplication
-  #     AND the container glibc trap.
-  # --------------------------------------------------------------------
-  docs-build:
-    runs-on: ubuntu-latest
+  # This performs all normal Go/Web/OpenAPI/fixture checks on the same commit.
+  # UI generation happens here only: two clean builds for reproducibility,
+  # then ONE zip. Neither GoReleaser nor Docker rebuilds Node/Sphinx assets.
+  checks:
     needs: prep
+    uses: ./.github/workflows/go.yml
+    with:
+      source_sha: ${{ needs.prep.outputs.source_sha }}
 
+  release:
+    runs-on: ubuntu-latest
+    needs: [prep, checks]
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref }}
+          persist-credentials: false
+          ref: ${{ needs.prep.outputs.source_sha }}
           fetch-depth: 0
-          fetch-tags: true
-
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-go@v5
         with:
-          python-version: "3.12"
-
-      - name: Build docs sites (public /doc + admin /devdoc)
+          go-version-file: go.mod
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.checks.outputs.ui_artifact }}
+          path: build/ui
+      - name: Restore exact checked UI (kept outside GoReleaser dist)
+        env:
+          VERSION: ${{ needs.prep.outputs.version }}
+          SOURCE_SHA: ${{ needs.checks.outputs.source_sha }}
         run: |
-          set -euo pipefail
-          python -m pip install -r docsite/requirements.txt
-          # Public user docs → served at /doc.
-          sphinx-build -b html docsite web/public/doc
-          # Admin-only dev docs → served at /devdoc behind the ticket gate.
-          sphinx-build -b html -t devdocs -D root_doc=dev/index \
-            -D html_title="QuantumAtlas 开发文档" docsite web/public/devdoc
-
-      - name: Upload docs sites
-        uses: actions/upload-artifact@v4
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          python3 .github/scripts/artifacts.py restore-ui "build/ui/qatlasd_${VERSION}_web.zip" web/dist "$VERSION"
+          test -z "$(git status --porcelain --untracked-files=all)"
+      - name: Recheck draft guard immediately before upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/release_gate.py guard "$GITHUB_REF_NAME"
+      - name: GoReleaser creates/uploads draft (default tar.gz and checksums)
+        uses: goreleaser/goreleaser-action@v6
         with:
-          name: docs-sites
-          path: |
-            web/public/doc
-            web/public/devdoc
-          retention-days: 7
+          distribution: goreleaser
+          version: v2.18.1
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - name: Verify default manifest includes exactly three archives and the UI zip
+        id: manifest
+        env:
+          VERSION: ${{ needs.prep.outputs.version }}
+        run: |
+          MANIFEST="$(python3 .github/scripts/artifacts.py verify-release dist build/ui "$VERSION")"
+          echo "path=$MANIFEST" >> "$GITHUB_OUTPUT"
+      - name: Attest archives AND UI from the default checksums file
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-checksums: ${{ steps.manifest.outputs.path }}
+      - name: Verify the UI actually uploaded as a draft Release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prep.outputs.version }}
+        run: |
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --pattern "qatlasd_${VERSION}_web.zip" --dir build/published-ui
+          cmp "build/ui/qatlasd_${VERSION}_web.zip" "build/published-ui/qatlasd_${VERSION}_web.zip"
 
-  # --------------------------------------------------------------------
-  # 3. binary-build — matrix over (OS, arch). Each runner is native to
-  #    its target so we don't juggle cross-toolchains. CGO_ENABLED=0
-  #    so the output is a pure-Go binary with no libc / libstdc++
-  #    runtime dependency on linux.
-  #
-  #    Linux targets run INSIDE a manylinux_2_28 container (AlmaLinux 8
-  #    / glibc 2.28 / gcc-toolset-12) via the job-level `container:`
-  #    key, so every step (checkout, node, go build) executes inside it.
-  #
-  #    Why manylinux_2_28 when the binary itself is static?
-  #    GitHub Actions runs every step's JavaScript action (checkout,
-  #    setup-node, setup-go …) via `docker exec <container> node20`.
-  #    Node 20 requires glibc ≥ 2.28; older containers (CentOS 7 /
-  #    glibc 2.17) would crash. manylinux_2_28 (glibc 2.28) is the
-  #    minimum that satisfies Node — it doesn't affect the produced
-  #    binary, which is CGO-free and runs on any modern Linux kernel
-  #    regardless of the host's glibc version.
-  #
-  #    darwin-arm64 stays on macos-latest (no container).
-  #
-  #    Free runner availability (public repos):
-  #      - ubuntu-latest        linux/amd64 → manylinux_2_28_x86_64
-  #      - ubuntu-24.04-arm     linux/arm64 → manylinux_2_28_aarch64
-  #      - macos-latest         darwin/arm64 (Apple Silicon, native)
-  #
-  #    darwin/amd64 deliberately NOT shipped: macos-13 runners sit in
-  #    queue 10–40 min on the free tier.
-  # --------------------------------------------------------------------
-  binary-build:
-    needs: [prep, docs-build]
+  native-smoke:
+    name: Native archive smoke (${{ matrix.platform }})
+    needs: [prep, release]
+    timeout-minutes: 10
+    # Needed to see/download the draft, not to execute write API calls.
+    # The candidate runs with a fresh environment (artifacts.py).
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
         include:
-          - target: linux-amd64
+          - platform: linux_amd64
             runner: ubuntu-latest
-            container: quay.io/pypa/manylinux_2_28_x86_64
-          - target: linux-arm64
+          - platform: linux_arm64
             runner: ubuntu-24.04-arm
-            container: quay.io/pypa/manylinux_2_28_aarch64
-          - target: darwin-arm64
+          - platform: darwin_arm64
             runner: macos-latest
-            container: ""
     runs-on: ${{ matrix.runner }}
-    container: ${{ matrix.container }}
-
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref }}
-          fetch-depth: 0
-          fetch-tags: true
-
-      # Docs sites must exist under web/public/ BEFORE `npm run build`:
-      # vite copies web/public/* into dist/, and web/embed.go embeds
-      # dist/ into the binary. Built once in the docs-build job
-      # (setup-python's standalone Python can't start inside the
-      # manylinux_2_28 containers this matrix uses).
-      - name: Download docs sites
-        uses: actions/download-artifact@v4
+          persist-credentials: false
+          ref: ${{ needs.prep.outputs.source_sha }}
+      - uses: actions/setup-python@v5
         with:
-          name: docs-sites
-          path: web/public/
-
-      # web/embed.go does //go:embed all:dist — need web/dist/ before
-      # the Go compile. Cheap (~30 s), simpler to rebuild per matrix
-      # entry than to ferry a prebuilt bundle across jobs.
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: web/package-lock.json
-
-      - name: Build web frontend
-        working-directory: web
-        run: |
-          npm ci
-          npm run build
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      - name: Build qatlasd
+          python-version: '3.12'
+      # No Go/Node/Sphinx setup, rebuilding, server start or production targets.
+      - name: Download, checksum, safely unpack and run --version only
         env:
-          CGO_ENABLED: "0"
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prep.outputs.version }}
+          PLATFORM: ${{ matrix.platform }}
         run: |
-          set -euo pipefail
-          mkdir -p dist/bin
-          OUT="dist/bin/qatlasd-${{ matrix.target }}"
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --pattern "qatlasd_${VERSION}_${PLATFORM}.tar.gz" \
+            --pattern '*_checksums.txt' --dir build/download
+          python3 .github/scripts/artifacts.py smoke build/download "$VERSION" "$PLATFORM"
 
-          # Pure-Go build (CGO_ENABLED=0). The SQLite driver in use is
-          # modernc.org/sqlite (pure Go); no other dep needs cgo. The
-          # resulting linux binaries are statically linked and have no
-          # libc / libstdc++ runtime dependency.
-          LDFLAGS="-s -w -X main.Version=${{ needs.prep.outputs.version }}"
-
-          go build -trimpath -buildvcs=false -ldflags "$LDFLAGS" -o "$OUT" ./cmd/qatlasd
-
-          # Audit: surface what the binary links against.
-          file "$OUT" || true
-          case "${{ matrix.target }}" in
-            linux-*)
-              # Pure-Go ⇒ `ldd` typically reports "not a dynamic
-              # executable" and objdump finds no GLIBC/CXXABI deps.
-              ldd "$OUT" 2>&1 | head -10 || true
-              objdump -T "$OUT" 2>/dev/null | grep -oE 'GLIBC_[0-9]+\.[0-9]+(\.[0-9]+)?' | sort -V -u | tail -5 || true
-              objdump -T "$OUT" 2>/dev/null | grep -oE 'CXXABI_[0-9]+\.[0-9]+(\.[0-9]+)?' | sort -V -u | tail -5 || true
-              ;;
-          esac
-
-      - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: qatlasd-${{ matrix.target }}
-          path: dist/bin/qatlasd-${{ matrix.target }}
-          retention-days: 7
-
-  # --------------------------------------------------------------------
-  # 4. create-release — server binaries only, no retired PyPI artifacts.
-  # --------------------------------------------------------------------
-  create-release:
-    runs-on: ubuntu-latest
-    needs: [prep, binary-build]
-    permissions:
-      contents: write       # needed to push tag + create release
-      id-token: write       # OIDC token → Sigstore for SLSA provenance
-      attestations: write   # write to GitHub attestations API
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.ref }}
-          fetch-depth: 0
-          fetch-tags: true
-
-      # Each binary lives in its own per-target artifact. `pattern` +
-      # `merge-multiple: true` glues them back into a single dist/bin/
-      # directory.
-      - name: Download Go binaries
-        uses: actions/download-artifact@v4
-        with:
-          pattern: qatlasd-*
-          path: dist/bin/
-          merge-multiple: true
-
-      - name: List downloaded artifacts
-        run: |
-          set -euo pipefail
-          ls -la dist/
-          ls -la dist/bin/
-
-      - name: Generate SHA256SUMS
-        run: |
-          set -euo pipefail
-          # Server release assets only; legacy Python publishing is separate.
-          cd dist
-          ( cd bin && sha256sum qatlasd-* ) > SHA256SUMS
-          cat SHA256SUMS
-
-      # SLSA build provenance — signed attestation binding each artifact
-      # digest to (this workflow, this commit, this runner, this point in
-      # time). Stored in GitHub's attestations API rather than as a
-      # release asset; users verify with:
-      #
-      #   gh attestation verify ./qatlasd-linux-amd64 \
-      #     --repo IAI-USTC-Quantum/QuantumAtlas
-      #
-      # Powered by Sigstore public-good keyless signing (free for public
-      # repos, zero key management). Run BEFORE the release-create step
-      # so the attestation predates the release notification — anyone
-      # auto-downloading on release-published events sees a verifiable
-      # artifact from the first moment.
-      - name: Attest build provenance
-        uses: actions/attest-build-provenance@v3
-        with:
-          subject-path: dist/bin/qatlasd-*
-
-      - name: Extract latest changelog
-        run: |
-          VERSION="${{ needs.prep.outputs.version }}"
-
-          if [ -f CHANGELOG.md ]; then
-            awk -v version="$VERSION" '
-            BEGIN { found=0; content="" }
-            /^## / {
-              if (found) exit
-              if ($0 ~ version) {
-                found=1
-                content = content $0 "\n"
-                next
-              }
-              next
-            }
-            found && /^## / { exit }
-            found { content = content $0 "\n" }
-            END { print content }
-            ' CHANGELOG.md > /tmp/changelog.txt
-          else
-            echo "Version $VERSION" > /tmp/changelog.txt
-          fi
-
-          if [ ! -s /tmp/changelog.txt ]; then
-            echo "Version $VERSION" > /tmp/changelog.txt
-          fi
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ needs.prep.outputs.tag }}
-          body_path: /tmp/changelog.txt
-          files: |
-            dist/bin/qatlasd-*
-            dist/SHA256SUMS
-          draft: false
-          # prerelease auto-detected in the prep job based on PEP 440
-          # markers (a/b/rc/alpha/beta/pre/'-'). Stable tags like
-          # v0.15.0 → false (this release becomes "Latest" and is what
-          # install-qatlasd.sh's no-flag default picks up). Pre-release
-          # tags like v0.15.0a1 → true (action keeps the previous
-          # stable as Latest, so casual installers stay on the known
-          # version).
-          prerelease: ${{ needs.prep.outputs.is_prerelease == 'true' }}
-          generate_release_notes: true
-
-  # --------------------------------------------------------------------
-  # 5. docker-image — build & push the multi-arch container image to
-  #    ghcr.io/iai-ustc-quantum/qatlasd and attest its build provenance.
-  #
-  #    Runs in parallel with create-release: it consumes the source tree
-  #    (which it Dockerfile-builds) plus the docs-build artifact.
-  #
-  #    Why this exists at all: docker-compose templates in deploy/ point
-  #    at `ghcr.io/iai-ustc-quantum/qatlasd:<tag>`. Without this job
-  #    operators would have to `docker build .` locally on every
-  #    install — slow, non-reproducible, and breaks the
-  #    install-qatlasd.sh-style "pull a pre-built artifact" workflow we
-  #    already use for server binaries.
-  # --------------------------------------------------------------------
   docker-image:
     runs-on: ubuntu-latest
-    needs: [prep, docs-build]
+    needs: [prep, checks, release]
+    timeout-minutes: 30
     permissions:
-      contents: read
-      packages: write       # ghcr.io push
-      id-token: write       # SLSA attestation OIDC
+      contents: write # draft visibility for the guard (no release writes here)
+      packages: write
+      id-token: write
       attestations: write
-
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref }}
-
-      # Download the docs sites into web/public/ so the Docker build
-      # context (the Dockerfile's `COPY web/ ./` + vite build) bundles
-      # /doc and /devdoc into the image. Built once in the docs-build
-      # job.
-      - name: Download docs sites
-        uses: actions/download-artifact@v4
+          persist-credentials: false
+          ref: ${{ needs.prep.outputs.source_sha }}
+      - uses: actions/download-artifact@v4
         with:
-          name: docs-sites
-          path: web/public/
-
-      # QEMU lets us cross-build linux/arm64 from amd64 runners. Slower
-      # than native, but free + reliable + matches the platform set the
-      # standalone binary job already produces.
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+          name: ${{ needs.checks.outputs.ui_artifact }}
+          path: build/ui
+      - name: Restore the same complete UI tree used by GoReleaser
+        env:
+          VERSION: ${{ needs.prep.outputs.version }}
+        run: python3 .github/scripts/artifacts.py restore-ui "build/ui/qatlasd_${VERSION}_web.zip" web/dist "$VERSION"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          # GITHUB_TOKEN has push access to ghcr.io for the same repo
-          # when `permissions: packages: write` is set above.
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push multi-arch image
+          password: ${{ github.token }}
+      - name: Refuse a release made public since validation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/release_gate.py guard "$GITHUB_REF_NAME"
+      - name: Build and push versioned linux/amd64 image (never latest here)
         id: build
         uses: docker/build-push-action@v6
         with:
@@ -424,27 +200,109 @@ jobs:
           push: true
           build-args: |
             VERSION=${{ needs.prep.outputs.version }}
-          # Three tags so consumers can pin at three granularities:
-          # exact version (vX.Y.Z), latest, and the bare version
-          # without 'v' (useful in compose interpolation).
           tags: |
             ghcr.io/iai-ustc-quantum/qatlasd:${{ needs.prep.outputs.tag }}
             ghcr.io/iai-ustc-quantum/qatlasd:${{ needs.prep.outputs.version }}
-            ghcr.io/iai-ustc-quantum/qatlasd:latest
           provenance: true
           sbom: true
-
-      # SLSA build provenance for the image. Same security story as the
-      # binary / wheel attestations above:
-      #
-      #   gh attestation verify oci://ghcr.io/iai-ustc-quantum/qatlasd:<tag> \
-      #     --repo IAI-USTC-Quantum/QuantumAtlas
-      #
-      # Bound to the image digest, not the tag, so retagging can't
-      # forge attestation.
+      - name: Check pushed image by digest without network or production config
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          VERSION: ${{ needs.prep.outputs.version }}
+        run: |
+          IMAGE="ghcr.io/iai-ustc-quantum/qatlasd@$DIGEST"
+          docker pull --platform linux/amd64 "$IMAGE"
+          ACTUAL="$(docker run --rm --network none --platform linux/amd64 "$IMAGE" --version)"
+          test "$ACTUAL" = "qatlasd version $VERSION"
       - name: Attest image build provenance
         uses: actions/attest-build-provenance@v3
         with:
           subject-name: ghcr.io/iai-ustc-quantum/qatlasd
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
+
+  publish:
+    needs: [prep, release, native-smoke, docker-image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ needs.prep.outputs.source_sha }}
+      - name: Publish validated draft WITHOUT changing latest yet
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/release_gate.py publish "$GITHUB_REF_NAME"
+
+  latest:
+    needs: [prep, docker-image, publish]
+    if: needs.prep.outputs.is_prerelease == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ needs.prep.outputs.source_sha }}
+      - name: Require an already-public stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/release_gate.py public-stable "$GITHUB_REF_NAME"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Promote verified image digest to latest (no rebuild)
+        env:
+          DIGEST: ${{ needs.docker-image.outputs.digest }}
+        run: |
+          docker buildx imagetools create --tag ghcr.io/iai-ustc-quantum/qatlasd:latest \
+            "ghcr.io/iai-ustc-quantum/qatlasd@$DIGEST"
+      - name: Promote GitHub stable release to latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/release_gate.py latest "$GITHUB_REF_NAME"
+
+  report:
+    if: always() && startsWith(github.ref, 'refs/tags/v')
+    needs: [prep, checks, release, native-smoke, docker-image, publish, latest]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write # observe actual draft state rather than a read-only empty list
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Report actual release state and non-atomic failure boundaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_RESULTS: ${{ toJSON(needs) }}
+          IMAGE_DIGEST: ${{ needs.docker-image.outputs.digest }}
+        run: |
+          {
+            echo '## Release state and recovery boundary'
+            echo 'GitHub/GHCR are not atomic. A failed run may leave draft assets or versioned images.'
+            echo 'A failure after publication may leave a public release with one latest pointer unchanged.'
+            echo 'Already-public tags reject re-upload. Recovery requires operator review; never move tags or alter production automatically.'
+            echo 'Pushed Go tags may already be visible to go install even while the GitHub Release is draft.'
+            printf '\nReported image digest (empty does NOT prove no image was pushed): `%s`\n' "$IMAGE_DIGEST"
+            echo '```json'
+            printf '%s\n' "$JOB_RESULTS"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if STATE="$(python3 .github/scripts/release_gate.py status "$GITHUB_REF_NAME")"; then
+            printf '\nGitHub: `%s`\n' "$STATE" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'GitHub state UNKNOWN: query failed; do not assume absent/draft or retry uploads blindly.' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi

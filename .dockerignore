@@ -14,11 +14,15 @@
 *.swp
 *.swo
 
-# Dependency / build caches that the multi-stage build re-creates.
+# Dependency / build caches; web/dist is a REQUIRED prebuilt input, not
+# rebuilt in Docker. Keep the GoReleaser output and Sphinx intermediates out.
 node_modules
 web/node_modules
-web/dist
+dist
 build
+web/public/doc
+web/public/devdoc
+docsite
 .pixi
 .gocache
 .venv
@@ -59,3 +63,7 @@ coverage.out
 # OS junk.
 .DS_Store
 Thumbs.db
+
+# Preserve every file of the validated UI tree (including Sphinx dotfiles).
+!web/dist/
+!web/dist/**

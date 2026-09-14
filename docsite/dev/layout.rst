@@ -78,11 +78,23 @@ Python 命令行客户端由独立仓库 ``IAI-USTC-Quantum/qatlas-cli`` 维护�
 前端（web/）
 ------------
 
-React + TanStack Router 的 SPA，路由带语言前缀（``/zh``、``/en``），
-``npm run build`` 产物（``web/dist``）通过 ``web/embed.go`` 内嵌进 Go
-二进制；``web/public/doc`` 是本文档站的构建产物，随 dist 一起内嵌，
-作为文档的基线副本（免鉴权）；运行时 qatlasd 优先从
-``~/.qatlas/docs`` 目录取材，详见"约定"一节。
+React + TanStack Router 的 SPA，路由带语言前缀（``/zh``、``/en``）。
+Git 仅存源码，不提交 ``web/dist`` 或 Sphinx 生成的
+``web/public/doc`` / ``web/public/devdoc``。固定 Node 版本见
+``web/.node-version``；Sphinx 两站构建后再运行 ``npm ci`` / ``npm run build``。
+
+``web/embed.go`` 仅在 ``embedui`` build tag 下编译：GoReleaser 和
+Docker 构建嵌入完整 dist；普通 Go 模块构建使用 ``embed_none.go``，
+即使没有 Node、Sphinx、dist 也能完成 ``go install``。
+``web.Resolve`` 在首次 serve 时优先内置资源，否则校验版本缓存，缺缓存才从
+对应 GitHub Release 下载 UI ZIP 与 SHA256 清单；不使用 latest 回退。
+ZIP 不解压到缓存目录，校验路径、类型、重复项、版本、尺寸与内容后以
+支持 seek 的 ``fs.FS`` 提供，静态服务、SPA fallback 与业务路由共用。
+``internal/cmd/uibundle`` 从同一 dist 打包，确保两种安装的 UI 内容一致。
+
+两文档站也在完整 bundle 中：``/doc`` 公开，``/devdoc`` 仍需管理员票据。
+既有 ``~/.qatlas/docs`` 显式磁盘覆盖保持不变，详见"约定"一节。
+公开发布的归档/二进制可直接读取开发文档，管理员 HTTP 门控不是保密措施。
 
 客户端（独立仓库）
 --------------------
@@ -113,7 +125,7 @@ React + TanStack Router 的 SPA，路由带语言前缀（``/zh``、``/en``）�
   不再包含 pytest；``uv sync`` 不把主仓安装成 Python 包。
   本仓测试统一为 Go：``tests/compose_test.go`` 检查部署模板，
   ``tests/e2e/`` 的普通 fixture 只使用本地 ``httptest``。
-  ``go test ./internal/... ./cmd/... ./tests/...``（或 ``pixi run test-go``）
+  ``go test ./internal/... ./cmd/... ./web ./tests/...``（或 ``pixi run test-go``）
   不编译带 ``e2e`` build tag 的生产检查。
   真正的生产冒烟由 nightly 单独运行：
   ``go test -tags=e2e ./tests/e2e -count=1 -timeout=10m``，必须显式配置
@@ -122,8 +134,8 @@ React + TanStack Router 的 SPA，路由带语言前缀（``/zh``、``/en``）�
   ``.github/workflows/docs.yml`` 独立构建并发布为 ghcr 上的
   ``qatlas-docs`` 镜像；部署机运行 ``deploy/update-docs.sh`` 把新文档写入
   ``~/.qatlas/docs``，qatlasd 从该目录取材（目录缺失或为空时回落到
-  二进制内嵌的副本，见 ``internal/routes/docs.go``），更新文档不需要
-  重启服务。本地预览时开发者仍可直接运行两套 sphinx 构建：
+  当前版本 bundle 的副本，来源可为内嵌或缓存，见 ``internal/routes/docs.go``）。
+  已选磁盘目录内部更新不需重启；改变来源仍需重启。本地预览时开发者仍可直接运行两套 sphinx 构建：
   公开站 ``sphinx-build -b html docsite web/public/doc``，开发站
   ``sphinx-build -b html -t devdocs -D root_doc=dev/index docsite
   web/public/devdoc``；
