@@ -278,7 +278,7 @@ uuidgen
 
 ### MinerU（contributor client — `qatlas contrib mineru` 子命令读）
 
-这组字段由 Python client (`qatlas/extractor/llm_interface.py` / `qatlas/client/mineru.py`) 在
+这组字段由独立 [qatlas-cli 仓库](https://github.com/IAI-USTC-Quantum/qatlas-cli)维护的 Python client 在
 contributor 本地跑 `qatlas contrib mineru` 时读取并转发给 MinerU API；走的是
 contributor 自己的 MinerU 配额。**v0.17.0+ 只能放 `~/.config/qatlas/config.yaml`**，
 不再支持 env / `MINERU_*` env var。
@@ -336,8 +336,7 @@ client 现在**完全独立于 server**：
 
 ### YAML schema
 
-**Flat snake_case** — 字段名一对一 derived from
-[`ServerConfig.model_fields`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/qatlas/config.py)。
+**Flat snake_case** — 字段名由独立 [qatlas-cli 仓库](https://github.com/IAI-USTC-Quantum/qatlas-cli)中的客户端配置模型定义，不再对应 QuantumAtlas 主仓的 Python 模块。
 首次跑 `qatlas` 子命令时这个 yaml 模板会自动写到磁盘。
 
 ```yaml

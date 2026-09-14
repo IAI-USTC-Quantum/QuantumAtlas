@@ -24,7 +24,12 @@ app 微服务之间的 HTTP 接口协议。主仓还包含独立部署的下载 
      - 根目录 ``VERSION`` + ``v*`` tag（release.yml prep 强校验一致）
      - push tag ``v*.*.*``
      - ghcr 镜像 ``:{vX.Y.Z, X.Y.Z, latest}`` + 三平台二进制 +
-       GitHub Release + PyPI ``quantum-atlas``
+       GitHub Release；不再发布旧 PyPI 包
+   * - ``quantum-atlas``\ （旧包最后一次迁移发布）
+     - 本仓库 ``pyproject.toml`` 固定版本 ``0.21.0``
+     - 仅精确 tag ``quantum-atlas-v0.21.0``
+     - PyPI 元数据/迁移说明包 + 独立 GitHub Release
+       （``make_latest: false``）；不构建或发布服务端/容器
    * - ``qatlas-cli``
      - 其仓库 ``pyproject.toml``\ （commitizen）
      - ``cz bump`` 打 tag ``v*``
@@ -55,7 +60,39 @@ app 微服务之间的 HTTP 接口协议。主仓还包含独立部署的下载 
        ``Dockerfile.downloaderproxy`` 现场构建（见下文例外与
        :doc:`prod-deploy` 的 runbook）
 
-.. rubric:: 下载执行端的当前分发边界
+旧包的最后一次迁移发布
+------------------------
+
+``quantum-atlas 0.21.0`` 是旧 PyPI 名称的最终迁移说明版本，不是新 CLI
+或 parser 库。wheel 只应包含发行元数据及说明，不包含 ``qatlas/``、
+console scripts 或运行时依赖，尤其不能通过 ``Requires-Dist`` 自动安装
+``qatlas-cli``，也不能提供调用新 CLI 的转发入口。旧帮助库的退役不等于
+已把它们的 Python API 搬到独立客户端。
+
+该发布沿用 ``.github/workflows/release.yml``，但与常规服务端发布严格隔离：
+
+- 仅精确 tag ``quantum-atlas-v0.21.0`` 进入旧包的最终发布路径，
+  不用 ``v0.21.0`` 代替；``v*.*.*`` 与根目录 ``VERSION`` 仍只管理
+  qatlasd 的常规发布，迁移不修改 ``VERSION``（迁移时为 ``0.34.0``）；
+- 最终发布路径只构建 Python 迁移包、发布 PyPI，并创建该专用 tag 的
+  独立 GitHub Release。它不运行服务端二进制、容器构建或发布 job；
+- 该 GitHub Release 必须设置 ``make_latest: false``，不覆盖
+  qatlasd 的 latest release；
+- PyPI Trusted Publisher 继续匹配仓库 ``IAI-USTC-Quantum/QuantumAtlas``、
+  workflow 文件名 ``release.yml`` 和 environment ``pypi``，无需把
+  OIDC 发布身份迁到另一个 workflow；
+- 本仓库不再配置 Commitizen，也不继续为旧包执行 ``cz bump``。
+  独立 ``qatlas-cli`` 仓库的版本管理不受影响。
+
+推送最终 tag 前，应独立验收 wheel 与 sdist 的文件清单、元数据中的
+``Name: quantum-atlas`` / ``Version: 0.21.0``、无 ``Requires-Dist``、
+无 ``qatlas/`` 命名空间与命令入口，并检查迁移说明明确要求用户手动
+卸载旧包、再安装 ``qatlas-cli``。发布后核对 PyPI 产物及专用 GitHub
+Release，并确认服务器 latest 与容器标签没有因本次迁移变化；不能仅以
+某个 job 变绿代替这些检查。服务端继续按下文常规流程独立发布。
+
+下载执行端的当前分发边界
+----------------------------
 
 ``downloaderworker`` 与旧 ``downloaderproxy`` 都复用主仓策略梯；当前
 提供 Dockerfile，但未为新 worker 增加独立的镜像发布 workflow。因此它们
@@ -204,8 +241,8 @@ sphinx 站点并直接写入文档目录。
   CHANGELOG 的 ``BREAKING CHANGE`` 小节中写明前置条件与迁移步骤，
   部署方按上文的前置检查执行。
 
-发版 checklist
---------------
+服务端发版 checklist
+----------------------
 
 .. list-table::
    :header-rows: 1
@@ -215,7 +252,7 @@ sphinx 站点并直接写入文档目录。
      - 验收
    * - 本地 CI mirror
      - ``go vet`` / ``go test ./internal/... ./cmd/...`` /
-       ``uv run pytest -m "not e2e and not network"`` /
+       ``uv run --group dev pytest -m "not e2e and not network"`` /
        ``cd web && npm run build`` / ``swagger-check`` 全绿
        （release.yml 不跑测试，发版前自行保证）
    * - ``VERSION`` + CHANGELOG

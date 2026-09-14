@@ -1,8 +1,9 @@
 代码组织
 ========
 
-QuantumAtlas 主仓库是一个多语言单体仓库（monorepo），包含 Go 服务器、
-Python 客户端、React 前端与部署模板。顶层布局：
+QuantumAtlas 主仓库包含 Go 服务器、React 前端、部署模板与服务端测试。
+Python 命令行客户端由独立仓库 ``IAI-USTC-Quantum/qatlas-cli`` 维护，
+不在本仓库分发。顶层布局：
 
 .. code-block:: text
 
@@ -11,7 +12,6 @@ Python 客户端、React 前端与部署模板。顶层布局：
    ├── cmd/downloaderworker/   主动接入的下载节点（独立浏览器与持久暂存）
    ├── cmd/downloaderproxy/    旧单代理服务（仅兼容路径）
    ├── internal/               Go 服务器内部包（见下表）
-   ├── qatlas/             Python 客户端（qatlas CLI）
    ├── web/                React SPA 前端
    ├── deploy/             docker-compose 部署模板
    ├── docsite/            本文档站源码（Sphinx + Furo）
@@ -83,23 +83,20 @@ React + TanStack Router 的 SPA，路由带语言前缀（``/zh``、``/en``）�
 作为文档的基线副本（免鉴权）；运行时 qatlasd 优先从
 ``~/.qatlas/docs`` 目录取材，详见"约定"一节。
 
-客户端（Python，qatlas/）
--------------------------
+客户端（独立仓库）
+--------------------
 
-.. code-block:: text
+``qatlas`` CLI 的实现位于 `IAI-USTC-Quantum/qatlas-cli
+<https://github.com/IAI-USTC-Quantum/qatlas-cli>`_ 的 ``src/qatlas/``，
+包括命令分发、HTTP 客户端、YAML 配置、插件框架和本地 arXiv/MinerU
+工作流；客户端测试也在该仓库运行。本仓库只保留相关的使用与协议文档，
+不再包含 ``qatlas/`` Python 命名空间。
 
-   qatlas/
-   ├── cli.py            顶层命令分发（config / auth / paper / contrib / parser）
-   ├── config.py         客户端 YAML 配置（~/.config/qatlas/config.yaml）
-   ├── client/
-   │   ├── paper.py      qatlas paper：取 PDF / Markdown（LRO 轮询）
-   │   ├── contrib.py    qatlas contrib：上传与本地 MinerU 调度
-   │   ├── upload.py     PDF / MinerU zip 上传
-   │   ├── mineru.py     本地 MinerU runner（claim → 转换 → 回传）
-   │   ├── auth.py       PAT 管理与 OAuth Device Flow 登录
-   │   ├── config.py     qatlas config 子命令
-   │   └── plugins/      客户端插件框架（entry-point 发现，见下页）
-   └── parser/           本地 arXiv 抓取 + MinerU 解析（qatlas parser）
+旧 PyPI 包 ``quantum-atlas`` 的最后一个版本 ``0.21.0`` 仅保留元数据与
+迁移说明，没有运行时依赖或命令入口，也不会转发安装 ``qatlas-cli``。
+原来的 ``qatlas.paper_assets`` 和 ``qatlas.parser.doi`` 帮助库已退役，
+不属于独立 CLI 的等价迁移承诺。服务端资产路径与 DOI 处理仍由
+``internal/paperassets``、``internal/openalex`` 等 Go 包实现，保持不变。
 
 约定
 ----
@@ -107,8 +104,11 @@ React + TanStack Router 的 SPA，路由带语言前缀（``/zh``、``/en``）�
 - 主客户端与主服务配置使用 YAML：客户端 ``~/.config/qatlas/config.yaml``，
   qatlasd ``~/.qatlas/config.yaml``；独立 ``downloaderworker`` 则使用
   ``DL_WORKER_*`` 环境变量与非凭据 flags，不能把主进程约束推广到执行节点；
-- Python 测试：``uv run --extra dev pytest tests/``；
-  Go 测试：``go test ./internal/... ./cmd/...``（或 ``pixi run test-go``）；
+- 本仓 Python 测试覆盖部署模板与服务端生产冒烟；开发依赖位于
+  ``pyproject.toml`` 的 ``[dependency-groups].dev``，不是发行包的 runtime deps。
+  离线测试：``uv run --group dev pytest -m "not e2e and not network" tests/``；
+  生产冒烟按 nightly workflow 的配置单独运行。Go 测试：
+  ``go test ./internal/... ./cmd/...``（或 ``pixi run test-go``）；
 - 文档站：公开站 ``/doc`` 与开发站 ``/devdoc``（管理员票据鉴权）由
   ``.github/workflows/docs.yml`` 独立构建并发布为 ghcr 上的
   ``qatlas-docs`` 镜像；部署机运行 ``deploy/update-docs.sh`` 把新文档写入

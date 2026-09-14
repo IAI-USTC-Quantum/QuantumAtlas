@@ -1,6 +1,8 @@
 # Python 客户端 `qatlas`
 
-`qatlas` 是 QuantumAtlas 的命令行客户端，独立发布为 PyPI 包 **`qatlas-cli`**（CLI 自 0.22.0 起从主仓拆出；主仓的 `quantum-atlas` 包现在只含 parser 库）。它通过 HTTP 与 `qatlasd` 服务端通信，覆盖论文摄入、资产上传、本地 MinerU 解析、论文 Markdown / 图片拉取、凭据管理等工作流。
+`qatlas` 是 QuantumAtlas 的命令行客户端，由 [IAI-USTC-Quantum/qatlas-cli](https://github.com/IAI-USTC-Quantum/qatlas-cli) 独立维护和发版，PyPI 包名为 **[`qatlas-cli`](https://pypi.org/project/qatlas-cli/)**。它通过 HTTP 与 `qatlasd` 服务端通信，覆盖论文摄入、资产上传、本地 MinerU 解析、论文 Markdown / 图片拉取、凭据管理等工作流。本节保留服务端集成指南；客户端开发与发行请到独立仓库。
+
+旧包 `quantum-atlas 0.21.0` 是仅含元数据的最终迁移版：不含 `qatlas` 模块、parser 库或命令入口，没有运行时依赖，不会自动安装 `qatlas-cli`。安装主仓不会得到 CLI。已装旧包的用户请先看[迁移指南](../getting-started.md#migrate-quantum-atlas)，保留 `~/.config/qatlas` 配置和凭据。
 
 ```bash
 uv tool install qatlas-cli    # 或 pipx install / pip install

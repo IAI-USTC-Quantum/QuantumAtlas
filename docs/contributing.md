@@ -10,7 +10,7 @@
 
     ---
 
-    改 Python client / Go server / React 前端。从 fork 到 PR 的完整流程。
+    本仓改 Go server / React 前端；Python CLI 请到 [qatlas-cli 独立仓库](https://github.com/IAI-USTC-Quantum/qatlas-cli)。从 fork 到 PR 的完整流程。
 
 -   :material-text-box-edit:{ .lg .middle } **[贡献文档](#docs)**
 
@@ -57,13 +57,13 @@
 例子：
 
 ```
-feat(client): support --no-poll for qatlas contrib mineru queue mode
+feat(routes): add paper metadata endpoint
 fix(routes): preserve metadata sha256 on conditional PUT 412 retry
 docs(deployment): add Caddy template for dual-endpoint RustFS
 chore(deps): bump pocketbase to v0.38.2
 ```
 
-**BREAKING CHANGE** 用 footer 标记，`!` 会让 commitizen 算成 major bump：
+**BREAKING CHANGE** 用 footer 或 type 后的 `!` 标记；版本调整由 maintainer 按发布对象审核：
 
 ```
 feat(api)!: rename /api/papers/upload to /api/papers/upload-pdf
@@ -71,101 +71,9 @@ feat(api)!: rename /api/papers/upload to /api/papers/upload-pdf
 BREAKING CHANGE: clients before 0.2.0 must update to use the new path.
 ```
 
-### Commitizen 与发版
+### 版本与发布边界
 
-我们用 [Commitizen](https://commitizen-tools.github.io/commitizen/) 自动算下个版本号 + 写 CHANGELOG + 打 tag。配置在 `pyproject.toml [tool.commitizen]`：
-
-```toml
-[tool.commitizen]
-name = "cz_conventional_commits"
-tag_format = "v$version"
-version_scheme = "pep440"           # PEP 440 版本号格式（支持 0.12.0a1 / 0.12.0.dev3 等 Python 标记）
-version_provider = "pep621"         # 从 [project] version 字段读写（不是 [tool.poetry]）
-update_changelog_on_bump = true
-major_version_zero = true           # 0.x 期间 feat 也只 bump minor
-annotated_tag = true                # 创建 annotated tag（默认 lightweight，git push --follow-tags 不推 lightweight）
-```
-
-`version_provider = "pep621"` 这条意思是 cz **读写 `pyproject.toml` 顶层 `[project] version`**——PEP 621 标准位置。`uv` 不参与，因为 `uv.lock` 里的 self-package version 字段在工程上无人依赖（详见下"为什么 uv.lock 不用同步"）。
-
-```bash
-# 写 commit 不会格式（type / scope / subject）
-uv run cz commit
-
-# 算下个版本 + 改 pyproject + 改 CHANGELOG + commit + tag（一条命令搞定）
-uv run cz bump
-```
-
-`cz bump` 默认行为：
-
-1. 按 git log 算下个版本号（feat → minor，fix → patch，`feat!` / `BREAKING CHANGE` → major；0.x 期间 feat 仍 minor）
-2. 改 `pyproject.toml [project] version` + 在 `CHANGELOG.md` 顶部插新版本段
-3. **`git commit -a` —— 卷入所有 modified tracked files**，不只 pyproject + CHANGELOG。源码 `commitizen/commands/bump.py::Bump._get_commit_args` 永远返回 `["-a"]`。所以 bump 前**必须先 `git stash` 工作树里所有未完成 WIP**，或者把它们 commit 完再 bump，否则 bump commit 会卷进 unrelated 改动 + commit message 失实
-4. `git commit -m "bump: version <旧> → <新>"` + `git tag v<新>`
-5. **不 push**——你 review 完手动 push
-
-**release.yml 只在 `git push origin v<X.Y.Z>`（push tag）时触发**。不 push tag 就不会发版。push tag 后 [`release.yml`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.github/workflows/release.yml) 自动 build wheel/sdist + 3 个平台 Go binary + 发 PyPI + 发 GitHub Release + 签 SLSA attestation。
-
-#### 标准发版流程（推荐 — 跟社区主流一致）
-
-```bash
-# 1. 本地跑全部 CI mirror，全绿再 bump
-pixi run vet \
-  && pixi run test-go \
-  && pixi run build \
-  && uv run pytest -m "not network and not e2e"
-
-# 2. 算版本 + 改文件 + commit + tag 一条搞定
-uv run cz bump
-
-# 3. Review commit 和 tag 内容
-git show HEAD                               # 看 bump commit diff
-git show --stat $(git describe --tags --abbrev=0)  # 看 tag 指向
-
-# 4. Push branch + tag（--follow-tags 同时推 main 和 annotated tag）
-git push --follow-tags
-```
-
-!!! info "为什么必须先本地跑 CI mirror"
-
-    CI 有三个独立 workflow（`go.yml` / `pytest.yml` / `release.yml`）平行跑。**`release.yml` 不跑 vet/pytest**，所以本地不跑 vet 就直接 push tag → release artifact 照常发了，但 `go.yml` 红着，得 push fix commit 才能消红——一次 release 留个红 badge 在 commit history 不好看。
-
-!!! info "为什么 uv.lock 不用同步"
-
-    cz 改 pyproject `[project] version` 后，`uv.lock` 里 `[[package]] name = "quantum-atlas"` 块的 `version` 字段会 stale 一拍。但：
-
-    - `release.yml` 用 `python -m build`，**不读 uv.lock**
-    - `pytest.yml` 用 `uv sync --frozen`，`--frozen` 检查 dep tree 但 **self-package 是 editable install，不参与 dep resolve**，不会失败
-    - dev 运行时直接读 pyproject
-
-    所以 uv.lock 里 self-version 字段过期**不影响任何 CI / build / runtime**，纯粹是 cosmetic。强迫症想清，bump 后单跑：
-
-    ```bash
-    uv lock && git add uv.lock && git commit --amend --no-edit && git tag -f v$(cz version --project)
-    ```
-
-    （`tag -f` 是因为 amend 改了 commit hash，原 tag 还指向旧 hash 需要重指。）
-
-    uv.lock 也不能挂到 cz 的 `version_files` 自动更新——cz 单行 regex 替换，uv.lock 里几十个 dep 都有 `version = "..."` 行，迟早撞车（今天 0.12.0 不撞，明天 0.13.0 可能跟某 dep 撞）。
-
-!!! warning "bump 出错怎么撤"
-
-    tag **没** push 出去：
-
-    ```bash
-    git reset --soft HEAD~1   # 撤 commit 保留改动
-    git tag -d v<n>           # 删本地 tag
-    git reset HEAD            # unstage
-    ```
-
-    tag 已经 push 出去：
-
-    ```bash
-    git push origin :refs/tags/v<n>           # 删远端 tag
-    git push origin main --force-with-lease   # force push 修正后的 main
-    ```
-
-    后者会让任何 fetch 过该 tag 的 client 看到不一致，能避免就避免——所以 push 前一定 `git show HEAD` review 一次。
+Conventional Commits 是提交约定，不会自动触发发布。服务端使用根目录 `VERSION` + `v<version>` tag；旧 PyPI 包仅保留一次性最终迁移版 `quantum-atlas 0.21.0`，使用独立 tag `quantum-atlas-v0.21.0`。不要再用 `cz bump` 驱动服务端或继续递增旧包版本。发布命令统一见下方 [Release 流程](#release)。
 
 ---
 
@@ -180,15 +88,17 @@ cd QuantumAtlas
 
 # 一次性同步全栈依赖（Python + npm + 前端 build + Go build）
 pixi run build
-# 或单独装 Python deps
-uv sync
+# 单独装主仓 Python 开发 / 测试工具
+uv sync --locked --group dev
 ```
+
+Python 开发依赖由 `pyproject.toml [dependency-groups].dev` 管理，不再使用 `quantum-atlas[dev]` 项目 extra，也不是最终迁移包的运行时依赖。主仓不含 `qatlas/` 客户端代码；安装主仓不会提供 `qatlas` 命令。需要服务端联调时单独安装 `qatlas-cli`；修改客户端代码、测试或发版请到 [qatlas-cli 仓库](https://github.com/IAI-USTC-Quantum/qatlas-cli)。
 
 ### 跑测试
 
 ```bash
-# Python 测试
-uv run pytest
+# 主仓 Python 工具 / 契约测试（不是 CLI 实现测试）
+uv run --group dev pytest
 
 # Go 测试（必须通过 pixi 跑，自带 cgo + 工具链）
 pixi run test-go
@@ -213,7 +123,6 @@ cd web && npm run build
 ### 仓库结构
 
 ```
-qatlas/                Python client (CLI + contrib workflows)
 internal/              Go server 内部包（registry / search / ingest / objstore / auth / config）
 cmd/qatlasd/           Go server 入口 (main + cobra subcommands)
 web/                   React SPA (Vite + TanStack Router)
@@ -236,7 +145,7 @@ docs/                  这份文档
 
 ### 添加新功能注意
 
-- **client 新命令** → 在 `atlas/cli.py::COMMANDS` 加条目，新建 `atlas/client/<name>.py`
+- **client 新命令** → 到 [qatlas-cli 仓库](https://github.com/IAI-USTC-Quantum/qatlas-cli)开发；本仓只保留服务端 API / 集成文档
 - **server 新 endpoint** → 在 `internal/routes/` 加 handler，并在 `cmd/qatlasd/main.go::registerRoutes` 中注册
 - **加 PAT scope** → 改 `internal/pat/scopes.go`（必须重新部署，**不可热加载**）
 - **新 PocketBase migration** → 放 `pb_migrations/`，下次启动自动跑
@@ -326,30 +235,49 @@ qatlas contrib mineru --watch
 
 ---
 
-## Release 流程
+## Release 流程 { #release }
 
-仅 maintainer 关心。
+仅 maintainer 操作。发布前先确认目标 commit 的 CI 全绿并 review 变更；**推送 tag 才是发布动作**，普通分支提交不会自动发布。不要使用 `--tags` / `--follow-tags` 顺带推送未经审核的 tag。
 
-> **版本解耦（0.22.0 起）**：`qatlasd` 的版本唯一来源是仓库根目录的
-> `VERSION` 文件 + 手动推送的 `v<version>` tag（release.yml prep 强校验
-> 二者一致）。`cz bump` 只管理 `pyproject.toml` 里 `quantum-atlas`
-> PyPI 包的版本，两者互不挂钩。与 `qatlas-cli` 的兼容协议见
-> [版本与兼容策略](https://quantum-atlas.readthedocs.io/zh-cn/latest/dev/versioning.html)：
-> `(major, minor)` 相同即兼容，兼容性修复只 bump patch。
+| 发布对象 | 版本来源 | 唯一对应 tag | 产物 |
+|---|---|---|---|
+| 服务端 `qatlasd` | 根目录 `VERSION`（当前 `0.34.0`） | `v<version>` | Go binaries、服务端 GitHub Release、Docker 镜像 |
+| 旧 PyPI 包最终迁移版 | `pyproject.toml [project].version = "0.21.0"` | **仅 `quantum-atlas-v0.21.0`** | metadata-only wheel / sdist、独立迁移 GitHub Release、PyPI |
+| 客户端 `qatlas-cli` | [独立仓库](https://github.com/IAI-USTC-Quantum/qatlas-cli) | 由该仓库管理 | [PyPI `qatlas-cli`](https://pypi.org/project/qatlas-cli/) |
 
-1. 确认 CI 全绿（pytest + go test + 前端 build）
-2. 编辑根目录 `VERSION` 为目标版本号，更新 `CHANGELOG.md`，commit
-3. `git tag v<version>`（与 VERSION 完全一致）并 Review：`git show --stat <tag>`
-4. `git push && git push origin v<version>`
-5. [`release.yml`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.github/workflows/release.yml) 自动：
-    - Cross-compile 3 平台 binary（`linux/{amd64,arm64}` + `darwin/arm64`；Intel Mac 故意不发，`macos-13` runner 太慢，详见 `release.yml::binary-build` 注释）
-    - 发到 GitHub Release（含 SHA256 checksum）
-    - PyPI 发 `quantum-atlas` wheel + sdist（版本取 pyproject.toml，与 qatlasd 版本无关；`skip-existing` 保证重复发同版本是 no-op）
-6. 验证：
-    ```bash
-    pip install --upgrade quantum-atlas   # 验证 parser 包（主仓发的 quantum-atlas 只含 parser；CLI 包是独立的 qatlas-cli）
-    curl https://quantum-atlas.ai/install-qatlasd.sh | sh -s -- --version vX.Y.Z
-    ```
+### 服务端发版
+
+根目录 `VERSION` 是服务端版本唯一来源；最终迁移包的 `0.21.0` **不能写回** `VERSION`，此次退役不改变服务端 `0.34.0`。以后发布服务端时，先按需更新 `VERSION` 和服务端 changelog、提交并 review，再执行：
+
+```bash
+# 在已审核的 release commit 上；tag 必须与该 commit 的 VERSION 一致
+SERVER_VERSION="$(tr -d '[:space:]' < VERSION)"
+git tag -a "v${SERVER_VERSION}" -m "Release qatlasd ${SERVER_VERSION}"
+git show --stat "v${SERVER_VERSION}"
+# 确认后只推这个 tag
+git push origin "refs/tags/v${SERVER_VERSION}"
+```
+
+[`release.yml`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/.github/workflows/release.yml) 校验 tag 与 `VERSION` 一致，构建服务端文档 / 前端、三个平台的 Go binary（`linux/{amd64,arm64}` + `darwin/arm64`），生成 GitHub Release / checksum / provenance，并发布服务端 Docker 镜像。**服务端 `v*` tag 不构建或发布 `quantum-atlas`，也不发布 `qatlas-cli`。**
+
+完成后检查 Actions、GitHub Release 与镜像产物，并在测试环境验证 `qatlasd --version` 与健康检查；不要通过安装旧 PyPI 包验证服务端。
+
+### 一次性最终迁移包发版
+
+`quantum-atlas 0.21.0` 只保留退役说明和发行元数据，**不含 `qatlas` 模块、parser 库或任何 console entry，没有运行时依赖，也不通过依赖自动安装 `qatlas-cli`**。主仓残留 Python helpers 已退役，客户端用户按[迁移指南](getting-started.md#migrate-quantum-atlas)手动切换。
+
+在已审核的退役 commit 上确认最终包版本、构建产物内容和迁移安装测试通过，且根目录 `VERSION` 仍为 `0.34.0`。只在准备正式发布这一次迁移版时执行：
+
+```bash
+git tag -a quantum-atlas-v0.21.0 -m "Retire quantum-atlas on PyPI at 0.21.0"
+git show --stat quantum-atlas-v0.21.0
+# 确认后仅推最终迁移 tag，不推服务端 tag
+git push origin refs/tags/quantum-atlas-v0.21.0
+```
+
+此 tag 仍由 **`.github/workflows/release.yml`** 处理，但走独立 Python 构建 / 发布 job，不运行服务端 binary、文档或 Docker 构建。保留现有 PyPI Trusted Publisher 的 workflow filename **`release.yml`** 和 GitHub environment **`pypi`**（OIDC 身份不变）。迁移 GitHub Release 设置 **`make_latest: false`**，不抢占服务端 Latest，也不影响默认 `install-qatlasd.sh` 下载。
+
+发布后核对 PyPI 项目页的迁移说明、wheel / sdist 确实无 Python 模块 / 命令入口 / `Requires-Dist`，且服务端 Latest 未变化。不要为重试修改已经发布的版本或移动已推送 tag；需要重试时在 Actions 针对同一最终 tag 重跑。旧包没有后续常规发版流程，CLI 后续开发和发版只在 `qatlas-cli` 仓库进行。
 
 ## 行为准则
 

@@ -33,10 +33,10 @@ arXiv / user uploads
 
 ## Installation
 
-QuantumAtlas ships two deliverables:
+QuantumAtlas has two independently maintained components:
 
-- **`qatlasd`** (Go binary, single file ~30 MB, embeds the frontend SPA + PocketBase + SQLite) — the server
-- **`qatlas`** (Python CLI, `quantum-atlas` package) — the daily-driver client that talks to the server API
+- **`qatlasd`** (Go binary, single file ~30 MB, embeds the frontend SPA + PocketBase + SQLite) — the server, built and released from this repository
+- **`qatlas`** (Python CLI, [`qatlas-cli` package](https://pypi.org/project/qatlas-cli/)) — the daily-driver client, maintained and released in [IAI-USTC-Quantum/qatlas-cli](https://github.com/IAI-USTC-Quantum/qatlas-cli)
 
 ### Install the server (`qatlasd`)
 
@@ -63,11 +63,12 @@ qatlasd service install \
 
 ### Install the client (`qatlas` CLI)
 
-> **Install-method change**: since 0.22.0 the `qatlas` CLI lives in its own
-> repository, [IAI-USTC-Quantum/qatlas-cli](https://github.com/IAI-USTC-Quantum/qatlas-cli),
-> and the PyPI package is renamed from `quantum-atlas` to **`qatlas-cli`**.
-> If you previously installed `quantum-atlas`, switch to the commands below
-> (the version lineage continues from 0.21.0a3; your CLI config is unaffected).
+> **Old package retirement:** the final `quantum-atlas 0.21.0` release is
+> metadata-only. It contains no `qatlas` module, parser library, or console entry
+> point, has no runtime dependencies, and does **not** automatically install
+> `qatlas-cli`. Installing this repository does not provide the `qatlas` command.
+> For a new installation, choose one command below. Existing `quantum-atlas`
+> users must [migrate first](#migrate-from-quantum-atlas).
 
 ```bash
 # Recommended: uv global tool (isolated env + easy upgrades)
@@ -83,6 +84,43 @@ qatlas --help
 ```
 
 The `qatlas` CLI points at a remote server via its YAML config (`qatlas config set`). See [docs/client/cli-qatlas.md](docs/client/cli-qatlas.md).
+
+### Migrate from `quantum-atlas`
+
+Choose **only the installer you originally used**, in the same environment:
+
+```bash
+# uv tool users
+uv tool uninstall quantum-atlas
+uv tool install qatlas-cli
+
+# OR pipx users
+pipx uninstall quantum-atlas
+pipx install qatlas-cli
+
+# OR pip users (activate the original virtual environment first, if used)
+pip uninstall quantum-atlas
+pip install qatlas-cli
+```
+
+If both packages were already installed, uninstalling the old package can remove
+shared module or command paths. **Reinstall `qatlas-cli` after uninstalling
+`quantum-atlas`**, even if the installer says the new package is already present:
+
+```bash
+# Choose the matching installer again
+uv tool install --reinstall qatlas-cli
+# OR
+pipx reinstall qatlas-cli
+# OR
+pip install --force-reinstall qatlas-cli
+
+qatlas --help
+```
+
+**Do not delete `~/.config/qatlas`** (or the corresponding platform config
+directory): keep your existing configuration and credentials. The old package's
+remaining Python helpers are retired, not a supported library API in this repo.
 
 ## Quickstart
 
@@ -163,13 +201,12 @@ Full CLI options, auth details (PAT scopes / bearer tokens), and the recommended
 - [docs/concepts/storage-architecture.md](docs/concepts/storage-architecture.md): how raw assets, metadata, and the registry are split, and why; bucket layout; reconciliation and rebuild.
 - [docs/server/rustfs.md](docs/server/rustfs.md): qatlas ↔ RustFS ops guide (env vars, IAM policy, bucket versioning, `qatlasd storage prune`, troubleshooting).
 - [docs/server/](docs/server/index.md): local startup, single-host deployment, systemd, environment variables, reverse proxy, and auth examples.
-- [docs/contributing.md](docs/contributing.md): dev commands, Conventional Commits, Commitizen release flow, testing conventions.
+- [docs/contributing.md](docs/contributing.md): dev commands, Conventional Commits, server releases and the one-time legacy PyPI retirement release, testing conventions.
 
 ## Repository overview
 
 ```text
 QuantumAtlas/
-├── qatlas/                Python client (CLI + contrib workflows)
 ├── cmd/                   Go server entry point
 ├── internal/              Go server internals (registry, search, ingest, objstore, ...)
 ├── web/                   React SPA frontend
@@ -177,7 +214,8 @@ QuantumAtlas/
 ├── scripts/               bootstrap and maintenance scripts
 ├── tests/                 test suite
 ├── docs/                  documentation
-└── pyproject.toml         project config
+├── VERSION                server version (currently 0.34.0)
+└── pyproject.toml         retired package metadata + development dependency groups
 ```
 
 > State directories (`raw/`, `data/`, `pb_data/`) are **not** in the repo —
@@ -209,7 +247,7 @@ Contributions welcome in these areas:
 - Improving parsing, ingestion, search providers, and the API.
 - Tests, documentation fixes, and collaboration UX.
 
-Please use Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`). qatlasd releases are driven by the root `VERSION` file + a pushed `v<version>` tag; Commitizen only manages the `quantum-atlas` PyPI package version — see [docs/contributing.md](docs/contributing.md).
+Please use Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`). Server releases use the root `VERSION` (currently `0.34.0`) + a `v<version>` tag and publish only server Go/GitHub/Docker artifacts. The one-time final `quantum-atlas 0.21.0` package uses only `quantum-atlas-v0.21.0` in `release.yml`, with a separate build/release path and `make_latest: false`; server tags never publish it. Do not use Commitizen to bump the server or continue the retired package's releases. CLI development and releases belong in [qatlas-cli](https://github.com/IAI-USTC-Quantum/qatlas-cli). See [docs/contributing.md](docs/contributing.md) for the distinct release commands.
 
 ## Acknowledgements
 

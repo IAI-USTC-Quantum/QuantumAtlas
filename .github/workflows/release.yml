@@ -1,27 +1,16 @@
 name: Tag and publish release
 
-# Trigger surface — qalgo style:
-#   - workflow_dispatch    — manual re-run from the Actions tab.
-#   - push tags v*.*.*    — user creates a tag locally with `cz bump
-#                           && git push origin v<X.Y.Z>` (or any tag of
-#                           the right shape) and that's the ONLY thing
-#                           that fires a release.
-#
-# We previously triggered on pyproject.toml / CHANGELOG.md path-pushes
-# and let this workflow create the tag itself. That trigger surface
-# fired on ANY unrelated commit that happened to touch those files
-# (e.g. a refactor that drops a dependency from pyproject) — and when
-# the version string wasn't bumped, the "validate-tag" step would red
-# the run with a confusing "tag exists at different SHA" error. The
-# qalgo pattern (only push:tags triggers) makes the operator the
-# explicit "I want a release" actor: no tag push → no workflow run →
-# no spurious red CI badge. See .github/copilot-instructions.md
-# "Release / publish 流水" + "🛑 cz bump 上线前置 checklist" sections.
+# Server releases: v*.*.* tags, validated against root VERSION.
+# Legacy PyPI retirement: ONLY quantum-atlas-v0.21.0, validated against
+# pyproject.toml. This path never builds/publishes qatlasd or Docker images.
+# Keep this filename and environment=pypi for the existing Trusted Publisher.
+# CLI releases belong exclusively to IAI-USTC-Quantum/qatlas-cli.
 on:
   workflow_dispatch:
   push:
     tags:
       - 'v*.*.*'
+      - 'quantum-atlas-v0.21.0'
 
 # Top-level permissions are read-only; each job opts in to what it needs.
 # Trusted Publishing in pypi-publish requires id-token: write at the JOB
@@ -36,6 +25,7 @@ jobs:
   #    source of truth), and emit it as an output other jobs depend on.
   # --------------------------------------------------------------------
   prep:
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -62,8 +52,7 @@ jobs:
           set -euo pipefail
           # Tag was pushed by the operator — github.ref_name is e.g. "v0.4.0".
           TAG="${GITHUB_REF_NAME}"
-          # Strip the leading 'v' for the bare version string used in
-          # filenames / Python wheel metadata.
+          # Strip the leading 'v' for the server version and filenames.
           VERSION="${TAG#v}"
 
           # Cross-check: the root VERSION file (qatlasd's single source
@@ -78,10 +67,8 @@ jobs:
             exit 1
           fi
 
-          # NOTE: pyproject.toml's `quantum-atlas` package version is
-          # deliberately NOT checked here — the PyPI package is decoupled
-          # from qatlasd and evolves on its own cadence (bumped via
-          # commitizen); only the VERSION file gates a qatlasd release.
+          # The retired quantum-atlas distribution is NOT part of a
+          # server release. Only root VERSION gates qatlasd releases.
 
           # PEP 440 / SemVer pre-release detection. Anything containing
           # a, b, rc, alpha, beta, pre, or '-' in the version segment is
@@ -101,12 +88,12 @@ jobs:
           echo "Resolved tag=$TAG version=$VERSION is_prerelease=$IS_PRERELEASE"
 
   # --------------------------------------------------------------------
-  # 2. python-build — wheel + sdist, single ubuntu job (Python builds
-  #    are platform-agnostic, only one architecture needed).
+  # 2. python-build — one final metadata-only retirement release.
+  #    Never runs for a server v* tag; never depends on server prep.
   # --------------------------------------------------------------------
   python-build:
+    if: github.ref == 'refs/tags/quantum-atlas-v0.21.0'
     runs-on: ubuntu-latest
-    needs: prep
 
     steps:
       - uses: actions/checkout@v4
@@ -119,10 +106,33 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Build Python distributions
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Validate final package version and run offline tests
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          python -m pip install build
-          python -m build
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          import tomllib
+          from pathlib import Path
+          project = tomllib.loads(Path("pyproject.toml").read_text())["project"]
+          assert project["name"] == "quantum-atlas"
+          assert project["version"] == "0.21.0"
+          assert os.environ["RELEASE_TAG"] == f"quantum-atlas-v{project['version']}"
+          PY
+          uv sync --locked
+          uv run --no-sync python -m pytest -m "not network and not e2e"
+
+      - name: Build and validate final Python distributions
+        run: |
+          set -euo pipefail
+          uv run --no-sync python -m build --no-isolation
+          uv run --no-sync python scripts/check_legacy_dist.py dist
+          uv run --no-sync python -m twine check --strict dist/*
 
       - name: Upload Python distributions
         uses: actions/upload-artifact@v4
@@ -303,12 +313,11 @@ jobs:
           retention-days: 7
 
   # --------------------------------------------------------------------
-  # 4. create-release — aggregate all artifacts into one GitHub Release.
-  #    Owns the git tag creation too (when prep said exists=false).
+  # 4. create-release — server binaries only, no retired PyPI artifacts.
   # --------------------------------------------------------------------
   create-release:
     runs-on: ubuntu-latest
-    needs: [prep, python-build, binary-build]
+    needs: [prep, binary-build]
     permissions:
       contents: write       # needed to push tag + create release
       id-token: write       # OIDC token → Sigstore for SLSA provenance
@@ -320,12 +329,6 @@ jobs:
           ref: ${{ github.ref }}
           fetch-depth: 0
           fetch-tags: true
-
-      - name: Download Python distributions
-        uses: actions/download-artifact@v4
-        with:
-          name: release-dists-python
-          path: dist/
 
       # Each binary lives in its own per-target artifact. `pattern` +
       # `merge-multiple: true` glues them back into a single dist/bin/
@@ -346,14 +349,9 @@ jobs:
       - name: Generate SHA256SUMS
         run: |
           set -euo pipefail
-          # One manifest covering EVERY release asset (binaries + wheel +
-          # sdist). Naming follows the hashicorp / k8s / debian convention
-          # (uppercase, no extension), which signals "this is a checksum
-          # manifest" to humans + tools without needing MIME-sniffing.
+          # Server release assets only; legacy Python publishing is separate.
           cd dist
           ( cd bin && sha256sum qatlasd-* ) > SHA256SUMS
-          # Python artifacts (wheel + sdist) live one level up.
-          sha256sum *.whl *.tar.gz >> SHA256SUMS
           cat SHA256SUMS
 
       # SLSA build provenance — signed attestation binding each artifact
@@ -372,10 +370,7 @@ jobs:
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v3
         with:
-          subject-path: |
-            dist/*.whl
-            dist/*.tar.gz
-            dist/bin/qatlasd-*
+          subject-path: dist/bin/qatlasd-*
 
       - name: Extract latest changelog
         run: |
@@ -413,8 +408,6 @@ jobs:
           tag_name: ${{ needs.prep.outputs.tag }}
           body_path: /tmp/changelog.txt
           files: |
-            dist/*.tar.gz
-            dist/*.whl
             dist/bin/qatlasd-*
             dist/SHA256SUMS
           draft: false
@@ -431,11 +424,8 @@ jobs:
   # --------------------------------------------------------------------
   # 5. pypi-publish — Trusted Publishing via OIDC.
   #
-  # This job ships the `quantum-atlas` PyPI package (currently the rag
-  # embed worker code). Its version comes from pyproject.toml (bumped via
-  # commitizen) and is DECOUPLED from qatlasd's version: qatlasd's single
-  # source of truth is the root VERSION file + the pushed v* tag. The two
-  # version numbers are not expected to match.
+  # One final quantum-atlas distribution, gated to its exact retirement
+  # tag. Later server releases MUST NOT upload anything to this project.
   #
   # No API token stored anywhere; PyPI verifies the GitHub OIDC token
   # against a per-project Trusted Publisher config that must match:
@@ -452,13 +442,12 @@ jobs:
   # (no secrets / approval reviewers needed — the name itself is the
   # match key for the OIDC token).
   #
-  # Runs in parallel with create-release: both consume python-build's
-  # artifact and neither depends on the other. `skip-existing: true`
-  # makes re-runs against an already-published version a no-op.
+  # `skip-existing: true` makes retries of the final release idempotent.
   # --------------------------------------------------------------------
   pypi-publish:
+    if: github.ref == 'refs/tags/quantum-atlas-v0.21.0'
     runs-on: ubuntu-latest
-    needs: [prep, python-build]
+    needs: python-build
     environment:
       name: pypi
       url: https://pypi.org/p/quantum-atlas/
@@ -480,6 +469,44 @@ jobs:
           # packages-dir defaults to dist/. We deliberately did NOT
           # download the binaries artifact in this job so the directory
           # contains only *.whl + *.tar.gz, matching what twine wants.
+
+  # Only announce the legacy release after PyPI has accepted it. Never
+  # replace the server's GitHub Latest release (used by install-qatlasd.sh).
+  legacy-python-release:
+    if: github.ref == 'refs/tags/quantum-atlas-v0.21.0'
+    runs-on: ubuntu-latest
+    needs: [python-build, pypi-publish]
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-dists-python
+          path: dist/
+      - name: Generate Python artifact checksums
+        working-directory: dist
+        run: sha256sum *.whl *.tar.gz > SHA256SUMS
+      - uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            dist/*.whl
+            dist/*.tar.gz
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "quantum-atlas 0.21.0 — final migration release"
+          body_path: PYPI_README.md
+          make_latest: false
+          prerelease: false
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/SHA256SUMS
 
   # --------------------------------------------------------------------
   # 6. docker-image — build & push the multi-arch container image to

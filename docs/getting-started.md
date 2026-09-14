@@ -2,6 +2,8 @@
 
 按你的角色选一条路径开始。每条路径都是「装好工具 → 跑一个最小可工作的例子 → 知道下一步往哪走」。
 
+客户端由 [qatlas-cli 独立仓库](https://github.com/IAI-USTC-Quantum/qatlas-cli)维护和发版，安装包为 [PyPI `qatlas-cli`](https://pypi.org/project/qatlas-cli/)。安装本仓不会提供 `qatlas` 命令；已装过旧包 `quantum-atlas` 的用户请先完成[迁移](#migrate-quantum-atlas)。
+
 === ":material-account-search: 我是研究者"
 
     我想用 QuantumAtlas 查论文 / 拉论文资产。**不需要装 server**。
@@ -161,6 +163,8 @@
     pixi run build
     ```
 
+    Python 测试工具从 `pyproject.toml [dependency-groups].dev` 安装：`uv sync --locked --group dev`，不再使用 `quantum-atlas[dev]` extra。这不会安装 `qatlas`；需要 CLI 联调时，按上面的独立客户端安装步骤操作。CLI 自身的代码修改与测试请到 [qatlas-cli 仓库](https://github.com/IAI-USTC-Quantum/qatlas-cli)。
+
     **2. 起本地 Web 服务：**
 
     ```bash
@@ -184,8 +188,8 @@
     **4. 跑测试：**
 
     ```bash
-    # Python 测试
-    uv run pytest
+    # 主仓 Python 工具 / 契约测试（不是 CLI 实现测试）
+    uv run --group dev pytest
 
     # Go 测试（必须通过 pixi 跑：cgo + 工具链都在 pixi env 里）
     pixi run test-go
@@ -201,6 +205,47 @@
     - [参考](reference/index.md)
 
 ---
+
+## 从旧包 quantum-atlas 迁移 { #migrate-quantum-atlas }
+
+`quantum-atlas 0.21.0` 是仅含元数据的最终迁移版：没有 `qatlas` Python 模块、parser 库或 console entry，没有运行时依赖，也不会自动安装 `qatlas-cli`。升级旧包不等于安装新 CLI；旧包残留的 Python helpers 已退役，并非主仓继续提供的库 API。
+
+**选择最初安装旧包的工具，只执行对应的一组命令**。pip 用户需先激活原来的虚拟环境（如有），不要跨安装器混用：
+
+=== "uv tool"
+
+    ```bash
+    uv tool uninstall quantum-atlas
+    uv tool install qatlas-cli
+    ```
+
+=== "pipx"
+
+    ```bash
+    pipx uninstall quantum-atlas
+    pipx install qatlas-cli
+    ```
+
+=== "pip"
+
+    ```bash
+    pip uninstall quantum-atlas
+    pip install qatlas-cli
+    ```
+
+!!! warning "两包已共存时，卸载之后重装新包"
+    旧发行版可能与 `qatlas-cli` 共享模块或命令路径；卸载 `quantum-atlas` 时可能把它们一起移除。即使新包显示「已安装」，也必须在**旧包卸载之后**用对应安装器重装：
+
+    ```bash
+    # 三选一，与原安装器一致
+    uv tool install --reinstall qatlas-cli
+    # 或
+    pipx reinstall qatlas-cli
+    # 或
+    pip install --force-reinstall qatlas-cli
+    ```
+
+**不要删除 `~/.config/qatlas`**（macOS / Windows 保留对应平台的配置目录），其中的配置和凭据无需因包名迁移而清除。最后运行 `qatlas --help`、`qatlas config path` 验证安装和配置路径。客户端后续升级与问题反馈请到 [qatlas-cli 仓库](https://github.com/IAI-USTC-Quantum/qatlas-cli)。
 
 ## 通用配置：client YAML / server `.env`
 

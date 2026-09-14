@@ -4,6 +4,19 @@
 安装
 ----
 
+``qatlas`` 命令由独立 PyPI 包 ``qatlas-cli`` 提供，源码与客户端测试位于
+`IAI-USTC-Quantum/qatlas-cli
+<https://github.com/IAI-USTC-Quantum/qatlas-cli>`_ 的 ``src/qatlas/`` 与
+``tests/``。本文保留客户端调用服务端的使用说明，不代表主仓仍包含 CLI。
+
+.. important::
+
+   旧包 ``quantum-atlas`` 的最终版本 ``0.21.0`` 只保留元数据与迁移说明，
+   没有运行时依赖、``qatlas`` Python 命名空间或命令入口；它不会安装、
+   调用或自动转发到 ``qatlas-cli``。不要再通过安装旧包获取 CLI。
+   旧 ``qatlas.paper_assets`` 与 ``qatlas.parser.doi`` 库也已退役，
+   不应认为它们的 Python API 已迁入 ``qatlas-cli``。
+
 .. code-block:: bash
 
    # 从 PyPI 安装为全局工具（推荐；CLI 独立发布为 qatlas-cli 包）
@@ -13,6 +26,27 @@
    cd qatlas-cli && uv tool install . --editable --force
 
    qatlas --help
+
+从旧包切换时，按原来的安装方式选择下面一组命令；先卸载旧包，后安装
+新包，避免两个发行版共用 ``qatlas`` 文件或命令入口：
+
+.. code-block:: bash
+
+   # 原先通过 uv tool 安装
+   uv tool uninstall quantum-atlas
+   uv tool install qatlas-cli --force
+
+   # 原先通过 pipx 安装
+   pipx uninstall quantum-atlas
+   pipx install qatlas-cli --force
+
+   # 原先通过 pip 安装：在原 Python 环境中操作
+   python -m pip uninstall quantum-atlas
+   python -m pip install --force-reinstall qatlas-cli
+
+如果同一 Python 环境曾同时安装两个包，卸载旧包可能移除共享文件，
+因此上面的 pip 流程会重新安装客户端。迁移不需要删除现有客户端
+``config.yaml`` 或 ``hosts.yml``；请保留配置与登录凭据。
 
 默认线上实例为 https://qatlas.hfnl.app.chenzhaoyun.com/ （本文档即由它提供）。
 首次使用：
@@ -429,8 +463,9 @@ qatlasd 完成，qatlas-match 微服务只走内网）。退出码为 grep 风�
 插件协议（CLI plugin API v2）
 -----------------------------
 
-第三方包通过 entry-point 组 ``qatlas.plugins`` 向 CLI 贡献命令（协议定义在
-``qatlas/client/plugins/base.py``）：
+第三方包通过 entry-point 组 ``qatlas.plugins`` 向 CLI 贡献命令。
+协议定义位于独立 ``qatlas-cli`` 仓库的
+``src/qatlas/client/plugins/base.py``，不在本主仓库：
 
 .. code-block:: toml
 
@@ -451,7 +486,7 @@ qatlasd 完成，qatlas-match 微服务只走内网）。退出码为 grep 风�
 - ``ctx`` 是 ``CliContext``（已解析的 ``server_base_url`` / ``token`` /
   ``request_timeout`` / ``insecure`` / ``client_version``），与内置命令
   读同一份 ``~/.config/qatlas/config.yaml`` 与 hosts.yml；
-- ``qatlas.client.pluginsupport`` 是插件的公共 HTTP 层：
+- ``qatlas.client.pluginsupport`` 由 ``qatlas-cli`` 提供，是插件的公共 HTTP 层：
   ``server_request(ctx, method, path, ...)`` 自动带 PAT、
   ``X-Qatlas-Client-Version`` 协商头、超时与 TLS 选项；
   ``format_api_error(resp)`` 统一错误渲染；``poll_lro(ctx, path, ...)``
@@ -465,7 +500,8 @@ qatlasd 完成，qatlas-match 微服务只走内网）。退出码为 grep 风�
   用法。
 
 内置命令优先于插件命令；``search`` / ``rag`` 未安装时 CLI 给出安装提示
-（提示表在 ``qatlas/client/plugins/registry.py`` 的
+（提示表在独立 ``qatlas-cli`` 仓库的
+``src/qatlas/client/plugins/registry.py`` 中，名为
 ``KNOWN_STANDALONE_PLUGINS``）。
 
 示例

@@ -485,7 +485,7 @@ still recoverable until `storage prune` decides otherwise).
 `s3:ObjectRemoved:*`）、`s3.bucket.name`、`s3.object.key` 等。sink 刻意选**通用、
 零后端约定**的日志转发器（Fluent Bit，CNCF Graduated 项目）作为 sidecar，**不碰
 我们的 binary**——dumb 存储层不该被后端演进中的约定（事件 JSON 解析、桶布局、
-过滤逻辑）绑死；我们每 `cz bump` 一次也不该逼 NAS 跟着换 sink 镜像。Go server
+过滤逻辑）绑死；Go server 每次按根目录 `VERSION` + `v<version>` tag 发版，也不该逼 NAS 跟着换 sink 镜像。Go server
 唯一参与的是 `QATLAS_EDGE_NAME` 打的 UA 标（见下，纯辅助标识）。
 
 **为什么不用 RustFS 原生 audit**：audit 子系统在 1.0.0-beta.5 上有

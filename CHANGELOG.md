@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) during pre-1.0 development with Commitizen bump rules.
 
+## quantum-atlas 0.21.0 — final PyPI migration release (2026-09-14)
+
+### Breaking changes
+
+- Retire the `quantum-atlas` Python distribution. The final wheel contains only metadata and a migration notice: no `qatlas` command, `qatlas` import package, legacy parser helpers, runtime dependencies, or forwarding dependency to `qatlas-cli`.
+- The maintained CLI is published independently by [qatlas-cli](https://github.com/IAI-USTC-Quantum/qatlas-cli). Uninstall the old package before installing (or reinstalling) `qatlas-cli`; preserve existing CLI configuration. See [the migration guide](PYPI_README.md). The retired Python helper APIs are not promised by the replacement CLI.
+- Remove the dormant Python namespace and its orphan unit tests from this repository; preserve Go implementations, server deployment tests, and production smoke tests.
+
+### Build and release
+
+- Publish this final Python version only from `quantum-atlas-v0.21.0`, using the existing PyPI Trusted Publisher. Keep it separate from `v*` server tags and do not replace the server's GitHub Latest release.
+- Server releases no longer build, attach, or publish the retired Python distribution. `qatlasd` remains at `0.34.0`; no server binary or container release is part of this migration.
+- Move Python test/build tooling to a development dependency group; validate both wheel and sdist contents and exercise explicit legacy-to-CLI migration before publishing. The final release does not archive or yank any PyPI project/version.
+- Correct the existing Compose test's stale service list to include the already-configured, profile-gated `qatlas-match` service; deployment configuration is unchanged.
+
 ## v0.34.0 (2026-09-12)
 
 ### Feat

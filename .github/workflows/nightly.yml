@@ -53,7 +53,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: uv sync --extra dev --frozen
+        run: uv sync --locked
 
       - name: Validate required secret
         # Fail loudly + immediately if the operator forgot to set the

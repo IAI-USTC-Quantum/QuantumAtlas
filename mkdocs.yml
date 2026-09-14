@@ -81,8 +81,8 @@ extra:
       link: https://github.com/IAI-USTC-Quantum/QuantumAtlas
       name: GitHub repository
     - icon: fontawesome/brands/python
-      link: https://pypi.org/project/quantum-atlas/
-      name: quantum-atlas on PyPI
+      link: https://pypi.org/project/qatlas-cli/
+      name: qatlas-cli on PyPI
   status:
     new: 最近新增
     deprecated: 已废弃
@@ -108,14 +108,6 @@ plugins:
       locale: zh
       enable_creation_date: true
       fallback_to_build_date: true
-  - mkdocstrings:
-      handlers:
-        python:
-          paths: [qatlas]
-          options:
-            show_source: true
-            show_signature_annotations: true
-            separate_signature: true
   # Render the swaggo-generated OpenAPI spec as an embedded Swagger UI on
   # docs/server/api-explorer.md. The spec is copied into the docs tree by
   # hooks/openapi_spec.py at build time (single source: internal/apidocs).
@@ -208,4 +200,3 @@ extra_css:
 
 watch:
   - docs/snippets
-  - qatlas

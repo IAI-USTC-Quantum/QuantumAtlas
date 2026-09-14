@@ -5,8 +5,10 @@
 ## 项目快照
 
 - **名字**：QuantumAtlas
-- **PyPI**：[`quantum-atlas`](https://pypi.org/project/quantum-atlas/)（parser 库）/ [`qatlas-cli`](https://pypi.org/project/qatlas-cli/)（CLI）
-- **GitHub**：<https://github.com/IAI-USTC-Quantum/QuantumAtlas>
+- **客户端安装包**：[`qatlas-cli`](https://pypi.org/project/qatlas-cli/)，提供 `qatlas` 命令
+- **旧 PyPI 包**：[`quantum-atlas`](https://pypi.org/project/quantum-atlas/) 的 `0.21.0` 是仅含元数据的最终迁移版，不含 Python 模块、parser、命令入口或运行时依赖，不会自动安装新 CLI；请按[迁移指南](../getting-started.md#migrate-quantum-atlas)切换
+- **服务端 GitHub**：<https://github.com/IAI-USTC-Quantum/QuantumAtlas>
+- **客户端 GitHub**：<https://github.com/IAI-USTC-Quantum/qatlas-cli>（独立维护和发版）
 - **生产入口**：<https://quantum-atlas.ai>
 - **协议**：[Apache-2.0](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/LICENSE)
 - **维护方**：[IAI-USTC-Quantum](https://github.com/IAI-USTC-Quantum)
@@ -15,20 +17,18 @@
 
 ```text
 QuantumAtlas/
-├── qatlas/                Python 客户端
-│   ├── cli.py             qatlas CLI 分发器
-│   ├── client/            HTTP client（ingest / upload / mineru / auth / paper）
-│   └── parser/            arXiv fetch + MinerU 解析
 ├── cmd/qatlasd/           Go server 入口（main + 各 cobra 子命令）
 ├── internal/              Go server 内部包（registry / search / ingest / auth / objstore / config 等）
 ├── web/                   React SPA 前端（Vite + TanStack Router）
 ├── scripts/               初始化与维护脚本（rustfs_bootstrap.sh 等）
 ├── tests/                 测试套件
 ├── docs/                  本文档（你正在看的）
-├── pyproject.toml         Python 项目配置
-├── go.mod                 Go 项目
-└── pixi.toml              跨语言开发环境（pixi）
+├── VERSION                服务端版本唯一来源
+├── pyproject.toml         旧包退役元数据 + Python 开发依赖组 + pixi 工具链
+└── go.mod                 Go 项目
 ```
+
+客户端代码不在此目录树中；安装主仓不会得到 `qatlas`，请使用独立的 `qatlas-cli`。主仓旧 `qatlas/` helpers 已退役，不再作为 parser 库保留。
 
 !!! info "状态目录不在仓库里"
     `raw/`、`data/`、`pb_data/` 已**不在**仓库内——默认落到 `${XDG_DATA_HOME:-$HOME/.local/share}/qatlasd/` 之下，可通过 `.env` 显式覆盖。详见 [存储布局迁移](../server/migration-storage-layout.md)。

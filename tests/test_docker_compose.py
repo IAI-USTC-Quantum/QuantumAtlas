@@ -41,12 +41,19 @@ class TestFullStackCompose:
 
     def test_qatlasd_only_service(self, doc: dict) -> None:
         services = doc.get("services", {})
-        assert set(services) == {"qatlasd", "qatlas-search", "qatlas-rag"}, (
+        assert set(services) == {"qatlasd", "qatlas-search", "qatlas-match", "qatlas-rag"}, (
             f"unexpected service set {set(services)}; postgres is an external "
             "shared instance and must not be defined in this template, and "
-            "qatlas-search / qatlas-rag are the only sanctioned siblings "
+            "qatlas-search / qatlas-match / qatlas-rag are the sanctioned siblings "
             "(profile-gated microservices)"
         )
+
+    def test_qatlas_match_is_profile_gated_and_internal_only(self, doc: dict) -> None:
+        svc = doc["services"]["qatlas-match"]
+        assert "match" in svc.get("profiles", [])
+        assert "ports" not in svc
+        assert svc["image"].startswith("ghcr.io/iai-ustc-quantum/qatlas-match:")
+        assert "QATLAS_MATCH_VERSION" in svc["image"]
 
     def test_qatlas_search_is_profile_gated_and_internal_only(self, doc: dict) -> None:
         # qatlas-search is optional (compose --profile search) and must

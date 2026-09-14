@@ -32,7 +32,15 @@
 
 ??? question "client 必须装 server 吗？"
 
-    不必。**client 是独立的 PyPI 包**（`qatlas-cli`）；纯 client 用户只需要在 `~/.config/qatlas/config.yaml` 设 `server_url:` 指向远端 server（如 `https://quantum-atlas.ai`）。
+    不必。**client 是独立的 [PyPI 包 `qatlas-cli`](https://pypi.org/project/qatlas-cli/)**，由 [qatlas-cli 仓库](https://github.com/IAI-USTC-Quantum/qatlas-cli)独立维护和发版；纯 client 用户只需要在 `~/.config/qatlas/config.yaml` 设 `server_url:` 指向远端 server（如 `https://quantum-atlas.ai`）。安装 QuantumAtlas 主仓不会提供 `qatlas`。
+
+??? question "quantum-atlas 退役后怎么迁移？会自动安装 qatlas-cli 吗？"
+
+    **不会自动安装。**`quantum-atlas 0.21.0` 是仅含元数据的最终迁移版，不含 `qatlas` Python 模块、parser 库或 console entry，没有运行时依赖，也没有指向 `qatlas-cli` 的转发依赖。
+
+    按[迁移指南](../getting-started.md#migrate-quantum-atlas)选择原安装器（uv tool / pipx / pip），先卸载 `quantum-atlas`，再安装 `qatlas-cli`。如果两者已经共存，卸载旧包可能移除共享的模块或命令路径，务必在**卸载之后重装 `qatlas-cli`**。
+
+    **不要删除 `~/.config/qatlas`**（或对应平台的配置目录）；原来的配置和凭据继续保留。
 
 ??? question "Windows 能跑 server 吗？"
 

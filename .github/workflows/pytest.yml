@@ -4,24 +4,24 @@ on:
   push:
     branches: [main]
     paths:
-      - 'qatlas/**'
-      - 'rag/qatlas_rag/**'
-      - 'search/qatlas_search/**'
       - 'tests/**'
-      - 'rag/tests/**'
-      - 'search/tests/**'
+      - 'deploy/**'
+      - 'Dockerfile'
+      - 'PYPI_README.md'
+      - 'scripts/check_legacy_dist.py'
+      - '.github/workflows/release.yml'
       - 'pyproject.toml'
       - 'uv.lock'
       - '.github/workflows/pytest.yml'
   pull_request:
     branches: [main]
     paths:
-      - 'qatlas/**'
-      - 'rag/qatlas_rag/**'
-      - 'search/qatlas_search/**'
       - 'tests/**'
-      - 'rag/tests/**'
-      - 'search/tests/**'
+      - 'deploy/**'
+      - 'Dockerfile'
+      - 'PYPI_README.md'
+      - 'scripts/check_legacy_dist.py'
+      - '.github/workflows/release.yml'
       - 'pyproject.toml'
       - 'uv.lock'
       - '.github/workflows/pytest.yml'
@@ -52,7 +52,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --extra dev --frozen
+        run: uv sync --locked
 
       - name: Run pytest (offline)
         run: uv run pytest -rs -m "not network and not e2e"

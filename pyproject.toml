@@ -1,29 +1,37 @@
 [project]
 name = "quantum-atlas"
-version = "0.21.0a3"
-description = "Paper collection, multi-paradigm search, and registry database for quantum research"
-readme = "README.md"
+version = "0.21.0"
+description = "Retired package: install qatlas-cli for the qatlas command (no automatic redirect)"
+readme = "PYPI_README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.11"
 authors = [{ name = "IAI-USTC-Quantum" }]
 keywords = ["quantum", "papers", "search", "registry", "arxiv"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 7 - Inactive",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Topic :: Scientific/Engineering :: Physics",
 ]
-dependencies = [
-    "requests>=2.31.0,<3",
-    "pydantic>=2.5.0,<3",
-    "pydantic-settings>=2.0.0,<3",
-    "pyyaml>=6.0.1,<7",
-]
+# Final, metadata-only release: no CLI, import package, or forwarding dependency.
+dependencies = []
 
-[project.optional-dependencies]
+[project.urls]
+"Migration guide" = "https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/PYPI_README.md"
+"CLI source" = "https://github.com/IAI-USTC-Quantum/qatlas-cli"
+"CLI on PyPI" = "https://pypi.org/project/qatlas-cli/"
+"Server source" = "https://github.com/IAI-USTC-Quantum/QuantumAtlas"
+
+# Repository tooling is not part of the retired distribution's dependencies.
+[dependency-groups]
 dev = [
+    "requests>=2.31.0,<3",
+    "pyyaml>=6.0.1,<7",
+    "build>=1.2",
+    "hatchling>=1.24",
+    "twine>=6",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.24",
     "black>=24.0.0",
@@ -37,16 +45,12 @@ requires = ["hatchling>=1.24"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["qatlas"]
+# Intentionally emit only .dist-info; never occupy qatlas-cli's namespace.
+bypass-selection = true
 
-[tool.commitizen]
-name = "cz_conventional_commits"
-tag_format = "v$version"
-version_scheme = "pep440"
-version_provider = "uv"
-update_changelog_on_bump = true
-major_version_zero = true
-annotated_tag = true
+[tool.hatch.build.targets.sdist]
+# Do not upload the server tree, tests, or retired Python helpers to PyPI.
+only-include = ["pyproject.toml", "PYPI_README.md", "LICENSE"]
 
 # Pytest
 [tool.pytest.ini_options]

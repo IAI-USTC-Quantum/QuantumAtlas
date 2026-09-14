@@ -24,10 +24,21 @@ QuantumAtlas 由两个独立演进的组件构成：服务端 ``qatlasd`` （本
    * - ``qatlas-cli``
      - 它自己仓库的 ``pyproject.toml`` （commitizen 管理）
      - ``cz bump`` 打 tag 后由该仓 CI 发 PyPI（``uv tool install qatlas-cli``）
-   * - ``quantum-atlas`` PyPI 包（本仓库，rag embed worker 等 Python 代码）
-     - 本仓库 ``pyproject.toml`` （commitizen 管理）
-     - 随 release.yml 的 pypi-publish job 发布，与 qatlasd 版本**不挂钩**，
-       独立节奏演进
+   * - ``quantum-atlas`` 旧 PyPI 包（退役迁移说明）
+     - 本仓库 ``pyproject.toml`` 固定为最后一个版本 ``0.21.0``
+     - 仅精确 tag ``quantum-atlas-v0.21.0`` 触发最后一次迁移发布；
+       不随 qatlasd 的 ``v*`` tag 继续发布
+
+``quantum-atlas 0.21.0`` 是仅含元数据与迁移说明的最终版本：没有运行时
+依赖、``qatlas`` Python 命名空间或 console script，也不依赖或自动转发到
+``qatlas-cli``。旧 ``qatlas.paper_assets`` 与 ``qatlas.parser.doi`` 帮助库
+已退役，不能把安装 ``qatlas-cli`` 当作这些 Python API 的等价迁移。
+CLI 用户需要手动卸载旧包，再安装独立的 ``qatlas-cli``。
+
+本仓库已移除 Commitizen 配置，不再用根目录的 ``cz bump`` 管理发布。
+常规服务端发版仍以 ``VERSION`` 与 ``v<version>`` 为准；旧包迁移不修改
+``VERSION``（迁移时仍为 ``0.34.0``），也不参与客户端/服务端版本协商。
+最后一次 PyPI 发布的隔离与验收要求见 :doc:`release`。
 
 兼容协议
 --------

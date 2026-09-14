@@ -1,6 +1,9 @@
 # `qatlas` 客户端 CLI 参考
 
-`qatlas` 是独立 PyPI 包 `qatlas-cli` 提供的 console script（CLI 自 0.22.0 起从主仓的 `quantum-atlas` 包拆出），按 `qatlas <subcommand>` 形式分发到子模块。
+`qatlas` 是独立 PyPI 包 [`qatlas-cli`](https://pypi.org/project/qatlas-cli/) 提供的 console script，由 [IAI-USTC-Quantum/qatlas-cli](https://github.com/IAI-USTC-Quantum/qatlas-cli) 独立维护和发版。本文保留与 QuantumAtlas 服务端集成相关的命令参考；客户端源码、完整命令和版本更新以该仓库及 `qatlas --help` 为准。
+
+!!! warning "旧包 quantum-atlas 退役"
+    `quantum-atlas 0.21.0` 是仅含元数据的最终迁移版，不含 `qatlas` 模块、parser 库或 console entry，没有运行时依赖，也不会自动安装 `qatlas-cli`。安装 QuantumAtlas 主仓同样不会提供 `qatlas`。旧用户请按[迁移步骤](../getting-started.md#migrate-quantum-atlas)先卸载旧包，再用原安装器安装 `qatlas-cli`；不要删除 `~/.config/qatlas`。
 
 ## 顶层
 
@@ -57,7 +60,7 @@ qatlas config <subcommand>
 **配置入口**（v0.17.0+ 极简）：
 
 1. **平台原生配置文件路径**（见上表）— **唯一**配置源（首次跑任意命令自动创建）
-2. **内置 Field default** — 各字段在 `qatlas/config.py` 的 `ServerConfig` 上定义
+2. **内置 Field default** — 由独立 [qatlas-cli 仓库](https://github.com/IAI-USTC-Quantum/qatlas-cli)中的客户端配置模型定义，不在 QuantumAtlas 主仓中
 
 没有 CLI flag overrides，没有 OS env vars，没有 `$QATLAS_DOTENV` / `$QATLAS_CONFIG`。这是有意的极简化——client 用户基本是"配一次长期用"的模式，多入口反而增加心智负担（v0.16 起 client 不再借 server 的 `.env` 跑）。
 
@@ -343,17 +346,9 @@ qatlas-rag 服务（默认 `127.0.0.1:8801`，即部署该服务的主机或可�
 地址）；`qatlas match` 默认经 qatlasd 的 `POST /api/papers/match` 代理调用
 （需 `papers:read` scope 的 PAT），`--direct` 仅面向部署机就地连库。
 
-## 运维 / 兼容性命令（不常用）
+## 已退役的旧 Python 入口
 
-| 命令 | 说明 |
-|---|---|
-| `qatlas parser` (alias `parse`) | 旧 monolith parser CLI；新代码用 `qatlas ingest` |
-
-## 别名
-
-| 别名 | 等同于 |
-|---|---|
-| `parse` | `parser` |
+QuantumAtlas 主仓不再分发原 `qatlas/` Python helpers，也不再提供旧 monolith 的 `qatlas parser` / `parse` 入口。`quantum-atlas 0.21.0` 不包含这些代码；不要通过安装主仓或旧包恢复它们。客户端可用命令以独立 `qatlas-cli` 的 `qatlas --help` 为准。
 
 ---
 

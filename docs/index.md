@@ -20,7 +20,7 @@ flowchart LR
 
 ## 文档导航
 
-文档按两个组件 + 共享基础组织：**Python 客户端 (`qatlas`)** 与 **Go 服务端 (`qatlasd`)** 各成一节，概念、参考、入门、贡献为两者共享。
+文档按两个组件 + 共享基础组织：**独立客户端 (`qatlas-cli` 提供 `qatlas`)** 与 **本仓 Go 服务端 (`qatlasd`)** 各成一节。客户端章节保留服务端集成示例；客户端源码与发版在[独立仓库](https://github.com/IAI-USTC-Quantum/qatlas-cli)，不随主仓安装或发布。
 
 <div class="grid cards" markdown>
 
@@ -97,7 +97,9 @@ flowchart LR
 
 ## 仓库 & 包
 
-- :material-github: 源码：<https://github.com/IAI-USTC-Quantum/QuantumAtlas>
-- :material-language-python: PyPI：[`quantum-atlas`](https://pypi.org/project/quantum-atlas/)（parser 库；CLI 请装 [`qatlas-cli`](https://pypi.org/project/qatlas-cli/)）
+- :material-github: 服务端源码与发版：<https://github.com/IAI-USTC-Quantum/QuantumAtlas>
+- :material-github: 客户端源码与独立发版：<https://github.com/IAI-USTC-Quantum/qatlas-cli>
+- :material-language-python: 客户端安装包：[`qatlas-cli`](https://pypi.org/project/qatlas-cli/)
+- :material-archive: 旧包 [`quantum-atlas`](https://pypi.org/project/quantum-atlas/)：`0.21.0` 为仅含元数据的最终迁移版，不含 Python 模块、CLI 或运行时依赖，不会自动安装 `qatlas-cli`；请按[迁移指南](getting-started.md#migrate-quantum-atlas)切换
 - :material-server-network: 生产入口：<https://quantum-atlas.ai>
 - :material-license: 协议：[Apache-2.0](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/LICENSE)
