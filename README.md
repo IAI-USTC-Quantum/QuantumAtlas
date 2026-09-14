@@ -245,6 +245,12 @@ It is best understood as "extensible research infrastructure", not a productized
   The QuantumAtlas backend centrally provides the API and build-artifact hosting;
   all page design lives in the Vite + React workbench under `web/`.
 
+## Development docs
+
+The developer guide is the Sphinx site at `/devdoc` (sources in `docsite/dev/`). Start with [development](docsite/dev/development.rst), [versioning](docsite/dev/versioning.rst), [release](docsite/dev/release.rst), and [contributing](docs/contributing.md). User-facing pages remain at `/doc`.
+
+This Go repository is tag-only: maintainers choose an unpublished SemVer `vX.Y.Z[-rc.N]`, push that annotated tag, and CI runs GoReleaser to publish GitHub archives, checksums, the UI zip, and GHCR images. There is no version file and no Commitizen here. Companion Python repos (`qatlas-cli`, `qatlas-search`, `qatlas-rag`) bump PEP 440 versions with Commitizen (`cz bump`) and publish on tag push. qatlasd and qatlas-cli are compatible when `(major, minor)` match; the prerelease spellings differ on purpose.
+
 ## Contributing
 
 Contributions welcome in these areas:
