@@ -97,7 +97,7 @@ def stamp(output: Path) -> None:
         "schema": 1,
         "host_repository": "IAI-USTC-Quantum/QuantumAtlas",
         "host_sha": git(ROOT, "rev-parse", "HEAD"),
-        "host_dirty": bool(git(ROOT, "status", "--porcelain", "--untracked-files=all", "--", "docsite", ".github/scripts", ".github/actions", ".github/workflows")),
+        "host_dirty": bool(git(ROOT, "status", "--porcelain", "--untracked-files=no", "--", "docsite", ".github/scripts", ".github/actions", ".github/workflows")),
         "source_date_epoch": int(os.environ["SOURCE_DATE_EPOCH"]),
         "components": components,
     }
