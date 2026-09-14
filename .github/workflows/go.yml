@@ -148,6 +148,12 @@ jobs:
       - name: Install web dependencies
         working-directory: web
         run: npm ci
+      - name: Audit web dependencies (including build tools)
+        working-directory: web
+        run: npm audit
+      - name: Lint web source
+        working-directory: web
+        run: npm run lint
       - name: First clean Sphinx build (both sites)
         run: bash .github/scripts/build-docs.sh
       - name: First clean web build

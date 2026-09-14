@@ -354,6 +354,9 @@ class SourceContractTests(unittest.TestCase):
         self.assertIn("cache-dependency-path: docs/requirements.txt", workflow)
         self.assertIn("cache-dependency-path: docsite/requirements.txt", workflow)
         self.assertEqual(workflow.count("run: bash .github/scripts/build-docs.sh"), 2)
+        # Audit the full locked graph, not only browser/runtime dependencies.
+        self.assertIn("working-directory: web\n        run: npm audit\n", workflow)
+        self.assertIn("working-directory: web\n        run: npm run lint\n", workflow)
         release = (root / ".github/workflows/release.yml").read_text()
         self.assertIn("uses: ./.github/workflows/go.yml", release)
         self.assertIn("source_sha: ${{ needs.prep.outputs.source_sha }}", release)

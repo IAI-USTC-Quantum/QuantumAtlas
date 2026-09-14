@@ -6,6 +6,8 @@ QuantumAtlas 的 React SPA；API、PocketBase、静态资源和文档由 Go 服�
 
 ## 工具与依赖
 
+本次依赖链、利用条件、修复版本及回归结果见 [安全审计记录](SECURITY_AUDIT.md)。
+
 - Node 版本唯一取自 [`.node-version`](.node-version)，用 `npm ci` 安装
   [`package-lock.json`](package-lock.json) 锁定的依赖；不要用一次构建顺带升级依赖。
 - [`package.json`](package.json) 当前使用 Vite 7、React 19、TypeScript 5.6、
@@ -14,7 +16,9 @@ QuantumAtlas 的 React SPA；API、PocketBase、静态资源和文档由 Go 服�
   `components.json`、`src/index.css` 管理组件路径及主题变量。
 - PocketBase JS SDK 管理会话；`react-i18next` / `i18next-browser-languagedetector`
   负责语言；`next-themes`、`lucide-react`、`sonner` 分别提供主题、图标与通知。
-- `marked`、DOMPurify、KaTeX 等仍是 manifest 中的依赖；依赖存在不代表有对应页面路由。
+- 论文与管理员资产的 Markdown 预览使用 React `<pre>` 输出纯文本，不执行 HTML。
+  旧 wiki 渲染链（`marked`、DOMPurify、KaTeX）已移除；不要为渲染富文本直接使用
+  `dangerouslySetInnerHTML`，新功能需单独选型、消毒和 XSS 回归。
 - `@/*` 对应 `src/*`，配置位于 `vite.config.ts`、`tsconfig.json` 和
   `tsconfig.app.json`。Go 工具链门槛以根 `go.mod` 为准，不另设 Go 版本。
 
@@ -173,8 +177,9 @@ npm run preview -- --host 127.0.0.1
 ```
 
 `preview` 仅预览静态构建，不应假定具有开发 API 代理，也不代替 Go 的鉴权验证。
-`package.json` 还声明了 `gen:api`（`openapi-ts`），但当前没有对应生成配置；
-不要当作现成可复现的 API 同步步骤。后端规范的权威生成命令在仓库根运行：
+前端 API 类型在 `src/lib/api.ts` 手动维护。未配置的旧 `gen:api` 命令及
+`@hey-api/openapi-ts` 已移除，不是通过忽略审计来保留旧生成链。
+后端规范的权威生成命令仍在仓库根运行：
 
 ```bash
 go tool swag init -g main.go -d ./cmd/qatlasd,./internal/routes \

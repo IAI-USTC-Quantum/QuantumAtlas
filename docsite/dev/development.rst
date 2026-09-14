@@ -116,7 +116,8 @@ flag。混合测试文件不整体排除，其离线测试仍默认运行。S3 �
 ``internal/apidocs``、``web/src/routeTree.gen.ts`` 是按仓库约定跟踪的生成源码，
 不同于不得提交的分发资源。前端 ``npm run build`` 会运行
 ``tsr generate && tsc -b && vite build``；修改路由后审核生成路由树。
-前端 API 类型目前在 ``web/src/lib/api.ts``；不要假定 ``gen:api`` 已配置了自动同步链。
+前端 API 类型在 ``web/src/lib/api.ts`` 手动维护；未配置的旧 ``gen:api`` 命令与
+OpenAPI 前端生成器已移除，不存在自动同步链。
 
 完整 UI：两套 Sphinx → npm → embedui
 -------------------------------------

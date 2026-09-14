@@ -9,42 +9,32 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as PatRouteImport } from './routes/pat'
-import { Route as LoginRouteImport } from './routes/login'
-import { Route as DeviceRouteImport } from './routes/device'
-import { Route as LangRouteImport } from './routes/$lang'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as LangRouteImport } from './routes/$lang'
+import { Route as DeviceRouteImport } from './routes/device'
+import { Route as LoginRouteImport } from './routes/login'
+import { Route as PatRouteImport } from './routes/pat'
 import { Route as LangIndexRouteImport } from './routes/$lang.index'
-import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
-import { Route as LangPatRouteImport } from './routes/$lang.pat'
-import { Route as LangDownloaderRouteImport } from './routes/$lang.downloader'
-import { Route as LangDeviceRouteImport } from './routes/$lang.device'
 import { Route as LangDashboardRouteImport } from './routes/$lang.dashboard'
-import { Route as LangPapersIndexRouteImport } from './routes/$lang.papers.index'
+import { Route as LangDeviceRouteImport } from './routes/$lang.device'
+import { Route as LangDownloaderRouteImport } from './routes/$lang.downloader'
+import { Route as LangPatRouteImport } from './routes/$lang.pat'
+import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
 import { Route as LangAdminIndexRouteImport } from './routes/$lang.admin.index'
-import { Route as LangPapersSearchRouteImport } from './routes/$lang.papers.search'
-import { Route as LangPapersPaperIdRouteImport } from './routes/$lang.papers.$paperId'
-import { Route as LangAdminUsersRouteImport } from './routes/$lang.admin.users'
-import { Route as LangAdminPluginsRouteImport } from './routes/$lang.admin.plugins'
-import { Route as LangAdminPipelinesRouteImport } from './routes/$lang.admin.pipelines'
-import { Route as LangAdminDownloaderWorkersRouteImport } from './routes/$lang.admin.downloader-workers'
-import { Route as LangAdminDocsRouteImport } from './routes/$lang.admin.docs'
 import { Route as LangAdminAssetsRouteImport } from './routes/$lang.admin.assets'
+import { Route as LangAdminDocsRouteImport } from './routes/$lang.admin.docs'
+import { Route as LangAdminDownloaderWorkersRouteImport } from './routes/$lang.admin.downloader-workers'
+import { Route as LangAdminPipelinesRouteImport } from './routes/$lang.admin.pipelines'
+import { Route as LangAdminPluginsRouteImport } from './routes/$lang.admin.plugins'
+import { Route as LangAdminUsersRouteImport } from './routes/$lang.admin.users'
+import { Route as LangPapersIndexRouteImport } from './routes/$lang.papers.index'
+import { Route as LangPapersPaperIdRouteImport } from './routes/$lang.papers.$paperId'
+import { Route as LangPapersSearchRouteImport } from './routes/$lang.papers.search'
 import { Route as LangAdminDbTableRouteImport } from './routes/$lang.admin.db.$table'
 
-const PatRoute = PatRouteImport.update({
-  id: '/pat',
-  path: '/pat',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LoginRoute = LoginRouteImport.update({
-  id: '/login',
-  path: '/login',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DeviceRoute = DeviceRouteImport.update({
-  id: '/device',
-  path: '/device',
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LangRoute = LangRouteImport.update({
@@ -52,9 +42,19 @@ const LangRoute = LangRouteImport.update({
   path: '/$lang',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const DeviceRoute = DeviceRouteImport.update({
+  id: '/device',
+  path: '/device',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PatRoute = PatRouteImport.update({
+  id: '/pat',
+  path: '/pat',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LangIndexRoute = LangIndexRouteImport.update({
@@ -62,19 +62,9 @@ const LangIndexRoute = LangIndexRouteImport.update({
   path: '/',
   getParentRoute: () => LangRoute,
 } as any)
-const AuthCallbackRoute = AuthCallbackRouteImport.update({
-  id: '/auth/callback',
-  path: '/auth/callback',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LangPatRoute = LangPatRouteImport.update({
-  id: '/pat',
-  path: '/pat',
-  getParentRoute: () => LangRoute,
-} as any)
-const LangDownloaderRoute = LangDownloaderRouteImport.update({
-  id: '/downloader',
-  path: '/downloader',
+const LangDashboardRoute = LangDashboardRouteImport.update({
+  id: '/dashboard',
+  path: '/dashboard',
   getParentRoute: () => LangRoute,
 } as any)
 const LangDeviceRoute = LangDeviceRouteImport.update({
@@ -82,44 +72,34 @@ const LangDeviceRoute = LangDeviceRouteImport.update({
   path: '/device',
   getParentRoute: () => LangRoute,
 } as any)
-const LangDashboardRoute = LangDashboardRouteImport.update({
-  id: '/dashboard',
-  path: '/dashboard',
+const LangDownloaderRoute = LangDownloaderRouteImport.update({
+  id: '/downloader',
+  path: '/downloader',
   getParentRoute: () => LangRoute,
 } as any)
-const LangPapersIndexRoute = LangPapersIndexRouteImport.update({
-  id: '/papers/',
-  path: '/papers/',
+const LangPatRoute = LangPatRouteImport.update({
+  id: '/pat',
+  path: '/pat',
   getParentRoute: () => LangRoute,
+} as any)
+const AuthCallbackRoute = AuthCallbackRouteImport.update({
+  id: '/auth/callback',
+  path: '/auth/callback',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const LangAdminIndexRoute = LangAdminIndexRouteImport.update({
   id: '/admin/',
   path: '/admin/',
   getParentRoute: () => LangRoute,
 } as any)
-const LangPapersSearchRoute = LangPapersSearchRouteImport.update({
-  id: '/papers/search',
-  path: '/papers/search',
+const LangAdminAssetsRoute = LangAdminAssetsRouteImport.update({
+  id: '/admin/assets',
+  path: '/admin/assets',
   getParentRoute: () => LangRoute,
 } as any)
-const LangPapersPaperIdRoute = LangPapersPaperIdRouteImport.update({
-  id: '/papers/$paperId',
-  path: '/papers/$paperId',
-  getParentRoute: () => LangRoute,
-} as any)
-const LangAdminUsersRoute = LangAdminUsersRouteImport.update({
-  id: '/admin/users',
-  path: '/admin/users',
-  getParentRoute: () => LangRoute,
-} as any)
-const LangAdminPluginsRoute = LangAdminPluginsRouteImport.update({
-  id: '/admin/plugins',
-  path: '/admin/plugins',
-  getParentRoute: () => LangRoute,
-} as any)
-const LangAdminPipelinesRoute = LangAdminPipelinesRouteImport.update({
-  id: '/admin/pipelines',
-  path: '/admin/pipelines',
+const LangAdminDocsRoute = LangAdminDocsRouteImport.update({
+  id: '/admin/docs',
+  path: '/admin/docs',
   getParentRoute: () => LangRoute,
 } as any)
 const LangAdminDownloaderWorkersRoute =
@@ -128,14 +108,34 @@ const LangAdminDownloaderWorkersRoute =
     path: '/admin/downloader-workers',
     getParentRoute: () => LangRoute,
   } as any)
-const LangAdminDocsRoute = LangAdminDocsRouteImport.update({
-  id: '/admin/docs',
-  path: '/admin/docs',
+const LangAdminPipelinesRoute = LangAdminPipelinesRouteImport.update({
+  id: '/admin/pipelines',
+  path: '/admin/pipelines',
   getParentRoute: () => LangRoute,
 } as any)
-const LangAdminAssetsRoute = LangAdminAssetsRouteImport.update({
-  id: '/admin/assets',
-  path: '/admin/assets',
+const LangAdminPluginsRoute = LangAdminPluginsRouteImport.update({
+  id: '/admin/plugins',
+  path: '/admin/plugins',
+  getParentRoute: () => LangRoute,
+} as any)
+const LangAdminUsersRoute = LangAdminUsersRouteImport.update({
+  id: '/admin/users',
+  path: '/admin/users',
+  getParentRoute: () => LangRoute,
+} as any)
+const LangPapersIndexRoute = LangPapersIndexRouteImport.update({
+  id: '/papers/',
+  path: '/papers/',
+  getParentRoute: () => LangRoute,
+} as any)
+const LangPapersPaperIdRoute = LangPapersPaperIdRouteImport.update({
+  id: '/papers/$paperId',
+  path: '/papers/$paperId',
+  getParentRoute: () => LangRoute,
+} as any)
+const LangPapersSearchRoute = LangPapersSearchRouteImport.update({
+  id: '/papers/search',
+  path: '/papers/search',
   getParentRoute: () => LangRoute,
 } as any)
 const LangAdminDbTableRoute = LangAdminDbTableRouteImport.update({
@@ -301,25 +301,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/pat': {
-      id: '/pat'
-      path: '/pat'
-      fullPath: '/pat'
-      preLoaderRoute: typeof PatRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/login': {
-      id: '/login'
-      path: '/login'
-      fullPath: '/login'
-      preLoaderRoute: typeof LoginRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/device': {
-      id: '/device'
-      path: '/device'
-      fullPath: '/device'
-      preLoaderRoute: typeof DeviceRouteImport
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/$lang': {
@@ -329,11 +315,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LangRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/device': {
+      id: '/device'
+      path: '/device'
+      fullPath: '/device'
+      preLoaderRoute: typeof DeviceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pat': {
+      id: '/pat'
+      path: '/pat'
+      fullPath: '/pat'
+      preLoaderRoute: typeof PatRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/$lang/': {
@@ -343,25 +343,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LangIndexRouteImport
       parentRoute: typeof LangRoute
     }
-    '/auth/callback': {
-      id: '/auth/callback'
-      path: '/auth/callback'
-      fullPath: '/auth/callback'
-      preLoaderRoute: typeof AuthCallbackRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/$lang/pat': {
-      id: '/$lang/pat'
-      path: '/pat'
-      fullPath: '/$lang/pat'
-      preLoaderRoute: typeof LangPatRouteImport
-      parentRoute: typeof LangRoute
-    }
-    '/$lang/downloader': {
-      id: '/$lang/downloader'
-      path: '/downloader'
-      fullPath: '/$lang/downloader'
-      preLoaderRoute: typeof LangDownloaderRouteImport
+    '/$lang/dashboard': {
+      id: '/$lang/dashboard'
+      path: '/dashboard'
+      fullPath: '/$lang/dashboard'
+      preLoaderRoute: typeof LangDashboardRouteImport
       parentRoute: typeof LangRoute
     }
     '/$lang/device': {
@@ -371,19 +357,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LangDeviceRouteImport
       parentRoute: typeof LangRoute
     }
-    '/$lang/dashboard': {
-      id: '/$lang/dashboard'
-      path: '/dashboard'
-      fullPath: '/$lang/dashboard'
-      preLoaderRoute: typeof LangDashboardRouteImport
+    '/$lang/downloader': {
+      id: '/$lang/downloader'
+      path: '/downloader'
+      fullPath: '/$lang/downloader'
+      preLoaderRoute: typeof LangDownloaderRouteImport
       parentRoute: typeof LangRoute
     }
-    '/$lang/papers/': {
-      id: '/$lang/papers/'
-      path: '/papers'
-      fullPath: '/$lang/papers/'
-      preLoaderRoute: typeof LangPapersIndexRouteImport
+    '/$lang/pat': {
+      id: '/$lang/pat'
+      path: '/pat'
+      fullPath: '/$lang/pat'
+      preLoaderRoute: typeof LangPatRouteImport
       parentRoute: typeof LangRoute
+    }
+    '/auth/callback': {
+      id: '/auth/callback'
+      path: '/auth/callback'
+      fullPath: '/auth/callback'
+      preLoaderRoute: typeof AuthCallbackRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/$lang/admin/': {
       id: '/$lang/admin/'
@@ -392,46 +385,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LangAdminIndexRouteImport
       parentRoute: typeof LangRoute
     }
-    '/$lang/papers/search': {
-      id: '/$lang/papers/search'
-      path: '/papers/search'
-      fullPath: '/$lang/papers/search'
-      preLoaderRoute: typeof LangPapersSearchRouteImport
-      parentRoute: typeof LangRoute
-    }
-    '/$lang/papers/$paperId': {
-      id: '/$lang/papers/$paperId'
-      path: '/papers/$paperId'
-      fullPath: '/$lang/papers/$paperId'
-      preLoaderRoute: typeof LangPapersPaperIdRouteImport
-      parentRoute: typeof LangRoute
-    }
-    '/$lang/admin/users': {
-      id: '/$lang/admin/users'
-      path: '/admin/users'
-      fullPath: '/$lang/admin/users'
-      preLoaderRoute: typeof LangAdminUsersRouteImport
-      parentRoute: typeof LangRoute
-    }
-    '/$lang/admin/plugins': {
-      id: '/$lang/admin/plugins'
-      path: '/admin/plugins'
-      fullPath: '/$lang/admin/plugins'
-      preLoaderRoute: typeof LangAdminPluginsRouteImport
-      parentRoute: typeof LangRoute
-    }
-    '/$lang/admin/pipelines': {
-      id: '/$lang/admin/pipelines'
-      path: '/admin/pipelines'
-      fullPath: '/$lang/admin/pipelines'
-      preLoaderRoute: typeof LangAdminPipelinesRouteImport
-      parentRoute: typeof LangRoute
-    }
-    '/$lang/admin/downloader-workers': {
-      id: '/$lang/admin/downloader-workers'
-      path: '/admin/downloader-workers'
-      fullPath: '/$lang/admin/downloader-workers'
-      preLoaderRoute: typeof LangAdminDownloaderWorkersRouteImport
+    '/$lang/admin/assets': {
+      id: '/$lang/admin/assets'
+      path: '/admin/assets'
+      fullPath: '/$lang/admin/assets'
+      preLoaderRoute: typeof LangAdminAssetsRouteImport
       parentRoute: typeof LangRoute
     }
     '/$lang/admin/docs': {
@@ -441,11 +399,53 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LangAdminDocsRouteImport
       parentRoute: typeof LangRoute
     }
-    '/$lang/admin/assets': {
-      id: '/$lang/admin/assets'
-      path: '/admin/assets'
-      fullPath: '/$lang/admin/assets'
-      preLoaderRoute: typeof LangAdminAssetsRouteImport
+    '/$lang/admin/downloader-workers': {
+      id: '/$lang/admin/downloader-workers'
+      path: '/admin/downloader-workers'
+      fullPath: '/$lang/admin/downloader-workers'
+      preLoaderRoute: typeof LangAdminDownloaderWorkersRouteImport
+      parentRoute: typeof LangRoute
+    }
+    '/$lang/admin/pipelines': {
+      id: '/$lang/admin/pipelines'
+      path: '/admin/pipelines'
+      fullPath: '/$lang/admin/pipelines'
+      preLoaderRoute: typeof LangAdminPipelinesRouteImport
+      parentRoute: typeof LangRoute
+    }
+    '/$lang/admin/plugins': {
+      id: '/$lang/admin/plugins'
+      path: '/admin/plugins'
+      fullPath: '/$lang/admin/plugins'
+      preLoaderRoute: typeof LangAdminPluginsRouteImport
+      parentRoute: typeof LangRoute
+    }
+    '/$lang/admin/users': {
+      id: '/$lang/admin/users'
+      path: '/admin/users'
+      fullPath: '/$lang/admin/users'
+      preLoaderRoute: typeof LangAdminUsersRouteImport
+      parentRoute: typeof LangRoute
+    }
+    '/$lang/papers/': {
+      id: '/$lang/papers/'
+      path: '/papers'
+      fullPath: '/$lang/papers/'
+      preLoaderRoute: typeof LangPapersIndexRouteImport
+      parentRoute: typeof LangRoute
+    }
+    '/$lang/papers/$paperId': {
+      id: '/$lang/papers/$paperId'
+      path: '/papers/$paperId'
+      fullPath: '/$lang/papers/$paperId'
+      preLoaderRoute: typeof LangPapersPaperIdRouteImport
+      parentRoute: typeof LangRoute
+    }
+    '/$lang/papers/search': {
+      id: '/$lang/papers/search'
+      path: '/papers/search'
+      fullPath: '/$lang/papers/search'
+      preLoaderRoute: typeof LangPapersSearchRouteImport
       parentRoute: typeof LangRoute
     }
     '/$lang/admin/db/$table': {
