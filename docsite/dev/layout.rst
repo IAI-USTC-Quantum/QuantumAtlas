@@ -14,9 +14,8 @@ Python 命令行客户端由独立仓库 ``IAI-USTC-Quantum/qatlas-cli`` 维护�
    ├── internal/               Go 服务器内部包（见下表）
    ├── web/                    React SPA；.node-version + package-lock.json
    ├── deploy/                 docker-compose 部署模板
-   ├── docsite/                双站源码（Sphinx + Furo，独立 requirements.txt）
-   ├── docs/                   MkDocs 源码与独立 requirements.txt
-   ├── hooks/                  MkDocs 文档构建 hook
+   ├── docsite/                双站源码（Sphinx + Furo，含组件提交锁）
+   ├── docs/                   历史 Markdown 源；当前构建使用 docsite/manual/
    ├── tests/                  部署结构、离线 fixture 与显式启用的生产冒烟
    ├── .github/scripts/        CI 资源校验与 Python 标准库 fixture
    ├── .goreleaser.yaml        服务端归档、GitHub Release 与 GHCR 发布
@@ -134,8 +133,9 @@ UI 与独立 ZIP 的 UI 内容一致。``dev`` / Go 伪版本没有精确 Releas
 - 开发命令直接使用 ``go``、``go tool swag``、``npm`` 和文档工具，
   完整步骤见 :doc:`development`。没有根 Python 项目或 ``uv sync`` 流程，
   不引入 Pixi、Makefile、Taskfile 或新构建框架。Go 工具链门槛只读 ``go.mod``；
-  Sphinx/MkDocs 依赖分别由 ``docsite/requirements.txt``、``docs/requirements.txt``
-  管理；``.github/scripts`` 的 Python fixture 仅用标准库，不用 pytest。
+  Sphinx 依赖由 ``docsite/requirements.txt`` 管理；组件文档提交由
+  ``docsite/components.lock.json`` 锁定。``.github/scripts`` 的部分 Python
+  fixture 仅用标准库，不用 pytest。
 - 服务端测试使用 Go：``tests/compose_test.go`` 检查部署模板，
   ``tests/e2e/`` 的普通 fixture 只使用本地 ``httptest``。
   ``CGO_ENABLED=0 go test ./internal/... ./cmd/... ./web ./tests/...``

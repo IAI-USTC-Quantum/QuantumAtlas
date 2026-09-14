@@ -16,15 +16,16 @@
 - **改前端 / 启动本地 dev 服务 / 制作完整分发资源**：再安装
   ``web/.node-version`` 指定的 Node，使用随 Node 提供的 npm 和
   ``web/package-lock.json``。不要为一次构建顺手升级依赖。
-- **构建文档**：Python 只用于独立文档工具。Sphinx 使用
-  ``docsite/requirements.txt``；MkDocs 使用 ``docs/requirements.txt``。
-  CI 使用 Python 3.12，可在本地创建同版本的隔离虚拟环境。
-  ``.github/scripts`` 的 Python 测试只依赖标准库，不要求安装这两套文档依赖。
+- **构建文档**：Python 只用于独立文档工具。Sphinx + Furo 使用
+  ``docsite/requirements.txt``（含哈希锁）。构建前按
+  ``docsite/components.lock.json`` 检出三个组件的固定提交。
+  CI 使用 Python 3.12。``.github/scripts`` 的部分测试只依赖标准库；
+  文档验收脚本需要同一套文档依赖。
 
 主仓不是 Python 应用或可安装的 Python 项目，没有根 ``pyproject.toml`` /
 ``uv.lock`` / ``pixi.lock`` 开发契约，不执行 ``uv sync`` 或 ``pip install .``。
-``qatlas-cli`` 的开发、测试与发版都在其独立仓库；本仓保留 Sphinx、MkDocs、
-``hooks/`` 与 CI 辅助脚本，不应将它们误当作旧 Python 包残留删除。
+``qatlas-cli`` 的开发、测试与发版都在其独立仓库；本仓保留 Sphinx 与 CI
+辅助脚本，不应将它们误当作旧 Python 包残留删除。
 
 .. code-block:: bash
 
@@ -130,13 +131,9 @@ Markdown 与公式渲染
   元素，KaTeX 负责公式排版；原始 HTML 只作文本，公式 JS、CSS 和字体按 npm 锁定版本
   本地打包。解析在主线程同步执行，不再使用 Worker，也没有可抢占的解析超时；长文档
   的实测表现、资源预算与原文回退见仓库 ``web/MARKDOWN_PREVIEW.md``。
-- **MkDocs**：``docs/`` 的 Markdown 经 Python Markdown 与 ``pymdownx.arithmatex``
-  处理，再由浏览器中的 KaTeX auto-render 渲染公式。目前公式资源来自
-  ``unpkg.com/katex@0`` 的浮动 CDN 版本，由 ``mkdocs.yml`` 和
-  ``docs/javascripts/katex.js`` 独立配置。
-- **Sphinx**：``docsite/`` 使用 reStructuredText；``:math:`` 和 ``.. math::``
-  创建数学节点，HTML 构建器默认使用 MathJax，含公式的页面按需加载其脚本。
-  当前 ``docsite/conf.py`` 未自定义数学引擎。
+- **Sphinx**：``docsite/`` 使用 reStructuredText 与 MyST Markdown。
+  数学节点可由 ``:math:``、``.. math::`` 或 MyST ``dollarmath`` 生成。
+  图表使用 ``sphinxcontrib-mermaid``。当前主题为 Furo。
 
 Sphinx 的 ``/doc``、``/devdoc`` 虽随 Web/Go 资源一起分发，仍是独立静态页面，
 不经过 React 预览器。修改主 Web 渲染逻辑或通过 npm 审计，不代表文档站及其 CDN
@@ -149,8 +146,9 @@ Sphinx 的 ``/doc``、``/devdoc`` 虽随 Web/Go 资源一起分发，仍是独�
 
 .. code-block:: bash
 
-   python3 -m venv build/venv-sphinx
-   build/venv-sphinx/bin/python -m pip install -r docsite/requirements.txt
+   python3 -m venv .venv-docs
+   .venv-docs/bin/python -m pip install --require-hashes -r docsite/requirements.txt
+   .venv-docs/bin/python .github/scripts/docs_sources.py checkout --transport ssh
    # 先用自己的 Node 版本管理器选择 web/.node-version 指定的版本
    (cd web && npm ci)
 
@@ -161,12 +159,8 @@ Sphinx 的 ``/doc``、``/devdoc`` 虽随 Web/Go 资源一起分发，仍是独�
    export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
    export TZ=UTC PYTHONHASHSEED=0
    # 只清理这些可再生输出，不触碰运行数据或个人缓存
-   rm -rf web/public/doc web/public/devdoc web/dist build/doctrees web/node_modules/.tmp
-   build/venv-sphinx/bin/sphinx-build \
-     -b html -d build/doctrees/public docsite web/public/doc
-   build/venv-sphinx/bin/sphinx-build \
-     -b html -d build/doctrees/dev -t devdocs -D root_doc=dev/index \
-     -D html_title="QuantumAtlas 开发文档" docsite web/public/devdoc
+   rm -rf web/dist web/node_modules/.tmp
+   PYTHON="$PWD/.venv-docs/bin/python" bash .github/scripts/build-docs.sh
    # 打包前确认当前 shell 和所有会加载的 .env 文件都没有 token
    (cd web && npm run build)
    CGO_ENABLED=0 go build -tags embedui -o build/qatlasd ./cmd/qatlasd
@@ -209,7 +203,7 @@ Doctree/pickle 缓存放 ``build/doctrees``，不能随 UI 发行。CI 对同一
 检查用上面的临时标识，不发布。GoReleaser 绑定真实触发 tag，不从旧 tag 猜版本。
 
 Git 只保存源码与必要锁文件。不要提交 ``web/dist``、``web/public/doc``、
-``web/public/devdoc``、根 ``dist/`` / ``build/``、MkDocs ``site/``、
+``web/public/devdoc``、根 ``dist/`` / ``build/``、文档构建缓存、
 ``node_modules``、缓存、运行配置或 ELF 可执行文件。始终显式将本地 Go 输出放到
 ``build/``，而不是把 ``qatlasd`` / ``downloaderproxy`` / ``downloaderworker``
 留在仓库根目录。禁止通过 ``git add -f`` 绕过这些边界。
@@ -303,24 +297,13 @@ YAML ``system_pat.token``，不是旧环境变量。``VITE_`` 是 Vite 可暴露
 与会加载的 env 文件不含 token。不要将带真实凭据的 Vite 服务开放到公网，也不要
 把生产后端作为日常前端开发目标。更完整的路由表和代理约束见仓库 ``web/README.md``。
 
-MkDocs 与开发文档的验收
-------------------------
-
-MkDocs 是独立文档体系，不代替上面的两套 Sphinx 站点，也不进入同一 UI 构建链。
-保留其 ``hooks/openapi_spec.py`` 等文档 hook；不需要旧 Python 包、pytest 或
-``mkdocstrings`` Python API 自动文档插件。
-
-.. code-block:: bash
-
-   python3 -m venv build/venv-mkdocs
-   build/venv-mkdocs/bin/python -m pip install -r docs/requirements.txt
-   build/venv-mkdocs/bin/mkdocs build --strict --site-dir build/mkdocs
-   build/venv-mkdocs/bin/mkdocs serve --dev-addr 127.0.0.1:8000
+开发文档的访问边界
+------------------
 
 Sphinx 开发文档经服务端 ``/devdoc`` HTTP 管理员门控访问，但公开的二进制和
 UI ZIP 中也能直接读取其内容。**HTTP 仅管理员可见不等于内容保密**，不要写入
 密钥、个人 token、内网凭据或私有部署信息。
 
-提交前应通过隔离 Go test/vet、gofmt、OpenAPI 同步、CI 标准库 fixture、
-MkDocs build，以及完整 Sphinx/前端双构建与内嵌资源检查。新生成的站点仅用于
+提交前应通过隔离 Go test/vet、gofmt、OpenAPI 同步、CI 标准库 fixture，
+以及完整 Sphinx/前端双构建与内嵌资源检查。新生成的站点仅用于
 验收，不提交 Git；再次审核 ``git status --short`` 与 ``git diff --check``。

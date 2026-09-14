@@ -35,3 +35,22 @@ worker 暂存并上传 PDF，主服务完成存储与资产登记后确认交付
    guide/search
    guide/mineru
    guide/admin
+
+.. toctree::
+   :maxdepth: 2
+   :caption: 组件文档（随本次构建固定版本）
+
+   _collections/qatlas-cli/index
+   _collections/qatlas-search/index
+   _collections/qatlas-rag/index
+
+.. toctree::
+   :maxdepth: 2
+   :caption: 平台参考与架构决策
+
+   manual/contents
+
+组件正文由各组件仓库维护；主仓在构建时按 ``components.lock.json`` 中的固定
+提交收集，一次生成整个站点和搜索索引。固定文档提交不代表各服务已经完成
+运行时兼容性测试。平台参考保留了原 Markdown 站的完整内容，部分历史设计与
+当前使用手册的侧重点不同；迁移没有恢复已经退役的业务模块。

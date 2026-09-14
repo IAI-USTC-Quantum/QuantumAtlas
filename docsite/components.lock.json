@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "description": "Exact component documentation inputs for the main Sphinx build; not a runtime compatibility guarantee.",
+  "components": [
+    {
+      "name": "qatlas-cli",
+      "repository": "IAI-USTC-Quantum/qatlas-cli",
+      "sha": "ff84c6a6c28b0aaa66a697b7be3dd9f4ec890d5e",
+      "docs_dir": "docs"
+    },
+    {
+      "name": "qatlas-search",
+      "repository": "IAI-USTC-Quantum/qatlas-search",
+      "sha": "10d0f135d9fa753dddbb08b9b61a17b5a3dbe5d4",
+      "docs_dir": "docs"
+    },
+    {
+      "name": "qatlas-rag",
+      "repository": "IAI-USTC-Quantum/qatlas-rag",
+      "sha": "e25b274821f2862a3aa62e0eea2922cc97e4ab4d",
+      "docs_dir": "docs"
+    }
+  ]
+}

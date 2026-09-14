@@ -17,10 +17,10 @@
 #                      ./deploy/update-docs.sh
 #                      DOCS_REF=<sha> ./deploy/update-docs.sh   # pin/rollback
 #
-#   --build-local    Build the sphinx sites from a LOCAL checkout (e.g.
-#                    docs changes not pushed yet) in a throwaway python
-#                    container. Run from anywhere; REPO_DIR points at the
-#                    checkout (default: this script's repo root):
+#   --build-local    Copy already-built Sphinx sites from a LOCAL checkout
+#                    (web/public/doc and web/public/devdoc). Build first with
+#                    .github/scripts/build-docs.sh; this mode does not run
+#                    Sphinx again:
 #
 #                      ./deploy/update-docs.sh --build-local
 #
@@ -29,7 +29,6 @@
 #   DOCS_REF     image tag to pull         (default: latest)
 #   DOCS_IMAGE   image reference           (default: ghcr.io/iai-ustc-quantum/qatlas-docs)
 #   REPO_DIR     checkout for --build-local (default: repo root of this script)
-#   PYTHON_IMAGE builder image for --build-local (default: python:3.12-slim)
 #
 # Remote docs directory? Run --build-local on any dev machine with a
 # local DOCS_DIR, then:  rsync -a "$DOCS_DIR/" host:~/.qatlas/docs/
@@ -39,7 +38,6 @@ DOCS_DIR="${DOCS_DIR:-$HOME/.qatlas/docs}"
 DOCS_REF="${DOCS_REF:-latest}"
 DOCS_IMAGE="${DOCS_IMAGE:-ghcr.io/iai-ustc-quantum/qatlas-docs}"
 REPO_DIR="${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-PYTHON_IMAGE="${PYTHON_IMAGE:-python:3.12-slim}"
 
 BUILD_LOCAL=0
 for arg in "$@"; do
@@ -53,23 +51,17 @@ done
 mkdir -p "$DOCS_DIR"
 
 if [ "$BUILD_LOCAL" -eq 1 ]; then
-  echo ">> building docs from $REPO_DIR in $PYTHON_IMAGE"
-  # -u + HOME=/tmp: the builder writes the output as the INVOKING user
-  # (root-written files would block the next refresh's rm -rf for
-  # non-root operators); pip --user lands in /tmp/.local.
-  docker run --rm \
-    -u "$(id -u):$(id -g)" -e HOME=/tmp \
-    -v "$REPO_DIR":/src:ro \
-    -v "$DOCS_DIR":/out \
-    -w /src "$PYTHON_IMAGE" bash -euo pipefail -c '
-      pip install -q --user -r docsite/requirements.txt
-      export PATH="$HOME/.local/bin:$PATH"
-      rm -rf /out/doc /out/devdoc
-      sphinx-build -b html docsite /out/doc
-      sphinx-build -b html -t devdocs -D root_doc=dev/index \
-        -D html_title="QuantumAtlas 开发文档" docsite /out/devdoc
-  '
-  git -C "$REPO_DIR" rev-parse --short HEAD > "$DOCS_DIR/VERSION" 2>/dev/null || true
+  echo ">> copying prebuilt Sphinx sites from $REPO_DIR/web/public"
+  for site in doc devdoc; do
+    if [ ! -f "$REPO_DIR/web/public/$site/index.html" ] && [ ! -f "$REPO_DIR/web/public/$site/dev/index.html" ]; then
+      echo "missing $REPO_DIR/web/public/$site; run .github/scripts/build-docs.sh first" >&2
+      exit 1
+    fi
+  done
+  rm -rf "$DOCS_DIR/doc" "$DOCS_DIR/devdoc"
+  cp -a "$REPO_DIR/web/public/doc" "$DOCS_DIR/doc"
+  cp -a "$REPO_DIR/web/public/devdoc" "$DOCS_DIR/devdoc"
+  git -C "$REPO_DIR" rev-parse HEAD > "$DOCS_DIR/VERSION" 2>/dev/null || true
 else
   echo ">> pulling $DOCS_IMAGE:$DOCS_REF"
   # Tolerate a pull failure when the image already exists locally

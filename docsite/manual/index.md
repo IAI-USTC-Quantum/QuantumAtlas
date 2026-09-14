@@ -1,0 +1,89 @@
+# QuantumAtlas
+
+**面向量子算法研究的论文收集、多路检索与注册数据库。**
+
+QuantumAtlas 从 arXiv 收集量子算法论文，把 PDF 解析成结构化资产（Markdown / 图片 / 元数据 JSON），把每一篇论文、每一个身份（arXiv ID / DOI / OpenAlex ID）、每一份资产登记进 PostgreSQL registry，再通过**一个搜索端点**回答查询——本地 catalog、arXiv、OpenAlex、可选的 Qdrant 语义向量检索，多路 fan-out 一次完成。
+
+核心想法：**收集一次，全部登记，到处可搜**。原始资产进对象存储，论文 registry 进 PostgreSQL（boot 时 goose 自动迁移），搜索引擎跨范式查询而不需要你事先选边。
+
+```{mermaid}
+flowchart LR
+    A[arXiv / 用户上传] -->|fetch + parse| R[对象存储<br/>PDF + Markdown + images]
+    R -->|register| P[PostgreSQL registry<br/>papers / identities / assets]
+    P & U[arXiv / OpenAlex 上游] --> S[POST /api/search<br/>多 provider fan-out]
+    Q[Qdrant 语义检索<br/>可选] --> S
+```
+
+---
+
+## 文档导航
+
+文档按两个组件 + 共享基础组织：**独立客户端 (`qatlas-cli` 提供 `qatlas`)** 与 **本仓 Go 服务端 (`qatlasd`)** 各成一节。客户端章节保留服务端集成示例；客户端源码与发版在[独立仓库](https://github.com/IAI-USTC-Quantum/qatlas-cli)，不随主仓安装或发布。
+
+- **入门**
+
+  装 client、指向 server、拉第一篇论文；或 5 分钟把 qatlasd + PostgreSQL 跑起来。
+
+  [入门指南](getting-started.md)
+
+- **概念与架构**
+
+  分层模型、数据流动、对象寻址、鉴权语义、存储边界。
+
+  [概念](concepts/index.md)
+
+- **Python 客户端 `qatlas`**
+
+  摄入论文、上传资产、跑 MinerU、拉取 PDF / Markdown、管理凭据。
+
+  [Python 客户端](client/index.md)
+
+- **Go 服务端 `qatlasd`**
+
+  安装、systemd、反向代理、OAuth、PostgreSQL、RustFS、REST API、健康检查、备份升级。
+
+  [Go 服务端](server/index.md)
+
+- **参考 / 数据格式**
+
+  环境变量、arXiv ID 格式等跨组件的稳定约定。
+
+  [参考](reference/index.md)
+
+- **贡献**
+
+  代码、文档、发布流程。
+
+  [贡献指南](contributing.md)
+
+---
+
+## 核心能力
+
+- **从 arXiv 收集论文**：自动抓取 PDF + 元数据，可选用 MinerU 解析为 Markdown
+- **Robust Downloader**：给定 DOI / arXiv id / 论文 URL，多范式策略阶梯抓取正式版 PDF——arXiv 直下、OA 元数据 API（Europe PMC / Unpaywall / OpenAlex / Semantic Scholar）、出版社 URL 模板、落地页挖掘、真实浏览器 lane、LLM 兜底，可再委托校园出口代理机（downloaderproxy）；每个候选都过统一验证管线（`%PDF-` magic、bot 墙 / 付费墙分类）
+- **PostgreSQL 论文 registry**：论文、身份（arXiv / DOI / OpenAlex）、资产状态全部入库，纯 SQL 可查；goose migrations 随 server 启动自动 apply
+- **多范式搜索**：`POST /api/search` 一个端点 fan-out 到 catalog / arxiv / OpenAlex provider；`POST /api/search/multi` 逐平台返回原始结果（SPA backend picker + 每用户第三方搜索 key，AES-GCM 加密存储）；语义混合检索（dense+sparse, RRF + rerank）经 qatlas-search / qatlas-rag 微服务接入
+- **懒加载摄入**：缓存未命中时 server 后台静默 fetch + 转换，LRO 状态可轮询，并发请求自动 dedupe
+- **OpenAlex 语料镜像**：works 语料灌进同一个 PG 库，引用上下文 / 批量分析直接 SQL
+- **管理端 Asset Browser**：admin 直接浏览 / 预览 / 下载 / presign 对象存储里的论文 PDF 与 Markdown（批量 ZIP、限时 presigned URL），抓取失败表 + 内联 PDF 上传闭环补救
+- **远程协作**：Web API + CLI，协作者不需要服务器登录权限
+
+## 当前状态
+
+```{admonition} Alpha 阶段，主干已贯通
+:class: note
+
+- 论文收集、registry、多路搜索、懒加载摄入 **全链路打通**。
+- Web API 与远程协作流程 **可用**。
+- 项目定位是「可持续扩展的研究基础设施」，而不是已经产品化的平台——意味着稳定但仍在快速演化。
+```
+
+## 仓库 & 包
+
+- 服务端源码与发版：<https://github.com/IAI-USTC-Quantum/QuantumAtlas>
+- 客户端源码与独立发版：<https://github.com/IAI-USTC-Quantum/qatlas-cli>
+- 客户端安装包：[`qatlas-cli`](https://pypi.org/project/qatlas-cli/)
+- 旧包 [`quantum-atlas`](https://pypi.org/project/quantum-atlas/)：`0.21.0` 为仅含元数据的最终迁移版，不含 Python 模块、CLI 或运行时依赖，不会自动安装 `qatlas-cli`；请按[迁移指南](getting-started.md#从旧包-quantum-atlas-迁移)切换
+- 生产入口：<https://quantum-atlas.ai>
+- 协议：[Apache-2.0](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/LICENSE)

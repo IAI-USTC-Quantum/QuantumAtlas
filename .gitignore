@@ -35,6 +35,7 @@ node_modules/
 /docs-dist/
 docs/_build/
 docsite/_build/
+docsite/_collections/
 docs/server/openapi.json
 __pycache__/
 *.py[codz]

@@ -71,7 +71,7 @@ app 微服务之间的 HTTP 接口协议。主仓还包含独立部署的下载 
 或覆盖该 tag。main 已移除这些一次性工具和旧包发布入口，不再发布后续
 ``quantum-atlas`` 版本；保留 ``PYPI_README.md`` 的退役说明入口，不保留
 根 Python 项目、uv/Pixi 锁文件或旧包构建后端。文档的独立 requirements、
-Sphinx/MkDocs hook 与 CI 标准库辅助脚本继续维护。
+Sphinx 依赖锁与 CI 标准库辅助脚本继续维护。
 
 常规 ``v*`` 服务端流程继续发布二进制、镜像和 GitHub Release，不包含
 PyPI 产物。这次旧包退役没有发布服务端或容器，当时服务端最新发行及
@@ -127,7 +127,7 @@ SemVer，推荐标准 ``vX.Y.Z[-rc.N]``，不使用 PEP 440 或 ``+build`` 标�
 ``release.yml`` 在 push tag ``v*.*.*`` 或手动选择 tag 运行时，prep 固定 checkout
 事件的 ``github.sha``，再把 ``HEAD`` 解析为提交 SHA，供 checks 和发布共用；
 不重新解析浮动 tag 来选择源码。先复用同 SHA 的 ``go.yml`` checks（Go test/vet、
-integration 编译检查、OpenAPI、MkDocs、前端与两文档站双干净构建一致性），
+integration 编译检查、OpenAPI、前端与两文档站双干净构建一致性），
 再由 GoReleaser 构建和发布。
 正式 UI 版本从传入的精确 ``release_tag`` 去掉前导 ``v`` 派生，仍确认
 tag 所指提交 SHA = source SHA = ``HEAD``，并复用唯一验证过的 UI 包。
@@ -361,7 +361,7 @@ sphinx 站点并直接写入文档目录。
      - 审核兼容性，选择未发布的 SemVer；不使用 PEP 440 或 ``+build``，不自动 bump
    * - 待发源码本地 CI mirror
      - gofmt、隔离 Go test/vet（含 web 与 tests）、integration 仅编译、
-       OpenAPI 同步、CI Python 标准库 fixture、独立 MkDocs 与完整 UI 双构建，
+       OpenAPI 同步、CI Python 标准库 fixture、完整 UI 双构建，
        GoReleaser check/snapshot 全绿；发布也复用同 SHA 的检查
    * - 完成源码提交/review
      - breaking 标记在 commit 标题，迁移步骤在对应功能/部署文档；

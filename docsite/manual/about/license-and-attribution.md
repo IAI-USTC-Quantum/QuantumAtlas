@@ -1,0 +1,140 @@
+# License & Attribution
+
+> QuantumAtlas 自己的代码 / 文档 license 见 [致谢 · 许可证](credits.md#许可证)
+> 段。本文档讲**外部上游数据源**的 license 归属和我们的合规策略。
+
+## 我们怎么处理"PDF + metadata + 全文"三类数据
+
+| 数据类别 | 来源 | 我们持有 / 分发？ | 用户拿到什么 |
+|---|---|---|---|
+| **论文 PDF 字节** | arxiv.org（作者保留版权） | ⚠️ **默认不分发** | qatlasd **默认无 PDF 下载 API**（`QATLAS_PAPER_ACCESS_ENABLED=false`）；从 [arxiv.org](https://arxiv.org/) 自行下载。Self-hosted 部署可在受控范围内启用对内下载，详见下文「论文访问开关」 |
+| **论文 metadata**（标题 / 作者 / DOI / 引用 / 发表日期 等） | OpenAlex（CC0）+ Crossref（CC0） | ✅ 镜像进 PostgreSQL corpus | 公开 API 返回，CC0 transitively 公开 |
+| **MinerU 解析后的 Markdown 全文** | 由部署方用自己的 MinerU quota 从 PDF 转换 | ✅ 缓存在 `qatlas-md` 桶 | 同上开关控制：默认仅供 server 内部检索；启用后可对持 `papers:read` 的客户端 serve markdown 字节 |
+
+**核心合规设计**：
+
+```
+默认不分发 PDF 字节 + metadata 来自 CC0 上游 + Markdown 默认不通过 API 外发
+  → 论文 license 风险在 quantum-atlas.ai 这类公开实例上天然规避
+  → self-hosted 部署若开启论文访问开关，由部署方自行承担分发义务
+```
+
+这意味着 [quantum-atlas.ai](https://quantum-atlas.ai) 这类公开实例**不需要**在
+ingest 时检查每篇论文的 license（许多 arxiv 论文是"作者保留版权 + 授予 arxiv
+永久非排他分发权"，license 字段在 OpenAlex 里**不**统一记录）。靠"默认不持
+字节面向公网 + 默认不外发全文"两条规则在源头规避，比 per-paper license
+匹配可靠得多。
+
+> **Self-hosters 注意**：若你把 `QATLAS_PAPER_ACCESS_ENABLED` 设为
+> `true`（见 [论文访问开关](#论文访问开关-self-hosted)），server 会开始通过
+> HTTP API 对外 serve PDF / Markdown 字节，原生的"源头规避"就**不再适用**——
+> 此时部署方需要自己评估对外受众范围、上游 ToS 与适用法域的合规要求。
+> 我们维护的公开实例（quantum-atlas.ai）保持默认关闭。
+
+## 上游数据源 license 汇总
+
+各数据源的详细介绍见 [外部数据源](external-data-sources.md)。下表只列 license
+和我们的归属义务。
+
+| 数据源 | License | 商业可用 | 强制归属 | 备注 |
+|---|---|---|---|---|
+| **OpenAlex** | [CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/) | ✅ | ❌（强烈推荐但不强制） | 创作者放弃所有权利，可任意使用。OpenAlex 仍**请求**显示归属，我们照做 |
+| **Crossref metadata** | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) | ✅ | ❌ | 2017 起 Crossref 全部 metadata 转 CC0 |
+| **arXiv metadata**（via OAI-PMH） | [arXiv ToU](https://arxiv.org/help/license) | ✅（read access） | ✅ "Source: arXiv" | 元数据可读、可镜像；归属到 arxiv.org |
+| **arXiv 论文全文（PDF）** | **作者保留版权** | ❌ 不可随意再分发 | — | 公开实例**不**镜像 PDF 字节；用户从 arxiv 自己下。Self-hosted + 开关启用后，由部署方承担分发义务 |
+| **MinerU 解析输出** | 衍生作品 — 受**原 PDF 版权**约束 | ⚠️ 仅 fair-use / 研究教育 | — | 同上：公开实例无字节下载 API；self-hosted 自负责任 |
+| **Semantic Scholar Open Research Corpus** | [ODC-BY 1.0](https://opendatacommons.org/licenses/by/1-0/) | ✅ | ✅ "Data provided by Semantic Scholar" | 当前未使用，预留 |
+| **ORCID public profile** | CC0 | ✅ | ❌ | 当前未使用，预留 |
+
+## 我们的归属（按 CC0 推荐做法）
+
+**SPA 详情页脚 + 公开 API 响应**会显示：
+
+```
+Metadata from OpenAlex (https://openalex.org), released under CC0.
+Article source and full text: arXiv (https://arxiv.org).
+```
+
+**API 响应 header**（在所有 `/api/*` 路径上自动注入，由
+`cmd/qatlasd/main.go` 的 router-level middleware 实现）：
+
+```
+X-Attribution: OpenAlex (CC0), Crossref (CC0), arXiv
+```
+
+**README + 项目文档**（本节及 [致谢](credits.md)）显示完整 attribution 链。
+
+## 用户责任
+
+如果你**复用**从 QuantumAtlas API 拿到的内容：
+
+- **Metadata（CC0）**：随便用，**仍请**归属到 OpenAlex（公益项目，归属能帮它们拿持续资助）
+- **PDF**：公开实例不提供 PDF 下载——请自行到 [arxiv.org](https://arxiv.org/) 拉，按原作者声明使用
+
+## 论文访问开关 (self-hosted)
+
+`QATLAS_PAPER_ACCESS_ENABLED` 是 qatlasd 上的**单一 master 开关**，
+默认 `false`。**合规就落在这个开关上**：它决定 server 是否对外分发论文内容（ADR
+[0011](../adr/0011-by-id-asset-reads.md)）。开关 OFF 时（quantum-atlas.ai 等公开实例的默认状态）**不对外分发**：
+
+- **PDF**：arxiv 论文 → 返回 `arxiv.org/pdf/<id>` 直链（canonical 源分发，不是 QA）；
+  非 arxiv（DOI/published-only）→ 不提供
+- **markdown / json** → 不提供
+- server 不读 `MINERU_*` / `QATLAS_OPENALEX_MAILTO` / `QATLAS_ARXIV_FETCH_*` 字段；不会代客户端做 server-side 转换或 fetch
+- Contributor 仍可走 `qatlas contrib mineru`（拿自己的 MinerU quota 在本地跑），通过
+  `POST /api/papers/{id}/upload-mineru` 把成品 markdown 推到 server——这条
+  路径**与开关无关**
+
+> 当前实现：开关 OFF 时 `/markdown` / `/pdf` 端点整体**不注册**（客户端拿到 404）；
+> 上面「arxiv 论文 → arxiv.org 直链」是 ADR 0011 的既定 OFF 态行为，实施跟踪见
+> [#8](https://github.com/IAI-USTC-Quantum/QuantumAtlas/issues/8)。
+
+开关 ON 时（部署方**显式接受衍生作品分发义务**），server 同时启用以下四件事，**一体不可拆**（pdf / markdown / json 都对外提供）：
+
+1. **Markdown 对外 serve + on-demand convert**
+   `GET /api/papers/{id_or_doi}/markdown` 注册，受 `papers:read` 保护。**默认串字节流**
+   （`text/markdown`），`?format=link` 改为返回 RustFS 直链（ADR 0011）；缓存未
+   命中时 server 用部署方配置的 `MINERU_API_TOKENS` 跑 MinerU，markdown 写回
+   `qatlas-md` 桶。
+2. **PDF 对外 serve + silent fetch**（历史行为，现已停用）
+   `GET /api/papers/{id_or_doi}/pdf` 注册，受 `papers:read` 保护。**默认返回 RustFS
+   直链**（从 `QATLAS_S3_PUBLIC_ENDPOINT` presign，qatlasd 不代理大二进制），
+   `?format=bytes` 改为串 `application/pdf` 字节；缓存未命中时用
+   `QATLAS_OPENALEX_MAILTO`（polite-pool）+ `QATLAS_ARXIV_FETCH_RPS` 速率限制从
+   arxiv.org 拉 PDF，写入 `qatlas-pdf` 桶。**无论直链还是字节，部署方都对外重分发了
+   arxiv PDF 的副本**（直链指向 QA 存的那份）——arxiv 的 ToS 没禁止 redistribution，但
+   **版权归原作者**，部署方应自行评估对外受众范围与法域限制。
+
+   > 上述 PDF 交付是**停用前的行为**：PDF 分发现已设计性停用，`GET /pdf` 恒返
+   > **410 Gone**（提示改用 markdown 端点）；PDF 抓取仍作为 markdown 转换管线的
+   > 内部阶段、以及贡献者 MinerU lease 的对象保留。
+3. **DOI 寻址**
+   path 头部匹配 `^10\.\d{4,9}/` 自动经 OpenAlex 反查 → canonical arxiv id →
+   走同一套 handler；缺 `QATLAS_OPENALEX_MAILTO` 时 DOI 路径返回 503。
+4. **状态端点**
+   `…/markdown/status` 与 `…/pdf/status` 提供 side-effect-free 进度查询；
+   两端点同样只在开关 ON 时注册。
+
+开关 ON 后，部署方对**对外受众范围**与**适用法域 ToS** 自负责任。我们建议：
+
+- 反代层放鉴权前置（caddy-security GitHub OAuth、企业 SSO 等），不要裸开
+  到匿名互联网；
+- 部署在受控范围（私有团队、内部站点、教育机构 IP allowlist）；
+- 公开实例（互联网开放）维持开关默认 OFF。
+
+当前 YAML 配置边界见[配置参考 · 论文访问开关](../reference/env-vars.md#server论文访问开关self-hosted-可选)。
+实施进度跟踪：[#8](https://github.com/IAI-USTC-Quantum/QuantumAtlas/issues/8)。
+
+## 撤稿 / 删除请求
+
+如果你是论文作者或权利持有人，希望我们：
+
+- 从 PostgreSQL paper registry 移除该 paper 记录
+- 从 `qatlas-md` 桶删除某 paper 的解析 markdown
+
+请提 [GitHub issue](https://github.com/IAI-USTC-Quantum/QuantumAtlas/issues) 或邮件
+联系维护者（见 [致谢](credits.md#维护者)）。我们会在合理时间内处理（不保证 SLA，
+这是一个研究项目）。
+
+注意：metadata 来自 CC0 上游，我们删除自己 catalog 不会让 metadata 从
+OpenAlex / Crossref 消失；要从那里删，请直接联系上游。

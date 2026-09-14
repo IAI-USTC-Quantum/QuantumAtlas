@@ -6,9 +6,7 @@
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![PocketBase v0.38](https://img.shields.io/badge/PocketBase-v0.38-B8DBE4?style=flat&logo=pocketbase&logoColor=black)](https://pocketbase.io/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16+-336791?style=flat&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
-[![Documentation Status](https://app.readthedocs.org/projects/quantum-atlas/badge/?version=latest)](https://quantum-atlas.readthedocs.io/zh-cn/latest/)
-
-> 📚 **Full documentation: <https://quantum-atlas.readthedocs.io>** — installation, architecture, contributing, deployment, and API reference.
+> 📚 **Documentation** is the Sphinx/Furo site served by qatlasd at `/doc` (user guide) and `/devdoc` (developer guide). The current internal instance is <https://qatlas.hfnl.app.chenzhaoyun.com/doc/>. It is not published to Read the Docs.
 
 QuantumAtlas collects quantum-algorithm papers from arXiv, parses them into structured assets, registers every paper and asset in a PostgreSQL database, and answers queries through a single search endpoint that fans out across multiple paradigms — the local catalog, arXiv, OpenAlex, and (optionally) semantic vector retrieval via Qdrant.
 
@@ -203,15 +201,12 @@ Full CLI options, auth details (PAT scopes / bearer tokens), and the recommended
 
 ## Documentation map
 
-> Online version (recommended): <https://quantum-atlas.readthedocs.io>. Repository paths below.
+User docs live in `docsite/` (Sphinx + Furo). Component docs are collected from pinned SHAs in `docsite/components.lock.json`. Build with `.github/scripts/build-docs.sh`; deploy the content image with `deploy/update-docs.sh`.
 
-- [docs/concepts/architecture.md](docs/concepts/architecture.md): the layered model, sources of truth, and storage boundaries.
-- [docs/client/contribute-content.md](docs/client/contribute-content.md): the contribution paths, auth, and sync semantics.
-- [docs/server/upload-api.md](docs/server/upload-api.md): `qatlas contrib pdf` / `POST /api/papers/.../upload-pdf` full API reference (sha256 dedup, idempotent retry, in-transit guard, conflict handling).
-- [docs/concepts/storage-architecture.md](docs/concepts/storage-architecture.md): how raw assets, metadata, and the registry are split, and why; bucket layout; reconciliation and rebuild.
-- [docs/server/rustfs.md](docs/server/rustfs.md): qatlas ↔ RustFS ops guide (env vars, IAM policy, bucket versioning, `qatlasd storage prune`, troubleshooting).
-- [docs/server/](docs/server/index.md): local startup, single-host deployment, systemd, environment variables, reverse proxy, and auth examples.
-- [docs/contributing.md](docs/contributing.md): dev commands, Conventional Commits, normal server releases, testing conventions, and the legacy package's retirement record.
+- [docsite/guide/](docsite/guide/concepts.rst): user guide (Web, CLI, API, search, admin)
+- [docsite/manual/](docsite/manual/contents.rst): platform reference, operations, and ADRs
+- [docsite/dev/](docsite/dev/index.rst): developer/release docs (served at `/devdoc`)
+- [docsite/manual/contributing.md](docsite/manual/contributing.md): contribution and server release process
 
 ## Repository overview
 
@@ -223,9 +218,9 @@ QuantumAtlas/
 ├── deploy/                docker-compose templates
 ├── scripts/               bootstrap and maintenance scripts
 ├── tests/                 test suite
-├── docs/                  documentation
+├── docs/                  historical Markdown sources (Sphinx copies live in docsite/manual/)
 ├── go.mod / go.sum        Go module, pinned dependencies and tool declarations
-└── docsite/               Sphinx user/developer documentation source
+└── docsite/               Sphinx/Furo user and developer documentation source
 ```
 
 > State directories (`raw/`, `data/`, `pb_data/`) are **not** in the repo —
@@ -276,7 +271,7 @@ QuantumAtlas's paper catalog builds on these open scholarly data sources:
 - **Paper metadata** (titles / authors / DOIs / citations) from [OpenAlex](https://openalex.org/) and [Crossref](https://www.crossref.org/), both **[CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/)** public domain.
 - **Paper records** from [arXiv](https://arxiv.org/), metadata mirrored per the [arXiv ToU](https://arxiv.org/help/license). **We do not hold or redistribute paper PDF bytes** — the public server exposes no PDF / Markdown download API; users fetch PDFs from arxiv.org themselves.
 
-Full license / attribution / takedown process: [License & Attribution](https://quantum-atlas.readthedocs.io/zh-cn/latest/about/license-and-attribution/); terms of use: [Terms of Service](https://quantum-atlas.readthedocs.io/zh-cn/latest/about/terms-of-service/).
+Full license / attribution / takedown process: [License & Attribution](docsite/manual/about/license-and-attribution.md); terms of use: [Terms of Service](docsite/manual/about/terms-of-service.md).
 
 ## License
 

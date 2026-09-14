@@ -1,0 +1,45 @@
+name: Checkout pinned component documentation
+description: Read components.lock.json and checkout all three exact component commits
+inputs:
+  token:
+    description: Read-only Contents token for qatlas-search and qatlas-rag
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Require cross-repository read credentials
+      shell: bash
+      env:
+        DOCS_TOKEN: ${{ inputs.token }}
+      run: |
+        if [ -z "$DOCS_TOKEN" ]; then
+          echo '::error::Configure DOCS_READ_TOKEN on QuantumAtlas with Contents: read for qatlas-search and qatlas-rag. Fork PRs do not receive this secret.'
+          exit 1
+        fi
+    - name: Read the immutable source lock
+      id: refs
+      shell: bash
+      run: python3 .github/scripts/docs_sources.py ci-outputs >> "$GITHUB_OUTPUT"
+    - uses: actions/checkout@v4
+      with:
+        repository: IAI-USTC-Quantum/qatlas-cli
+        ref: ${{ steps.refs.outputs.cli_sha }}
+        path: build/docs-components/qatlas-cli
+        persist-credentials: false
+    - uses: actions/checkout@v4
+      with:
+        repository: IAI-USTC-Quantum/qatlas-search
+        ref: ${{ steps.refs.outputs.search_sha }}
+        path: build/docs-components/qatlas-search
+        token: ${{ inputs.token }}
+        persist-credentials: false
+    - uses: actions/checkout@v4
+      with:
+        repository: IAI-USTC-Quantum/qatlas-rag
+        ref: ${{ steps.refs.outputs.rag_sha }}
+        path: build/docs-components/qatlas-rag
+        token: ${{ inputs.token }}
+        persist-credentials: false
+    - name: Verify source identities and clean documentation
+      shell: bash
+      run: python3 .github/scripts/docs_sources.py validate

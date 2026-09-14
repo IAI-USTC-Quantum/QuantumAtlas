@@ -20,6 +20,10 @@ on:
         type: string
         required: false
         default: ''
+    secrets:
+      DOCS_READ_TOKEN:
+        description: Read-only checkout token for the pinned private component docs
+        required: true
     outputs:
       ui_artifact:
         description: Complete validated UI zip, reusable without rebuilding
@@ -86,15 +90,14 @@ jobs:
           args: check
 
   docs:
-    name: MkDocs (strict build)
+    name: Sphinx and Furo (strict aggregate build)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.source_sha || github.sha }}
-          # The existing revision-date plugin needs file history.
-          fetch-depth: 0
+          persist-credentials: false
       - name: Verify exact documentation source
         env:
           SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
@@ -103,13 +106,19 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
-          cache-dependency-path: docs/requirements.txt
-      - name: Install MkDocs toolchain
-        run: python -m pip install -r docs/requirements.txt
-      - name: Build MkDocs (RTD remains the publishing service)
-        run: python -m mkdocs build --strict --site-dir build/mkdocs
-      - name: Require a source-only clean checkout after documentation build
+          cache-dependency-path: docsite/requirements.txt
+      - uses: ./.github/actions/checkout-docs
+        with:
+          token: ${{ secrets.DOCS_READ_TOKEN }}
+      - name: Install locked Sphinx toolchain
+        run: python -m pip install --require-hashes -r docsite/requirements.txt
+      - name: Fix documentation timestamps
+        run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
+      - name: Build both Sphinx sites
+        run: bash .github/scripts/build-docs.sh
+      - name: Require a verified source-only clean checkout
         run: |
+          python .github/scripts/check_docs.py web/public --release
           git diff --exit-code
           test -z "$(git status --porcelain --untracked-files=all)"
 
@@ -152,8 +161,11 @@ jobs:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: docsite/requirements.txt
+      - uses: ./.github/actions/checkout-docs
+        with:
+          token: ${{ secrets.DOCS_READ_TOKEN }}
       - name: Install Sphinx toolchain (not the retired Python application)
-        run: python -m pip install -r docsite/requirements.txt
+        run: python -m pip install --require-hashes -r docsite/requirements.txt
       - name: Install web dependencies
         working-directory: web
         run: npm ci
@@ -174,6 +186,8 @@ jobs:
       - name: Install Chromium for isolated UI tests
         working-directory: web
         run: npm exec -- playwright install --with-deps chromium
+      - name: Browser documentation searches and diagrams
+        run: node .github/scripts/docs-browser.cjs web/public build/docs-browser
       - name: Browser math previews (mock APIs, loopback only)
         working-directory: web
         run: npm run test:browser

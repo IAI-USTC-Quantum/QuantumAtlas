@@ -18,7 +18,7 @@ do not recreate retired Python, graph, wiki or theorem implementations in this m
   `-tags integration` plus explicit test targets enables DB/API fixtures; `-tags e2e`
   separately enables production smoke. Never use real deployment targets by default.
 - Start at [the developer guide](docsite/dev/development.rst) or
-  [contributing](docs/contributing.md). Current config is YAML-only, not `.env`.
+  [contributing](docsite/manual/contributing.md). Current config is YAML-only, not `.env`.
 - Historical tags/ADRs are audit records. The final Python tag is excluded from
   GoReleaser tag selection; it is not deleted, moved or republished.
 

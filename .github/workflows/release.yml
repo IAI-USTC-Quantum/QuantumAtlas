@@ -31,6 +31,8 @@ jobs:
   checks:
     needs: prep
     uses: ./.github/workflows/go.yml
+    secrets:
+      DOCS_READ_TOKEN: ${{ secrets.DOCS_READ_TOKEN }}
     with:
       source_sha: ${{ needs.prep.outputs.source_sha }}
       release_tag: ${{ github.ref_name }}
