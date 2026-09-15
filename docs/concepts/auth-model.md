@@ -33,7 +33,7 @@ System PAT 明文格式随意（推荐 `openssl rand -base64 32`），**只活�
 `internal/auth/oauth.go` 在 `OnRecordAuthWithOAuth2Request` 钩子里做登录校验：拿到 provider 身份、但**还没建 `users` 记录、还没发 token** 那一刻：
 
 - **GitHub**：比对 `Config.IsGitHubLoginAllowed(login)`（config.yaml `auth.allowed_logins` ∪ `auth.admin_logins`，大小写不敏感），不在名单一律返回 **403**。
-- **Gitea**：**不做白名单**——实例上任何账号都能登录（实例自身的注册/审核策略就是门槛）。`auth.gitea_admin_logins` 只在启动时播种 `is_admin` 标志（见 [§DB 角色](#db-角色-is-admin-is-superadmin-disabled)），不管登录。
+- **Gitea**：**不做白名单**——实例上任何账号都能登录（实例自身的注册/审核策略就是门槛）。`auth.gitea_admin_logins` 只在启动时播种 `is_admin` 标志（见「DB 角色」一节），不管登录。
 
 要点：
 
