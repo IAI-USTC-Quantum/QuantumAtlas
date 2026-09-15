@@ -26,7 +26,7 @@ func TestGoNativeRepositoryBoundary(t *testing.T) {
 	}
 	for _, name := range []string{
 		"go.mod", "go.sum", ".goreleaser.yaml", "PYPI_README.md",
-		"docsite/conf.py", "docsite/requirements.txt", "docsite/components.lock.json",
+		"docsite/conf.py", ".github/scripts/build_docs.py", "docsite/components.lock.json",
 		".github/scripts/artifacts.py", ".github/scripts/docs_sources.py", "Dockerfile.goreleaser",
 	} {
 		if info, err := os.Stat(filepath.Join(root, filepath.FromSlash(name))); err != nil || !info.Mode().IsRegular() {
