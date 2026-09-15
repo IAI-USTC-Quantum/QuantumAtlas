@@ -387,28 +387,7 @@ func main() {
 		// nil (local dev / no DSN) the corpus reports unavailable and lookup
 		// degrades gracefully (resolved=false, corpus_available=false).
 		corpus := openalexcorpus.NewStore(pgPool)
-		if registryStore.Configured() {
-			// Schema migration runs in the background: registry.Migrate is a
-			// series of goose DDL round-trips to the registry database, which can
-			// exceed any startup-blocking budget and would otherwise delay
-			// /api/health. We retry with a generous per-attempt timeout until the
-			// schema is at the latest bundled version. One failure mode is NOT
-			// retried: a database NEWER than the binary (ErrSchemaTooNew) can
-			// never converge, so it is fatal.
-			//
-			// The OpenAlex corpus BASE schema is created here too (openalex_works
-			// + sync-state + audit; the pgvector-guarded work_embeddings is a
-			// no-op without the extension). This makes openalex_works exist at
-			// boot so the corpus can be populated lazily (fetch-on-miss
-			// write-through, ADR 0006) — the bulk `openalex bootstrap-pg` is only
-			// an optional pre-warm, no longer a prerequisite.
-			//
-			// The HEAVY openalex_works indexes are built in a second phase
-			// CONCURRENTLY (never a boot-time SHARE lock on the 353 GB table)
-			// and only when postgres.corpus_ensure_indexes is true — an edge
-			// pointing at a pre-indexed corpus sets it false (ADR 0013).
-			go ensureCatalogSchema(pgPool, corpus, cfg.CorpusEnsureIndexes)
-		} else {
+		if !registryStore.Configured() {
 			log.Printf("papers: registry disabled (postgres.dsn unset); /api/papers stats+queue report available:false")
 		}
 
@@ -478,6 +457,18 @@ func main() {
 			ingestPusher = ragClient
 		}
 
+		// MinerU token pool: the registry DB (mineru_tokens, migration
+		// 00006) is the durable source of truth for which keys are
+		// loaded AND their rotation timestamps; the config api_tokens
+		// list only seeds rows the table hasn't seen. The converter
+		// boots on the config list and the swap to the DB-backed pool
+		// happens in the post-migration hook below — the table cannot
+		// exist before ensureCatalogSchema has run.
+		var mineruTokenStore *mineru.TokenStore
+		if cfg.PaperAccessEnabled && registryStore.Configured() {
+			mineruTokenStore = mineru.NewTokenStore(registryStore.Pool())
+		}
+
 		// Build the MinerU converter (always non-nil; behaves as a
 		// no-op when paper_access.enabled is false). When
 		// the operator opts in we emit ONE info line so deploy logs
@@ -487,6 +478,7 @@ func main() {
 			mineru.ConverterConfig{
 				PaperAccessEnabled:      cfg.PaperAccessEnabled,
 				MinerUAPITokens:         cfg.MinerUAPITokens,
+				TokenStore:              mineruTokenStore,
 				MinerUAPIBaseURL:        cfg.MinerUAPIBaseURL,
 				MinerUModelVersion:      cfg.MinerUModelVersion,
 				MinerULanguage:          cfg.MinerULanguage,
@@ -527,6 +519,36 @@ func main() {
 				"arxiv_fetch_rps", cfg.ArxivFetchRPS,
 				"timeout_s", int(mineruConverter.Timeout().Seconds()),
 			)
+		}
+
+		// Background schema ensure: registry.Migrate is a series of goose
+		// DDL round-trips to the registry database, which can exceed any
+		// startup-blocking budget and would otherwise delay /api/health
+		// (retried with a generous per-attempt timeout; a database NEWER
+		// than the binary can never converge and is fatal). The OpenAlex
+		// corpus BASE schema is created here too (openalex_works +
+		// sync-state + audit) so the corpus can be populated lazily, and
+		// the HEAVY openalex_works indexes are built in a second phase
+		// CONCURRENTLY — never a boot-time SHARE lock on the 353 GB
+		// table — gated by postgres.corpus_ensure_indexes (ADR 0013).
+		// Launched here, after the converter exists, so the post-migrate
+		// hook can swap its token ring over to the mineru_tokens table
+		// the migration just created (see Converter.BootSyncTokens).
+		if registryStore.Configured() {
+			go ensureCatalogSchema(pgPool, corpus, cfg.CorpusEnsureIndexes, func() {
+				if mineruTokenStore == nil {
+					return
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				if err := mineruConverter.BootSyncTokens(ctx, cfg.MinerUAPITokens); err != nil {
+					slog.Warn("mineru token pool DB sync failed; staying on config tokens",
+						"error", err, "config_tokens", len(cfg.MinerUAPITokens))
+					return
+				}
+				slog.Info("mineru token pool loaded from registry DB",
+					"tokens", mineruConverter.KeyRingSize())
+			})
 		}
 
 		// Daily 00:00 auto-conversion: each local midnight the scheduler
@@ -964,7 +986,10 @@ func initPostgresPool(cfg *config.Config) (*pgxpool.Pool, error) {
 //
 // A database NEWER than this binary (registry.ErrSchemaTooNew) can never
 // converge by retrying, so it is a hard fatal instead of another attempt.
-func ensureCatalogSchema(pool *pgxpool.Pool, corpus *openalexcorpus.Store, ensureIndexes bool) {
+// postMigrate, when non-nil, runs once after phase 1 succeeds (before the
+// long index build starts) — used to hand the MinerU converter the
+// mineru_tokens pool the migration just created.
+func ensureCatalogSchema(pool *pgxpool.Pool, corpus *openalexcorpus.Store, ensureIndexes bool, postMigrate func()) {
 	const (
 		attemptTimeout = 90 * time.Second
 		retryDelay     = 30 * time.Second
@@ -991,6 +1016,9 @@ func ensureCatalogSchema(pool *pgxpool.Pool, corpus *openalexcorpus.Store, ensur
 	if !baseOK {
 		slog.Error("papers: base schema ensure gave up after retries (will retry next boot)")
 		return
+	}
+	if postMigrate != nil {
+		postMigrate()
 	}
 
 	if !ensureIndexes {
@@ -1636,7 +1664,7 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// unavailable. The plugin admin surface (admin_plugins.go) lists the
 	// plugin registry and proxies manifest/config to the qatlas-search
 	// microservice (503 when remote search is disabled).
-	routes.RegisterAdmin(se, cfg, app, registryStore.Pool(), mineruScheduler, usageStore, pluginRegistry, remoteProvider)
+	routes.RegisterAdmin(se, cfg, app, registryStore.Pool(), mineruScheduler, mineruConverter, usageStore, pluginRegistry, remoteProvider)
 	routes.RegisterAdminAssets(se, cfg, rawStore, registryStore)
 }
 

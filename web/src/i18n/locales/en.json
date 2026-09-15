@@ -542,7 +542,23 @@
         "failed": "Failed",
         "skipped": "Skipped",
         "nextRun": "Next scheduled run",
-        "lastStopReason": "Last stop reason"
+        "lastStopReason": "Last stop reason",
+        "tokens": {
+          "title": "API token pool",
+          "hint": "Round-robin pool; each token carries its own MinerU daily quota. Adding or removing here takes effect immediately, no restart needed.",
+          "unmanaged": "No registry database wired — changes apply to the running process only and are lost on restart.",
+          "rotatedAt": "Last rotated",
+          "status": "Status",
+          "available": "Available",
+          "cooldown": "Quota cooldown until",
+          "empty": "No tokens configured — server-side conversion is cache-only.",
+          "placeholder": "Paste a MinerU API token",
+          "add": "Rotate in",
+          "added": "Token added",
+          "removed": "Token removed",
+          "remove": "Remove",
+          "lastGuard": "Add a replacement before removing the last token"
+        }
       },
       "downloader": {
         "title": "Downloader pipeline",

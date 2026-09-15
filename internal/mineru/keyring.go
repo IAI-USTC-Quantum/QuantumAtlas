@@ -23,35 +23,62 @@ import (
 type KeyRing struct {
 	now func() time.Time
 
+	baseURL string // every client is built against this (see AddToken / SetEntries)
+
 	mu      sync.Mutex
 	entries []*ringEntry
 	cursor  int // round-robin pointer
 }
 
 type ringEntry struct {
+	token         string
+	rotatedAt     time.Time // when the token was last added / re-added; zero for config-only boot
 	client        *Client
 	cooldownUntil time.Time // zero when free
 }
 
-// NewKeyRing builds a ring from N tokens. baseURL + httpClient are
-// shared across every key (NewClient call); the only per-key state is
-// the token string and the cooldown timestamp.
+// TokenEntry pairs a token string with its last-rotation timestamp,
+// the shape the DB-backed pool (TokenStore) feeds the ring with.
+type TokenEntry struct {
+	Token     string
+	RotatedAt time.Time
+}
+
+// NewKeyRing builds a ring from N tokens, recording no rotation
+// timestamps (config-only boot). See NewKeyRingFromEntries for the
+// DB-backed variant.
+func NewKeyRing(tokens []string, baseURL string, now func() time.Time) *KeyRing {
+	entries := make([]TokenEntry, 0, len(tokens))
+	for _, tok := range tokens {
+		entries = append(entries, TokenEntry{Token: tok})
+	}
+	return NewKeyRingFromEntries(entries, baseURL, now)
+}
+
+// NewKeyRingFromEntries builds a ring from N token entries (token +
+// rotated_at). baseURL + httpClient are shared across every key
+// (NewClient call); the only per-key state is the token string, the
+// rotation timestamp, and the cooldown.
 //
 // At least one non-empty token is required — the caller is expected
 // to have already validated this against the master switch and
 // emitted the appropriate "cache-only" disabled message.
-func NewKeyRing(tokens []string, baseURL string, now func() time.Time) *KeyRing {
+func NewKeyRingFromEntries(entries []TokenEntry, baseURL string, now func() time.Time) *KeyRing {
 	if now == nil {
 		now = time.Now
 	}
-	entries := make([]*ringEntry, 0, len(tokens))
-	for _, tok := range tokens {
-		if tok == "" {
+	ring := make([]*ringEntry, 0, len(entries))
+	for _, e := range entries {
+		if e.Token == "" {
 			continue
 		}
-		entries = append(entries, &ringEntry{client: NewClient(tok, baseURL, nil)})
+		ring = append(ring, &ringEntry{
+			token:     e.Token,
+			rotatedAt: e.RotatedAt,
+			client:    NewClient(e.Token, baseURL, nil),
+		})
 	}
-	return &KeyRing{now: now, entries: entries}
+	return &KeyRing{now: now, baseURL: baseURL, entries: ring}
 }
 
 // Size returns how many keys are loaded (non-empty after trimming).
@@ -149,4 +176,118 @@ func (k *KeyRing) AvailableSlots() int {
 		}
 	}
 	return free
+}
+
+// KeyState is the admin-facing view of one ring entry. Token is the
+// raw secret — mask it (MaskToken) before crossing an API boundary.
+type KeyState struct {
+	Token         string
+	RotatedAt     time.Time
+	CooldownUntil time.Time
+}
+
+// AddToken upserts a token into the ring: an existing entry only gets
+// its rotatedAt refreshed (cooldown survives — re-adding a quota-shot
+// key must not reset its cooldown), a new entry is appended. Returns
+// whether the token was already present.
+func (k *KeyRing) AddToken(token string, rotatedAt time.Time) bool {
+	if k == nil || token == "" {
+		return false
+	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	for _, e := range k.entries {
+		if e.token == token {
+			e.rotatedAt = rotatedAt
+			return true
+		}
+	}
+	entry := &ringEntry{
+		token:     token,
+		rotatedAt: rotatedAt,
+		client:    NewClient(token, k.baseURL, nil),
+	}
+	k.entries = append(k.entries, entry)
+	return false
+}
+
+// RemoveToken drops the entry with the exact token string. The cursor
+// is re-modulo'd so it keeps pointing inside the (now smaller) ring.
+// Returns whether a matching entry existed.
+func (k *KeyRing) RemoveToken(token string) bool {
+	if k == nil {
+		return false
+	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	for i, e := range k.entries {
+		if e.token != token {
+			continue
+		}
+		k.entries = append(k.entries[:i], k.entries[i+1:]...)
+		if len(k.entries) == 0 {
+			k.cursor = 0
+		} else if k.cursor >= len(k.entries) {
+			k.cursor = k.cursor % len(k.entries)
+		}
+		return true
+	}
+	return false
+}
+
+// States copies the per-entry identity + cooldown state, in ring
+// order. The *Client pointers stay private; callers get values only.
+func (k *KeyRing) States() []KeyState {
+	if k == nil {
+		return nil
+	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	out := make([]KeyState, 0, len(k.entries))
+	for _, e := range k.entries {
+		out = append(out, KeyState{
+			Token:         e.token,
+			RotatedAt:     e.rotatedAt,
+			CooldownUntil: e.cooldownUntil,
+		})
+	}
+	return out
+}
+
+// SetEntries atomically replaces the whole pool, preserving the
+// cooldown of every token that survives the swap (a boot-time
+// reconcile must not reset today's quota cooldowns). Used by the
+// post-migration hook: the converter boots with the config list, then
+// the registry DB becomes authoritative once its schema exists.
+func (k *KeyRing) SetEntries(entries []TokenEntry) {
+	if k == nil {
+		return
+	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	prev := make(map[string]time.Time, len(k.entries))
+	for _, e := range k.entries {
+		prev[e.token] = e.cooldownUntil
+	}
+	ring := make([]*ringEntry, 0, len(entries))
+	for _, en := range entries {
+		if en.Token == "" {
+			continue
+		}
+		e := &ringEntry{
+			token:     en.Token,
+			rotatedAt: en.RotatedAt,
+			client:    NewClient(en.Token, k.baseURL, nil),
+		}
+		if cd, ok := prev[en.Token]; ok {
+			e.cooldownUntil = cd
+		}
+		ring = append(ring, e)
+	}
+	k.entries = ring
+	if len(ring) == 0 {
+		k.cursor = 0
+	} else if k.cursor >= len(ring) {
+		k.cursor %= len(ring)
+	}
 }

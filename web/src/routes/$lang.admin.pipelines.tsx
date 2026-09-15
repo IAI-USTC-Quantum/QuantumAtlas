@@ -1,6 +1,7 @@
-import { Fragment } from 'react'
+import { Fragment, useState, type FormEvent } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import {
   AlertCircle,
   ArrowLeft,
@@ -8,18 +9,25 @@ import {
   Clock3,
   Cog,
   Download,
+  KeyRound,
   Loader2,
+  Snowflake,
+  Trash2,
 } from 'lucide-react'
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { PageHeader } from '@/components/page-header'
 import { Panel } from '@/components/panel'
 import { StatusBlock } from '@/components/status-block'
 import { type DownloaderJob, type MineruStatus } from '@/lib/api'
 import {
+  useAdminAddMineruToken,
+  useAdminDeleteMineruToken,
   useAdminMineruStatus,
+  useAdminMineruTokens,
   useAdminPipelineJobs,
   useAdminWhoami,
 } from '@/lib/queries'
@@ -207,6 +215,8 @@ function MineruPanel({
               )}
             </div>
 
+            <MineruTokensSection />
+
             <div className="flex flex-col gap-1.5 text-sm sm:flex-row sm:flex-wrap sm:gap-x-6">
               <span className="text-muted-foreground">
                 {t('pipelines.mineru.nextRun')}:{' '}
@@ -245,6 +255,155 @@ function LastRunStat({
       <div className={`text-xl font-semibold tabular-nums ${className}`}>
         {(value ?? 0).toLocaleString()}
       </div>
+    </div>
+  )
+}
+
+// --- MinerU API token pool -----------------------------------------------------
+//
+// GET/POST/DELETE /api/admin/mineru/tokens: the DB-backed rotation
+// pool. Each row shows the masked token preview, when it was last
+// rotated in, and its daily-quota state; the form rotates a new token
+// in without a server restart. The last row can't be deleted (the
+// converter would go dark) — rotate in a replacement first.
+
+function MineruTokensSection() {
+  const { t } = useTranslation('admin')
+  const tokens = useAdminMineruTokens(true)
+  const add = useAdminAddMineruToken()
+  const remove = useAdminDeleteMineruToken()
+  const [value, setValue] = useState('')
+
+  const list = tokens.data?.tokens ?? []
+  const managed = tokens.data?.managed ?? false
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault()
+    const token = value.trim()
+    if (!token || add.isPending) return
+    add.mutate(token, {
+      onSuccess: () => {
+        setValue('')
+        toast.success(t('pipelines.mineru.tokens.added'))
+      },
+      onError: (err) => toast.error(err.message),
+    })
+  }
+
+  return (
+    <div>
+      <h4 className="mb-2 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        <KeyRound className="size-3.5" />
+        {t('pipelines.mineru.tokens.title')}
+      </h4>
+      <p className="mb-2 text-xs text-muted-foreground">
+        {t('pipelines.mineru.tokens.hint')}
+      </p>
+      {!managed && tokens.data && (
+        <p className="mb-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-700 dark:text-amber-400">
+          {t('pipelines.mineru.tokens.unmanaged')}
+        </p>
+      )}
+
+      {tokens.error ? (
+        <p className="text-sm text-destructive">{tokens.error.message}</p>
+      ) : tokens.isLoading ? (
+        <p className="text-sm text-muted-foreground">
+          <Loader2 className="mr-1 inline size-4 animate-spin align-text-bottom" />
+        </p>
+      ) : list.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          {t('pipelines.mineru.tokens.empty')}
+        </p>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="w-full text-sm">
+            <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2 font-medium">
+                  {t('pipelines.mineru.tokens.title')}
+                </th>
+                <th className="px-3 py-2 font-medium">
+                  {t('pipelines.mineru.tokens.rotatedAt')}
+                </th>
+                <th className="px-3 py-2 font-medium">
+                  {t('pipelines.mineru.tokens.status')}
+                </th>
+                <th className="px-3 py-2" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {list.map((tok) => {
+                const lastRow = list.length <= 1
+                return (
+                  <tr key={tok.id}>
+                    <td className="px-3 py-2 font-mono text-xs">{tok.masked}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
+                      {formatPipelineTime(tok.rotated_at)}
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2">
+                      {tok.available ? (
+                        <Badge
+                          variant="outline"
+                          className="border-emerald-500/50 text-emerald-600 dark:border-emerald-400/40 dark:text-emerald-400"
+                        >
+                          <CheckCircle2 className="size-3" />
+                          {t('pipelines.mineru.tokens.available')}
+                        </Badge>
+                      ) : (
+                        <Badge variant="secondary">
+                          <Snowflake className="size-3" />
+                          {t('pipelines.mineru.tokens.cooldown')}{' '}
+                          {formatPipelineTime(tok.cooldown_until)}
+                        </Badge>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        aria-label={t('pipelines.mineru.tokens.remove')}
+                        title={
+                          lastRow
+                            ? t('pipelines.mineru.tokens.lastGuard')
+                            : t('pipelines.mineru.tokens.remove')
+                        }
+                        disabled={remove.isPending || lastRow}
+                        onClick={() =>
+                          remove.mutate(tok.id, {
+                            onSuccess: () =>
+                              toast.success(
+                                t('pipelines.mineru.tokens.removed'),
+                              ),
+                            onError: (err) => toast.error(err.message),
+                          })
+                        }
+                      >
+                        <Trash2 className="size-4" />
+                      </Button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <form onSubmit={submit} className="mt-3 flex gap-2">
+        <Input
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder={t('pipelines.mineru.tokens.placeholder')}
+          className="font-mono"
+          autoComplete="off"
+          spellCheck={false}
+        />
+        <Button type="submit" disabled={!value.trim() || add.isPending}>
+          {add.isPending && <Loader2 className="size-4 animate-spin" />}
+          {t('pipelines.mineru.tokens.add')}
+        </Button>
+      </form>
     </div>
   )
 }

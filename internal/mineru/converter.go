@@ -72,6 +72,7 @@ type Converter struct {
 	store   objstore.Store
 	catalog *registry.Store
 	keyRing *KeyRing
+	tokens  *TokenStore
 	logger  *slog.Logger
 
 	// now/dailyResetAt are indirection hooks so tests can fast-forward
@@ -128,6 +129,16 @@ type ConverterConfig struct {
 	MinerUPollInterval      time.Duration
 	MinerUTimeout           time.Duration
 	MinerUMaxConcurrentJobs int
+
+	// MinerUTokenEntries overrides MinerUAPITokens when non-nil: the
+	// DB-backed pool (token + rotated_at per entry) loaded at boot by
+	// TokenStore.BootSync. Nil keeps the plain config-strings boot.
+	MinerUTokenEntries []TokenEntry
+
+	// TokenStore, when non-nil, persists admin token mutations (see
+	// AddToken / RemoveToken). Nil = config-only boot; admin mutations
+	// then apply to the in-memory ring alone and are lost on restart.
+	TokenStore *TokenStore
 
 	// Fetcher, when non-nil, allows the converter to silent-fetch
 	// missing PDFs from arxiv.org before driving MinerU. When nil the
@@ -363,10 +374,27 @@ func NewConverter(cfg ConverterConfig, store objstore.Store, catalog *registry.S
 	if cfg.Fetcher != nil {
 		c.arxivSem = make(chan struct{}, arxivConc)
 	}
-	c.keyRing = NewKeyRing(cfg.MinerUAPITokens, cfg.MinerUAPIBaseURL, c.now)
+	if cfg.MinerUTokenEntries != nil {
+		c.keyRing = NewKeyRingFromEntries(cfg.MinerUTokenEntries, cfg.MinerUAPIBaseURL, c.now)
+	} else {
+		c.keyRing = NewKeyRing(cfg.MinerUAPITokens, cfg.MinerUAPIBaseURL, c.now)
+	}
+	c.tokens = cfg.TokenStore
+	c.mu.Lock()
+	c.recomputeEnabledLocked()
+	c.mu.Unlock()
 
+	return c
+}
+
+// recomputeEnabledLocked refreshes the enabled switch after the ring
+// size changes at runtime (AddToken / RemoveToken). Inputs: the
+// paper_access master switch and the ring size; wording mirrors the
+// boot-time messages. Caller must hold c.mu (the ring takes its own
+// lock inside Size — lock order is always c.mu → ring).
+func (c *Converter) recomputeEnabledLocked() {
 	switch {
-	case !cfg.PaperAccessEnabled:
+	case !c.cfg.PaperAccessEnabled:
 		c.enabled = false
 		c.disabledMsg = "asset downloads disabled (QATLAS_PAPER_ACCESS_ENABLED=false)"
 	case c.keyRing.Size() == 0:
@@ -374,9 +402,8 @@ func NewConverter(cfg ConverterConfig, store objstore.Store, catalog *registry.S
 		c.disabledMsg = "MinerU not configured (MINERU_API_TOKENS unset); cache-only mode"
 	default:
 		c.enabled = true
+		c.disabledMsg = ""
 	}
-
-	return c
 }
 
 // KeyRingSize returns how many MinerU API tokens are loaded into the
@@ -384,16 +411,150 @@ func NewConverter(cfg ConverterConfig, store objstore.Store, catalog *registry.S
 // see at a glance how many keys are being managed.
 func (c *Converter) KeyRingSize() int { return c.keyRing.Size() }
 
+// TokenSnapshot is the admin-facing view of one MinerU API token. The
+// raw secret never crosses the process boundary: id (hash prefix)
+// addresses it for mutations, masked is a display preview.
+type TokenSnapshot struct {
+	ID            string     `json:"id"`
+	Masked        string     `json:"masked"`
+	RotatedAt     time.Time  `json:"rotated_at"`
+	CooldownUntil *time.Time `json:"cooldown_until,omitempty"`
+	Available     bool       `json:"available"`
+}
+
+// ErrLastToken guards the pool against deleting its final entry —
+// that would silently disable the whole server-side conversion
+// pipeline. Rotate instead: add the replacement first, then remove.
+var ErrLastToken = errors.New("refusing to remove the last MinerU token; add a replacement first")
+
+// ErrEmptyToken is returned by AddToken for blank / whitespace-only
+// submissions.
+var ErrEmptyToken = errors.New("token must not be empty")
+
+// TokenStoreConfigured reports whether admin token mutations are
+// persisted (registry PostgreSQL wired). False means mutations only
+// affect the in-memory ring and are lost on restart.
+func (c *Converter) TokenStoreConfigured() bool { return c.tokens.Configured() }
+
+// BootSyncTokens seeds the config token list into the store and swaps
+// the ring over to the DB-backed pool. Called from the post-migration
+// hook in main.go: the registry schema (incl. mineru_tokens) is
+// ensured in the background AFTER the converter is constructed, so
+// the DB pool can only be reconciled once that migration finished —
+// otherwise a fresh database would boot config-only and only pick the
+// table up on the SECOND restart.
+func (c *Converter) BootSyncTokens(ctx context.Context, cfgTokens []string) error {
+	if !c.tokens.Configured() {
+		return errors.New("mineru token store: not configured")
+	}
+	entries, err := c.tokens.BootSync(ctx, cfgTokens)
+	if err != nil {
+		return err
+	}
+	c.keyRing.SetEntries(entries)
+	c.mu.Lock()
+	c.recomputeEnabledLocked()
+	c.mu.Unlock()
+	return nil
+}
+
+// TokensSnapshot lists the live pool in ring order: masked previews,
+// rotation timestamps, and daily-quota cooldown state.
+func (c *Converter) TokensSnapshot() []TokenSnapshot {
+	states := c.keyRing.States()
+	out := make([]TokenSnapshot, 0, len(states))
+	now := c.now()
+	for _, st := range states {
+		snap := TokenSnapshot{
+			ID:        TokenID(st.Token),
+			Masked:    MaskToken(st.Token),
+			RotatedAt: st.RotatedAt,
+			Available: st.CooldownUntil.IsZero() || !now.Before(st.CooldownUntil),
+		}
+		if !st.CooldownUntil.IsZero() {
+			until := st.CooldownUntil
+			snap.CooldownUntil = &until
+		}
+		out = append(out, snap)
+	}
+	return out
+}
+
+// AddToken rotates a token into the live pool: persisted first (when
+// a store is wired, so a crash after the ring update can't lose the
+// token), then upserted into the ring, then the enabled switch is
+// recomputed — adding the first token to a cache-only deployment
+// turns server-side conversion on without a restart. Re-adding a
+// known token only refreshes its rotated_at (cooldown untouched).
+func (c *Converter) AddToken(ctx context.Context, token string) (TokenSnapshot, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return TokenSnapshot{}, ErrEmptyToken
+	}
+	rotatedAt := c.now()
+	if c.tokens.Configured() {
+		if err := c.tokens.Upsert(ctx, token, rotatedAt); err != nil {
+			return TokenSnapshot{}, err
+		}
+	}
+	c.keyRing.AddToken(token, rotatedAt)
+	c.mu.Lock()
+	c.recomputeEnabledLocked()
+	c.mu.Unlock()
+	id := TokenID(token)
+	for _, snap := range c.TokensSnapshot() {
+		if snap.ID == id {
+			return snap, nil
+		}
+	}
+	// Unreachable: the token was just upserted into the ring.
+	return TokenSnapshot{}, ErrEmptyToken
+}
+
+// RemoveToken drops the token addressed by its hash id from the pool
+// and the store. Refuses to remove the last entry (ErrLastToken).
+// ErrTokenNotFound when no live entry matches the id.
+func (c *Converter) RemoveToken(ctx context.Context, id string) error {
+	for _, st := range c.keyRing.States() {
+		if TokenID(st.Token) != id {
+			continue
+		}
+		if c.keyRing.Size() <= 1 {
+			return ErrLastToken
+		}
+		if c.tokens.Configured() {
+			if err := c.tokens.Delete(ctx, st.Token); err != nil && !errors.Is(err, ErrTokenNotFound) {
+				return err
+			}
+		}
+		c.keyRing.RemoveToken(st.Token)
+		c.mu.Lock()
+		c.recomputeEnabledLocked()
+		c.mu.Unlock()
+		return nil
+	}
+	return ErrTokenNotFound
+}
+
 // Enabled reports whether the converter will actually drive MinerU on
 // cache miss. False when the switch is off or no API token is
 // configured. The handler falls back to "cache only; 503 on miss"
-// when false.
-func (c *Converter) Enabled() bool { return c.enabled }
+// when false. Mu-guarded: the pool can gain / lose its last token at
+// runtime via the admin token surface.
+func (c *Converter) Enabled() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.enabled
+}
 
 // DisabledReason returns a human-readable explanation of why the
 // converter is disabled, suitable for the body of a 503 response.
 // Empty when Enabled() == true.
-func (c *Converter) DisabledReason() string { return c.disabledMsg }
+func (c *Converter) DisabledReason() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.disabledMsg
+}
 
 // FetchEnabled reports whether an arXiv PDF fetcher is wired in. The
 // converter can be Enabled() (tokens configured) yet still lack a

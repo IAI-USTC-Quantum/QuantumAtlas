@@ -97,18 +97,22 @@ func isAdminCaller(re *core.RequestEvent, cfg *config.Config) bool {
 // QATLAS_POSTGRES_DSN is unset, in which case the db/schema handler
 // reports 503 while whoami keeps working. sched is the MinerU batch
 // scheduler — may be nil when paper access is disabled, in which case
-// the mineru endpoints report 503. app resolves users-collection logins
-// for the usage view; usageStore backs the metering endpoints
-// (admin_usage.go) and reports 503 when its pool is nil.
-// pluginRegistry and remote back the plugin management surface
-// (admin_plugins.go); nil values degrade to an empty plugin list and
-// 503 proxy endpoints respectively.
-func RegisterAdmin(se *core.ServeEvent, cfg *config.Config, app core.App, pool *pgxpool.Pool, sched *mineru.Scheduler, usageStore *usage.Store, pluginRegistry *qplugin.Registry, remote *search.RemoteProvider) {
+// the mineru endpoints report 503. conv backs the MinerU token pool
+// management endpoints (nil → 503, same convention). app resolves
+// users-collection logins for the usage view; usageStore backs the
+// metering endpoints (admin_usage.go) and reports 503 when its pool
+// is nil. pluginRegistry and remote back the plugin management
+// surface (admin_plugins.go); nil values degrade to an empty plugin
+// list and 503 proxy endpoints respectively.
+func RegisterAdmin(se *core.ServeEvent, cfg *config.Config, app core.App, pool *pgxpool.Pool, sched *mineru.Scheduler, conv *mineru.Converter, usageStore *usage.Store, pluginRegistry *qplugin.Registry, remote *search.RemoteProvider) {
 	se.Router.GET("/api/admin/whoami", sessionGuard(adminWhoamiHandler(cfg)))
 	se.Router.GET("/api/admin/db/schema", adminGuard(cfg, adminDBSchemaHandler(pool)))
 	se.Router.GET("/api/admin/db/tables/{name}/rows", adminGuard(cfg, adminDBRowsHandler(pool)))
 	se.Router.POST("/api/admin/mineru/run", adminGuard(cfg, adminMineruRunHandler(sched)))
 	se.Router.GET("/api/admin/mineru/status", adminGuard(cfg, adminMineruStatusHandler(sched)))
+	se.Router.GET("/api/admin/mineru/tokens", adminGuard(cfg, adminMineruTokensHandler(conv)))
+	se.Router.POST("/api/admin/mineru/tokens", adminGuard(cfg, adminMineruTokenAddHandler(conv)))
+	se.Router.DELETE("/api/admin/mineru/tokens/{id}", adminGuard(cfg, adminMineruTokenDeleteHandler(conv)))
 	se.Router.GET("/api/admin/acquisition/failures", adminGuard(cfg, adminAcquisitionFailuresHandler(pool)))
 	registerAdminUsers(se, cfg, app)
 	registerAdminUsage(se, cfg, app, usageStore)

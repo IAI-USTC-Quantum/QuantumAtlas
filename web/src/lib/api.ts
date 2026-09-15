@@ -809,6 +809,40 @@ export function adminMineruStatus(): Promise<AdminMineruStatusResponse> {
   return getJson<AdminMineruStatusResponse>('/api/admin/mineru/status')
 }
 
+// --- Admin: MinerU API token pool (GET/POST/DELETE /api/admin/mineru/tokens)
+//
+// The pool is DB-backed (registry PostgreSQL): tokens carry the time
+// they were last rotated in, and the admin can add / remove entries
+// without a restart. managed=false means no registry DB is wired —
+// mutations only affect the in-memory ring and are lost on restart.
+
+export type MineruToken = {
+  id: string
+  masked: string
+  rotated_at: string
+  cooldown_until?: string
+  available: boolean
+}
+
+export type AdminMineruTokensResponse = {
+  managed: boolean
+  tokens: MineruToken[]
+}
+
+export function adminMineruTokens(): Promise<AdminMineruTokensResponse> {
+  return getJson<AdminMineruTokensResponse>('/api/admin/mineru/tokens')
+}
+
+export function adminAddMineruToken(
+  token: string,
+): Promise<MineruToken> {
+  return postJson<MineruToken>('/api/admin/mineru/tokens', { token })
+}
+
+export function adminDeleteMineruToken(id: string): Promise<unknown> {
+  return delJson(`/api/admin/mineru/tokens/${encodeURIComponent(id)}`)
+}
+
 // --- Admin: outbound downloader workers -------------------------------------
 // Registration creates a pending worker; enrollment is not approval. All of
 // these endpoints use the existing browser-session admin guard.
@@ -828,6 +862,8 @@ export type AdminDownloaderWorker = {
 export type AdminDownloaderWorkerJob = DownloaderRemoteJob
 
 export type AdminDownloaderWorkersResponse = {
+  enabled?: boolean
+  proxy_configured?: boolean
   workers: AdminDownloaderWorker[]
   jobs: AdminDownloaderWorkerJob[]
 }

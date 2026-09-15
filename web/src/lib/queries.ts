@@ -13,7 +13,10 @@ import {
   type DownloaderWorkerAction,
   adminListPlugins,
   adminListUsers,
+  adminAddMineruToken,
+  adminDeleteMineruToken,
   adminMineruStatus,
+  adminMineruTokens,
   adminPlans,
   adminPluginManifest,
   adminPluginUpdateConfig,
@@ -41,6 +44,7 @@ import {
   type AdminDBRows,
   type AdminDBSchema,
   type AdminMineruStatusResponse,
+  type AdminMineruTokensResponse,
   type AdminPlansResponse,
   type AdminPluginConfigResult,
   type AdminPluginManifest,
@@ -449,6 +453,40 @@ export function useAdminMineruStatus(enabled: boolean) {
     enabled,
     retry: false,
     refetchInterval: enabled ? 10_000 : false,
+  })
+}
+
+// MinerU API token pool for the admin pipelines page. Mutations
+// invalidate both the pool and the scheduler status (adding the first
+// token flips the converter from cache-only to enabled).
+export function useAdminMineruTokens(enabled: boolean) {
+  return useQuery({
+    queryKey: ['admin-mineru-tokens'],
+    queryFn: (): Promise<AdminMineruTokensResponse> => adminMineruTokens(),
+    enabled,
+    retry: false,
+  })
+}
+
+export function useAdminAddMineruToken() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (token: string) => adminAddMineruToken(token),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['admin-mineru-tokens'] })
+      void qc.invalidateQueries({ queryKey: ['admin-mineru-status'] })
+    },
+  })
+}
+
+export function useAdminDeleteMineruToken() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => adminDeleteMineruToken(id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['admin-mineru-tokens'] })
+      void qc.invalidateQueries({ queryKey: ['admin-mineru-status'] })
+    },
   })
 }
 

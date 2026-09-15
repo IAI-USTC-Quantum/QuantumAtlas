@@ -542,7 +542,23 @@
         "failed": "失败",
         "skipped": "跳过",
         "nextRun": "下次调度",
-        "lastStopReason": "上次停止原因"
+        "lastStopReason": "上次停止原因",
+        "tokens": {
+          "title": "API token 池",
+          "hint": "轮换使用，每个 token 有独立的 MinerU 每日配额；在此添加或移除即时生效，无需重启。",
+          "unmanaged": "未接入 registry 数据库——改动仅对当前进程生效，重启后丢失。",
+          "rotatedAt": "上次轮换",
+          "status": "状态",
+          "available": "可用",
+          "cooldown": "限额冷却至",
+          "empty": "尚未配置 token——服务端转换为仅缓存模式。",
+          "placeholder": "粘贴 MinerU API token",
+          "add": "添加",
+          "added": "Token 已添加",
+          "removed": "Token 已移除",
+          "remove": "移除",
+          "lastGuard": "移除最后一个 token 前请先添加替代 token"
+        }
       },
       "downloader": {
         "title": "Downloader 下载管线",

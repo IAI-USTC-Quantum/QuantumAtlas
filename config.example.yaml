@@ -178,7 +178,10 @@
 #   arxiv_fetch_concurrent: 2
 #   arxiv_fetch_rps: 0.33                  # ≈ 1 req / 3 s, per arxiv guidance
 #   mineru:                                # only parsed when enabled: true
-#     api_tokens: []                       # pool; empty = cache-only mode
+#     api_tokens: []                       # boot seed for the registry DB's
+#                                          # mineru_tokens pool; the admin
+#                                          # pipelines page manages the pool
+#                                          # at runtime (DB wins from boot)
 #     api_base_url: https://mineru.net
 #     model_version: vlm
 #     language: ch

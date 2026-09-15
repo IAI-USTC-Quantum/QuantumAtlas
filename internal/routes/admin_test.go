@@ -58,6 +58,7 @@ type adminHarness struct {
 	*patHarness
 	cfg   *config.Config
 	sched *mineru.Scheduler
+	conv  *mineru.Converter
 }
 
 func newAdminHarness(t testing.TB) *adminHarness {
@@ -88,6 +89,7 @@ func newAdminHarnessWith(t testing.TB, pluginRegistry *qplugin.Registry, remote 
 	// queue or MinerU.
 	disabledConv := mineru.NewConverter(mineru.ConverterConfig{PaperAccessEnabled: false}, nil, nil, nil)
 	h.sched = mineru.NewScheduler(disabledConv, nil, nil)
+	h.conv = disabledConv
 	t.Cleanup(h.sched.Stop)
 
 	// The auth package migration must have added github_login to the
@@ -110,7 +112,7 @@ func newAdminHarnessWith(t testing.TB, pluginRegistry *qplugin.Registry, remote 
 
 	var built http.Handler
 	err = app.OnServe().Trigger(se, func(e *core.ServeEvent) error {
-		RegisterAdmin(e, h.cfg, app, nil, h.sched, usage.NewStore(nil), pluginRegistry, remote)
+		RegisterAdmin(e, h.cfg, app, nil, h.sched, h.conv, usage.NewStore(nil), pluginRegistry, remote)
 		m, mErr := e.Router.BuildMux()
 		if mErr != nil {
 			return mErr
@@ -616,5 +618,84 @@ func TestResolveUserLogins(t *testing.T) {
 	logins := resolveUserLogins(h.app, rows)
 	if logins["no-such-user-id"] != "" {
 		t.Errorf("unknown user login = %q, want empty", logins["no-such-user-id"])
+	}
+}
+
+// TestAPI_Admin_MineruTokens: the token-pool surface over the harness
+// converter (no DB store wired → managed=false; mutations are ring
+// only, which is exactly what these tests observe).
+func TestAPI_Admin_MineruTokens(t *testing.T) {
+	h := newAdminHarness(t)
+	admin := rawHeader(h.adminSessionToken())
+	const url = "/api/admin/mineru/tokens"
+
+	// Gate matrix: anonymous 401, non-admin session 403.
+	if status, _, body := h.do(http.MethodGet, url, "", nil); status != http.StatusUnauthorized {
+		t.Fatalf("anonymous GET: status = %d, want 401; body=%v", status, body)
+	}
+	if status, _, body := h.do(http.MethodGet, url, "", rawHeader(h.sessionToken())); status != http.StatusForbidden {
+		t.Fatalf("non-admin GET: status = %d, want 403; body=%v", status, body)
+	}
+
+	// Empty pool, ring-only management.
+	status, _, body := h.do(http.MethodGet, url, "", admin)
+	if status != http.StatusOK {
+		t.Fatalf("admin GET: status = %d, want 200; body=%v", status, body)
+	}
+	if body["managed"] != false {
+		t.Errorf("managed = %v, want false (no registry pool in harness)", body["managed"])
+	}
+
+	// Validation before anything else: blank token, invalid JSON.
+	if status, _, body := h.do(http.MethodPost, url, `{"token":"   "}`, admin); status != http.StatusBadRequest {
+		t.Errorf("blank token: status = %d, want 400; body=%v", status, body)
+	}
+	if status, _, body := h.do(http.MethodPost, url, `{not json`, admin); status != http.StatusBadRequest {
+		t.Errorf("invalid JSON: status = %d, want 400; body=%v", status, body)
+	}
+
+	// Add two tokens; both come back masked with ids.
+	var ids []string
+	for _, tok := range []string{"sk-first-token-aaaaaaaaaaaaaaaaaaaa", "sk-second-token-bbbbbbbbbbbbbbbbbbbb"} {
+		status, _, body := h.do(http.MethodPost, url, `{"token":"`+tok+`"}`, admin)
+		if status != http.StatusCreated {
+			t.Fatalf("add %s…: status = %d, want 201; body=%v", tok[:9], status, body)
+		}
+		masked := asString(body["masked"])
+		if masked == "" || strings.Contains(masked, tok) {
+			t.Errorf("masked = %q, want a masked preview that hides the secret", masked)
+		}
+		id := asString(body["id"])
+		if id == "" {
+			t.Fatalf("add %s…: id empty", tok[:9])
+		}
+		ids = append(ids, id)
+	}
+
+	// Listing shows both, ring-only.
+	status, _, body = h.do(http.MethodGet, url, "", admin)
+	if status != http.StatusOK {
+		t.Fatalf("GET after adds: status = %d", status)
+	}
+	toks, _ := body["tokens"].([]any)
+	if len(toks) != 2 {
+		t.Fatalf("tokens len = %d, want 2; body=%v", len(toks), body)
+	}
+
+	// Removing a token that isn't the last one succeeds.
+	if status, _, body := h.do(http.MethodDelete, url+"/"+ids[0], "", admin); status != http.StatusOK {
+		t.Fatalf("delete first: status = %d, want 200; body=%v", status, body)
+	}
+	// Same id again: gone → 404.
+	if status, _, _ := h.do(http.MethodDelete, url+"/"+ids[0], "", admin); status != http.StatusNotFound {
+		t.Errorf("re-delete: status = %d, want 404", status)
+	}
+	// The remaining token is the last one → 409 refusal.
+	status, _, body = h.do(http.MethodDelete, url+"/"+ids[1], "", admin)
+	if status != http.StatusConflict {
+		t.Fatalf("delete last: status = %d, want 409; body=%v", status, body)
+	}
+	if !strings.Contains(asString(body["detail"]), "last") {
+		t.Errorf("detail = %q, want the last-token explanation", body["detail"])
 	}
 }

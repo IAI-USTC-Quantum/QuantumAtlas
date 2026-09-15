@@ -665,6 +665,174 @@ func TestKeyRing_TrimsEmptyTokens(t *testing.T) {
 	}
 }
 
+func TestKeyRing_FromEntriesCarriesRotation(t *testing.T) {
+	stamp := time.Date(2026, 9, 15, 8, 30, 0, 0, time.UTC)
+	ring := NewKeyRingFromEntries([]TokenEntry{
+		{Token: "a", RotatedAt: stamp},
+		{Token: "", RotatedAt: stamp}, // trimmed like NewKeyRing
+		{Token: "b"},
+	}, "http://stub", nil)
+	states := ring.States()
+	if len(states) != 2 {
+		t.Fatalf("len(States) = %d, want 2", len(states))
+	}
+	if !states[0].RotatedAt.Equal(stamp) {
+		t.Errorf("states[0].RotatedAt = %v, want %v", states[0].RotatedAt, stamp)
+	}
+	if !states[1].RotatedAt.IsZero() {
+		t.Errorf("states[1].RotatedAt = %v, want zero (no timestamp supplied)", states[1].RotatedAt)
+	}
+}
+
+func TestKeyRing_AddRemoveToken(t *testing.T) {
+	now := time.Now
+	ring := NewKeyRing([]string{"a", "b"}, "http://stub", now)
+
+	// Re-adding refreshes the rotation stamp but keeps identity.
+	stamp := time.Date(2026, 9, 15, 9, 0, 0, 0, time.UTC)
+	if existed := ring.AddToken("a", stamp); !existed {
+		t.Error("AddToken(a) existed = false, want true")
+	}
+	if got := ring.Size(); got != 2 {
+		t.Fatalf("Size after re-add = %d, want 2", got)
+	}
+	for _, st := range ring.States() {
+		if st.Token == "a" && !st.RotatedAt.Equal(stamp) {
+			t.Errorf("rotatedAt = %v, want %v", st.RotatedAt, stamp)
+		}
+	}
+
+	// A new token joins the rotation.
+	if existed := ring.AddToken("c", stamp); existed {
+		t.Error("AddToken(c) existed = true, want false")
+	}
+	if got := ring.Size(); got != 3 {
+		t.Fatalf("Size after add = %d, want 3", got)
+	}
+
+	// Cooldown survives a re-add (quota-shot key must not come back early).
+	ring.MarkDailyLimit(0, now().Add(12*time.Hour))
+	ring.AddToken("a", stamp)
+	if got := ring.AvailableSlots(); got != 2 {
+		t.Errorf("AvailableSlots after re-add = %d, want 2 (cooldown must survive)", got)
+	}
+
+	// Removal: unknown token is a no-op; a real one drops out and the
+	// cursor stays inside the ring.
+	if removed := ring.RemoveToken("nope"); removed {
+		t.Error("RemoveToken(unknown) = true, want false")
+	}
+	if removed := ring.RemoveToken("a"); !removed {
+		t.Error("RemoveToken(a) = false, want true")
+	}
+	if got := ring.Size(); got != 2 {
+		t.Fatalf("Size after remove = %d, want 2", got)
+	}
+	for i := 0; i < 4; i++ {
+		if _, _, ok := ring.Acquire(); !ok {
+			t.Fatalf("Acquire %d = !ok after removal (cursor out of range?)", i)
+		}
+	}
+
+	// Removing down to (and past) the last entry stays consistent, and
+	// adding after emptying rebuilds a working client.
+	ring.RemoveToken("b")
+	ring.RemoveToken("c")
+	if got := ring.Size(); got != 0 {
+		t.Errorf("Size = %d, want 0", got)
+	}
+	if _, _, ok := ring.Acquire(); ok {
+		t.Error("Acquire on empty ring = ok")
+	}
+	ring.AddToken("d", stamp)
+	if got := ring.Size(); got != 1 {
+		t.Errorf("Size after re-add = %d, want 1", got)
+	}
+	if _, _, ok := ring.Acquire(); !ok {
+		t.Error("Acquire after re-add = !ok")
+	}
+}
+
+func TestConverter_TokenAdminSurface(t *testing.T) {
+	ctx := context.Background()
+
+	// Cache-only boot (no tokens): disabled, and adding the first token
+	// flips the converter on without a restart.
+	conv := NewConverter(ConverterConfig{
+		PaperAccessEnabled: true,
+		MinerUTokenEntries: TokenEntriesFromStrings(nil),
+	}, nil, nil, nil)
+	if conv.Enabled() {
+		t.Fatal("Enabled = true with empty pool, want false")
+	}
+	if _, err := conv.AddToken(ctx, "   "); !errors.Is(err, ErrEmptyToken) {
+		t.Fatalf("blank AddToken err = %v, want ErrEmptyToken", err)
+	}
+	snap, err := conv.AddToken(ctx, "sk-first-token-aaaaaaaaaaaaaaaaaaaa")
+	if err != nil {
+		t.Fatalf("AddToken: %v", err)
+	}
+	if snap.Masked == "" || snap.ID == "" || snap.RotatedAt.IsZero() {
+		t.Fatalf("snapshot incomplete: %+v", snap)
+	}
+	if !conv.Enabled() {
+		t.Error("Enabled = false after adding first token, want true")
+	}
+
+	// Re-adding a known token refreshes rotated_at (upsert semantics).
+	snap2, err := conv.AddToken(ctx, "sk-first-token-aaaaaaaaaaaaaaaaaaaa")
+	if err != nil {
+		t.Fatalf("re-AddToken: %v", err)
+	}
+	if snap2.RotatedAt.Before(snap.RotatedAt) {
+		t.Errorf("rotated_at went backwards: %v < %v", snap2.RotatedAt, snap.RotatedAt)
+	}
+
+	// Second token, then the last-token guard on the path to empty.
+	second, err := conv.AddToken(ctx, "sk-second-token-bbbbbbbbbbbbbbbbbbbb")
+	if err != nil {
+		t.Fatalf("AddToken second: %v", err)
+	}
+	if err := conv.RemoveToken(ctx, snap.ID); err != nil {
+		t.Fatalf("RemoveToken: %v", err)
+	}
+	if err := conv.RemoveToken(ctx, second.ID); !errors.Is(err, ErrLastToken) {
+		t.Fatalf("remove-last err = %v, want ErrLastToken", err)
+	}
+	if err := conv.RemoveToken(ctx, "deadbeefdeadbeef"); !errors.Is(err, ErrTokenNotFound) {
+		t.Fatalf("unknown-id err = %v, want ErrTokenNotFound", err)
+	}
+
+	// Masking never leaks the secret; ids are stable hashes.
+	for _, st := range conv.TokensSnapshot() {
+		if strings.Contains(st.Masked, "sk-second-token") {
+			t.Errorf("masked preview leaks the secret: %q", st.Masked)
+		}
+	}
+	if got := TokenID("x"); got == TokenID("y") {
+		t.Error("TokenID collision for distinct inputs")
+	}
+	if got := MaskToken("short"); !strings.Contains(got, "***") {
+		t.Errorf("MaskToken(short) = %q, want fully masked", got)
+	}
+}
+
+func TestConverter_DisabledSwitchOffWinsOverTokens(t *testing.T) {
+	conv := NewConverter(ConverterConfig{
+		PaperAccessEnabled: false,
+		MinerUTokenEntries: TokenEntriesFromStrings([]string{"tok"}),
+	}, nil, nil, nil)
+	if conv.Enabled() {
+		t.Fatal("Enabled = true with paper access off")
+	}
+	if _, err := conv.AddToken(context.Background(), "tok2"); err != nil {
+		t.Fatalf("AddToken under switch-off: %v", err)
+	}
+	if conv.Enabled() {
+		t.Error("Enabled = true after add with paper access off, want false")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Silent-fetch + LRO state machine integration tests (plan §4 Phase C / G4)
 // ---------------------------------------------------------------------------
