@@ -49,19 +49,17 @@ function HomePage() {
         </div>
       </div>
 
-      {paperStats.data?.available ? (
+      {paperStats.isLoading || paperStats.data?.available ? (
         <MetricGrid
           paperStats={paperStats.data}
           loading={paperStats.isLoading}
         />
       ) : (
-        !paperStats.isLoading && (
-          <Panel title={t('registryStats')} icon={Activity}>
-            <p className="text-sm text-muted-foreground">
-              {t('registryUnavailable')}
-            </p>
-          </Panel>
-        )
+        <Panel title={t('registryStats')} icon={Activity}>
+          <p className="text-sm text-muted-foreground">
+            {t('registryUnavailable')}
+          </p>
+        </Panel>
       )}
 
       <Panel
