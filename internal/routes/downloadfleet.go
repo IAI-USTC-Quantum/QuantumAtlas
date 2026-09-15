@@ -47,15 +47,32 @@ func RegisterDownloadFleet(se *core.ServeEvent, cfg *config.Config, fleet *downl
 	)
 	se.Router.GET(wp.ReceiptPath+"{attempt}", worker)
 	se.Router.GET("/api/admin/downloader/workers", adminGuard(cfg, func(re *core.RequestEvent) error {
+		re.Response.Header().Set("Cache-Control", "no-store")
 		if fleet == nil {
-			return fleetRouteError(re, downloadfleet.ErrDisabled)
+			// A disabled fleet is a normal deployment state — e.g. the
+			// instance runs the legacy downloader proxy lane instead
+			// (downloader.remote and downloader.proxy are mutually
+			// exclusive by config validation) — not an error. Mirror the
+			// /api/downloader/remote-jobs convention (200 + enabled:false)
+			// so the admin page can render an explanatory panel instead
+			// of a generic "something went wrong".
+			return re.JSON(http.StatusOK, map[string]any{
+				"enabled":          false,
+				"proxy_configured": cfg.DownloaderProxyURL != "",
+				"workers":          []wp.Node{},
+				"jobs":             []downloadfleet.Job{},
+			})
 		}
 		snapshot, err := fleet.Snapshot(re.Request.Context())
 		if err != nil {
 			return fleetRouteError(re, err)
 		}
-		re.Response.Header().Set("Cache-Control", "no-store")
-		return re.JSON(http.StatusOK, snapshot)
+		return re.JSON(http.StatusOK, map[string]any{
+			"enabled":          true,
+			"proxy_configured": cfg.DownloaderProxyURL != "",
+			"workers":          snapshot.Workers,
+			"jobs":             snapshot.Jobs,
+		})
 	}))
 	se.Router.POST("/api/admin/downloader/enrollment", adminGuard(cfg, func(re *core.RequestEvent) error {
 		if fleet == nil {

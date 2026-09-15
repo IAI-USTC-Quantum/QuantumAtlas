@@ -62,7 +62,8 @@ func TestFleetAdminGatesAndDisabledStatus(t *testing.T) {
 	admin := h.adminSessionToken()
 	for _, path := range []string{"/api/admin/downloader/workers", "/api/admin/downloader/enrollment", "/api/admin/downloader/workers/worker-a/approve"} {
 		method := http.MethodPost
-		if path == "/api/admin/downloader/workers" {
+		isGet := path == "/api/admin/downloader/workers"
+		if isGet {
 			method = http.MethodGet
 		}
 		if status, _, _ := h.do(method, path, "{}", nil); status != http.StatusUnauthorized {
@@ -71,9 +72,29 @@ func TestFleetAdminGatesAndDisabledStatus(t *testing.T) {
 		if status, _, _ := h.do(method, path, "{}", rawHeader(regular)); status != http.StatusForbidden {
 			t.Fatalf("nonadmin %s: %d", path, status)
 		}
-		if status, _, _ := h.do(method, path, "{}", rawHeader(admin)); status != http.StatusServiceUnavailable {
-			t.Fatalf("disabled admin %s: %d", path, status)
+		// GET degrades to the structured 200 + enabled:false payload (same
+		// convention as /api/downloader/remote-jobs); mutations stay 503.
+		want := http.StatusServiceUnavailable
+		if isGet {
+			want = http.StatusOK
 		}
+		if status, _, _ := h.do(method, path, "{}", rawHeader(admin)); status != want {
+			t.Fatalf("disabled admin %s: %d, want %d", path, status, want)
+		}
+	}
+	// The disabled GET payload explains WHY (no fleet wired) and whether
+	// the legacy proxy lane is what this deployment actually uses.
+	status, _, body := h.do(http.MethodGet, "/api/admin/downloader/workers", "", rawHeader(admin))
+	if status != http.StatusOK || body["enabled"] != false {
+		t.Fatalf("disabled workers: %d %+v", status, body)
+	}
+	if body["proxy_configured"] != false {
+		t.Fatalf("proxy_configured = %v, want false in the bare harness cfg", body["proxy_configured"])
+	}
+	h.cfg.DownloaderProxyURL = "http://10.0.0.9:8602"
+	status, _, body = h.do(http.MethodGet, "/api/admin/downloader/workers", "", rawHeader(admin))
+	if status != http.StatusOK || body["proxy_configured"] != true {
+		t.Fatalf("proxy-configured workers: %d %+v", status, body)
 	}
 	if status, _, _ := h.do(http.MethodGet, "/api/downloader/remote-jobs", "", nil); status != http.StatusUnauthorized {
 		t.Fatalf("anonymous jobs: %d", status)

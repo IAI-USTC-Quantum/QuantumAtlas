@@ -85,6 +85,40 @@ function WorkerAdmin({ text }: { text: Text }) {
   const jobs = snapshot.data?.jobs ?? []
   const action = useAdminDownloaderWorkerAction()
   const [selection, setSelection] = useState<{ worker: AdminDownloaderWorker; action: DownloaderWorkerAction } | null>(null)
+
+  // Fleet not wired (downloader.remote off): render an explanatory panel
+  // instead of the management UI — enrollment/actions would all 503.
+  if (snapshot.data && snapshot.data.enabled === false) {
+    const viaProxy = snapshot.data.proxy_configured === true
+    return (
+      <Panel title={text('Workers', '工作节点')} icon={Server}>
+        <Alert>
+          <AlertCircle className="size-4" />
+          <AlertTitle>{text('Downloader worker fleet is not enabled', '下载工作节点集群未启用')}</AlertTitle>
+          <AlertDescription className="mt-2 space-y-2 text-sm">
+            <p>
+              {viaProxy
+                ? text(
+                    'This deployment delegates downloads to the legacy downloader proxy (downloader.proxy.url in config.yaml). No outbound workers can register while that lane is active — downloader.remote and downloader.proxy are mutually exclusive.',
+                    '当前部署通过旧版 downloader proxy（config.yaml 的 downloader.proxy.url）代理下载。该模式下主动接入的工作节点无法注册——downloader.remote 与 downloader.proxy 互斥，不能同时开启。',
+                  )
+                : text(
+                    'The server runs with downloader.remote disabled, so there is no worker registry behind this page.',
+                    '服务端未启用 downloader.remote，本页背后没有工作节点注册表。',
+                  )}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {text(
+                'To switch lanes: remove downloader.proxy.url, set downloader.remote.enabled: true (requires paper_access.enabled, downloader.enabled and postgres.dsn), restart qatlasd, then create an enrollment token here and point workers at this server.',
+                '切换方式：删除 downloader.proxy.url，设置 downloader.remote.enabled: true（需要 paper_access.enabled、downloader.enabled 与 postgres.dsn），重启 qatlasd，然后在此页创建注册令牌并让节点指向本服务器。',
+              )}
+            </p>
+          </AlertDescription>
+        </Alert>
+      </Panel>
+    )
+  }
+
   const selectedWorker = workers.find((worker) => worker.id === selection?.worker.id)
   const actionAllowed = !!selection && !!selectedWorker && workerActions(selectedWorker.status).includes(selection.action)
   const labels: Record<DownloaderWorkerAction, string> = {
