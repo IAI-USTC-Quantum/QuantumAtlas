@@ -34,21 +34,23 @@ import (
 // the usage handler then reports 503 while the profile handler keeps
 // working (profile data lives in PocketBase, not Postgres).
 func RegisterMe(se *core.ServeEvent, cfg *config.Config, usageStore *usage.Store) {
-	se.Router.GET("/api/me", sessionGuard(meProfileHandler(cfg)))
+	se.Router.GET("/api/me", sessionGuard(meProfileHandler()))
 	se.Router.GET("/api/me/usage", sessionGuard(meUsageHandler(cfg, usageStore)))
 }
 
 // meProfileHandler returns the caller's own users-record fields. Unlike
 // /api/admin/whoami (login + admin flag only) this is the full profile
-// the dashboard renders. is_admin / is_superadmin consult both
-// providers' allowlists (GitHub against github_login, Gitea against
-// gitea_login), and *_bound reports which OAuth2 identities are linked
+// the dashboard renders. is_admin / is_superadmin mirror the role flags
+// on the record (is_admin OR is_superadmin for is_admin — same
+// hierarchy as every admin surface; the YAML lists only seed the flags
+// at boot), and *_bound reports which OAuth2 identities are linked
 // to the record (drives the dashboard's 账号绑定 panels).
-func meProfileHandler(cfg *config.Config) func(re *core.RequestEvent) error {
+func meProfileHandler() func(re *core.RequestEvent) error {
 	return func(re *core.RequestEvent) error {
 		user := re.Auth // sessionGuard guarantees non-nil + browser-sourced
 		login := user.GetString(auth.GitHubLoginField)
 		giteaLogin := user.GetString(auth.GiteaLoginField)
+		isSuper := user.GetBool(auth.IsSuperadminField)
 		return re.JSON(http.StatusOK, map[string]any{
 			"id":            user.Id,
 			"email":         user.GetString("email"),
@@ -58,8 +60,8 @@ func meProfileHandler(cfg *config.Config) func(re *core.RequestEvent) error {
 			"gitea_login":   giteaLogin,
 			"github_bound":  providerBound(re.App, user, pbauth.NameGithub),
 			"gitea_bound":   providerBound(re.App, user, pbauth.NameGitea),
-			"is_admin":      cfg.IsGitHubAdmin(login) || cfg.IsGiteaAdmin(giteaLogin),
-			"is_superadmin": user.GetBool(auth.IsSuperadminField) || cfg.IsGitHubSuperadmin(login) || cfg.IsGiteaSuperadmin(giteaLogin),
+			"is_admin":      user.GetBool(auth.IsAdminField) || isSuper,
+			"is_superadmin": isSuper,
 			"created":       user.GetDateTime("created").String(),
 		})
 	}

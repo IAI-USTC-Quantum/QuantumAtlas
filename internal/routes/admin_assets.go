@@ -33,7 +33,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/registry"
 
@@ -71,15 +70,15 @@ type adminAssetListResponse struct {
 }
 
 // RegisterAdminAssets wires the admin asset browser surface.
-func RegisterAdminAssets(se *core.ServeEvent, cfg *config.Config, rawStore objstore.Store, catalog *registry.Store) {
-	se.Router.GET("/api/admin/assets/{paper_id}", adminGuard(cfg, adminAssetListHandler(rawStore, catalog)))
-	se.Router.GET("/api/admin/assets/{paper_id}/{kind}", adminGuard(cfg, adminAssetDetailHandler(rawStore, catalog)))
-	se.Router.GET("/api/admin/assets/{paper_id}/{kind}/download", adminGuard(cfg, adminAssetDownloadHandler(rawStore, catalog)))
-	se.Router.GET("/api/admin/assets/{paper_id}/{kind}/inline", adminGuard(cfg, adminAssetInlineHandler(rawStore, catalog)))
-	se.Router.GET("/api/admin/assets/{paper_id}/{kind}/url", adminGuard(cfg, adminAssetURLHandler(rawStore, catalog)))
-	se.Router.GET("/api/admin/assets/batch", adminGuard(cfg, adminAssetBatchHandler(rawStore, catalog)))
-	se.Router.GET("/api/admin/assets/batch/download", adminGuard(cfg, adminAssetBatchDownloadHandler(rawStore, catalog)))
-	se.Router.GET("/api/admin/assets/search", adminGuard(cfg, adminAssetSearchHandler(catalog)))
+func RegisterAdminAssets(se *core.ServeEvent, rawStore objstore.Store, catalog *registry.Store) {
+	se.Router.GET("/api/admin/assets/{paper_id}", adminGuard(adminAssetListHandler(rawStore, catalog)))
+	se.Router.GET("/api/admin/assets/{paper_id}/{kind}", adminGuard(adminAssetDetailHandler(rawStore, catalog)))
+	se.Router.GET("/api/admin/assets/{paper_id}/{kind}/download", adminGuard(adminAssetDownloadHandler(rawStore, catalog)))
+	se.Router.GET("/api/admin/assets/{paper_id}/{kind}/inline", adminGuard(adminAssetInlineHandler(rawStore, catalog)))
+	se.Router.GET("/api/admin/assets/{paper_id}/{kind}/url", adminGuard(adminAssetURLHandler(rawStore, catalog)))
+	se.Router.GET("/api/admin/assets/batch", adminGuard(adminAssetBatchHandler(rawStore, catalog)))
+	se.Router.GET("/api/admin/assets/batch/download", adminGuard(adminAssetBatchDownloadHandler(rawStore, catalog)))
+	se.Router.GET("/api/admin/assets/search", adminGuard(adminAssetSearchHandler(catalog)))
 }
 
 // buildAssetEntries collects asset entries for a paper detail.

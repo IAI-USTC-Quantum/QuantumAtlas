@@ -17,7 +17,6 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 	qplugin "github.com/IAI-USTC-Quantum/QuantumAtlas/internal/plugin"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/search"
 
@@ -32,18 +31,18 @@ const adminPluginIDSearchRemote = "search-remote"
 // an empty slice. remote is the qatlas-search client; nil (remote
 // search disabled) 503s the proxy endpoints while the list keeps
 // working.
-func registerAdminPlugins(se *core.ServeEvent, cfg *config.Config, registry *qplugin.Registry, remote *search.RemoteProvider) {
+func registerAdminPlugins(se *core.ServeEvent, registry *qplugin.Registry, remote *search.RemoteProvider) {
 	if registry == nil {
 		registry = &qplugin.Registry{}
 	}
-	se.Router.GET("/api/admin/plugins", adminGuard(cfg, func(re *core.RequestEvent) error {
+	se.Router.GET("/api/admin/plugins", adminGuard(func(re *core.RequestEvent) error {
 		return re.JSON(http.StatusOK, map[string]any{
 			"plugins": registry.List(),
 		})
 	}))
-	se.Router.GET("/api/admin/plugins/{id}/manifest", adminGuard(cfg,
+	se.Router.GET("/api/admin/plugins/{id}/manifest", adminGuard(
 		adminPluginProxyHandler(remote, "/v1/admin/manifest", false)))
-	se.Router.PUT("/api/admin/plugins/{id}/config", adminGuard(cfg,
+	se.Router.PUT("/api/admin/plugins/{id}/config", adminGuard(
 		adminPluginProxyHandler(remote, "/v1/admin/config", true)))
 }
 

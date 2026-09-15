@@ -33,8 +33,8 @@ import (
 )
 
 // devdocHarness mirrors meHarness/adminHarness: one mux built from
-// OnServe with the devdoc routes mounted behind a cfg allowlisting
-// adminTestLogin.
+// OnServe with the devdoc routes mounted (admin-ness comes from the
+// is_admin flag stamped by adminHarness.adminSessionToken).
 type devdocHarness struct {
 	*patHarness
 	cfg *config.Config
@@ -80,7 +80,7 @@ func newDevdocHarnessWithFS(t testing.TB, devdocFS fs.FS) *devdocHarness {
 
 	var built http.Handler
 	err = app.OnServe().Trigger(se, func(e *core.ServeEvent) error {
-		RegisterDevdoc(e, h.cfg, devdocFS)
+		RegisterDevdoc(e, devdocFS)
 		m, mErr := e.Router.BuildMux()
 		if mErr != nil {
 			return mErr
@@ -98,9 +98,10 @@ func newDevdocHarnessWithFS(t testing.TB, devdocFS fs.FS) *devdocHarness {
 	return h
 }
 
-// adminToken creates an admin-allowlisted user (github_login stamped,
-// exactly the state the OAuth hook produces) and returns its session
-// token. Same construction as adminHarness.adminSessionToken.
+// adminToken creates a user carrying the is_admin role flag (exactly
+// the state the bootstrap promotion leaves for an allowlisted login)
+// and returns its session token. Same construction as
+// adminHarness.adminSessionToken.
 func (h *devdocHarness) adminToken() string {
 	h.t.Helper()
 	col, err := h.app.FindCollectionByNameOrId(auth.UsersCollection)
@@ -111,6 +112,7 @@ func (h *devdocHarness) adminToken() string {
 	rec.SetEmail("devdoc-admin@example.com")
 	rec.SetPassword("devdoc-admin-password")
 	rec.Set(auth.GitHubLoginField, adminTestLogin)
+	rec.Set(auth.IsAdminField, true)
 	if err := h.app.Save(rec); err != nil {
 		h.t.Fatalf("save admin user: %v", err)
 	}

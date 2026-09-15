@@ -33,7 +33,7 @@ System PAT 明文格式随意（推荐 `openssl rand -base64 32`），**只活�
 `internal/auth/oauth.go` 在 `OnRecordAuthWithOAuth2Request` 钩子里做登录校验：拿到 provider 身份、但**还没建 `users` 记录、还没发 token** 那一刻：
 
 - **GitHub**：比对 `Config.IsGitHubLoginAllowed(login)`（config.yaml `auth.allowed_logins` ∪ `auth.admin_logins`，大小写不敏感），不在名单一律返回 **403**。
-- **Gitea**：**不做白名单**——实例上任何账号都能登录（实例自身的注册/审核策略就是门槛）。`auth.gitea_admin_logins` 只授予 admin，不管登录。
+- **Gitea**：**不做白名单**——实例上任何账号都能登录（实例自身的注册/审核策略就是门槛）。`auth.gitea_admin_logins` 只在启动时播种 `is_admin` 标志（见 [§DB 角色](#db-角色-is-admin-is-superadmin-disabled)），不管登录。
 
 要点：
 
@@ -57,8 +57,12 @@ System PAT 明文格式随意（推荐 `openssl rand -base64 32`），**只活�
 
 ## DB 角色：is_admin / is_superadmin / disabled
 
-除了上面的 env 白名单 admin（运维面，`adminGuard`），`users` 记录上还有三个数据库字段
-（迁移 `1788100000_add_role_flags_to_users.go`），支撑**用户管理面**：
+`users` 记录上的三个数据库字段（迁移 `1788100000_add_role_flags_to_users.go`）是
+**所有管理面的唯一运行时鉴权来源**——运维面（`adminGuard`：db schema / usage /
+mineru / 下载工作节点等）与用户管理面都读它们。config.yaml 的
+`auth.admin_logins` / `auth.superadmin_logins`（含 `gitea_*` 同名列表）只是
+**启动时的播种名单**：每次启动 `promoteRoleFlags` 把名单里的登录名单调晋升为
+对应标志（从不下调），此后运行时不再看名单。
 
 | 字段 | 谁能改 | 持有者能做什么 |
 |---|---|---|
@@ -75,11 +79,11 @@ PATCH /api/admin/users/{id}     # body: {"disabled": bool} 或 {"is_admin": bool
 
 要点：
 
-- **env 白名单 admin 在此面上是 superadmin 等价**——运维永远保有角色管理权，即使所有 DB 标志全灭。
+- **授予 `is_admin` 只认 `is_superadmin` 标志**——配置名单不再在运行时桥接 superadmin 权限；要新增 superadmin，把它加进 `auth.superadmin_logins` 后重启播种，或在 `/_/` 后台手改。
 - **`disabled` 的生效是即时的**：`isAuthorized` 每个请求都会复查该标志（session 与 PAT 两条路），OAuth 登录钩子也会拒绝禁用账号换新 session。管理员禁用一个账号后，其 14 天 session 与全部 PAT 立即失效。
 - **自我保护**：不能禁用自己、不能改自己的 `is_admin`、admin 不能禁用 superadmin——防止把管理面自己锁死。
 - **`is_superadmin` 不可通过 API 授予**（防止一次 admin session 泄漏直接提权）：播种源是配置文件的 `auth.superadmin_logins`（每次启动单调晋升，从不下调）或 `/_/` 后台手改。
-- 这三个字段与 env 白名单 admin 的关系：`adminGuard`（db schema / usage / mineru 等运维端点）**仍然只认 env 白名单**，DB 角色不扩权到运维面。
+- **改名单必须重启才生效**：播种发生在启动时，`adminGuard` 运行时只读 DB 标志。superadmin 通过 `PATCH /api/admin/users/{id}` 授予/回收 `is_admin` 则是即时的（下一个请求生效）。
 
 ## Scope 词表
 
@@ -132,7 +136,7 @@ flowchart TD
 | Health / Meta (`/api/health`、`/api/server/info`、`/api/pat/scopes`、`/install-qatlasd.sh`、`/swagger/*`、SPA `/{path...}`) | **公开**（无数据 / bootstrap / 外壳）|
 | 论文上传 / mineru 相关 | `authGuard + papers:write` |
 | **PAT 管理** (`/api/pat`) | `sessionGuard`（拒 PAT）|
-| **用户管理** (`GET /api/admin/users`、`PATCH /api/admin/users/{id}`) | `userAdminGuard`（session + is_admin / is_superadmin / env 白名单，拒 PAT）|
+| **用户管理** (`GET /api/admin/users`、`PATCH /api/admin/users/{id}`) | `userAdminGuard`（session + is_admin / is_superadmin，拒 PAT）|
 
 设计原则：**凡是返回语料数据的端点（读和写）都要鉴权**；只有"无数据"的探活 / 版本 / 安装脚本 / 文档 / SPA 外壳保持公开。知识库不再匿名可读。论文 PDF / Markdown 字节在 quantum-atlas.ai 等公开实例上**默认不通过 HTTP API 对外分发**（`QATLAS_PAPER_ACCESS_ENABLED=false`）——客户端只能查询元数据（OpenAlex 同步进来的内容）与论文具备何种资产的开关位（`stats` / `needs-mineru`）。Self-hosted 部署可在受控范围内打开该开关，启用后 `papers:read` 同时覆盖 `GET /api/papers/{id}/markdown` 类端点，详见 [License & Attribution · 论文访问开关](../about/license-and-attribution.md#论文访问开关-self-hosted)。
 

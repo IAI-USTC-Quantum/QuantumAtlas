@@ -46,7 +46,7 @@ func RegisterDownloadFleet(se *core.ServeEvent, cfg *config.Config, fleet *downl
 		apis.BodyLimit(downloader.DefaultMaxPDFBytes),
 	)
 	se.Router.GET(wp.ReceiptPath+"{attempt}", worker)
-	se.Router.GET("/api/admin/downloader/workers", adminGuard(cfg, func(re *core.RequestEvent) error {
+	se.Router.GET("/api/admin/downloader/workers", adminGuard(func(re *core.RequestEvent) error {
 		re.Response.Header().Set("Cache-Control", "no-store")
 		if fleet == nil {
 			// A disabled fleet is a normal deployment state — e.g. the
@@ -74,7 +74,7 @@ func RegisterDownloadFleet(se *core.ServeEvent, cfg *config.Config, fleet *downl
 			"jobs":             snapshot.Jobs,
 		})
 	}))
-	se.Router.POST("/api/admin/downloader/enrollment", adminGuard(cfg, func(re *core.RequestEvent) error {
+	se.Router.POST("/api/admin/downloader/enrollment", adminGuard(func(re *core.RequestEvent) error {
 		if fleet == nil {
 			return fleetRouteError(re, downloadfleet.ErrDisabled)
 		}
@@ -85,7 +85,7 @@ func RegisterDownloadFleet(se *core.ServeEvent, cfg *config.Config, fleet *downl
 		re.Response.Header().Set("Cache-Control", "no-store")
 		return re.JSON(http.StatusCreated, enrollment)
 	}))
-	se.Router.POST("/api/admin/downloader/workers/{id}/{action}", adminGuard(cfg, func(re *core.RequestEvent) error {
+	se.Router.POST("/api/admin/downloader/workers/{id}/{action}", adminGuard(func(re *core.RequestEvent) error {
 		if fleet == nil {
 			return fleetRouteError(re, downloadfleet.ErrDisabled)
 		}

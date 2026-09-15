@@ -290,8 +290,8 @@ paths:
         every table in schema public (goose_db_version included,
         alphabetical) with row estimate, total size, columns
         (type/nullable/default/is_pk), indexes and constraints.
-        Admin-only: session token + github_login on the
-        QATLAS_ADMIN_GITHUB_LOGINS allowlist.
+        Admin-only: session token + is_admin or is_superadmin
+        on the users record.
       produces:
       - application/json
       responses:
@@ -330,8 +330,8 @@ paths:
         Returns {url} — a short-lived signed link into the admin-only
         dev-docs site (/devdoc). Opening it sets an HttpOnly cookie and
         redirects to the ticket-free URL; the cookie authorizes the
-        docs for 12h. Admin-only: session token + github_login on the
-        QATLAS_ADMIN_GITHUB_LOGINS allowlist.
+        docs for 12h. Admin-only: session token + is_admin or
+        is_superadmin on the users record.
       produces:
       - application/json
       responses:
@@ -370,8 +370,9 @@ paths:
         Every users record: {users:[{id, name, email, github_login,
         gitea_login, is_admin, is_superadmin, disabled, created,
         updated}], total}.
-        Requires a session AND one of: is_admin, is_superadmin, or the
-        config admin allowlist (userAdminGuard — PATs rejected).
+        Requires a session AND one of: is_admin, is_superadmin
+        (userAdminGuard — PATs rejected; the YAML admin lists are
+        only a boot-time seed for those flags).
       produces:
       - application/json
       responses:
@@ -404,8 +405,8 @@ paths:
       description: |-
         Body is a JSON object with any of {"disabled": bool,
         "is_admin": bool} — at least one key required. disabled needs
-        admin-or-above; is_admin needs superadmin (env-allowlist admins
-        count as superadmin). Self-protection: nobody may disable
+        admin-or-above; is_admin needs the is_superadmin flag.
+        Self-protection: nobody may disable
         themselves or change their own is_admin; admins cannot
         disable superadmins. is_superadmin is not patchable here.
       parameters:
@@ -457,11 +458,13 @@ paths:
         Returns {login, is_admin, is_user_admin, is_superadmin}
         for the signed-in session user. login is the github_login,
         falling back to gitea_login when only that is stamped.
-        is_admin is the config allowlist gate (ops dashboard);
-        is_user_admin / is_superadmin mirror the /api/admin/users
-        guard for the user-management nav. The SPA uses these to
-        decide which admin surfaces to render; non-admins get false
-        flags rather than a 403. Session-token auth only (PAT auth
+        All three flags read the users-record role flags (the
+        auth.admin_logins / superadmin_logins YAML lists only
+        seed them at boot): is_admin and is_user_admin are true
+        when the record holds is_admin or is_superadmin; the
+        SPA uses them to decide which admin surfaces to render.
+        Non-admins get false flags rather than a 403.
+        Session-token auth only (PAT auth
         refused, same as /api/pat).
       produces:
       - application/json

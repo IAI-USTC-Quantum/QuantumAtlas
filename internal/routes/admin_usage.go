@@ -49,10 +49,10 @@ type adminUsageRow struct {
 // logins from the users collection; usageStore reads the metering
 // tables (nil pool → the 503 catalog-unavailable convention).
 func registerAdminUsage(se *core.ServeEvent, cfg *config.Config, app core.App, usageStore *usage.Store) {
-	se.Router.GET("/api/admin/usage", adminGuard(cfg, adminUsageHandler(cfg, app, usageStore)))
-	se.Router.GET("/api/admin/plans", adminGuard(cfg, adminListPlansHandler(usageStore)))
-	se.Router.PUT("/api/admin/plans/{name}", adminGuard(cfg, adminUpsertPlanHandler(usageStore)))
-	se.Router.PUT("/api/admin/quotas/{user_id}", adminGuard(cfg, adminUpsertQuotaHandler(usageStore)))
+	se.Router.GET("/api/admin/usage", adminGuard(adminUsageHandler(cfg, app, usageStore)))
+	se.Router.GET("/api/admin/plans", adminGuard(adminListPlansHandler(usageStore)))
+	se.Router.PUT("/api/admin/plans/{name}", adminGuard(adminUpsertPlanHandler(usageStore)))
+	se.Router.PUT("/api/admin/quotas/{user_id}", adminGuard(adminUpsertQuotaHandler(usageStore)))
 }
 
 // adminUsageHandler answers GET /api/admin/usage.

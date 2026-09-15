@@ -34,10 +34,11 @@ const GitHubLoginField = "github_login"
 const GiteaLoginField = "gitea_login"
 
 // Role / availability fields on the users collection (see
-// 1788100000_add_role_flags_to_users.go). The env-derived admin gate
-// (Config.IsGitHubAdmin) stays authoritative for the /api/admin ops
-// surface; these flags back the user-management surface
-// (internal/routes/admin_users.go):
+// 1788100000_add_role_flags_to_users.go). These flags are the single
+// runtime authority for every admin surface — the ops dashboard
+// (internal/routes/admin.go) and user management alike. The YAML lists
+// (auth.admin_logins / auth.superadmin_logins and the gitea_*
+// equivalents) only SEED them at boot via promoteRoleFlags:
 //
 //   - IsAdminField: the holder may list all users and toggle their
 //     availability (disabled), but not their admin flags.

@@ -65,15 +65,15 @@ export function Sidebar({
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const homePath = `/${lang}`
   // Session-only whoami; cached for a few minutes in the query cache.
-  // Hidden (not errored) for non-admins / non-sessions. is_user_admin
-  // broadens the entry to DB-flag user managers (is_admin stays the env
-  // allowlist gate for the ops dashboard itself).
+  // Hidden (not errored) for non-admins / non-sessions. Both flags read
+  // the users-record role flags server-side; they only differ in what
+  // the SPA gates on (user management vs the ops dashboard).
   const whoami = useAdminWhoami()
   const showAdmin =
     whoami.data?.is_admin === true || whoami.data?.is_user_admin === true
-  // The asset browser and pipeline monitor are adminGuard-ed (env
-  // allowlist), unlike the user pages user-managers can reach — so only
-  // surface them for real admins.
+  // The asset browser and pipeline monitor are adminGuard-ed
+  // (is_admin / is_superadmin on the users record), unlike the user
+  // pages user-managers can reach — so only surface them for admins.
   const showAdminPages = whoami.data?.is_admin === true
   const adminPath = `${homePath}/admin`
   const adminAssetsPath = `${adminPath}/assets`

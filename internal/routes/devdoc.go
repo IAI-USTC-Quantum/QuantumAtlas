@@ -6,7 +6,7 @@
 // page load, which cannot carry the PocketBase bearer token the rest of
 // the admin API uses, so the gate is a two-step ticket → cookie flow:
 //
-//  1. POST /api/admin/devdoc/ticket — adminGuard (session + GitHub admin
+//  1. POST /api/admin/devdoc/ticket — adminGuard (session + users-record
 //     allowlist, same as every other admin surface). Returns a short-
 //     lived signed URL: /devdoc/?ticket=<hmac>.
 //  2. GET /devdoc/* — the gate first looks for a valid auth cookie; on a
@@ -32,8 +32,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
-
 	"github.com/pocketbase/pocketbase/core"
 )
 
@@ -57,7 +55,7 @@ type devdocGate struct {
 // in docs.go: disk override first, embedded bundle as the baseline);
 // nil means this build has no dev docs at all — both endpoints then
 // answer 404 on use instead of crashing boot.
-func RegisterDevdoc(se *core.ServeEvent, cfg *config.Config, devdocFS fs.FS) {
+func RegisterDevdoc(se *core.ServeEvent, devdocFS fs.FS) {
 	g := &devdocGate{key: make([]byte, 32)}
 	if _, err := rand.Read(g.key); err != nil {
 		panic("devdoc: read random key: " + err.Error())
@@ -66,7 +64,7 @@ func RegisterDevdoc(se *core.ServeEvent, cfg *config.Config, devdocFS fs.FS) {
 		g.static = http.FileServer(http.FS(devdocFS))
 	}
 
-	se.Router.POST("/api/admin/devdoc/ticket", adminGuard(cfg, func(re *core.RequestEvent) error {
+	se.Router.POST("/api/admin/devdoc/ticket", adminGuard(func(re *core.RequestEvent) error {
 		if g.static == nil {
 			return re.JSON(http.StatusNotFound, map[string]string{
 				"detail": "dev docs not bundled in this build",

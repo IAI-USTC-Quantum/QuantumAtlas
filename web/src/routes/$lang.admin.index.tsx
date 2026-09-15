@@ -67,9 +67,9 @@ function AdminPage() {
   const { lang } = Route.useParams()
   const whoami = useAdminWhoami()
   const isAdmin = whoami.data?.is_admin ?? false
-  // DB-flag user managers (is_admin / is_superadmin on the users
-  // record) reach the user-management surface without the env
-  // allowlist; see internal/routes/admin_users.go.
+  // User management opens for any admin-or-above role flag on the
+  // users record (is_admin / is_superadmin); see
+  // internal/routes/admin_users.go.
   const canManageUsers = whoami.data?.is_user_admin ?? false
   const schema = useAdminSchema(isAdmin)
   const acquisitionFailures = useAdminAcquisitionFailures(isAdmin)

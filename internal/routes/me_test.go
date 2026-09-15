@@ -6,8 +6,9 @@
 //   - sessionGuard: a user PAT is REJECTED (403, "browser session
 //     token") — the dashboard surface is for browser sessions, same
 //     contract as /api/pat and /api/admin/whoami
-//   - /api/me: a session gets its own profile fields; github_login and
-//     is_admin reflect the stamped login + the admin allowlist
+//   - /api/me: a session gets its own profile fields; is_admin /
+//     is_superadmin reflect the users-record role flags (the YAML
+//     allowlist is only a boot-time seed for them)
 //   - /api/me/usage: session + nil-pool usage store → 503 (the
 //     registry-unavailable convention, same as the admin usage surface)
 //
@@ -87,6 +88,14 @@ func newMeHarness(t testing.TB) *meHarness {
 // exactly the state the OAuth hook produces after sign-in.
 func (h *meHarness) meSessionToken(login string) string {
 	h.t.Helper()
+	return h.meFlaggedSessionToken(login, false, false)
+}
+
+// meFlaggedSessionToken is meSessionToken with explicit role flags, so
+// tests can mint admin/superadmin sessions the way promoteRoleFlags
+// leaves them on a real deployment.
+func (h *meHarness) meFlaggedSessionToken(login string, isAdmin, isSuper bool) string {
+	h.t.Helper()
 	col, err := h.app.FindCollectionByNameOrId(auth.UsersCollection)
 	if err != nil {
 		h.t.Fatalf("find users collection: %v", err)
@@ -95,6 +104,8 @@ func (h *meHarness) meSessionToken(login string) string {
 	rec.SetEmail(login + "@example.com")
 	rec.SetPassword("me-test-password")
 	rec.Set(auth.GitHubLoginField, login)
+	rec.Set(auth.IsAdminField, isAdmin)
+	rec.Set(auth.IsSuperadminField, isSuper)
 	if err := h.app.Save(rec); err != nil {
 		h.t.Fatalf("save user: %v", err)
 	}
@@ -185,15 +196,34 @@ func TestAPI_Me_ProfileSession(t *testing.T) {
 
 func TestAPI_Me_ProfileAdminSession(t *testing.T) {
 	h := newMeHarness(t)
-	status, _, body := h.do(http.MethodGet, "/api/me", "", rawHeader(h.meSessionToken(adminTestLogin)))
+	// An admin is a users record carrying the is_admin flag (the YAML
+	// lists only seed it at boot); the login itself grants nothing.
+	status, _, body := h.do(http.MethodGet, "/api/me", "", rawHeader(h.meFlaggedSessionToken(adminTestLogin, true, false)))
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%v", status, body)
 	}
 	if body["is_admin"] != true {
-		t.Errorf("is_admin = %v, want true (allowlisted login)", body)
+		t.Errorf("is_admin = %v, want true (users-record flag)", body)
+	}
+	if body["is_superadmin"] != false {
+		t.Errorf("is_superadmin = %v, want false", body["is_superadmin"])
 	}
 	if got := asString(body["github_login"]); got != adminTestLogin {
 		t.Errorf("github_login = %q, want %q", got, adminTestLogin)
+	}
+}
+
+func TestAPI_Me_ProfileLoginAloneIsNotAdmin(t *testing.T) {
+	h := newMeHarness(t)
+	// adminTestLogin sits in the harness cfg's AdminGitHubLogins, but a
+	// record without the flag must NOT be an admin at runtime — the
+	// lists are only a boot-time seed.
+	status, _, body := h.do(http.MethodGet, "/api/me", "", rawHeader(h.meSessionToken(adminTestLogin)))
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%v", status, body)
+	}
+	if body["is_admin"] != false {
+		t.Errorf("is_admin = %v, want false (no role flag on record)", body)
 	}
 }
 

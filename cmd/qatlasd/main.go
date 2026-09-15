@@ -854,7 +854,7 @@ func main() {
 			log.Printf("docs: serving /doc from %s, /devdoc from %s (override dir %s)",
 				docSrc, devdocSrc, docsRoot)
 			routes.RegisterDoc(se, docFS)
-			routes.RegisterDevdoc(se, cfg, devdocFS)
+			routes.RegisterDevdoc(se, devdocFS)
 
 			// Serve the embedded SPA last as the catch-all. apis.Static's
 			// indexFallback=true means any path that doesn't match a real
@@ -1665,7 +1665,7 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// plugin registry and proxies manifest/config to the qatlas-search
 	// microservice (503 when remote search is disabled).
 	routes.RegisterAdmin(se, cfg, app, registryStore.Pool(), mineruScheduler, mineruConverter, usageStore, pluginRegistry, remoteProvider)
-	routes.RegisterAdminAssets(se, cfg, rawStore, registryStore)
+	routes.RegisterAdminAssets(se, rawStore, registryStore)
 }
 
 // probeRemoteSearch probes the qatlas-search microservice's /healthz

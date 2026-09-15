@@ -130,10 +130,11 @@ func newAdminHarnessWith(t testing.TB, pluginRegistry *qplugin.Registry, remote 
 	return h
 }
 
-// adminSessionToken creates a users record with the allowlisted GitHub
-// login stamped on github_login and returns a fresh session token for
-// it. This is exactly the state the OAuth hook produces for an admin
-// after sign-in (see stampGitHubLogin).
+// adminSessionToken creates a users record with the is_admin role flag
+// stamped and returns a fresh session token for it. This is exactly
+// the state the bootstrap promotion (auth.promoteRoleFlags) produces
+// for an allowlisted login after sign-in: the flag on the record is
+// what every admin guard reads.
 func (h *adminHarness) adminSessionToken() string {
 	h.t.Helper()
 	col, err := h.app.FindCollectionByNameOrId(auth.UsersCollection)
@@ -144,6 +145,7 @@ func (h *adminHarness) adminSessionToken() string {
 	rec.SetEmail("admin@example.com")
 	rec.SetPassword("admin-test-password")
 	rec.Set(auth.GitHubLoginField, adminTestLogin)
+	rec.Set(auth.IsAdminField, true)
 	if err := h.app.Save(rec); err != nil {
 		h.t.Fatalf("save admin user: %v", err)
 	}

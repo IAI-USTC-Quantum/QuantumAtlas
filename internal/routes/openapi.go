@@ -996,10 +996,10 @@ func docMeSearchKeysDelete() {}
 
 // --- Admin -------------------------------------------------------------------
 //
-// Admin console API. Session-token auth only (PATs rejected); the db
-// schema endpoint additionally requires the caller's github_login /
-// gitea_login to be on the matching config admin allowlist
-// (auth.admin_logins / auth.gitea_admin_logins). See internal/routes/admin.go.
+// Admin console API. Session-token auth only (PATs rejected); every
+// admin endpoint requires the users record to carry is_admin or
+// is_superadmin (the auth.admin_logins / auth.gitea_admin_logins YAML
+// lists only seed those flags at boot). See internal/routes/admin.go.
 
 // adminWhoami reports the caller's provider login and admin status.
 //
@@ -1007,11 +1007,13 @@ func docMeSearchKeysDelete() {}
 // @Description Returns {login, is_admin, is_user_admin, is_superadmin}
 // @Description for the signed-in session user. login is the github_login,
 // @Description falling back to gitea_login when only that is stamped.
-// @Description is_admin is the config allowlist gate (ops dashboard);
-// @Description is_user_admin / is_superadmin mirror the /api/admin/users
-// @Description guard for the user-management nav. The SPA uses these to
-// @Description decide which admin surfaces to render; non-admins get false
-// @Description flags rather than a 403. Session-token auth only (PAT auth
+// @Description All three flags read the users-record role flags (the
+// @Description auth.admin_logins / superadmin_logins YAML lists only
+// @Description seed them at boot): is_admin and is_user_admin are true
+// @Description when the record holds is_admin or is_superadmin; the
+// @Description SPA uses them to decide which admin surfaces to render.
+// @Description Non-admins get false flags rather than a 403.
+// @Description Session-token auth only (PAT auth
 // @Description refused, same as /api/pat).
 // @Tags        Admin
 // @Produce     json
@@ -1029,8 +1031,8 @@ func docAdminWhoami() {}
 // @Description every table in schema public (goose_db_version included,
 // @Description alphabetical) with row estimate, total size, columns
 // @Description (type/nullable/default/is_pk), indexes and constraints.
-// @Description Admin-only: session token + github_login on the
-// @Description QATLAS_ADMIN_GITHUB_LOGINS allowlist.
+// @Description Admin-only: session token + is_admin or is_superadmin
+// @Description on the users record.
 // @Tags        Admin
 // @Produce     json
 // @Security    BearerAuth
@@ -1047,8 +1049,8 @@ func docAdminDBSchema() {}
 // @Description Returns {url} — a short-lived signed link into the admin-only
 // @Description dev-docs site (/devdoc). Opening it sets an HttpOnly cookie and
 // @Description redirects to the ticket-free URL; the cookie authorizes the
-// @Description docs for 12h. Admin-only: session token + github_login on the
-// @Description QATLAS_ADMIN_GITHUB_LOGINS allowlist.
+// @Description docs for 12h. Admin-only: session token + is_admin or
+// @Description is_superadmin on the users record.
 // @Tags        Admin
 // @Produce     json
 // @Security    BearerAuth
@@ -1065,8 +1067,9 @@ func docAdminDevdocTicket() {}
 // @Description Every users record: {users:[{id, name, email, github_login,
 // @Description gitea_login, is_admin, is_superadmin, disabled, created,
 // @Description updated}], total}.
-// @Description Requires a session AND one of: is_admin, is_superadmin, or the
-// @Description config admin allowlist (userAdminGuard — PATs rejected).
+// @Description Requires a session AND one of: is_admin, is_superadmin
+// @Description (userAdminGuard — PATs rejected; the YAML admin lists are
+// @Description only a boot-time seed for those flags).
 // @Tags        Admin
 // @Produce     json
 // @Security    BearerAuth
@@ -1081,8 +1084,8 @@ func docAdminListUsers() {}
 // @Summary     Update user flags
 // @Description Body is a JSON object with any of {"disabled": bool,
 // @Description "is_admin": bool} — at least one key required. disabled needs
-// @Description admin-or-above; is_admin needs superadmin (env-allowlist admins
-// @Description count as superadmin). Self-protection: nobody may disable
+// @Description admin-or-above; is_admin needs the is_superadmin flag.
+// @Description Self-protection: nobody may disable
 // @Description themselves or change their own is_admin; admins cannot
 // @Description disable superadmins. is_superadmin is not patchable here.
 // @Tags        Admin

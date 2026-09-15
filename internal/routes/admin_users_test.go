@@ -9,8 +9,8 @@
 //     NOT is_admin (read-only to them), NOT self-disable, NOT
 //     disabling a superadmin
 //   - superadmin powers: grant/revoke is_admin on others, but never
-//     on self
-//   - env allowlist admin (adminTestLogin) behaves superadmin-equivalent
+//     on self; a plain is_admin holder cannot grant — the YAML
+//     allowlist no longer bridges that gap
 //   - availability enforcement at the request layer: a disabled user's
 //     session 401s on a sessionGuard route, a disabled user's PAT 401s
 //     on authGuard (contrast: an enabled user's PAT gets 403 from
@@ -223,16 +223,18 @@ func TestAPI_AdminUsers_SuperadminCannotChangeOwnAdminFlag(t *testing.T) {
 	}
 }
 
-func TestAPI_AdminUsers_EnvAdminIsSuperadminEquivalent(t *testing.T) {
+func TestAPI_AdminUsers_PlainAdminCannotGrantIsAdmin(t *testing.T) {
 	h := newAdminHarness(t)
 	victim := h.flaggedUser("victim@example.com", "victim", false, false, false)
 
-	// adminSessionToken = env-allowlisted adminTestLogin — must be able
-	// to grant is_admin even though it holds no DB flags.
+	// adminSessionToken = a record holding is_admin but NOT
+	// is_superadmin. Granting is_admin is a superadmin-only act; the
+	// harness cfg still lists its login in AdminGitHubLogins, which
+	// must not change the verdict.
 	status, _, body := h.do(http.MethodPatch, "/api/admin/users/"+victim.Id,
 		`{"is_admin":true}`, rawHeader(h.adminSessionToken()))
-	if status != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%v", status, body)
+	if status != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body=%v", status, body)
 	}
 }
 

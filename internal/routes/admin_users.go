@@ -7,10 +7,10 @@
 //	                (disabled); the flag itself is READ-ONLY to them.
 //	is_superadmin — additionally may toggle other users' is_admin.
 //
-// The allowlist admin (Config.IsGitHubAdmin / Config.IsGiteaAdmin,
-// adminGuard) is a strict superset here: it passes userAdminGuard and is
-// treated as superadmin-equivalent, so the operator always retains role
-// management even when every DB flag is off.
+// The same flags gate the ops surface (adminGuard), so a plain admin
+// loses nothing by being created purely in the database: an
+// is_superadmin holder promotes them with PATCH is_admin and the ops
+// dashboard opens up on their next whoami.
 //
 //	GET   /api/admin/users        — userAdminGuard; every users record
 //	                                 (id, name, email, github_login,
@@ -41,18 +41,17 @@ import (
 	"net/http"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/auth"
-	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 
 	"github.com/pocketbase/pocketbase/core"
 )
 
-// userAdminGuard layers the DB-flag role check on top of sessionGuard
+// userAdminGuard layers the role-flag check on top of sessionGuard
 // (PATs rejected — user management is for humans, same posture as
 // adminGuard). A caller passes when they hold a session AND at least
-// one of: the env admin allowlist, is_admin, is_superadmin.
-func userAdminGuard(cfg *config.Config, handler func(re *core.RequestEvent) error) func(re *core.RequestEvent) error {
+// one of: is_admin, is_superadmin.
+func userAdminGuard(handler func(re *core.RequestEvent) error) func(re *core.RequestEvent) error {
 	return sessionGuard(func(re *core.RequestEvent) error {
-		if !isUserManager(re, cfg) {
+		if !isUserManager(re) {
 			return re.JSON(http.StatusForbidden, map[string]string{
 				"detail": "user management requires admin",
 			})
@@ -62,36 +61,30 @@ func userAdminGuard(cfg *config.Config, handler func(re *core.RequestEvent) erro
 }
 
 // isUserManager reports whether the session-authenticated caller may
-// use the /api/admin/users surface. sessionGuard has already run, so
-// re.Auth is a live users record.
-func isUserManager(re *core.RequestEvent, cfg *config.Config) bool {
-	if re.Auth == nil {
-		return false
-	}
-	if isAdminCaller(re, cfg) {
-		return true
-	}
-	return re.Auth.GetBool(auth.IsAdminField) || re.Auth.GetBool(auth.IsSuperadminField)
+// use the /api/admin/users surface: the same admin-or-above flags as
+// every other admin surface. sessionGuard has already run, so re.Auth
+// is a live users record.
+func isUserManager(re *core.RequestEvent) bool {
+	return isAdminCaller(re)
 }
 
 // isSuperadminCaller reports whether the caller may modify is_admin
-// flags: allowlist admins of either provider (operators) or
-// is_superadmin holders.
-func isSuperadminCaller(re *core.RequestEvent, cfg *config.Config) bool {
+// flags: is_superadmin holders only. (The YAML superadmin lists seed
+// the flag at boot via auth.promoteRoleFlags; there is deliberately no
+// runtime allowlist shortcut — granting is_admin out-of-band stays a
+// superadmin act.)
+func isSuperadminCaller(re *core.RequestEvent) bool {
 	if re.Auth == nil {
 		return false
-	}
-	if isAdminCaller(re, cfg) {
-		return true
 	}
 	return re.Auth.GetBool(auth.IsSuperadminField)
 }
 
 // registerAdminUsers wires the user-management routes. Called from
 // RegisterAdmin so all /api/admin/* wiring lives in one place.
-func registerAdminUsers(se *core.ServeEvent, cfg *config.Config, app core.App) {
-	se.Router.GET("/api/admin/users", userAdminGuard(cfg, adminListUsersHandler(app)))
-	se.Router.PATCH("/api/admin/users/{id}", userAdminGuard(cfg, adminUpdateUserHandler(cfg, app)))
+func registerAdminUsers(se *core.ServeEvent, app core.App) {
+	se.Router.GET("/api/admin/users", userAdminGuard(adminListUsersHandler(app)))
+	se.Router.PATCH("/api/admin/users/{id}", userAdminGuard(adminUpdateUserHandler(app)))
 }
 
 // adminUserJSON is the wire shape of a user both in the list response
@@ -142,7 +135,7 @@ type adminUpdateUserBody struct {
 }
 
 // adminUpdateUserHandler answers PATCH /api/admin/users/{id}.
-func adminUpdateUserHandler(cfg *config.Config, app core.App) func(re *core.RequestEvent) error {
+func adminUpdateUserHandler(app core.App) func(re *core.RequestEvent) error {
 	return func(re *core.RequestEvent) error {
 		var body adminUpdateUserBody
 		if err := json.NewDecoder(re.Request.Body).Decode(&body); err != nil {
@@ -167,7 +160,7 @@ func adminUpdateUserHandler(cfg *config.Config, app core.App) func(re *core.Requ
 		self := target.Id == caller.Id
 
 		if body.IsAdmin != nil {
-			if !isSuperadminCaller(re, cfg) {
+			if !isSuperadminCaller(re) {
 				return re.JSON(http.StatusForbidden, map[string]string{
 					"detail": "changing is_admin requires superadmin",
 				})
@@ -187,7 +180,7 @@ func adminUpdateUserHandler(cfg *config.Config, app core.App) func(re *core.Requ
 				})
 			}
 			if *body.Disabled &&
-				!isSuperadminCaller(re, cfg) &&
+				!isSuperadminCaller(re) &&
 				target.GetBool(auth.IsSuperadminField) {
 				return re.JSON(http.StatusForbidden, map[string]string{
 					"detail": "disabling a superadmin requires superadmin",

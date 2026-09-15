@@ -1,14 +1,20 @@
 // Admin console API.
 //
-// The admin concept is a provider-login allowlist: the GitHub lists
-// (Config.AdminGitHubLogins, auth.admin_logins) matched against the
-// github_login stamped on the users record, or — since Gitea login was
-// added — the Gitea lists (Config.AdminGiteaLogins, auth.gitea_admin_logins)
-// matched against gitea_login. A caller is an admin iff they hold an
-// authenticated PocketBase SESSION (admins are humans — PATs, both user
-// and system, are rejected via sessionGuard semantics, same as /api/pat)
-// AND one of those matches (case-insensitive, see Config.IsGitHubAdmin /
-// Config.IsGiteaAdmin).
+// The admin concept is the users-record role flags (see
+// internal/auth/migrations.go 1788100000_add_role_flags_to_users.go):
+// a caller is an admin iff they hold an authenticated PocketBase
+// SESSION (admins are humans — PATs, both user and system, are
+// rejected via sessionGuard semantics, same as /api/pat) AND their
+// users record carries is_admin or is_superadmin.
+//
+// The YAML lists (auth.admin_logins / auth.superadmin_logins, and the
+// gitea_* equivalents) are the SEED for those flags: at every boot
+// promoteRoleFlags stamps them onto matching users records
+// (idempotently, never demoting — see internal/auth/oauth.go). Runtime
+// authorization never consults the lists: editing YAML therefore
+// changes nothing until the next restart promotes the login, and the
+// users record (PATCH /api/admin/users, superadmin) is the live source
+// of truth.
 //
 // Two endpoints:
 //
@@ -62,17 +68,14 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 )
 
-// adminGuard layers the admin allowlist check on top of sessionGuard:
+// adminGuard layers the role-flag check on top of sessionGuard:
 // the caller must be session-authenticated (PATs rejected, because admin
 // surfaces are for humans — a leaked PAT must not reach them) AND their
-// users-record github_login / gitea_login must appear in the matching
-// config admin allowlist (either provider grants admin; the lists are
-// checked against their own login field so a GitHub entry never matches
-// a Gitea account of the same name, and vice versa).
+// users record must carry is_admin or is_superadmin.
 // 403 {"detail":"admin only"} otherwise.
-func adminGuard(cfg *config.Config, handler func(re *core.RequestEvent) error) func(re *core.RequestEvent) error {
+func adminGuard(handler func(re *core.RequestEvent) error) func(re *core.RequestEvent) error {
 	return sessionGuard(func(re *core.RequestEvent) error {
-		if !isAdminCaller(re, cfg) {
+		if !isAdminCaller(re) {
 			return re.JSON(http.StatusForbidden, map[string]string{
 				"detail": "admin only",
 			})
@@ -81,15 +84,16 @@ func adminGuard(cfg *config.Config, handler func(re *core.RequestEvent) error) f
 	})
 }
 
-// isAdminCaller reports whether the session-authenticated caller is on
-// either provider's admin allowlist. sessionGuard has already run, so
-// re.Auth is a live users record (nil-tolerant for unit tests).
-func isAdminCaller(re *core.RequestEvent, cfg *config.Config) bool {
+// isAdminCaller reports whether the session-authenticated caller holds
+// an admin-or-above role flag on their users record (is_superadmin
+// implies admin — same hierarchy as the user-management surface).
+// sessionGuard has already run, so re.Auth is a live users record
+// (nil-tolerant for unit tests).
+func isAdminCaller(re *core.RequestEvent) bool {
 	if re.Auth == nil {
 		return false
 	}
-	return cfg.IsGitHubAdmin(re.Auth.GetString(auth.GitHubLoginField)) ||
-		cfg.IsGiteaAdmin(re.Auth.GetString(auth.GiteaLoginField))
+	return re.Auth.GetBool(auth.IsAdminField) || re.Auth.GetBool(auth.IsSuperadminField)
 }
 
 // RegisterAdmin wires the /api/admin/* surface. pool is the Postgres
@@ -103,60 +107,54 @@ func isAdminCaller(re *core.RequestEvent, cfg *config.Config) bool {
 // metering endpoints (admin_usage.go) and reports 503 when its pool
 // is nil. pluginRegistry and remote back the plugin management
 // surface (admin_plugins.go); nil values degrade to an empty plugin
-// list and 503 proxy endpoints respectively.
+// list and 503 proxy endpoints respectively. cfg carries the agentic
+// metering knobs (daily limit / price) for admin_usage.go — it plays
+// no part in authorization, which reads the users-record role flags.
 func RegisterAdmin(se *core.ServeEvent, cfg *config.Config, app core.App, pool *pgxpool.Pool, sched *mineru.Scheduler, conv *mineru.Converter, usageStore *usage.Store, pluginRegistry *qplugin.Registry, remote *search.RemoteProvider) {
-	se.Router.GET("/api/admin/whoami", sessionGuard(adminWhoamiHandler(cfg)))
-	se.Router.GET("/api/admin/db/schema", adminGuard(cfg, adminDBSchemaHandler(pool)))
-	se.Router.GET("/api/admin/db/tables/{name}/rows", adminGuard(cfg, adminDBRowsHandler(pool)))
-	se.Router.POST("/api/admin/mineru/run", adminGuard(cfg, adminMineruRunHandler(sched)))
-	se.Router.GET("/api/admin/mineru/status", adminGuard(cfg, adminMineruStatusHandler(sched)))
-	se.Router.GET("/api/admin/mineru/tokens", adminGuard(cfg, adminMineruTokensHandler(conv)))
-	se.Router.POST("/api/admin/mineru/tokens", adminGuard(cfg, adminMineruTokenAddHandler(conv)))
-	se.Router.DELETE("/api/admin/mineru/tokens/{id}", adminGuard(cfg, adminMineruTokenDeleteHandler(conv)))
-	se.Router.GET("/api/admin/acquisition/failures", adminGuard(cfg, adminAcquisitionFailuresHandler(pool)))
-	registerAdminUsers(se, cfg, app)
+	se.Router.GET("/api/admin/whoami", sessionGuard(adminWhoamiHandler()))
+	se.Router.GET("/api/admin/db/schema", adminGuard(adminDBSchemaHandler(pool)))
+	se.Router.GET("/api/admin/db/tables/{name}/rows", adminGuard(adminDBRowsHandler(pool)))
+	se.Router.POST("/api/admin/mineru/run", adminGuard(adminMineruRunHandler(sched)))
+	se.Router.GET("/api/admin/mineru/status", adminGuard(adminMineruStatusHandler(sched)))
+	se.Router.GET("/api/admin/mineru/tokens", adminGuard(adminMineruTokensHandler(conv)))
+	se.Router.POST("/api/admin/mineru/tokens", adminGuard(adminMineruTokenAddHandler(conv)))
+	se.Router.DELETE("/api/admin/mineru/tokens/{id}", adminGuard(adminMineruTokenDeleteHandler(conv)))
+	se.Router.GET("/api/admin/acquisition/failures", adminGuard(adminAcquisitionFailuresHandler(pool)))
+	registerAdminUsers(se, app)
 	registerAdminUsage(se, cfg, app, usageStore)
-	registerAdminPlugins(se, cfg, pluginRegistry, remote)
+	registerAdminPlugins(se, pluginRegistry, remote)
 }
 
 // adminWhoamiHandler reports the caller's provider login (GitHub, else
-// Gitea — whichever is stamped on the record) and admin status so the
+// Gitea — whichever is stamped on the record) and role flags so the
 // frontend can decide whether to show the admin nav. Session-only
 // (PAT auth rejected with the sessionGuard 403, same as /api/pat).
 //
-// is_admin stays allowlist-only (the ops dashboard gate). The two
-// role fields mirror the /api/admin/users guard: is_user_admin = an
-// allowlist admin OR is_admin OR is_superadmin (drives the
-// user-management nav), is_superadmin = an allowlist admin OR
-// is_superadmin (drives the is_admin toggle column on that page).
-func adminWhoamiHandler(cfg *config.Config) func(re *core.RequestEvent) error {
+// All three flags read the users record directly (the YAML lists are
+// only a boot-time seed, see the package comment): is_admin /
+// is_user_admin = is_admin or is_superadmin (is_admin gates the ops
+// dashboard, is_user_admin the user-management nav — kept as separate
+// keys for the SPA contract), is_superadmin = the is_superadmin flag
+// (drives the is_admin toggle column on the users page).
+func adminWhoamiHandler() func(re *core.RequestEvent) error {
 	return func(re *core.RequestEvent) error {
 		login := ""
+		isAdmin := false
+		isSuper := false
 		if re.Auth != nil {
 			// Display value only: show the GitHub login when stamped,
-			// else the Gitea login, else empty. Both allowlists are
-			// consulted below regardless of which one is set.
+			// else the Gitea login, else empty.
 			login = re.Auth.GetString(auth.GitHubLoginField)
 			if login == "" {
 				login = re.Auth.GetString(auth.GiteaLoginField)
 			}
-		}
-		envAdmin := isAdminCaller(re, cfg)
-		isSuper := envAdmin
-		isUserAdmin := envAdmin
-		if re.Auth != nil {
-			if re.Auth.GetBool(auth.IsSuperadminField) {
-				isSuper = true
-				isUserAdmin = true
-			}
-			if re.Auth.GetBool(auth.IsAdminField) {
-				isUserAdmin = true
-			}
+			isSuper = re.Auth.GetBool(auth.IsSuperadminField)
+			isAdmin = re.Auth.GetBool(auth.IsAdminField) || isSuper
 		}
 		return re.JSON(http.StatusOK, map[string]any{
 			"login":         login,
-			"is_admin":      envAdmin,
-			"is_user_admin": isUserAdmin,
+			"is_admin":      isAdmin,
+			"is_user_admin": isAdmin,
 			"is_superadmin": isSuper,
 		})
 	}

@@ -39,17 +39,21 @@
 #   github_client_id: ""
 #   github_client_secret: ""
 #   allowed_logins: [your-gh-login, teammate-gh-login]
+#   # Logins promoted to is_admin on the users record at every boot
+#   # (see docs/concepts/auth-model.md §DB 角色). Seed/recovery path
+#   # only — runtime admin checks read the record flags, so editing
+#   # these lists changes nothing until the next restart promotes the
+#   # login; never demotes.
 #   admin_logins: [your-gh-login]
 #   # Logins promoted to is_superadmin on the users record at every
-#   # boot (see docs/concepts/auth-model.md §DB 角色). Seed/recovery
-#   # path for the role-management API; never demotes.
+#   # boot (same seed/recovery semantics; never demotes).
 #   superadmin_logins: [your-gh-login]
 #   # Self-hosted Gitea/Forgejo as a second login provider. gitea_url is
 #   # the instance origin; authorize/token/userinfo endpoints are derived
 #   # from it. No sign-in allowlist: the instance's own account policy is
-#   # the gate. The gitea_* login lists only grant admin / superadmin and
-#   # are SEPARATE from the GitHub ones — a same-named account on the
-#   # other provider derives no privileges from them.
+#   # the gate. The gitea_* login lists seed the same role flags at boot
+#   # and are SEPARATE from the GitHub ones — a same-named account on
+#   # the other provider derives no privileges from them.
 #   gitea_url: https://git.example.com
 #   gitea_client_id: ""
 #   gitea_client_secret: ""
