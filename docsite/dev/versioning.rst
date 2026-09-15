@@ -111,7 +111,7 @@ GitHub/GHCR/证明登记非原子，证明失败时 Release 可能已公开：�
 
 运行时握手：qatlas-cli 每个请求带 ``X-Qatlas-Client-Version`` ，
 qatlasd 每个响应带 ``X-Qatlas-Server-Version`` 。明确写操作先探测
-``GET /api/server/info``（同一凭证、超时与 TLS，无业务载荷），通过后再
+``GET /api/server/info`` （同一凭证、超时与 TLS，无业务载荷），通过后再
 发业务请求：
 
 - ``(major, minor)`` 一致：静默通过（patch 差异不影响兼容）；
