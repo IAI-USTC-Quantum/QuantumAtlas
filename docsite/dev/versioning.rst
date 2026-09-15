@@ -38,7 +38,7 @@ QuantumAtlas 由两个独立演进的组件构成：服务端 ``qatlasd`` （本
 发布入口。main 保留 ``PYPI_README.md`` 作为退役说明入口，但不再有根
 ``pyproject.toml`` / ``uv.lock`` / ``pixi.lock`` 或旧包构建后端。
 Go 工具链门槛唯一取自 ``go.mod`` ，Node 唯一取自 ``web/.node-version`` ；
-Python 只用于独立 Sphinx requirements 和 CI 标准库辅助脚本。
+Python 只用于独立 Sphinx 入口脚本和 CI 标准库辅助脚本。
 常规服务端正式版本仅从 ``v<version>`` Git tag 派生，没有 PyPI 产物；
 不需要版本文件 bump commit，也不为版本专门修改 Go 源码/版本字段。
 旧包退役没有发布服务端或容器，当时 GitHub Latest 保持为 ``v0.34.0`` ，

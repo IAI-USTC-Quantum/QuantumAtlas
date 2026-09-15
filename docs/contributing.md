@@ -85,7 +85,7 @@ Conventional Commits 是提交约定，不会自动推导或 bump 版本，也�
 
 - Go 工具链门槛**唯一取自 `go.mod` 的 `go` 指令**；CI 同样读取该文件，不另维护版本要求。普通 Go 构建和测试不需要 Node、Sphinx 或 UI 产物。
 - 前端与完整分发资源使用 `web/.node-version` 指定的 Node、npm 和 `web/package-lock.json`。
-- Python 仅用于独立文档工具及 CI 辅助脚本：Sphinx 用 `docsite/requirements.txt`，MkDocs 用 `docs/requirements.txt`，CI 文档环境为 Python 3.12。
+- Python 仅用于独立文档工具及 CI 辅助脚本：Sphinx 用 `uv run --locked --script .github/scripts/build_docs.py`（uv 0.11.30、Python 3.12）。历史 MkDocs 不参与产品文档构建。
 
 ```bash
 git clone https://github.com/IAI-USTC-Quantum/QuantumAtlas.git
@@ -103,22 +103,17 @@ CGO_ENABLED=0 go build -o build/qatlasd ./cmd/qatlasd
 
 Git **只保存源码**。`web/dist`、`web/public/doc`、`web/public/devdoc`、根 `dist/` / `build/`、MkDocs `site/`、缓存和 ELF 可执行文件不提交 Git。Go 输出显式放在 `build/`，不要放到仓库根再强制 add。安装采用新格式且附件已公开的精确 tag：`go install github.com/IAI-USTC-Quantum/QuantumAtlas/cmd/qatlasd@vX.Y.Z`（替换为实际 tag）时不运行 npm；首次 `serve` 自动下载同一 Release 的 UI ZIP 与 SHA256 清单，校验 SHA256、包内版本与完整性，缓存到 `os.UserCacheDir()/qatlas/ui/v<version>`，后续仍校验缓存。没有对应 Release 的 dev/伪版本不会回退 latest，必须完成 Sphinx 两站、npm 构建，再使用 `-tags embedui`；不要假定旧 `v0.34.0` 已有新格式 UI。
 
-开发/发布资源使用 `web/.node-version` 的 Node 版本、`web/package-lock.json` 和 `docsite/requirements.txt`；不要顺手升级依赖。Sphinx 仍生成两套站点，MkDocs 是独立文档体系。
+开发/发布资源使用 `web/.node-version` 的 Node 版本、`web/package-lock.json` 和文档脚本锁；不要顺手升级依赖。Sphinx 仍生成两套站点；MkDocs 是冻结的历史源。
 
 ```bash
-# 一次性准备独立 Sphinx 环境；先选择 web/.node-version 指定的 Node
-python3 -m venv build/venv-sphinx
-build/venv-sphinx/bin/python -m pip install -r docsite/requirements.txt
+# 先选择 web/.node-version 指定的 Node
+python3 .github/scripts/docs_sources.py checkout --transport ssh
 (cd web && npm ci)
 export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
 export TZ=UTC PYTHONHASHSEED=0
 # 清理的都是可再生输出；在仓库根执行
 rm -rf web/public/doc web/public/devdoc web/dist build/doctrees web/node_modules/.tmp
-build/venv-sphinx/bin/sphinx-build \
-  -b html -d build/doctrees/public docsite web/public/doc
-build/venv-sphinx/bin/sphinx-build \
-  -b html -d build/doctrees/dev -t devdocs -D root_doc=dev/index \
-  -D html_title="QuantumAtlas 开发文档" docsite web/public/devdoc
+uv run --locked --script .github/scripts/build_docs.py
 # 打包环境及会加载的 .env 文件不得携带 VITE_DEV_API_PAT 等 token
 (cd web && npm run build)
 CGO_ENABLED=0 go build -tags embedui -o build/qatlasd ./cmd/qatlasd
@@ -213,7 +208,7 @@ docs/                  这份文档
 4. 跑相关测试 + 现有测试别 break
 5. push 你 fork：`git push -u origin feat/some-thing`
 6. 在 GitHub 网页发 PR 到 `IAI-USTC-Quantum/QuantumAtlas:main`
-7. CI 跑（gofmt、Go test/vet、integration 仅编译、OpenAPI、CI 标准库 fixture、MkDocs、Sphinx 两站与前端双干净构建）
+7. CI 跑（gofmt、Go test/vet、integration 仅编译、OpenAPI、CI 标准库 fixture、Sphinx 两站与前端双干净构建）
 8. review + 修改
 9. squash merge
 

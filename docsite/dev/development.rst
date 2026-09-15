@@ -16,15 +16,15 @@
 - **改前端 / 启动本地 dev 服务 / 制作完整分发资源**：再安装
   ``web/.node-version`` 指定的 Node，使用随 Node 提供的 npm 和
   ``web/package-lock.json``。不要为一次构建顺手升级依赖。
-- **构建文档**：Python 只用于独立文档工具。Sphinx + Furo 使用
-  ``docsite/requirements.txt``（含哈希锁）。构建前按
-  ``docsite/components.lock.json`` 检出三个组件的固定提交。
-  CI 使用 Python 3.12。``.github/scripts`` 的部分测试只依赖标准库；
-  文档验收脚本需要同一套文档依赖。
+- **构建文档**：Python 只用于独立文档工具。Sphinx + Furo 由
+  ``uv run --locked --script .github/scripts/build_docs.py`` 按脚本头和
+  ``build_docs.py.lock`` 安装。构建前按 ``docsite/components.lock.json``
+  检出三个组件的固定提交。CI 使用 uv 0.11.30 与 Python 3.12。
+  ``.github/scripts`` 的部分测试只依赖标准库；文档验收跑在同一脚本环境里。
 
 主仓不是 Python 应用或可安装的 Python 项目，没有根 ``pyproject.toml`` /
 ``uv.lock`` / ``pixi.lock`` 开发契约，不执行 ``uv sync`` 或 ``pip install .``。
-``qatlas-cli`` 的开发、测试与发版都在其独立仓库；本仓保留 Sphinx 与 CI
+``qatlas-cli`` 的开发、测试与发版都在其独立仓库；本仓保留 Sphinx 入口脚本与 CI
 辅助脚本，不应将它们误当作旧 Python 包残留删除。
 
 .. code-block:: bash
@@ -142,13 +142,11 @@ Sphinx 的 ``/doc``、``/devdoc`` 虽随 Web/Go 资源一起分发，仍是独�
 完整 UI：两套 Sphinx → npm → embedui
 -------------------------------------
 
-首次配置 Sphinx 环境（后续复用）：
+检出组件文档，并准备 Node（后续复用）：
 
 .. code-block:: bash
 
-   python3 -m venv .venv-docs
-   .venv-docs/bin/python -m pip install --require-hashes -r docsite/requirements.txt
-   .venv-docs/bin/python .github/scripts/docs_sources.py checkout --transport ssh
+   python3 .github/scripts/docs_sources.py checkout --transport ssh
    # 先用自己的 Node 版本管理器选择 web/.node-version 指定的版本
    (cd web && npm ci)
 
@@ -160,7 +158,7 @@ Sphinx 的 ``/doc``、``/devdoc`` 虽随 Web/Go 资源一起分发，仍是独�
    export TZ=UTC PYTHONHASHSEED=0
    # 只清理这些可再生输出，不触碰运行数据或个人缓存
    rm -rf web/dist web/node_modules/.tmp
-   PYTHON="$PWD/.venv-docs/bin/python" bash .github/scripts/build-docs.sh
+   uv run --locked --script .github/scripts/build_docs.py
    # 打包前确认当前 shell 和所有会加载的 .env 文件都没有 token
    (cd web && npm run build)
    CGO_ENABLED=0 go build -tags embedui -o build/qatlasd ./cmd/qatlasd

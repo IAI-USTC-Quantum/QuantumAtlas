@@ -19,7 +19,8 @@
 #
 #   --build-local    Copy already-built Sphinx sites from a LOCAL checkout
 #                    (web/public/doc and web/public/devdoc). Build first with
-#                    .github/scripts/build-docs.sh; this mode does not run
+#                    uv run --locked --script .github/scripts/build_docs.py;
+#                    this mode does not run
 #                    Sphinx again:
 #
 #                      ./deploy/update-docs.sh --build-local
@@ -54,7 +55,7 @@ if [ "$BUILD_LOCAL" -eq 1 ]; then
   echo ">> copying prebuilt Sphinx sites from $REPO_DIR/web/public"
   for site in doc devdoc; do
     if [ ! -f "$REPO_DIR/web/public/$site/index.html" ] && [ ! -f "$REPO_DIR/web/public/$site/dev/index.html" ]; then
-      echo "missing $REPO_DIR/web/public/$site; run .github/scripts/build-docs.sh first" >&2
+      echo "missing $REPO_DIR/web/public/$site; run uv run --locked --script .github/scripts/build_docs.py first" >&2
       exit 1
     fi
   done

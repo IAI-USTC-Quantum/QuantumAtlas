@@ -190,7 +190,7 @@ MARKDOWN_BENCH_LABEL=react-markdown npm run test:performance
 - 浏览器只访问 loopback 的无代理静态 preview；外部/未知请求、CSP 违规、资源失败和未捕获异常均失败。
   **这不代表生产 OAuth、数据库、S3 或后端鉴权集成验证通过。**
 - 普通 CI 运行类型、lint、单元和浏览器回归；计时基准是显式 opt-in，不把受机器影响的毫秒数设为 CI 门禁。
-  `.github/scripts/build-docs.sh` 会清除 `web/dist`，不能在浏览器/性能测试期间运行。
+  `.github/scripts/build_docs.py` 会替换 `web/public/doc` 与 `web/public/devdoc`，不能在浏览器/性能测试期间运行。
 
 本地新证据位于 `build/react-markdown-results/`，截图/普通浏览器报告位于 `web/test-results/`。
 此前 `build/markdown-ast-results/` 记录的是 Worker 方案，不是当前实现的验收报告。

@@ -201,7 +201,7 @@ Full CLI options, auth details (PAT scopes / bearer tokens), and the recommended
 
 ## Documentation map
 
-User docs live in `docsite/` (Sphinx + Furo). Component docs are collected from pinned SHAs in `docsite/components.lock.json`. Build with `.github/scripts/build-docs.sh`; deploy the content image with `deploy/update-docs.sh`.
+User docs live in `docsite/` (Sphinx + Furo). Component docs are collected from pinned SHAs in `docsite/components.lock.json`. Build with `uv run --locked --script .github/scripts/build_docs.py`; deploy the content image with `deploy/update-docs.sh`.
 
 - [docsite/guide/](docsite/guide/concepts.rst): user guide (Web, CLI, API, search, admin)
 - [docsite/manual/](docsite/manual/contents.rst): platform reference, operations, and ADRs

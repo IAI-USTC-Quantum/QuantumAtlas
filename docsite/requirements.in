@@ -1,9 +1,0 @@
-# Documentation-only toolchain. The applications and GPU packages are not needed.
-# Sphinx 9.0/9.1.0 have upstream ChineseStemmer regression #14229; use stable 8.2.3.
-Sphinx==8.2.3
-furo==2025.12.19
-myst-parser==5.1.0
-jieba==0.42.1
-sphinx-collections==0.3.2
-sphinx-design>=0.6,<1
-sphinxcontrib-mermaid>=1,<3

@@ -11,7 +11,8 @@ on:
       - 'docsite/**'
       - '.github/workflows/docs.yml'
       - '.github/actions/checkout-docs/**'
-      - '.github/scripts/build-docs.sh'
+      - '.github/scripts/build_docs.py'
+      - '.github/scripts/build_docs.py.lock'
       - '.github/scripts/docs_sources.py'
       - '.github/scripts/check_docs.py'
       - '.github/scripts/docs-browser.cjs'
@@ -46,23 +47,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v6
         with:
+          version: '0.11.30'
           python-version: '3.12'
-          cache: pip
-          cache-dependency-path: docsite/requirements.txt
       - uses: ./.github/actions/checkout-docs
         with:
           token: ${{ secrets.DOCS_READ_TOKEN }}
-      - name: Install hash-locked Sphinx/Furo toolchain
-        run: python -m pip install --require-hashes -r docsite/requirements.txt
       - name: Build and verify both Sphinx sites
         run: |
           set -euo pipefail
           SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
           export SOURCE_DATE_EPOCH
-          bash .github/scripts/build-docs.sh
-          python .github/scripts/check_docs.py web/public --release
+          uv run --locked --script .github/scripts/build_docs.py --release
           git diff --exit-code
           test -z "$(git status --porcelain --untracked-files=all)"
           mkdir -p docs-dist

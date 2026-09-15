@@ -170,8 +170,8 @@ GoReleaser tar.gz 内的二进制已经嵌入与独立 ZIP 相同的 UI，不需
 资源生成顺序仍是 Sphinx 两站 → npm Web build → 完整性检查 →
 ``go run ./internal/cmd/uibundle -version <version> -output build/ui``。
 Go 工具链门槛唯一读 ``go.mod``；Node 使用 ``web/.node-version``，npm 使用
-锁文件，Sphinx 依赖使用 ``docsite/requirements.txt``。完整本地命令见
-:doc:`development`，不通过 Pixi 或根 Python 项目构建。
+锁文件，Sphinx 使用 ``uv run --locked --script .github/scripts/build_docs.py``。
+完整本地命令见 :doc:`development`，不通过 Pixi 或根 Python 项目构建。
 设置 ``SOURCE_DATE_EPOCH`` 为提交时间、
 ``TZ=UTC`` / ``PYTHONHASHSEED=0``，doctree 缓存放 ``build/`` 而非 bundle。
 修改文档或前端后必须重新构建用于验证的资源，但只提交源码。

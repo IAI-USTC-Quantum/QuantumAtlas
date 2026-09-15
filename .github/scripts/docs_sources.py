@@ -13,7 +13,7 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[2]
 LOCK = ROOT / "docsite/components.lock.json"
 NAMES = ("qatlas-cli", "qatlas-search", "qatlas-rag")
-IGNORE = {"conf.py", "check_build.py", "requirements.in", "requirements.txt", "__pycache__", "_build"}
+IGNORE = {"conf.py", "check_build.py", "build.py", "build.py.lock", "requirements.in", "requirements.txt", "__pycache__", "_build"}
 
 
 def load_lock(path: Path = LOCK) -> list[dict]:

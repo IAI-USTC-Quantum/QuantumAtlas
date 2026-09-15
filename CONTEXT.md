@@ -10,6 +10,7 @@ do not recreate retired Python, graph, wiki or theorem implementations in this m
 - `go.mod` / `go.sum` define the Go toolchain/dependency graph; `web/.node-version`
   and the npm lock define frontend inputs. There is no root Python/Pixi project.
 - Python files still present are documentation or CI helpers, not a Python package.
+  Sphinx is invoked with `uv run --locked --script .github/scripts/build_docs.py`.
   `PYPI_README.md` remains the permanent migration notice to independent `qatlas-cli`.
 - Git stores source, not executables or generated `web/dist`. Normal Go builds work
   without Node/Sphinx; release builds use `embedui` after generating complete UI/docs.

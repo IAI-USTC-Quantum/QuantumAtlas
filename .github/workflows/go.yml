@@ -102,23 +102,19 @@ jobs:
         env:
           SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
         run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v6
         with:
+          version: '0.11.30'
           python-version: '3.12'
-          cache: pip
-          cache-dependency-path: docsite/requirements.txt
       - uses: ./.github/actions/checkout-docs
         with:
           token: ${{ secrets.DOCS_READ_TOKEN }}
-      - name: Install locked Sphinx toolchain
-        run: python -m pip install --require-hashes -r docsite/requirements.txt
       - name: Fix documentation timestamps
         run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
       - name: Build both Sphinx sites
-        run: bash .github/scripts/build-docs.sh
+        run: uv run --locked --script .github/scripts/build_docs.py --release
       - name: Require a verified source-only clean checkout
         run: |
-          python .github/scripts/check_docs.py web/public --release
           git diff --exit-code
           test -z "$(git status --porcelain --untracked-files=all)"
 
@@ -156,16 +152,13 @@ jobs:
           node-version-file: web/.node-version
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v6
         with:
+          version: '0.11.30'
           python-version: '3.12'
-          cache: pip
-          cache-dependency-path: docsite/requirements.txt
       - uses: ./.github/actions/checkout-docs
         with:
           token: ${{ secrets.DOCS_READ_TOKEN }}
-      - name: Install Sphinx toolchain (not the retired Python application)
-        run: python -m pip install --require-hashes -r docsite/requirements.txt
       - name: Install web dependencies
         working-directory: web
         run: npm ci
@@ -179,7 +172,7 @@ jobs:
         working-directory: web
         run: npm test
       - name: First clean Sphinx build (both sites)
-        run: bash .github/scripts/build-docs.sh
+        run: uv run --locked --script .github/scripts/build_docs.py
       - name: First clean web build
         working-directory: web
         run: npm run build
@@ -194,7 +187,7 @@ jobs:
       - name: Preserve entire first output tree
         run: cp -a web/dist build/ui-first
       - name: Second clean Sphinx build (both sites, no doctree reuse)
-        run: bash .github/scripts/build-docs.sh
+        run: uv run --locked --script .github/scripts/build_docs.py
       - name: Second clean web build
         working-directory: web
         run: npm run build

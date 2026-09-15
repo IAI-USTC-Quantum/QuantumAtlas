@@ -133,9 +133,9 @@ UI 与独立 ZIP 的 UI 内容一致。``dev`` / Go 伪版本没有精确 Releas
 - 开发命令直接使用 ``go``、``go tool swag``、``npm`` 和文档工具，
   完整步骤见 :doc:`development`。没有根 Python 项目或 ``uv sync`` 流程，
   不引入 Pixi、Makefile、Taskfile 或新构建框架。Go 工具链门槛只读 ``go.mod``；
-  Sphinx 依赖由 ``docsite/requirements.txt`` 管理；组件文档提交由
-  ``docsite/components.lock.json`` 锁定。``.github/scripts`` 的部分 Python
-  fixture 仅用标准库，不用 pytest。
+  Sphinx 由 ``.github/scripts/build_docs.py`` 的 PEP 723 头与旁边的锁文件管理；
+  组件文档提交由 ``docsite/components.lock.json`` 锁定。``.github/scripts`` 的
+  部分 Python fixture 仅用标准库，不用 pytest。
 - 服务端测试使用 Go：``tests/compose_test.go`` 检查部署模板，
   ``tests/e2e/`` 的普通 fixture 只使用本地 ``httptest``。
   ``CGO_ENABLED=0 go test ./internal/... ./cmd/... ./web ./tests/...``
