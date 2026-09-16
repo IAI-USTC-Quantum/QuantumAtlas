@@ -1613,6 +1613,13 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// internal/routes/downloader.go.
 	routes.RegisterDownloader(se, downloaderRoutes, registryStore, enforcer)
 	routes.RegisterSearchBackends(se, userKeys, multiBackendFor(remoteProvider))
+	// Scorer generation and confirmed custom ranking are remote-only; do not
+	// route them through the optional local AgenticBackend implementation.
+	var scoringBackend routes.ScoringBackend
+	if remoteProvider != nil {
+		scoringBackend = remoteProvider
+	}
+	routes.RegisterSearchScoring(se, cfg, userKeys, scoringBackend, usageStore, searchEngine, registryStore, enforcer)
 
 	// Metered agentic search — POST /api/search/agentic. The backend is
 	// the remote qatlas-search microservice by default, or the local

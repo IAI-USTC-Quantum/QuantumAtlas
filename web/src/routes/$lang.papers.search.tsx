@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input'
 import { PageHeader } from '@/components/page-header'
 import { Panel } from '@/components/panel'
 import { PaperHitCard } from '@/components/paper-hit-card'
+import { ScorerEditor } from '@/components/scorer-editor'
 import { StatusBlock } from '@/components/status-block'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useLang } from '@/hooks/use-lang'
@@ -74,13 +75,13 @@ function PaperSearchPage() {
   const { q } = Route.useSearch()
   const query = q ?? ''
 
-  // Agentic mode toggle. The switch is gated on the `search-remote` plugin
-  // being enabled and connected; when the microservice is not there we
-  // force classic mode and disable the toggle.
+  // Remote modes are gated on the connected search-remote plugin, not on
+  // whether AI rule generation is configured. Offline keeps legacy search.
   const plugins = usePlugins()
   const remoteAvailable = isSearchRemoteAvailable(plugins.data?.plugins)
-  const [agenticWanted, setAgenticWanted] = useState(false)
-  const agenticOn = agenticWanted && remoteAvailable
+  const [mode, setMode] = useState<'classic' | 'agentic' | 'custom'>('classic')
+  const agenticOn = mode === 'agentic' && remoteAvailable
+  const customOn = mode === 'custom' && remoteAvailable
 
   // Backend catalog + selection. The picker only exists when the
   // qatlas-search microservice is reachable (the catalog proxies it).
@@ -132,12 +133,13 @@ function PaperSearchPage() {
   // the default useTranslation signature returns string.
   const examples = t('queryExamples', { returnObjects: true }) as string[]
 
-  // Three mutually exclusive query paths:
+  // Preserve the three legacy query paths; all are idle in custom mode,
+  // whose generation and execution are explicit ScorerEditor mutations:
   //   agentic on         -> POST /api/search/agentic (fused + conclusion)
   //   agentic off + remote -> POST /api/search/multi (per-backend tabs)
   //   no remote          -> POST /api/search (legacy fused fallback)
   const multiEntry =
-    query && remoteAvailable && !agenticOn && sources.length > 0
+    query && remoteAvailable && !agenticOn && !customOn && sources.length > 0
       ? { text: query, sources }
       : null
   const multiResults = useMultiSearch(multiEntry)
@@ -166,7 +168,7 @@ function PaperSearchPage() {
         copy={t('subtitle')}
       />
 
-      <form
+      {!customOn && <form
         onSubmit={(event) => {
           event.preventDefault()
           const form = new FormData(event.currentTarget)
@@ -185,25 +187,34 @@ function PaperSearchPage() {
           </div>
           <Button type="submit">{t('searchButton')}</Button>
         </div>
-        <div className="mt-2 flex items-center gap-2">
+      </form>}
+      <div className="flex flex-wrap items-center gap-2" role="group" aria-label={t('scoring.modeLabel')}>
+          <Button type="button" size="sm" variant={!agenticOn && !customOn ? 'default' : 'outline'}
+            aria-pressed={!agenticOn && !customOn} onClick={() => setMode('classic')}>
+            {t('scoring.classic')}
+          </Button>
           <Button
             type="button"
             variant={agenticOn ? 'default' : 'outline'}
             size="sm"
             disabled={!remoteAvailable}
-            onClick={() => setAgenticWanted((v) => !v)}
+            aria-pressed={agenticOn}
+            onClick={() => setMode(agenticOn ? 'classic' : 'agentic')}
             title={remoteAvailable ? t('agentic.toggleHint') : t('agentic.unavailable')}
           >
             <Wand2 className="size-4" />
             {t('agentic.toggle')}
+          </Button>
+          <Button type="button" size="sm" variant={customOn ? 'default' : 'outline'}
+            aria-pressed={customOn} disabled={!remoteAvailable} onClick={() => setMode('custom')}>
+            {t('scoring.toggle')}
           </Button>
           {!remoteAvailable && (
             <span className="text-xs text-muted-foreground">
               {t('agentic.unavailable')}
             </span>
           )}
-        </div>
-      </form>
+      </div>
 
       {remoteAvailable && (
         <BackendsPanel
@@ -217,7 +228,7 @@ function PaperSearchPage() {
         />
       )}
 
-      {!query && (
+      {!query && !customOn && (
         <Panel title={t('popularQueries')} icon={Sparkles}>
           <div className="flex flex-wrap gap-2">
             {examples.map((example) => (
@@ -235,7 +246,9 @@ function PaperSearchPage() {
         </Panel>
       )}
 
-      {query && rateLimitError ? (
+      {customOn ? (
+        <ScorerEditor key={query} initialQuery={query} sources={sources} />
+      ) : query && rateLimitError ? (
         <Alert>
           <AlertCircle className="size-4" />
           <AlertTitle>{t('agentic.rateLimitedTitle')}</AlertTitle>

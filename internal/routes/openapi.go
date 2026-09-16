@@ -173,6 +173,56 @@ func docSearchPapers() {}
 // @Router      /api/search/agentic [post]
 func docSearchAgentic() {}
 
+// @Summary     Scoring language capabilities
+// @Description Remote-only DSL features, limits and generation_available. Browser session required.
+// @Tags        Search
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200 {object} map[string]interface{}
+// @Failure     401 {object} map[string]interface{}
+// @Failure     503 {object} map[string]interface{}
+// @Router      /api/search/scoring/capabilities [get]
+func docScoringCapabilities() {}
+
+// @Summary     Generate a restricted scorer from natural language (metered)
+// @Description Requires papers:read and a user-bound credential. Generates and compiles a qatlas-expr-v1 scorer without searching or ingesting. One successful generation consumes one shared Agentic daily unit; failures refund the unit while recording known token usage. At most one internal repair.
+// @Tags        Search
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body body object true "{query:string, requirements:string}; each 1-4000 Unicode characters"
+// @Success     200 {object} map[string]interface{} "{scorer,summary,warnings,scorer_hash,feature_version,usage:{today,limit,llm_tokens}}"
+// @Failure     400 {object} map[string]interface{}
+// @Failure     401 {object} map[string]interface{}
+// @Failure     403 {object} map[string]interface{}
+// @Failure     413 {object} map[string]interface{}
+// @Failure     422 {object} map[string]interface{}
+// @Failure     429 {object} map[string]interface{}
+// @Failure     502 {object} map[string]interface{}
+// @Failure     503 {object} map[string]interface{}
+// @Failure     504 {object} map[string]interface{}
+// @Router      /api/search/scoring/generate [post]
+func docScoringGenerate() {}
+
+// @Summary     Search using a confirmed custom scorer
+// @Description Remote-only fused search with ranking=scorer and agent=false. Requires papers:read. Recompiles the supplied program on every request. No LLM calls. Preserves one globally ordered hit list including title-only candidates and custom score explanations; only returned identity-anchored hits are resolve-or-minted. Scores are neither normalized nor probabilities.
+// @Tags        Search
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body body object true "{text:string,sources:[string],max_results?:1..100,scorer:{language:qatlas-expr-v1,filter?:string,score:string},explain?:boolean}"
+// @Success     200 {object} map[string]interface{} "{hits:[...],ranking,usage,errors,remote:true}"
+// @Failure     400 {object} map[string]interface{}
+// @Failure     401 {object} map[string]interface{}
+// @Failure     403 {object} map[string]interface{}
+// @Failure     413 {object} map[string]interface{}
+// @Failure     422 {object} map[string]interface{}
+// @Failure     429 {object} map[string]interface{}
+// @Failure     502 {object} map[string]interface{}
+// @Failure     503 {object} map[string]interface{}
+// @Router      /api/search/ranked [post]
+func docSearchRanked() {}
+
 // multiSearch runs the per-backend ("multi") search.
 //
 // @Summary     Multi-backend search (per-platform raw results)

@@ -139,6 +139,89 @@ qatlas-search（``POST /api/search/multi``），每个被选中的 backend 返�
   列表；key 的 CRUD 在 ``GET/PUT/DELETE /api/me/search-keys`` （仅
   浏览器会话）。完整请求/响应格式见 :doc:`api <api>`。
 
+自定义评分：自然语言生成受限 Scorer
+------------------------------------
+
+搜索页的「自定义评分」是独立模式，不改变普通逐平台搜索或 Agentic 总结。
+输入检索主题与排序需求，点击生成后检查模型说明、硬过滤条件、评分表达式
+及缺失值处理；也可手动编辑表达式。确认规则后再点击搜索。修改主题、需求
+或表达式会使确认失效；不会因页面聚焦或打字自动调用模型。模型说明仅供
+参考，实际行为以确认后的表达式为准。第一阶段不自动生成论文总结。
+
+规则语言是 ``qatlas-expr-v1``，不是任意 Python/JavaScript。可使用 lexical、
+phrase、citations、year、age_years、source_count；作者/期刊字符串、全文
+创新性判断不在此版本范围。用户偏好应写进 score，只有必须满足的条件才
+写进 filter；未知年份/引用数需要显式决定排除还是给缺省值。
+
+API（均经 qatlasd，浏览器不持有模型或服务 token）：
+
+- ``GET /api/search/scoring/capabilities``：浏览器会话；返回 DSL 说明及
+  ``generation_available``。模型生成关闭时仍可手动使用支持的 DSL。
+- ``POST /api/search/scoring/generate``：papers:read 加用户绑定凭证；body
+  为 ``{query, requirements}``，两者均为 1–4000 个 Unicode 字符。返回
+  ``scorer / summary / warnings / scorer_hash / feature_version / usage``。
+  只生成并编译校验，不执行检索或入库。内部最多调用模型两次（一次修复）。
+- ``POST /api/search/ranked``：papers:read；body 示例如下。始终代理
+  ``/v1/search`` 的 fused + scorer 模式，不调用生成模型，也不调用总结。
+
+.. code-block:: json
+
+   {
+     "text": "quantum error correction",
+     "sources": ["arxiv", "openalex"],
+     "max_results": 10,
+     "scorer": {
+       "language": "qatlas-expr-v1",
+       "filter": "coalesce(year, 0) >= 2020",
+       "score": "lexical + 0.2 * log1p(coalesce(citations, 0))"
+     },
+     "explain": false
+   }
+
+排名响应为 ``{hits, ranking, usage, errors, remote:true}``。统一有序 hits
+同时包含身份已确认和只有标题的论文，不拆成 results/candidates；分数可负、
+可大于 1，不代表概率。保留 score_detail、可选 score_explanation、raw_rank、
+raw_score；在原位置补充 paper_id/created/has_md/status，不改变排序。
+只对最终返回的身份可确认论文触发惰性收录。过滤与评分基于有限召回候选，
+不保证全库覆盖。修改后提交的规则仍在服务端重新编译，哈希不是授权凭证。
+
+生成成功一次与 Agentic 搜索共用一次每日额度；内部修复不重复扣次数。
+生成失败退回次数，已知实际 tokens 仍计入用量。执行既有规则不扣 LLM
+次数。这是成功次数配额而非模型账单硬上限；浏览器取消或网络断开时模型
+可能已消耗 tokens，但没有收到上游统计的部分无法准确计量。实际外部费用
+应同时在模型提供方设置预算。未知/不支持条件、编译失败或运行错误均显式
+返回，绝不静默改用默认评分。错误体 ``detail`` 包含 code/message 和可选 field/position；常见
+状态为 400、413、422、429、503，模型网关故障为 502/504。
+
+部署与资源边界：
+
+1. 先升级 qatlas-search，再升级 qatlasd 并重建 Web 资源。旧服务不支持
+   scoring 时新入口显式报不可用，旧搜索路径仍可使用。
+2. 在 **qatlas-search 自己的配置** 中设置
+   ``search.scorer_generation_enabled: true``，并配置现有
+   ``search.agent.base_url/api_key/model``。独立生成开关默认关闭，不要求
+   开启 Agentic 总结的 agent.enabled；可在搜索插件管理页设置并重启服务。
+3. qatlasd ``search.remote.timeout`` 应覆盖搜索服务的生成总超时与网络余量；
+   生成路由自身上限 150 秒、评分搜索 90 秒，较短的 remote timeout 仍
+   优先生效。默认生成总超时 30 秒与 remote 默认 60 秒兼容；若把生成超时
+   提高到允许的 120 秒，应同时把 remote timeout 提高到至少 130 秒。
+4. qatlasd 接纳上限按进程计：生成 8 个全局并发/每用户 1 个、每用户每分钟
+   10 次；评分搜索 16 个全局并发/每用户 2 个、每分钟 30 次。超过容量
+   立即 429，不排无限队；短期速率记录最多 4096 个用户。系统 PAT 的评分
+   搜索共享一个限流桶，生成必须关联用户。
+5. 请求体最多 64 KiB，scorer 最多 4 KiB，sources 最多 32 个，返回上限
+   100 个。搜索服务另有 AST、候选数、解释、模型响应与并发限制。多 worker/
+   多副本部署须在入口统一限流，不能把单进程限制误认为集群总上限。
+
+本阶段不支持浏览器执行 scorer，也不支持把 survey 规则与 scorer 组合。
+
+跨仓库离线契约回归：在 qatlas-search 仓库运行
+``.venv/bin/python tests/scoring_contract_server.py``，它只绑定本机随机端口，
+打印 ``QATLAS_SCORING_CONTRACT_URL``。在 QuantumAtlas 仓库将此变量传给
+``go test ./internal/search -run TestRemoteScoringLiveContract -count=1``。
+该测试通过真实 HTTP 串联生成接口、编译、硬过滤、评分及 Go 解码；模型输出
+与候选论文均为固定离线数据，不调用外部模型。完成后终止测试服务器。
+
 Robust Downloader（多范式下载入库）
 ------------------------------------
 

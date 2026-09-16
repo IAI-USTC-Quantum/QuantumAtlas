@@ -58,6 +58,11 @@ type RemoteHit struct {
 	Citations int      `json:"citations,omitempty"`
 	Source    string   `json:"source"`
 	Score     float64  `json:"score"`
+	// Preserve remote ranking metadata without interpreting or normalizing it.
+	ScoreDetail      json.RawMessage `json:"score_detail,omitempty"`
+	ScoreExplanation json.RawMessage `json:"score_explanation,omitempty"`
+	RawRank          *int            `json:"raw_rank,omitempty"`
+	RawScore         *float64        `json:"raw_score,omitempty"`
 	// Server-side enrichment, backfilled by qatlasd on the multi
 	// response after resolve-or-minting identity-anchored hits into the
 	// registry: the anchored paper_id, whether this search minted it,

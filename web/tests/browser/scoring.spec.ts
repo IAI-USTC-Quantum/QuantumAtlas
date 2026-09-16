@@ -1,0 +1,501 @@
+import { test as base, expect, type Locator, type Page } from '@playwright/test'
+
+// Synthetic UI contracts only: no backend, real credentials, LLM, or third-party
+// traffic. Keep these mocks separate from the existing Markdown fixtures.
+const GENERATE = '/api/search/scoring/generate'
+const RANKED = '/api/search/ranked'
+const CAPABILITIES = '/api/search/scoring/capabilities'
+const SOURCES = ['arxiv', 'openalex', 'semantic_scholar']
+const CONFIRM = 'I confirm these rules for this search'
+const EXECUTE = 'Search with confirmed rules'
+const EXPLAIN = 'Include score explanations (off by default)'
+const INERT = '<img src="https://scoring-fixture.invalid/x" onerror="window.__scoringXss=1"><script>window.__scoringXss=1</script>'
+const SCORER = { language: 'qatlas-expr-v1', filter: 'year >= 2020', score: 'citations - 10' }
+const GENERATED = {
+  scorer: SCORER, summary: `Prefer recent papers. ${INERT}`,
+  warnings: ['Missing citation counts may change ranking.'],
+  scorer_hash: 'synthetic-scorer-hash', feature_version: 'fixture-v1',
+  usage: { today: 2, limit: 10, llm_tokens: 123 },
+}
+const RANKING = {
+  hits: [
+    { title: 'Title-only leader', source: 'arxiv', score: 12.5,
+      score_detail: { raw: 12.5 }, score_explanation: { text: INERT } },
+    { title: 'Registry middle', source: 'openalex', score: 2.25,
+      paper_id: 'scoring-paper-001', created: false },
+    { title: 'Negative tail', source: 'semantic_scholar', score: -4.75 },
+  ],
+  ranking: { language: 'qatlas-expr-v1', scorer_hash: 'synthetic-scorer-hash' },
+  usage: { llm_tokens: 0 }, errors: {}, remote: true,
+}
+
+type Reply = { status?: number; json: unknown }
+type RequestEntry = { method: string; path: string; body?: unknown }
+type ReplyHandler = () => Reply | Promise<Reply>
+type Mocks = {
+  remote: boolean
+  generation: boolean
+  requests: RequestEntry[]
+  handlers: Map<string, ReplyHandler>
+  posts: (path: string) => RequestEntry[]
+  hold: (path: string) => { release: (reply: Reply) => Promise<void> }
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((done) => { resolve = done })
+  return { promise, resolve }
+}
+
+const test = base.extend<{ api: Mocks }>({
+  api: [async ({ context, baseURL }, use, testInfo) => {
+    expect(baseURL, 'Only the existing static preview may be used').toBe('http://127.0.0.1:4177')
+    const origin = baseURL!
+    const record = {
+      id: 'scoringuser0001', collectionId: '_pb_users_auth_', collectionName: 'users',
+      email: 'scoring-fixture@example.invalid', name: 'Scoring Fixture',
+      username: 'scoring-fixture', avatar: '', verified: true,
+    }
+    const encoded = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url')
+    const token = `${encoded({ alg: 'HS256', typ: 'JWT' })}.${encoded({ id: record.id, exp: Math.floor(Date.now() / 1000) + 3600 })}.synthetic-invalid-signature`
+    const refreshedToken = `${token}-refreshed`
+    const violations: string[] = []
+    const pageErrors: string[] = []
+    const completed = new Map<ReplyHandler, ReturnType<typeof deferred<void>>>()
+    const held: ReturnType<typeof deferred<Reply>>[] = []
+    const api: Mocks = {
+      remote: true, generation: true, requests: [], handlers: new Map(),
+      posts: (path) => api.requests.filter((request) => request.method === 'POST' && request.path === path),
+      hold(path) {
+        const response = deferred<Reply>()
+        const delivered = deferred<void>()
+        const handler = () => response.promise
+        held.push(response)
+        completed.set(handler, delivered)
+        api.handlers.set(path, handler)
+        return { async release(reply) { response.resolve(reply); await delivered.promise } }
+      },
+    }
+    await context.addInitScript(({ origin, token, record }) => {
+      if (location.origin !== origin) return
+      localStorage.clear()
+      sessionStorage.clear()
+      localStorage.setItem('pocketbase_auth', JSON.stringify({ token, record }))
+      localStorage.setItem('i18nextLng', 'en')
+      localStorage.setItem('qatlas_theme', 'light')
+      document.addEventListener('securitypolicyviolation', (event) => {
+        console.error(`SCORING_CSP: ${event.violatedDirective} ${event.blockedURI}`)
+      })
+    }, { origin, token, record })
+    context.on('page', (page) => {
+      page.on('pageerror', (error) => pageErrors.push(error.message))
+      page.on('console', (message) => {
+        if (message.text().startsWith('SCORING_CSP:')) violations.push(message.text())
+      })
+      page.on('dialog', async (dialog) => {
+        violations.push(`Unexpected dialog: ${dialog.message()}`)
+        await dialog.dismiss()
+      })
+      page.on('requestfailed', (request) => {
+        if (['script', 'stylesheet', 'font'].includes(request.resourceType())) {
+          violations.push(`Static asset failed: ${request.url()}`)
+        }
+      })
+    })
+    await context.routeWebSocket('**/*', (socket) => {
+      violations.push(`Unexpected WebSocket: ${socket.url()}`)
+      socket.close()
+    })
+    await context.route('**/*', async (route) => {
+      const request = route.request()
+      const url = new URL(request.url())
+      const path = url.pathname
+      const method = request.method()
+      if (url.origin !== origin) {
+        violations.push(`External request blocked: ${method} ${url.href}`)
+        await route.abort('blockedbyclient')
+        return
+      }
+      if (path.startsWith('/api/')) {
+        api.requests.push({ method, path, ...(request.postData() ? { body: request.postDataJSON() } : {}) })
+        if (method === 'POST' && path === '/api/collections/users/auth-refresh') {
+          expect(request.headers().authorization).toBe(token)
+          await route.fulfill({ json: { token: refreshedToken, record } })
+          return
+        }
+        expect(request.headers().authorization, 'Use the refreshed synthetic session').toBe(`Bearer ${refreshedToken}`)
+        const replies: Record<string, unknown> = {
+          '/api/admin/whoami': { login: record.username, is_admin: false, is_user_admin: false, is_superadmin: false },
+          '/api/me': { ...record, is_admin: false, is_superadmin: false },
+          '/api/v1/plugins': { plugins: [{ id: 'search-remote', enabled: true, status: api.remote ? 'connected' : 'disconnected' }] },
+          '/api/search/backends': { remote: true, keys_enabled: true, backends: SOURCES.map((name) => ({
+            name, label: name, category: 'academic', selectable: true,
+            requires_key: false, user_key: false, server_ready: true, key_configured: false,
+          })) },
+          [CAPABILITIES]: { language: 'qatlas-expr-v1', feature_version: 'fixture-v1', generation_available: api.generation },
+          [GENERATE]: GENERATED,
+          [RANKED]: RANKING,
+          '/api/search/multi': { results: { arxiv: [{ title: 'Ordinary multi hit', source: 'arxiv', score: 0 }] }, errors: {}, usage: { llm_tokens: 0 }, remote: true },
+          '/api/search/agentic': { results: [], candidates: [], conclusion: 'Synthetic Agentic conclusion', usage: { today: 1, limit: 10 }, remote: true },
+          '/api/search': { results: [], candidates: [{ title: 'Classic fallback hit', source: 'catalog', score: 0.5 }] },
+          '/api/papers/scoring-paper-001': { paper_id: 'scoring-paper-001', title: 'Registry middle', status: 'ready', assets: [], acquisition: { state: 'ready', phase: 'done', active: false, events: [] } },
+        }
+        const expectedMethod = [GENERATE, RANKED, '/api/search/multi', '/api/search/agentic', '/api/search'].includes(path) ? 'POST' : 'GET'
+        if (Object.prototype.hasOwnProperty.call(replies, path) && method === expectedMethod) {
+          const handler = api.handlers.get(path)
+          try {
+            const response = handler ? await handler() : { json: replies[path] }
+            await route.fulfill({ status: response.status ?? 200, json: response.json })
+          } finally {
+            if (handler) completed.get(handler)?.resolve()
+          }
+          return
+        }
+        violations.push(`Unknown API blocked: ${method} ${path}`)
+        await route.abort('blockedbyclient')
+        return
+      }
+      const staticAsset = /^\/assets\/[^/]+\.(?:js|css|woff2?|ttf)$/.test(path)
+      if (method === 'GET' && (staticAsset || /^\/(?:en|zh)\/papers\/search$/.test(path) || path === '/favicon.ico')) {
+        await route.continue()
+        return
+      }
+      violations.push(`Unknown local request blocked: ${method} ${path}`)
+      await route.abort('blockedbyclient')
+    })
+    try {
+      await use(api)
+    } finally {
+      // Release intercepted requests even if an assertion failed mid-flight.
+      for (const response of held) response.resolve({ status: 503, json: { detail: 'Fixture teardown' } })
+      await testInfo.attach('scoring-synthetic-network', {
+        body: JSON.stringify({ requests: api.requests, violations, pageErrors }, null, 2), contentType: 'application/json',
+      })
+      expect(violations, 'No external traffic, unexpected endpoints, dialogs, or CSP violations').toEqual([])
+      expect(pageErrors, 'No uncaught browser exceptions').toEqual([])
+      expect(api.posts('/api/collections/users/auth-refresh')).toHaveLength(1)
+    }
+  }, { auto: true }],
+})
+
+async function openCustom(page: Page) {
+  await page.goto('/en/papers/search')
+  await page.getByRole('button', { name: 'Custom scoring', exact: true }).click()
+  const editor = page.getByTestId('scorer-editor')
+  await expect(editor).toBeVisible()
+  await expect(editor.getByText('Loading scoring capabilities…', { exact: true })).toHaveCount(0)
+  return editor
+}
+
+async function manualRules(editor: Locator) {
+  await editor.getByLabel('Search topic', { exact: true }).fill('quantum error correction')
+  await editor.getByRole('textbox', { name: 'Filter expression', exact: true }).fill(SCORER.filter)
+  await editor.getByRole('textbox', { name: 'Score expression', exact: true }).fill(SCORER.score)
+}
+
+async function confirmAndExecute(editor: Locator) {
+  await editor.getByRole('checkbox', { name: CONFIRM, exact: true }).check()
+  await editor.getByRole('button', { name: EXECUTE, exact: true }).click()
+}
+
+// Dispatch two same-turn activations so a duplicate cannot hide behind network
+// speed or an auto-wait for the button to become enabled again.
+async function rapidClicks(button: Locator) {
+  await button.evaluate((element) => {
+    if (!(element instanceof HTMLButtonElement)) throw new Error('Expected button')
+    element.click()
+    element.click()
+  })
+}
+
+async function settleUI(page: Page) {
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+}
+
+test('generation requires review; explicit execution posts exact rules and renders one safe ordered list', async ({ page, api }) => {
+  const editor = await openCustom(page)
+  const execute = editor.getByRole('button', { name: EXECUTE, exact: true })
+  await expect(execute).toBeDisabled()
+  await editor.getByLabel('Search topic', { exact: true }).fill('  quantum error correction  ')
+  await editor.getByRole('textbox', { name: 'Scoring requirements', exact: true }).fill('  Prefer recent papers and citations  ')
+  expect(api.posts(GENERATE)).toHaveLength(0)
+  expect(api.posts(RANKED)).toHaveLength(0)
+  await editor.getByRole('button', { name: 'Generate scoring rules', exact: true }).click()
+  const summary = editor.getByRole('region', { name: 'AI-generated explanation (not validation)', exact: true })
+  await expect(summary).toContainText(GENERATED.summary)
+  await expect(summary).toContainText(GENERATED.warnings[0])
+  await expect(summary).toContainText('fixture-v1 · hash: synthetic-scorer-hash')
+  await expect(editor.getByText('Today 2/10 · LLM tokens: 123', { exact: true })).toBeVisible()
+  await expect(editor.getByRole('textbox', { name: 'Filter expression', exact: true })).toHaveValue(SCORER.filter)
+  await expect(editor.getByRole('textbox', { name: 'Score expression', exact: true })).toHaveValue(SCORER.score)
+  await expect(execute).toBeDisabled()
+  await expect(editor.getByRole('checkbox', { name: CONFIRM, exact: true })).not.toBeChecked()
+  await expect(editor.getByRole('checkbox', { name: EXPLAIN, exact: true })).not.toBeChecked()
+  expect(api.posts(GENERATE)).toEqual([{ method: 'POST', path: GENERATE, body: { query: 'quantum error correction', requirements: 'Prefer recent papers and citations' } }])
+  expect(api.posts(RANKED)).toHaveLength(0)
+  await confirmAndExecute(editor)
+  const results = page.getByRole('region', { name: 'Custom scoring results', exact: true })
+  const list = results.getByTestId('scorer-hits')
+  await expect(list).toHaveJSProperty('tagName', 'OL')
+  const items = list.locator(':scope > li')
+  await expect(items).toHaveCount(3)
+  for (const [index, hit] of RANKING.hits.entries()) {
+    await expect(items.nth(index)).toContainText(`#${index + 1}`)
+    await expect(items.nth(index)).toContainText(hit.title)
+    await expect(items.nth(index)).toContainText(`score: ${hit.score.toFixed(3)}`)
+  }
+  await expect(items.nth(1).getByRole('link', { name: 'Registry middle', exact: true })).toHaveAttribute('href', '/en/papers/scoring-paper-001')
+  await expect(results.getByText('Possible matches', { exact: true })).toHaveCount(0)
+  await items.first().getByText('Score details and explanation (JSON)', { exact: true }).click()
+  const explanation = items.first().getByTestId('score-explanation')
+  await expect(explanation).toHaveText(JSON.stringify({ score_detail: RANKING.hits[0].score_detail, score_explanation: RANKING.hits[0].score_explanation }, null, 2))
+  await expect(explanation.locator('*')).toHaveCount(0)
+  await expect(editor.locator('img, script, iframe, svg[data-xss]')).toHaveCount(0)
+  expect(await page.evaluate(() => Reflect.get(window, '__scoringXss'))).toBeUndefined()
+  expect(api.posts(RANKED)).toEqual([{ method: 'POST', path: RANKED, body: { text: 'quantum error correction', sources: SOURCES, scorer: SCORER, explain: false } }])
+})
+
+test('topic, requirements, filter, score, source and explanation edits each revoke confirmation', async ({ page, api }) => {
+  const editor = await openCustom(page)
+  await manualRules(editor)
+  const confirm = editor.getByRole('checkbox', { name: CONFIRM, exact: true })
+  const execute = editor.getByRole('button', { name: EXECUTE, exact: true })
+  const changes = [
+    () => editor.getByLabel('Search topic', { exact: true }).fill('edited topic'),
+    () => editor.getByRole('textbox', { name: 'Scoring requirements', exact: true }).fill('edited requirements'),
+    () => editor.getByRole('textbox', { name: 'Filter expression', exact: true }).fill('year >= 2022'),
+    () => editor.getByRole('textbox', { name: 'Score expression', exact: true }).fill('citations - 20'),
+    () => page.getByRole('checkbox', { name: 'openalex', exact: true }).uncheck(),
+    () => editor.getByRole('checkbox', { name: EXPLAIN, exact: true }).check(),
+  ]
+  for (const change of changes) {
+    await confirm.check()
+    await expect(execute).toBeEnabled()
+    await change()
+    await expect(confirm).not.toBeChecked()
+    await expect(execute).toBeDisabled()
+    expect(api.posts(RANKED)).toHaveLength(0)
+  }
+  await confirmAndExecute(editor)
+  await expect(page.getByTestId('scorer-hits')).toBeVisible()
+  expect(api.posts(RANKED)[0].body).toEqual({
+    text: 'edited topic', sources: ['arxiv', 'semantic_scholar'],
+    scorer: { language: 'qatlas-expr-v1', filter: 'year >= 2022', score: 'citations - 20' }, explain: true,
+  })
+  await editor.getByRole('textbox', { name: 'Score expression', exact: true }).fill('0')
+  await expect(page.getByTestId('scorer-hits')).toHaveCount(0)
+  await expect(confirm).not.toBeChecked()
+})
+
+test('rapid duplicate generation and execution clicks send one POST while pending', async ({ page, api }) => {
+  const editor = await openCustom(page)
+  await manualRules(editor)
+  await editor.getByRole('textbox', { name: 'Scoring requirements', exact: true }).fill('Rank by citations')
+  const generation = api.hold(GENERATE)
+  await rapidClicks(editor.getByRole('button', { name: 'Generate scoring rules', exact: true }))
+  await expect.poll(() => api.posts(GENERATE).length).toBe(1)
+  await expect(editor.getByRole('button', { name: 'Generating rules…', exact: true })).toBeDisabled()
+  await generation.release({ json: GENERATED })
+  await expect(editor.getByRole('region', { name: 'AI-generated explanation (not validation)' })).toBeVisible()
+  expect(api.posts(GENERATE)).toHaveLength(1)
+  await editor.getByRole('checkbox', { name: CONFIRM, exact: true }).check()
+  const execution = api.hold(RANKED)
+  await rapidClicks(editor.getByRole('button', { name: EXECUTE, exact: true }))
+  await expect.poll(() => api.posts(RANKED).length).toBe(1)
+  await expect(editor.getByRole('button', { name: 'Searching with rules…', exact: true })).toBeDisabled()
+  await execution.release({ json: RANKING })
+  await expect(page.getByTestId('scorer-hits')).toBeVisible()
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event('focus'))
+    document.dispatchEvent(new Event('visibilitychange'))
+    window.dispatchEvent(new Event('online'))
+  })
+  await settleUI(page)
+  expect(api.posts(GENERATE)).toHaveLength(1)
+  expect(api.posts(RANKED)).toHaveLength(1)
+})
+
+test('late generation and ranked responses cannot overwrite edits or revive stale results', async ({ page, api }) => {
+  const editor = await openCustom(page)
+  await manualRules(editor)
+  await editor.getByRole('textbox', { name: 'Scoring requirements', exact: true }).fill('Initial requirements')
+  const generation = api.hold(GENERATE)
+  await editor.getByRole('button', { name: 'Generate scoring rules', exact: true }).click()
+  await expect.poll(() => api.posts(GENERATE).length).toBe(1)
+  await editor.getByRole('textbox', { name: 'Scoring requirements', exact: true }).fill('New requirements')
+  await editor.getByRole('textbox', { name: 'Score expression', exact: true }).fill('42')
+  await generation.release({ json: { ...GENERATED, summary: 'STALE generation', scorer: { ...SCORER, score: '-999' } } })
+  await settleUI(page)
+  await expect(editor.getByRole('textbox', { name: 'Score expression', exact: true })).toHaveValue('42')
+  await expect(editor.getByText('STALE generation', { exact: true })).toHaveCount(0)
+  await expect(editor.getByRole('checkbox', { name: CONFIRM, exact: true })).not.toBeChecked()
+  const cancelledGeneration = api.hold(GENERATE)
+  await editor.getByRole('button', { name: 'Generate scoring rules', exact: true }).click()
+  await expect.poll(() => api.posts(GENERATE).length).toBe(2)
+  await editor.getByRole('button', { name: 'Cancel request', exact: true }).click()
+  await cancelledGeneration.release({ json: { ...GENERATED, summary: 'CANCELLED generation' } })
+  await settleUI(page)
+  await expect(editor.getByText('CANCELLED generation', { exact: true })).toHaveCount(0)
+  await expect(editor.getByRole('textbox', { name: 'Score expression', exact: true })).toHaveValue('42')
+  const execution = api.hold(RANKED)
+  await confirmAndExecute(editor)
+  await expect.poll(() => api.posts(RANKED).length).toBe(1)
+  await editor.getByLabel('Search topic', { exact: true }).fill('New topic while executing')
+  await execution.release({ json: { ...RANKING, hits: [{ title: 'STALE ranked hit', source: 'arxiv', score: 999 }] } })
+  await settleUI(page)
+  await expect(page.getByTestId('scorer-hits')).toHaveCount(0)
+  await expect(editor.getByRole('button', { name: EXECUTE, exact: true })).toBeDisabled()
+  api.handlers.delete(RANKED)
+  await confirmAndExecute(editor)
+  await expect(page.getByTestId('scorer-hits')).toBeVisible()
+  await expect(page.getByText('STALE ranked hit', { exact: true })).toHaveCount(0)
+  expect(api.posts(RANKED)).toHaveLength(2)
+  expect(api.posts(RANKED)[1].body).toMatchObject({ text: 'New topic while executing', scorer: { score: '42' } })
+})
+
+test('structured 422 validation, 429 quota and 503 generation failures remain actionable', async ({ page, api }) => {
+  const editor = await openCustom(page)
+  await manualRules(editor)
+  api.handlers.set(RANKED, () => ({ status: 422, json: { detail: { code: 'invalid_expression', message: 'Unknown score feature', field: 'scorer.score', position: 0 } } }))
+  await confirmAndExecute(editor)
+  const alert = editor.getByRole('alert')
+  await expect(alert).toContainText('422: Unknown score feature')
+  await expect(alert).toContainText('invalid_expression · Field: scorer.score · Position: 0')
+  expect(api.posts(RANKED)).toHaveLength(1)
+  await editor.getByRole('textbox', { name: 'Scoring requirements', exact: true }).fill('Prefer recent papers')
+  await expect(alert).toHaveCount(0)
+  api.handlers.set(GENERATE, () => ({ status: 429, json: { detail: { code: 'quota_exhausted', message: 'No generation quota remains' }, usage: { today: 10, limit: 10 } } }))
+  await editor.getByRole('button', { name: 'Generate scoring rules', exact: true }).click()
+  await expect(alert).toContainText('Daily limit reached')
+  await expect(alert).toContainText('429: No generation quota remains')
+  await expect(alert).toContainText("You have reached today's agentic-search quota (10/10)")
+  api.handlers.set(GENERATE, () => ({ status: 503, json: { detail: { code: 'generation_unavailable', message: 'Generation provider unavailable' } } }))
+  await editor.getByRole('button', { name: 'Generate scoring rules', exact: true }).click()
+  await expect(alert).toContainText('Scoring request failed')
+  await expect(alert).toContainText('503: Generation provider unavailable')
+  await expect(alert).toContainText('generation_unavailable')
+  await expect(editor.getByRole('textbox', { name: 'Score expression', exact: true })).toHaveValue(SCORER.score)
+  expect(api.posts(GENERATE)).toHaveLength(2)
+  api.handlers.delete(RANKED)
+  await confirmAndExecute(editor)
+  await expect(page.getByTestId('scorer-hits')).toBeVisible()
+  await expect(alert).toHaveCount(0)
+})
+
+test('real structured DSL positions render as JSON instead of object interpolation', async ({ page, api }) => {
+  const editor = await openCustom(page)
+  await manualRules(editor)
+  const position = { line: 1, column: 0, end_line: 1, end_column: 7 }
+  api.handlers.set(RANKED, () => ({ status: 422, json: { detail: {
+    code: 'invalid_expression', message: 'Unknown score feature', field: 'scorer.score', position,
+  } } }))
+  await confirmAndExecute(editor)
+  const alert = editor.getByRole('alert')
+  await expect(alert).toContainText(`Position: ${JSON.stringify(position)}`)
+  await expect(alert).not.toContainText('[object Object]')
+  await expect(alert).toContainText('Field: scorer.score')
+  await expect(alert).toContainText('Scoring request failed')
+  await expect(alert.locator('script, img, iframe')).toHaveCount(0)
+  expect(api.posts(RANKED)).toHaveLength(1)
+})
+
+test('429 busy and provider rate limits are not mislabeled as exhausted daily quota', async ({ page, api }) => {
+  const editor = await openCustom(page)
+  await manualRules(editor)
+  const alert = editor.getByRole('alert')
+  api.handlers.set(RANKED, () => ({ status: 429, json: { detail: {
+    code: 'busy', message: 'Too many scoring requests in flight; retry later',
+  } } }))
+  await confirmAndExecute(editor)
+  await expect(alert).toContainText('Scoring request failed')
+  await expect(alert).toContainText('429: Too many scoring requests in flight')
+  await expect(alert).not.toContainText('Daily limit reached')
+  await expect(alert).not.toContainText("You have reached today's agentic-search quota")
+
+  await editor.getByRole('textbox', { name: 'Scoring requirements', exact: true }).fill('Prefer recent papers')
+  // Failed generation can include informational daily usage without being a
+  // daily quota failure: busy/rate_limited must take precedence over that block.
+  api.handlers.set(GENERATE, () => ({ status: 429, json: {
+    detail: { code: 'rate_limited', message: 'Generation provider is temporarily rate limited' },
+    usage: { today: 1, limit: 10, llm_tokens: 0 },
+  } }))
+  await editor.getByRole('button', { name: 'Generate scoring rules', exact: true }).click()
+  await expect(alert).toContainText('Scoring request failed')
+  await expect(alert).toContainText('429: Generation provider is temporarily rate limited')
+  await expect(alert).not.toContainText('Daily limit reached')
+  await expect(alert).not.toContainText("You have reached today's agentic-search quota")
+
+  // The explicit quota code identifies exhaustion even when usage is absent.
+  api.handlers.set(GENERATE, () => ({ status: 429, json: {
+    detail: { code: 'quota_exceeded', message: 'Daily generation quota exhausted' },
+  } }))
+  await editor.getByRole('button', { name: 'Generate scoring rules', exact: true }).click()
+  await expect(alert).toContainText('Daily limit reached')
+  await expect(alert).toContainText('429: Daily generation quota exhausted')
+  expect(api.posts(GENERATE)).toHaveLength(2)
+  expect(api.posts(RANKED)).toHaveLength(1)
+})
+
+test('Chinese narrow-screen manual DSL works when generation_available is false', async ({ page, api }) => {
+  api.generation = false
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/zh/papers/search')
+  await page.getByRole('button', { name: '自定义评分', exact: true }).click()
+  const editor = page.getByTestId('scorer-editor')
+  await expect(page.locator('html')).toHaveAttribute('lang', 'zh')
+  await expect(editor.getByText('AI 规则生成未配置或不可用。仍可手动输入 DSL 规则；普通搜索不受影响。', { exact: true })).toBeVisible()
+  await editor.getByLabel('搜索主题', { exact: true }).fill('量子纠错')
+  await editor.getByRole('textbox', { name: '评分需求', exact: true }).fill('手动规则')
+  await editor.getByRole('textbox', { name: '评分表达式', exact: true }).fill(SCORER.score)
+  await expect(editor.getByRole('textbox', { name: '筛选表达式', exact: true })).toHaveValue('true')
+  await editor.getByRole('textbox', { name: '筛选表达式', exact: true }).fill('')
+  await expect(editor.getByRole('checkbox', { name: '我确认本次搜索使用这些规则', exact: true })).toBeDisabled()
+  await editor.getByRole('textbox', { name: '筛选表达式', exact: true }).fill('true')
+  await expect(editor.getByRole('button', { name: '生成评分规则', exact: true })).toBeDisabled()
+  await expect(editor.getByRole('button', { name: '按已确认规则搜索', exact: true })).toBeDisabled()
+  await editor.getByRole('checkbox', { name: '我确认本次搜索使用这些规则', exact: true }).check()
+  await editor.getByRole('button', { name: '按已确认规则搜索', exact: true }).click()
+  await expect(page.getByRole('region', { name: '自定义评分结果', exact: true })).toBeVisible()
+  expect(api.posts(GENERATE)).toHaveLength(0)
+  expect(api.posts(RANKED)).toEqual([{ method: 'POST', path: RANKED, body: { text: '量子纠错', sources: SOURCES, scorer: { ...SCORER, filter: 'true' }, explain: false } }])
+})
+
+test('offline remote disables custom and Agentic without breaking classic fallback', async ({ page, api }) => {
+  api.remote = false
+  await page.goto('/en/papers/search')
+  await expect.poll(() => api.requests.some((entry) => entry.path === '/api/v1/plugins')).toBe(true)
+  await expect(page.getByRole('button', { name: 'Custom scoring', exact: true })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Agentic search', exact: true })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Classic search', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  await page.getByRole('main').locator('input[name="q"]').fill('fallback topic')
+  await page.getByRole('button', { name: 'Search', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Classic fallback hit', exact: true })).toBeVisible()
+  expect(api.posts('/api/search')).toEqual([{ method: 'POST', path: '/api/search', body: { text: 'fallback topic' } }])
+  expect(api.requests.filter((entry) => [CAPABILITIES, GENERATE, RANKED, '/api/search/multi', '/api/search/agentic'].includes(entry.path))).toEqual([])
+})
+
+test('ordinary multi and Agentic retain their endpoints and custom mode does not auto-execute', async ({ page, api }) => {
+  await page.goto('/en/papers/search')
+  await expect(page.getByRole('checkbox', { name: 'arxiv', exact: true })).toBeVisible()
+  await page.getByRole('main').locator('input[name="q"]').fill('ordinary topic')
+  await page.getByRole('button', { name: 'Search', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Ordinary multi hit', exact: true })).toBeVisible()
+  expect(api.posts('/api/search/multi')).toEqual([{ method: 'POST', path: '/api/search/multi', body: { text: 'ordinary topic', sources: SOURCES } }])
+  await page.getByRole('button', { name: 'Agentic search', exact: true }).click()
+  await expect(page.getByText('Synthetic Agentic conclusion', { exact: true })).toBeVisible()
+  expect(api.posts('/api/search/agentic')).toEqual([{ method: 'POST', path: '/api/search/agentic', body: { text: 'ordinary topic', sources: SOURCES } }])
+  await page.getByRole('button', { name: 'Custom scoring', exact: true }).click()
+  const editor = page.getByTestId('scorer-editor')
+  await expect(editor.getByLabel('Search topic', { exact: true })).toHaveValue('ordinary topic')
+  await editor.getByRole('textbox', { name: 'Score expression', exact: true }).fill('1')
+  await editor.getByRole('checkbox', { name: CONFIRM, exact: true }).check()
+  await page.getByRole('button', { name: 'Classic search', exact: true }).click()
+  await expect(editor).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'Ordinary multi hit', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Custom scoring', exact: true }).click()
+  await expect(editor.getByRole('checkbox', { name: CONFIRM, exact: true })).not.toBeChecked()
+  await expect(editor.getByRole('button', { name: EXECUTE, exact: true })).toBeDisabled()
+  expect(api.posts(GENERATE)).toHaveLength(0)
+  expect(api.posts(RANKED)).toHaveLength(0)
+  expect(api.posts('/api/search')).toHaveLength(0)
+})

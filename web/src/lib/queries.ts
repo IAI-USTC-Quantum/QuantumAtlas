@@ -65,6 +65,43 @@ import {
   type SearchBackendsResponse,
 } from './api'
 
+import {
+  generateScorer,
+  getScoringCapabilities,
+  rankedSearch,
+  type GenerateScorerEntry,
+  type RankedSearchEntry,
+} from './scoring-api'
+
+export function useScoringCapabilities(enabled: boolean) {
+  return useQuery({
+    queryKey: ['scoring-capabilities'],
+    queryFn: ({ signal }) => getScoringCapabilities(signal),
+    enabled,
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  })
+}
+
+// Only explicit actions can spend quota or execute a ranked search. Mutations
+// never refetch on focus and explicitly opt out of global retry defaults.
+export function useGenerateScorer() {
+  return useMutation({
+    mutationFn: ({ body, signal }: { body: GenerateScorerEntry; signal: AbortSignal }) =>
+      generateScorer(body, signal),
+    retry: false,
+  })
+}
+
+export function useRankedSearch() {
+  return useMutation({
+    mutationFn: ({ body, signal }: { body: RankedSearchEntry; signal: AbortSignal }) =>
+      rankedSearch(body, signal),
+    retry: false,
+  })
+}
+
 export function usePaperStats() {
   return useQuery({
     queryKey: ['paper-stats'],
