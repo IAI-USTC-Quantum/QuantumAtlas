@@ -146,7 +146,11 @@ function PaperSearchPage() {
 
   const classicEntry = query && !remoteAvailable && !agenticOn ? { text: query } : null
   const classicResults = usePaperSearch(classicEntry)
-  const agenticEntry = agenticOn && query ? { text: query, sources } : null
+  // Do not start a metered search until the catalog has resolved a selection.
+  // An empty sources list means an unpinned fan-out to the remote service.
+  const agenticEntry = agenticOn && query && sources.length > 0
+    ? { text: query, sources }
+    : null
   const agenticResults = useAgenticSearch(agenticEntry)
 
   // 429: the daily quota is exhausted. The body carries today's usage, so
@@ -261,17 +265,21 @@ function PaperSearchPage() {
               : rateLimitError.message}
           </AlertDescription>
         </Alert>
-      ) : query && agenticOn ? (
-        <AgenticResults results={agenticResults.data} isFetching={agenticResults.isFetching} />
       ) : query && remoteAvailable ? (
         backendsQuery.isLoading ? (
           <StatusBlock loading error="" empty={false}>
             <span />
           </StatusBlock>
         ) : sources.length === 0 ? (
-          <Panel title={t('backends.title')} icon={Search}>
-            <p className="text-sm text-muted-foreground">{t('backends.noneSelected')}</p>
-          </Panel>
+          <StatusBlock loading={false} error={backendsQuery.error?.message ?? ''} empty={false}>
+            <Panel title={t('backends.title')} icon={Search}>
+              <p className="text-sm text-muted-foreground">{t('backends.noneSelected')}</p>
+            </Panel>
+          </StatusBlock>
+        ) : agenticOn ? (
+          <StatusBlock loading={false} error={err?.message ?? ''} empty={false}>
+            <AgenticResults results={agenticResults.data} isFetching={agenticResults.isFetching} />
+          </StatusBlock>
         ) : (
           <StatusBlock
             loading={multiResults.isLoading}
@@ -503,7 +511,7 @@ function BackendGroup({
   )
 }
 
-// --- Agentic / classic fused renderings (unchanged behaviour) -------------------
+// --- Agentic / classic fused renderings ---------------------------------------
 
 function AgenticResults({
   results,
@@ -513,8 +521,16 @@ function AgenticResults({
   isFetching: boolean
 }) {
   const { t } = useTranslation('papers')
-  if (!results) return null
+  if (!results) {
+    return isFetching ? (
+      <div role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Loader2 className="size-4 animate-spin" />
+        {t('common:status.loading')}
+      </div>
+    ) : null
+  }
   const candidates = results.candidates ?? []
+  const errors = Object.entries(results.errors ?? {})
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -529,6 +545,18 @@ function AgenticResults({
           </Badge>
         )}
       </div>
+
+      {errors.map(([backend, message]) => (
+        <Alert key={backend} variant="destructive">
+          <AlertCircle className="size-4" />
+          <AlertTitle>{t('tabs.errorTitle', { backend })}</AlertTitle>
+          <AlertDescription className="break-all">{message}</AlertDescription>
+        </Alert>
+      ))}
+
+      {!results.results.length && !candidates.length && errors.length === 0 && (
+        <p className="text-sm text-muted-foreground">{t('noResults')}</p>
+      )}
 
       {results.conclusion && (
         <Panel title={t('agentic.conclusionTitle')} icon={Wand2}>

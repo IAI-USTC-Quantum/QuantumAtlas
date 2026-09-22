@@ -474,6 +474,82 @@ test('offline remote disables custom and Agentic without breaking classic fallba
   expect(api.requests.filter((entry) => [CAPABILITIES, GENERATE, RANKED, '/api/search/multi', '/api/search/agentic'].includes(entry.path))).toEqual([])
 })
 
+async function openAgentic(page: Page) {
+  await page.goto('/en/papers/search')
+  await page.getByRole('button', { name: 'Agentic search', exact: true }).click()
+  await page.getByRole('main').locator('input[name="q"]').fill('agentic topic')
+  await page.getByRole('button', { name: 'Search', exact: true }).click()
+}
+
+const AGENTIC = '/api/search/agentic'
+const EMPTY_AGENTIC = { results: [], candidates: [], conclusion: null, usage: { today: 1, limit: 10 } }
+
+test('Agentic shows progress while the first request is pending', async ({ page, api }) => {
+  const pending = api.hold(AGENTIC)
+  await openAgentic(page)
+  await expect.poll(() => api.posts(AGENTIC).length).toBe(1)
+  await expect(page.getByRole('status')).toContainText('Loading…')
+  await pending.release({ json: { ...EMPTY_AGENTIC, conclusion: 'Completed Agentic search' } })
+  await expect(page.getByText('Completed Agentic search', { exact: true })).toBeVisible()
+  await expect(page.getByRole('status')).toHaveCount(0)
+})
+
+for (const status of [401, 500, 502, 503, 504]) {
+  test(`Agentic displays HTTP ${status} errors instead of a blank result area`, async ({ page, api }) => {
+    api.handlers.set(AGENTIC, () => ({ status, json: { detail: `Search failed (${status})` } }))
+    await openAgentic(page)
+    await expect(page.getByRole('alert')).toContainText(`Search failed (${status})`)
+    expect(api.posts(AGENTIC)).toHaveLength(1)
+  })
+}
+
+test('Agentic preserves the daily quota message', async ({ page, api }) => {
+  api.handlers.set(AGENTIC, () => ({ status: 429, json: { detail: 'Quota exhausted', usage: { today: 10, limit: 10 } } }))
+  await openAgentic(page)
+  await expect(page.getByRole('alert')).toContainText("You have reached today's agentic-search quota (10/10)")
+  expect(api.posts(AGENTIC)).toHaveLength(1)
+})
+
+test('Agentic shows an empty-result message and preserves usage and conclusion', async ({ page, api }) => {
+  api.handlers.set(AGENTIC, () => ({ json: { ...EMPTY_AGENTIC, conclusion: 'No relevant papers found' } }))
+  await openAgentic(page)
+  await expect(page.getByText('No matching papers. Try a different query, a DOI, or an arXiv id.', { exact: true })).toBeVisible()
+  await expect(page.getByText('No relevant papers found', { exact: true })).toBeVisible()
+  await expect(page.getByText('Today 1/10', { exact: true })).toBeVisible()
+})
+
+test('Agentic surfaces partial backend failures without hiding successful candidates', async ({ page, api }) => {
+  api.handlers.set(AGENTIC, () => ({ json: {
+    ...EMPTY_AGENTIC, candidates: [{ title: 'Surviving candidate', source: 'arxiv', score: 0.5 }],
+    errors: { openalex: 'Backend timed out' },
+  } }))
+  await openAgentic(page)
+  await expect(page.getByRole('alert')).toContainText('Backend timed out')
+  await expect(page.getByRole('alert')).toContainText('openalex')
+  await expect(page.getByRole('heading', { name: 'Surviving candidate', exact: true })).toBeVisible()
+  await expect(page.getByText('No matching papers. Try a different query, a DOI, or an arXiv id.', { exact: true })).toHaveCount(0)
+})
+
+test('Agentic waits for the backend selection instead of issuing an unpinned extra request', async ({ page, api }) => {
+  const catalog = api.hold('/api/search/backends')
+  await openAgentic(page)
+  await expect(page.getByRole('main')).toContainText('Loading')
+  expect(api.posts(AGENTIC)).toHaveLength(0)
+  await catalog.release({ json: { remote: true, keys_enabled: true, backends: SOURCES.map((name) => ({
+    name, label: name, category: 'academic', selectable: true,
+    requires_key: false, user_key: false, server_ready: true, key_configured: false,
+  })) } })
+  await expect(page.getByText('Synthetic Agentic conclusion', { exact: true })).toBeVisible()
+  expect(api.posts(AGENTIC)).toEqual([{ method: 'POST', path: AGENTIC, body: { text: 'agentic topic', sources: SOURCES } }])
+})
+
+test('Agentic does not fan out to all backends when none are selectable', async ({ page, api }) => {
+  api.handlers.set('/api/search/backends', () => ({ json: { remote: true, keys_enabled: true, backends: [] } }))
+  await openAgentic(page)
+  await expect(page.getByText('Select at least one search backend before searching.', { exact: true })).toBeVisible()
+  expect(api.posts(AGENTIC)).toHaveLength(0)
+})
+
 test('ordinary multi and Agentic retain their endpoints and custom mode does not auto-execute', async ({ page, api }) => {
   await page.goto('/en/papers/search')
   await expect(page.getByRole('checkbox', { name: 'arxiv', exact: true })).toBeVisible()
