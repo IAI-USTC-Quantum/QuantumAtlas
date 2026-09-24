@@ -23,8 +23,8 @@ import (
 // fakeMultiBackend stands in for the qatlas-search microservice,
 // capturing what the handlers forwarded.
 type fakeMultiBackend struct {
-	lastQuery   string
-	lastMax     int
+	lastEntry   search.SearchEntry
+	multiCalls  int
 	lastSources []string
 	lastKeys    map[string]string
 
@@ -35,8 +35,9 @@ type fakeMultiBackend struct {
 	listErr  error
 }
 
-func (f *fakeMultiBackend) SearchMulti(_ context.Context, query string, maxResults int, sources []string, apiKeys map[string]string) (search.RemoteMultiResponse, error) {
-	f.lastQuery, f.lastMax, f.lastSources, f.lastKeys = query, maxResults, sources, apiKeys
+func (f *fakeMultiBackend) SearchMulti(_ context.Context, entry search.SearchEntry, sources []string, apiKeys map[string]string) (search.RemoteMultiResponse, error) {
+	f.multiCalls++
+	f.lastEntry, f.lastSources, f.lastKeys = entry, sources, apiKeys
 	return f.multiResp, f.multiErr
 }
 
@@ -121,17 +122,28 @@ func TestAPI_SearchMulti_NoBackend(t *testing.T) {
 }
 
 func TestAPI_SearchMulti_ValidatesBody(t *testing.T) {
-	h := newMultiHarness(t, &fakeMultiBackend{}, search.NewEngine(nil), nil)
+	fake := &fakeMultiBackend{}
+	h := newMultiHarness(t, fake, search.NewEngine(nil), nil)
 	hdr := rawHeader(h.sessionToken())
 	for _, tc := range []struct{ name, body string }{
-		{"no text", `{"sources":["arxiv"]}`},
+		{"missing text and doi", `{"sources":["arxiv"]}`},
+		{"empty text and doi", `{"text":"","doi":"","sources":["arxiv"]}`},
+		{"blank text and doi", `{"text":" \t\n","doi":" \t\n","sources":["arxiv"]}`},
+		{"blank doi only", `{"doi":"  ","sources":["arxiv"]}`},
 		{"no sources", `{"text":"x"}`},
 		{"blank sources", `{"text":"x","sources":["  ",""]}`},
+		{"doi without sources", `{"doi":"10.1234/qa"}`},
+		{"doi with blank sources", `{"doi":"10.1234/qa","sources":["  ",""]}`},
 	} {
-		status, _, _ := h.do(http.MethodPost, "/api/search/multi", tc.body, hdr)
-		if status != http.StatusBadRequest {
-			t.Fatalf("%s: status = %d, want 400", tc.name, status)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			status, _, _ := h.do(http.MethodPost, "/api/search/multi", tc.body, hdr)
+			if status != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", status)
+			}
+		})
+	}
+	if fake.multiCalls != 0 {
+		t.Fatalf("invalid requests reached backend %d times", fake.multiCalls)
 	}
 }
 
@@ -157,8 +169,8 @@ func TestAPI_SearchMulti_ForwardsSourcesAndUserKeys(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("status = %d; body=%v", status, resp)
 	}
-	if fake.lastQuery != "quantum error correction" || fake.lastMax != 7 {
-		t.Fatalf("forwarded query/max = %q/%d", fake.lastQuery, fake.lastMax)
+	if fake.lastEntry.Text != "quantum error correction" || fake.lastEntry.DOI != "" || fake.lastEntry.MaxResults != 7 {
+		t.Fatalf("forwarded entry = %+v", fake.lastEntry)
 	}
 	if len(fake.lastSources) != 2 || fake.lastSources[0] != "ieee" || fake.lastSources[1] != "arxiv" {
 		t.Fatalf("forwarded sources = %v", fake.lastSources)
@@ -176,6 +188,45 @@ func TestAPI_SearchMulti_ForwardsSourcesAndUserKeys(t *testing.T) {
 	errs := resp["errors"].(map[string]any)
 	if errs["tavily"] != "HTTPError: 401" {
 		t.Errorf("errors = %v", errs)
+	}
+}
+
+func TestAPI_SearchMulti_ForwardsDOIAndPreservesText(t *testing.T) {
+	fake := &fakeMultiBackend{}
+	h := newMultiHarness(t, fake, search.NewEngine(nil), nil)
+	hdr := rawHeader(h.sessionToken())
+	for _, backend := range []string{"ieee", "tavily"} {
+		status, _, _ := h.do(http.MethodPut, "/api/me/search-keys/"+backend, `{"key":"user-key"}`, hdr)
+		if status != http.StatusOK {
+			t.Fatalf("seed %s key: status = %d", backend, status)
+		}
+	}
+	for _, tc := range []struct {
+		name, body, text, doi string
+		max                   int
+	}{
+		{"doi only", `{"doi":"10.1234/qa","sources":[" ieee ","ieee","","arxiv"]}`, "", "10.1234/qa", 0},
+		{"trim blank text and doi", `{"text":" \t\n","doi":" \t10.1234/qa\n ","sources":[" ieee ","ieee","","arxiv"]}`, "", "10.1234/qa", 0},
+		{"text and doi", `{"text":"  quantum  ","doi":" 10.1234/qa ","max_results":75,"sources":[" ieee ","ieee","","arxiv"]}`, "  quantum  ", "10.1234/qa", 75},
+		{"legacy text whitespace", `{"text":"  quantum  ","doi":" \t ","sources":[" ieee ","ieee","","arxiv"]}`, "  quantum  ", "", 0},
+		{"doi-looking legacy text", `{"text":"10.1234/qa","sources":[" ieee ","ieee","","arxiv"]}`, "10.1234/qa", "", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before := fake.multiCalls
+			status, _, resp := h.do(http.MethodPost, "/api/search/multi", tc.body, hdr)
+			if status != http.StatusOK || fake.multiCalls != before+1 {
+				t.Fatalf("status = %d, calls = %d; body=%v", status, fake.multiCalls-before, resp)
+			}
+			if got := fake.lastEntry; got.Text != tc.text || got.DOI != tc.doi || got.MaxResults != tc.max {
+				t.Fatalf("forwarded entry = %+v, want text=%q doi=%q max=%d", got, tc.text, tc.doi, tc.max)
+			}
+			if len(fake.lastSources) != 2 || fake.lastSources[0] != "ieee" || fake.lastSources[1] != "arxiv" {
+				t.Fatalf("normalized sources = %v", fake.lastSources)
+			}
+			if len(fake.lastKeys) != 1 || fake.lastKeys["ieee"] != "user-key" {
+				t.Fatalf("keys must exclude unrequested tavily: %v", fake.lastKeys)
+			}
+		})
 	}
 }
 
@@ -289,16 +340,22 @@ func TestAPI_SearchMulti_MintFailureKeepsResponse(t *testing.T) {
 		},
 	}
 	h := newMultiHarness(t, fake, search.NewEngine(registry.NewStore(nil)), registry.NewStore(nil))
-	status, raw, resp := h.do(http.MethodPost, "/api/search/multi", `{"text":"x","sources":["arxiv"]}`, rawHeader(h.sessionToken()))
-	if status != http.StatusOK {
-		t.Fatalf("status = %d, want 200 despite mint failure; body=%s", status, raw)
-	}
-	results := resp["results"].(map[string]any)
-	if results["arxiv"].([]any)[0].(map[string]any)["title"] != "Anchored" {
-		t.Fatalf("raw hits lost: %s", raw)
-	}
-	if containsSubstr(string(raw), `"paper_id"`) || containsSubstr(string(raw), `"status"`) {
-		t.Errorf("body must omit enrichment after a mint failure: %s", raw)
+	hdr := rawHeader(h.sessionToken())
+	for _, body := range []string{
+		`{"text":"x","sources":["arxiv"]}`,
+		`{"doi":"10.1234/qa","sources":["arxiv"]}`,
+	} {
+		status, raw, resp := h.do(http.MethodPost, "/api/search/multi", body, hdr)
+		if status != http.StatusOK {
+			t.Fatalf("status = %d, want 200 despite mint failure; body=%s", status, raw)
+		}
+		results := resp["results"].(map[string]any)
+		if results["arxiv"].([]any)[0].(map[string]any)["title"] != "Anchored" {
+			t.Fatalf("raw hits lost: %s", raw)
+		}
+		if containsSubstr(string(raw), `"paper_id"`) || containsSubstr(string(raw), `"status"`) {
+			t.Errorf("body must omit enrichment after a mint failure: %s", raw)
+		}
 	}
 }
 

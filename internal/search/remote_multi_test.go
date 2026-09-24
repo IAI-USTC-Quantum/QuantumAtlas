@@ -14,6 +14,8 @@ import (
 // the provider sent.
 type multiFixture struct {
 	lastAuth   string
+	lastMethod string
+	lastPath   string
 	lastBody   map[string]any
 	respBody   string
 	respStatus int
@@ -24,6 +26,7 @@ func newMultiFixture(t testing.TB) (*multiFixture, *httptest.Server) {
 	fx := &multiFixture{respStatus: http.StatusOK}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fx.lastAuth = r.Header.Get("Authorization")
+		fx.lastMethod, fx.lastPath = r.Method, r.URL.Path
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		fx.lastBody = body
@@ -48,7 +51,7 @@ func TestRemoteSearchMulti_WireContract(t *testing.T) {
 	}`
 	p := NewRemoteProvider(srv.URL, "tok", 5*time.Second)
 
-	resp, err := p.SearchMulti(context.Background(), "quantum", 5, []string{"ieee", "arxiv"}, map[string]string{"ieee": "user-key"})
+	resp, err := p.SearchMulti(context.Background(), SearchEntry{Text: "quantum", MaxResults: 5}, []string{"ieee", "arxiv"}, map[string]string{"ieee": "user-key"})
 	if err != nil {
 		t.Fatalf("SearchMulti: %v", err)
 	}
@@ -72,12 +75,56 @@ func TestRemoteSearchMulti_WireContract(t *testing.T) {
 	}
 }
 
+func TestRemoteSearchMulti_EntryWireContract(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		entry SearchEntry
+		max   int
+	}{
+		{"doi only", SearchEntry{DOI: "10.1234/qa"}, DefaultMaxResults},
+		{"text and doi", SearchEntry{Text: "  quantum  ", DOI: "10.1234/qa", MaxResults: 7}, 7},
+		{"legacy text", SearchEntry{Text: "  quantum  ", MaxResults: 5}, 5},
+		{"doi-looking text", SearchEntry{Text: "10.1234/qa"}, DefaultMaxResults},
+		{"negative max", SearchEntry{DOI: "10.1234/qa", MaxResults: -1}, DefaultMaxResults},
+		{"uncapped max", SearchEntry{DOI: "10.1234/qa", MaxResults: 75}, 75},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fx, srv := newMultiFixture(t)
+			fx.respBody = `{"results":{},"usage":{"llm_tokens":0},"errors":{}}`
+			p := NewRemoteProvider(srv.URL, "tok", 5*time.Second)
+			_, err := p.SearchMulti(context.Background(), tc.entry, []string{"ieee", "arxiv"}, map[string]string{"ieee": "user-key"})
+			if err != nil {
+				t.Fatalf("SearchMulti: %v", err)
+			}
+			if fx.lastMethod != http.MethodPost || fx.lastPath != "/v1/search" || fx.lastAuth != "Bearer tok" {
+				t.Fatalf("request = %s %s, auth=%q", fx.lastMethod, fx.lastPath, fx.lastAuth)
+			}
+			if fx.lastBody["mode"] != "multi" || fx.lastBody["agent"] != false || fx.lastBody["query"] != tc.entry.Text || fx.lastBody["max_results"] != float64(tc.max) {
+				t.Errorf("request body = %v", fx.lastBody)
+			}
+			if got, present := fx.lastBody["doi"]; tc.entry.DOI == "" {
+				if present {
+					t.Errorf("text-only request must omit doi: %v", fx.lastBody)
+				}
+			} else if got != tc.entry.DOI {
+				t.Errorf("doi = %v, want %q", got, tc.entry.DOI)
+			}
+			if got := fx.lastBody["sources"].([]any); len(got) != 2 || got[0] != "ieee" || got[1] != "arxiv" {
+				t.Errorf("sources = %v", got)
+			}
+			if got := fx.lastBody["api_keys"].(map[string]any); len(got) != 1 || got["ieee"] != "user-key" {
+				t.Errorf("api_keys = %v", got)
+			}
+		})
+	}
+}
+
 func TestRemoteSearchMulti_OmitsEmptyApiKeys(t *testing.T) {
 	fx, srv := newMultiFixture(t)
 	fx.respBody = `{"results":{},"usage":{"llm_tokens":0},"errors":{}}`
 	p := NewRemoteProvider(srv.URL, "", 5*time.Second)
 
-	if _, err := p.SearchMulti(context.Background(), "q", 0, []string{"arxiv"}, nil); err != nil {
+	if _, err := p.SearchMulti(context.Background(), SearchEntry{Text: "q"}, []string{"arxiv"}, nil); err != nil {
 		t.Fatalf("SearchMulti: %v", err)
 	}
 	if _, present := fx.lastBody["api_keys"]; present {
@@ -93,7 +140,7 @@ func TestRemoteSearchMulti_Non200IsError(t *testing.T) {
 	fx.respStatus = http.StatusBadGateway
 	fx.respBody = `{"detail":"boom"}`
 	p := NewRemoteProvider(srv.URL, "tok", 5*time.Second)
-	if _, err := p.SearchMulti(context.Background(), "q", 5, []string{"arxiv"}, nil); err == nil {
+	if _, err := p.SearchMulti(context.Background(), SearchEntry{Text: "q", MaxResults: 5}, []string{"arxiv"}, nil); err == nil {
 		t.Fatal("non-200 must surface as an error")
 	}
 }

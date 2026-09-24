@@ -231,16 +231,20 @@ func (p *RemoteProvider) SearchAgentic(ctx context.Context, entry SearchEntry, a
 // third-party keys (backend name -> key) that the microservice applies
 // over its server-level fallbacks; it may be nil. Returns real errors —
 // the multi endpoint has no quota to refund but the caller still needs
-// the failure signal to answer 502.
-func (p *RemoteProvider) SearchMulti(ctx context.Context, query string, maxResults int, sources []string, apiKeys map[string]string) (RemoteMultiResponse, error) {
+// the failure signal to answer 502. Text and DOI are forwarded separately:
+// DOI-only entries keep query empty, while mixed entries let the upstream
+// retain its text-first behavior.
+func (p *RemoteProvider) SearchMulti(ctx context.Context, entry SearchEntry, sources []string, apiKeys map[string]string) (RemoteMultiResponse, error) {
 	if p.baseURL == "" {
 		return RemoteMultiResponse{}, fmt.Errorf("remote search: no base URL configured")
 	}
+	maxResults := entry.MaxResults
 	if maxResults <= 0 {
 		maxResults = DefaultMaxResults
 	}
 	req := remoteRequest{
-		Query:      query,
+		Query:      entry.Text,
+		DOI:        entry.DOI,
 		MaxResults: maxResults,
 		Sources:    sources,
 		Mode:       "multi",

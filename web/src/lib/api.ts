@@ -242,7 +242,8 @@ export function getSearchBackends(): Promise<SearchBackendsResponse> {
 }
 
 export type MultiSearchEntry = {
-  text: string
+  text?: string
+  doi?: string
   max_results?: number
   sources: string[]
 }

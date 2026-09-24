@@ -3251,7 +3251,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Proxies one mode=\"multi\" call to the qatlas-search\nmicroservice: every requested backend returns its own raw\nhit list (the source's own order), with NO cross-backend\nmerge or ranking. The caller's stored third-party API keys\n(configured in the dashboard) are decrypted and forwarded so\nkey-requiring backends run under the user's credentials.\nIdentity-anchored hits (DOI / arXiv id) are resolve-or-\nminted as metadata only before the response, without downloads\nor conversion tasks, and carry the server-side\nenrichment paper_id / created / has_md / status (the\nhosting summary is omitted when the registry is\nunavailable). Title-only hits — no DOI, no arXiv id — are\nnever minted and carry none of these fields.\nRequires the papers:read scope; 503 when search.remote is\ndisabled; 502 when the microservice call fails.",
+                "description": "Proxies one mode=\"multi\" call to the qatlas-search\nmicroservice: every requested backend returns its own raw\nhit list (the source's own order), with NO cross-backend\nmerge or ranking. The caller's stored third-party API keys\n(configured in the dashboard) are decrypted and forwarded so\nkey-requiring backends run under the user's credentials.\nProvide text or doi (at least one nonblank). A DOI-only request\nforwards doi with an empty query for identity-aware lookup;\nnonempty text retains text-search semantics when both are supplied.\nIdentity-anchored hits (DOI / arXiv id) are resolve-or-\nminted as metadata only before the response, without downloads\nor conversion tasks, and carry the server-side\nenrichment paper_id / created / has_md / status (the\nhosting summary is omitted when the registry is\nunavailable). Title-only hits — no DOI, no arXiv id — are\nnever minted and carry none of these fields.\nRequires the papers:read scope; 503 when search.remote is\ndisabled; 502 when the microservice call fails.",
                 "consumes": [
                     "application/json"
                 ],
@@ -3264,7 +3264,7 @@ const docTemplate = `{
                 "summary": "Multi-backend search (per-platform raw results)",
                 "parameters": [
                     {
-                        "description": "{text, max_results?, sources: [backend names]}",
+                        "description": "{text?, doi?, max_results?, sources: [backend names]}; text or doi is required",
                         "name": "body",
                         "in": "body",
                         "required": true,

@@ -121,6 +121,10 @@
     },
     "inputPlaceholder": "例如：fault-tolerant magic state distillation、标题、DOI 或 arXiv ID",
     "searchButton": "搜索",
+    "doiSearch": {
+      "detected": "DOI 精确检索：{{doi}}",
+      "sourcesHint": "DOI 查询请选择 OpenAlex 或 Semantic Scholar；其他搜索源可能不支持。"
+    },
     "popularQueries": "示例查询",
     "queryExamples": [
       "surface code 的距离 d 如何影响逻辑错误率",

@@ -552,6 +552,76 @@ test('Agentic does not fan out to all backends when none are selectable', async 
   expect(api.posts(AGENTIC)).toHaveLength(0)
 })
 
+const DOI_SEARCH_INPUTS = [
+  '10.1109/TAC.2010.2050710',
+  'DOI: 10.1109/TAC.2010.2050710',
+  'https://doi.org/10.1109%2FTAC.2010.2050710?utm_source=test#section',
+]
+
+for (const mode of ['classic', 'multi', 'agentic'] as const) {
+  for (const input of DOI_SEARCH_INPUTS) {
+    test(`${mode}: DOI input ${input} uses identity fields without starting downloads`, async ({ page, api }) => {
+      api.remote = mode !== 'classic'
+      await page.goto('/en/papers/search')
+      if (mode === 'classic') {
+        await expect(page.getByRole('button', { name: 'Agentic search', exact: true })).toBeDisabled()
+      } else {
+        await expect(page.getByRole('checkbox', { name: 'openalex', exact: true })).toBeVisible()
+      }
+      if (mode === 'agentic') await page.getByRole('button', { name: 'Agentic search', exact: true }).click()
+      await page.getByRole('main').locator('input[name="q"]').fill(input)
+      await page.getByRole('button', { name: 'Search', exact: true }).click()
+      const endpoint = mode === 'classic' ? '/api/search' : mode === 'multi' ? '/api/search/multi' : AGENTIC
+      await expect.poll(() => api.posts(endpoint).length).toBe(1)
+      expect(api.posts(endpoint)[0].body).toEqual({
+        doi: '10.1109/tac.2010.2050710', ...(mode === 'classic' ? {} : { sources: SOURCES }),
+      })
+      await expect(page.getByTestId('doi-search-hint')).toContainText('Exact DOI lookup: 10.1109/tac.2010.2050710')
+      if (mode !== 'classic') await expect(page.getByTestId('doi-search-hint')).toContainText('OpenAlex or Semantic Scholar')
+      for (const other of ['/api/search', '/api/search/multi', AGENTIC].filter((path) => path !== endpoint)) {
+        expect(api.posts(other)).toHaveLength(0)
+      }
+      expect(api.posts(FETCH)).toHaveLength(0)
+      expect(api.posts(GENERATE)).toHaveLength(0)
+      expect(api.posts(RANKED)).toHaveLength(0)
+    })
+  }
+}
+
+test('switching from DOI to a topic mentioning it restores text search and clears the hint', async ({ page, api }) => {
+  await page.goto('/en/papers/search')
+  await expect(page.getByRole('checkbox', { name: 'openalex', exact: true })).toBeVisible()
+  const input = page.getByRole('main').locator('input[name="q"]')
+  await input.fill('10.1109/tac.2010.2050710')
+  await page.getByRole('button', { name: 'Search', exact: true }).click()
+  await expect(page.getByTestId('doi-search-hint')).toBeVisible()
+  await expect.poll(() => api.posts('/api/search/multi').length).toBe(1)
+  const topic = 'papers related to 10.1109/tac.2010.2050710'
+  await input.fill(topic)
+  await page.getByRole('button', { name: 'Search', exact: true }).click()
+  await expect.poll(() => api.posts('/api/search/multi').length).toBe(2)
+  expect(api.posts('/api/search/multi')[1].body).toEqual({ text: topic, sources: SOURCES })
+  await expect(page.getByTestId('doi-search-hint')).toHaveCount(0)
+  expect(api.posts(FETCH)).toHaveLength(0)
+})
+
+test('Chinese DOI hint is visible and custom scoring does not silently issue identity searches', async ({ page, api }) => {
+  await page.goto('/zh/papers/search')
+  await expect(page.getByRole('checkbox', { name: 'openalex', exact: true })).toBeVisible()
+  await page.getByRole('main').locator('input[name="q"]').fill('https://doi.org/10.1234/Example')
+  await page.getByRole('button', { name: '搜索', exact: true }).click()
+  await expect(page.getByTestId('doi-search-hint')).toContainText('DOI 精确检索：10.1234/example')
+  await expect.poll(() => api.posts('/api/search/multi').length).toBe(1)
+  await page.getByRole('button', { name: '自定义评分', exact: true }).click()
+  await expect(page.getByTestId('doi-search-hint')).toHaveCount(0)
+  await expect(page.getByTestId('scorer-editor')).toBeVisible()
+  expect(api.posts('/api/search/multi')).toHaveLength(1)
+  expect(api.posts(AGENTIC)).toHaveLength(0)
+  expect(api.posts(GENERATE)).toHaveLength(0)
+  expect(api.posts(RANKED)).toHaveLength(0)
+  expect(api.posts(FETCH)).toHaveLength(0)
+})
+
 test('ordinary multi and Agentic retain their endpoints and custom mode does not auto-execute', async ({ page, api }) => {
   await page.goto('/en/papers/search')
   await expect(page.getByRole('checkbox', { name: 'arxiv', exact: true })).toBeVisible()

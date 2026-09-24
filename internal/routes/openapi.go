@@ -235,6 +235,9 @@ func docSearchRanked() {}
 // @Description merge or ranking. The caller's stored third-party API keys
 // @Description (configured in the dashboard) are decrypted and forwarded so
 // @Description key-requiring backends run under the user's credentials.
+// @Description Provide text or doi (at least one nonblank). A DOI-only request
+// @Description forwards doi with an empty query for identity-aware lookup;
+// @Description nonempty text retains text-search semantics when both are supplied.
 // @Description Identity-anchored hits (DOI / arXiv id) are resolve-or-
 // @Description minted as metadata only before the response, without downloads
 // @Description or conversion tasks, and carry the server-side
@@ -248,7 +251,7 @@ func docSearchRanked() {}
 // @Accept      json
 // @Produce     json
 // @Security    BearerAuth
-// @Param       body body object true "{text, max_results?, sources: [backend names]}"
+// @Param       body body object true "{text?, doi?, max_results?, sources: [backend names]}; text or doi is required"
 // @Success     200 {object} map[string]interface{} "{results: {backend: [{title, authors?, year?, doi?, arxiv_id?, url?, venue?, citations?, source, score, paper_id?, created?, has_md?, status?}]}, usage, errors: {backend: msg}, remote: true}"
 // @Failure     400 {object} map[string]string
 // @Failure     401 {object} map[string]string

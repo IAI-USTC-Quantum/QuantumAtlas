@@ -121,6 +121,10 @@
     },
     "inputPlaceholder": "e.g. fault-tolerant magic state distillation, a title, DOI, or arXiv id",
     "searchButton": "Search",
+    "doiSearch": {
+      "detected": "Exact DOI lookup: {{doi}}",
+      "sourcesHint": "Select OpenAlex or Semantic Scholar for DOI lookup. Other search backends may not support it."
+    },
     "popularQueries": "Example queries",
     "queryExamples": [
       "How does the surface code distance d affect logical error rate",

@@ -100,7 +100,7 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
 | Method | Path | 鉴权 | 用途 |
 |---|---|---|---|
 | `POST` | `/api/search` | `papers:read` | 多 provider 论文搜索。body 为 SearchEntry JSON，engine fan-out 到 `search.providers`（config.yaml，默认 `catalog,arxiv,openalex`）列出的 provider。`text` / `title` / `arxiv_id` / `doi` **全空时 400**（不再发出空查询）；带 `arxiv_id` / `doi` 的请求把身份透传给 qatlas-search 微服务做精确查询（arXiv `id_list` / OpenAlex DOI filter / Semantic Scholar paper 端点）。`results` 每项附带 `has_md` / `has_pdf` / `status`（registry 默认资产摘要；catalog 不可用时省略）|
-| `POST` | `/api/search/multi` | `papers:read` | **逐平台原始搜索**。body `{text, max_results, sources[]}`（≤32 个 backend），代理一次 `mode:"multi"` 调用到 qatlas-search 微服务：每个 backend 返回**各自的原始命中列表**（源自己的排序），不做跨源融合打分（融合打分在 `POST /api/search` / `/api/search/agentic`）。调用者存着的第三方 key 被解密后随请求 `api_keys` 转发，key 后端跑在用户自己的凭据下。不计费（同 `POST /api/search`）。`search.remote` 未启用时 503 |
+| `POST` | `/api/search/multi` | `papers:read` | **逐平台原始搜索**。body `{text?, doi?, max_results?, sources[]}`（`text` / `doi` 至少一个非空，≤32 个 backend）；DOI-only 请求以空 `query` 加 `doi` 透传做身份精确检索，若同时提供非空 `text` 则仍按文本搜索，代理一次 `mode:"multi"` 调用到 qatlas-search 微服务：每个 backend 返回**各自的原始命中列表**（源自己的排序），不做跨源融合打分（融合打分在 `POST /api/search` / `/api/search/agentic`）。调用者存着的第三方 key 被解密后随请求 `api_keys` 转发，key 后端跑在用户自己的凭据下。不计费（同 `POST /api/search`）。`search.remote` 未启用时 503 |
 | `GET` | `/api/search/backends` | session only | backend 目录（SPA 渲染成 checkbox 选择器）：静态表（`internal/search/backendmeta.go`）合并微服务 live `/v1/backends` 可用性 + 调用者已存的 key。每行 `{name, label, category, requires_key, user_key, server_ready, key_configured, selectable}`，`selectable = server_ready \|\| (user_key && key_configured)`——需要 key 但没配的后端渲染为禁用并附"去 dashboard 配置"链接 |
 | `POST` | `/api/search/agentic` | `papers:read` | 计量 + LLM 总结的 agentic 搜索（qatlas-search 微服务）。body 额外接受 `sources[]` **钉死 backend 列表**（v0.26.0 起；不传则由微服务侧全量 fan-out）。空 entry（`text` / `title` / `arxiv_id` / `doi` 全空）在计量**之前**就 400；身份条目同样透传给微服务；`results` 与 `POST /api/search` 一样附带 `has_md` / `has_pdf` / `status` |
 
@@ -108,6 +108,13 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
 提供，经 qatlas-search 的 fan-out 接入（`POST /api/search/agentic` 路径），
 qatlasd 在论文 ready 时通过 `rag.remote` 配置段向 qatlas-rag 推送索引构建。
 `/api/search/multi` 与 `/api/search/backends` 同样依赖 `search.remote` 启用。
+
+Web 的普通搜索和 Agentic 搜索会将完整的裸 DOI、`doi:...` 或
+`http(s)://doi.org/...` / `http(s)://dx.doi.org/...` 识别为 `doi` 字段，
+不再同时发送 `text`。DOI 链接的路径解码一次，查询参数/fragment 不作为 DOI；
+包含 DOI 的一句话仍按关键词搜索。远程 DOI 精确检索请选择 OpenAlex 或
+Semantic Scholar，其他来源可能不支持；不会替用户改变所选来源。自定义评分仍使用
+其显式文本主题与规则流程。DOI 搜索只检索/登记元数据，不自动下载论文。
 
 ### Personal Search Keys（个人第三方搜索 key）
 

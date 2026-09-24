@@ -15,6 +15,7 @@ import { SearchDownloadSelection } from '@/components/search-download-selection'
 import { StatusBlock } from '@/components/status-block'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useLang } from '@/hooks/use-lang'
+import { parseSearchInput } from '@/lib/search-input'
 import {
   AgenticSearchError,
   isSearchRemoteAvailable,
@@ -75,6 +76,7 @@ function PaperSearchPage() {
   const navigate = useNavigate()
   const { q } = Route.useSearch()
   const query = q ?? ''
+  const searchInput = useMemo(() => parseSearchInput(query), [query])
 
   // Remote modes are gated on the connected search-remote plugin, not on
   // whether AI rule generation is configured. Offline keeps legacy search.
@@ -143,16 +145,16 @@ function PaperSearchPage() {
   //   no remote          -> POST /api/search (legacy fused fallback)
   const multiEntry =
     query && remoteAvailable && !agenticOn && !customOn && sources.length > 0
-      ? { text: query, sources }
+      ? { ...searchInput, sources }
       : null
   const multiResults = useMultiSearch(multiEntry)
 
-  const classicEntry = query && !remoteAvailable && !agenticOn ? { text: query } : null
+  const classicEntry = query && !remoteAvailable && !agenticOn ? searchInput : null
   const classicResults = usePaperSearch(classicEntry)
   // Do not start a metered search until the catalog has resolved a selection.
   // An empty sources list means an unpinned fan-out to the remote service.
   const agenticEntry = agenticOn && query && sources.length > 0
-    ? { text: query, sources }
+    ? { ...searchInput, sources }
     : null
   const agenticResults = useAgenticSearch(agenticEntry)
 
@@ -201,6 +203,12 @@ function PaperSearchPage() {
           <Button type="submit">{t('searchButton')}</Button>
         </div>
       </form>}
+      {!customOn && searchInput.doi && (
+        <div className="space-y-1 text-sm text-muted-foreground" data-testid="doi-search-hint">
+          <p>{t('doiSearch.detected', { doi: searchInput.doi })}</p>
+          {remoteAvailable && <p>{t('doiSearch.sourcesHint')}</p>}
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-2" role="group" aria-label={t('scoring.modeLabel')}>
           <Button type="button" size="sm" variant={!agenticOn && !customOn ? 'default' : 'outline'}
             aria-pressed={!agenticOn && !customOn} onClick={() => setMode('classic')}>

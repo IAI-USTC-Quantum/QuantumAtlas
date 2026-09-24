@@ -47,7 +47,7 @@ import (
 // microservice (*search.RemoteProvider). The interface keeps the
 // handlers testable with a fake, mirroring AgenticBackend.
 type MultiBackend interface {
-	SearchMulti(ctx context.Context, query string, maxResults int, sources []string, apiKeys map[string]string) (search.RemoteMultiResponse, error)
+	SearchMulti(ctx context.Context, entry search.SearchEntry, sources []string, apiKeys map[string]string) (search.RemoteMultiResponse, error)
 	ListBackends(ctx context.Context) ([]search.RemoteBackendMeta, error)
 }
 
@@ -57,6 +57,7 @@ var _ MultiBackend = (*search.RemoteProvider)(nil)
 // multiSearchRequest is the POST /api/search/multi body.
 type multiSearchRequest struct {
 	Text       string   `json:"text"`
+	DOI        string   `json:"doi,omitempty"`
 	MaxResults int      `json:"max_results"`
 	Sources    []string `json:"sources"`
 }
@@ -173,8 +174,12 @@ func RegisterSearchMulti(se *core.ServeEvent, keys *userkeys.Store, backend Mult
 		if err := json.Unmarshal(raw, &req); err != nil {
 			return re.JSON(http.StatusBadRequest, map[string]string{"detail": "invalid JSON: " + err.Error()})
 		}
+		req.DOI = strings.TrimSpace(req.DOI)
 		if strings.TrimSpace(req.Text) == "" {
-			return re.JSON(http.StatusBadRequest, map[string]string{"detail": "text is required"})
+			req.Text = ""
+		}
+		if req.Text == "" && req.DOI == "" {
+			return re.JSON(http.StatusBadRequest, map[string]string{"detail": "text or doi is required"})
 		}
 		sources := normalizeSources(req.Sources)
 		if len(sources) == 0 {
@@ -200,7 +205,10 @@ func RegisterSearchMulti(se *core.ServeEvent, keys *userkeys.Store, backend Mult
 			}
 		}
 
-		resp, err := backend.SearchMulti(re.Request.Context(), req.Text, req.MaxResults, sources, apiKeys)
+		// Preserve nonblank text and the historical max_results semantics;
+		// full SearchEntry.Normalize would also trim text and cap results.
+		entry := search.SearchEntry{Text: req.Text, DOI: req.DOI, MaxResults: req.MaxResults}
+		resp, err := backend.SearchMulti(re.Request.Context(), entry, sources, apiKeys)
 		if err != nil {
 			return re.JSON(http.StatusBadGateway, map[string]string{
 				"detail": "multi search upstream failed: " + err.Error(),
