@@ -148,9 +148,28 @@ show unhealthy until approved; this is not a reason to recreate their volumes.
 Container restart policy follows process exit, not health status.
 
 Worker logs use fixed error summaries and HTTP status codes rather than tokens,
-master response bodies or credential-bearing URLs. Provenance strips source URL
-userinfo/query/fragment and reports generic strategy errors (up to 12 trace
-entries); it intentionally does not export arbitrary downloader error strings.
+master response bodies or credential-bearing URLs. Successful provenance strips
+source URL userinfo/query/fragment. Failed downloads persist and report the last
+12 strategy steps (including duration) through the existing v2 `Trace` fields;
+URLs are omitted from failure traces. Errors contain only allowlisted failure
+kinds, available HTTP status codes and allowlisted verification/denial page
+titles from the last captured HTML response (not necessarily the live DOM).
+Arbitrary titles, page bodies and raw error strings are never exported. Unknown
+errors remain generic; `not_found` means no strategy produced a PDF, not HTTP 404.
+
+`worker download failed` logs correlate task/attempt IDs; `worker download
+strategy` logs contain the bounded sanitized trace. Reports retain these traces
+across spool restarts and delivery retries. A master with diagnostic recovery
+support also includes them in failed download pipeline traces and retains the
+previous worker failure when a requeued task later expires. A final queue timeout
+therefore does not necessarily mean a worker ran until its execution deadline.
+Healthy only verifies worker readiness, not publisher subscription entitlement.
+
+No protocol/schema migration is required. Update both worker and master binaries
+for the full diagnostics; a new worker can still report to an older v2 master,
+but the old master may overwrite the summary on expiry. Preserve each worker's
+existing data volume and identity when replacing its container. This change does
+not alter browser navigation, retry budgets, concurrency or publisher access.
 No inbound endpoint or live CDP port needs firewall exposure. Restrict outbound
 master access and browser/CDP administration appropriately.
 

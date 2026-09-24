@@ -31,6 +31,7 @@ type LandingInfo struct {
 	FinalURL   string
 	HTML       []byte
 	Candidates []string
+	HTTPStatus int // observed landing response status, not a guessed status
 }
 
 // FetchLanding fetches the landing page for a DOI and extracts PDF
@@ -51,11 +52,11 @@ func (d *Downloader) FetchLanding(ctx context.Context, doi string) (*LandingInfo
 // pages surfaced by the OA APIs (green-OA hosts like HAL or
 // repositorio.* whose "pdf" candidate is actually an article page).
 func (d *Downloader) scrapeLanding(ctx context.Context, landingURL string) (*LandingInfo, error) {
-	html, finalURL, _, err := d.fetch.FetchText(ctx, landingURL, d.fetch.cfg.LandingMaxBytes)
+	html, finalURL, status, err := d.fetch.FetchText(ctx, landingURL, d.fetch.cfg.LandingMaxBytes)
 	if err != nil {
 		return nil, err
 	}
-	info := &LandingInfo{FinalURL: finalURL, HTML: html}
+	info := &LandingInfo{FinalURL: finalURL, HTML: html, HTTPStatus: status}
 	seen := map[string]bool{}
 	add := func(raw string) {
 		raw = strings.TrimSpace(raw)

@@ -319,6 +319,12 @@ func (s *Spool) Ready(id string, body io.Reader, metadata workerprotocol.ResultM
 	return nil
 }
 func (s *Spool) Fail(id, code, message string) error {
+	return s.FailWithTrace(id, code, message, nil)
+}
+
+// FailWithTrace persists the already-sanitized diagnostics in the same atomic
+// catalog transition as the failure. Delivery retries and restarts keep them.
+func (s *Spool) FailWithTrace(id, code, message string, trace []workerprotocol.Trace) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r, ok := s.records[id]
@@ -332,6 +338,7 @@ func (s *Spool) Fail(id, code, message string) error {
 	r.State = "failed"
 	r.Failure = code
 	r.Error = message
+	r.Metadata.Trace = append([]workerprotocol.Trace(nil), trace...)
 	s.records[id] = r
 	if err := s.saveLocked(); err != nil {
 		s.records[id] = old

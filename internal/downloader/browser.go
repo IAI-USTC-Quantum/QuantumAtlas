@@ -85,9 +85,10 @@ func (b *BrowserLane) Enabled() bool { return b != nil && b.cfg.CDPURL != "" }
 
 // browserBody is what one navigation produced.
 type browserBody struct {
-	url  string
-	body []byte
-	kind BodyKind
+	url    string
+	body   []byte
+	kind   BodyKind
+	status int // observed CDP response status
 }
 
 // pdfish reports whether a paused response plausibly carries PDF bytes.
@@ -123,8 +124,13 @@ func (b *BrowserLane) FetchPDF(ctx context.Context, rawURL string) (*FetchResult
 	}
 	body, err := b.navigate(ctx, rawURL)
 	if err != nil {
-		return nil, fmt.Errorf("browser: %w", err)
+		return nil, withDiagnostic(fmt.Errorf("browser: %w", err), "browser", 0, nil)
 	}
+	return b.validateBody(body)
+}
+
+func (b *BrowserLane) validateBody(body *browserBody) (result *FetchResult, err error) {
+	defer func() { err = withDiagnostic(err, "browser", body.status, body.body) }()
 	if body.kind != BodyPDF {
 		if strings.Contains(strings.ToLower(body.url), "login") || strings.Contains(strings.ToLower(body.url), "seamlessaccess") {
 			return nil, fmt.Errorf("browser: %w (publisher requires an authenticated session — sign in once in the browser profile, see downloader.browser.cdp_url deployment notes)", ErrPaywall)
@@ -197,17 +203,17 @@ func (b *BrowserLane) navigate(ctx context.Context, rawURL string) (*browserBody
 					switch kind := ClassifyBody(body); kind {
 					case BodyPDF:
 						select {
-						case resultCh <- &browserBody{url: url, body: body, kind: kind}:
+						case resultCh <- &browserBody{url: url, body: body, kind: kind, status: int(e.ResponseStatusCode)}:
 						default:
 						}
 					default:
 						if isDocument {
 							select {
-							case htmlCh <- &browserBody{url: url, body: body, kind: kind}:
+							case htmlCh <- &browserBody{url: url, body: body, kind: kind, status: int(e.ResponseStatusCode)}:
 							default:
 							}
 							mu.Lock()
-							lastHTML = &browserBody{url: url, body: body, kind: kind}
+							lastHTML = &browserBody{url: url, body: body, kind: kind, status: int(e.ResponseStatusCode)}
 							mu.Unlock()
 						}
 					}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/downloader"
@@ -138,19 +139,22 @@ func (s *Service) expire(ctx context.Context) error {
 	if e = schedulerLock(ctx, tx); e != nil {
 		return e
 	}
-	rows, e := tx.Query(ctx, `SELECT t.id,t.current_attempt,t.state FROM download_fleet_tasks t LEFT JOIN download_fleet_attempts a ON a.id=t.current_attempt WHERE (t.state='queued' AND (t.deadline<=clock_timestamp() OR t.attempt_count >= $1)) OR (t.state='running' AND (a.lease_expires<=clock_timestamp() OR (a.state='running' AND a.deadline<=clock_timestamp()) OR t.deadline<=clock_timestamp())) OR (t.state='staged' AND t.updated_at<clock_timestamp()-$2::interval) ORDER BY t.created_at FOR UPDATE OF t SKIP LOCKED LIMIT 100`, s.cfg.MaxWorkerAttempts, interval(s.cfg.Retention))
+	rows, e := tx.Query(ctx, `SELECT t.id,t.current_attempt,t.state,t.error,t.deadline<=clock_timestamp(),t.attempt_count >= $1 FROM download_fleet_tasks t LEFT JOIN download_fleet_attempts a ON a.id=t.current_attempt WHERE (t.state='queued' AND (t.deadline<=clock_timestamp() OR t.attempt_count >= $1)) OR (t.state='running' AND (a.lease_expires<=clock_timestamp() OR (a.state='running' AND a.deadline<=clock_timestamp()) OR t.deadline<=clock_timestamp())) OR (t.state='staged' AND t.updated_at<clock_timestamp()-$2::interval) ORDER BY t.created_at FOR UPDATE OF t SKIP LOCKED LIMIT 100`, s.cfg.MaxWorkerAttempts, interval(s.cfg.Retention))
 	if e != nil {
 		return e
 	}
 	type expired struct {
-		id      string
-		attempt *string
-		state   string
+		id                string
+		attempt           *string
+		state             string
+		err               string
+		deadlineExpired   bool
+		attemptsExhausted bool
 	}
 	var tasks []expired
 	for rows.Next() {
 		var t expired
-		if e = rows.Scan(&t.id, &t.attempt, &t.state); e != nil {
+		if e = rows.Scan(&t.id, &t.attempt, &t.state, &t.err, &t.deadlineExpired, &t.attemptsExhausted); e != nil {
 			rows.Close()
 			return e
 		}
@@ -165,8 +169,17 @@ func (s *Service) expire(ctx context.Context) error {
 		msg := "worker lease/execution deadline expired"
 		if t.state == "staged" {
 			msg = "staged archive recovery exceeded retention"
+		} else if t.state == "queued" {
+			// A queued task has no executing worker. Its current_attempt may be
+			// NULL, or may refer to a later lease expiry that hid a worker report.
+			// Recover the latest nonempty worker failure without rewriting the
+			// immutable report/receipt; fall back to the task's existing error.
+			if e = tx.QueryRow(ctx, `SELECT coalesce((SELECT error FROM download_fleet_attempts WHERE task_id=$1 AND state='failed' AND error<>'' ORDER BY created_at DESC,id DESC LIMIT 1),$2::text)`, t.id, t.err).Scan(&msg); e != nil {
+				return e
+			}
+			msg = queuedExpiryError(msg, t.deadlineExpired, t.attemptsExhausted)
 		}
-		if t.attempt != nil {
+		if t.attempt != nil && t.state != "queued" {
 			if _, e = tx.Exec(ctx, `UPDATE download_fleet_attempts SET state='expired',failure='timeout',error=$2,updated_at=clock_timestamp() WHERE id=$1 AND state IN ('running','uploading','staged')`, *t.attempt, msg); e != nil {
 				return e
 			}
@@ -177,6 +190,33 @@ func (s *Service) expire(ctx context.Context) error {
 	}
 	return tx.Commit(ctx)
 }
+
+// queuedExpiryError keeps the original bounded worker error intact and adds a
+// separate task-level final reason, rather than inventing an execution timeout.
+func queuedExpiryError(previous string, deadlineExpired, attemptsExhausted bool) string {
+	var reasons []string
+	if deadlineExpired {
+		reasons = append(reasons, "queued timeout (task deadline expired while queued)")
+	}
+	if attemptsExhausted {
+		reasons = append(reasons, "attempt limit reached while queued")
+	}
+	if len(reasons) == 0 {
+		return previous
+	}
+	final := "fleet final reason: " + strings.Join(reasons, "; ")
+	if previous == "" || previous == final {
+		return final
+	}
+	suffix := "; " + final
+	if strings.HasSuffix(previous, suffix) {
+		return previous
+	}
+	// Reports are already capped at 2048 bytes. Reserve additional space for
+	// the fixed final reason so neither it nor the original report is lost.
+	return truncate(previous, 2048) + suffix
+}
+
 func (s *Service) deliverHooks(ctx context.Context) error {
 	_, hook := s.callbacks()
 	if hook == nil {

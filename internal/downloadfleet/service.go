@@ -217,7 +217,14 @@ func (s *Service) FetchPDF(ctx context.Context, ref registry.PaperRef) (*downloa
 			return &o, nil
 		}
 		if state == "failed" {
-			return &downloader.FetchOutcome{RemoteTaskID: id}, fmt.Errorf("remote download failed: %s", msg)
+			trace, traceErr := s.failureTrace(ctx, id)
+			failure := fmt.Errorf("remote download failed: %s", msg)
+			if traceErr != nil {
+				// The task is already terminal: diagnostics must not turn it into
+				// a pending task or hide the original failure.
+				failure = errors.Join(failure, fmt.Errorf("load remote failure trace: %w", traceErr))
+			}
+			return &downloader.FetchOutcome{RemoteTaskID: id, Trace: trace}, failure
 		}
 		if !deadline.After(time.Now()) {
 			return remotePending(id, context.DeadlineExceeded)
@@ -228,6 +235,40 @@ func (s *Service) FetchPDF(ctx context.Context, ref registry.PaperRef) (*downloa
 		case <-ticker.C:
 		}
 	}
+}
+
+// failureTrace exposes the same worker-prefixed diagnostics as successful archive
+// outcomes. Use protocol/configuration maxima rather than the current attempt
+// budget, which may have been reduced since these attempts were admitted.
+func (s *Service) failureTrace(ctx context.Context, task string) ([]downloader.Attempt, error) {
+	rows, err := s.pool.Query(ctx, `SELECT worker_id,failure,error,trace FROM download_fleet_attempts WHERE task_id=$1 ORDER BY created_at,id LIMIT 32`, task)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var trace []downloader.Attempt
+	var errs []error
+	for rows.Next() {
+		var worker, failure, msg string
+		var raw []byte
+		if err := rows.Scan(&worker, &failure, &msg, &raw); err != nil {
+			return trace, errors.Join(append(errs, err)...)
+		}
+		if failure != "" {
+			msg = failure + ": " + msg
+		}
+		prefix := "worker:" + worker
+		trace = append(trace, downloader.Attempt{Strategy: prefix, Error: truncate(msg, 2048)})
+		var items []wp.Trace
+		if err := json.Unmarshal(raw, &items); err != nil {
+			errs = append(errs, fmt.Errorf("decode worker %s trace: %w", worker, err))
+			continue
+		}
+		for _, item := range items[:min(len(items), 64)] {
+			trace = append(trace, downloader.Attempt{Strategy: prefix + ":" + truncate(item.Strategy, 128), URL: truncate(item.URL, 2048), Error: truncate(item.Error, 2048), Millis: item.Millis})
+		}
+	}
+	return trace, errors.Join(append(errs, rows.Err())...)
 }
 
 type Enrollment struct {

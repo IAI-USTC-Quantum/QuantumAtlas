@@ -220,12 +220,12 @@ func (f *FetchClient) limiterFor(host string) *rate.Limiter {
 // follows redirects (cookie jar active), honors per-host rate limits
 // and robots.txt, retries once on 429/503, and runs the full validation
 // pipeline on the body.
-func (f *FetchClient) FetchPDF(ctx context.Context, rawURL string) (*FetchResult, error) {
+func (f *FetchClient) FetchPDF(ctx context.Context, rawURL string) (result *FetchResult, err error) {
 	body, finalURL, kind, status, err := f.fetch(ctx, rawURL, f.cfg.MaxPDFBytes, false)
 	if err != nil {
 		return nil, err
 	}
-	_ = status
+	defer func() { err = withDiagnostic(err, "", status, body) }()
 	if kind != BodyPDF {
 		return nil, classifyBodyErr(kind)
 	}
@@ -299,7 +299,7 @@ func (f *FetchClient) fetch(ctx context.Context, rawURL string, limit int64, isT
 		}
 		select {
 		case <-ctx.Done():
-			return nil, "", kind, status, fmt.Errorf("%w: %v", ErrUpstream, ctx.Err())
+			return nil, "", kind, status, fmt.Errorf("%w: %w", ErrUpstream, ctx.Err())
 		case <-time.After(wait):
 		}
 	}
@@ -318,9 +318,11 @@ func (f *FetchClient) doOnce(ctx context.Context, rawURL string, limit int64, is
 	f.setBrowserHeaders(req, isText)
 	resp, err := f.client.Do(req)
 	if err != nil {
-		return nil, "", BodyOther, 0, false, fmt.Errorf("%w: %v", ErrUpstream, err)
+		return nil, "", BodyOther, 0, false, fmt.Errorf("%w: %w", ErrUpstream, err)
 	}
 	defer resp.Body.Close()
+	var observedBody []byte
+	defer func() { err = withDiagnostic(err, "", resp.StatusCode, observedBody) }()
 
 	switch {
 	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 400:
@@ -328,6 +330,7 @@ func (f *FetchClient) doOnce(ctx context.Context, rawURL string, limit int64, is
 		// moment", Radware) can be classified even when it arrives with
 		// a 403/429 — the taxonomy drives the retry + UI messaging.
 		body, rerr := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		observedBody = body
 		if rerr != nil {
 			return nil, "", BodyOther, resp.StatusCode, false, fmt.Errorf("%w: http %d", ErrHTTP, resp.StatusCode)
 		}
@@ -347,8 +350,9 @@ func (f *FetchClient) doOnce(ctx context.Context, rawURL string, limit int64, is
 	}
 
 	body, err = io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	observedBody = body
 	if err != nil {
-		return nil, "", BodyOther, resp.StatusCode, false, fmt.Errorf("%w: read body: %v", ErrUpstream, err)
+		return nil, "", BodyOther, resp.StatusCode, false, withDiagnostic(fmt.Errorf("%w: read body: %w", ErrUpstream, err), "body_read", resp.StatusCode, body)
 	}
 	if int64(len(body)) > limit {
 		return nil, "", BodyOther, resp.StatusCode, false, ErrTooLarge

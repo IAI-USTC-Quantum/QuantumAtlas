@@ -131,7 +131,7 @@ func (f *integrationFetcher) FetchPDF(ctx context.Context, ref registry.PaperRef
 		}
 	}
 	if f.fail {
-		return nil, downloader.ErrNoPDF
+		return &downloader.FetchOutcome{Trace: []downloader.Attempt{{Strategy: "browser", Error: "raw TOPSECRET error", FailureKind: "challenge", HTTPStatus: 403, PageTitle: "Just a moment...", Millis: 62}}}, downloader.ErrNoPDF
 	}
 	body := syntheticPDF()
 	return &downloader.FetchOutcome{DOI: ref.DOI, Strategy: "synthetic", URL: "https://publisher.invalid/test.pdf", Trace: []downloader.Attempt{{Strategy: "synthetic", Millis: 1}}, Result: &downloader.FetchResult{Body: bytes.NewReader(body), Size: int64(len(body))}}, nil
@@ -421,6 +421,17 @@ func TestPostgresOutboundTwoWorkersFailureRescheduled(t *testing.T) {
 	case <-firstReported:
 	case <-time.After(8 * time.Second):
 		t.Fatal("first worker failed to report failure")
+	}
+	var failureTrace []byte
+	if err := pool.QueryRow(context.Background(), `SELECT trace FROM download_fleet_attempts WHERE worker_id=$1 AND state='failed'`, first.id.ID).Scan(&failureTrace); err != nil {
+		t.Fatal(err)
+	}
+	var steps []wp.Trace
+	if err := json.Unmarshal(failureTrace, &steps); err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) != 1 || steps[0].Strategy != "browser" || steps[0].Millis != 62 || !strings.Contains(steps[0].Error, "http_status=403") || !strings.Contains(steps[0].Error, "Just a moment") || strings.Contains(string(failureTrace), "TOPSECRET") {
+		t.Fatalf("runner-to-master failure diagnostics lost or leaked: %s", failureTrace)
 	}
 	// Drain prevents further claims while preserving terminal report receipts.
 	if err := service.Action(context.Background(), first.id.ID, "drain"); err != nil {

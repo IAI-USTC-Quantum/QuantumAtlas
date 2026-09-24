@@ -139,10 +139,14 @@ func WithIndexPusher(p IndexPusher) Option {
 // Attempt is one strategy try in the trace (survives to the job
 // snapshot and, on failure, the audit events).
 type Attempt struct {
-	Strategy string `json:"strategy"`
-	URL      string `json:"url,omitempty"`
-	Error    string `json:"error,omitempty"`
-	Millis   int64  `json:"ms"`
+	Strategy    string `json:"strategy"`
+	URL         string `json:"url,omitempty"`
+	Error       string `json:"error,omitempty"`
+	Millis      int64  `json:"ms"`
+	FailureKind string `json:"failure_kind,omitempty"`
+	HTTPStatus  int    `json:"http_status,omitempty"`
+	// PageTitle is an allowlisted title from the final response HTML, not live DOM.
+	PageTitle string `json:"page_title,omitempty"`
 }
 
 // FetchOutcome is the ladder's result for one paper.
@@ -347,8 +351,9 @@ func (d *Downloader) FetchPDF(ctx context.Context, ref registry.PaperRef) (*Fetc
 		// EPMC render URL becomes an extra first candidate.
 		pmcid := strings.TrimPrefix(strings.ToLower(doi), "pmc:")
 		pmcid = strings.ToUpper(pmcid)
+		start := time.Now()
 		cands, realDOI, err := d.epmc.CandidatesByPMCID(ctx, pmcid)
-		out.Trace = append(out.Trace, Attempt{Strategy: "pmc-resolve", Error: errString(err), Millis: 0})
+		out.Trace = append(out.Trace, attemptOf("pmc-resolve", "", withDiagnostic(err, "resolve", 0, nil), start))
 		if err != nil {
 			return out, fmt.Errorf("%w: pmcid %s: %v", ErrNoPDF, pmcid, err)
 		}
@@ -392,13 +397,14 @@ func (d *Downloader) FetchPDF(ctx context.Context, ref registry.PaperRef) (*Fetc
 	// pages (green-OA repositories: HAL, university repos …) are mined
 	// for the real PDF link instead of being fetched blind.
 	for _, r := range d.oaResolvers {
+		start := time.Now()
 		cands, err := r.Candidates(ctx, doi)
 		if err != nil {
-			out.Trace = append(out.Trace, Attempt{Strategy: "oa:" + r.Name(), Error: errString(err)})
+			out.Trace = append(out.Trace, attemptOf("oa:"+r.Name(), "", withDiagnostic(err, "resolve", 0, nil), start))
 			continue
 		}
 		if len(cands) == 0 {
-			out.Trace = append(out.Trace, Attempt{Strategy: "oa:" + r.Name(), Error: "no candidates"})
+			out.Trace = append(out.Trace, attemptOf("oa:"+r.Name(), "", errNoCandidates, start))
 		}
 		for _, u := range cands {
 			if looksLikePDF(u) {
@@ -407,13 +413,14 @@ func (d *Downloader) FetchPDF(ctx context.Context, ref registry.PaperRef) (*Fetc
 				}
 				continue
 			}
+			landingStart := time.Now()
 			li, lerr := d.scrapeLanding(ctx, u)
 			if lerr != nil {
-				out.Trace = append(out.Trace, attemptOf("oa:"+r.Name()+"+landing", u, lerr, time.Now()))
+				out.Trace = append(out.Trace, attemptOf("oa:"+r.Name()+"+landing", u, lerr, landingStart))
 				continue
 			}
 			if len(li.Candidates) == 0 {
-				out.Trace = append(out.Trace, Attempt{Strategy: "oa:" + r.Name() + "+landing", URL: u, Error: "no PDF candidates on repository landing page"})
+				out.Trace = append(out.Trace, attemptOf("oa:"+r.Name()+"+landing", u, withDiagnostic(errNoRepositoryCandidates, "", li.HTTPStatus, li.HTML), landingStart))
 			}
 			for _, u2 := range li.Candidates {
 				if res := d.tryCandidate(ctx, "oa:"+r.Name()+"+landing", u2, out); res != nil {
@@ -431,9 +438,11 @@ func (d *Downloader) FetchPDF(ctx context.Context, ref registry.PaperRef) (*Fetc
 	}
 
 	// Landing page (+ IEEE stamp resolution) and the agent fallback.
+	landingStart := time.Now()
 	landing, err := d.FetchLanding(ctx, doi)
+	landingAttempt := attemptOf("landing", "", err, landingStart)
 	if err != nil {
-		out.Trace = append(out.Trace, Attempt{Strategy: "landing", Error: errString(err)})
+		out.Trace = append(out.Trace, landingAttempt)
 	} else {
 		for _, u := range landing.Candidates {
 			if res := d.tryCandidate(ctx, "landing", u, out); res != nil {
@@ -441,7 +450,12 @@ func (d *Downloader) FetchPDF(ctx context.Context, ref registry.PaperRef) (*Fetc
 			}
 		}
 		if len(landing.Candidates) == 0 {
-			out.Trace = append(out.Trace, Attempt{Strategy: "landing", URL: landing.FinalURL, Error: "no PDF candidates on landing page"})
+			landingAttempt.URL = landing.FinalURL
+			landingAttempt.Error = errNoLandingCandidates.Error()
+			landingAttempt.FailureKind = "no_candidates"
+			landingAttempt.HTTPStatus = landing.HTTPStatus
+			landingAttempt.PageTitle = safeHTMLTitle(landing.HTML)
+			out.Trace = append(out.Trace, landingAttempt)
 		}
 	}
 
@@ -464,17 +478,16 @@ func (d *Downloader) FetchPDF(ctx context.Context, ref registry.PaperRef) (*Fetc
 	// most common terminal failure on entitled networks. Enabled via
 	// downloader.browser.cdp_url.
 	if d.browser.Enabled() && (traceSawChallenge(out.Trace) || traceSawNoCandidates(out.Trace)) {
-		start := time.Now()
 		for _, u := range browserTargets(out, doi) {
-			res, berr := d.browser.FetchPDF(ctx, u)
+			res, berr, attempt := browserAttempt(ctx, u, d.browser.FetchPDF)
 			if berr == nil {
 				out.Strategy = "browser"
 				out.URL = res.URL
 				out.Result = res
-				out.Trace = append(out.Trace, Attempt{Strategy: "browser", URL: u, Millis: time.Since(start).Milliseconds()})
+				out.Trace = append(out.Trace, attempt)
 				return out, nil
 			}
-			out.Trace = append(out.Trace, attemptOf("browser", u, berr, start))
+			out.Trace = append(out.Trace, attempt)
 		}
 	}
 
@@ -583,10 +596,23 @@ func (d *Downloader) tryCandidate(ctx context.Context, strategy, rawURL string, 
 	return res
 }
 
+// browserAttempt measures each target independently, including existing pacing.
+func browserAttempt(ctx context.Context, url string, fetch func(context.Context, string) (*FetchResult, error)) (*FetchResult, error, Attempt) {
+	start := time.Now()
+	res, err := fetch(ctx, url)
+	return res, err, attemptOf("browser", url, err, start)
+}
+
 func attemptOf(strategy, url string, err error, start time.Time) Attempt {
 	a := Attempt{Strategy: strategy, URL: url, Millis: time.Since(start).Milliseconds()}
 	if err != nil {
 		a.Error = err.Error()
+		a.FailureKind = failureKind(err)
+		var diagnostic *diagnosticError
+		if errors.As(err, &diagnostic) {
+			a.HTTPStatus = diagnostic.status
+			a.PageTitle = safePageTitle(diagnostic.title)
+		}
 	}
 	return a
 }

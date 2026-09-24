@@ -269,8 +269,25 @@ func (r *Runner) startTask(ctx context.Context, a workerprotocol.Assignment) {
 			code = workerprotocol.FailureInvalidIdentifier
 			message = "assignment has no supported identity"
 		}
-		if err = r.Spool.Fail(a.AttemptID, code, message); err != nil {
+		trace := failureTrace(result)
+		for i := len(trace) - 1; i >= 0; i-- {
+			if trace[i].Error != "" {
+				message += "; last strategy " + trace[i].Strategy + ": " + trace[i].Error
+				break
+			}
+		}
+		if err = r.Spool.FailWithTrace(a.AttemptID, code, message, trace); err != nil {
 			r.fatalError(errors.New("cannot persist download failure"))
+			return
+		}
+		log := r.Log
+		if log == nil {
+			log = slog.Default()
+		}
+		// No publisher URLs, raw errors, credentials or arbitrary page titles.
+		log.Warn("worker download failed", "task_id", a.TaskID, "attempt_id", a.AttemptID, "failure", code, "error", message, "trace_steps", len(trace))
+		for _, step := range trace {
+			log.Info("worker download strategy", "attempt_id", a.AttemptID, "strategy", step.Strategy, "ms", step.Millis, "diagnostic", step.Error)
 		}
 	}()
 }

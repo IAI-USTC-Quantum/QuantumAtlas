@@ -37,13 +37,13 @@ func getJSON(ctx context.Context, client *http.Client, ua, rawURL string, out an
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("http %d", resp.StatusCode)
+		return withDiagnostic(fmt.Errorf("http %d", resp.StatusCode), "http_status", resp.StatusCode, nil)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if err != nil {
-		return err
+		return withDiagnostic(err, "body_read", resp.StatusCode, nil)
 	}
-	return json.Unmarshal(body, out)
+	return withDiagnostic(json.Unmarshal(body, out), "resolve", resp.StatusCode, nil)
 }
 
 // getS2JSON is getJSON plus the S2 x-api-key header when a key is set.
@@ -63,13 +63,13 @@ func getS2JSON(ctx context.Context, client *http.Client, apiKey, rawURL string, 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("http %d", resp.StatusCode)
+		return withDiagnostic(fmt.Errorf("http %d", resp.StatusCode), "http_status", resp.StatusCode, nil)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if err != nil {
-		return err
+		return withDiagnostic(err, "body_read", resp.StatusCode, nil)
 	}
-	return json.Unmarshal(body, out)
+	return withDiagnostic(json.Unmarshal(body, out), "resolve", resp.StatusCode, nil)
 }
 
 // Unpaywall resolves via https://unpaywall.org. email is required by

@@ -108,7 +108,7 @@ func (c *Client) Claim(ctx context.Context, limit int) (workerprotocol.ClaimResp
 }
 func (c *Client) Report(ctx context.Context, r Record) (workerprotocol.Receipt, error) {
 	var out workerprotocol.Receipt
-	err := c.json(ctx, http.MethodPost, workerprotocol.ReportPath, workerprotocol.ReportRequest{AttemptID: r.Assignment.AttemptID, Failure: r.Failure, Error: r.Error}, &out)
+	err := c.json(ctx, http.MethodPost, workerprotocol.ReportPath, workerprotocol.ReportRequest{AttemptID: r.Assignment.AttemptID, Failure: r.Failure, Error: r.Error, Trace: r.Metadata.Trace}, &out)
 	return out, err
 }
 func (c *Client) Receipt(ctx context.Context, id string) (workerprotocol.Receipt, error) {
