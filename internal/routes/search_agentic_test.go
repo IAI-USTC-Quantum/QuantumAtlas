@@ -64,7 +64,7 @@ func newAgenticHarness(t testing.TB, backend AgenticBackend) *agenticHarness {
 
 	var built http.Handler
 	err = app.OnServe().Trigger(se, func(e *core.ServeEvent) error {
-		RegisterSearchAgentic(e, &config.Config{}, backend, usage.NewStore(nil), search.NewEngine(nil, nil), nil, enforcer)
+		RegisterSearchAgentic(e, &config.Config{}, backend, usage.NewStore(nil), search.NewEngine(nil), nil, enforcer)
 		m, mErr := e.Router.BuildMux()
 		if mErr != nil {
 			return mErr

@@ -78,7 +78,7 @@ func newTestRunner(t *testing.T, claudeBin string, engine *search.Engine, mutate
 }
 
 func testEngine(providers ...search.Provider) *search.Engine {
-	return search.NewEngine(nil, nil, providers...)
+	return search.NewEngine(nil, providers...)
 }
 
 func TestRunner_AgentHappyPath(t *testing.T) {

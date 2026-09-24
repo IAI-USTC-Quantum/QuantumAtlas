@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { PaperHitCard } from '@/components/paper-hit-card'
+import { SearchDownloadSelection } from '@/components/search-download-selection'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import type { RankedSearchResponse } from '@/lib/scoring-api'
 
@@ -7,6 +8,7 @@ export function ScorerResults({ results }: { results: RankedSearchResponse }) {
   const { t } = useTranslation('papers')
   return (
     <section className="space-y-3" aria-label={t('scoring.results')}>
+      <SearchDownloadSelection hits={results.hits} resetKey={JSON.stringify(results)}>
       <p className="text-sm text-muted-foreground">{t('resultsHeader', { count: results.hits.length })}</p>
       {Object.entries(results.errors ?? {}).map(([source, error]) => (
         <Alert key={source} variant="destructive">
@@ -35,6 +37,7 @@ export function ScorerResults({ results }: { results: RankedSearchResponse }) {
         <summary className="cursor-pointer">{t('scoring.ranking')}</summary>
         <pre className="mt-2 overflow-auto whitespace-pre-wrap break-all">{JSON.stringify(results.ranking, null, 2)}</pre>
       </details>
+      </SearchDownloadSelection>
     </section>
   )
 }

@@ -21,8 +21,6 @@ const DefaultProviderTimeout = 15 * time.Second
 // implicitly.
 type minter interface {
 	ResolveOrMint(ctx context.Context, ref registry.PaperRef) (paperID string, created bool, err error)
-	UpdateStatus(ctx context.Context, paperID, status string) (found bool, err error)
-	Get(ctx context.Context, paperID string) (paper *registry.Paper, found bool, err error)
 }
 
 // Engine fans one SearchEntry out to every provider, merges the hits by
@@ -32,18 +30,17 @@ type minter interface {
 type Engine struct {
 	providers []Provider
 	reg       minter
-	onMint    func(ctx context.Context, paperID string, ref registry.PaperRef)
 
 	// ProviderTimeout bounds each individual provider call. Zero applies
 	// DefaultProviderTimeout.
 	ProviderTimeout time.Duration
 }
 
-// NewEngine builds an Engine. reg may be nil (minting disabled); onMint is
-// an optional hook fired once per newly minted paper (used by the
-// lazy-ingestion pipeline) and may be nil.
-func NewEngine(reg *registry.Store, onMint func(ctx context.Context, paperID string, ref registry.PaperRef), providers ...Provider) *Engine {
-	e := &Engine{providers: providers, onMint: onMint}
+// NewEngine builds a metadata-only search engine. reg may be nil (minting
+// disabled). Acquisition is deliberately not a capability of search: callers
+// must explicitly submit selected identifiers to the downloader endpoint.
+func NewEngine(reg *registry.Store, providers ...Provider) *Engine {
+	e := &Engine{providers: providers}
 	if reg != nil {
 		e.reg = reg
 	}
@@ -104,16 +101,18 @@ func (e *Engine) Collect(ctx context.Context, entry SearchEntry) ([]Hit, map[str
 // candidates. Returns the partial results gathered so far together with
 // the first minting error.
 func (e *Engine) MintHits(ctx context.Context, hits []Hit, maxResults int) ([]Result, []Hit, error) {
-	return MintHits(ctx, e.reg, e.onMint, hits, maxResults)
+	return MintHits(ctx, e.reg, hits, maxResults)
 }
 
 // MintHits resolves-or-mints identity-anchored hits against reg,
 // capped at maxResults; title-only hits are collected as un-minted
 // candidates (capped at MaxCandidates). reg may be nil (minting
-// disabled — hits come back with an empty Result.PaperID); onMint is an
-// optional hook fired once per newly minted paper. On a minting error
-// the partial results are returned together with the error.
-func MintHits(ctx context.Context, reg minter, onMint func(ctx context.Context, paperID string, ref registry.PaperRef), hits []Hit, maxResults int) ([]Result, []Hit, error) {
+// disabled — hits come back with an empty Result.PaperID). This only anchors
+// metadata: it never changes acquisition status or submits work, including for
+// existing pending papers. New rows keep the registry default status, not pending,
+// so background pending recovery cannot turn an unselected hit into a download.
+// On a minting error the partial results are returned together with the error.
+func MintHits(ctx context.Context, reg minter, hits []Hit, maxResults int) ([]Result, []Hit, error) {
 	var results []Result
 	var candidates []Hit
 	for _, h := range hits {
@@ -133,27 +132,6 @@ func MintHits(ctx context.Context, reg minter, onMint func(ctx context.Context, 
 			paperID, created, err := reg.ResolveOrMint(ctx, ref)
 			if err != nil {
 				return results, candidates, fmt.Errorf("search: resolve-or-mint %s: %w", identityKey(h), err)
-			}
-			shouldIngest := created
-			if created {
-				// Registry mints with the schema default status 'ready';
-				// search-minted papers still need ingestion, so demote to
-				// 'pending' before notifying the lazy-ingestion hook.
-				if _, err := reg.UpdateStatus(ctx, paperID, "pending"); err != nil {
-					return results, candidates, fmt.Errorf("search: mark minted paper %s pending: %w", paperID, err)
-				}
-			} else if onMint != nil {
-				// A process restart can strand an in-memory ingestion job.
-				// Re-searching an existing pending paper re-drives it, while
-				// ready/failed papers remain side-effect free.
-				paper, found, err := reg.Get(ctx, paperID)
-				if err != nil {
-					return results, candidates, fmt.Errorf("search: inspect paper %s for ingestion: %w", paperID, err)
-				}
-				shouldIngest = found && paper.Status == "pending"
-			}
-			if shouldIngest && onMint != nil {
-				onMint(ctx, paperID, ref)
 			}
 			res.PaperID = paperID
 			res.Created = created

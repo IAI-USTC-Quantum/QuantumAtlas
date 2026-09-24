@@ -8,13 +8,14 @@ import type { SearchHit } from '@/lib/api'
 import { useLang } from '@/hooks/use-lang'
 import { usePaperDetail } from '@/lib/queries'
 import { PaperPipelineChip } from '@/components/paper-pipeline-chip'
+import { SearchDownloadCheckbox } from '@/components/search-download-selection'
 
 type Props = {
   hit: SearchHit
   rank: number
   /** Registry paper this hit resolved to. When set, the title links to the paper detail page. */
   paperId?: string
-  /** True when this search minted the registry paper (picked up by lazy ingestion). */
+  /** True when this search minted registry metadata (not a download request). */
   created?: boolean
   /** Hide the fused score (multi-mode raw results carry no meaningful score). */
   hideScore?: boolean
@@ -35,6 +36,7 @@ export function PaperHitCard({ hit, rank, paperId, created, hideScore }: Props) 
   return (
     <Card className="border-border/60">
       <CardContent className="space-y-3 p-4">
+        <SearchDownloadCheckbox hit={hit} paperId={paperId} />
         <div className="flex items-baseline justify-between gap-3">
           <div className="flex min-w-0 items-baseline gap-2">
             <span className="shrink-0 font-mono text-xs text-muted-foreground tabular-nums">

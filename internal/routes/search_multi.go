@@ -12,7 +12,7 @@ package routes
 //	                           decrypted and forwarded as api_keys so
 //	                           key-requiring backends run under the
 //	                           user's own credentials. Identity-anchored
-//	                           hits are resolve-or-minted (lazy ingest)
+//	                           hits are resolve-or-minted (metadata only)
 //	                           and backfilled with paper_id / created /
 //	                           has_md / status — title-only hits get no
 //	                           enrichment. Not metered (same as POST
@@ -150,13 +150,11 @@ func attachMultiAnchors(results map[string][]search.RemoteHit, anchors map[strin
 // search.remote is disabled — the route stays registered but every call
 // answers 503 (same convention as the agentic endpoint).
 //
-// The minter (search engine) is used for lazy ingestion: after the
-// microservice returns per-backend raw hits, identity-anchored results
-// (DOI / arXiv ID) are resolve-or-minted into the registry, which fires
-// the ingester's OnMint hook → PDF fetch → MinerU conversion. This
-// mirrors what POST /api/search and /api/search/agentic already do; the
-// mint results are backfilled onto the raw hits (paper_id / created /
-// hosting summary) so frontends can link minted hits to the site.
+// The search engine anchors metadata after the microservice returns raw
+// hits: DOI / arXiv results are resolve-or-minted without downloading or
+// submitting conversion work, just as on the other search surfaces.
+// Anchors are backfilled onto raw hits (paper_id / created / hosting
+// summary) so frontends can link results and explicitly select downloads.
 // catalog decorates those hits with the registry hosting summary
 // (has_md / status) and may be nil — the fields are then omitted.
 func RegisterSearchMulti(se *core.ServeEvent, keys *userkeys.Store, backend MultiBackend, engine *search.Engine, catalog *registry.Store, enforcer *casbin.Enforcer, surveyOptions ...SurveyOptions) {
@@ -209,8 +207,7 @@ func RegisterSearchMulti(se *core.ServeEvent, keys *userkeys.Store, backend Mult
 			})
 		}
 
-		// Lazy ingestion: resolve-or-mint identity-anchored hits so the
-		// ingest pipeline (PDF fetch → MinerU) fires for new papers —
+		// Resolve-or-mint metadata only, without acquisition side effects —
 		// the same behavior as POST /api/search and /api/search/agentic.
 		// Dedup by DOI > arXiv across backends to avoid minting the same
 		// paper N times when N backends return it.
@@ -235,7 +232,7 @@ func RegisterSearchMulti(se *core.ServeEvent, keys *userkeys.Store, backend Mult
 				// user can still see the raw hit.
 				results, _, mintErr := engine.MintHits(re.Request.Context(), hits, len(hits))
 				if mintErr != nil {
-					slog.Warn("multi search: lazy minting failed", "error", mintErr)
+					slog.Warn("multi search: metadata anchoring failed", "error", mintErr)
 				}
 				mintResults = results
 			}

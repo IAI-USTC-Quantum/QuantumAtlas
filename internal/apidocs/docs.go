@@ -3039,7 +3039,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Fans one search entry out to the configured providers\n(catalog / arxiv / openalex / remote), merges hits by paper\nidentity (DOI \u003e arXiv \u003e title hash) and resolve-or-mints each\nidentity-anchored hit against the paper registry. Newly minted\npapers carry created=true and are picked up by the lazy\ningestion pipeline; title-only hits return as un-minted\ncandidates. The entry may carry an identity (arxiv_id / doi)\ninstead of free text — identity fields are forwarded to the\nremote provider for identity-aware lookups; an entry with\nnone of text / title / arxiv_id / doi is a 400. Each minted\nresult also carries its hosting summary: has_md / has_pdf /\nstatus from the registry default asset (omitted when the\nregistry is unavailable). Requires the papers:read scope.",
+                "description": "Fans one search entry out to the configured providers\n(catalog / arxiv / openalex / remote), merges hits by paper\nidentity (DOI \u003e arXiv \u003e title hash) and resolve-or-mints each\nidentity-anchored hit against the paper registry. Newly minted\npapers carry created=true as metadata only: search does not\ndownload papers or submit conversion tasks. Select identifiers\nexplicitly via POST /api/downloader/fetch. Title-only hits return as un-minted\ncandidates. The entry may carry an identity (arxiv_id / doi)\ninstead of free text — identity fields are forwarded to the\nremote provider for identity-aware lookups; an entry with\nnone of text / title / arxiv_id / doi is a 400. Each minted\nresult also carries its hosting summary: has_md / has_pdf /\nstatus from the registry default asset (omitted when the\nregistry is unavailable). Requires the papers:read scope.",
                 "consumes": [
                     "application/json"
                 ],
@@ -3115,7 +3115,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "One multi-source search through the agentic backend\n(remote qatlas-search microservice or the local runner),\noptionally with an LLM conclusion ({\"agent\": false} skips\nit). The body is a search entry plus \"agent\" and \"sources\"\nextensions; identity fields (arxiv_id / doi / title) are\nforwarded so identity-only entries run identity lookups\ninstead of an empty query — an entry with none of text /\ntitle / arxiv_id / doi is a 400 (before metering). Every\ncall is metered per user per day (usage block); a failed\nupstream is refunded. Results mirror POST /api/search,\nincluding the has_md / has_pdf / status hosting summary\non minted results. Requires the papers:read scope plus a\nuser-bound credential (system PATs get 403).",
+                "description": "One multi-source search through the agentic backend\n(remote qatlas-search microservice or the local runner),\noptionally with an LLM conclusion ({\"agent\": false} skips\nit). The body is a search entry plus \"agent\" and \"sources\"\nextensions; identity fields (arxiv_id / doi / title) are\nforwarded so identity-only entries run identity lookups\ninstead of an empty query — an entry with none of text /\ntitle / arxiv_id / doi is a 400 (before metering). Every\ncall is metered per user per day (usage block); a failed\nupstream is refunded. Results mirror POST /api/search,\nincluding the has_md / has_pdf / status hosting summary\non minted results. Anchoring is metadata-only; downloads require\nexplicit POST /api/downloader/fetch. Requires the papers:read scope plus a\nuser-bound credential (system PATs get 403).",
                 "consumes": [
                     "application/json"
                 ],
@@ -3251,7 +3251,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Proxies one mode=\"multi\" call to the qatlas-search\nmicroservice: every requested backend returns its own raw\nhit list (the source's own order), with NO cross-backend\nmerge or ranking. The caller's stored third-party API keys\n(configured in the dashboard) are decrypted and forwarded so\nkey-requiring backends run under the user's credentials.\nIdentity-anchored hits (DOI / arXiv id) are resolve-or-\nminted into the registry before the response, firing the\nlazy ingestion pipeline, and carry the server-side\nenrichment paper_id / created / has_md / status (the\nhosting summary is omitted when the registry is\nunavailable). Title-only hits — no DOI, no arXiv id — are\nnever minted and carry none of these fields.\nRequires the papers:read scope; 503 when search.remote is\ndisabled; 502 when the microservice call fails.",
+                "description": "Proxies one mode=\"multi\" call to the qatlas-search\nmicroservice: every requested backend returns its own raw\nhit list (the source's own order), with NO cross-backend\nmerge or ranking. The caller's stored third-party API keys\n(configured in the dashboard) are decrypted and forwarded so\nkey-requiring backends run under the user's credentials.\nIdentity-anchored hits (DOI / arXiv id) are resolve-or-\nminted as metadata only before the response, without downloads\nor conversion tasks, and carry the server-side\nenrichment paper_id / created / has_md / status (the\nhosting summary is omitted when the registry is\nunavailable). Title-only hits — no DOI, no arXiv id — are\nnever minted and carry none of these fields.\nRequires the papers:read scope; 503 when search.remote is\ndisabled; 502 when the microservice call fails.",
                 "consumes": [
                     "application/json"
                 ],
@@ -3336,7 +3336,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Remote-only fused search with ranking=scorer and agent=false. Requires papers:read. Recompiles the supplied program on every request. No LLM calls. Preserves one globally ordered hit list including title-only candidates and custom score explanations; only returned identity-anchored hits are resolve-or-minted. Scores are neither normalized nor probabilities.",
+                "description": "Search anchors metadata only; downloading selected identifiers requires POST /api/downloader/fetch.\nRemote-only fused search with ranking=scorer and agent=false. Requires papers:read. Recompiles the supplied program on every request. No LLM calls. Preserves one globally ordered hit list including title-only candidates and custom score explanations; only returned identity-anchored hits are resolve-or-minted. Scores are neither normalized nor probabilities.",
                 "consumes": [
                     "application/json"
                 ],
@@ -3570,7 +3570,7 @@ const docTemplate = `{
         },
         "/api/search/survey": {
             "post": {
-                "description": "Keywords, author/year/venue/citation rules and agentic planning are owned by qatlas-search. Rules filter a bounded retrieved set, not an exhaustive corpus. Per-user backend keys are injected by qatlasd and cannot be supplied by callers.",
+                "description": "Results are anchored as metadata only, without downloads or conversion tasks; selected identifiers require POST /api/downloader/fetch.\nKeywords, author/year/venue/citation rules and agentic planning are owned by qatlas-search. Rules filter a bounded retrieved set, not an exhaustive corpus. Per-user backend keys are injected by qatlasd and cannot be supplied by callers.",
                 "consumes": [
                     "application/json"
                 ],

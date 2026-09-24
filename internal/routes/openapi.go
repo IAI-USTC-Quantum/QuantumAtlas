@@ -120,8 +120,9 @@ func docInstallScript() {}
 // @Description (catalog / arxiv / openalex / remote), merges hits by paper
 // @Description identity (DOI > arXiv > title hash) and resolve-or-mints each
 // @Description identity-anchored hit against the paper registry. Newly minted
-// @Description papers carry created=true and are picked up by the lazy
-// @Description ingestion pipeline; title-only hits return as un-minted
+// @Description papers carry created=true as metadata only: search does not
+// @Description download papers or submit conversion tasks. Select identifiers
+// @Description explicitly via POST /api/downloader/fetch. Title-only hits return as un-minted
 // @Description candidates. The entry may carry an identity (arxiv_id / doi)
 // @Description instead of free text — identity fields are forwarded to the
 // @Description remote provider for identity-aware lookups; an entry with
@@ -156,7 +157,8 @@ func docSearchPapers() {}
 // @Description call is metered per user per day (usage block); a failed
 // @Description upstream is refunded. Results mirror POST /api/search,
 // @Description including the has_md / has_pdf / status hosting summary
-// @Description on minted results. Requires the papers:read scope plus a
+// @Description on minted results. Anchoring is metadata-only; downloads require
+// @Description explicit POST /api/downloader/fetch. Requires the papers:read scope plus a
 // @Description user-bound credential (system PATs get 403).
 // @Tags        Search
 // @Accept      json
@@ -205,6 +207,7 @@ func docScoringCapabilities() {}
 func docScoringGenerate() {}
 
 // @Summary     Search using a confirmed custom scorer
+// @Description Search anchors metadata only; downloading selected identifiers requires POST /api/downloader/fetch.
 // @Description Remote-only fused search with ranking=scorer and agent=false. Requires papers:read. Recompiles the supplied program on every request. No LLM calls. Preserves one globally ordered hit list including title-only candidates and custom score explanations; only returned identity-anchored hits are resolve-or-minted. Scores are neither normalized nor probabilities.
 // @Tags        Search
 // @Accept      json
@@ -233,8 +236,8 @@ func docSearchRanked() {}
 // @Description (configured in the dashboard) are decrypted and forwarded so
 // @Description key-requiring backends run under the user's credentials.
 // @Description Identity-anchored hits (DOI / arXiv id) are resolve-or-
-// @Description minted into the registry before the response, firing the
-// @Description lazy ingestion pipeline, and carry the server-side
+// @Description minted as metadata only before the response, without downloads
+// @Description or conversion tasks, and carry the server-side
 // @Description enrichment paper_id / created / has_md / status (the
 // @Description hosting summary is omitted when the registry is
 // @Description unavailable). Title-only hits — no DOI, no arXiv id — are
@@ -1306,6 +1309,7 @@ func docAdminAssetSearch() {}
 // searchSurveyDoc is the bounded survey-search surface.
 // searchSurvey godoc
 // @Summary Plan and execute a bounded academic survey search
+// @Description Results are anchored as metadata only, without downloads or conversion tasks; selected identifiers require POST /api/downloader/fetch.
 // @Description Keywords, author/year/venue/citation rules and agentic planning are owned by qatlas-search. Rules filter a bounded retrieved set, not an exhaustive corpus. Per-user backend keys are injected by qatlasd and cannot be supplied by callers.
 // @Tags search
 // @Accept json

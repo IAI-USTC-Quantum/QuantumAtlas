@@ -38,6 +38,7 @@ type fakeMinter struct {
 	nextID      int
 	resolveErr  error
 	getErr      error
+	getCalls    int
 	paperStatus string
 	createdFor  func(ref registry.PaperRef) bool
 }
@@ -58,6 +59,7 @@ func (m *fakeMinter) UpdateStatus(_ context.Context, _ string, status string) (b
 }
 
 func (m *fakeMinter) Get(_ context.Context, paperID string) (*registry.Paper, bool, error) {
+	m.getCalls++
 	if m.getErr != nil {
 		return nil, false, m.getErr
 	}
@@ -96,7 +98,7 @@ func TestFanOutMergeAndIsolation(t *testing.T) {
 	failing := &fakeProvider{name: "p3", err: errors.New("backend down")}
 	panicking := &fakeProvider{name: "p4", panic: true}
 
-	eng := NewEngine(nil, nil, good1, good2, failing, panicking)
+	eng := NewEngine(nil, good1, good2, failing, panicking)
 	resp, err := eng.Search(context.Background(), SearchEntry{Text: "q"})
 	if err != nil {
 		t.Fatalf("search: %v", err)
@@ -144,7 +146,7 @@ func TestMaxResultsCapAndCandidatesCap(t *testing.T) {
 	for i := 0; i < 8; i++ {
 		hits = append(hits, Hit{Title: "t" + string(rune('a'+i)), Source: "p1"})
 	}
-	eng := NewEngine(nil, nil, &fakeProvider{name: "p1", hits: hits})
+	eng := NewEngine(nil, &fakeProvider{name: "p1", hits: hits})
 	resp, err := eng.Search(context.Background(), SearchEntry{Text: "q", MaxResults: 3})
 	if err != nil {
 		t.Fatalf("search: %v", err)
@@ -163,14 +165,12 @@ func TestMaxResultsCapAndCandidatesCap(t *testing.T) {
 
 func TestMintingPath(t *testing.T) {
 	mint := &fakeMinter{}
-	var minted []string
 	eng := &Engine{
 		providers: []Provider{&fakeProvider{name: "p1", hits: []Hit{
 			{DOI: "10.1000/x", Title: "New Paper", Score: 1.0, Source: "p1"},
 			{Title: "No Identity", Score: 0.5, Source: "p1"},
 		}}},
-		reg:    mint,
-		onMint: func(_ context.Context, paperID string, _ registry.PaperRef) { minted = append(minted, paperID) },
+		reg: mint,
 	}
 	resp, err := eng.Search(context.Background(), SearchEntry{Text: "q"})
 	if err != nil {
@@ -182,12 +182,10 @@ func TestMintingPath(t *testing.T) {
 	if len(mint.refs) != 1 || mint.refs[0].DOI != "10.1000/x" {
 		t.Fatalf("bad mint refs: %+v", mint.refs)
 	}
-	// Registry default status is 'ready'; search mints must demote to pending.
-	if len(mint.statuses) != 1 || mint.statuses[0] != "pending" {
-		t.Fatalf("expected pending demotion, got %v", mint.statuses)
-	}
-	if len(minted) != 1 {
-		t.Fatalf("onMint not fired once: %v", minted)
+	// Never create pending rows: both startup ingestion recovery and the
+	// downloader's periodic adoption would otherwise acquire unselected hits.
+	if len(mint.statuses) != 0 {
+		t.Fatalf("search changed acquisition status: %v", mint.statuses)
 	}
 	if len(resp.Candidates) != 1 {
 		t.Fatalf("title-only hit should be a candidate, not minted: %+v", resp.Candidates)
@@ -196,13 +194,11 @@ func TestMintingPath(t *testing.T) {
 
 func TestExistingPaperNotDemoted(t *testing.T) {
 	mint := &fakeMinter{createdFor: func(registry.PaperRef) bool { return false }}
-	var queued []string
 	eng := &Engine{
 		providers: []Provider{&fakeProvider{name: "p1", hits: []Hit{
 			{ArxivID: "2401.00001", Score: 1.0, Source: "p1"},
 		}}},
-		reg:    mint,
-		onMint: func(_ context.Context, paperID string, _ registry.PaperRef) { queued = append(queued, paperID) },
+		reg: mint,
 	}
 	resp, err := eng.Search(context.Background(), SearchEntry{Text: "q"})
 	if err != nil {
@@ -214,23 +210,67 @@ func TestExistingPaperNotDemoted(t *testing.T) {
 	if len(mint.statuses) != 0 {
 		t.Fatalf("existing paper must not be re-demoted: %v", mint.statuses)
 	}
-	if len(queued) != 0 {
-		t.Fatalf("ready paper must not be requeued: %v", queued)
+}
+
+// MintHits is shared by multi, survey, agentic, and ranked search, while
+// Search calls it after provider fan-out. Exercise both entry points so remote
+// modes cannot bypass the metadata-only admission boundary.
+func TestSearchAnchoringNeverChangesAcquisition(t *testing.T) {
+	for _, direct := range []bool{false, true} {
+		for _, status := range []string{"new", "pending", "ready", "failed"} {
+			name := status
+			if direct {
+				name += "/MintHits"
+			} else {
+				name += "/Search"
+			}
+			t.Run(name, func(t *testing.T) {
+				mint := &fakeMinter{
+					paperStatus: status,
+					createdFor:  func(registry.PaperRef) bool { return status == "new" },
+					getErr:      errors.New("acquisition inspection must not run"),
+				}
+				hits := []Hit{{DOI: "10.1000/selected-later", Title: "Metadata", Authors: []string{"Alice"}, Year: 2026}, {Title: "Candidate"}}
+				eng := &Engine{reg: mint, providers: []Provider{&fakeProvider{name: "test", hits: hits}}}
+				for range 2 { // repeated searches do not retry or reset existing work
+					var results []Result
+					var candidates []Hit
+					var err error
+					if direct {
+						results, candidates, err = eng.MintHits(context.Background(), hits, 10)
+					} else {
+						var resp Response
+						resp, err = eng.Search(context.Background(), SearchEntry{Text: "q"})
+						results, candidates = resp.Results, resp.Candidates
+					}
+					if err != nil || len(results) != 1 || len(candidates) != 1 {
+						t.Fatalf("results=%+v candidates=%+v err=%v", results, candidates, err)
+					}
+					if results[0].PaperID == "" || results[0].Created != (status == "new") {
+						t.Fatalf("lost metadata anchor: %+v", results[0])
+					}
+				}
+				if len(mint.statuses) != 0 || mint.getCalls != 0 || mint.paperStatus != status {
+					t.Fatalf("search touched acquisition: statuses=%v reads=%d status=%s", mint.statuses, mint.getCalls, mint.paperStatus)
+				}
+				if len(mint.refs) != 2 || mint.refs[0].Title != "Metadata" || mint.refs[0].Year != 2026 || len(mint.refs[0].Authors) != 1 {
+					t.Fatalf("metadata enrichment lost: %+v", mint.refs)
+				}
+			})
+		}
 	}
 }
 
-func TestExistingPendingPaperRequeues(t *testing.T) {
+func TestExistingPendingPaperRemainsUntouched(t *testing.T) {
 	mint := &fakeMinter{
 		createdFor:  func(registry.PaperRef) bool { return false },
 		paperStatus: "pending",
 	}
-	var queued []string
 	eng := &Engine{
 		providers: []Provider{&fakeProvider{name: "p1", hits: []Hit{
 			{DOI: "10.3788/cjl221209", Score: 1.0, Source: "p1"},
 		}}},
-		reg:    mint,
-		onMint: func(_ context.Context, paperID string, _ registry.PaperRef) { queued = append(queued, paperID) },
+		reg: mint,
 	}
 	resp, err := eng.Search(context.Background(), SearchEntry{Text: "q"})
 	if err != nil {
@@ -242,7 +282,7 @@ func TestExistingPendingPaperRequeues(t *testing.T) {
 	if len(mint.statuses) != 0 {
 		t.Fatalf("existing pending paper must not be re-demoted: %v", mint.statuses)
 	}
-	if len(queued) != 1 || queued[0] != resp.Results[0].PaperID {
-		t.Fatalf("pending paper was not requeued: %v", queued)
+	if mint.getCalls != 0 {
+		t.Fatalf("search inspected pending paper for resubmission: %d", mint.getCalls)
 	}
 }

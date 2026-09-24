@@ -5,6 +5,7 @@ import { test as base, expect, type Locator, type Page } from '@playwright/test'
 const GENERATE = '/api/search/scoring/generate'
 const RANKED = '/api/search/ranked'
 const CAPABILITIES = '/api/search/scoring/capabilities'
+const FETCH = '/api/downloader/fetch'
 const SOURCES = ['arxiv', 'openalex', 'semantic_scholar']
 const CONFIRM = 'I confirm these rules for this search'
 const EXECUTE = 'Search with confirmed rules'
@@ -127,7 +128,8 @@ const test = base.extend<{ api: Mocks }>({
         const replies: Record<string, unknown> = {
           '/api/admin/whoami': { login: record.username, is_admin: false, is_user_admin: false, is_superadmin: false },
           '/api/me': { ...record, is_admin: false, is_superadmin: false },
-          '/api/v1/plugins': { plugins: [{ id: 'search-remote', enabled: true, status: api.remote ? 'connected' : 'disconnected' }] },
+          '/api/v1/plugins': { plugins: [{ id: 'search-remote', enabled: true, status: api.remote ? 'connected' : 'disconnected' }, { id: 'downloader', enabled: true, status: 'connected' }] },
+          [FETCH]: { items: [], enqueued: 0 },
           '/api/search/backends': { remote: true, keys_enabled: true, backends: SOURCES.map((name) => ({
             name, label: name, category: 'academic', selectable: true,
             requires_key: false, user_key: false, server_ready: true, key_configured: false,
@@ -140,7 +142,7 @@ const test = base.extend<{ api: Mocks }>({
           '/api/search': { results: [], candidates: [{ title: 'Classic fallback hit', source: 'catalog', score: 0.5 }] },
           '/api/papers/scoring-paper-001': { paper_id: 'scoring-paper-001', title: 'Registry middle', status: 'ready', assets: [], acquisition: { state: 'ready', phase: 'done', active: false, events: [] } },
         }
-        const expectedMethod = [GENERATE, RANKED, '/api/search/multi', '/api/search/agentic', '/api/search'].includes(path) ? 'POST' : 'GET'
+        const expectedMethod = [FETCH, GENERATE, RANKED, '/api/search/multi', '/api/search/agentic', '/api/search'].includes(path) ? 'POST' : 'GET'
         if (Object.prototype.hasOwnProperty.call(replies, path) && method === expectedMethod) {
           const handler = api.handlers.get(path)
           try {
@@ -574,4 +576,159 @@ test('ordinary multi and Agentic retain their endpoints and custom mode does not
   expect(api.posts(GENERATE)).toHaveLength(0)
   expect(api.posts(RANKED)).toHaveLength(0)
   expect(api.posts('/api/search')).toHaveLength(0)
+})
+
+const DOWNLOAD_HITS = [
+  { title: 'Download Alpha', arxiv_id: '2401.12345', source: 'arxiv', score: 1 },
+  { title: 'Download Beta', doi: '10.1234/beta', source: 'openalex', score: 0.9 },
+  { title: 'Title only', source: 'fixture', score: 0 },
+  { title: 'Generic web link', url: 'https://example.invalid/paper', source: 'web', score: 0 },
+]
+
+function downloadFixtures(api: Mocks) {
+  api.handlers.set('/api/search/multi', () => ({ json: {
+    results: { arxiv: DOWNLOAD_HITS, openalex: [{ ...DOWNLOAD_HITS[0], title: 'Duplicate Alpha', arxiv_id: undefined, url: 'https://arxiv.org/abs/2401.12345v2' }] },
+    errors: {}, usage: { llm_tokens: 0 }, remote: true,
+  } }))
+  for (const path of ['/api/search', AGENTIC]) api.handlers.set(path, () => ({ json: {
+    ...EMPTY_AGENTIC, results: [{ paper_id: 'scoring-paper-001', created: false, hit: DOWNLOAD_HITS[0] }], candidates: DOWNLOAD_HITS.slice(1),
+  } }))
+  api.handlers.set(RANKED, () => ({ json: { ...RANKING, hits: DOWNLOAD_HITS } }))
+  api.handlers.set(FETCH, () => {
+    const body = api.posts(FETCH).at(-1)?.body as { items: string[] }
+    return { json: { items: body.items.map((input) => ({ input, kind: 'arxiv', created: false })), enqueued: body.items.length } }
+  })
+}
+
+for (const mode of ['classic', 'multi', 'agentic', 'custom'] as const) {
+  test(`${mode}: render/search never downloads; explicit selection submits identifiers only`, async ({ page, api }) => {
+    downloadFixtures(api)
+    api.remote = mode !== 'classic'
+    if (mode === 'custom') {
+      const editor = await openCustom(page)
+      await manualRules(editor)
+      await confirmAndExecute(editor)
+    } else {
+      await page.goto('/en/papers/search')
+      if (mode === 'agentic') await page.getByRole('button', { name: 'Agentic search', exact: true }).click()
+      await page.getByRole('main').locator('input[name="q"]').fill('download fixture')
+      await page.getByRole('button', { name: 'Search', exact: true }).click()
+    }
+    const alpha = page.getByRole('checkbox', { name: 'Select for download: Download Alpha', exact: true })
+    const beta = page.getByRole('checkbox', { name: 'Select for download: Download Beta', exact: true })
+    await expect(alpha).not.toBeChecked()
+    await expect(beta).not.toBeChecked()
+    await expect(page.getByRole('checkbox', { name: 'Select for download: Title only', exact: true })).toBeDisabled()
+    await expect(page.getByRole('checkbox', { name: 'Select for download: Generic web link', exact: true })).toBeDisabled()
+    const submit = page.getByRole('button', { name: 'Download selected', exact: true })
+    await expect(submit).toBeDisabled()
+    expect(api.posts(FETCH)).toHaveLength(0)
+    await alpha.check()
+    if (mode === 'multi') {
+      await page.getByRole('tab', { name: 'openalex' }).click()
+      await expect(page.getByRole('checkbox', { name: 'Select for download: Duplicate Alpha', exact: true })).toBeChecked()
+      await expect(page.getByTestId('download-selection-count')).toHaveText('1 selected')
+    }
+    expect(api.posts(FETCH)).toHaveLength(0)
+    await submit.click()
+    await expect(page.getByRole('status')).toContainText('1 accepted by downloader')
+    expect(api.posts(FETCH)).toEqual([{ method: 'POST', path: FETCH, body: { items: ['2401.12345'] } }])
+    await expect(submit).toBeDisabled()
+  })
+}
+
+test('download selection resets on query, source, mode and custom result edits', async ({ page, api }) => {
+  downloadFixtures(api)
+  await page.goto('/en/papers/search')
+  const search = async (query: string) => {
+    await page.getByRole('main').locator('input[name="q"]').fill(query)
+    await page.getByRole('button', { name: 'Search', exact: true }).click()
+  }
+  const alpha = page.getByRole('checkbox', { name: 'Select for download: Download Alpha', exact: true })
+  await search('first')
+  await alpha.check()
+  await search('second')
+  await expect(alpha).not.toBeChecked()
+  await alpha.check()
+  await page.getByRole('checkbox', { name: 'openalex', exact: true }).uncheck()
+  await expect(alpha).not.toBeChecked()
+  await alpha.check()
+  await page.getByRole('button', { name: 'Agentic search', exact: true }).click()
+  await expect(alpha).not.toBeChecked()
+  await alpha.check()
+  await page.getByRole('button', { name: 'Classic search', exact: true }).click()
+  await expect(alpha).not.toBeChecked()
+  await page.getByRole('button', { name: 'Custom scoring', exact: true }).click()
+  const editor = page.getByTestId('scorer-editor')
+  await manualRules(editor)
+  await confirmAndExecute(editor)
+  await alpha.check()
+  await editor.getByRole('textbox', { name: 'Score expression', exact: true }).fill('42')
+  await expect(alpha).toHaveCount(0)
+  await confirmAndExecute(editor)
+  await expect(alpha).not.toBeChecked()
+  expect(api.posts(FETCH)).toHaveLength(0)
+})
+
+test('download pending guard and partial failures retry only failed selected identifiers', async ({ page, api }) => {
+  downloadFixtures(api)
+  await openAgentic(page)
+  const alpha = page.getByRole('checkbox', { name: 'Select for download: Download Alpha', exact: true })
+  const beta = page.getByRole('checkbox', { name: 'Select for download: Download Beta', exact: true })
+  await alpha.check()
+  await beta.check()
+  const pending = api.hold(FETCH)
+  await rapidClicks(page.getByRole('button', { name: 'Download selected', exact: true }))
+  await expect.poll(() => api.posts(FETCH).length).toBe(1)
+  await expect(page.getByRole('button', { name: 'Submitting downloads…', exact: true })).toBeDisabled()
+  await expect(alpha).toBeDisabled()
+  await pending.release({ json: { items: [
+    { input: '2401.12345', kind: 'arxiv', created: false },
+    { input: '10.1234/beta', kind: 'doi', created: false, error: 'Temporary fixture failure' },
+  ], enqueued: 1 } })
+  await expect(page.getByRole('alert')).toContainText('Download Beta: Temporary fixture failure')
+  await expect(alpha).not.toBeChecked()
+  await expect(alpha).toBeDisabled()
+  await expect(beta).toBeChecked()
+  api.handlers.set(FETCH, () => ({ status: 403, json: { detail: 'papers:write required' } }))
+  await page.getByRole('button', { name: 'Retry failed (1)', exact: true }).click()
+  await expect(page.getByRole('alert')).toContainText('papers:write required')
+  expect(api.posts(FETCH).at(-1)?.body).toEqual({ items: ['10.1234/beta'] })
+  downloadFixtures(api)
+  await page.getByRole('button', { name: 'Retry failed (1)', exact: true }).click()
+  await expect(page.getByRole('alert')).toHaveCount(0)
+  await expect(beta).not.toBeChecked()
+  expect(api.posts(FETCH).map((request) => request.body)).toEqual([
+    { items: ['2401.12345', '10.1234/beta'] }, { items: ['10.1234/beta'] }, { items: ['10.1234/beta'] },
+  ])
+})
+
+test('download batches enforce the existing 50-identifier limit', async ({ page, api }) => {
+  downloadFixtures(api)
+  api.handlers.set(AGENTIC, () => ({ json: { ...EMPTY_AGENTIC, candidates: Array.from({ length: 51 }, (_, index) => ({
+    title: `Batch ${index}`, arxiv_id: `2401.${String(index).padStart(5, '0')}`, source: 'arxiv', score: 1,
+  })) } }))
+  await openAgentic(page)
+  const boxes = page.getByRole('checkbox', { name: /^Select for download: Batch/ })
+  await expect(boxes).toHaveCount(51)
+  for (const box of await boxes.all()) await box.check()
+  await expect(page.getByRole('button', { name: 'Download selected', exact: true })).toBeDisabled()
+  await expect(page.getByText('Select at most 50 unique papers per submission.', { exact: true })).toBeVisible()
+  expect(api.posts(FETCH)).toHaveLength(0)
+  await boxes.last().uncheck()
+  await page.getByRole('button', { name: 'Download selected', exact: true }).click()
+  await expect(page.getByRole('status')).toContainText('50 accepted by downloader')
+  expect((api.posts(FETCH)[0].body as { items: string[] }).items).toHaveLength(50)
+})
+
+test('Chinese download controls remain disabled when downloader is unavailable', async ({ page, api }) => {
+  downloadFixtures(api)
+  api.handlers.set('/api/v1/plugins', () => ({ json: { plugins: [{ id: 'search-remote', enabled: true, status: 'connected' }] } }))
+  await page.goto('/zh/papers/search')
+  await page.getByRole('main').locator('input[name="q"]').fill('量子')
+  await page.getByRole('button', { name: '搜索', exact: true }).click()
+  await expect(page.getByRole('checkbox', { name: '选择下载：Download Alpha', exact: true })).toBeDisabled()
+  await expect(page.getByRole('button', { name: '下载所选论文', exact: true })).toBeDisabled()
+  await expect(page.getByTestId('download-selection-count')).toHaveText('已选择 0 篇')
+  expect(api.posts(FETCH)).toHaveLength(0)
 })

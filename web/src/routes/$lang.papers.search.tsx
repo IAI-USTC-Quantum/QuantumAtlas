@@ -11,6 +11,7 @@ import { PageHeader } from '@/components/page-header'
 import { Panel } from '@/components/panel'
 import { PaperHitCard } from '@/components/paper-hit-card'
 import { ScorerEditor } from '@/components/scorer-editor'
+import { SearchDownloadSelection } from '@/components/search-download-selection'
 import { StatusBlock } from '@/components/status-block'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useLang } from '@/hooks/use-lang'
@@ -80,6 +81,7 @@ function PaperSearchPage() {
   const plugins = usePlugins()
   const remoteAvailable = isSearchRemoteAvailable(plugins.data?.plugins)
   const [mode, setMode] = useState<'classic' | 'agentic' | 'custom'>('classic')
+  const [searchRevision, setSearchRevision] = useState(0)
   const agenticOn = mode === 'agentic' && remoteAvailable
   const customOn = mode === 'custom' && remoteAvailable
 
@@ -121,6 +123,7 @@ function PaperSearchPage() {
   }
 
   function go(nextQuery: string) {
+    setSearchRevision((revision) => revision + 1)
     navigate({
       to: '/$lang/papers/search',
       params: { lang },
@@ -163,6 +166,12 @@ function PaperSearchPage() {
         : classicResults.error
   const rateLimitError =
     err instanceof AgenticSearchError && err.status === 429 ? err : undefined
+  const fusedResults = agenticOn ? agenticResults.data : classicResults.data
+  const downloadHits = customOn ? [] : remoteAvailable && !agenticOn
+    ? sources.flatMap((source) => multiResults.data?.results[source] ?? [])
+    : [...(fusedResults?.results.map((result) => ({ ...result.hit, paper_id: result.paper_id })) ?? []), ...(fusedResults?.candidates ?? [])]
+  const resultsRevision = agenticOn ? agenticResults.dataUpdatedAt : remoteAvailable ? multiResults.dataUpdatedAt : classicResults.dataUpdatedAt
+  const downloadResetKey = JSON.stringify([query, sources, mode, remoteAvailable, searchRevision, resultsRevision])
 
   return (
     <section className="space-y-5">
@@ -252,7 +261,8 @@ function PaperSearchPage() {
 
       {customOn ? (
         <ScorerEditor key={query} initialQuery={query} sources={sources} />
-      ) : query && rateLimitError ? (
+      ) : <SearchDownloadSelection hits={downloadHits} resetKey={downloadResetKey}>
+      {query && rateLimitError ? (
         <Alert>
           <AlertCircle className="size-4" />
           <AlertTitle>{t('agentic.rateLimitedTitle')}</AlertTitle>
@@ -307,6 +317,7 @@ function PaperSearchPage() {
       ) : query ? (
         <ClassicResults results={classicResults.data} error={err} />
       ) : null}
+      </SearchDownloadSelection>}
     </section>
   )
 }

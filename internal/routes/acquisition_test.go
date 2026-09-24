@@ -22,6 +22,15 @@ func TestPaperAcquisitionPendingFallback(t *testing.T) {
 	}
 }
 
+func TestPaperAcquisitionPendingWithPDFRemainsQueued(t *testing.T) {
+	body := paperAcquisition(context.Background(), &registry.Paper{
+		PaperID: "qa_existing", DOI: "10.1000/existing", Status: "pending",
+	}, []registry.Asset{{Source: "published", PDFPath: "existing.pdf"}}, nil, nil)
+	if body["state"] != "queued" || body["phase"] != "queued" || body["active"] != true {
+		t.Fatalf("existing accepted work lost its progress: %+v", body)
+	}
+}
+
 func TestPaperAcquisitionReadyFromMarkdownAsset(t *testing.T) {
 	body := paperAcquisition(context.Background(), &registry.Paper{
 		PaperID: "qa_ready", DOI: "10.1000/ready", Status: "ready",

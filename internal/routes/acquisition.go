@@ -18,10 +18,9 @@ type acquisitionEvent struct {
 	Detail string    `json:"detail,omitempty"`
 }
 
-// paperAcquisition merges the PDF ingester and MinerU converter into one
-// UI-facing status. Calling it also idempotently starts conversion when
-// a PDF exists without markdown; this makes search-card polling useful
-// for both newly ingested and pre-existing published assets.
+// paperAcquisition merges existing PDF ingestion and MinerU progress into one
+// UI-facing status. Detail GETs and search-card polling are observational only:
+// they must never start downloads or conversion for unselected search results.
 func paperAcquisition(
 	ctx context.Context,
 	p *registry.Paper,
@@ -54,7 +53,7 @@ func paperAcquisition(
 	if asset != nil && !asset.FetchedAt.IsZero() && !hasAcquisitionPhase(events, "pdf_ready") {
 		events = append(events, acquisitionEvent{Phase: "pdf_ready", State: "done", At: asset.FetchedAt})
 	}
-	job := ensureAndLookupConversion(ctx, p, asset, converter)
+	job := lookupConversion(p, asset, converter)
 	if job != nil {
 		appendMinerUEvents(&events, job)
 		switch job.State {
@@ -80,9 +79,10 @@ func paperAcquisition(
 			if !asset.FetchedAt.IsZero() && !hasAcquisitionPhase(events, "ready") {
 				events = append(events, acquisitionEvent{Phase: "ready", State: "done", At: asset.FetchedAt})
 			}
-		} else {
-			state, phase = "queued", "waiting_mineru"
-			active = converter != nil && converter.Enabled()
+		} else if !active {
+			// A stored PDF is not evidence of an accepted conversion job.
+			// Preserve any actual ingestion progress already observed above.
+			state, phase = "idle", "waiting_mineru"
 		}
 	}
 
@@ -127,14 +127,11 @@ func defaultAcquisitionAsset(assets []registry.Asset) *registry.Asset {
 	return &assets[0] // registry.Assets already orders published/default first.
 }
 
-func ensureAndLookupConversion(ctx context.Context, p *registry.Paper, asset *registry.Asset, c *mineru.Converter) *mineru.Job {
+func lookupConversion(p *registry.Paper, asset *registry.Asset, c *mineru.Converter) *mineru.Job {
 	if c == nil || asset == nil {
 		return nil
 	}
 	if asset.Source == "published" && p.DOI != "" {
-		if asset.MinerUMDPath == "" && c.Enabled() {
-			c.EnsureByDOI(ctx, p.DOI, "")
-		}
 		job, _ := c.LookupDOI(p.DOI)
 		return job
 	}
@@ -142,9 +139,6 @@ func ensureAndLookupConversion(ctx context.Context, p *registry.Paper, asset *re
 		canonical := p.ArxivID
 		if asset.ArxivVersion > 0 {
 			canonical += "v" + strconv.Itoa(asset.ArxivVersion)
-		}
-		if asset.MinerUMDPath == "" && c.Enabled() {
-			c.Ensure(ctx, canonical)
 		}
 		job, _ := c.Lookup(canonical)
 		return job

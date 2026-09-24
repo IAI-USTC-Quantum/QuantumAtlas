@@ -2470,8 +2470,9 @@ paths:
         (catalog / arxiv / openalex / remote), merges hits by paper
         identity (DOI > arXiv > title hash) and resolve-or-mints each
         identity-anchored hit against the paper registry. Newly minted
-        papers carry created=true and are picked up by the lazy
-        ingestion pipeline; title-only hits return as un-minted
+        papers carry created=true as metadata only: search does not
+        download papers or submit conversion tasks. Select identifiers
+        explicitly via POST /api/downloader/fetch. Title-only hits return as un-minted
         candidates. The entry may carry an identity (arxiv_id / doi)
         instead of free text — identity fields are forwarded to the
         remote provider for identity-aware lookups; an entry with
@@ -2540,7 +2541,8 @@ paths:
         call is metered per user per day (usage block); a failed
         upstream is refunded. Results mirror POST /api/search,
         including the has_md / has_pdf / status hosting summary
-        on minted results. Requires the papers:read scope plus a
+        on minted results. Anchoring is metadata-only; downloads require
+        explicit POST /api/downloader/fetch. Requires the papers:read scope plus a
         user-bound credential (system PATs get 403).
       parameters:
       - description: '{text?, title?, doi?, arxiv_id?, max_results?, agent?, sources?}'
@@ -2646,8 +2648,8 @@ paths:
         (configured in the dashboard) are decrypted and forwarded so
         key-requiring backends run under the user's credentials.
         Identity-anchored hits (DOI / arXiv id) are resolve-or-
-        minted into the registry before the response, firing the
-        lazy ingestion pipeline, and carry the server-side
+        minted as metadata only before the response, without downloads
+        or conversion tasks, and carry the server-side
         enrichment paper_id / created / has_md / status (the
         hosting summary is omitted when the registry is
         unavailable). Title-only hits — no DOI, no arXiv id — are
@@ -2710,11 +2712,9 @@ paths:
     post:
       consumes:
       - application/json
-      description: Remote-only fused search with ranking=scorer and agent=false. Requires
-        papers:read. Recompiles the supplied program on every request. No LLM calls.
-        Preserves one globally ordered hit list including title-only candidates and
-        custom score explanations; only returned identity-anchored hits are resolve-or-minted.
-        Scores are neither normalized nor probabilities.
+      description: |-
+        Search anchors metadata only; downloading selected identifiers requires POST /api/downloader/fetch.
+        Remote-only fused search with ranking=scorer and agent=false. Requires papers:read. Recompiles the supplied program on every request. No LLM calls. Preserves one globally ordered hit list including title-only candidates and custom score explanations; only returned identity-anchored hits are resolve-or-minted. Scores are neither normalized nor probabilities.
       parameters:
       - description: '{text:string,sources:[string],max_results?:1..100,scorer:{language:qatlas-expr-v1,filter?:string,score:string},explain?:boolean}'
         in: body
@@ -2879,10 +2879,9 @@ paths:
     post:
       consumes:
       - application/json
-      description: Keywords, author/year/venue/citation rules and agentic planning
-        are owned by qatlas-search. Rules filter a bounded retrieved set, not an exhaustive
-        corpus. Per-user backend keys are injected by qatlasd and cannot be supplied
-        by callers.
+      description: |-
+        Results are anchored as metadata only, without downloads or conversion tasks; selected identifiers require POST /api/downloader/fetch.
+        Keywords, author/year/venue/citation rules and agentic planning are owned by qatlas-search. Rules filter a bounded retrieved set, not an exhaustive corpus. Per-user backend keys are injected by qatlasd and cannot be supplied by callers.
       parameters:
       - description: '{goal, queries?, rules?: {authors?, venues?, year_from?, year_to?,
           min_citations?, sort?}, sources, max_results?, agentic?}; agentic=true uses

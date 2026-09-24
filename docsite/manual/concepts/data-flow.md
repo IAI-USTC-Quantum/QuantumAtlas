@@ -113,6 +113,8 @@ markdown 管线的内部阶段）在缓存未命中时**不阻塞**：server 立
 
 ## 搜索路径
 
+搜索只登记论文元数据，不自动下载 PDF，也不把新命中标为待下载。普通、逐平台、Agentic 和自定义评分搜索都遵循同一策略。用户在结果中勾选论文并点击「下载所选」后，前端才调用 `POST /api/downloader/fetch`，由主服务为明确选择的条目提交任务；worker 的领取与执行方式不变。升级前已有的排队任务不会自动取消。
+
 `POST /api/search` 接收一个 SearchEntry JSON，engine 按 config.yaml 的
 `search.providers`（默认 `catalog,arxiv,openalex`）fan-out：
 

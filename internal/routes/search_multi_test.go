@@ -102,7 +102,7 @@ func newMultiHarness(t testing.TB, backend MultiBackend, engine *search.Engine, 
 }
 
 func TestAPI_SearchMulti_RejectsAnonymous(t *testing.T) {
-	h := newMultiHarness(t, &fakeMultiBackend{}, search.NewEngine(nil, nil), nil)
+	h := newMultiHarness(t, &fakeMultiBackend{}, search.NewEngine(nil), nil)
 	status, _, _ := h.do(http.MethodPost, "/api/search/multi", `{"text":"x","sources":["arxiv"]}`, nil)
 	if status != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", status)
@@ -121,7 +121,7 @@ func TestAPI_SearchMulti_NoBackend(t *testing.T) {
 }
 
 func TestAPI_SearchMulti_ValidatesBody(t *testing.T) {
-	h := newMultiHarness(t, &fakeMultiBackend{}, search.NewEngine(nil, nil), nil)
+	h := newMultiHarness(t, &fakeMultiBackend{}, search.NewEngine(nil), nil)
 	hdr := rawHeader(h.sessionToken())
 	for _, tc := range []struct{ name, body string }{
 		{"no text", `{"sources":["arxiv"]}`},
@@ -144,7 +144,7 @@ func TestAPI_SearchMulti_ForwardsSourcesAndUserKeys(t *testing.T) {
 			Errors: map[string]string{"tavily": "HTTPError: 401"},
 		},
 	}
-	h := newMultiHarness(t, fake, search.NewEngine(nil, nil), nil)
+	h := newMultiHarness(t, fake, search.NewEngine(nil), nil)
 
 	// Store a user key for a key-requiring backend first (dashboard flow).
 	status, _, _ := h.do(http.MethodPut, "/api/me/search-keys/ieee", `{"key":"ieee-user-key-99"}`, rawHeader(h.sessionToken()))
@@ -182,7 +182,7 @@ func TestAPI_SearchMulti_ForwardsSourcesAndUserKeys(t *testing.T) {
 func TestAPI_SearchMulti_UpstreamFailure(t *testing.T) {
 	fake := &fakeMultiBackend{}
 	fake.multiErr = context.DeadlineExceeded
-	h := newMultiHarness(t, fake, search.NewEngine(nil, nil), nil)
+	h := newMultiHarness(t, fake, search.NewEngine(nil), nil)
 	status, _, body := h.do(http.MethodPost, "/api/search/multi", `{"text":"x","sources":["arxiv"]}`, rawHeader(h.sessionToken()))
 	if status != http.StatusBadGateway {
 		t.Fatalf("status = %d, want 502; body=%v", status, body)
@@ -261,7 +261,7 @@ func TestAPI_SearchMulti_EnrichmentOmittedWithoutRegistry(t *testing.T) {
 			},
 		},
 	}
-	h := newMultiHarness(t, fake, search.NewEngine(nil, nil), nil)
+	h := newMultiHarness(t, fake, search.NewEngine(nil), nil)
 	status, raw, resp := h.do(http.MethodPost, "/api/search/multi", `{"text":"x","sources":["arxiv","web"]}`, rawHeader(h.sessionToken()))
 	if status != http.StatusOK {
 		t.Fatalf("status = %d; body=%s", status, raw)
@@ -288,7 +288,7 @@ func TestAPI_SearchMulti_MintFailureKeepsResponse(t *testing.T) {
 			},
 		},
 	}
-	h := newMultiHarness(t, fake, search.NewEngine(registry.NewStore(nil), nil), registry.NewStore(nil))
+	h := newMultiHarness(t, fake, search.NewEngine(registry.NewStore(nil)), registry.NewStore(nil))
 	status, raw, resp := h.do(http.MethodPost, "/api/search/multi", `{"text":"x","sources":["arxiv"]}`, rawHeader(h.sessionToken()))
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want 200 despite mint failure; body=%s", status, raw)
@@ -310,7 +310,7 @@ func TestAPI_SearchBackends_MergesLiveAndUserKeys(t *testing.T) {
 			{Name: "totally_new", Label: "Brand New", Category: "web", UserKey: true, Available: true},
 		},
 	}
-	h := newMultiHarness(t, fake, search.NewEngine(nil, nil), nil)
+	h := newMultiHarness(t, fake, search.NewEngine(nil), nil)
 
 	status, _, _ := h.do(http.MethodPut, "/api/me/search-keys/ieee", `{"key":"ieee-user-key-99"}`, rawHeader(h.sessionToken()))
 	if status != http.StatusOK {
@@ -367,7 +367,7 @@ func TestAPI_SearchBackends_NoBackendIsEmpty(t *testing.T) {
 }
 
 func TestAPI_SearchBackends_RejectsAnonymous(t *testing.T) {
-	h := newMultiHarness(t, &fakeMultiBackend{}, search.NewEngine(nil, nil), nil)
+	h := newMultiHarness(t, &fakeMultiBackend{}, search.NewEngine(nil), nil)
 	status, _, _ := h.do(http.MethodGet, "/api/search/backends", "", nil)
 	if status != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", status)
@@ -375,7 +375,7 @@ func TestAPI_SearchBackends_RejectsAnonymous(t *testing.T) {
 }
 
 func TestAPI_MeSearchKeys_CRUD(t *testing.T) {
-	h := newMultiHarness(t, &fakeMultiBackend{}, search.NewEngine(nil, nil), nil)
+	h := newMultiHarness(t, &fakeMultiBackend{}, search.NewEngine(nil), nil)
 	hdr := rawHeader(h.sessionToken())
 
 	// Unknown backend / no user-key slot -> 400.

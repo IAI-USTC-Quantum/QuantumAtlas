@@ -47,7 +47,7 @@ func newSearchHarness(t testing.TB, catalog *registry.Store) *patHarness {
 
 	var built http.Handler
 	err = app.OnServe().Trigger(se, func(e *core.ServeEvent) error {
-		RegisterSearch(e, search.NewEngine(nil, nil), catalog, enforcer)
+		RegisterSearch(e, search.NewEngine(nil), catalog, enforcer)
 		m, mErr := e.Router.BuildMux()
 		if mErr != nil {
 			return mErr

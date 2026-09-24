@@ -7,8 +7,8 @@ package routes
 // the configured providers (catalog / arxiv / openalex / remote) via the
 // search.Engine, and returns the engine's merged response: results are
 // identity-anchored hits with their registry paper_id (newly minted
-// papers carry created=true and are picked up by the lazy-ingestion
-// pipeline), candidates are title-only hits that were NOT minted. An
+// papers carry created=true without submitting acquisition work),
+// candidates are title-only hits that were NOT minted. An
 // entry may carry an identity (arxiv_id / doi) instead of free text —
 // identity-only entries are forwarded to the remote provider as
 // identity fields; entries with none of the four inputs 400. Each

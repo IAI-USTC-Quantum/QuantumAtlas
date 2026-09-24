@@ -101,7 +101,7 @@ func newScoringHarness(t testing.TB, backend ScoringBackend, meter ScoringMeter)
 	}
 	se := &core.ServeEvent{App: app, Router: router}
 	err = app.OnServe().Trigger(se, func(e *core.ServeEvent) error {
-		RegisterSearchScoring(e, &config.Config{}, h.keys, backend, meter, search.NewEngine(nil, nil), nil, enforcer)
+		RegisterSearchScoring(e, &config.Config{}, h.keys, backend, meter, search.NewEngine(nil), nil, enforcer)
 		RegisterMeSearchKeys(e, h.keys)
 		h.mux, err = e.Router.BuildMux()
 		return err

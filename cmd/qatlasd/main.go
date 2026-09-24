@@ -770,7 +770,7 @@ func main() {
 		// POST /api/search/agentic talks to it directly (metered,
 		// agent=true).
 		remoteProvider := buildRemoteProvider(cfg)
-		searchEngine := buildSearchEngine(cfg, pgPool, registryStore, lazyOnMint(downloaderModule, ingester), remoteProvider)
+		searchEngine := buildSearchEngine(cfg, pgPool, registryStore, remoteProvider)
 
 		// qatlas-match proxy client (match.remote). nil when disabled;
 		// POST /api/papers/match then answers 503. User auth stays on the
@@ -1051,14 +1051,10 @@ func ensureCatalogSchema(pool *pgxpool.Pool, corpus *openalexcorpus.Store, ensur
 // "remote" joins the fan-out only when search.remote
 // is enabled with a URL (remote == nil otherwise). Unknown or
 // unconstructible providers are logged and skipped — one bad entry must
-// not sink the whole engine. The engine resolves-or-mints every
-// identity-anchored hit through registryStore and fires the onMint hook
-// for freshly minted papers. When the robust Downloader is configured,
-// onMint feeds its strategy-ladder queue directly — the Downloader is
-// the single PDF acquisition pipeline (fetch→validate→store→register→
-// MinerU). The legacy Ingester is the fallback when the Downloader is
-// off (paper_access.enabled=false).
-func buildSearchEngine(cfg *config.Config, pool *pgxpool.Pool, registryStore *registry.Store, onMint func(ctx context.Context, paperID string, ref registry.PaperRef), remote *search.RemoteProvider) *search.Engine {
+// not sink the whole engine. The engine resolves-or-mints metadata only;
+// search never submits acquisition work. Selected identifiers are admitted
+// separately through POST /api/downloader/fetch.
+func buildSearchEngine(cfg *config.Config, pool *pgxpool.Pool, registryStore *registry.Store, remote *search.RemoteProvider) *search.Engine {
 	httpClient := &http.Client{Timeout: 10 * time.Second}
 	mailto := strings.TrimSpace(cfg.OpenAlexMailto)
 	var providers []search.Provider
@@ -1082,36 +1078,7 @@ func buildSearchEngine(cfg *config.Config, pool *pgxpool.Pool, registryStore *re
 			slog.Warn("search: unknown provider in search.providers; skipping", "provider", name)
 		}
 	}
-	return search.NewEngine(registryStore, onMint, providers...)
-}
-
-// lazyOnMint returns the search engine's onMint hook. When the robust
-// Downloader is configured, freshly minted papers go directly onto its
-// strategy-ladder queue (arXiv → twin-resolve → OA APIs → patterns →
-// landing → browser → agent → remote-proxy → store → register → MinerU).
-// The legacy Ingester is the fallback when the Downloader is off — its
-// simpler arXiv/OA fetch path keeps papers flowing without the full
-// ladder. This is the single point where the two pipelines meet: search
-// minting feeds whichever acquisition engine is active, never both.
-func lazyOnMint(dl *downloader.Downloader, ing *ingest.Ingester) func(ctx context.Context, paperID string, ref registry.PaperRef) {
-	if dl != nil {
-		return func(ctx context.Context, paperID string, ref registry.PaperRef) {
-			input := ref.ArxivID
-			kind := downloader.KindArxiv
-			if input == "" {
-				input = ref.DOI
-				kind = downloader.KindDOI
-			}
-			if input == "" {
-				return // no fetchable identity; leave pending
-			}
-			dl.Enqueue(ctx, paperID, input, kind, ref)
-		}
-	}
-	if ing != nil {
-		return ing.OnMint
-	}
-	return nil // no acquisition engine; papers stay pending
+	return search.NewEngine(registryStore, providers...)
 }
 
 // buildRemoteProvider constructs the qatlas-search microservice client

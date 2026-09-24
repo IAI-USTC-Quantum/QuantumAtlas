@@ -194,7 +194,7 @@ QuantumAtlas leans toward "research infrastructure" rather than a static archive
 
 Content contribution has two parallel paths:
 
-1. Server-side lazy ingestion: when a search hits a paper the registry has never seen (e.g. an unknown arXiv ID), the server mints a `paper_id` and fetches the PDF in the background — no client action needed.
+1. Explicit selected downloads: search resolves or mints paper metadata only, without scheduling PDF downloads. Select papers in the search results and click **Download selected** to submit only those identifiers to `POST /api/downloader/fetch` (`papers:write` required). Workers continue executing the server's queued tasks. This policy applies to future searches; existing queued tasks are not cancelled.
 2. Authenticated direct upload (`qatlas contrib pdf` → `POST /api/papers/{arxiv_id}/upload-pdf`), or local MinerU with your own token pushed back to the server (`qatlas contrib mineru`).
 
 Full CLI options, auth details (PAT scopes / bearer tokens), and the recommended collaboration cadence are in [docs/client/contribute-content.md](docs/client/contribute-content.md).
