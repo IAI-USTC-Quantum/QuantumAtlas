@@ -82,6 +82,16 @@ func ingestMinerUNewFormat(
 	if err != nil {
 		return re.JSON(http.StatusBadRequest, map[string]string{"detail": err.Error()})
 	}
+	// Strict intake (plan §13.4.5, user decision): only a COMPLETE
+	// new-CLI result is accepted. A zip with middle_json but no
+	// markdown member is not a full final output — reject with a clear
+	// message instead of ingesting a half bundle. Images stay optional
+	// (text-only papers legitimately have none).
+	if len(res.Markdown) == 0 {
+		return re.JSON(http.StatusUnprocessableEntity, map[string]string{
+			"detail": "incomplete new-format result: middle_json.json present but no markdown.md/full.md member — upload the COMPLETE new-CLI output (final JSON + markdown)",
+		})
+	}
 
 	// Validate the artifact BEFORE persisting anything: a zip whose
 	// middle JSON fails the profile must not produce a parse revision

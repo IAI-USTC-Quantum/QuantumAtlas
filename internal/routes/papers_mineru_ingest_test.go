@@ -210,9 +210,12 @@ func TestIngestNewFormatSourceReuseAndCurrentFlip(t *testing.T) {
 func TestIngestNewFormatBadSchemaRejected(t *testing.T) {
 	c, store := newIngestFixture(t)
 	// Middle JSON with a bogus schema: must 422 and persist NOTHING.
+	// (markdown member included so the strict completeness gate passes
+	// and the SCHEMA rejection path is what fires.)
 	var buf bytes.Buffer
 	zw := newZipWriter(t, &buf)
 	zw.write("middle_json.json", []byte(`{"schema":"not.middle","schema_version":"9","blocks":[]}`))
+	zw.write("markdown.md", []byte("# x\n"))
 	zw.close()
 	rec, body := callIngest(t, store, c, "2501.09999v1", strings.Repeat("ab", 32), "", buf.Bytes())
 	if rec.Code != http.StatusUnprocessableEntity {
@@ -226,6 +229,26 @@ func TestIngestNewFormatBadSchemaRejected(t *testing.T) {
 	}
 	if objs, _ := store.ListPrefix(context.Background(), "papers/", 0); len(objs) != 0 {
 		t.Errorf("rejected zip must not store objects (found %d)", len(objs))
+	}
+}
+
+func TestIngestNewFormatIncompleteRejected(t *testing.T) {
+	c, store := newIngestFixture(t)
+	// Strict intake (plan §13.4.5): middle_json without markdown is
+	// NOT a complete new-CLI final output — refuse the half bundle.
+	var buf bytes.Buffer
+	zw := newZipWriter(t, &buf)
+	zw.write("middle_json.json", []byte(`{"schema":"docvortex.middle","schema_version":"2.0","blocks":[]}`))
+	zw.close()
+	rec, body := callIngest(t, store, c, "2501.09999v1", strings.Repeat("ab", 32), "", buf.Bytes())
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", rec.Code)
+	}
+	if !strings.Contains(body["detail"].(string), "COMPLETE") {
+		t.Errorf("detail = %v", body["detail"])
+	}
+	if len(c.revisions[fixturePaperID]) != 0 || len(c.sources[fixturePaperID]) != 0 {
+		t.Error("incomplete zip must not mint rows")
 	}
 }
 
