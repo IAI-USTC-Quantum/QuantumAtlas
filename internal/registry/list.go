@@ -102,11 +102,23 @@ func (s *Store) ListPapers(ctx context.Context, f ListFilter) (items []ListItem,
 	if f.Sort == "updated_at" {
 		sortCol = "p.updated_at"
 	}
-	offset := (f.Page - 1) * f.PerPage
-	if offset < 0 {
-		offset = 0
+	// Clamp defensively: the HTTP route clamps too, but direct store
+	// callers (tests, backfills) may pass zero values — an unclamped
+	// PerPage would silently LIMIT 0 while the count query still
+	// reports the true total (observed in the PG integration suite,
+	// which CI only compiles, never runs).
+	perPage := f.PerPage
+	if perPage < 1 {
+		perPage = 20
+	} else if perPage > 100 {
+		perPage = 100
 	}
-	args = append(args, f.PerPage, offset)
+	page := f.Page
+	if page < 1 {
+		page = 1
+	}
+	offset := (page - 1) * perPage
+	args = append(args, perPage, offset)
 	query := fmt.Sprintf(`
 		SELECT p.paper_id, p.arxiv_id, p.doi, p.title, p.status,
 		       a.asset_id IS NOT NULL, a.mineru_md_path IS NOT NULL,
