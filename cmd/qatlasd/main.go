@@ -1549,12 +1549,11 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// Block-level comments (plan §12.2, Q2) — discussions, replies,
 	// status machine, body edits, history. PG-backed through the same
 	// registry pool (nil pool → handlers degrade to 503, same
-	// convention as the papers catalog). The anchor validator is
-	// permissive for now: Q2 develops fixture-first and the Q1
-	// parse_revisions tables land during integration.
-	// TODO(q1-integration): swap nil for a registry-backed
-	// comments.AnchorValidator validating parse_revision + block.
-	routes.RegisterComments(se, cfg, comments.NewPGStore(registryStore.Pool()), comments.NewIdempotency(1024), nil, enforcer)
+	// convention as the papers catalog). Anchors validate against the
+	// Q1 parse_revisions rows and their middle artifacts (integration
+	// glue in internal/routes/comments_anchor.go): a creatable
+	// discussion anchor always names a block the Q1 endpoints return.
+	routes.RegisterComments(se, cfg, comments.NewPGStore(registryStore.Pool()), comments.NewIdempotency(1024), routes.NewRegistryAnchorValidator(registryStore, rawStore), enforcer)
 
 	// Paper identity matching — POST /api/papers/match, proxied to the
 	// qatlas-match microservice (match.remote). matchClient == nil

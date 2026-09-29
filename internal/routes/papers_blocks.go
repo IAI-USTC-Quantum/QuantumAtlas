@@ -292,6 +292,30 @@ func paperBlockGetHandler(re *core.RequestEvent, store objstore.Store, catalog b
 		})
 	}
 
+	discussions := []any{}
+	nextCursor := any(nil)
+	ready := false
+	hint := "discussions not configured on this server (Q2 comment API absent); anchor semantics are final"
+	if blockDiscussions != nil {
+		items, next, derr := blockDiscussions(ctx, rp.canonical, rev.RevisionID, pageIdx, blockIndex, combinedBlockDiscussionsLimit)
+		if derr != nil {
+			// Combined read degrades honestly: the block itself is
+			// readable, the comment store is not — say so instead of
+			// failing the whole read (discussions have their own
+			// dedicated endpoints for retries).
+			hint = "discussions temporarily unavailable: " + derr.Error()
+		} else {
+			for _, d := range items {
+				discussions = append(discussions, discussionJSON(d))
+			}
+			if next != "" {
+				nextCursor = next
+			}
+			ready = true
+			hint = ""
+		}
+	}
+
 	body := map[string]any{
 		"source": map[string]any{
 			"paper_id":         rp.canonical,
@@ -319,10 +343,12 @@ func paperBlockGetHandler(re *core.RequestEvent, store objstore.Store, catalog b
 			// keeps locator auxiliary, never identity).
 		},
 		"content":           blockBody(block),
-		"discussions":       []any{}, // TODO(Q2): wire the real discussion list + filters.
-		"discussions_ready": false,
-		"discussions_hint":  "discussions arrive with the Q2 comment API; anchor semantics are final",
-		"next_cursor":       nil,
+		"discussions":       discussions,
+		"discussions_ready": ready,
+		"next_cursor":       nextCursor,
+	}
+	if hint != "" {
+		body["discussions_hint"] = hint
 	}
 	embedResolutionInBody(body, rp.resolution)
 	return re.JSON(http.StatusOK, body)

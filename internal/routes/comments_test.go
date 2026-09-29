@@ -103,6 +103,11 @@ func newCommentsHarnessCfg(t testing.TB, cfg *config.Config) *commentsHarness {
 	var built http.Handler
 	err = app.OnServe().Trigger(se, func(e *core.ServeEvent) error {
 		RegisterComments(e, cfg, store, idem, anchors, enforcer)
+		// RegisterComments installs the package-level combined-read
+		// lister (comments_blocks_wire.go); reset it so later Q1
+		// golden-anchor tests in this package see the placeholder
+		// shape, not a stale memstore.
+		t.Cleanup(func() { installBlockDiscussionsLister(nil) })
 		m, mErr := e.Router.BuildMux()
 		if mErr != nil {
 			return mErr

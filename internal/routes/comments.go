@@ -81,6 +81,10 @@ func RegisterComments(
 		deps.anchors = comments.PermissiveAnchor()
 	}
 
+	// Embed the real discussion list into the Q1 combined-read block
+	// response (see comments_blocks_wire.go for the ordering argument).
+	installBlockDiscussionsLister(store)
+
 	// Paper-scoped discussion list/create. These specific patterns take
 	// precedence over the /api/papers/{path...} catch-alls registered by
 	// RegisterPapers (Go 1.22 ServeMux: the more specific pattern wins).
