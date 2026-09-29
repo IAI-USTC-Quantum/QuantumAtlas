@@ -33,3 +33,6 @@ public/devdoc/
 # Browser regression reports (source tests are tracked)
 test-results/
 playwright-report/
+
+# pdfjs-dist companion assets, copied from the locked node_modules copy
+public/pdfjs/
