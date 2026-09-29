@@ -123,6 +123,14 @@ func RegisterPapers(
 		if raw == "lookup" {
 			return paperLookupHandler(re, catalog, corpus, corpusLoader)
 		}
+		// Q1 block-comments originals surface (plan §12.2): every
+		// /sources and /parses path, for any paper id form (qa_
+		// surrogate or alias). Dispatched ahead of the qa_ / identifier
+		// detail paths because those treat an unknown trailing segment
+		// as an identifier.
+		if handled, herr := dispatchBlockOriginalsGET(re, cfg, rawStore, catalog, raw); handled {
+			return herr
+		}
 		// Paper detail by surrogate id: GET /api/papers/qa_<ulid>, the
 		// on-demand image listing: GET /api/papers/qa_<ulid>/images, the
 		// figure/caption index: GET /api/papers/qa_<ulid>/figures, and

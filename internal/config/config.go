@@ -219,6 +219,18 @@ type Config struct {
 	//     triggering a MinerU conversion on cache miss
 	PaperAccessEnabled bool
 
+	// Block-image crop renderer for the Q1 block-comments surface
+	// (GET /api/papers/{id}/parses/{rev}/blocks/{p}/{b}/image).
+	// BlockImageCommand is the external PDF rasterizer binary
+	// (default poppler-utils' pdftoppm; the Docker image does not
+	// bundle it — installs that want block images add the package).
+	// Empty → the default. BlockImageDPI is the rasterization density
+	// (default 150; <=0 → default). These knobs are NOT gated by
+	// PaperAccessEnabled: the block-originals endpoints are a separate
+	// auth-gated surface (plan §12.2).
+	BlockImageCommand string
+	BlockImageDPI     int
+
 	// Server-side MinerU configuration. Only parsed (and only validated)
 	// when PaperAccessEnabled=true. When the switch is off these
 	// fields are zero values regardless of YAML content.
@@ -479,6 +491,8 @@ type fileConfig struct {
 			Timeout           string   `yaml:"timeout"`
 			MaxConcurrentJobs *int     `yaml:"max_concurrent_jobs"`
 		} `yaml:"mineru"`
+		BlockImageCommand *string `yaml:"block_image_command"`
+		BlockImageDPI     *int    `yaml:"block_image_dpi"`
 	} `yaml:"paper_access"`
 
 	Downloader struct {
@@ -788,6 +802,8 @@ func (fc *fileConfig) toConfig(anchor string) (*Config, error) {
 		S3AccessKeyID:            fc.S3.AccessKeyID,
 		S3SecretAccessKey:        fc.S3.SecretAccessKey,
 		PaperAccessEnabled:       fc.PaperAccess.Enabled,
+		BlockImageCommand:        strings.TrimSpace(stringOrDefault(fc.PaperAccess.BlockImageCommand, "")),
+		BlockImageDPI:            intOrDefault(fc.PaperAccess.BlockImageDPI, 0),
 		OpenAlexMailto:           fc.PaperAccess.OpenAlexMailto,
 		ArxivFetchConcurrent:     intOrDefault(fc.PaperAccess.ArxivFetchConcurrent, 2),
 		ArxivFetchRPS:            floatOrDefault(fc.PaperAccess.ArxivFetchRPS, 0.33),
@@ -1072,6 +1088,13 @@ func intOrDefault(p *int, def int) int {
 }
 
 func floatOrDefault(p *float64, def float64) float64 {
+	if p == nil {
+		return def
+	}
+	return *p
+}
+
+func stringOrDefault(p *string, def string) string {
 	if p == nil {
 		return def
 	}
