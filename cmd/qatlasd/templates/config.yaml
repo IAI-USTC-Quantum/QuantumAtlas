@@ -181,6 +181,15 @@
 #   openalex_mailto: ops@your-domain.tld   # polite-pool contact (OpenAlex + arxiv UA)
 #   arxiv_fetch_concurrent: 2
 #   arxiv_fetch_rps: 0.33                  # ≈ 1 req / 3 s, per arxiv guidance
+#   block_image_command: pdftoppm          # block-comments block-image crop
+#                                          # rasterizer (poppler-utils);
+#                                          # NOT gated by enabled — the
+#                                          # /sources + /parses surface is
+#                                          # the normal logged-in reading
+#                                          # API (plan §12.2). Install the
+#                                          # package or point at another
+#                                          # pdftoppm-compatible binary.
+#   block_image_dpi: 150                   # crop rasterization density
 #   mineru:                                # only parsed when enabled: true
 #     api_tokens: []                       # boot seed for the registry DB's
 #                                          # mineru_tokens pool; the admin

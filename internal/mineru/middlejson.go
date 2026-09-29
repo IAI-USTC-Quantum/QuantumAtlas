@@ -1,0 +1,218 @@
+package mineru
+
+// middlejson.go: reader for the MinerU "Middle JSON" parse artifact —
+// the raw structured model with `schema=docvortex.middle` /
+// `schema_version=2.0` (plan §5). This is the artifact Q1 anchors block
+// comments to; block identity inside one artifact is the ORIGINAL
+// `page_idx` + top-level `block.index` pair (plan §4.2 / §5.1):
+//
+//   - page_idx is 0-based; the public locator page number is page_idx+1.
+//   - index is the block's own 1-based public number from the parse.
+//     Indexes may be non-contiguous (1, 2, 5, ...) and MUST be looked up
+//     by exact value — never by array position, never "nearest".
+//   - bbox, when present, is [x0, y0, x1, y1] NORMALIZED to [0,1]
+//     fractions of the page width/height (new Middle JSON profile).
+//     Legacy ContentList [0,1000] coordinates are NOT supported here
+//     (plan §5.1) — a bbox outside [0,1] is rejected, never rescaled.
+//
+// Unknown keys (including the fixtures' "_synthetic" markers) are
+// ignored so forward-compatible minor revisions still parse.
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"sort"
+	"strconv"
+	"strings"
+)
+
+// MiddleSchema is the only schema value ParseMiddleJSON accepts.
+const MiddleSchema = "docvortex.middle"
+
+// MiddleSchemaVersion is the only schema_version value ParseMiddleJSON
+// accepts. Bumping this is a deliberate contract change (new profile).
+const MiddleSchemaVersion = "2.0"
+
+// Errors surfaced by ParseMiddleJSON. Callers map them to 4xx/5xx:
+// ErrNotMiddleJSON / ErrUnsupportedSchema / ErrBadBlocks are data
+// problems (4xx-class); everything else is a decode failure.
+var (
+	ErrNotMiddleJSON  = errors.New("mineru: artifact is not docvortex.middle JSON")
+	ErrUnsupportedVer = errors.New("mineru: unsupported docvortex.middle schema_version")
+	ErrBadBlocks      = errors.New("mineru: middle JSON has invalid blocks array")
+	ErrBadBBox        = errors.New("mineru: block bbox invalid (want [0,1]-normalized [x0,y0,x1,y1])")
+	ErrBlockNotFound  = errors.New("mineru: block not found")
+	ErrInvalidCursor  = errors.New("mineru: invalid block cursor")
+)
+
+// MiddleBlock is one top-level block of a Middle JSON artifact. Content
+// is kept verbatim (json.RawMessage) so re-serialization never rewrites
+// the parsed value — string contents round-trip byte-for-byte and
+// non-string contents stay structured. BBox is nil when the parse
+// carried no bbox for this block (image crops then answer "unavailable",
+// never a fabricated crop — plan §5.2).
+type MiddleBlock struct {
+	PageIdx int
+	Index   int
+	Type    string
+	Content json.RawMessage
+	BBox    []float64 // nil or [4]float64 in [0,1]
+	// Raw is the complete original JSON object of the block.
+	Raw json.RawMessage
+}
+
+// ContentText returns the content as a plain string when it is a JSON
+// string (the common case), otherwise "".
+func (b MiddleBlock) ContentText() string {
+	if len(b.Content) == 0 {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(b.Content, &s); err != nil {
+		return ""
+	}
+	return s
+}
+
+// MiddleDoc is a parsed Middle JSON artifact.
+type MiddleDoc struct {
+	Schema        string
+	SchemaVersion string
+	Pages         int // pdf_info.pages when present
+	PageSize      [][2]float64
+	Blocks        []MiddleBlock
+}
+
+type middleJSON struct {
+	Schema        string `json:"schema"`
+	SchemaVersion string `json:"schema_version"`
+	PDFInfo       *struct {
+		Pages    int          `json:"pages"`
+		PageSize [][2]float64 `json:"page_size"`
+	} `json:"pdf_info"`
+	Blocks []json.RawMessage `json:"blocks"`
+}
+
+type middleBlockJSON struct {
+	PageIdx *int            `json:"page_idx"`
+	Index   *int            `json:"index"`
+	Type    string          `json:"type"`
+	Content json.RawMessage `json:"content"`
+	BBox    []float64       `json:"bbox"`
+}
+
+// ParseMiddleJSON decodes and validates one Middle JSON artifact.
+// The schema / schema_version gate is strict: a mismatched artifact
+// must never be silently interpreted as blocks (plan §8 Q1: "坏schema
+// 如实报错").
+func ParseMiddleJSON(data []byte) (*MiddleDoc, error) {
+	var raw middleJSON
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("mineru: decode middle json: %w", err)
+	}
+	if raw.Schema != MiddleSchema {
+		return nil, fmt.Errorf("%w: schema=%q", ErrNotMiddleJSON, raw.Schema)
+	}
+	if raw.SchemaVersion != MiddleSchemaVersion {
+		return nil, fmt.Errorf("%w: schema_version=%q (supported: %s)",
+			ErrUnsupportedVer, raw.SchemaVersion, MiddleSchemaVersion)
+	}
+	doc := &MiddleDoc{
+		Schema:        raw.Schema,
+		SchemaVersion: raw.SchemaVersion,
+	}
+	if raw.PDFInfo != nil {
+		doc.Pages = raw.PDFInfo.Pages
+		doc.PageSize = raw.PDFInfo.PageSize
+	}
+	if raw.Blocks == nil {
+		return nil, fmt.Errorf("%w: missing blocks array", ErrBadBlocks)
+	}
+	for i, braw := range raw.Blocks {
+		var b middleBlockJSON
+		if err := json.Unmarshal(braw, &b); err != nil {
+			return nil, fmt.Errorf("%w: block[%d] decode: %v", ErrBadBlocks, i, err)
+		}
+		if b.PageIdx == nil || b.Index == nil {
+			return nil, fmt.Errorf("%w: block[%d] missing page_idx/index", ErrBadBlocks, i)
+		}
+		if *b.Index < 1 {
+			return nil, fmt.Errorf("%w: block[%d] index %d < 1 (public index is 1-based)", ErrBadBlocks, i, *b.Index)
+		}
+		if b.BBox != nil {
+			if len(b.BBox) != 4 {
+				return nil, fmt.Errorf("%w: block[%d] has %d bbox coords", ErrBadBBox, i, len(b.BBox))
+			}
+			for _, v := range b.BBox {
+				// Small epsilon for float round-trips at the edges.
+				if v < -1e-9 || v > 1+1e-9 {
+					return nil, fmt.Errorf("%w: block[%d] coord %v outside [0,1] (legacy [0,1000] profile is not supported)", ErrBadBBox, i, v)
+				}
+			}
+			if b.BBox[2] < b.BBox[0] || b.BBox[3] < b.BBox[1] {
+				return nil, fmt.Errorf("%w: block[%d] x1<y0 or y1<y0", ErrBadBBox, i)
+			}
+		}
+		doc.Blocks = append(doc.Blocks, MiddleBlock{
+			PageIdx: *b.PageIdx,
+			Index:   *b.Index,
+			Type:    b.Type,
+			Content: b.Content,
+			BBox:    b.BBox,
+			Raw:     append(json.RawMessage(nil), braw...),
+		})
+	}
+	return doc, nil
+}
+
+// FindBlock returns the block with EXACTLY the given (page_idx, block
+// index) — a non-contiguous index gap (1,2,5 → no 3 or 4) answers
+// found=false; callers MUST 404, never fall back to a neighbour block
+// (golden-anchors case "parse-A page 1 block 3/4").
+func (d *MiddleDoc) FindBlock(pageIdx, index int) (MiddleBlock, bool) {
+	for _, b := range d.Blocks {
+		if b.PageIdx == pageIdx && b.Index == index {
+			return b, true
+		}
+	}
+	return MiddleBlock{}, false
+}
+
+// OrderedBlocks returns all blocks sorted by (page_idx, index) — the
+// stable order the keyset-paginated listing serves.
+func (d *MiddleDoc) OrderedBlocks() []MiddleBlock {
+	out := append([]MiddleBlock(nil), d.Blocks...)
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].PageIdx != out[j].PageIdx {
+			return out[i].PageIdx < out[j].PageIdx
+		}
+		return out[i].Index < out[j].Index
+	})
+	return out
+}
+
+// EncodeCursor renders the keyset cursor for "the block after
+// (pageIdx, index)".
+func EncodeCursor(pageIdx, index int) string {
+	return fmt.Sprintf("p%d:b%d", pageIdx, index)
+}
+
+// DecodeCursor parses a keyset cursor produced by EncodeCursor.
+func DecodeCursor(s string) (pageIdx, index int, err error) {
+	p, rest, ok := strings.Cut(s, ":")
+	if !ok {
+		return 0, 0, fmt.Errorf("%w: %q", ErrInvalidCursor, s)
+	}
+	b, ok := strings.CutPrefix(rest, "b")
+	if !ok {
+		return 0, 0, fmt.Errorf("%w: %q", ErrInvalidCursor, s)
+	}
+	p = strings.TrimPrefix(p, "p")
+	pageIdx, perr := strconv.Atoi(p)
+	index, ierr := strconv.Atoi(b)
+	if perr != nil || ierr != nil {
+		return 0, 0, fmt.Errorf("%w: %q", ErrInvalidCursor, s)
+	}
+	return pageIdx, index, nil
+}

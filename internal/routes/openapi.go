@@ -753,6 +753,205 @@ func docPaperFigures() {}
 // @Router      /api/papers/{id}/images/{name} [get]
 func docPaperImageGet() {}
 
+// --- Block comments (Q1 originals) --------------------------------------------
+
+// paperSourcesList lists the source-PDF identities of a paper.
+//
+// @Summary     List paper sources (block comments)
+// @Description Source PDF assets of a paper for the block-comments
+// @Description surface: each row pins one immutable byte-identity
+// @Description (origin label like arxiv:v2 / upload, sha256, size).
+// @Description The current_source_id / is_current pointer is derived
+// @Description from the paper's current parse revision (paper_sources
+// @Description rows are append-only). The paper_id path segment may be
+// @Description a qa_ surrogate, an arXiv id, or a DOI — all resolve to
+// @Description the canonical qa_ (merged papers follow merged_into;
+// @Description the request alias is echoed via X-QAtlas-Requested-Id /
+// @Description X-QAtlas-Resolved-Id). Requires login or the
+// @Description papers:read scope.
+// @Tags        BlockComments
+// @Produce     json
+// @Security    BearerAuth
+// @Param       paper_id path string true "paper id: qa_... | arXiv id | DOI"
+// @Success     200 {object} map[string]interface{} "{paper_id, sources:[{source_id,origin,sha256,size_bytes,is_current,created_at,pdf_endpoint}], current_source_id}"
+// @Failure     400 {object} map[string]string "unrecognized id form"
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Failure     404 {object} map[string]string "no such paper"
+// @Failure     503 {object} map[string]string "registry unavailable"
+// @Router      /api/papers/{paper_id}/sources [get]
+func docPaperSourcesList() {}
+
+// paperSourcePDF streams the original source PDF bytes.
+//
+// @Summary     Get source PDF bytes
+// @Description The ORIGINAL PDF bytes of one source, hash-verifiable
+// @Description via ETag / X-QAtlas-Sha256 (= the row's sha256). Range
+// @Description requests are honoured with the SAME authentication as
+// @Description full GETs. ?version=vN is a pin, not a hint: on mismatch
+// @Description with the source's own origin the answer is 404 — the
+// @Description server never substitutes a newer version or the journal
+// @Description edition. This is the block-comments reading surface; the
+// @Description legacy /api/papers/{id}/pdf route stays 410.
+// @Tags        BlockComments
+// @Produce     application/pdf
+// @Security    BearerAuth
+// @Param       paper_id path string true "paper id: qa_... | arXiv id | DOI"
+// @Param       source_id path string true "source id from the sources list"
+// @Param       version query string false "pin: arXiv version, e.g. v2 — mismatch 404s, never substitutes"
+// @Success     200 {file} binary "PDF bytes (Range → 206)"
+// @Success     206 {file} binary "partial content"
+// @Failure     400 {object} map[string]string
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Failure     404 {object} map[string]string "no such source / version pin mismatch / bytes missing"
+// @Failure     503 {object} map[string]string "registry or store unavailable"
+// @Router      /api/papers/{paper_id}/sources/{source_id}/pdf [get]
+func docPaperSourcePDF() {}
+
+// paperParsesList lists the immutable parse revisions of a paper.
+//
+// @Summary     List parse revisions (block comments)
+// @Description Parse revisions of a paper: each row is one immutable
+// @Description parse artifact (schema + schema_version + artifact
+// @Description sha256) bound to the source it was parsed from. A
+// @Description re-parse inserts a new revision and flips the
+// @Description is_current pointer (current_revision_id); old artifacts
+// @Description keep serving unchanged bytes. Requires login or
+// @Description papers:read.
+// @Tags        BlockComments
+// @Produce     json
+// @Security    BearerAuth
+// @Param       paper_id path string true "paper id: qa_... | arXiv id | DOI"
+// @Success     200 {object} map[string]interface{} "{paper_id, parses:[{revision_id,source_id,schema,schema_version,artifact_sha256,is_current,created_at,json_endpoint,blocks_endpoint}], current_revision_id}"
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Failure     404 {object} map[string]string "no such paper"
+// @Failure     503 {object} map[string]string "registry unavailable"
+// @Router      /api/papers/{paper_id}/parses [get]
+func docPaperParsesList() {}
+
+// paperParseJSON serves the original parse artifact bytes.
+//
+// @Summary     Get parse JSON bytes
+// @Description The ORIGINAL Middle JSON artifact bytes of one parse
+// @Description revision — not a re-serialization. ETag /
+// @Description X-QAtlas-Sha256 carry the artifact sha256 the revision
+// @Description row pins; the server verifies the stored bytes against
+// @Description it before serving (a mismatch is a 500, never silent).
+// @Description Revisions are immutable: the bytes for a revision_id
+// @Description never change. Requires login or papers:read.
+// @Tags        BlockComments
+// @Produce     json
+// @Security    BearerAuth
+// @Param       paper_id path string true "paper id: qa_... | arXiv id | DOI"
+// @Param       revision path string true "parse revision id"
+// @Success     200 {file} binary "Middle JSON bytes (application/json)"
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Failure     404 {object} map[string]string "no such revision / bytes missing"
+// @Failure     500 {object} map[string]string "stored bytes fail the pinned sha256"
+// @Failure     503 {object} map[string]string "registry or store unavailable"
+// @Router      /api/papers/{paper_id}/parses/{revision}/json [get]
+func docPaperParseJSON() {}
+
+// paperBlocksList keyset-paginates the top-level blocks of one parse.
+//
+// @Summary     List parse blocks (keyset)
+// @Description Top-level blocks of one immutable parse revision, in
+// @Description stable (page_idx, block index) order. Block indexes are
+// @Description the parse's own public 1-based numbers and may be
+// @Description non-contiguous (1,2,5,...); gaps are real — never
+// @Description renumbered. page_idx is the original 0-based page index
+// @Description (page_no in each item is the public 1-based number).
+// @Description cursor is the opaque next_cursor token (keyset on the
+// @Description last emitted block); per_page defaults to 20, max 100.
+// @Description Requires login or papers:read.
+// @Tags        BlockComments
+// @Produce     json
+// @Security    BearerAuth
+// @Param       paper_id path string true "paper id: qa_... | arXiv id | DOI"
+// @Param       revision path string true "parse revision id"
+// @Param       page_idx query int false "filter: exact 0-based page index"
+// @Param       cursor query string false "keyset cursor from next_cursor"
+// @Param       per_page query int false "page size (default 20, max 100)"
+// @Success     200 {object} map[string]interface{} "{paper_id,revision_id,schema,schema_version,blocks:[{page_idx,block_index,page_no,type,content,bbox,has_bbox,raw}],next_cursor}"
+// @Failure     400 {object} map[string]string "bad query parameter"
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Failure     404 {object} map[string]string "no such revision / bytes missing"
+// @Failure     422 {object} map[string]string "artifact fails the docvortex.middle v2.0 profile"
+// @Failure     503 {object} map[string]string "registry or store unavailable"
+// @Router      /api/papers/{paper_id}/parses/{revision}/blocks [get]
+func docPaperBlocksList() {}
+
+// paperBlockGet is the combined single-block read.
+//
+// @Summary     Read one block (combined)
+// @Description Combined read of ONE block: source (paper + source PDF
+// @Description identity + parse revision identity) + anchor (the
+// @Description permanent comment anchor: canonical qa_, source_id,
+// @Description parse_revision, schema, page_idx, block_index) +
+// @Description content (the block's parsed value, original JSON under
+// @Description raw) + discussions. Block lookup is EXACT on
+// @Description (page_idx, block index): a non-contiguous index gap or a
+// @Description page the parse lacks answers 404 — never a
+// @Description nearest-block fallback. The same visual text under two
+// @Description parses of one PDF is TWO distinct anchors; comments
+// @Description never migrate between revisions. discussions is an
+// @Description empty placeholder until the Q2 comment API lands
+// @Description (discussions_ready=false). Requires login or
+// @Description papers:read.
+// @Tags        BlockComments
+// @Produce     json
+// @Security    BearerAuth
+// @Param       paper_id path string true "paper id: qa_... | arXiv id | DOI"
+// @Param       revision path string true "parse revision id"
+// @Param       page_idx path int true "0-based page index"
+// @Param       block_index path int true "1-based public block index (exact)"
+// @Success     200 {object} map[string]interface{} "{source, anchor, content, discussions, discussions_ready, next_cursor}"
+// @Failure     400 {object} map[string]string "malformed block path"
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Failure     404 {object} map[string]string "no such revision or block (exact-index semantics)"
+// @Failure     422 {object} map[string]string "artifact fails the docvortex.middle v2.0 profile"
+// @Failure     503 {object} map[string]string "registry or store unavailable"
+// @Router      /api/papers/{paper_id}/parses/{revision}/blocks/{page_idx}/{block_index} [get]
+func docPaperBlockGet() {}
+
+// paperBlockImage crops the original PDF page render to the block bbox.
+//
+// @Summary     Get block image (original-page crop)
+// @Description A PNG crop of the ORIGINAL source PDF page rendered and
+// @Description clipped to the block's [0,1]-normalized bbox — a real
+// @Description page region, never a redraw of the parsed text. Honest
+// @Description failures, never a fabricated image: the block carries
+// @Description no bbox → 404 reason=no_bbox; the source PDF bytes are
+// @Description missing → 404 reason=source_missing; the page is beyond
+// @Description the source PDF → 404 reason=page_out_of_range; no PDF
+// @Description rasterizer installed on the server → 503
+// @Description reason=renderer_unavailable (operators install
+// @Description poppler-utils or set paper_access.block_image_command;
+// @Description resolution via paper_access.block_image_dpi, default
+// @Description 150). ETag is deterministic over (source sha, page,
+// @Description bbox, dpi). Requires login or papers:read.
+// @Tags        BlockComments
+// @Produce     image/png
+// @Security    BearerAuth
+// @Param       paper_id path string true "paper id: qa_... | arXiv id | DOI"
+// @Param       revision path string true "parse revision id"
+// @Param       page_idx path int true "0-based page index"
+// @Param       block_index path int true "1-based public block index (exact)"
+// @Success     200 {file} binary "PNG crop of the rendered original page"
+// @Failure     400 {object} map[string]string "malformed block path"
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Failure     404 {object} map[string]string "no_bbox | source_missing | page_out_of_range | no such revision/block"
+// @Failure     422 {object} map[string]string "artifact fails the docvortex.middle v2.0 profile"
+// @Failure     503 {object} map[string]string "renderer_unavailable | registry or store unavailable"
+// @Router      /api/papers/{paper_id}/parses/{revision}/blocks/{page_idx}/{block_index}/image [get]
+func docPaperBlockImage() {}
+
 // paperStatusBatch probes asset readiness for up to 200 papers at once.
 //
 // @Summary     Batch paper asset status
