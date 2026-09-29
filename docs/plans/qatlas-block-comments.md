@@ -582,3 +582,55 @@ S3 模式下 `objstore.Router` 按 key 首段路由到 `qatlas-pdf` / `qatlas-md
 2. 若保留 A 或 C：`papers` 前缀是否独立成桶（`S3BucketParses`，影响 `initRawStore` 与部署 compose）；还是继续与 pdf 同桶。
 3. 旧 default_asset 的冻结时点：何时停止旧格式 upload-mineru 写 `markdown/`（保留只读兼容多久）。
 4. md/images 是否参与永久锚点合同（决定 B 是否合法）。
+
+## 14. 存储后端形态讨论材料（未拍板）
+
+> **状态：供 Lead 与用户讨论，未拍板，不改代码。** 回应三问：objstore 是什么；md 之前是否在 PG；存储后端到底要怎么改。
+
+### 14.1 白话：objstore 是什么
+
+objstore（`internal/objstore`）是对象存储抽象层：一个 `Store` 接口、两个实现——本地目录（LocalStore，开发/首启）和任意 S3 兼容服务（S3Store，生产 RustFS@NAS）。按 key 存取文件字节；生产由 Router 按 key 首段把 `pdf/ markdown/ images/ papers/` 路由到 qatlas-pdf / qatlas-md / qatlas-images 三桶（`papers/` 前缀暂挂 pdf 桶），本地模式单目录保留完整前缀。**PG 从不存文件字节**：只存结构化行＋objstore key 指针＋sha256。**md 的字节一直在 objstore，用户记得没错**——PG 里的路径列只是 key 字符串（`mineru_json_path` 早已弃用为空）。
+
+### 14.2 现状一图流：三类东西各在哪
+
+| 东西 | 位置 | 谁在读 |
+|---|---|---|
+| 元数据：论文身份、资产行、解析修订、评论 | PG 表 | 所有 API |
+| 旧产物：md、images 单 zip、源 PDF | 三桶旧前缀 `pdf\|markdown\|images/<yymm>/…`（default_asset 布局，同 key 可变覆盖） | 旧读路径 `GET /markdown`、figures、images zip |
+| 新解析 bundle：middle.json（必有）＋markdown.md/content_list.json/images/（按 zip 实有） | `papers/<qa>/parses/<rev>/`（不可变；重解析＝新 rev＋is_current 翻转） | 新 Q1 端点 `/parses/{rev}/…` |
+
+### 14.3 双轨的实际代价
+
+| # | 代价 | 冻结旧写后 | 读合一（D2）后 |
+|---|---|---|---|
+| 1 | 读路径两套：旧 `/markdown`、figures 只认 default_asset，看不到新解析 | 仍在 | **消失** |
+| 2 | 写入两种：full.md-only zip 走旧覆盖位；middle_json zip 走 bundle | **消失**（旧写关停） | 已消失 |
+| 3 | 检索/figures/旧客户端拿不到重解析后的新版内容 | 仍在 | **消失** |
+| 4 | 两套真相：paper_assets（md+json 绑一行）vs parse_revisions | 减半（旧表冻结只读） | 减半 |
+
+### 14.4 三个简化方向
+
+**D1 维持双轨，仅冻结旧写**（改动量：极小，约一天——旧 upload-mineru 停写/拒收 full.md-only zip；冻结时点随 §13.4.4）
+利：零风险，不动生产、不动读路径；旧数据原地只读。
+弊：代价 #1/#3 仍在，旧端点继续看不到新解析。
+
+**D2 旧读路径改经 parse_revisions 当前指针**（改动量：小——旧端点先查当前 rev 的 bundle 成员，miss 回退 default_asset）
+利：读合一，#1/#3 消失；旧端点立即反映新解析；客户端零变化。
+弊：写仍双轨到冻结日；无 rev 的旧记录要长期保留回退分支。
+
+**D3 桶拓扑简化：三桶＋papers 前缀 → 更少桶/单桶前缀制**（改动量：中——initRawStore、部署 compose、RustFS 桶＋IAM＋数据迁移）
+利：桶少心简；papers 域不再寄生 pdf 桶。
+弊：动生产 RustFS 与存量数据；A 布局刚锁又翻拓扑；数据量小的现状下收益近零。
+
+**推荐：D1 现在做，D2 作为唯一值得排期的后续，D3 不做/无限期缓议。** 数据量小、A 布局刚拍板、别折腾生产 RustFS——D1+D2 已消除双轨全部实际代价，D3 只换桶名不换语义，违反"不要复杂"。
+
+### 14.4b 拍板（2026-09-29）
+
+用户接受推荐：**D1 现在做**（冻结旧写路径，排入 v0.37.0 转正批次）、**D2 进 v0.38**（旧读路径经 parse_revisions 当前指针，读合一）、**D3 不做**。附带确认：json/md **不入 PG**——PG 恒只存结构化行+指针+sha 指纹；字节恒在 objstore（体量估算见讨论记录：万级论文×2-3 修订×~1MB，PG bytea 为负优化）。§15（since 端点）已按用户批准实施完毕。
+
+### 14.5 不需要改的部分（防发散）
+
+- PG/objstore 两层分工本身：PG＝结构化行＋指针，objstore＝文件字节；问题只在双轨布局，不在分层。
+- §13.4 拍板的 A 布局与"不做内容寻址/哈希去重"。
+- §4.2 锚点合同：middle.json 独占锚点，md/images 只是 bundle 成员。
+- `Store` 接口与 local/s3 两实现：接口面已最小，不为拓扑讨论加方法。
