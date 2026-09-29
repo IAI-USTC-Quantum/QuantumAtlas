@@ -12,12 +12,24 @@ import { expect, test, READER_PAPER_ID } from './fixtures'
 
 const WORKBENCH = '[data-testid="reader-workbench"]'
 
-async function openReader(page: Page, language: 'en' | 'zh' = 'en') {
-  await page.goto(`/${language}/papers/${READER_PAPER_ID}`)
+// Real anchors on pr_local (1-based URL numbering): page 5 block 6 is the
+// Uniq(P) equation carrying the two-independent-discussions demo; page 1
+// has 15 blocks (aside stamp, doc_title, authors, abstract …).
+const READER_URL = `/papers/${READER_PAPER_ID}`
+
+async function openReader(
+  page: Page,
+  language: 'en' | 'zh' = 'en',
+  target: { page?: number; block?: number } = {},
+) {
+  const search = new URLSearchParams({ rev: 'pr_local' })
+  if (target.page) search.set('page', String(target.page))
+  if (target.block) search.set('block', String(target.block))
+  await page.goto(`/${language}${READER_URL}?${search}`)
   await expect(page.locator(WORKBENCH)).toBeVisible()
   await expect(page.getByTestId('reader-mock-badge')).toBeVisible()
   // The canvas reports the rendered page number through data-rendered.
-  await expect(page.locator('canvas[data-rendered="1"]')).toBeAttached({ timeout: 15_000 })
+  await expect(page.locator(`canvas[data-rendered="${target.page ?? 1}"]`)).toBeAttached({ timeout: 15_000 })
 }
 
 async function frameRatio(overlay: Locator, canvas: Locator): Promise<number> {
@@ -28,17 +40,29 @@ async function frameRatio(overlay: Locator, canvas: Locator): Promise<number> {
   return (frame.width * frame.height) / (surface.width * surface.height)
 }
 
-test('renders the pdf and a clickable overlay for non-contiguous blocks', async ({ page }) => {
+test('renders the 17-page pdf with a full overlay on page 1 (15 real blocks)', async ({ page }) => {
   await openReader(page)
-  // Page 1 of parse A: non-contiguous blocks 1, 2, 5 (§12.5).
-  for (const index of [1, 2, 5]) {
+  // Page 1 of pr_local: every one of the 15 real top-level blocks gets a
+  // frame — the cursor-following block query must not truncate any.
+  for (let index = 1; index <= 15; index += 1) {
     await expect(page.getByTestId(`block-overlay-${index}`)).toBeVisible()
   }
-  await expect(page.getByTestId('block-overlay-3')).toHaveCount(0)
+  await expect(page.getByTestId('block-overlay-16')).toHaveCount(0)
+  // Page 1: doc_title (block 2) carries the reading-note discussion.
+  await expect(page.getByTestId('block-item-2')).toContainText('1 discussions')
 
-  // Block list mirrors the same blocks; block 2 carries 2 discussions.
-  await expect(page.getByTestId('block-item-2')).toContainText('2 discussions')
-  await expect(page.getByTestId('block-item-1')).toContainText('1 discussions')
+  // Page navigation across the real 17-page document.
+  await page.getByTestId('pdf-page-input').fill('5')
+  await expect(page.locator('canvas[data-rendered="5"]')).toBeAttached({ timeout: 15_000 })
+  // Page 5 carries 17 blocks, all framed (per-page budget is 20 in the mock
+  // client; page 16's 21 blocks exercise the cursor path in the unit suite).
+  for (let index = 1; index <= 17; index += 1) {
+    await expect(page.getByTestId(`block-overlay-${index}`)).toBeVisible()
+  }
+
+  // Block 6 on page 5 is the anchored equation and carries 2 discussions.
+  await expect(page.getByTestId('block-item-6')).toContainText('equation')
+  await expect(page.getByTestId('block-item-6')).toContainText('2 discussions')
 })
 
 // pdf.js ≥5.4.624 standard unconditionally calls Uint8Array.prototype.toHex()
@@ -96,13 +120,13 @@ test('the pdf.js worker and main module served to the browser are the legacy bui
 test('mock mode: the papers list degrades gracefully and launches the reader', async ({ page }) => {
   // With no backend, /api/papers would return the SPA fallback and crash
   // the JSON parse ("Unexpected token '<'"). Mock mode must serve the
-  // synthetic list instead — and the fixture paper must click through into
-  // a working reader. (The fixture boundary also fails the test if any
+  // real-paper list instead — and the entry must click through into a
+  // working reader. (The fixture boundary also fails the test if any
   // unmocked /api request is made from this page.)
   await page.goto('/zh/papers')
   await expect(page.getByTestId('papers-mock-badge')).toBeVisible()
 
-  const fixtureRow = page.getByRole('link', { name: 'Synthetic Block-Comments Fixture Paper' })
+  const fixtureRow = page.getByRole('link', { name: 'Fully dynamic data structure for LCE queries in compressed space' })
   await expect(fixtureRow).toBeVisible()
   await fixtureRow.click()
 
@@ -111,8 +135,8 @@ test('mock mode: the papers list degrades gracefully and launches the reader', a
 })
 
 test('selecting a block shows its two independent discussions', async ({ page }) => {
-  await openReader(page)
-  await page.getByTestId('block-overlay-2').click()
+  await openReader(page, 'en', { page: 5 })
+  await page.getByTestId('block-overlay-6').click()
 
   const panel = page.getByTestId('discussion-panel')
   await expect(panel.getByTestId('discussion-card')).toHaveCount(2)
@@ -124,38 +148,48 @@ test('selecting a block shows its two independent discussions', async ({ page })
   await expect(panel.locator('[data-discussion-id="dsc_01"]')).toContainText('user_alma')
   // Selection is URL state (?page=&block=): deep-linkable.
   const params = new URL(page.url()).searchParams
-  expect(params.get('page')).toBe('1')
-  expect(params.get('block')).toBe('2')
+  expect(params.get('page')).toBe('5')
+  expect(params.get('block')).toBe('6')
 
   // A block without discussions says so honestly.
-  await page.getByTestId('block-item-5').click()
+  await page.getByTestId('block-item-7').click()
   await expect(panel.getByTestId('discussion-card')).toHaveCount(0)
 })
 
-test('blocks without bbox are flagged, never framed', async ({ page }) => {
+test('switching to pr_remote re-anchors: same paper, different block order', async ({ page }) => {
   await openReader(page)
-  // Parse B page 1 block 7 has no bbox (§12.5).
-  await page.getByTestId('parse-select').selectOption('rev_parse_b_02')
+  // mineru 4.0.9 (pr_local) starts page 1 with the rotated arXiv stamp;
+  // engine 3.4.4 (pr_remote) starts at the title. Both revisions render
+  // every block — and the remote-only discussion lives at its own anchor.
+  await page.getByTestId('parse-select').selectOption('pr_remote')
   await expect(page.locator('canvas[data-rendered="1"]')).toBeAttached({ timeout: 15_000 })
-  await expect(page.getByTestId('block-overlay-7')).toHaveCount(0)
-  await page.getByTestId('block-item-7').click()
-  // Still selectable from the list; the panel shows the block context.
-  await expect(page.getByTestId('block-context')).toContainText('Block without bbox')
+  await expect(page.getByTestId('block-item-1')).toContainText('doc_title')
+  await expect(page.getByTestId('block-item-1')).not.toContainText('aside_text')
+  await expect(page.getByTestId('block-item-14')).toContainText('aside_text')
+
+  // The remote equation anchor (dsc_06, same visual equation as pr_local's
+  // page 5 block 6) is a DISTINCT anchor on page 5 block 6 of pr_remote.
+  await page.getByTestId('pdf-page-input').fill('5')
+  await expect(page.locator('canvas[data-rendered="5"]')).toBeAttached({ timeout: 15_000 })
+  await page.getByTestId('block-item-6').click()
+  const panel = page.getByTestId('discussion-panel')
+  await expect(panel.getByTestId('discussion-card')).toHaveCount(1)
+  await expect(panel.locator('[data-discussion-id="dsc_06"]')).toBeVisible()
 })
 
 test('bbox overlay stays glued to the block across zoom and rotation', async ({ page }) => {
-  await openReader(page)
-  const overlay = page.getByTestId('block-overlay-2')
+  await openReader(page, 'en', { page: 5 })
+  const overlay = page.getByTestId('block-overlay-6')
   const canvas = page.locator('canvas[aria-label="PDF page"]')
 
   const ratioBefore = await frameRatio(overlay, canvas)
   await page.getByRole('button', { name: 'Zoom in' }).click()
-  await expect(page.locator('canvas[data-rendered="1"]')).toBeAttached({ timeout: 15_000 })
+  await expect(page.locator('canvas[data-rendered="5"]')).toBeAttached({ timeout: 15_000 })
   const ratioAfterZoom = await frameRatio(overlay, canvas)
   expect(Math.abs(ratioAfterZoom - ratioBefore)).toBeLessThan(0.01)
 
   await page.getByRole('button', { name: 'Rotate 90°' }).click()
-  await expect(page.locator('canvas[data-rendered="1"]')).toBeAttached({ timeout: 15_000 })
+  await expect(page.locator('canvas[data-rendered="5"]')).toBeAttached({ timeout: 15_000 })
   const ratioAfterRotate = await frameRatio(overlay, canvas)
   // Rotation maps normalized (x,y)→(1−y,x): the frame keeps its normalized
   // footprint relative to the (now swapped) canvas extents.
@@ -193,10 +227,10 @@ test('collapsible panes and the discussions page round-trip back to the exact bl
     .getByTestId('anchor-link')
     .click()
   const params = new URL(page.url()).searchParams
-  expect(params.get('rev')).toBe('rev_parse_a_01')
-  expect(params.get('page')).toBe('2')
-  expect(params.get('block')).toBe('2')
-  await expect(page.locator('canvas[data-rendered="2"]')).toBeAttached({ timeout: 15_000 })
+  expect(params.get('rev')).toBe('pr_local')
+  expect(params.get('page')).toBe('7')
+  expect(params.get('block')).toBe('14')
+  await expect(page.locator('canvas[data-rendered="7"]')).toBeAttached({ timeout: 15_000 })
   const panel = page.getByTestId('discussion-panel')
   await expect(panel.locator('[data-discussion-id="dsc_04"] [data-status="retracted"]')).toBeVisible()
 })
@@ -212,8 +246,8 @@ test('expanded discussion thread shows replies with model declarations (zh)', as
 })
 
 test('write flow: create discussion, reply, change status with reason, see history', async ({ page }) => {
-  await openReader(page)
-  await page.getByTestId('block-overlay-2').click()
+  await openReader(page, 'en', { page: 5 })
+  await page.getByTestId('block-overlay-6').click()
 
   // Create a new discussion on this exact anchor (default actor user_alma).
   await page.getByTestId('composer-toggle').click()
