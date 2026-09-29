@@ -139,7 +139,17 @@ export function usePaperDetail(paperId: string | null) {
 export function usePapersList(params: PapersListParams) {
   return useQuery({
     queryKey: ['papers-list', params],
-    queryFn: () => papersList(params),
+    // Mock mode (same VITE_READER_API switch as the reader workbench, see
+    // reader-api.ts READER_API_MODE): with no backend, vite dev answers
+    // /api/papers with the SPA fallback and the JSON parse crashes the page
+    // (`Unexpected token '<'`). Degrade to the synthetic fixture list instead.
+    // The mock module is imported dynamically so the live build tree-shakes
+    // it out entirely (import.meta.env.VITE_READER_API is statically replaced
+    // at build time).
+    queryFn: () =>
+      import.meta.env.VITE_READER_API === 'live'
+        ? papersList(params)
+        : import('@/mocks/papers-list-mock').then((m) => m.mockPapersList(params)),
     placeholderData: keepPreviousData,
   })
 }

@@ -31,6 +31,7 @@ import { Route as LangPapersIndexRouteImport } from './routes/$lang.papers.index
 import { Route as LangPapersPaperIdRouteImport } from './routes/$lang.papers.$paperId'
 import { Route as LangPapersSearchRouteImport } from './routes/$lang.papers.search'
 import { Route as LangAdminDbTableRouteImport } from './routes/$lang.admin.db.$table'
+import { Route as LangPapersPaperIdDiscussionsRouteImport } from './routes/$lang.papers.$paperId_.discussions'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -143,6 +144,12 @@ const LangAdminDbTableRoute = LangAdminDbTableRouteImport.update({
   path: '/admin/db/$table',
   getParentRoute: () => LangRoute,
 } as any)
+const LangPapersPaperIdDiscussionsRoute =
+  LangPapersPaperIdDiscussionsRouteImport.update({
+    id: '/papers/$paperId_/discussions',
+    path: '/papers/$paperId/discussions',
+    getParentRoute: () => LangRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -167,6 +174,7 @@ export interface FileRoutesByFullPath {
   '/$lang/admin/': typeof LangAdminIndexRoute
   '/$lang/papers/': typeof LangPapersIndexRoute
   '/$lang/admin/db/$table': typeof LangAdminDbTableRoute
+  '/$lang/papers/$paperId/discussions': typeof LangPapersPaperIdDiscussionsRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -190,6 +198,7 @@ export interface FileRoutesByTo {
   '/$lang/admin': typeof LangAdminIndexRoute
   '/$lang/papers': typeof LangPapersIndexRoute
   '/$lang/admin/db/$table': typeof LangAdminDbTableRoute
+  '/$lang/papers/$paperId/discussions': typeof LangPapersPaperIdDiscussionsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -215,6 +224,7 @@ export interface FileRoutesById {
   '/$lang/admin/': typeof LangAdminIndexRoute
   '/$lang/papers/': typeof LangPapersIndexRoute
   '/$lang/admin/db/$table': typeof LangAdminDbTableRoute
+  '/$lang/papers/$paperId_/discussions': typeof LangPapersPaperIdDiscussionsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -241,6 +251,7 @@ export interface FileRouteTypes {
     | '/$lang/admin/'
     | '/$lang/papers/'
     | '/$lang/admin/db/$table'
+    | '/$lang/papers/$paperId/discussions'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -264,6 +275,7 @@ export interface FileRouteTypes {
     | '/$lang/admin'
     | '/$lang/papers'
     | '/$lang/admin/db/$table'
+    | '/$lang/papers/$paperId/discussions'
   id:
     | '__root__'
     | '/'
@@ -288,6 +300,7 @@ export interface FileRouteTypes {
     | '/$lang/admin/'
     | '/$lang/papers/'
     | '/$lang/admin/db/$table'
+    | '/$lang/papers/$paperId_/discussions'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -455,6 +468,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LangAdminDbTableRouteImport
       parentRoute: typeof LangRoute
     }
+    '/$lang/papers/$paperId_/discussions': {
+      id: '/$lang/papers/$paperId_/discussions'
+      path: '/papers/$paperId/discussions'
+      fullPath: '/$lang/papers/$paperId/discussions'
+      preLoaderRoute: typeof LangPapersPaperIdDiscussionsRouteImport
+      parentRoute: typeof LangRoute
+    }
   }
 }
 
@@ -475,6 +495,7 @@ interface LangRouteChildren {
   LangAdminIndexRoute: typeof LangAdminIndexRoute
   LangPapersIndexRoute: typeof LangPapersIndexRoute
   LangAdminDbTableRoute: typeof LangAdminDbTableRoute
+  LangPapersPaperIdDiscussionsRoute: typeof LangPapersPaperIdDiscussionsRoute
 }
 
 const LangRouteChildren: LangRouteChildren = {
@@ -494,6 +515,7 @@ const LangRouteChildren: LangRouteChildren = {
   LangAdminIndexRoute: LangAdminIndexRoute,
   LangPapersIndexRoute: LangPapersIndexRoute,
   LangAdminDbTableRoute: LangAdminDbTableRoute,
+  LangPapersPaperIdDiscussionsRoute: LangPapersPaperIdDiscussionsRoute,
 }
 
 const LangRouteWithChildren = LangRoute._addFileChildren(LangRouteChildren)

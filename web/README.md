@@ -149,6 +149,7 @@ cp web/.env.development.example web/.env.development.local
 | `VITE_DEV_FAKE_AUTH` | 值为 `1` 且 `import.meta.env.DEV` 为真时，`useAuth()` 返回前端 stub；不生成真实后端会话，不授予读、写或管理员权限。 |
 | `VITE_DEV_API_PAT` | 配置代理的 `/api` Authorization Bearer 请求头；不向 `/_`、`/share`、`/swagger` 注入。使用后端认可且最小权限的开发 token。 |
 | `VITE_DEV_ALLOWED_HOSTS` | 逗号分隔的 Vite `allowedHosts` 配置；未设置时为 `localhost` / `127.0.0.1`。这不是认证或网络隔离措施，只有确需受控反向代理预览时才填写。 |
+| `VITE_READER_API` | 块级评论阅读工作台的数据源：未设置或 `mock` 用内置合成夹具（`src/mocks/`，数据形状按设计计划 §12.2）；`live` 走真实 `/api` 端点。前端 UI 权限提示不代替后端鉴权。 |
 
 - **fake auth 只解除前端门控**。未提供真实凭据的受保护 API 仍会拒绝请求；
   注入 PAT 或浏览器持有真实会话后，权限由后端及该凭据决定，可能执行写入。
@@ -165,6 +166,33 @@ cp web/.env.development.example web/.env.development.local
   代理下的真实 Bearer 会把相应后端权限暴露给能使用这个开发服务的调用者。
 - HMR WebSocket 不走 `/api` 代理；`/api` 的后端 WebSocket 则已启用 `ws: true`。
   `/doc` / `/devdoc` 没有配置 Vite 代理，请在 Go 后端地址验证文档门控。
+
+### 块级评论阅读工作台（原型，mock 优先）
+
+设计依据是 [docs/plans/qatlas-block-comments.md](../docs/plans/qatlas-block-comments.md)（唯一设计文档）。
+原型阶段默认 mock：`npm run dev` 下无需后端即可预览三栏阅读工作台与讨论列表：
+
+```sh
+VITE_DEV_FAKE_AUTH=1 npm run dev
+# /zh/papers                                         论文列表（mock：仅夹具论文一条）
+# /zh/papers/qa_01J5SYNTHETICFIXTURE0001            阅读工作台（PDF | 块 | 讨论）
+# /zh/papers/qa_01J5SYNTHETICFIXTURE0001/discussions Issue 式讨论列表
+```
+
+mock 数据来自 `tests/fixtures/blockcomments/` 的合成夹具（PDF 复制在
+`public/fixtures/`，pdfjs-dist 配套字体等在 `public/pdfjs/`，均不入库、由
+脚本同步）；`/papers` 列表页在 mock 模式下同样走内置合成数据（否则无后端时
+vite 回退 `index.html`，JSON 解析报 `Unexpected token '<'` 崩页）。写操作
+（发起/回复/状态/编辑）只在页面内存中生效，刷新即重置。
+后端就绪后设 `VITE_READER_API=live` 切换真实 API；两套实现共用同一类型与
+语义合同（幂等键、If-Match、状态理由等），单测同时锁定。
+
+PDF 渲染必须使用 pdfjs-dist 的 **legacy build**（主线程与 worker 均为
+`legacy/build/*`，Babel + core-js 转译版）：pdf.js ≥5.4.624 的 standard
+build 无条件调用 `Uint8Array.prototype.toHex()`（需 Chrome 140+），旧浏览器
+上 PDF 区全白。`scripts/sync-pdfjs-assets.mjs` 会在安装/构建时校验 legacy
+产物存在且带 core-js 标记，`tests/pdfjs-legacy.test.ts` 与浏览器套件锁定
+两处 import 不回归。
 
 ## 常用命令与资源分发
 

@@ -270,6 +270,7 @@
         "createdAt": "Created"
       },
       "empty": "No papers match the current filters.",
+      "mockNotice": "Mock preview: the list is synthetic fixture data, no backend connected.",
       "total": "{{count}} papers",
       "pageOf": "Page {{page}} of {{pages}}",
       "prev": "Previous",
@@ -777,6 +778,129 @@
     },
     "trace": {
       "title": "Fetch trace ({{count}} attempts)"
+    }
+  },
+  "reader": {
+    "workbench": {
+      "title": "Reader workbench",
+      "mockBadge": "MOCK",
+      "mockHint": "Prototype mode: data comes from synthetic fixtures shaped exactly like the §12.2 API, not from the live backend.",
+      "parseLabel": "Parse",
+      "noParses": "no parse revisions",
+      "currentTag": "current",
+      "collapseBlocks": "Collapse block pane",
+      "expandBlocks": "Expand block pane",
+      "collapseDiscussions": "Collapse discussion pane",
+      "expandDiscussions": "Expand discussion pane",
+      "discussionsLink": "All discussions",
+      "sourceLabel": "Source PDF",
+      "mockUnavailable": "Reader fixture data is only wired for the synthetic paper in mock mode (got {{paperId}}).",
+      "openFixture": "Open the fixture paper"
+    },
+    "pdf": {
+      "prevPage": "Previous page",
+      "nextPage": "Next page",
+      "pageInput": "PDF page number",
+      "zoomIn": "Zoom in",
+      "zoomOut": "Zoom out",
+      "rotate": "Rotate 90°",
+      "loading": "Loading PDF…",
+      "canvasLabel": "PDF page",
+      "tooManyPages": "PDF has {{count}} pages, above the {{max}}-page preview budget.",
+      "noCanvas2d": "This browser does not support Canvas 2D."
+    },
+    "overlay": {
+      "selectBlock": "Select block {{index}} on page {{page}} ({{count}} discussions)"
+    },
+    "blockList": {
+      "hint": "{{count}} top-level blocks on this page",
+      "loading": "Loading blocks…",
+      "noBbox": "Block has no bbox; it cannot be located on the page (no fake frame is drawn).",
+      "discussionCount": "{{count}} discussions",
+      "emptyPage": "No blocks on this page for this parse revision."
+    },
+    "discussion": {
+      "pickBlockFirst": "Select a block in the PDF or the block list to read its discussions.",
+      "loading": "Loading block discussions…",
+      "parseLabel": "parse",
+      "schemaLabel": "schema",
+      "pdfShaLabel": "pdf sha256",
+      "noDiscussions": "No discussions on this block yet.",
+      "replies": "{{count}} replies",
+      "modelDeclared": "Model declaration reported by the client; not verified identity.",
+      "revisionTitle": "revision",
+      "openThread": "Open thread"
+    },
+    "status": {
+      "none": "note",
+      "pending": "pending",
+      "confirmed": "confirmed",
+      "retracted": "retracted"
+    },
+    "scope": {
+      "public": "public",
+      "lean": "lean"
+    },
+    "type": {
+      "normal": "normal",
+      "transcription_error": "transcription error",
+      "typo_in_original": "typo in original"
+    },
+    "filters": {
+      "scope": "Scope",
+      "scopeAll": "All scopes",
+      "scopeLean": "Lean (public + lean)",
+      "status": "Status",
+      "statusAll": "All statuses",
+      "statusNone": "No status (notes)",
+      "type": "Type",
+      "typeAll": "All types"
+    },
+    "discussionsPage": {
+      "back": "Back to paper",
+      "eyebrow": "Block comments",
+      "title": "Discussions",
+      "empty": "No discussions match the current filters.",
+      "loadMore": "Load more",
+      "loadingDetail": "Loading discussion…",
+      "repliesHeading": "{{count}} replies",
+      "noReplies": "No replies yet.",
+      "anchorLink": "p{{page}} #{{block}} · {{rev}}",
+      "currentTag": "current"
+    },
+    "composer": {
+      "toggle": "New discussion",
+      "type": "Type",
+      "typeCustom": "Custom…",
+      "customPlaceholder": "custom_slug",
+      "scope": "Scope",
+      "model": "Model (declared)",
+      "modelPlaceholder": "model/agent id (optional)",
+      "bodyPlaceholder": "What did you verify, and against which original material?",
+      "submit": "Post discussion",
+      "submitting": "Posting…",
+      "cancel": "Cancel",
+      "charCount": "{{count}} / {{max}} characters",
+      "typeInvalid": "Custom type must match [a-z0-9_:-]{1,64}."
+    },
+    "thread": {
+      "loadingDetail": "Loading thread…",
+      "replyPlaceholder": "Reply with evidence, references, or verification results…",
+      "replySubmit": "Reply",
+      "edit": "Edit body",
+      "editReply": "Edit reply",
+      "editConflict": "This content changed while you were editing (revision mismatch). Refresh and try again.",
+      "save": "Save",
+      "statusChange": "Set status",
+      "statusReason": "Reason",
+      "statusReasonPlaceholder": "Reason (required, kept in history)",
+      "apply": "Apply",
+      "history": "History",
+      "historyLoading": "Loading history…",
+      "eventCreated": "discussion created",
+      "eventReply": "reply added",
+      "eventBody": "{{target}} body edited",
+      "eventStatusFrom": "from"
     }
   }
 }
