@@ -57,7 +57,9 @@ func (f *fakeIngestCatalog) FindPaperSourceBySHA(_ context.Context, paperID, sha
 func (f *fakeIngestCatalog) InsertPaperSource(_ context.Context, src registry.PaperSource) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if src.SourceID == "" { src.SourceID = "src_fake_1" }
+	if src.SourceID == "" {
+		src.SourceID = "src_fake_1"
+	}
 	f.sources[src.PaperID] = append(f.sources[src.PaperID], src)
 	return true, nil
 }
