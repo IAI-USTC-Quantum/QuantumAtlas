@@ -174,16 +174,24 @@ cp web/.env.development.example web/.env.development.local
 
 ```sh
 VITE_DEV_FAKE_AUTH=1 npm run dev
-# /zh/papers                                         论文列表（mock：仅夹具论文一条）
-# /zh/papers/qa_01J5SYNTHETICFIXTURE0001            阅读工作台（PDF | 块 | 讨论）
-# /zh/papers/qa_01J5SYNTHETICFIXTURE0001/discussions Issue 式讨论列表
+# /zh/papers                                         论文列表（mock：仅真实论文一条）
+# /zh/papers/qa_01m366bx7pt2k3rda8yg351mkp          阅读工作台（PDF | 块 | 讨论）
+# /zh/papers/qa_01m366bx7pt2k3rda8yg351mkp/discussions Issue 式讨论列表
 ```
 
-mock 数据来自 `tests/fixtures/blockcomments/` 的合成夹具（PDF 复制在
-`public/fixtures/`，pdfjs-dist 配套字体等在 `public/pdfjs/`，均不入库、由
-脚本同步）；`/papers` 列表页在 mock 模式下同样走内置合成数据（否则无后端时
-vite 回退 `index.html`，JSON 解析报 `Unexpected token '<'` 崩页）。写操作
-（发起/回复/状态/编辑）只在页面内存中生效，刷新即重置。
+mock 数据是一篇**真实论文**的真实解析产物：arXiv 1605.01488v2
+（"Fully dynamic data structure for LCE queries in compressed space"，
+17 页 / 241 顶层块），同一 PDF 两份解析修订 —— `pr_local`（mineru 4.0.9
+本机解析，当前指针）与 `pr_remote`（远程引擎 3.4.4，块序不同）。原始
+middle JSON 与 markdown 提交在 `tests/fixtures/realpaper/`；源 PDF 提交在
+`public/fixtures/realpaper/`；`scripts/sync-realpaper-assets.mjs` 从分析
+工作区刷新两者（`remote/images/` 不入库，`--images` 可选拷贝，缺失时阅读
+器保持 bbox 叠框无图模式）。应用侧的 slim 夹具由
+`scripts/gen-realpaper-mocks.mjs` 从原始产物确定性生成（单测锁定不漂移），
+讨论 mock 锚在真实公式块上。pdfjs-dist 配套字体等在 `public/pdfjs/`
+（不入库、由脚本同步）；`/papers` 列表页在 mock 模式下同样走内置数据
+（否则无后端时 vite 回退 `index.html`，JSON 解析报 `Unexpected token '<'`
+崩页）。写操作（发起/回复/状态/编辑）只在页面内存中生效，刷新即重置。
 后端就绪后设 `VITE_READER_API=live` 切换真实 API；两套实现共用同一类型与
 语义合同（幂等键、If-Match、状态理由等），单测同时锁定。
 

@@ -277,7 +277,7 @@ export const test = base.extend<Options & { api: ApiFixtures }>({
       // the reader workbench's same-origin static assets (see readerStatic).
       const staticAsset = /^\/assets\/[^/]+\.(?:js|mjs|css|woff2?|ttf)$/.test(url.pathname)
       const readerStatic =
-        /^\/(?:fixtures\/realpaper\/1605\.01488\.pdf|fixtures\/blockcomments\/minimal-2page\.pdf|pdfjs\/(?:cmaps|standard_fonts|wasm|iccs)\/[^/?]+)$/.test(url.pathname)
+        /^\/(?:fixtures\/realpaper\/1605\.01488\.pdf|pdfjs\/(?:cmaps|standard_fonts|wasm|iccs)\/[^/?]+)$/.test(url.pathname)
       // The papers list (/en|zh/papers) is included for the mock-mode list
       // walk-through and the language-switcher regression.
       const appDocument =
