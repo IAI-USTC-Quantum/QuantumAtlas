@@ -44,12 +44,17 @@ func paperParsesListHandler(re *core.RequestEvent, catalog blockCatalog, request
 		if rev.IsCurrent {
 			current = rev.RevisionID
 		}
+		tier := rev.Tier
+		if tier == "" {
+			tier = "standard" // pre-00009 rows / fixtures without a tier
+		}
 		items = append(items, map[string]any{
 			"revision_id":     rev.RevisionID,
 			"source_id":       rev.SourceID,
 			"schema":          rev.Schema,
 			"schema_version":  rev.SchemaVersion,
 			"artifact_sha256": rev.ArtifactSha256,
+			"tier":            tier,
 			"is_current":      rev.IsCurrent,
 			"created_at":      rev.CreatedAt.UTC().Format(time.RFC3339),
 			"json_endpoint":   "/api/papers/" + rp.canonical + "/parses/" + rev.RevisionID + "/json",

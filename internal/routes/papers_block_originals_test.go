@@ -107,7 +107,7 @@ func newFakeBlockCatalog(t *testing.T) (*fakeBlockCatalog, objstore.Store) {
 					ArtifactSha256: sum(jsonA), ObjstoreKey: jsonKeyA, CreatedAt: now, IsCurrent: true},
 				revB: {RevisionID: revB, PaperID: fixturePaperID, SourceID: srcArxivV3,
 					Schema: "docvortex.middle", SchemaVersion: "2.0",
-					ArtifactSha256: sum(jsonB), ObjstoreKey: jsonKeyB, CreatedAt: now.Add(2 * time.Second), IsCurrent: false},
+					ArtifactSha256: sum(jsonB), ObjstoreKey: jsonKeyB, Tier: "lite", CreatedAt: now.Add(2 * time.Second), IsCurrent: false},
 			},
 		},
 	}
@@ -431,6 +431,61 @@ func TestGoldenAnchor_ParseAPage1Block2(t *testing.T) {
 	}
 	if body["discussions_ready"].(bool) {
 		t.Error("discussions_ready must be false until Q2")
+	}
+}
+
+// TestCombinedReadLocator pins the readable locator in the combined
+// read's anchor (plan §5.1): doc:<short_id>/tier:<tier>/page:<page_no>/
+// block:<block_no>, short_id = first 7 hex of the SOURCE PDF sha256,
+// tier from the revision row (empty → 'standard' for pre-00009 rows).
+// The locator is auxiliary — the identity fields stay on the anchor.
+func TestCombinedReadLocator(t *testing.T) {
+	c, store := newFakeBlockCatalog(t)
+
+	pdfBytes, err := os.ReadFile("../../tests/fixtures/blockcomments/minimal-2page.pdf")
+	if err != nil {
+		t.Fatalf("read fixture pdf: %v", err)
+	}
+	s := sha256.Sum256(pdfBytes)
+	short := hex.EncodeToString(s[:])[:7]
+
+	// revA: no tier on the row → 'standard'; page_idx 0 → page 1.
+	_, body := callBlockOriginals(t, c, store,
+		"/api/papers/"+fixturePaperID+"/parses/"+revA+"/blocks/0/2", nil)
+	anchor := body["anchor"].(map[string]any)
+	want := "doc:" + short + "/tier:standard/page:1/block:2"
+	if got, _ := anchor["locator"].(string); got != want {
+		t.Errorf("revA locator = %q, want %q", got, want)
+	}
+	if got, _ := anchor["short_id"].(string); got != short {
+		t.Errorf("revA short_id = %q, want %q", got, short)
+	}
+	if got, _ := anchor["tier"].(string); got != "standard" {
+		t.Errorf("revA tier = %q, want standard (empty row tier must default)", got)
+	}
+
+	// revB: tier 'lite' on the row; page_idx 0 → page 1, block 7.
+	_, body = callBlockOriginals(t, c, store,
+		"/api/papers/"+fixturePaperID+"/parses/"+revB+"/blocks/0/7", nil)
+	anchor = body["anchor"].(map[string]any)
+	want = "doc:" + short + "/tier:lite/page:1/block:7"
+	if got, _ := anchor["locator"].(string); got != want {
+		t.Errorf("revB locator = %q, want %q", got, want)
+	}
+
+	// Parses list surfaces the tier per revision (defaulted likewise).
+	_, body = callBlockOriginals(t, c, store,
+		"/api/papers/"+fixturePaperID+"/parses", nil)
+	for _, it := range body["parses"].([]any) {
+		m := it.(map[string]any)
+		rid := m["revision_id"].(string)
+		wantTier := "standard"
+		if rid == revB {
+			wantTier = "lite"
+		}
+		if got, _ := m["tier"].(string); got != wantTier {
+			t.Errorf("parses list %s tier = %q, want %q", rid, got, wantTier)
+		}
 	}
 }
 

@@ -316,6 +316,29 @@ func paperBlockGetHandler(re *core.RequestEvent, store objstore.Store, catalog b
 		}
 	}
 
+	// Readable locator (plan §5.1): auxiliary reading aid, never
+	// identity — §4.2 keeps the anchor on (paper, source, revision,
+	// page_idx, block_index). short_id = first 7 hex of the SOURCE PDF
+	// sha256; tier comes from the revision row (00009), defaulting to
+	// "standard" for rows written before the column existed.
+	anchor := map[string]any{
+		"paper_id":       rp.canonical,
+		"source_id":      src.SourceID,
+		"parse_revision": rev.RevisionID,
+		"schema":         rev.Schema,
+		"schema_version": rev.SchemaVersion,
+		"page_idx":       block.PageIdx,
+		"block_index":    block.Index,
+	}
+	tier := rev.Tier
+	if tier == "" {
+		tier = "standard"
+	}
+	if sid := mineru.ShortID(src.Sha256); sid != "" {
+		anchor["short_id"] = sid
+		anchor["tier"] = tier
+		anchor["locator"] = mineru.Locator(src.Sha256, tier, block.PageIdx, block.Index)
+	}
 	body := map[string]any{
 		"source": map[string]any{
 			"paper_id":         rp.canonical,
@@ -329,19 +352,7 @@ func paperBlockGetHandler(re *core.RequestEvent, store objstore.Store, catalog b
 			"schema_version":   rev.SchemaVersion,
 			"is_current_parse": rev.IsCurrent,
 		},
-		"anchor": map[string]any{
-			"paper_id":       rp.canonical,
-			"source_id":      src.SourceID,
-			"parse_revision": rev.RevisionID,
-			"schema":         rev.Schema,
-			"schema_version": rev.SchemaVersion,
-			"page_idx":       block.PageIdx,
-			"block_index":    block.Index,
-			// TODO(Q1): a readable MinerU-style locator
-			// (doc:<short_id>/tier:<tier>/page:N/block:M) needs the
-			// parse's tier recorded on the revision; deferred (§4.2
-			// keeps locator auxiliary, never identity).
-		},
+		"anchor":            anchor,
 		"content":           blockBody(block),
 		"discussions":       discussions,
 		"discussions_ready": ready,

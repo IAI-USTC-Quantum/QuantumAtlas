@@ -198,6 +198,55 @@ func EncodeCursor(pageIdx, index int) string {
 	return fmt.Sprintf("p%d:b%d", pageIdx, index)
 }
 
+// ShortIDLen is the fixed width of a locator's doc component: the
+// first 7 hex chars of the SOURCE PDF sha256 (plan §5.1).
+const ShortIDLen = 7
+
+// ShortID returns the locator doc component for a source sha256: the
+// first 7 lowercase hex characters. §5.1 says MinerU widens short_id on
+// collision and persists the widened value; qatlas pins a fixed 7 chars
+// (28 bits — collision odds are ~2^-28 per pair of distinct sources
+// under one paper) and TODO(deferred): revisit widening when a paper
+// carries enough distinct sources for a collision to be observable.
+// Empty or malformed input yields "" — callers skip the locator rather
+// than emit a fabricated id.
+func ShortID(sourceSha256 string) string {
+	s := strings.ToLower(strings.TrimSpace(sourceSha256))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		ok := c >= '0' && c <= '9' || c >= 'a' && c <= 'f'
+		if !ok {
+			return ""
+		}
+	}
+	if len(s) < ShortIDLen {
+		return ""
+	}
+	return s[:ShortIDLen]
+}
+
+// Locator renders the readable MinerU-style locator string (plan §5.1):
+//
+//	doc:<short_id>/tier:<tier>/page:<page_no>/block:<block_no>
+//
+// page_no is the PUBLIC 1-based page (pageIdx+1); block_no is the
+// parse's own 1-based block index. The locator is an auxiliary reading
+// aid only — §4.2 keeps identity on (paper, source, revision, page_idx,
+// block_index); §5.1 notes the locator deliberately omits the parse id,
+// so same-PDF-same-tier re-parses share a locator while pointing at
+// different revisions. An invalid shortID yields "" (caller omits the
+// field rather than lying).
+func Locator(shortID, tier string, pageIdx, blockIndex int) string {
+	if ShortID(shortID) == "" {
+		return ""
+	}
+	tier = strings.TrimSpace(tier)
+	if tier == "" {
+		tier = "standard"
+	}
+	return fmt.Sprintf("doc:%s/tier:%s/page:%d/block:%d", ShortID(shortID), tier, pageIdx+1, blockIndex)
+}
+
 // DecodeCursor parses a keyset cursor produced by EncodeCursor.
 func DecodeCursor(s string) (pageIdx, index int, err error) {
 	p, rest, ok := strings.Cut(s, ":")
