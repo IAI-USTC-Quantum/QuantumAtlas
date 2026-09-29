@@ -778,5 +778,94 @@
     "trace": {
       "title": "获取轨迹（{{count}} 次尝试）"
     }
+  },
+  "reader": {
+    "workbench": {
+      "title": "阅读工作台",
+      "mockBadge": "模拟数据",
+      "mockHint": "原型模式：数据来自按 §12.2 API 形状手工编写的合成夹具，尚未接真实后端。",
+      "parseLabel": "解析",
+      "noParses": "暂无解析修订",
+      "currentTag": "当前",
+      "collapseBlocks": "折叠块面板",
+      "expandBlocks": "展开块面板",
+      "collapseDiscussions": "折叠讨论面板",
+      "expandDiscussions": "展开讨论面板",
+      "discussionsLink": "全部讨论",
+      "sourceLabel": "源 PDF",
+      "mockUnavailable": "模拟模式只为合成夹具论文提供阅读数据（当前 {{paperId}}）。",
+      "openFixture": "打开夹具论文"
+    },
+    "pdf": {
+      "prevPage": "上一页",
+      "nextPage": "下一页",
+      "pageInput": "PDF 页码",
+      "zoomIn": "放大",
+      "zoomOut": "缩小",
+      "rotate": "旋转 90°",
+      "loading": "PDF 加载中…",
+      "canvasLabel": "PDF 页面",
+      "tooManyPages": "PDF 共 {{count}} 页，超出 {{max}} 页的预览预算。",
+      "noCanvas2d": "当前浏览器不支持 Canvas 2D。"
+    },
+    "overlay": {
+      "selectBlock": "选择第 {{page}} 页的块 {{index}}（{{count}} 条讨论）"
+    },
+    "blockList": {
+      "hint": "本页共 {{count}} 个顶层块",
+      "loading": "块加载中…",
+      "noBbox": "该块没有 bbox，无法在页面上定位（不会画假框）。",
+      "discussionCount": "{{count}} 条讨论",
+      "emptyPage": "该解析修订在此页没有块。"
+    },
+    "discussion": {
+      "pickBlockFirst": "在 PDF 或块列表中选择一个块，查看其讨论。",
+      "loading": "块讨论加载中…",
+      "parseLabel": "解析",
+      "schemaLabel": "schema",
+      "pdfShaLabel": "PDF sha256",
+      "noDiscussions": "该块暂无讨论。",
+      "replies": "{{count}} 条回复",
+      "modelDeclared": "由客户端申报的模型声明，非经核实的身份。",
+      "revisionTitle": "修订号",
+      "openThread": "打开讨论串"
+    },
+    "status": {
+      "none": "笔记",
+      "pending": "待查证",
+      "confirmed": "已确认",
+      "retracted": "已撤回"
+    },
+    "scope": {
+      "public": "公共",
+      "lean": "Lean"
+    },
+    "type": {
+      "normal": "普通",
+      "transcription_error": "转录有误",
+      "typo_in_original": "原文笔误"
+    },
+    "filters": {
+      "scope": "作用域",
+      "scopeAll": "全部作用域",
+      "scopeLean": "Lean（含公共）",
+      "status": "状态",
+      "statusAll": "全部状态",
+      "statusNone": "无状态（笔记）",
+      "type": "类型",
+      "typeAll": "全部类型"
+    },
+    "discussionsPage": {
+      "back": "返回论文",
+      "eyebrow": "块级评论",
+      "title": "讨论列表",
+      "empty": "没有符合当前筛选的讨论。",
+      "loadMore": "加载更多",
+      "loadingDetail": "讨论加载中…",
+      "repliesHeading": "{{count}} 条回复",
+      "noReplies": "暂无回复。",
+      "anchorLink": "第 {{page}} 页 #{{block}} · {{rev}}",
+      "currentTag": "当前"
+    }
   }
 }

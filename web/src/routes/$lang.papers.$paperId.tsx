@@ -24,8 +24,31 @@ import {
   saveBlob,
 } from '@/lib/api'
 import { PaperAcquisition } from '@/components/paper-acquisition'
+import { ReaderWorkbench } from '@/components/reader/ReaderWorkbench'
+
+// Reader selection state is URL-shareable (plan §7.3: entering a discussion
+// from reading must also work in reverse). ?d= is reserved for a discussion
+// deep link coming back from the discussions page.
+type PaperSearch = {
+  rev?: string
+  page?: number
+  block?: number
+  d?: string
+}
 
 export const Route = createFileRoute('/$lang/papers/$paperId')({
+  validateSearch: (search: Record<string, unknown>): PaperSearch => ({
+    rev: typeof search.rev === 'string' ? search.rev : undefined,
+    page:
+      typeof search.page === 'number' && Number.isInteger(search.page) && search.page >= 1
+        ? search.page
+        : undefined,
+    block:
+      typeof search.block === 'number' && Number.isInteger(search.block) && search.block >= 1
+        ? search.block
+        : undefined,
+    d: typeof search.d === 'string' ? search.d : undefined,
+  }),
   component: PaperDetailPage,
 })
 
@@ -89,6 +112,8 @@ function PaperDetailPage() {
                 {paper.paper_id}
               </Badge>
             </div>
+
+            <ReaderWorkbench paperId={paper.paper_id} />
 
             <Panel title={t('acquisition.title')} icon={FileText}>
               <PaperAcquisition acquisition={paper.acquisition} />
