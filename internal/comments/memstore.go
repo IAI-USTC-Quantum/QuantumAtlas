@@ -107,6 +107,9 @@ func (m *MemStore) ListDiscussions(_ context.Context, f ListFilter) ([]Discussio
 		if f.Cursor != "" && d.DiscussionID >= f.Cursor {
 			continue
 		}
+		if !f.Since.IsZero() && !sinceAfter(d.UpdatedAt, d.DiscussionID, f.Since, f.SinceID) {
+			continue
+		}
 		out = append(out, *d)
 	}
 	// Newest first (keyset: ULID desc == created desc).

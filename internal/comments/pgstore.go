@@ -152,6 +152,15 @@ func (s *PGStore) ListDiscussions(ctx context.Context, f ListFilter) ([]Discussi
 	if f.Cursor != "" {
 		where = append(where, "discussion_id < "+arg(f.Cursor))
 	}
+	if !f.Since.IsZero() {
+		// Incremental-sync position (plan §13.4.5). The row timestamp
+		// is floored to millis to match the cursor's precision (see
+		// since.go sinceAfter); the id half breaks same-millisecond
+		// ties. Filters after the paper_id prefix of the keyset index
+		// — see the pgstore integration EXPLAIN notes; no new index
+		// by design.
+		where = append(where, "(date_trunc('milliseconds', updated_at), discussion_id) > ("+arg(f.Since)+", "+arg(f.SinceID)+")")
+	}
 	limit := f.Limit
 	if limit <= 0 {
 		limit = 1 // callers always pass a positive limit; defensive floor

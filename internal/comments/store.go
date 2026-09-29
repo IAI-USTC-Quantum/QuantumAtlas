@@ -52,6 +52,15 @@ type ListFilter struct {
 	Scopes        []string
 	Cursor        string // discussion_id keyset cursor
 	Limit         int
+
+	// Since / SinceID carry the incremental-sync position (plan
+	// §13.4.5): only discussions with (updated_at, discussion_id)
+	// strictly greater than (Since, SinceID) are returned. Orthogonal
+	// to every filter above AND to the keyset Cursor (the client may
+	// page through a since-window with Cursor exactly like a normal
+	// list). Zero Since = no since constraint.
+	Since   time.Time
+	SinceID string
 }
 
 // Store is the persistence seam for the comment domain. All methods
