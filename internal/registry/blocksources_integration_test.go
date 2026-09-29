@@ -6,7 +6,10 @@ package registry
 // rest of the integration suite it skips (honestly) otherwise; a skip
 // is not a database verification pass.
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 // TestIntegrationBlockSources covers the 00007 schema end to end:
 // source insert idempotency, paper-scoped reads, parse-revision
@@ -36,6 +39,11 @@ func TestIntegrationBlockSources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveOrMint: %v", err)
 	}
+	// Fixed revision ids (pr_int_a/b) make re-runs collide unless the
+	// paper (and its cascade) is removed; clean up unconditionally.
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM papers WHERE paper_id = $1`, paperID)
+	})
 
 	// Two sources (same bytes, different origins) + one source for a
 	// second paper to prove scoping.

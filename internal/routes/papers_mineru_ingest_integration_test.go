@@ -62,6 +62,10 @@ func TestIntegrationIngestNewFormatRealRegistry(t *testing.T) {
 		t.Fatalf("ResolveOrMint: %v", err)
 	}
 	t.Cleanup(func() {
+		// The RESTRICT-probe discussion below pins the revisions, so
+		// clear it before the cascade delete (otherwise the cleanup
+		// itself is RESTRICTed and the fixture leaks between runs).
+		_, _ = pool.Exec(context.Background(), `DELETE FROM comment_discussions WHERE paper_id = $1`, paperID)
 		_, _ = pool.Exec(context.Background(), `DELETE FROM papers WHERE paper_id = $1`, paperID)
 	})
 

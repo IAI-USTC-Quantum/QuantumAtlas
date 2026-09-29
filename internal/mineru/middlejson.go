@@ -63,16 +63,28 @@ type MiddleBlock struct {
 }
 
 // ContentText returns the content as a plain string when it is a JSON
-// string (the common case), otherwise "".
+// string (equation blocks), or the concatenated span texts when it is
+// the real-MinerU rich-content array of {type, content} objects (text
+// blocks); "" otherwise.
 func (b MiddleBlock) ContentText() string {
 	if len(b.Content) == 0 {
 		return ""
 	}
 	var s string
-	if err := json.Unmarshal(b.Content, &s); err != nil {
-		return ""
+	if err := json.Unmarshal(b.Content, &s); err == nil {
+		return s
 	}
-	return s
+	var spans []struct {
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(b.Content, &spans); err == nil {
+		var sb strings.Builder
+		for _, sp := range spans {
+			sb.WriteString(sp.Content)
+		}
+		return sb.String()
+	}
+	return ""
 }
 
 // MiddleDoc is a parsed Middle JSON artifact.
@@ -91,21 +103,68 @@ type middleJSON struct {
 		Pages    int          `json:"pages"`
 		PageSize [][2]float64 `json:"page_size"`
 	} `json:"pdf_info"`
+	// Legacy/synthetic layout: flat top-level blocks array where every
+	// block carries its own page_idx and a 1-based public index.
 	Blocks []json.RawMessage `json:"blocks"`
+	// Real MinerU 4.x layout (verified against a genuine result zip,
+	// 2026-09-29): pages[] each with page_idx + blocks[]; the blocks
+	// carry NO page_idx of their own and their index is 0-based, as a
+	// JSON string OR number — the producer mixes both shapes.
+	Pages []middlePageJSON `json:"pages"`
 }
 
+type middlePageJSON struct {
+	PageIdx int               `json:"page_idx"`
+	Blocks  []json.RawMessage `json:"blocks"`
+}
+
+// middleBlockJSON accepts both index spellings (int for the synthetic
+// fixtures, int-or-string for real MinerU 4 output).
 type middleBlockJSON struct {
 	PageIdx *int            `json:"page_idx"`
-	Index   *int            `json:"index"`
+	Index   json.RawMessage `json:"index"`
 	Type    string          `json:"type"`
 	Content json.RawMessage `json:"content"`
 	BBox    []float64       `json:"bbox"`
+}
+
+// decodeBlockIndex parses a block index that may be a JSON number or a
+// JSON string holding a decimal (real MinerU 4 writes "0", "1", ...).
+// ok=false on any other shape.
+func decodeBlockIndex(raw json.RawMessage) (int, bool) {
+	if len(raw) == 0 {
+		return 0, false
+	}
+	var n int
+	if err := json.Unmarshal(raw, &n); err == nil {
+		return n, true
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		parsed, err := strconv.Atoi(strings.TrimSpace(s))
+		if err != nil {
+			return 0, false
+		}
+		return parsed, true
+	}
+	return 0, false
 }
 
 // ParseMiddleJSON decodes and validates one Middle JSON artifact.
 // The schema / schema_version gate is strict: a mismatched artifact
 // must never be silently interpreted as blocks (plan §8 Q1: "坏schema
 // 如实报错").
+//
+// Two block layouts are accepted and NORMALIZED to one internal model
+// where Index is the 1-based public block number (§5.1):
+//
+//   - top-level "blocks" (synthetic fixtures / Q0 golden anchors):
+//     blocks carry page_idx and an already-1-based index — used as-is;
+//   - top-level "pages[].blocks" (real MinerU 4.x output): blocks
+//     inherit their page's page_idx and carry a 0-based index — +1 on
+//     ingest. TODO(real-profile): pin this against more real samples;
+//     if a future MinerU ships 1-based page-block indexes the +1 must
+//     be keyed off the producer version in metadata.
 func ParseMiddleJSON(data []byte) (*MiddleDoc, error) {
 	var raw middleJSON
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -126,44 +185,92 @@ func ParseMiddleJSON(data []byte) (*MiddleDoc, error) {
 		doc.Pages = raw.PDFInfo.Pages
 		doc.PageSize = raw.PDFInfo.PageSize
 	}
-	if raw.Blocks == nil {
+
+	switch {
+	case raw.Blocks != nil:
+		for i, braw := range raw.Blocks {
+			var b middleBlockJSON
+			if err := json.Unmarshal(braw, &b); err != nil {
+				return nil, fmt.Errorf("%w: block[%d] decode: %v", ErrBadBlocks, i, err)
+			}
+			if b.PageIdx == nil {
+				return nil, fmt.Errorf("%w: block[%d] missing page_idx", ErrBadBlocks, i)
+			}
+			idx, ok := decodeBlockIndex(b.Index)
+			if !ok {
+				return nil, fmt.Errorf("%w: block[%d] missing/invalid index", ErrBadBlocks, i)
+			}
+			if idx < 1 {
+				return nil, fmt.Errorf("%w: block[%d] index %d < 1 (public index is 1-based)", ErrBadBlocks, i, idx)
+			}
+			if err := validateMiddleBlock(i, &b); err != nil {
+				return nil, err
+			}
+			doc.Blocks = append(doc.Blocks, MiddleBlock{
+				PageIdx: *b.PageIdx,
+				Index:   idx,
+				Type:    b.Type,
+				Content: b.Content,
+				BBox:    b.BBox,
+				Raw:     append(json.RawMessage(nil), braw...),
+			})
+		}
+	case raw.Pages != nil:
+		if doc.Pages == 0 {
+			doc.Pages = len(raw.Pages)
+		}
+		for pi, page := range raw.Pages {
+			for i, braw := range page.Blocks {
+				var b middleBlockJSON
+				if err := json.Unmarshal(braw, &b); err != nil {
+					return nil, fmt.Errorf("%w: page[%d].block[%d] decode: %v", ErrBadBlocks, pi, i, err)
+				}
+				idx, ok := decodeBlockIndex(b.Index)
+				if !ok {
+					return nil, fmt.Errorf("%w: page[%d].block[%d] missing/invalid index", ErrBadBlocks, pi, i)
+				}
+				// Real profile is 0-based; normalize to the 1-based
+				// public number every downstream contract speaks.
+				idx++
+				if err := validateMiddleBlock(i, &b); err != nil {
+					return nil, err
+				}
+				p := page.PageIdx
+				doc.Blocks = append(doc.Blocks, MiddleBlock{
+					PageIdx: p,
+					Index:   idx,
+					Type:    b.Type,
+					Content: b.Content,
+					BBox:    b.BBox,
+					Raw:     append(json.RawMessage(nil), braw...),
+				})
+			}
+		}
+	default:
 		return nil, fmt.Errorf("%w: missing blocks array", ErrBadBlocks)
 	}
-	for i, braw := range raw.Blocks {
-		var b middleBlockJSON
-		if err := json.Unmarshal(braw, &b); err != nil {
-			return nil, fmt.Errorf("%w: block[%d] decode: %v", ErrBadBlocks, i, err)
-		}
-		if b.PageIdx == nil || b.Index == nil {
-			return nil, fmt.Errorf("%w: block[%d] missing page_idx/index", ErrBadBlocks, i)
-		}
-		if *b.Index < 1 {
-			return nil, fmt.Errorf("%w: block[%d] index %d < 1 (public index is 1-based)", ErrBadBlocks, i, *b.Index)
-		}
-		if b.BBox != nil {
-			if len(b.BBox) != 4 {
-				return nil, fmt.Errorf("%w: block[%d] has %d bbox coords", ErrBadBBox, i, len(b.BBox))
-			}
-			for _, v := range b.BBox {
-				// Small epsilon for float round-trips at the edges.
-				if v < -1e-9 || v > 1+1e-9 {
-					return nil, fmt.Errorf("%w: block[%d] coord %v outside [0,1] (legacy [0,1000] profile is not supported)", ErrBadBBox, i, v)
-				}
-			}
-			if b.BBox[2] < b.BBox[0] || b.BBox[3] < b.BBox[1] {
-				return nil, fmt.Errorf("%w: block[%d] x1<y0 or y1<y0", ErrBadBBox, i)
-			}
-		}
-		doc.Blocks = append(doc.Blocks, MiddleBlock{
-			PageIdx: *b.PageIdx,
-			Index:   *b.Index,
-			Type:    b.Type,
-			Content: b.Content,
-			BBox:    b.BBox,
-			Raw:     append(json.RawMessage(nil), braw...),
-		})
-	}
 	return doc, nil
+}
+
+// validateMiddleBlock applies the per-block invariants shared by both
+// layouts (bbox shape + [0,1] range).
+func validateMiddleBlock(i int, b *middleBlockJSON) error {
+	if b.BBox == nil {
+		return nil
+	}
+	if len(b.BBox) != 4 {
+		return fmt.Errorf("%w: block[%d] has %d bbox coords", ErrBadBBox, i, len(b.BBox))
+	}
+	for _, v := range b.BBox {
+		// Small epsilon for float round-trips at the edges.
+		if v < -1e-9 || v > 1+1e-9 {
+			return fmt.Errorf("%w: block[%d] coord %v outside [0,1] (legacy [0,1000] profile is not supported)", ErrBadBBox, i, v)
+		}
+	}
+	if b.BBox[2] < b.BBox[0] || b.BBox[3] < b.BBox[1] {
+		return fmt.Errorf("%w: block[%d] x1<y0 or y1<y0", ErrBadBBox, i)
+	}
+	return nil
 }
 
 // FindBlock returns the block with EXACTLY the given (page_idx, block
