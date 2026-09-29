@@ -1191,6 +1191,11 @@ func initRawStore(cfg *config.Config) (objstore.Store, error) {
 		return objstore.NewLocalStore(cfg.RawDir)
 	}
 	dual := cfg.S3PublicEndpoint != "" && cfg.S3PublicEndpoint != cfg.S3Endpoint
+	// "papers" carries the Q1 block-comments parse bundles
+	// (papers/<qa>/parses/<rev>/…) alongside the source PDFs they pin.
+	// It shares the pdf bucket for now — the plan's §13 storage-layout
+	// decision may split it into a dedicated bucket (then this entry
+	// grows its own cfg field).
 	kinds := []struct {
 		kind   string
 		bucket string
@@ -1198,6 +1203,7 @@ func initRawStore(cfg *config.Config) (objstore.Store, error) {
 		{"pdf", cfg.S3BucketPDF},
 		{"markdown", cfg.S3BucketMD},
 		{"images", cfg.S3BucketImages},
+		{"papers", cfg.S3BucketPDF},
 	}
 	backends := make(map[string]objstore.Store, len(kinds))
 	for _, k := range kinds {

@@ -126,6 +126,31 @@ func (s *Store) GetPaperSource(ctx context.Context, paperID, sourceID string) (P
 	return src, true, nil
 }
 
+// FindPaperSourceBySHA returns the paper's source row pinning sha256
+// (the ingest "reuse over re-mint" lookup: a re-upload of parse output
+// for bytes we already know reuses the source identity). found=false
+// when this paper has no source with that sha — including when the sha
+// exists under another paper (byte-identical files under different
+// papers stay distinct sources; sharing would leak anchors across
+// papers).
+func (s *Store) FindPaperSourceBySHA(ctx context.Context, paperID, sha256 string) (PaperSource, bool, error) {
+	if !s.ensure(ctx) {
+		return PaperSource{}, false, ErrCatalogUnavailable
+	}
+	row := s.pool.QueryRow(ctx, `
+		SELECT source_id, paper_id, origin, sha256, objstore_key, size_bytes, created_at
+		FROM paper_sources WHERE paper_id = $1 AND sha256 = $2
+		ORDER BY created_at ASC, source_id ASC LIMIT 1`, paperID, sha256)
+	src, err := scanPaperSource(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return PaperSource{}, false, nil
+	}
+	if err != nil {
+		return PaperSource{}, false, catalogUnavailable("registry: find paper source by sha "+paperID, err)
+	}
+	return src, true, nil
+}
+
 // InsertPaperSource appends one source row. Idempotent on source_id:
 // re-inserting the same id is a no-op (bytes are immutable — the
 // conflict row stays authoritative). minted=false when the row already

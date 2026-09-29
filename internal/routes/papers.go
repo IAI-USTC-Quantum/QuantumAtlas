@@ -1673,6 +1673,20 @@ func uploadMinerUHandler(re *core.RequestEvent, cfg *config.Config, store objsto
 		return re.JSON(http.StatusInternalServerError, map[string]string{"detail": "read zip: " + err.Error()})
 	}
 
+	// NEW-format branch (plan §5): a zip carrying middle_json.json is
+	// the Doclib layout — route it to the source/revision ingest
+	// (papers_mineru_ingest.go) instead of the legacy full.md
+	// extraction below.
+	if mineru.HasMiddleJSON(zipBytes) {
+		requester0 := ""
+		if cfg.UserHeader != "" {
+			requester0 = re.Request.Header.Get(cfg.UserHeader)
+		}
+		return ingestMinerUNewFormat(re, store, catalog, canonical, zipBytes,
+			claimedPDFSha, normaliseTierParam(re.Request.URL.Query().Get("tier")),
+			requester0, source)
+	}
+
 	result, err := mineru.ExtractResult(zipBytes)
 	if err != nil {
 		// ExtractResult's errors wrap "open zip", "result zip did not
