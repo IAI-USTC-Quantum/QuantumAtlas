@@ -5,6 +5,8 @@ import { test as base, expect, type Page } from '@playwright/test'
 // database, object-store, OAuth, or backend integration tests.
 export const PAPER_ID = 'markdown-paper-0001'
 export const SECOND_PAPER_ID = 'markdown-paper-0002'
+// The synthetic block-comments fixture paper (mock reader dataset).
+export const READER_PAPER_ID = 'qa_01J5SYNTHETICFIXTURE0001'
 export const TITLE = 'Markdown Fixture Paper / Markdown 回归论文'
 export const SECOND_TITLE = 'Second Fixture Paper / 第二篇论文'
 const STAMP = '2026-01-01T00:00:00Z'
@@ -144,6 +146,7 @@ export const test = base.extend<Options & { api: ApiFixtures }>({
       documents: {
         [PAPER_ID]: { title: TITLE, markdown: MARKDOWN },
         [SECOND_PAPER_ID]: { title: SECOND_TITLE, markdown: '# Second document\n\nFresh $y=2$.\n' },
+        [READER_PAPER_ID]: { title: 'Block Comments Fixture Paper', markdown: '# Fixture\n' },
       },
       requests: [],
       deliveredAssets: [],
@@ -268,9 +271,14 @@ export const test = base.extend<Options & { api: ApiFixtures }>({
       }
       // Static build files and the two actual route families only. In particular,
       // a local Markdown image cannot silently hit a real app/API endpoint.
-      const staticAsset = /^\/assets\/[^/]+\.(?:js|css|woff2?|ttf)$/.test(url.pathname)
-      const appDocument = /^\/(?:en|zh)\/(?:papers\/markdown-paper-000[12]|admin\/assets)\/?$/.test(url.pathname)
-      if (method === 'GET' && (staticAsset || appDocument || url.pathname === '/favicon.ico')) {
+      // .mjs covers the pdfjs worker/module chunks; /fixtures + /pdfjs cover
+      // the reader workbench's same-origin static assets (see readerStatic).
+      const staticAsset = /^\/assets\/[^/]+\.(?:js|mjs|css|woff2?|ttf)$/.test(url.pathname)
+      const readerStatic =
+        /^\/(?:fixtures\/blockcomments\/minimal-2page\.pdf|pdfjs\/(?:cmaps|standard_fonts|wasm|iccs)\/[^/?]+)$/.test(url.pathname)
+      const appDocument =
+        /^\/(?:en|zh)\/(?:papers\/(?:markdown-paper-000[12]|qa_01J5SYNTHETICFIXTURE0001)(?:\/discussions)?|admin\/assets)\/?$/.test(url.pathname)
+      if (method === 'GET' && (staticAsset || readerStatic || appDocument || url.pathname === '/favicon.ico')) {
         await route.continue()
         return
       }
