@@ -45,8 +45,30 @@ type ParseRevision struct {
 	SchemaVersion  string
 	ArtifactSha256 string
 	ObjstoreKey    string
+	Tier           string // parse tier (00009): 'standard' | 'lite' | ... — locator component, not identity
 	CreatedAt      time.Time
 	IsCurrent      bool
+}
+
+// ParseTierDefault is the tier recorded when the ingest path cannot
+// observe one (00009 column default; plan §5.1 tier semantics).
+const ParseTierDefault = "standard"
+
+// NormalizeParseTier coerces a raw tier label into a storable value:
+// lowercased ASCII, [a-z0-9_-]{1,32}; anything else (including empty)
+// becomes ParseTierDefault so the locator never carries garbage.
+func NormalizeParseTier(tier string) string {
+	tier = strings.ToLower(strings.TrimSpace(tier))
+	if tier == "" || len(tier) > 32 {
+		return ParseTierDefault
+	}
+	for i := 0; i < len(tier); i++ {
+		c := tier[i]
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
+			return ParseTierDefault
+		}
+	}
+	return tier
 }
 
 // NewSourceID mints a source id: "src_" + lowercase ULID.
@@ -137,7 +159,7 @@ func (s *Store) ListParseRevisions(ctx context.Context, paperID string) ([]Parse
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT revision_id, paper_id, source_id, schema, schema_version,
-		       artifact_sha256, objstore_key, created_at, is_current
+		       artifact_sha256, objstore_key, tier, created_at, is_current
 		FROM parse_revisions WHERE paper_id = $1
 		ORDER BY created_at ASC, revision_id ASC`, paperID)
 	if err != nil {
@@ -164,7 +186,7 @@ func (s *Store) GetParseRevision(ctx context.Context, paperID, revisionID string
 	}
 	row := s.pool.QueryRow(ctx, `
 		SELECT revision_id, paper_id, source_id, schema, schema_version,
-		       artifact_sha256, objstore_key, created_at, is_current
+		       artifact_sha256, objstore_key, tier, created_at, is_current
 		FROM parse_revisions WHERE paper_id = $1 AND revision_id = $2`, paperID, revisionID)
 	rev, err := scanParseRevision(row)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -203,10 +225,10 @@ func (s *Store) InsertParseRevision(ctx context.Context, rev ParseRevision, setC
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO parse_revisions
 			       (revision_id, paper_id, source_id, schema, schema_version,
-			        artifact_sha256, objstore_key, is_current)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE)`,
+			        artifact_sha256, objstore_key, tier, is_current)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE)`,
 			rev.RevisionID, rev.PaperID, rev.SourceID, rev.Schema, rev.SchemaVersion,
-			rev.ArtifactSha256, rev.ObjstoreKey); err != nil {
+			rev.ArtifactSha256, rev.ObjstoreKey, NormalizeParseTier(rev.Tier)); err != nil {
 			return catalogUnavailable("registry: insert parse revision "+rev.RevisionID, err)
 		}
 		return tx.Commit(ctx)
@@ -214,10 +236,10 @@ func (s *Store) InsertParseRevision(ctx context.Context, rev ParseRevision, setC
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO parse_revisions
 		       (revision_id, paper_id, source_id, schema, schema_version,
-		        artifact_sha256, objstore_key, is_current)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, FALSE)`,
+		        artifact_sha256, objstore_key, tier, is_current)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, FALSE)`,
 		rev.RevisionID, rev.PaperID, rev.SourceID, rev.Schema, rev.SchemaVersion,
-		rev.ArtifactSha256, rev.ObjstoreKey)
+		rev.ArtifactSha256, rev.ObjstoreKey, NormalizeParseTier(rev.Tier))
 	if err != nil {
 		return catalogUnavailable("registry: insert parse revision "+rev.RevisionID, err)
 	}
@@ -241,7 +263,7 @@ func scanPaperSource(row scanner) (PaperSource, error) {
 func scanParseRevision(row scanner) (ParseRevision, error) {
 	var rev ParseRevision
 	if err := row.Scan(&rev.RevisionID, &rev.PaperID, &rev.SourceID, &rev.Schema,
-		&rev.SchemaVersion, &rev.ArtifactSha256, &rev.ObjstoreKey,
+		&rev.SchemaVersion, &rev.ArtifactSha256, &rev.ObjstoreKey, &rev.Tier,
 		&rev.CreatedAt, &rev.IsCurrent); err != nil {
 		return rev, fmt.Errorf("registry: scan parse revision: %w", err)
 	}
