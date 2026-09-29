@@ -2716,6 +2716,674 @@
                 }
             }
         },
+        "/api/papers/{paper_id}/parses": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Parse revisions of a paper: each row is one immutable\nparse artifact (schema + schema_version + artifact\nsha256) bound to the source it was parsed from. A\nre-parse inserts a new revision and flips the\nis_current pointer (current_revision_id); old artifacts\nkeep serving unchanged bytes. Requires login or\npapers:read.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "BlockComments"
+                ],
+                "summary": "List parse revisions (block comments)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "paper id: qa_... | arXiv id | DOI",
+                        "name": "paper_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{paper_id, parses:[{revision_id,source_id,schema,schema_version,artifact_sha256,is_current,created_at,json_endpoint,blocks_endpoint}], current_revision_id}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "no such paper",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "registry unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/papers/{paper_id}/parses/{revision}/blocks": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Top-level blocks of one immutable parse revision, in\nstable (page_idx, block index) order. Block indexes are\nthe parse's own public 1-based numbers and may be\nnon-contiguous (1,2,5,...); gaps are real — never\nrenumbered. page_idx is the original 0-based page index\n(page_no in each item is the public 1-based number).\ncursor is the opaque next_cursor token (keyset on the\nlast emitted block); per_page defaults to 20, max 100.\nRequires login or papers:read.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "BlockComments"
+                ],
+                "summary": "List parse blocks (keyset)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "paper id: qa_... | arXiv id | DOI",
+                        "name": "paper_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "parse revision id",
+                        "name": "revision",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "filter: exact 0-based page index",
+                        "name": "page_idx",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "keyset cursor from next_cursor",
+                        "name": "cursor",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "page size (default 20, max 100)",
+                        "name": "per_page",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{paper_id,revision_id,schema,schema_version,blocks:[{page_idx,block_index,page_no,type,content,bbox,has_bbox,raw}],next_cursor}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "bad query parameter",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "no such revision / bytes missing",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "artifact fails the docvortex.middle v2.0 profile",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "registry or store unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/papers/{paper_id}/parses/{revision}/blocks/{page_idx}/{block_index}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Combined read of ONE block: source (paper + source PDF\nidentity + parse revision identity) + anchor (the\npermanent comment anchor: canonical qa_, source_id,\nparse_revision, schema, page_idx, block_index) +\ncontent (the block's parsed value, original JSON under\nraw) + discussions. Block lookup is EXACT on\n(page_idx, block index): a non-contiguous index gap or a\npage the parse lacks answers 404 — never a\nnearest-block fallback. The same visual text under two\nparses of one PDF is TWO distinct anchors; comments\nnever migrate between revisions. discussions is an\nempty placeholder until the Q2 comment API lands\n(discussions_ready=false). Requires login or\npapers:read.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "BlockComments"
+                ],
+                "summary": "Read one block (combined)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "paper id: qa_... | arXiv id | DOI",
+                        "name": "paper_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "parse revision id",
+                        "name": "revision",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "0-based page index",
+                        "name": "page_idx",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "1-based public block index (exact)",
+                        "name": "block_index",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{source, anchor, content, discussions, discussions_ready, next_cursor}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "malformed block path",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "no such revision or block (exact-index semantics)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "artifact fails the docvortex.middle v2.0 profile",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "registry or store unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/papers/{paper_id}/parses/{revision}/blocks/{page_idx}/{block_index}/image": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "A PNG crop of the ORIGINAL source PDF page rendered and\nclipped to the block's [0,1]-normalized bbox — a real\npage region, never a redraw of the parsed text. Honest\nfailures, never a fabricated image: the block carries\nno bbox → 404 reason=no_bbox; the source PDF bytes are\nmissing → 404 reason=source_missing; the page is beyond\nthe source PDF → 404 reason=page_out_of_range; no PDF\nrasterizer installed on the server → 503\nreason=renderer_unavailable (operators install\npoppler-utils or set paper_access.block_image_command;\nresolution via paper_access.block_image_dpi, default\n150). ETag is deterministic over (source sha, page,\nbbox, dpi). Requires login or papers:read.",
+                "produces": [
+                    "image/png"
+                ],
+                "tags": [
+                    "BlockComments"
+                ],
+                "summary": "Get block image (original-page crop)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "paper id: qa_... | arXiv id | DOI",
+                        "name": "paper_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "parse revision id",
+                        "name": "revision",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "0-based page index",
+                        "name": "page_idx",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "1-based public block index (exact)",
+                        "name": "block_index",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "PNG crop of the rendered original page",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "400": {
+                        "description": "malformed block path",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "no_bbox | source_missing | page_out_of_range | no such revision/block",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "artifact fails the docvortex.middle v2.0 profile",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "renderer_unavailable | registry or store unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/papers/{paper_id}/parses/{revision}/json": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The ORIGINAL Middle JSON artifact bytes of one parse\nrevision — not a re-serialization. ETag /\nX-QAtlas-Sha256 carry the artifact sha256 the revision\nrow pins; the server verifies the stored bytes against\nit before serving (a mismatch is a 500, never silent).\nRevisions are immutable: the bytes for a revision_id\nnever change. Requires login or papers:read.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "BlockComments"
+                ],
+                "summary": "Get parse JSON bytes",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "paper id: qa_... | arXiv id | DOI",
+                        "name": "paper_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "parse revision id",
+                        "name": "revision",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Middle JSON bytes (application/json)",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "no such revision / bytes missing",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "stored bytes fail the pinned sha256",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "registry or store unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/papers/{paper_id}/sources": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Source PDF assets of a paper for the block-comments\nsurface: each row pins one immutable byte-identity\n(origin label like arxiv:v2 / upload, sha256, size).\nThe current_source_id / is_current pointer is derived\nfrom the paper's current parse revision (paper_sources\nrows are append-only). The paper_id path segment may be\na qa_ surrogate, an arXiv id, or a DOI — all resolve to\nthe canonical qa_ (merged papers follow merged_into;\nthe request alias is echoed via X-QAtlas-Requested-Id /\nX-QAtlas-Resolved-Id). Requires login or the\npapers:read scope.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "BlockComments"
+                ],
+                "summary": "List paper sources (block comments)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "paper id: qa_... | arXiv id | DOI",
+                        "name": "paper_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{paper_id, sources:[{source_id,origin,sha256,size_bytes,is_current,created_at,pdf_endpoint}], current_source_id}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "unrecognized id form",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "no such paper",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "registry unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/papers/{paper_id}/sources/{source_id}/pdf": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The ORIGINAL PDF bytes of one source, hash-verifiable\nvia ETag / X-QAtlas-Sha256 (= the row's sha256). Range\nrequests are honoured with the SAME authentication as\nfull GETs. ?version=vN is a pin, not a hint: on mismatch\nwith the source's own origin the answer is 404 — the\nserver never substitutes a newer version or the journal\nedition. This is the block-comments reading surface; the\nlegacy /api/papers/{id}/pdf route stays 410.",
+                "produces": [
+                    "application/pdf"
+                ],
+                "tags": [
+                    "BlockComments"
+                ],
+                "summary": "Get source PDF bytes",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "paper id: qa_... | arXiv id | DOI",
+                        "name": "paper_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "source id from the sources list",
+                        "name": "source_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "pin: arXiv version, e.g. v2 — mismatch 404s, never substitutes",
+                        "name": "version",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "PDF bytes (Range → 206)",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "206": {
+                        "description": "partial content",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "no such source / version pin mismatch / bytes missing",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "registry or store unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/pat": {
             "get": {
                 "security": [
