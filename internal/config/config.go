@@ -237,6 +237,17 @@ type Config struct {
 	MinerUTimeout           time.Duration
 	MinerUMaxConcurrentJobs int
 
+	// --- Block-level comments (plan §12.2, Q2) ---------------------
+	//
+	// CommentsMaxBodyChars bounds one comment/reply body in Unicode
+	// characters (default 20000, `comments.max_body_chars`). Oversize
+	// bodies are rejected 413 — never silently truncated.
+	// CommentsMaxRequestBytes bounds the whole JSON request body the
+	// comment write endpoints accept (default 1 MiB,
+	// `comments.max_request_bytes`).
+	CommentsMaxBodyChars    int
+	CommentsMaxRequestBytes int
+
 	// --- RAG index push (qatlas-rag microservice) ------------------
 	//
 	// Semantic retrieval has moved out of qatlasd: the standalone
@@ -480,6 +491,11 @@ type fileConfig struct {
 			MaxConcurrentJobs *int     `yaml:"max_concurrent_jobs"`
 		} `yaml:"mineru"`
 	} `yaml:"paper_access"`
+
+	Comments struct {
+		MaxBodyChars    *int `yaml:"max_body_chars"`
+		MaxRequestBytes *int `yaml:"max_request_bytes"`
+	} `yaml:"comments"`
 
 	Downloader struct {
 		Enabled        *bool  `yaml:"enabled"`
@@ -791,6 +807,8 @@ func (fc *fileConfig) toConfig(anchor string) (*Config, error) {
 		OpenAlexMailto:           fc.PaperAccess.OpenAlexMailto,
 		ArxivFetchConcurrent:     intOrDefault(fc.PaperAccess.ArxivFetchConcurrent, 2),
 		ArxivFetchRPS:            floatOrDefault(fc.PaperAccess.ArxivFetchRPS, 0.33),
+		CommentsMaxBodyChars:     intOrDefault(fc.Comments.MaxBodyChars, 20000),
+		CommentsMaxRequestBytes:  intOrDefault(fc.Comments.MaxRequestBytes, 1<<20),
 		DownloaderEnabled:        boolOrDefault(fc.Downloader.Enabled, true),
 		DownloaderConcurrency:    intOrDefault(fc.Downloader.Concurrency, 2),
 		DownloaderUnpaywallEmail: fc.Downloader.UnpaywallEmail,
