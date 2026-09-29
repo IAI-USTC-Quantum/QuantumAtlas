@@ -6,11 +6,19 @@
 // preview already follows (web/MARKDOWN_PREVIEW.md). PDF bytes are cached
 // with a long gcTime but invalidated per paper+source; the AbortSignal is
 // consumed so a late response can't overwrite a closed viewer.
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from './auth'
-import { READER_API_MODE, MOCK_PAPER_ID, readerClient, type DiscussionFilters } from './reader-api'
-import { usePaperDetail } from './queries'
-import { mockPaperDetail } from '@/mocks/reader-mock-api'
+import {
+  READER_API_MODE,
+  MOCK_PAPER_ID,
+  readerClient,
+  type CreateDiscussionInput,
+  type DiscussionFilters,
+  type DiscussionStatus,
+  type ReplyInput,
+} from './reader-api'
+import { useAdminWhoami, usePaperDetail } from './queries'
+import { mockPaperDetail } from '@/mocks/reader-mock-seed'
 
 // Paper detail for reader pages: in mock mode the fixture paper has no
 // backend row, so serve the synthetic detail (lets `npm run dev` preview
@@ -90,6 +98,134 @@ export function useDiscussionDetail(discussionId: string | null) {
     queryKey: ['reader-discussion', discussionId],
     queryFn: ({ signal }) => readerClient.getDiscussion(discussionId!, signal),
     enabled: Boolean(discussionId),
+    retry: false,
+  })
+}
+
+export function useDiscussionRevisions(discussionId: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: ['reader-discussion-revisions', discussionId],
+    queryFn: ({ signal }) => readerClient.listRevisions(discussionId!, signal),
+    enabled: Boolean(discussionId) && enabled,
+    retry: false,
+  })
+}
+
+// Who is acting? In mock mode the fixture actor decides (root author /
+// admin semantics come from the mock store); live mode combines the
+// session user id with the session-only admin whoami. Used ONLY to decide
+// which controls to render — the server remains the authority.
+export function useReaderActor(): { id: string; is_admin: boolean; ready: boolean } {
+  const auth = useAuth()
+  const whoami = useAdminWhoami()
+  if (READER_API_MODE === 'mock') {
+    return { id: 'user_alma', is_admin: false, ready: true }
+  }
+  return {
+    id: auth.user?.id ?? '',
+    is_admin: whoami.data?.is_admin ?? false,
+    ready: !auth.isChecking,
+  }
+}
+
+// Fresh idempotency key per submission attempt (§12.2: retries with the
+// SAME key replay the original result — the key is minted when the user
+// initiates a submission, not on every keystroke).
+export function newIdempotencyKey(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
+  return `idem-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+function useInvalidateReader() {
+  const qc = useQueryClient()
+  return () => {
+    void qc.invalidateQueries({ queryKey: ['reader-discussions'] })
+    void qc.invalidateQueries({ queryKey: ['reader-discussion'] })
+    void qc.invalidateQueries({ queryKey: ['reader-block-reading'] })
+  }
+}
+
+export function useCreateDiscussion(paperId: string) {
+  const invalidate = useInvalidateReader()
+  return useMutation({
+    mutationFn: ({
+      input,
+      idempotencyKey,
+    }: {
+      input: CreateDiscussionInput
+      idempotencyKey: string
+    }) => readerClient.createDiscussion(paperId, input, idempotencyKey),
+    onSuccess: invalidate,
+    retry: false,
+  })
+}
+
+export function useAddReply() {
+  const invalidate = useInvalidateReader()
+  return useMutation({
+    mutationFn: ({
+      discussionId,
+      input,
+      idempotencyKey,
+    }: {
+      discussionId: string
+      input: ReplyInput
+      idempotencyKey: string
+    }) => readerClient.addReply(discussionId, input, idempotencyKey),
+    onSuccess: invalidate,
+    retry: false,
+  })
+}
+
+export function useSetDiscussionStatus() {
+  const invalidate = useInvalidateReader()
+  return useMutation({
+    mutationFn: ({
+      discussionId,
+      status,
+      reason,
+    }: {
+      discussionId: string
+      status: DiscussionStatus | null
+      reason: string
+    }) => readerClient.setStatus(discussionId, { status, reason }),
+    onSuccess: invalidate,
+    retry: false,
+  })
+}
+
+export function useEditDiscussionBody() {
+  const invalidate = useInvalidateReader()
+  return useMutation({
+    mutationFn: ({
+      discussionId,
+      body,
+      ifMatchRevision,
+    }: {
+      discussionId: string
+      body: string
+      ifMatchRevision: number
+    }) => readerClient.editDiscussionBody(discussionId, body, ifMatchRevision),
+    onSuccess: invalidate,
+    retry: false,
+  })
+}
+
+export function useEditReplyBody() {
+  const invalidate = useInvalidateReader()
+  return useMutation({
+    mutationFn: ({
+      discussionId,
+      replyId,
+      body,
+      ifMatchRevision,
+    }: {
+      discussionId: string
+      replyId: string
+      body: string
+      ifMatchRevision: number
+    }) => readerClient.editReplyBody(discussionId, replyId, body, ifMatchRevision),
+    onSuccess: invalidate,
     retry: false,
   })
 }

@@ -866,6 +866,40 @@
       "noReplies": "暂无回复。",
       "anchorLink": "第 {{page}} 页 #{{block}} · {{rev}}",
       "currentTag": "当前"
+    },
+    "composer": {
+      "toggle": "发起讨论",
+      "type": "类型",
+      "typeCustom": "自定义…",
+      "customPlaceholder": "custom_slug",
+      "scope": "作用域",
+      "model": "模型（声明）",
+      "modelPlaceholder": "模型/agent 标识（可选）",
+      "bodyPlaceholder": "你查证了什么、对照了哪份原始材料？",
+      "submit": "发布讨论",
+      "submitting": "发布中…",
+      "cancel": "取消",
+      "charCount": "{{count}} / {{max}} 字符",
+      "typeInvalid": "自定义类型需匹配 [a-z0-9_:-]{1,64}。"
+    },
+    "thread": {
+      "loadingDetail": "讨论串加载中…",
+      "replyPlaceholder": "回复证据、出处或查证结果…",
+      "replySubmit": "回复",
+      "edit": "编辑正文",
+      "editReply": "编辑回复",
+      "editConflict": "编辑期间内容已被他人修改（修订号不一致）。请刷新后重试。",
+      "save": "保存",
+      "statusChange": "设置状态",
+      "statusReason": "理由",
+      "statusReasonPlaceholder": "理由（必填，进入历史）",
+      "apply": "应用",
+      "history": "历史",
+      "historyLoading": "历史加载中…",
+      "eventCreated": "创建讨论",
+      "eventReply": "新增回复",
+      "eventBody": "{{target}} 正文已编辑",
+      "eventStatusFrom": "从"
     }
   }
 }

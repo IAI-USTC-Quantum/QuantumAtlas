@@ -14,10 +14,13 @@ import type {
   BlockReading,
   BlocksPage,
   DiscussionDetail,
+  DiscussionRevisionsResponse,
   DiscussionsPage,
+  DiscussionSummary,
   PaperParsesResponse,
   PaperSourcesResponse,
   ReaderClient,
+  ReplyEntry,
 } from './reader-types'
 
 export * from './reader-types'
@@ -42,6 +45,34 @@ async function getReaderJson<T>(url: string, signal?: AbortSignal): Promise<T> {
       response.status,
       detail || `${response.status} ${response.statusText}`,
     )
+  }
+  return (await response.json()) as T
+}
+
+// §12.2 write verbs: Idempotency-Key on create/reply, If-Match (revision
+// integer) on body edits; 409 surfaces as ReaderApiError.
+async function sendReaderJson<T>(
+  url: string,
+  method: 'POST' | 'PATCH',
+  body: unknown,
+  headers: Record<string, string> = {},
+  signal?: AbortSignal,
+): Promise<T> {
+  const response = await fetch(url, {
+    method,
+    headers: { ...authHeaders(), 'content-type': 'application/json', ...headers },
+    body: JSON.stringify(body),
+    signal,
+  })
+  if (!response.ok) {
+    let detail = ''
+    try {
+      const j = (await response.json()) as { detail?: string }
+      detail = j.detail ?? ''
+    } catch {
+      // not JSON; fall through to bare status
+    }
+    throw new ReaderApiError(response.status, detail || `${response.status} ${response.statusText}`)
   }
   return (await response.json()) as T
 }
@@ -104,6 +135,51 @@ function liveClient(): ReaderClient {
       }
       return response.arrayBuffer()
     },
+    createDiscussion: (paperId, input, idempotencyKey, signal) =>
+      sendReaderJson<DiscussionSummary>(
+        `/api/papers/${encodeURIComponent(paperId)}/discussions`,
+        'POST',
+        input,
+        { 'Idempotency-Key': idempotencyKey },
+        signal,
+      ),
+    addReply: (discussionId, input, idempotencyKey, signal) =>
+      sendReaderJson<ReplyEntry>(
+        `/api/discussions/${encodeURIComponent(discussionId)}/replies`,
+        'POST',
+        input,
+        { 'Idempotency-Key': idempotencyKey },
+        signal,
+      ),
+    setStatus: (discussionId, input, signal) =>
+      sendReaderJson<DiscussionSummary>(
+        `/api/discussions/${encodeURIComponent(discussionId)}/status`,
+        'PATCH',
+        input,
+        {},
+        signal,
+      ),
+    editDiscussionBody: (discussionId, body, ifMatchRevision, signal) =>
+      sendReaderJson<DiscussionSummary>(
+        `/api/discussions/${encodeURIComponent(discussionId)}/body`,
+        'PATCH',
+        { body },
+        { 'If-Match': String(ifMatchRevision) },
+        signal,
+      ),
+    editReplyBody: (discussionId, replyId, body, ifMatchRevision, signal) =>
+      sendReaderJson<ReplyEntry>(
+        `/api/discussions/${encodeURIComponent(discussionId)}/replies/${encodeURIComponent(replyId)}/body`,
+        'PATCH',
+        { body },
+        { 'If-Match': String(ifMatchRevision) },
+        signal,
+      ),
+    listRevisions: (discussionId, signal) =>
+      getReaderJson<DiscussionRevisionsResponse>(
+        `/api/discussions/${encodeURIComponent(discussionId)}/revisions`,
+        signal,
+      ),
   }
 }
 

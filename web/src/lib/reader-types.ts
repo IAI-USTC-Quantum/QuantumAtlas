@@ -122,6 +122,53 @@ export type DiscussionFilters = {
   cursor?: string
 }
 
+// --- Q2: write paths -----------------------------------------------------------
+
+export type CreateDiscussionInput = {
+  parse_revision: string
+  page_idx: number
+  block_index: number
+  type: string
+  scope: DiscussionScope
+  status?: DiscussionStatus | null
+  body: string
+  model?: string | null
+}
+
+export type ReplyInput = { body: string; model?: string | null }
+
+export type SetStatusInput = { status: DiscussionStatus | null; reason: string }
+
+// Revision & status history (plan §12.3 comment_status_events +
+// comment_body_revisions). `created` anchors the timeline; body edits keep
+// old AND new so a "confirmed" verdict can never be silently rewritten
+// (plan §6.2/§6.3).
+export type DiscussionEvent =
+  | { kind: 'created'; actor: string; created_at: string }
+  | {
+      kind: 'status'
+      from: DiscussionStatus | null
+      to: DiscussionStatus | null
+      reason: string
+      actor: string
+      created_at: string
+    }
+  | {
+      kind: 'body'
+      target: 'discussion' | 'reply'
+      target_id: string
+      old: string
+      new: string
+      editor: string
+      created_at: string
+    }
+  | { kind: 'reply'; reply_id: string; actor: string; created_at: string }
+
+export type DiscussionRevisionsResponse = {
+  discussion_id: string
+  events: DiscussionEvent[]
+}
+
 // --- Client contract -----------------------------------------------------------
 
 export type ReaderClient = {
@@ -153,4 +200,31 @@ export type ReaderClient = {
     version: string | undefined,
     signal?: AbortSignal,
   ): Promise<ArrayBuffer>
+  createDiscussion(
+    paperId: string,
+    input: CreateDiscussionInput,
+    idempotencyKey: string,
+    signal?: AbortSignal,
+  ): Promise<DiscussionSummary>
+  addReply(
+    discussionId: string,
+    input: ReplyInput,
+    idempotencyKey: string,
+    signal?: AbortSignal,
+  ): Promise<ReplyEntry>
+  setStatus(discussionId: string, input: SetStatusInput, signal?: AbortSignal): Promise<DiscussionSummary>
+  editDiscussionBody(
+    discussionId: string,
+    body: string,
+    ifMatchRevision: number,
+    signal?: AbortSignal,
+  ): Promise<DiscussionSummary>
+  editReplyBody(
+    discussionId: string,
+    replyId: string,
+    body: string,
+    ifMatchRevision: number,
+    signal?: AbortSignal,
+  ): Promise<ReplyEntry>
+  listRevisions(discussionId: string, signal?: AbortSignal): Promise<DiscussionRevisionsResponse>
 }

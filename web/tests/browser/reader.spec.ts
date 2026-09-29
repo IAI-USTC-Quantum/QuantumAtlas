@@ -141,6 +141,43 @@ test('expanded discussion thread shows replies with model declarations (zh)', as
   await expect(detail).toContainText('已确认')
 })
 
+test('write flow: create discussion, reply, change status with reason, see history', async ({ page }) => {
+  await openReader(page)
+  await page.getByTestId('block-overlay-2').click()
+
+  // Create a new discussion on this exact anchor (default actor user_alma).
+  await page.getByTestId('composer-toggle').click()
+  await page.getByTestId('composer-body').fill('New verification note from the browser test.')
+  await page.getByTestId('composer-submit').click()
+  const newCard = page.getByTestId('discussion-card').filter({ hasText: 'New verification note from the browser test.' })
+  await expect(newCard).toBeVisible()
+  await expect(newCard.locator('[data-status="pending"]')).toBeVisible()
+
+  // Expand dsc_01 (user_alma is its root author → status control shows).
+  const thread = page.locator('[data-discussion-id="dsc_01"]')
+  await thread.getByTestId('discussion-toggle').click()
+  await expect(thread.getByTestId('reply-item')).toHaveCount(2)
+
+  // Reply with evidence.
+  await thread.getByTestId('reply-body').fill('Browser test reply with evidence.')
+  await thread.getByTestId('reply-submit').click()
+  await expect(thread.getByTestId('reply-item')).toHaveCount(3)
+
+  // Status change requires a reason (apply stays disabled until filled);
+  // the badge flips after applying.
+  await thread.getByTestId('status-select').selectOption('retracted')
+  await expect(thread.getByTestId('status-apply')).toBeDisabled()
+  await thread.getByTestId('status-reason').fill('retracting after re-verification')
+  await thread.getByTestId('status-apply').click()
+  await expect(thread.getByTestId('status-badge')).toHaveAttribute('data-status', 'retracted')
+
+  // History keeps the transition and the reason.
+  await thread.getByTestId('history-toggle').click()
+  await expect(
+    thread.getByTestId('history-event').filter({ hasText: 'retracting after re-verification' }),
+  ).toBeVisible()
+})
+
 test('papers without fixture data get an honest unavailable state', async ({ page }) => {
   // Any registry paper without reader fixture data (mock mode) must say so
   // instead of faking a reader.

@@ -866,6 +866,40 @@
       "noReplies": "No replies yet.",
       "anchorLink": "p{{page}} #{{block}} · {{rev}}",
       "currentTag": "current"
+    },
+    "composer": {
+      "toggle": "New discussion",
+      "type": "Type",
+      "typeCustom": "Custom…",
+      "customPlaceholder": "custom_slug",
+      "scope": "Scope",
+      "model": "Model (declared)",
+      "modelPlaceholder": "model/agent id (optional)",
+      "bodyPlaceholder": "What did you verify, and against which original material?",
+      "submit": "Post discussion",
+      "submitting": "Posting…",
+      "cancel": "Cancel",
+      "charCount": "{{count}} / {{max}} characters",
+      "typeInvalid": "Custom type must match [a-z0-9_:-]{1,64}."
+    },
+    "thread": {
+      "loadingDetail": "Loading thread…",
+      "replyPlaceholder": "Reply with evidence, references, or verification results…",
+      "replySubmit": "Reply",
+      "edit": "Edit body",
+      "editReply": "Edit reply",
+      "editConflict": "This content changed while you were editing (revision mismatch). Refresh and try again.",
+      "save": "Save",
+      "statusChange": "Set status",
+      "statusReason": "Reason",
+      "statusReasonPlaceholder": "Reason (required, kept in history)",
+      "apply": "Apply",
+      "history": "History",
+      "historyLoading": "Loading history…",
+      "eventCreated": "discussion created",
+      "eventReply": "reply added",
+      "eventBody": "{{target}} body edited",
+      "eventStatusFrom": "from"
     }
   }
 }
