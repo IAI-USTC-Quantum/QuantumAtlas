@@ -174,15 +174,25 @@ cp web/.env.development.example web/.env.development.local
 
 ```sh
 VITE_DEV_FAKE_AUTH=1 npm run dev
+# /zh/papers                                         论文列表（mock：仅夹具论文一条）
 # /zh/papers/qa_01J5SYNTHETICFIXTURE0001            阅读工作台（PDF | 块 | 讨论）
 # /zh/papers/qa_01J5SYNTHETICFIXTURE0001/discussions Issue 式讨论列表
 ```
 
 mock 数据来自 `tests/fixtures/blockcomments/` 的合成夹具（PDF 复制在
 `public/fixtures/`，pdfjs-dist 配套字体等在 `public/pdfjs/`，均不入库、由
-脚本同步）。写操作（发起/回复/状态/编辑）只在页面内存中生效，刷新即重置。
+脚本同步）；`/papers` 列表页在 mock 模式下同样走内置合成数据（否则无后端时
+vite 回退 `index.html`，JSON 解析报 `Unexpected token '<'` 崩页）。写操作
+（发起/回复/状态/编辑）只在页面内存中生效，刷新即重置。
 后端就绪后设 `VITE_READER_API=live` 切换真实 API；两套实现共用同一类型与
 语义合同（幂等键、If-Match、状态理由等），单测同时锁定。
+
+PDF 渲染必须使用 pdfjs-dist 的 **legacy build**（主线程与 worker 均为
+`legacy/build/*`，Babel + core-js 转译版）：pdf.js ≥5.4.624 的 standard
+build 无条件调用 `Uint8Array.prototype.toHex()`（需 Chrome 140+），旧浏览器
+上 PDF 区全白。`scripts/sync-pdfjs-assets.mjs` 会在安装/构建时校验 legacy
+产物存在且带 core-js 标记，`tests/pdfjs-legacy.test.ts` 与浏览器套件锁定
+两处 import 不回归。
 
 ## 常用命令与资源分发
 
