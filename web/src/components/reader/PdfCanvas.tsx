@@ -9,12 +9,22 @@ import { isCanvasRotation, type CanvasRotation } from '@/lib/reader-geometry'
 // pdfjs module AND worker come from the same locked pdfjs-dist package;
 // no vendor copy and no CDN fallback (plan §12.1). The worker URL import is
 // resolved by Vite into a same-origin asset, satisfying worker-src 'self'.
-let pdfjsPromise: Promise<typeof import('pdfjs-dist')> | null = null
+//
+// BOTH sides must be the LEGACY build (pdfjs-dist/legacy/build/*): pdf.js
+// ≥5.4.624 standard calls Uint8Array.prototype.toHex() unconditionally
+// (Chrome 140+) and v6 standard also needs Map.getOrInsertComputed /
+// Math.sumPrecise / Promise.try, so older browsers render a blank PDF with
+// "toHex is not a function". The legacy build ships the core-js polyfills;
+// partial hand-written polyfills cannot save the standard build. Regressions
+// here are guarded by tests/pdfjs-legacy.test.ts + the browser suite.
+let pdfjsPromise: Promise<typeof import('pdfjs-dist/legacy/build/pdf.mjs')> | null = null
 async function loadPdfjs() {
   if (!pdfjsPromise) {
     pdfjsPromise = (async () => {
-      const lib = await import('pdfjs-dist')
-      const { default: workerUrl } = await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
+      const lib = await import('pdfjs-dist/legacy/build/pdf.mjs')
+      const { default: workerUrl } = await import(
+        'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
+      )
       lib.GlobalWorkerOptions.workerSrc = workerUrl
       return lib
     })()
