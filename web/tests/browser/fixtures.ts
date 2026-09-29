@@ -174,7 +174,9 @@ export const test = base.extend<Options & { api: ApiFixtures }>({
       sessionStorage.clear()
       localStorage.setItem('pocketbase_auth', JSON.stringify({ token, record }))
       localStorage.setItem('qatlas_theme', theme)
-      localStorage.setItem('i18nextLng', language)
+      // Must match lookupLocalStorage in src/i18n/index.ts ('qatlas_lang'),
+      // otherwise the language fixture never reaches the detector.
+      localStorage.setItem('qatlas_lang', language)
       document.addEventListener('securitypolicyviolation', (event) => {
         console.error(`BROWSER_REGRESSION_CSP: ${event.violatedDirective} ${event.blockedURI}`)
       })
@@ -276,8 +278,10 @@ export const test = base.extend<Options & { api: ApiFixtures }>({
       const staticAsset = /^\/assets\/[^/]+\.(?:js|mjs|css|woff2?|ttf)$/.test(url.pathname)
       const readerStatic =
         /^\/(?:fixtures\/blockcomments\/minimal-2page\.pdf|pdfjs\/(?:cmaps|standard_fonts|wasm|iccs)\/[^/?]+)$/.test(url.pathname)
+      // The papers list (/en|zh/papers) is included for the mock-mode list
+      // walk-through and the language-switcher regression.
       const appDocument =
-        /^\/(?:en|zh)\/(?:papers\/(?:markdown-paper-000[12]|qa_01J5SYNTHETICFIXTURE0001)(?:\/discussions)?|admin\/assets)\/?$/.test(url.pathname)
+        /^\/(?:en|zh)\/(?:papers(?:\/(?:markdown-paper-000[12]|qa_01J5SYNTHETICFIXTURE0001)(?:\/discussions)?)?|admin\/assets)\/?$/.test(url.pathname)
       if (method === 'GET' && (staticAsset || readerStatic || appDocument || url.pathname === '/favicon.ico')) {
         await route.continue()
         return

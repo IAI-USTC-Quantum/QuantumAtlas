@@ -1,4 +1,5 @@
 import type { Locator, Page } from '@playwright/test'
+import { readdirSync, readFileSync } from 'node:fs'
 import { expect, test, READER_PAPER_ID } from './fixtures'
 
 // Reader-workbench browser regression (plan §8 Q4): the three-pane
@@ -38,6 +39,75 @@ test('renders the pdf and a clickable overlay for non-contiguous blocks', async 
   // Block list mirrors the same blocks; block 2 carries 2 discussions.
   await expect(page.getByTestId('block-item-2')).toContainText('2 discussions')
   await expect(page.getByTestId('block-item-1')).toContainText('1 discussions')
+})
+
+// pdf.js ≥5.4.624 standard unconditionally calls Uint8Array.prototype.toHex()
+// (Chrome 140+); on older browsers the PDF area goes white with
+// "n.toHex is not a function". The official fix is the legacy build
+// (Babel + core-js) for BOTH the main module and the worker. This local
+// Chromium is too new to reproduce the crash, so we assert structurally on
+// the served bytes: the worker the browser actually spawns, and the shipped
+// main-thread chunk, must both carry the core-js payload.
+test('the pdf.js worker and main module served to the browser are the legacy build', async ({ page }) => {
+  await openReader(page)
+
+  // The worker is spawned via new Worker(workerSrc); find its script among
+  // the resource timing entries.
+  const workerUrlHandle = await page.waitForFunction(() =>
+    performance
+      .getEntriesByType('resource')
+      .map((entry) => entry.name)
+      .find((url) => url.includes('pdf.worker')) ?? null,
+  )
+  let workerUrl = (await workerUrlHandle.jsonValue()) as string | null
+  expect(workerUrl, 'a pdf.worker asset must have been requested').toBeTruthy()
+
+  // Vite serves `?url` imports behind a tiny JS wrapper that re-exports the
+  // real asset path; follow at most one hop to the actual worker bytes.
+  let workerText = await page.evaluate(
+    (target) => fetch(target).then((response) => response.text()),
+    workerUrl as string,
+  )
+  if (!workerText.includes('core-js_shared__')) {
+    const realPath = workerText.match(/\/assets\/[A-Za-z0-9._-]+\.mjs/)?.[0]
+    expect(realPath, 'the worker wrapper must point at a real asset').toBeTruthy()
+    workerUrl = new URL(realPath!, page.url()).href
+    workerText = await page.evaluate(
+      (target) => fetch(target).then((response) => response.text()),
+      workerUrl,
+    )
+  }
+  // core-js_shared__ only exists in the transpiled legacy build.
+  expect(workerText).toContain('core-js_shared__')
+
+  // Main thread: the production bundle must embed the legacy pdf.js module
+  // (a standard-build chunk carries no core-js marker). Chunks may be .js or
+  // .mjs; the 68-byte ?url wrappers are excluded by the marker requirement.
+  const assetsDir = new URL('../../dist/assets/', import.meta.url)
+  const chunks = readdirSync(assetsDir).filter(
+    (name) => (name.endsWith('.mjs') || name.endsWith('.js')) && !name.includes('worker'),
+  )
+  const legacyChunks = chunks.filter((name) =>
+    readFileSync(new URL(`../../dist/assets/${name}`, import.meta.url), 'utf8').includes('core-js_shared__'),
+  )
+  expect(legacyChunks.length, 'at least one main-thread chunk must carry core-js').toBeGreaterThan(0)
+})
+
+test('mock mode: the papers list degrades gracefully and launches the reader', async ({ page }) => {
+  // With no backend, /api/papers would return the SPA fallback and crash
+  // the JSON parse ("Unexpected token '<'"). Mock mode must serve the
+  // synthetic list instead — and the fixture paper must click through into
+  // a working reader. (The fixture boundary also fails the test if any
+  // unmocked /api request is made from this page.)
+  await page.goto('/zh/papers')
+  await expect(page.getByTestId('papers-mock-badge')).toBeVisible()
+
+  const fixtureRow = page.getByRole('link', { name: 'Synthetic Block-Comments Fixture Paper' })
+  await expect(fixtureRow).toBeVisible()
+  await fixtureRow.click()
+
+  await expect(page.locator(WORKBENCH)).toBeVisible()
+  await expect(page.locator('canvas[data-rendered="1"]')).toBeAttached({ timeout: 15_000 })
 })
 
 test('selecting a block shows its two independent discussions', async ({ page }) => {

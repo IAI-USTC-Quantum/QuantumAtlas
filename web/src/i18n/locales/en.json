@@ -270,6 +270,7 @@
         "createdAt": "Created"
       },
       "empty": "No papers match the current filters.",
+      "mockNotice": "Mock preview: the list is synthetic fixture data, no backend connected.",
       "total": "{{count}} papers",
       "pageOf": "Page {{page}} of {{pages}}",
       "prev": "Previous",

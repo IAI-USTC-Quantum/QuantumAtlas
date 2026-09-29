@@ -270,6 +270,7 @@
         "createdAt": "收录时间"
       },
       "empty": "没有符合当前筛选条件的论文。",
+      "mockNotice": "Mock 预览：列表为合成夹具数据，未连接后端。",
       "total": "共 {{count}} 篇",
       "pageOf": "第 {{page}} / {{pages}} 页",
       "prev": "上一页",

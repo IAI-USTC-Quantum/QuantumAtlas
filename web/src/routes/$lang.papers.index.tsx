@@ -91,6 +91,15 @@ function PapersListPage() {
         copy={t('list.subtitle')}
       />
 
+      {/* Same VITE_READER_API switch as the reader workbench (reader-api.ts
+          READER_API_MODE); statically replaced at build time, so the live
+          build drops this badge entirely. */}
+      {import.meta.env.VITE_READER_API !== 'live' && (
+        <Badge variant="secondary" data-testid="papers-mock-badge">
+          {t('list.mockNotice')}
+        </Badge>
+      )}
+
       <div className="flex flex-wrap items-center gap-2">
         <Button
           type="button"
