@@ -42,10 +42,12 @@ import (
 // "<resource>:<action>" naming convention so future tooling (rate
 // limits, audit logs) can group by resource easily.
 const (
-	ScopePapersRead   = "papers:read"   // GET /api/papers/{path...} (stats / needs-mineru; also markdown when QATLAS_PAPER_ACCESS_ENABLED=true), POST /api/search
-	ScopePapersWrite  = "papers:write"  // upload-pdf / upload-mineru / mineru-lease CRUD (implies papers:read)
-	ScopePluginsRead  = "plugins:read"  // GET /api/v1/plugins
-	ScopePluginsWrite = "plugins:write" // enable / disable plugins (implies plugins:read)
+	ScopePapersRead    = "papers:read"    // GET /api/papers/{path...} (stats / needs-mineru; also markdown when QATLAS_PAPER_ACCESS_ENABLED=true), POST /api/search
+	ScopePapersWrite   = "papers:write"   // upload-pdf / upload-mineru / mineru-lease CRUD (implies papers:read)
+	ScopePluginsRead   = "plugins:read"   // GET /api/v1/plugins
+	ScopePluginsWrite  = "plugins:write"  // enable / disable plugins (implies plugins:read)
+	ScopeCommentsRead  = "comments:read"  // GET /api/papers/{id}/discussions + /api/discussions/... (block comments, plan §12.2)
+	ScopeCommentsWrite = "comments:write" // POST/PATCH discussions, replies, status, body edits (implies comments:read; plan §12.2)
 
 	// ScopeMaster is the wildcard internal-only scope assigned to
 	// PocketBase session tokens (browser users). Never accepted as
@@ -59,15 +61,17 @@ const (
 // ScopeDescription supplies one-line human-readable copy for the SPA
 // scope picker. Keep these short — they appear next to a checkbox.
 var ScopeDescription = map[string]string{
-	ScopePapersRead:   "Read paper catalog (stats, needs-mineru, search; also markdown download when the server enables asset downloads)",
-	ScopePapersWrite:  "Upload paper PDFs and submit MinerU markdown (includes read)",
-	ScopePluginsRead:  "Read plugin manifests and connection status",
-	ScopePluginsWrite: "Enable or disable configured plugins (includes read)",
+	ScopePapersRead:    "Read paper catalog (stats, needs-mineru, search; also markdown download when the server enables asset downloads)",
+	ScopePapersWrite:   "Upload paper PDFs and submit MinerU markdown (includes read)",
+	ScopePluginsRead:   "Read plugin manifests and connection status",
+	ScopePluginsWrite:  "Enable or disable configured plugins (includes read)",
+	ScopeCommentsRead:  "Read block-level comments and discussions",
+	ScopeCommentsWrite: "Create discussions, replies, edit own bodies and change statuses (includes read)",
 }
 
 // AllScopes is the canonical vocabulary surfaced to clients. Keep it
 // in the order you want users to see in the SPA (most common first).
-var AllScopes = []string{ScopePapersRead, ScopePapersWrite, ScopePluginsRead, ScopePluginsWrite}
+var AllScopes = []string{ScopePapersRead, ScopePapersWrite, ScopeCommentsRead, ScopeCommentsWrite, ScopePluginsRead, ScopePluginsWrite}
 
 // casbinModel is the in-memory casbin model. Each scope acts as its
 // own subject — the matcher just checks (scope, obj, act) equality
@@ -98,6 +102,9 @@ var scopePolicies = [][3]string{
 	{ScopePluginsRead, "plugins", "read"},
 	{ScopePluginsWrite, "plugins", "read"}, // write implies read
 	{ScopePluginsWrite, "plugins", "write"},
+	{ScopeCommentsRead, "comments", "read"},
+	{ScopeCommentsWrite, "comments", "read"}, // write implies read
+	{ScopeCommentsWrite, "comments", "write"},
 }
 
 // NewEnforcer constructs a fresh in-memory casbin enforcer pre-loaded

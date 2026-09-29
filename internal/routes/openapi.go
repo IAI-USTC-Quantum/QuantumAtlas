@@ -1576,3 +1576,211 @@ func docRagRetrieve() {}
 // @Failure     503 {object} map[string]string "rag.remote disabled / microservice unreachable"
 // @Router      /api/rag/evidence [post]
 func docRagEvidence() {}
+
+// --- Comments (Q2 block-level comments, plan §12.2) ---------------------------
+
+// commentsListDiscussions returns the Issue-style discussion list of one
+// paper, newest first, keyset-paginated by discussion_id.
+//
+// @Summary     List block discussions
+// @Description Issue-style discussion list for one paper, filtered by
+// @Description anchor (parse_revision / page_idx / block_index), content
+// @Description scope, type and status. Ordering is newest-first; the
+// @Description cursor is the last discussion_id of the page (keyset).
+// @Description scope=lean returns public+lean (the Lean view includes
+// @Description shared public discussion); status=none selects statusless
+// @Description notes. per_page defaults to 20, max 100. Requires
+// @Description papers:read or comments:read; system PATs may read.
+// @Tags        Comments
+// @Produce     json
+// @Security    BearerAuth
+// @Param       paper_id path string true "qa_ paper id"
+// @Param       scope query string false "public|lean (lean includes public)"
+// @Param       type query string false "type slug, e.g. transcription_error"
+// @Param       status query string false "pending|confirmed|retracted|none"
+// @Param       parse_revision query string false "parse revision id"
+// @Param       page_idx query int false "0-based page index"
+// @Param       block_index query int false "1-based public block index"
+// @Param       cursor query string false "keyset cursor (last discussion_id)"
+// @Param       per_page query int false "page size (default 20, max 100)"
+// @Success     200 {object} map[string]interface{}
+// @Failure     400 {object} map[string]string
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Failure     503 {object} map[string]string "comment store unavailable"
+// @Router      /api/papers/{paper_id}/discussions [get]
+func docCommentsListDiscussions() {}
+
+// commentsCreateDiscussion creates a root discussion bound to one parse
+// block anchor.
+//
+// @Summary     Create a discussion
+// @Description Creates a root discussion anchored at (parse_revision,
+// @Description page_idx, block_index) of the paper. actor and timestamps
+// @Description are recorded server-side; the optional `model` string is a
+// @Description pure client declaration. status may be set at creation
+// @Description (then `reason` is required) or omitted for a statusless
+// @Description note. Bodies are capped at comments.max_body_chars (default
+// @Description 20000 Unicode chars, 413 beyond, never truncated); requests
+// @Description are capped at 1 MiB. Anchor misses 404 — never a
+// @Description nearest-block fallback. Idempotency-Key: same key + same
+// @Description request replays the original result; different request
+// @Description 409s. Requires a user identity (session or user PAT) with
+// @Description comments:write — system PATs are read-only and get 403.
+// @Tags        Comments
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       paper_id path string true "qa_ paper id"
+// @Param       Idempotency-Key header string false "replay key (SHA-256 of method+path+body compared)"
+// @Param       body body object true "{parse_revision, page_idx, block_index, type?, scope?, status?, reason?, body, model?}"
+// @Success     201 {object} map[string]interface{}
+// @Failure     400 {object} map[string]string
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string "system PAT / missing comments:write"
+// @Failure     404 {object} map[string]string "anchor block not found in parse revision"
+// @Failure     409 {object} map[string]string "idempotency key reused with different body"
+// @Failure     413 {object} map[string]string "body / request over limit"
+// @Failure     503 {object} map[string]string
+// @Router      /api/papers/{paper_id}/discussions [post]
+func docCommentsCreateDiscussion() {}
+
+// commentsGetDiscussion returns one discussion with a replies page.
+//
+// @Summary     Discussion detail
+// @Description The discussion plus the first (or cursor-continued) page
+// @Description of replies, oldest first, keyset-paginated by reply_id.
+// @Description The ETag response header carries the body revision integer
+// @Description used for If-Match CAS edits.
+// @Tags        Comments
+// @Produce     json
+// @Security    BearerAuth
+// @Param       discussion_id path string true "cd_ discussion id"
+// @Param       cursor query string false "keyset cursor (last reply_id)"
+// @Param       per_page query int false "replies page size (default 20, max 100)"
+// @Success     200 {object} map[string]interface{}
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Failure     404 {object} map[string]string
+// @Failure     503 {object} map[string]string
+// @Router      /api/discussions/{discussion_id} [get]
+func docCommentsGetDiscussion() {}
+
+// commentsCreateReply replies to a discussion.
+//
+// @Summary     Reply to a discussion
+// @Description Flat reply inside the discussion. Same identity/idempotency/
+// @Description body-budget contract as discussion creation.
+// @Tags        Comments
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       discussion_id path string true "cd_ discussion id"
+// @Param       Idempotency-Key header string false "replay key"
+// @Param       body body object true "{body, model?}"
+// @Success     201 {object} map[string]interface{}
+// @Failure     400 {object} map[string]string
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Failure     404 {object} map[string]string
+// @Failure     409 {object} map[string]string
+// @Failure     413 {object} map[string]string
+// @Failure     503 {object} map[string]string
+// @Router      /api/discussions/{discussion_id}/replies [post]
+func docCommentsCreateReply() {}
+
+// commentsSetStatus transitions the discussion status.
+//
+// @Summary     Change discussion status
+// @Description Sets the status machine (pending / confirmed / retracted;
+// @Description reopen allowed). `reason` is mandatory and every change is
+// @Description appended to the status-event trail with the acting account.
+// @Description Allowed for the discussion's root author or a platform
+// @Description admin (users-record is_admin / is_superadmin — a user PAT
+// @Description of an admin works; this is NOT the session-only admin
+// @Description console gate). System PATs and everyone else get 403.
+// @Tags        Comments
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       discussion_id path string true "cd_ discussion id"
+// @Param       body body object true "{status, reason}"
+// @Success     200 {object} map[string]interface{}
+// @Failure     400 {object} map[string]string "missing reason / bad status"
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Failure     404 {object} map[string]string
+// @Failure     503 {object} map[string]string
+// @Router      /api/discussions/{discussion_id}/status [patch]
+func docCommentsSetStatus() {}
+
+// commentsEditDiscussionBody edits the root body with CAS.
+//
+// @Summary     Edit discussion body
+// @Description Author-only edit (the caller must be the body's author —
+// @Description admins do not edit other people's words). Requires
+// @Description If-Match with the current revision integer; a stale value
+// @Description is a 409, the new body increments the revision and the
+// @Description old/new pair is appended to the revision history. Editing
+// @Description never reopens the status.
+// @Tags        Comments
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       discussion_id path string true "cd_ discussion id"
+// @Param       If-Match header string true "current revision integer (the ETag)"
+// @Param       body body object true "{body}"
+// @Success     200 {object} map[string]interface{}
+// @Failure     400 {object} map[string]string "missing/invalid If-Match"
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string "not the author"
+// @Failure     404 {object} map[string]string
+// @Failure     409 {object} map[string]string "revision conflict"
+// @Failure     413 {object} map[string]string
+// @Failure     503 {object} map[string]string
+// @Router      /api/discussions/{discussion_id}/body [patch]
+func docCommentsEditDiscussionBody() {}
+
+// commentsEditReplyBody edits a reply body with CAS.
+//
+// @Summary     Edit reply body
+// @Description Same author-only CAS contract as the discussion body edit,
+// @Description applied to one reply of the discussion.
+// @Tags        Comments
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       discussion_id path string true "cd_ discussion id"
+// @Param       reply_id path string true "cr_ reply id"
+// @Param       If-Match header string true "current revision integer"
+// @Param       body body object true "{body}"
+// @Success     200 {object} map[string]interface{}
+// @Failure     400 {object} map[string]string
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string "not the author"
+// @Failure     404 {object} map[string]string
+// @Failure     409 {object} map[string]string "revision conflict"
+// @Failure     413 {object} map[string]string
+// @Failure     503 {object} map[string]string
+// @Router      /api/discussions/{discussion_id}/replies/{reply_id}/body [patch]
+func docCommentsEditReplyBody() {}
+
+// commentsRevisions returns the revision and status history.
+//
+// @Summary     Discussion history
+// @Description Append-only trail of one discussion: body_revisions (the
+// @Description discussion's and its replies' edits: target / target_id /
+// @Description old_body / new_body / editor / created_at) and
+// @Description status_events (from / to / reason / actor / created_at),
+// @Description both oldest-first.
+// @Tags        Comments
+// @Produce     json
+// @Security    BearerAuth
+// @Param       discussion_id path string true "cd_ discussion id"
+// @Success     200 {object} map[string]interface{}
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Failure     404 {object} map[string]string
+// @Failure     503 {object} map[string]string
+// @Router      /api/discussions/{discussion_id}/revisions [get]
+func docCommentsRevisions() {}

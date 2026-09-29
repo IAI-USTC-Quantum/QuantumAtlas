@@ -491,6 +491,427 @@ paths:
       summary: Admin whoami
       tags:
       - Admin
+  /api/discussions/{discussion_id}:
+    get:
+      description: |-
+        The discussion plus the first (or cursor-continued) page
+        of replies, oldest first, keyset-paginated by reply_id.
+        The ETag response header carries the body revision integer
+        used for If-Match CAS edits.
+      parameters:
+      - description: cd_ discussion id
+        in: path
+        name: discussion_id
+        required: true
+        type: string
+      - description: keyset cursor (last reply_id)
+        in: query
+        name: cursor
+        type: string
+      - description: replies page size (default 20, max 100)
+        in: query
+        name: per_page
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Discussion detail
+      tags:
+      - Comments
+  /api/discussions/{discussion_id}/body:
+    patch:
+      consumes:
+      - application/json
+      description: |-
+        Author-only edit (the caller must be the body's author —
+        admins do not edit other people's words). Requires
+        If-Match with the current revision integer; a stale value
+        is a 409, the new body increments the revision and the
+        old/new pair is appended to the revision history. Editing
+        never reopens the status.
+      parameters:
+      - description: cd_ discussion id
+        in: path
+        name: discussion_id
+        required: true
+        type: string
+      - description: current revision integer (the ETag)
+        in: header
+        name: If-Match
+        required: true
+        type: string
+      - description: '{body}'
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: missing/invalid If-Match
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: not the author
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: revision conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "413":
+          description: Request Entity Too Large
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Edit discussion body
+      tags:
+      - Comments
+  /api/discussions/{discussion_id}/replies:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Flat reply inside the discussion. Same identity/idempotency/
+        body-budget contract as discussion creation.
+      parameters:
+      - description: cd_ discussion id
+        in: path
+        name: discussion_id
+        required: true
+        type: string
+      - description: replay key
+        in: header
+        name: Idempotency-Key
+        type: string
+      - description: '{body, model?}'
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "413":
+          description: Request Entity Too Large
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Reply to a discussion
+      tags:
+      - Comments
+  /api/discussions/{discussion_id}/replies/{reply_id}/body:
+    patch:
+      consumes:
+      - application/json
+      description: |-
+        Same author-only CAS contract as the discussion body edit,
+        applied to one reply of the discussion.
+      parameters:
+      - description: cd_ discussion id
+        in: path
+        name: discussion_id
+        required: true
+        type: string
+      - description: cr_ reply id
+        in: path
+        name: reply_id
+        required: true
+        type: string
+      - description: current revision integer
+        in: header
+        name: If-Match
+        required: true
+        type: string
+      - description: '{body}'
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: not the author
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: revision conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "413":
+          description: Request Entity Too Large
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Edit reply body
+      tags:
+      - Comments
+  /api/discussions/{discussion_id}/revisions:
+    get:
+      description: |-
+        Append-only trail of one discussion: body_revisions (the
+        discussion's and its replies' edits: target / target_id /
+        old_body / new_body / editor / created_at) and
+        status_events (from / to / reason / actor / created_at),
+        both oldest-first.
+      parameters:
+      - description: cd_ discussion id
+        in: path
+        name: discussion_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Discussion history
+      tags:
+      - Comments
+  /api/discussions/{discussion_id}/status:
+    patch:
+      consumes:
+      - application/json
+      description: |-
+        Sets the status machine (pending / confirmed / retracted;
+        reopen allowed). `reason` is mandatory and every change is
+        appended to the status-event trail with the acting account.
+        Allowed for the discussion's root author or a platform
+        admin (users-record is_admin / is_superadmin — a user PAT
+        of an admin works; this is NOT the session-only admin
+        console gate). System PATs and everyone else get 403.
+      parameters:
+      - description: cd_ discussion id
+        in: path
+        name: discussion_id
+        required: true
+        type: string
+      - description: '{status, reason}'
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: missing reason / bad status
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Change discussion status
+      tags:
+      - Comments
   /api/downloader/fetch:
     post:
       consumes:
@@ -1959,6 +2380,180 @@ paths:
       summary: Get paper by id
       tags:
       - Papers
+  /api/papers/{paper_id}/discussions:
+    get:
+      description: |-
+        Issue-style discussion list for one paper, filtered by
+        anchor (parse_revision / page_idx / block_index), content
+        scope, type and status. Ordering is newest-first; the
+        cursor is the last discussion_id of the page (keyset).
+        scope=lean returns public+lean (the Lean view includes
+        shared public discussion); status=none selects statusless
+        notes. per_page defaults to 20, max 100. Requires
+        papers:read or comments:read; system PATs may read.
+      parameters:
+      - description: qa_ paper id
+        in: path
+        name: paper_id
+        required: true
+        type: string
+      - description: public|lean (lean includes public)
+        in: query
+        name: scope
+        type: string
+      - description: type slug, e.g. transcription_error
+        in: query
+        name: type
+        type: string
+      - description: pending|confirmed|retracted|none
+        in: query
+        name: status
+        type: string
+      - description: parse revision id
+        in: query
+        name: parse_revision
+        type: string
+      - description: 0-based page index
+        in: query
+        name: page_idx
+        type: integer
+      - description: 1-based public block index
+        in: query
+        name: block_index
+        type: integer
+      - description: keyset cursor (last discussion_id)
+        in: query
+        name: cursor
+        type: string
+      - description: page size (default 20, max 100)
+        in: query
+        name: per_page
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: comment store unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List block discussions
+      tags:
+      - Comments
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Creates a root discussion anchored at (parse_revision,
+        page_idx, block_index) of the paper. actor and timestamps
+        are recorded server-side; the optional `model` string is a
+        pure client declaration. status may be set at creation
+        (then `reason` is required) or omitted for a statusless
+        note. Bodies are capped at comments.max_body_chars (default
+        20000 Unicode chars, 413 beyond, never truncated); requests
+        are capped at 1 MiB. Anchor misses 404 — never a
+        nearest-block fallback. Idempotency-Key: same key + same
+        request replays the original result; different request
+        409s. Requires a user identity (session or user PAT) with
+        comments:write — system PATs are read-only and get 403.
+      parameters:
+      - description: qa_ paper id
+        in: path
+        name: paper_id
+        required: true
+        type: string
+      - description: replay key (SHA-256 of method+path+body compared)
+        in: header
+        name: Idempotency-Key
+        type: string
+      - description: '{parse_revision, page_idx, block_index, type?, scope?, status?,
+          reason?, body, model?}'
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: system PAT / missing comments:write
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: anchor block not found in parse revision
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: idempotency key reused with different body
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "413":
+          description: body / request over limit
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create a discussion
+      tags:
+      - Comments
   /api/papers/{paper_id}/images:
     get:
       description: |-

@@ -31,6 +31,7 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/agentic"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/arxiv"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/auth"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/comments"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/downloader"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/downloadfleet"
@@ -1544,6 +1545,16 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// /markdown + /markdown/status come back when the operator opts
 	// in via paper_access.enabled: true.
 	routes.RegisterPapers(se, cfg, rawStore, registryStore, corpus, enforcer, mineruConverter, ingester, doiResolver, arxivFetcher)
+
+	// Block-level comments (plan §12.2, Q2) — discussions, replies,
+	// status machine, body edits, history. PG-backed through the same
+	// registry pool (nil pool → handlers degrade to 503, same
+	// convention as the papers catalog). The anchor validator is
+	// permissive for now: Q2 develops fixture-first and the Q1
+	// parse_revisions tables land during integration.
+	// TODO(q1-integration): swap nil for a registry-backed
+	// comments.AnchorValidator validating parse_revision + block.
+	routes.RegisterComments(se, cfg, comments.NewPGStore(registryStore.Pool()), comments.NewIdempotency(1024), nil, enforcer)
 
 	// Paper identity matching — POST /api/papers/match, proxied to the
 	// qatlas-match microservice (match.remote). matchClient == nil
