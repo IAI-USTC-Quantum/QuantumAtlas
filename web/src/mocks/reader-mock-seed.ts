@@ -2,8 +2,15 @@
 // only). Kept separate from both the api client and the mutable store so
 // they can import it without a runtime import cycle (a cycle here
 // previously crashed the page with a TDZ ReferenceError).
-import parseA from './fixtures/parse-a.middle.json'
-import parseB from './fixtures/parse-b.middle.json'
+//
+// REAL data (plan §12.5): arXiv 1605.01488v2, "Fully dynamic data structure
+// for LCE queries in compressed space", parsed twice — mineru 4.0.9 local
+// (the plan §11 pinned version, pr_local, current) and the remote engine
+// 3.4.4 (pr_remote). The slim fixtures under src/mocks/fixtures/ are
+// GENERATED from the committed raw artifacts by scripts/gen-realpaper-mocks.mjs;
+// never hand-edit block data here.
+import parseLocal from './fixtures/realpaper-local.middle.json'
+import parseRemote from './fixtures/realpaper-remote.middle.json'
 import sourcesFixture from './fixtures/sources.json'
 import type { PaperDetail } from '@/lib/api'
 import { MOCK_PAPER_ID, ReaderApiError } from '@/lib/reader-shared'
@@ -22,12 +29,23 @@ type FixtureBlock = {
   index: number
   type: string
   content: string
-  bbox?: number[]
+  bbox?: number[] | null
 }
-type FixtureFile = { schema: string; schema_version: string; blocks: FixtureBlock[] }
 
-const parseAFixture = parseA as unknown as FixtureFile
-const parseBFixture = parseB as unknown as FixtureFile
+type FixtureFile = {
+  _provenance?: { raw_middle_json_sha256?: string }
+} & RealFixtureFile
+
+type RealFixtureFile = {
+  schema: string
+  schema_version: string
+  producer: { name: string; version: string } | null
+  pages: number
+  blocks: FixtureBlock[]
+}
+
+const parseLocalFixture = parseLocal as unknown as FixtureFile
+const parseRemoteFixture = parseRemote as unknown as FixtureFile
 const sourcesFixtureTyped = sourcesFixture as unknown as {
   pdf_sha256: string
   sources: { source_id: string; origin: string; sha256: string; size_bytes: number }[]
@@ -35,8 +53,12 @@ const sourcesFixtureTyped = sourcesFixture as unknown as {
 
 export const PDF_SHA = sourcesFixtureTyped.pdf_sha256
 
-export const REVISION_A = 'rev_parse_a_01'
-export const REVISION_B = 'rev_parse_b_02'
+// Two parse revisions of ONE real paper: pr_local is the current pointer
+// (mineru 4.0.9, plan §11 pinned version); pr_remote is the same PDF parsed
+// by the remote engine 3.4.4 — same docvortex.middle 2.0 schema, different
+// block order on page 1 and slightly different LaTeX/bboxes.
+export const REVISION_LOCAL = 'pr_local'
+export const REVISION_REMOTE = 'pr_remote'
 
 function asBlocks(file: FixtureFile): ReaderBlock[] {
   return file.blocks.map((block) => ({
@@ -48,31 +70,32 @@ function asBlocks(file: FixtureFile): ReaderBlock[] {
   }))
 }
 
-export const BLOCKS_A = asBlocks(parseAFixture)
-export const BLOCKS_B = asBlocks(parseBFixture)
+export const BLOCKS_LOCAL = asBlocks(parseLocalFixture)
+export const BLOCKS_REMOTE = asBlocks(parseRemoteFixture)
 
-export const SOURCES: PaperSource[] = sourcesFixtureTyped.sources.map((source, i) => ({
+export const SOURCES: PaperSource[] = sourcesFixtureTyped.sources.map((source) => ({
   ...source,
   created_at: '2026-09-01T00:00:00Z',
-  is_current: i === sourcesFixtureTyped.sources.length - 1,
+  is_current: true,
 }))
 
 export const PARSES: ParseRevision[] = [
   {
-    revision_id: REVISION_A,
-    source_id: 'src_arxiv_v3',
-    schema: parseAFixture.schema,
-    schema_version: parseAFixture.schema_version,
-    artifact_sha256: 'a'.repeat(64),
+    revision_id: REVISION_LOCAL,
+    source_id: sourcesFixtureTyped.sources[0].source_id,
+    schema: parseLocalFixture.schema,
+    schema_version: parseLocalFixture.schema_version,
+    // sha256 of the raw local/middle.json the fixture was generated from.
+    artifact_sha256: parseLocalFixture._provenance?.raw_middle_json_sha256 ?? '',
     created_at: '2026-09-20T10:00:00Z',
     is_current: true,
   },
   {
-    revision_id: REVISION_B,
-    source_id: 'src_arxiv_v2',
-    schema: parseBFixture.schema,
-    schema_version: parseBFixture.schema_version,
-    artifact_sha256: 'b'.repeat(64),
+    revision_id: REVISION_REMOTE,
+    source_id: sourcesFixtureTyped.sources[0].source_id,
+    schema: parseRemoteFixture.schema,
+    schema_version: parseRemoteFixture.schema_version,
+    artifact_sha256: parseRemoteFixture._provenance?.raw_middle_json_sha256 ?? '',
     created_at: '2026-09-10T10:00:00Z',
     is_current: false,
   },
@@ -86,21 +109,24 @@ export function requireMockPaper(paperId: string): void {
 
 // Synthetic PaperDetail so `npm run dev` can preview the workbench with
 // zero backend (the real /api/papers/{id} would 401/404 in mock mode).
+// Identity fields (title/authors/arxiv id/pdf sha/size) are the REAL ones
+// from arXiv 1605.01488v2; timestamps are registry-side mock dates.
 export function mockPaperDetail(): PaperDetail {
   return {
     paper_id: MOCK_PAPER_ID,
     status: 'ready',
-    title: 'Synthetic Block-Comments Fixture Paper',
-    authors: ['Synthetic Author'],
+    arxiv_id: '1605.01488',
+    title: 'Fully dynamic data structure for LCE queries in compressed space',
+    authors: ['Takaaki Nishimoto', 'Tomohiro I', 'Shunsuke Inenaga', 'Hideo Bannai', 'Masayuki Takeda'],
     created_at: '2026-09-01T00:00:00Z',
     updated_at: '2026-09-23T12:00:00Z',
     assets: [
       {
         asset_id: 1,
         source: 'arxiv',
-        arxiv_version: 3,
+        arxiv_version: 2,
         pdf_sha256: PDF_SHA,
-        pdf_size: 854,
+        pdf_size: 763119,
         fetched_at: '2026-09-01T00:00:00Z',
       },
     ],
@@ -119,17 +145,22 @@ function discussion(
   return { discussion_id: id, paper_id: MOCK_PAPER_ID, ...partial }
 }
 
-// Two independent discussions anchor parse-A page 1 block 2 (the E=mc²
-// equation): withdrawing one must never affect the other (plan §6.1).
+// Real anchors on pr_local (1-based public block numbers):
+//   page 5 block 6  — equation  Uniq(P) = L̂₀·L₀ ⋯ (signature factors)
+//   page 1 block 2  — doc_title (the paper title block)
+//   page 1 block 9  — paragraph_title "Abstract"
+//   page 7 block 14 — equation  ŷ_t^P case split
+// pr_remote page 5 block 6 is the SAME displayed equation parsed by the
+// remote engine — a DISTINCT anchor that must never merge with pr_local's.
 export const DISCUSSIONS: DiscussionSummary[] = [
   discussion('dsc_01', {
-    parse_revision: REVISION_A,
-    page_idx: 0,
-    block_index: 2,
+    parse_revision: REVISION_LOCAL,
+    page_idx: 4,
+    block_index: 6,
     type: 'transcription_error',
     scope: 'public',
     status: 'confirmed',
-    body: 'The transcribed exponent renders as “E = m c^{2}”, but the original scan shows the 2 slightly offset — worth confirming the exponent placement against the source image before quoting this transcription.',
+    body: 'mineru 4.0.9 的 txt 模式把这条 Uniq(P) 公式转录成了逐字间隔的形式（“X S h r i n k _ {t} ^ {P}”）。与 PDF 原图对照后确认：字形与下标位置忠实，间隔是解析伪影而非原文排版；引用该公式前请以页面叠框对应的原图区域为准。',
     created_by: userAlma,
     model: 'agent-reader/0.9',
     revision: 3,
@@ -138,13 +169,13 @@ export const DISCUSSIONS: DiscussionSummary[] = [
     updated_at: '2026-09-22T08:30:00Z',
   }),
   discussion('dsc_02', {
-    parse_revision: REVISION_A,
-    page_idx: 0,
-    block_index: 2,
+    parse_revision: REVISION_LOCAL,
+    page_idx: 4,
+    block_index: 6,
     type: 'typo_in_original',
     scope: 'lean',
     status: 'pending',
-    body: '与另一份排版对照后怀疑原 PDF 本身在此处缺少单位说明；先挂起待查证，等拿到 v3 原件再核对。Lean 侧暂勿依赖该公式的单位约定。',
+    body: 'Lean 形式化注意：该公式定义 Uniq(P) 为签名因子的连接，转录里的 h^P 上标层级在渲染中略有偏移。在核对 v2 原件扫描前，Lean 侧暂勿依赖此转录的记号约定，先以 Definition 3 的文字叙述为准。',
     created_by: userBo,
     model: null,
     revision: 1,
@@ -153,13 +184,13 @@ export const DISCUSSIONS: DiscussionSummary[] = [
     updated_at: '2026-09-21T09:15:00Z',
   }),
   discussion('dsc_03', {
-    parse_revision: REVISION_A,
+    parse_revision: REVISION_LOCAL,
     page_idx: 0,
-    block_index: 1,
+    block_index: 2,
     type: 'normal',
     scope: 'public',
     status: null,
-    body: '阅读笔记：PAGE ONE TEST 是合成夹具的标记行，不承载语义。记录在此避免后续读者误当结论引用。',
+    body: '阅读笔记：这是 doc_title 块，左侧竖排的 arXiv 水印（块 1 aside_text）不在标题内。记录在此避免把水印行误当作者信息引用。',
     created_by: userCleo,
     model: null,
     revision: 1,
@@ -168,13 +199,13 @@ export const DISCUSSIONS: DiscussionSummary[] = [
     updated_at: '2026-09-21T10:00:00Z',
   }),
   discussion('dsc_04', {
-    parse_revision: REVISION_A,
-    page_idx: 1,
-    block_index: 2,
+    parse_revision: REVISION_LOCAL,
+    page_idx: 6,
+    block_index: 14,
     type: 'transcription_error',
     scope: 'public',
     status: 'retracted',
-    body: '最初怀疑求和公式的分数线转录有误；重新对照原图后确认转录忠实，撤回该质疑。保留原文与回复作为查证记录。',
+    body: '最初怀疑 ŷ_t^P 分段定义的换行转录有误（cases 环境的行序）。重新对照第 7 页原图叠框后确认转录忠实，撤回该质疑；保留原文与回复作为查证记录。',
     created_by: userAlma,
     model: null,
     revision: 2,
@@ -183,13 +214,13 @@ export const DISCUSSIONS: DiscussionSummary[] = [
     updated_at: '2026-09-23T12:00:00Z',
   }),
   discussion('dsc_05', {
-    parse_revision: REVISION_A,
-    page_idx: 1,
-    block_index: 1,
+    parse_revision: REVISION_LOCAL,
+    page_idx: 0,
+    block_index: 9,
     type: 'context_note',
     scope: 'lean',
     status: 'pending',
-    body: 'Lean formalization note: the synthetic page-two heading has no mathematical content; a finite-dimensional scaffold should skip it entirely.',
+    body: 'Lean formalization note: the Abstract heading block carries no mathematical content — a finite-dimensional scaffold should skip it and start at Section 1.',
     created_by: userBo,
     model: 'lean-agent/1.2',
     revision: 1,
@@ -197,16 +228,16 @@ export const DISCUSSIONS: DiscussionSummary[] = [
     created_at: '2026-09-22T14:00:00Z',
     updated_at: '2026-09-22T14:00:00Z',
   }),
-  // Anchored to parse-B page 1 block 1: same visual equation as parse-A's
-  // block 2, but a DISTINCT anchor — never merged or auto-migrated (§12.5).
+  // Same VISUAL equation as pr_local page 5 block 6, but a DISTINCT anchor
+  // in the pr_remote revision — never merged or auto-migrated (§12.5).
   discussion('dsc_06', {
-    parse_revision: REVISION_B,
-    page_idx: 0,
-    block_index: 1,
+    parse_revision: REVISION_REMOTE,
+    page_idx: 4,
+    block_index: 6,
     type: 'transcription_error',
     scope: 'public',
     status: 'pending',
-    body: 'Parse B renders this equation block with a slightly different bbox than parse A. Both stay readable; flagging so nobody assumes the two anchors share comments.',
+    body: '远程引擎 3.4.4 对同一条 Uniq(P) 公式给出了略不同的 bbox 和 LaTeX（\\text { Shrink } 风格）。两个修订的锚点各自独立，评论不迁移——引用时注意区分 rev。',
     created_by: userCleo,
     model: 'agent-reader/0.9',
     revision: 1,
@@ -220,7 +251,7 @@ export const REPLY_FEED: Record<string, Omit<ReplyEntry, 'discussion_id'>[]> = {
   dsc_01: [
     {
       reply_id: 'rpl_0101',
-      body: 'Checked the cropped original image at this anchor: the exponent is a superscript 2 with a small horizontal offset — transcription is faithful, the offset is a scan artifact.',
+      body: 'Checked the page-5 overlay against the cropped original: the letter spacing is a txt-mode parse artifact, glyph identity and subscript placement are faithful. Quote with the spacing normalized.',
       created_by: userBo,
       model: null,
       revision: 1,
@@ -229,7 +260,7 @@ export const REPLY_FEED: Record<string, Omit<ReplyEntry, 'discussion_id'>[]> = {
     },
     {
       reply_id: 'rpl_0102',
-      body: '标记为已确认：具体问题是扫描伪影而非转录错误，引用时请直接对照原图裁片。',
+      body: '标记为已确认：具体问题是解析伪影而非转录错误，引用时请直接对照叠框对应的原图区域。',
       created_by: userAlma,
       model: null,
       revision: 1,
@@ -240,7 +271,7 @@ export const REPLY_FEED: Record<string, Omit<ReplyEntry, 'discussion_id'>[]> = {
   dsc_02: [
     {
       reply_id: 'rpl_0201',
-      body: 'v3 source is the current pointer; re-check once the v2 bytes are re-fetched for comparison.',
+      body: 'v2 source is the current pointer; re-check the h^P superscript layering once the original scan is re-rendered for comparison.',
       created_by: userCleo,
       model: 'agent-reader/0.9',
       revision: 1,
@@ -251,7 +282,7 @@ export const REPLY_FEED: Record<string, Omit<ReplyEntry, 'discussion_id'>[]> = {
   dsc_04: [
     {
       reply_id: 'rpl_0401',
-      body: '复核无误：分数线位置与原图一致。同意撤回，理由已记录在状态历史中。',
+      body: '复核无误：cases 环境行序与原图一致。同意撤回，理由已记录在状态历史中。',
       created_by: userBo,
       model: null,
       revision: 1,

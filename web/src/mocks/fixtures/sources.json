@@ -1,20 +1,13 @@
 {
-  "_synthetic": true,
-  "paper_id": "qa_01J5SYNTHETICFIXTURE0001",
-  "pdf_sha256": "5eb6980e0eb27b236cdefd9ecbd557b003a8ab9eb23e5c247e04c0f2a3caedb2",
+  "_description": "Real acquisition record for the reader mock dataset: arXiv 1605.01488v2 (single source PDF). The two parse revisions (pr_local mineru 4.0.9, pr_remote engine 3.4.4) both derive from THIS source — same bytes parsed twice by different engines.",
+  "paper_id": "qa_01m366bx7pt2k3rda8yg351mkp",
+  "pdf_sha256": "d41ff6f92ffb6e610435cef1d7cdb88c80aa796cccd982faf5c1b31c88977eaf",
   "sources": [
     {
-      "source_id": "src_arxiv_v2",
+      "source_id": "src_arxiv_1605_01488_v2",
       "origin": "arxiv:v2",
-      "sha256": "5eb6980e0eb27b236cdefd9ecbd557b003a8ab9eb23e5c247e04c0f2a3caedb2",
-      "size_bytes": 854
-    },
-    {
-      "source_id": "src_arxiv_v3",
-      "origin": "arxiv:v3",
-      "sha256": "5eb6980e0eb27b236cdefd9ecbd557b003a8ab9eb23e5c247e04c0f2a3caedb2",
-      "size_bytes": 854
+      "sha256": "d41ff6f92ffb6e610435cef1d7cdb88c80aa796cccd982faf5c1b31c88977eaf",
+      "size_bytes": 763119
     }
-  ],
-  "note": "v2/v3 share the same synthetic pdf bytes on purpose: the pair must still be two distinct sources distinguished by source_id."
+  ]
 }

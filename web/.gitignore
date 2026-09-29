@@ -36,3 +36,6 @@ playwright-report/
 
 # pdfjs-dist companion assets, copied from the locked node_modules copy
 public/pdfjs/
+
+# Real-paper block figures (remote/images), copied by scripts/sync-realpaper-assets.mjs --images
+public/fixtures/realpaper/images/

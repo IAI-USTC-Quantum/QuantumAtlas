@@ -1,16 +1,17 @@
 // Mock reader client (plan §12.1 "原型先行", §12.5 fixtures).
 //
 // Reads come from the mutable in-memory store (seeded from
-// reader-mock-seed.ts, which mirrors the repo fixtures
-// tests/fixtures/blockcomments/*); writes implement the §12.2 semantics.
-// Everything is synthetic.
+// reader-mock-seed.ts, whose block data is GENERATED from the real
+// arXiv 1605.01488 parse artifacts in tests/fixtures/realpaper/);
+// writes implement the §12.2 semantics. Discussions are synthetic but
+// anchored to REAL equation blocks.
 import {
-  BLOCKS_A,
-  BLOCKS_B,
+  BLOCKS_LOCAL,
+  BLOCKS_REMOTE,
   PARSES,
   PDF_SHA,
-  REVISION_A,
-  REVISION_B,
+  REVISION_LOCAL,
+  REVISION_REMOTE,
   requireMockPaper,
   SOURCES,
 } from './reader-mock-seed'
@@ -38,7 +39,7 @@ import type {
 } from '@/lib/reader-types'
 
 // Re-exported for the unit tests and the preview helper.
-export { BLOCKS_A, BLOCKS_B, REVISION_A, REVISION_B }
+export { BLOCKS_LOCAL, BLOCKS_REMOTE, REVISION_LOCAL, REVISION_REMOTE }
 export { mockPaperDetail } from './reader-mock-seed'
 export { DISCUSSIONS } from './reader-mock-seed'
 
@@ -75,7 +76,7 @@ export function mockClient(): ReaderClient {
         (b) => b.page_idx === pageIdx && b.index === blockIndex,
       )
       // Golden-anchor rule: a missing block 404s — never fall back to the
-      // nearest block (§12.5 parse-A page 1 blocks 3/4, parse-B page 2).
+      // nearest block (§12.5).
       if (!block) {
         throw new ReaderApiError(
           404,

@@ -3,12 +3,12 @@
 // reader-api.ts ⇄ reader-mock-api.ts (the mock dataset evaluates
 // module-level consts that must not touch a half-initialized module).
 import type { DiscussionFilters, DiscussionScope, DiscussionStatus } from './reader-types'
-// The mock dataset is bound to one synthetic paper (repo fixture
-// tests/fixtures/blockcomments); any other id answers a structured
-// not-found so the UI shows "reader data unavailable" instead of faking
-// coverage.
-export const MOCK_PAPER_ID = 'qa_01J5SYNTHETICFIXTURE0001'
-export const MOCK_PDF_PATH = '/fixtures/blockcomments/minimal-2page.pdf'
+// The mock dataset is bound to one REAL paper — arXiv 1605.01488v2 (the
+// production registry id for it), parsed twice (pr_local mineru 4.0.9,
+// pr_remote engine 3.4.4); any other id answers a structured not-found so
+// the UI shows "reader data unavailable" instead of faking coverage.
+export const MOCK_PAPER_ID = 'qa_01m366bx7pt2k3rda8yg351mkp'
+export const MOCK_PDF_PATH = '/fixtures/realpaper/1605.01488.pdf'
 
 export class ReaderApiError extends Error {
   status: number
