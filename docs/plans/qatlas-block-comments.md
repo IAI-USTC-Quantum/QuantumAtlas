@@ -569,7 +569,12 @@ S3 模式下 `objstore.Router` 按 key 首段路由到 `qatlas-pdf` / `qatlas-md
 2. middle.json 独占锚点身份；md/images/content_list 为修订 bundle 成员（随修订不可变，但不参与锚点合同）。
 3. MinerU 设计的两种 JSON 均为设计产物：middle_json=锚点，content_list（structured content）=消费视图——ingest 自本次起将 zip 内 structured_content.json/content_list.json 作为 bundle 成员原样保留（content_list.json 键）。
 4. 独立桶、旧 default_asset 冻结时点：随 v0.37.0 转正 + lib 接入确认后再议（当前 papers 前缀仍在 pdf 桶）。
-5. 同轮记录的倾向（未见异议）：REST 不做 git 式重构，v0.38 增 `?since=` 增量同步端点；git 只读镜像为 v0.38 可选项（权威恒为 objstore+PG）；CLI `contrib mineru --zip` 放开 ARXIV_ID + `--tier` 透传 + 新格式预检。
+5. 同轮记录的倾向（2026-09-29 用户第二轮确认后修订）：
+   - REST 不做 git 式重构；**`?since=` 增量同步端点已批准**，当前手头工作完成后实施。
+   - **git 镜像方案取消**——不用 git，权威恒为 objstore+PG。
+   - CLI contrib 方向修订：**收紧而非放开**——对用户上传的 MinerU 产物做严格验收：仅接受可确证为新版 CLI 完整输出的包（须含最终结果 middle_json + markdown；缺件拒收），不盲目放开 ARXIV_ID/--tier 等入口。
+   - 总原则（用户原话）：**不要把这个系统做得太复杂和太限制。**
+   - 待办讨论：存储后端整体形态（objstore 与 PG 的分工、md 的归属），Lead 准备材料后与用户讨论。
 
 ### 13.3 待用户拍板
 
