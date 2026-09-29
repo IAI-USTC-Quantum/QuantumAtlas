@@ -320,6 +320,60 @@ func (s *S3Store) Get(ctx context.Context, key string) (io.ReadCloser, ObjectInf
 	}, nil
 }
 
+// GetRange opens key for the inclusive byte window [start, end] using a
+// ranged GetObject (S3 `Range: bytes=start-end` header). The object
+// never transits the client outside the requested window — this is the
+// streaming half of Range-served PDFs.
+//
+// Implementation note: minio-go's GetObject returns a LAZY *Object whose
+// internal goroutine strips the Range header from the options map when
+// the first request is a Stat/Seek (api-get-object.go: "Remove range
+// header if already set"). Calling obj.Stat() to pre-flight existence
+// would therefore silently turn the subsequent read into a full-object
+// GET. So we Stat separately (existence + authoritative size), clamp
+// the window client-side, and hand GetObject a fresh options value that
+// carries only the Range header. The returned reader issues exactly one
+// ranged GET on first Read.
+func (s *S3Store) GetRange(ctx context.Context, key string, start, end int64) (io.ReadCloser, error) {
+	if err := validateKey(key); err != nil {
+		return nil, err
+	}
+	if start < 0 {
+		return nil, fmt.Errorf("objstore: GetRange %s: negative start %d", key, start)
+	}
+	if end < start {
+		return nil, fmt.Errorf("objstore: GetRange %s: end %d < start %d", key, end, start)
+	}
+	stat, err := s.client.StatObject(ctx, s.bucket, key, minio.StatObjectOptions{})
+	if err != nil {
+		if isNoSuchKey(err) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("objstore: stat %s for range: %w", key, err)
+	}
+	// Clamp to EOF client-side per the interface contract (and to dodge
+	// backend 416 InvalidRange variance).
+	size := stat.Size
+	if start >= size {
+		return io.NopCloser(strings.NewReader("")), nil
+	}
+	if end >= size {
+		end = size - 1
+	}
+	opts := minio.GetObjectOptions{}
+	if err := opts.SetRange(start, end); err != nil {
+		return nil, fmt.Errorf("objstore: GetRange %s [%d,%d]: %w", key, start, end, err)
+	}
+	obj, err := s.client.GetObject(ctx, s.bucket, key, opts)
+	if err != nil {
+		if isNoSuchKey(err) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("objstore: get range %s: %w", key, err)
+	}
+	return obj, nil
+}
+
 // Stat does a HEAD against the object. Distinguishes absent (exists=
 // false, err=nil) from "lookup failed" (err non-nil).
 func (s *S3Store) Stat(ctx context.Context, key string) (ObjectInfo, bool, error) {

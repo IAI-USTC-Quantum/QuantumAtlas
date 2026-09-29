@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -254,6 +255,9 @@ func (s *statOnlyStore) PutWithOptions(context.Context, string, interface{ Read(
 	panic("unused")
 }
 func (s *statOnlyStore) Get(context.Context, string) (any, objstore.ObjectInfo, error) {
+	panic("unused")
+}
+func (s *statOnlyStore) GetRange(context.Context, string, int64, int64) (io.ReadCloser, error) {
 	panic("unused")
 }
 func (s *statOnlyStore) Delete(context.Context, string) error { panic("unused") }

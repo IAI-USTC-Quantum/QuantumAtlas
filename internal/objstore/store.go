@@ -147,6 +147,24 @@ type Store interface {
 	// Returns ErrNotFound when key does not exist.
 	Get(ctx context.Context, key string) (io.ReadCloser, ObjectInfo, error)
 
+	// GetRange opens key for reading the byte window [start, end]
+	// (BOTH bounds inclusive — the same convention as an HTTP Range
+	// request and S3's bytes=start-end header). The caller MUST close
+	// the reader. Returns ErrNotFound when key does not exist.
+	//
+	// Contract:
+	//   - start >= 0, end >= start; violations are caller bugs and
+	//     return an error (never a fabricated read).
+	//   - A window extending past EOF is clamped: the reader yields
+	//     exactly max(0, size-start) bytes. start >= size yields an
+	//     empty reader, NOT ErrNotFound — callers drive window
+	//     arithmetic from a size they Stat'ed earlier and must not
+	//     treat "past the end" as "object gone".
+	//   - The backend may serve the range however it likes: LocalStore
+	//     is an io.SectionReader over an open file; S3Store sends a
+	//     ranged GetObject. No whole-object buffering is implied.
+	GetRange(ctx context.Context, key string, start, end int64) (io.ReadCloser, error)
+
 	// Stat returns metadata for key. The exists flag is false (with
 	// nil err) when key does not exist; a non-nil err means the lookup
 	// itself failed (network, permission, etc.) and the caller cannot

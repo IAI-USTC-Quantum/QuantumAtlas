@@ -265,6 +265,60 @@ func (s *LocalStore) Get(_ context.Context, key string) (io.ReadCloser, ObjectIn
 	}, nil
 }
 
+// GetRange opens BaseDir/key and reads the inclusive byte window
+// [start, end] via an io.SectionReader-equivalent (open file + seek +
+// limit). The returned ReadCloser owns the *os.File: closing it closes
+// the file. A window past EOF is clamped to what exists (see the Store
+// interface contract); start >= size yields an empty reader.
+func (s *LocalStore) GetRange(_ context.Context, key string, start, end int64) (io.ReadCloser, error) {
+	if start < 0 {
+		return nil, fmt.Errorf("objstore: GetRange %s: negative start %d", key, start)
+	}
+	if end < start {
+		return nil, fmt.Errorf("objstore: GetRange %s: end %d < start %d", key, end, start)
+	}
+	path, err := s.resolve(key)
+	if err != nil {
+		return nil, err
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	// Clamp to EOF per the interface contract.
+	size := info.Size()
+	if start >= size {
+		_ = f.Close()
+		return io.NopCloser(strings.NewReader("")), nil
+	}
+	if end >= size {
+		end = size - 1
+	}
+	if _, err := f.Seek(start, io.SeekStart); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return &fileLimitedCloser{f: f, r: io.LimitReader(f, end-start+1)}, nil
+}
+
+// fileLimitedCloser pairs a limited reader over an open file so Close
+// releases the file descriptor.
+type fileLimitedCloser struct {
+	f *os.File
+	r io.Reader
+}
+
+func (c *fileLimitedCloser) Read(p []byte) (int, error) { return c.r.Read(p) }
+func (c *fileLimitedCloser) Close() error               { return c.f.Close() }
+
 // Stat reports whether BaseDir/key exists and, when it does, its size,
 // modtime, and any persisted sidecar metadata. Distinguishes "absent"
 // (exists=false, err=nil) from "lookup failed" (err non-nil).

@@ -61,6 +61,9 @@ func (f *fakeStore) PutWithOptions(ctx context.Context, key string, r io.Reader,
 func (f *fakeStore) Get(_ context.Context, _ string) (io.ReadCloser, objstore.ObjectInfo, error) {
 	panic("fakeStore.Get should not be called by uploadOne tests")
 }
+func (f *fakeStore) GetRange(_ context.Context, _ string, _, _ int64) (io.ReadCloser, error) {
+	panic("fakeStore.GetRange should not be called by uploadOne tests")
+}
 func (f *fakeStore) Stat(ctx context.Context, key string) (objstore.ObjectInfo, bool, error) {
 	if f.statFn == nil {
 		return objstore.ObjectInfo{}, false, nil

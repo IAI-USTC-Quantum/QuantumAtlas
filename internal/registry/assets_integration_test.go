@@ -85,6 +85,9 @@ func (f *fakeListStore) PutWithOptions(_ context.Context, _ string, _ io.Reader,
 func (f *fakeListStore) Get(_ context.Context, _ string) (io.ReadCloser, objstore.ObjectInfo, error) {
 	panic("fakeListStore.Get should not be called")
 }
+func (f *fakeListStore) GetRange(_ context.Context, _ string, _, _ int64) (io.ReadCloser, error) {
+	panic("fakeListStore.GetRange should not be called")
+}
 func (f *fakeListStore) Stat(_ context.Context, _ string) (objstore.ObjectInfo, bool, error) {
 	panic("fakeListStore.Stat should not be called")
 }

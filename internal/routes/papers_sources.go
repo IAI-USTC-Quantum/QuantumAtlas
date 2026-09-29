@@ -22,7 +22,6 @@ package routes
 // source-pinned contract.
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -352,13 +351,9 @@ func paperSourcePDFHandler(re *core.RequestEvent, store objstore.Store, catalog 
 			"detail": "object store not configured on this server",
 		})
 	}
-	// Buffer the (hash-verified) bytes so http.ServeContent can drive
-	// Range/206/If-Range semantics off a bytes.Reader — the objstore
-	// interface returns a non-seekable stream. TODO(Q1): true ranged
-	// reads off the S3 backend when the store grows a GetRange method;
-	// source PDFs are a few MB so buffering is acceptable for now.
-	pdfBytes, err := blockReadVerified(ctx, store, src.ObjstoreKey, src.Sha256)
-	if err != nil {
+	// Small PDFs buffer whole + sha-verify server-side; larger ones
+	// stream via ranged reads (see papers_source_stream.go).
+	if err := serveSourcePDF(re, store, src, rp.canonical+"-"+src.SourceID+".pdf"); err != nil {
 		if errors.Is(err, objstore.ErrNotFound) {
 			// Row exists, bytes gone: honest missing, never a
 			// "ready" pointer at a nonexistent object (plan §8 Q1).
@@ -370,14 +365,6 @@ func paperSourcePDFHandler(re *core.RequestEvent, store objstore.Store, catalog 
 			"detail": "fetch source pdf: " + err.Error(),
 		})
 	}
-
-	re.Response.Header().Set("ETag", `"`+src.Sha256+`"`)
-	re.Response.Header().Set("X-QAtlas-Sha256", src.Sha256)
-	re.Response.Header().Set("Cache-Control", "private, max-age=86400")
-	re.Response.Header().Set("Content-Disposition",
-		fmt.Sprintf("inline; filename=%q", sanitizeFilename(rp.canonical+"-"+src.SourceID+".pdf")))
-	// ServeContent gives us Range / 206 / If-Range semantics for free.
-	http.ServeContent(re.Response, re.Request, src.SourceID+".pdf", time.Time{}, bytes.NewReader(pdfBytes))
 	return nil
 }
 

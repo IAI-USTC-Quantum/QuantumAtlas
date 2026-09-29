@@ -51,6 +51,9 @@ func (s *statMockStore) PutWithOptions(_ context.Context, _ string, _ io.Reader,
 func (s *statMockStore) Get(_ context.Context, _ string) (io.ReadCloser, objstore.ObjectInfo, error) {
 	panic("Get unused")
 }
+func (s *statMockStore) GetRange(_ context.Context, _ string, _, _ int64) (io.ReadCloser, error) {
+	panic("GetRange unused")
+}
 func (s *statMockStore) Delete(_ context.Context, _ string) error { panic("Delete unused") }
 func (s *statMockStore) ListPrefix(_ context.Context, _ string, _ int) ([]objstore.ObjectInfo, error) {
 	panic("ListPrefix unused")

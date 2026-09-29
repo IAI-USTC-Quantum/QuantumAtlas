@@ -75,6 +75,19 @@ func (s *fakeStore) Get(_ context.Context, key string) (io.ReadCloser, objstore.
 	}
 	return io.NopCloser(strings.NewReader(string(b))), objstore.ObjectInfo{Key: key, Size: int64(len(b))}, nil
 }
+func (s *fakeStore) GetRange(_ context.Context, key string, start, end int64) (io.ReadCloser, error) {
+	b, ok := s.get(key)
+	if !ok {
+		return nil, objstore.ErrNotFound
+	}
+	if start >= int64(len(b)) {
+		return io.NopCloser(strings.NewReader("")), nil
+	}
+	if end >= int64(len(b)) {
+		end = int64(len(b)) - 1
+	}
+	return io.NopCloser(strings.NewReader(string(b[start : end+1]))), nil
+}
 func (s *fakeStore) Stat(_ context.Context, key string) (objstore.ObjectInfo, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

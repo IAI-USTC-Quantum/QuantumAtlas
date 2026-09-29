@@ -84,6 +84,15 @@ func (r *Router) Get(ctx context.Context, key string) (io.ReadCloser, ObjectInfo
 	return rc, info, err
 }
 
+func (r *Router) GetRange(ctx context.Context, key string, start, end int64) (io.ReadCloser, error) {
+	kind, rest, b := r.split(key)
+	if b == nil {
+		return nil, ErrNotFound
+	}
+	_ = kind
+	return b.GetRange(ctx, rest, start, end)
+}
+
 func (r *Router) Stat(ctx context.Context, key string) (ObjectInfo, bool, error) {
 	kind, rest, b := r.split(key)
 	if b == nil {

@@ -41,6 +41,20 @@ func (s *zipFakeStore) Get(_ context.Context, key string) (io.ReadCloser, objsto
 	return nil, objstore.ObjectInfo{}, objstore.ErrNotFound
 }
 
+func (s *zipFakeStore) GetRange(_ context.Context, key string, start, end int64) (io.ReadCloser, error) {
+	b, ok := s.objects[key]
+	if !ok {
+		return nil, objstore.ErrNotFound
+	}
+	if start >= int64(len(b)) {
+		return io.NopCloser(strings.NewReader("")), nil
+	}
+	if end >= int64(len(b)) {
+		end = int64(len(b)) - 1
+	}
+	return io.NopCloser(strings.NewReader(string(b[start : end+1]))), nil
+}
+
 func (s *zipFakeStore) PresignGet(_ context.Context, key string, _ time.Duration) (string, bool, error) {
 	if !s.presign {
 		return "", false, nil

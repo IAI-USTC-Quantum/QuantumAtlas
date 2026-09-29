@@ -31,6 +31,9 @@ func (f *fakeClaimStore) PutWithOptions(_ context.Context, _ string, _ io.Reader
 func (f *fakeClaimStore) Get(_ context.Context, _ string) (io.ReadCloser, objstore.ObjectInfo, error) {
 	panic("unused")
 }
+func (f *fakeClaimStore) GetRange(_ context.Context, _ string, _, _ int64) (io.ReadCloser, error) {
+	panic("unused")
+}
 func (f *fakeClaimStore) Stat(ctx context.Context, key string) (objstore.ObjectInfo, bool, error) {
 	if f.statFn == nil {
 		return objstore.ObjectInfo{}, true, nil

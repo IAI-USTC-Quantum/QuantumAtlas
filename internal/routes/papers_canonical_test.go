@@ -147,6 +147,9 @@ func (canonicalNoopStore) PutWithOptions(_ context.Context, _ string, _ io.Reade
 func (canonicalNoopStore) Get(_ context.Context, _ string) (io.ReadCloser, objstore.ObjectInfo, error) {
 	return nil, objstore.ObjectInfo{}, objstore.ErrNotFound
 }
+func (canonicalNoopStore) GetRange(_ context.Context, _ string, _, _ int64) (io.ReadCloser, error) {
+	return nil, objstore.ErrNotFound
+}
 func (canonicalNoopStore) Delete(_ context.Context, _ string) error { return nil }
 func (canonicalNoopStore) ListPrefix(_ context.Context, _ string, _ int) ([]objstore.ObjectInfo, error) {
 	return nil, nil
