@@ -515,3 +515,57 @@ Draft与实现冲突时以固定源码/测试为准。复制/引入代码前核�
 | q4-web | worktree `../QuantumAtlas-Q4` | feat/q4-reader | web/src/routes/$lang.papers.*、web/src/components/reader/、web/src/i18n、web/package.json（仅加 pdfjs-dist）、web/src/lib |
 
 OpenAPI 用 `go tool swag init -g main.go -d ./cmd/qatlasd,./internal/routes -o internal/apidocs --parseInternal --parseDepth 1` 同步。集成顺序 Q1→Q2→Q4；Q3 独立仓并行。
+
+## 13. 存储布局研究备忘：解析产物的 md 与 middle JSON（2026-09-29，后端加固轮）
+
+> **状态：调研与选项，未拍板。** 本节只记录现状与利弊，供用户决策；不替代 §12 的已锁定决议。当前代码（00009 + ingest 接线提交）默认运行在选项 A 的 bundle 布局上，切换成本见各选项。
+
+### 13.1 现状（两条并存的产物路径）
+
+**旧 default_asset 布局（v0.7.0 起，`paper_assets` 行驱动，可变单份）**
+
+| 产物 | 对象 key | 写入方 | 语义 |
+|---|---|---|---|
+| 源 PDF | `pdf/<yymm>/<stem>.pdf` | upload-pdf / 下载管线 | 每源版本一份（`paper_assets.pdf_path`），基本不再写 |
+| MinerU markdown | `markdown/<yymm>/<stem>.md` | upload-mineru（旧格式路径）/ 服务端转换器 | **同 key 覆盖**：重解析直接替换，靠 bucket versioning 兜底 |
+| images | `images/<yymm>/<stem>.zip`（合成单 zip） | 同上 | 同 key 覆盖 |
+| JSON | `json/<yymm>/<stem>.json` | 已弃用 | v0.7.0 丢弃该 kind；`mineru_json_path` 列仍在但长期为空 |
+
+S3 模式下 `objstore.Router` 按 key 首段路由到 `qatlas-pdf` / `qatlas-md` / `qatlas-images` 三桶，kind 前缀在桶内被剥掉；本地模式单目录保留完整前缀。`papers.default_asset_id` + `paper_assets` 的 CHECK 约束把 md 与 json 绑在同一资产行上。
+
+**新 parse-revision bundle 布局（00007 + 本轮 ingest 接线，不可变）**
+
+| 产物 | 对象 key | 语义 |
+|---|---|---|
+| middle JSON | `papers/<qa>/parses/<rev>/middle.json` | 解析修订的锚定对象，`parse_revisions.artifact_sha256` 逐字节 pin |
+| markdown | `papers/<qa>/parses/<rev>/markdown.md` | bundle 成员（zip 里有才存） |
+| images | `papers/<qa>/parses/<rev>/images/<rel>` | bundle 成员，逐文件 |
+
+`papers` kind 目前注册在 `qatlas-pdf` 桶（`initRawStore`）；重解析 = 新 `<rev>` 目录 + `is_current` 翻转，旧对象永不覆盖。旧读路径（`GET /markdown`、figures、images zip）**不会**看到新 bundle——它们只认 default_asset 布局。
+
+### 13.2 选项
+
+**A. 全 bundle 不可变（当前代码默认）**：middle.json、markdown、images 全部进 `papers/<qa>/parses/<rev>/`。
+
+- 利：与 §4.2 锚点身份严格一致——旧评论永远回看当时字节；重解析/多 tier/多引擎天然并存；无覆盖竞态，不需要 versioning 兜底；遗留 default_asset 可冻结为只读遗产。
+- 弊：存储放大——每修订一份 markdown+images（图像占大头，重复解析同 PDF 时 md 几乎相同）；旧 `/markdown`、figures 端点不受益于新解析，需要双读或指针迁移；三桶策略之外多出一个 papers 前缀域。
+- 迁移成本：零（已是现状）；旧数据的 md/images 留在原位，需要时按需重解析。
+
+**B. 沿用 default_asset 可变单份**：新解析的 markdown/images 仍写 `markdown/<yymm>/<stem>.md` 等覆盖位，仅 middle.json 入 bundle。
+
+- 利：零新布局；旧读路径立即拿到最新解析；存储最省（每论文一份 md+images）。
+- 弊：**直接违反 §4.2/§8 Q1 的不可变承诺**——覆盖后旧评论锚定的修订只剩 middle.json 完好，md/images 与锚点脱钩；依赖 bucket versioning 才能恢复历史，而版本化恢复不在 API 合同内（客户端无法寻址旧版本）；`parse_revisions` 行声称不可变、对象可变，两套真相。
+- 结论倾向：除非用户明确接受“md/images 不参与锚点、仅 latest-view”，否则不推荐。
+
+**C. 混合：middle.json 永远 bundle；md/images 内容寻址（推荐候选）**：markdown 与 images 按 `sha256` 寻址（如 `papers/<qa>/parses/<rev>/` 内符号性引用 + 内容存 `papers/<qa>/blobs/<sha>`），修订目录只记成员清单；`default_asset` 读取逐步改指 parse_revisions 当前指针。
+
+- 利：保住不可变锚点（middle.json 独占修订身份）；同 PDF 重解析 md 几乎不变时存储零放大（内容寻址自动去重）；旧读路径可通过当前修订指针获得一份“最新视图”；未来勘误版/二次加工也走内容寻址。
+- 弊：需要一次小的读路径改造（default_asset → parse_revisions 指针 + blobs 解引用）；成员清单需入库或写入 bundle 索引对象；调试直观性下降（目录里是 sha 名）。
+- 迁移成本：中等；可在 A 的现状上演进（旧 bundle 目录本身就是成员清单的天然载体）。
+
+### 13.3 待用户拍板
+
+1. 选 A / B / C（或提出 D）。
+2. 若保留 A 或 C：`papers` 前缀是否独立成桶（`S3BucketParses`，影响 `initRawStore` 与部署 compose）；还是继续与 pdf 同桶。
+3. 旧 default_asset 的冻结时点：何时停止旧格式 upload-mineru 写 `markdown/`（保留只读兼容多久）。
+4. md/images 是否参与永久锚点合同（决定 B 是否合法）。
