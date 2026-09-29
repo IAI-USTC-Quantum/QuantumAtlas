@@ -8,7 +8,26 @@
 // consumed so a late response can't overwrite a closed viewer.
 import { useQuery } from '@tanstack/react-query'
 import { useAuth } from './auth'
-import { readerClient, type DiscussionFilters } from './reader-api'
+import { READER_API_MODE, MOCK_PAPER_ID, readerClient, type DiscussionFilters } from './reader-api'
+import { usePaperDetail } from './queries'
+import { mockPaperDetail } from '@/mocks/reader-mock-api'
+
+// Paper detail for reader pages: in mock mode the fixture paper has no
+// backend row, so serve the synthetic detail (lets `npm run dev` preview
+// the workbench with zero backend); every other paper hits the real API.
+export function usePaperDetailForReader(paperId: string | null) {
+  const live = usePaperDetail(paperId)
+  const useMock =
+    READER_API_MODE === 'mock' && paperId === MOCK_PAPER_ID
+  const mocked = useQuery({
+    queryKey: ['reader-mock-paper-detail', paperId],
+    queryFn: () => mockPaperDetail(),
+    enabled: useMock,
+    staleTime: Infinity,
+    retry: false,
+  })
+  return useMock ? mocked : live
+}
 
 export function usePaperSources(paperId: string | null) {
   return useQuery({

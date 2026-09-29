@@ -9,8 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useLang } from '@/hooks/use-lang'
 import { READER_API_MODE, type DiscussionFilters as FilterState, type DiscussionSummary } from '@/lib/reader-api'
-import { useDiscussionDetail, useDiscussions, usePaperParses } from '@/lib/reader-queries'
-import { usePaperDetail } from '@/lib/queries'
+import { useDiscussionDetail, useDiscussions, usePaperDetailForReader, usePaperParses } from '@/lib/reader-queries'
 import { DiscussionFilterBar } from '@/components/reader/DiscussionFilters'
 import { ScopeBadge, StatusBadge, TypeBadge } from '@/components/reader/badges'
 
@@ -49,7 +48,7 @@ function PaperDiscussionsPage() {
   const navigate = useNavigate({ from: '/$lang/papers/$paperId/discussions' })
   const { paperId } = Route.useParams()
   const search = Route.useSearch()
-  const detail = usePaperDetail(paperId || null)
+  const detail = usePaperDetailForReader(paperId || null)
   const parses = usePaperParses(paperId || null)
   const paper = detail.data
 

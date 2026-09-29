@@ -248,9 +248,35 @@ export const REPLY_FEED: Record<string, Omit<DiscussionDetail['replies'][number]
   ],
 }
 
+import type { PaperDetail } from '@/lib/api'
+
 function requireMockPaper(paperId: string): void {
   if (paperId !== MOCK_PAPER_ID) {
     throw new ReaderApiError(404, `reader mock: paper ${paperId} has no fixture data`)
+  }
+}
+
+// Synthetic PaperDetail so `npm run dev` can preview the workbench with
+// zero backend (the real /api/papers/{id} would 401/404 in mock mode).
+export function mockPaperDetail(): PaperDetail {
+  return {
+    paper_id: MOCK_PAPER_ID,
+    status: 'ready',
+    title: 'Synthetic Block-Comments Fixture Paper',
+    authors: ['Synthetic Author'],
+    created_at: '2026-09-01T00:00:00Z',
+    updated_at: '2026-09-23T12:00:00Z',
+    assets: [
+      {
+        asset_id: 1,
+        source: 'arxiv',
+        arxiv_version: 3,
+        pdf_sha256: PDF_SHA,
+        pdf_size: 854,
+        fetched_at: '2026-09-01T00:00:00Z',
+      },
+    ],
+    acquisition: { state: 'ready', phase: 'done', active: false, events: [], updated_at: '2026-09-01T00:00:00Z' },
   }
 }
 

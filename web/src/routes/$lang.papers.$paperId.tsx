@@ -14,7 +14,8 @@ import { Panel } from '@/components/panel'
 import { StatusBlock } from '@/components/status-block'
 import { useLang } from '@/hooks/use-lang'
 import { useAuth } from '@/lib/auth'
-import { useAdminWhoami, usePaperDetail } from '@/lib/queries'
+import { useAdminWhoami } from '@/lib/queries'
+import { usePaperDetailForReader } from '@/lib/reader-queries'
 import {
   adminAssetURL,
   assetDownloadPath,
@@ -57,7 +58,7 @@ function PaperDetailPage() {
   const auth = useAuth()
   const lang = useLang()
   const { paperId } = Route.useParams()
-  const detail = usePaperDetail(paperId || null)
+  const detail = usePaperDetailForReader(paperId || null)
 
   const paper = detail.data
 
