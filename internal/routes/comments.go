@@ -220,6 +220,13 @@ func replyJSON(r comments.Reply) map[string]any {
 // --- handlers -------------------------------------------------------------------
 
 // listDiscussions: GET /api/papers/{paper_id}/discussions
+//
+// Optional ?since=<unixmillis>-<discussion_id> (plan §13.4.5) narrows
+// the window to discussions with (updated_at, discussion_id) strictly
+// past that position — pull-style incremental sync. It composes with
+// every filter and with the keyset ?cursor= unchanged. The response
+// carries a top-level "since" to echo on the next poll; it only
+// advances on the last page of a window (see below).
 func (d *commentDeps) listDiscussions(re *core.RequestEvent) error {
 	paperID := re.Request.PathValue("paper_id")
 	if !strings.HasPrefix(paperID, "qa_") || len(paperID) <= len("qa_") {
@@ -280,6 +287,15 @@ func (d *commentDeps) listDiscussions(re *core.RequestEvent) error {
 		f.BlockIndex = &n
 	}
 	f.Cursor = q.Get("cursor")
+	if v := q.Get("since"); v != "" {
+		sinceT, sinceID, err := comments.DecodeSinceCursor(v)
+		if err != nil {
+			return re.JSON(http.StatusBadRequest, map[string]string{
+				"detail": "invalid since cursor (want <unixmillis>-<discussion_id>, echo back the since field of the previous response): " + v,
+			})
+		}
+		f.Since, f.SinceID = sinceT, sinceID
+	}
 	f.Limit = commentsDefaultPerPage
 	if v := q.Get("per_page"); v != "" {
 		n, err := strconv.Atoi(v)
@@ -303,6 +319,27 @@ func (d *commentDeps) listDiscussions(re *core.RequestEvent) error {
 	resp := map[string]any{"items": out, "next_cursor": nil}
 	if len(items) == f.Limit && f.Limit > 0 {
 		resp["next_cursor"] = items[len(items)-1].DiscussionID
+	}
+	// Incremental-sync position (plan §13.4.5). The since cursor only
+	// ADVANCES on the last page of a window (next_cursor == nil): rows
+	// are ordered discussion_id DESC, not updated_at DESC, so a middle
+	// page's max(updated_at) may still hide un-pulled rows further down
+	// — advancing there would skip them. Re-polling an old cursor
+	// re-sends rows the client already merged (harmless); skipping is
+	// not. On an empty window the echoed cursor stands.
+	resp["since"] = nil
+	if echoed := q.Get("since"); echoed != "" {
+		resp["since"] = echoed
+	}
+	if resp["next_cursor"] == nil && len(items) > 0 {
+		maxItem := items[0]
+		for _, it := range items[1:] {
+			if it.UpdatedAt.After(maxItem.UpdatedAt) ||
+				(it.UpdatedAt.Equal(maxItem.UpdatedAt) && it.DiscussionID > maxItem.DiscussionID) {
+				maxItem = it
+			}
+		}
+		resp["since"] = comments.EncodeSinceCursor(maxItem.UpdatedAt, maxItem.DiscussionID)
 	}
 	return re.JSON(http.StatusOK, resp)
 }
