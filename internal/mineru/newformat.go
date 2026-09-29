@@ -33,8 +33,13 @@ import (
 type NewFormatResult struct {
 	MiddleJSON []byte
 	Markdown   []byte // markdown.md / full.md member; nil when absent
-	Images     map[string][]byte
-	Tier       string // "" when the zip carries no tier metadata
+	// StructuredContent is the MinerU-designed consumption-view JSON
+	// (content list) when the zip carries one: extracted from the
+	// "structured_content.json" or "content_list.json" member. It is a
+	// derived convenience view — never the anchor (that is MiddleJSON).
+	StructuredContent []byte
+	Images            map[string][]byte
+	Tier              string // "" when the zip carries no tier metadata
 }
 
 // middleJSONBase is the basename that identifies the new-format parse
@@ -114,6 +119,13 @@ func ExtractNewFormat(zipBytes []byte) (NewFormatResult, error) {
 				return NewFormatResult{}, err
 			}
 			res.Markdown = b
+		case res.StructuredContent == nil &&
+			(base == "structured_content.json" || base == "content_list.json"):
+			// MinerU's designed consumption-view JSON. First member
+			// wins across both historical names; optional.
+			if b, err := readZipEntry(f); err == nil {
+				res.StructuredContent = b
+			}
 		case base == metadataJSONBase:
 			// Optional producer metadata; tolerate unreadable/corrupt
 			// members by ignoring them (tier falls back to default).

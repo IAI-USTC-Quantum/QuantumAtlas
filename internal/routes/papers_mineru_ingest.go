@@ -189,6 +189,16 @@ func ingestMinerUNewFormat(
 			return re.JSON(http.StatusInternalServerError, map[string]string{"detail": err.Error()})
 		}
 	}
+	// MinerU's designed consumption-view JSON, preserved verbatim as a
+	// bundle member when the producer shipped one (plan §13 decision:
+	// middle.json stays the sole anchor; this is a convenience view).
+	clKey := ""
+	if len(res.StructuredContent) > 0 {
+		clKey = base + "/content_list.json"
+		if err := put(clKey, res.StructuredContent, "application/json"); err != nil {
+			return re.JSON(http.StatusInternalServerError, map[string]string{"detail": err.Error()})
+		}
+	}
 	imgKeys := make([]string, 0, len(res.Images))
 	for name, b := range res.Images {
 		clean := path.Clean("/" + name) // strips traversal, keeps rel shape
@@ -248,14 +258,18 @@ func ingestMinerUNewFormat(
 		"schema_version":  doc.SchemaVersion,
 		"artifact_sha256": artifactSha,
 		"objstore_keys": map[string]any{
-			"middle_json": middleKey,
-			"markdown":    nil,
-			"images":      imgKeys,
+			"middle_json":  middleKey,
+			"markdown":     nil,
+			"content_list": nil,
+			"images":       imgKeys,
 		},
 		"blocks_endpoint": "/api/papers/" + paperID + "/parses/" + revID + "/blocks",
 	}
 	if mdKey != "" {
 		body["objstore_keys"].(map[string]any)["markdown"] = mdKey
+	}
+	if clKey != "" {
+		body["objstore_keys"].(map[string]any)["content_list"] = clKey
 	}
 	re.Response.WriteHeader(http.StatusCreated)
 	return jsonBody(re, body)

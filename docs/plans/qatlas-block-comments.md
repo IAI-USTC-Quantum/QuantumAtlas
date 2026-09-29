@@ -563,6 +563,14 @@ S3 模式下 `objstore.Router` 按 key 首段路由到 `qatlas-pdf` / `qatlas-md
 - 弊：需要一次小的读路径改造（default_asset → parse_revisions 指针 + blobs 解引用）；成员清单需入库或写入 bundle 索引对象；调试直观性下降（目录里是 sha 名）。
 - 迁移成本：中等；可在 A 的现状上演进（旧 bundle 目录本身就是成员清单的天然载体）。
 
+### 13.4 拍板结果（2026-09-29，用户决定）
+
+1. **布局选 A**（全 bundle 不可变），**不采用 C 的内容寻址/哈希去重**——接受重解析时 md/images 的存储重复作为代价。B 维持否决。
+2. middle.json 独占锚点身份；md/images/content_list 为修订 bundle 成员（随修订不可变，但不参与锚点合同）。
+3. MinerU 设计的两种 JSON 均为设计产物：middle_json=锚点，content_list（structured content）=消费视图——ingest 自本次起将 zip 内 structured_content.json/content_list.json 作为 bundle 成员原样保留（content_list.json 键）。
+4. 独立桶、旧 default_asset 冻结时点：随 v0.37.0 转正 + lib 接入确认后再议（当前 papers 前缀仍在 pdf 桶）。
+5. 同轮记录的倾向（未见异议）：REST 不做 git 式重构，v0.38 增 `?since=` 增量同步端点；git 只读镜像为 v0.38 可选项（权威恒为 objstore+PG）；CLI `contrib mineru --zip` 放开 ARXIV_ID + `--tier` 透传 + 新格式预检。
+
 ### 13.3 待用户拍板
 
 1. 选 A / B / C（或提出 D）。
