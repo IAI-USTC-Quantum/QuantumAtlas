@@ -1,0 +1,48 @@
+{
+  "_synthetic": true,
+  "_source_pdf_sha256": "5eb6980e0eb27b236cdefd9ecbd557b003a8ab9eb23e5c247e04c0f2a3caedb2",
+  "_description": "synthetic second parse of the SAME pdf: reordered blocks, page 1 (0-based idx) missing, one block without bbox",
+  "schema": "docvortex.middle",
+  "schema_version": "2.0",
+  "pdf_info": {
+    "pages": 1,
+    "page_size": [
+      [
+        612.0,
+        792.0
+      ]
+    ]
+  },
+  "blocks": [
+    {
+      "page_idx": 0,
+      "index": 1,
+      "type": "equation",
+      "content": "E = m c^{2}",
+      "bbox": [
+        0.12,
+        0.29,
+        0.42,
+        0.37
+      ]
+    },
+    {
+      "page_idx": 0,
+      "index": 2,
+      "type": "text",
+      "content": "PAGE ONE TEST",
+      "bbox": [
+        0.09,
+        0.07,
+        0.56,
+        0.13
+      ]
+    },
+    {
+      "page_idx": 0,
+      "index": 7,
+      "type": "text",
+      "content": "Block without bbox on purpose."
+    }
+  ]
+}

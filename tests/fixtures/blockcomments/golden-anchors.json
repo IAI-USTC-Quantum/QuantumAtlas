@@ -1,0 +1,59 @@
+{
+  "_synthetic": true,
+  "description": "Golden anchor semantics: identical requests must resolve to identical anchors across Q1-Q4 (plan \u00a74.2, \u00a75.1).",
+  "pdf_sha256": "5eb6980e0eb27b236cdefd9ecbd557b003a8ab9eb23e5c247e04c0f2a3caedb2",
+  "anchor_shape": {
+    "paper_id": "string qa_...",
+    "source_id": "string",
+    "parse_revision": "string id of the immutable parse revision",
+    "schema": "docvortex.middle",
+    "schema_version": "2.0",
+    "page_idx": "0-based int",
+    "block_index": "1-based public index (block.index)"
+  },
+  "locator_shape": "doc:<short_id>/tier:<tier>/page:<page_no>/block:<block_no>",
+  "public_numbering": "public page = page_idx+1, public block = block.index",
+  "cases": [
+    {
+      "request": "parse-A page 1 block 2",
+      "anchor": {
+        "page_idx": 0,
+        "block_index": 2,
+        "type": "equation",
+        "content": "E = m c^{2}"
+      }
+    },
+    {
+      "request": "parse-A page 2 block 2",
+      "anchor": {
+        "page_idx": 1,
+        "block_index": 2,
+        "type": "equation",
+        "content": "\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}"
+      }
+    },
+    {
+      "request": "parse-A page 1 block 3/4",
+      "anchor": null,
+      "reason": "non-contiguous index 1,2,5: blocks 3 and 4 do NOT exist; must 404, never fall back to nearest block"
+    },
+    {
+      "request": "parse-B page 2 any block",
+      "anchor": null,
+      "reason": "parse B lacks page_idx=1 entirely: must 404"
+    },
+    {
+      "request": "parse-B page 1 block 7 image",
+      "anchor": {
+        "page_idx": 0,
+        "block_index": 7,
+        "bbox": null
+      },
+      "reason": "bbox missing: image endpoint reports unavailable, never fabricates a crop"
+    },
+    {
+      "request": "parse-A page 1 block 1 vs parse-B page 1 block 2",
+      "reason": "same visual text in two parses of one pdf must remain TWO distinct anchors (different revision+index); comments never auto-migrate between them"
+    }
+  ]
+}
