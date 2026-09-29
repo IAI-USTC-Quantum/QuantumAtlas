@@ -11,7 +11,15 @@
 //   - Status changes: root author or admin only, reason mandatory.
 //   - Body edits: per-item author only (§12.1.2).
 //   - Body budget: 1..20,000 Unicode chars (§12.2), 413 beyond.
-import { BLOCKS_A, BLOCKS_B, DISCUSSIONS, PARSES, REPLY_FEED, REVISION_A, REVISION_B } from './reader-mock-seed'
+import {
+  BLOCKS_LOCAL,
+  BLOCKS_REMOTE,
+  DISCUSSIONS,
+  PARSES,
+  REPLY_FEED,
+  REVISION_LOCAL,
+  REVISION_REMOTE,
+} from './reader-mock-seed'
 import { ReaderApiError } from '@/lib/reader-shared'
 import type {
   CreateDiscussionInput,
@@ -135,8 +143,8 @@ function requireBody(body: string): string {
 }
 
 export function blocksForRevision(revision: string): ReaderBlock[] {
-  if (revision === REVISION_A) return BLOCKS_A
-  if (revision === REVISION_B) return BLOCKS_B
+  if (revision === REVISION_LOCAL) return BLOCKS_LOCAL
+  if (revision === REVISION_REMOTE) return BLOCKS_REMOTE
   throw new ReaderApiError(404, `unknown parse revision ${revision}`)
 }
 

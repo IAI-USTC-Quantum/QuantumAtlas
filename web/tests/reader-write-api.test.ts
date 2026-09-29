@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { mockClient, REVISION_A, REVISION_B } from '@/mocks/reader-mock-api'
+import { mockClient, REVISION_LOCAL, REVISION_REMOTE } from '@/mocks/reader-mock-api'
 import {
   getMockActor,
   resetMockStore,
@@ -21,7 +21,8 @@ async function expectApiError(promise: Promise<unknown>, status: number) {
   await expect(promise).rejects.toMatchObject({ status })
 }
 
-const ANCHOR = { parse_revision: REVISION_A, page_idx: 0, block_index: 5 }
+// Real anchor: pr_local page 1 block 5 (the Kyushu University affiliation line).
+const ANCHOR = { parse_revision: REVISION_LOCAL, page_idx: 0, block_index: 5 }
 
 function createInput(overrides: Record<string, unknown> = {}) {
   return {
@@ -43,7 +44,7 @@ describe('mock write: createDiscussion', () => {
     expect(created.status).toBeNull()
     expect(created.revision).toBe(1)
     // Visible through the combined block read.
-    const reading = await client.readBlock(MOCK_PAPER_ID, REVISION_A, 0, 5)
+    const reading = await client.readBlock(MOCK_PAPER_ID, REVISION_LOCAL, 0, 5)
     expect(reading.discussions.map((d) => d.discussion_id)).toContain(created.discussion_id)
   })
 
@@ -52,7 +53,7 @@ describe('mock write: createDiscussion', () => {
     const first = await client.createDiscussion(MOCK_PAPER_ID, input, 'idem-a')
     const replay = await client.createDiscussion(MOCK_PAPER_ID, input, 'idem-a')
     expect(replay.discussion_id).toBe(first.discussion_id)
-    const reading = await client.readBlock(MOCK_PAPER_ID, REVISION_A, 0, 5)
+    const reading = await client.readBlock(MOCK_PAPER_ID, REVISION_LOCAL, 0, 5)
     expect(reading.discussions).toHaveLength(1)
   })
 
@@ -66,11 +67,11 @@ describe('mock write: createDiscussion', () => {
 
   it('404s for anchors that do not exist (golden anchors, no fallback)', async () => {
     await expectApiError(
-      client.createDiscussion(MOCK_PAPER_ID, createInput({ block_index: 3 }), 'k'),
+      client.createDiscussion(MOCK_PAPER_ID, createInput({ block_index: 99 }), 'k'),
       404,
     )
     await expectApiError(
-      client.createDiscussion(MOCK_PAPER_ID, createInput({ parse_revision: REVISION_B, page_idx: 1 }), 'k2'),
+      client.createDiscussion(MOCK_PAPER_ID, createInput({ parse_revision: REVISION_REMOTE, page_idx: 99 }), 'k2'),
       404,
     )
   })
@@ -104,12 +105,12 @@ describe('mock write: replies', () => {
 describe('mock write: status machine', () => {
   it('lets the root author change status with a mandatory reason', async () => {
     setMockActor({ id: 'user_bo', is_admin: false }) // dsc_02 root author
-    const updated = await client.setStatus('dsc_02', { status: 'confirmed', reason: 'verified against v3 bytes' })
+    const updated = await client.setStatus('dsc_02', { status: 'confirmed', reason: 'verified against the page-5 overlay' })
     expect(updated.status).toBe('confirmed')
     const revisions = await client.listRevisions('dsc_02')
     const events = revisions.events.filter((e) => e.kind === 'status')
     expect(events).toHaveLength(1)
-    expect(events[0]).toMatchObject({ from: 'pending', to: 'confirmed', reason: 'verified against v3 bytes', actor: 'user_bo' })
+    expect(events[0]).toMatchObject({ from: 'pending', to: 'confirmed', reason: 'verified against the page-5 overlay', actor: 'user_bo' })
   })
 
   it('403s for other users, allows admins, and 400s without a reason', async () => {
@@ -125,14 +126,14 @@ describe('mock write: status machine', () => {
   it('keeps two discussions on the same block independent', async () => {
     setMockActor({ id: 'user_alma', is_admin: false })
     await client.setStatus('dsc_01', { status: 'pending', reason: 'reopen for new evidence' })
-    const reading = await client.readBlock(MOCK_PAPER_ID, REVISION_A, 0, 2)
+    const reading = await client.readBlock(MOCK_PAPER_ID, REVISION_LOCAL, 4, 6)
     const statuses = Object.fromEntries(
       reading.discussions.map((d) => [d.discussion_id, d.status]),
     )
     expect(statuses['dsc_01']).toBe('pending')
     expect(statuses['dsc_02']).toBe('pending') // untouched: it was already pending
     await client.setStatus('dsc_01', { status: 'retracted', reason: 'actually a scan artifact' })
-    const after = await client.readBlock(MOCK_PAPER_ID, REVISION_A, 0, 2)
+    const after = await client.readBlock(MOCK_PAPER_ID, REVISION_LOCAL, 4, 6)
     expect(after.discussions.find((d) => d.discussion_id === 'dsc_02')?.status).toBe('pending')
   })
 })
@@ -145,7 +146,7 @@ describe('mock write: body edits under If-Match CAS', () => {
     expect(updated.revision).toBe(4)
     const revisions = await client.listRevisions('dsc_01')
     const bodyEvent = revisions.events.find((e) => e.kind === 'body')
-    expect(bodyEvent).toMatchObject({ target: 'discussion', old: expect.stringContaining('transcribed exponent'), new: 'revised root body', editor: 'user_alma' })
+    expect(bodyEvent).toMatchObject({ target: 'discussion', old: expect.stringContaining('逐字间隔'), new: 'revised root body', editor: 'user_alma' })
   })
 
   it('409s on stale revisions and 403s for non-authors', async () => {
@@ -172,7 +173,7 @@ describe('mock write: default actor and reset', () => {
     const created = await client.createDiscussion(MOCK_PAPER_ID, createInput(), 'k')
     expect(created.discussion_id).toBeTruthy()
     resetMockStore()
-    const reading = await client.readBlock(MOCK_PAPER_ID, REVISION_A, 0, 5)
+    const reading = await client.readBlock(MOCK_PAPER_ID, REVISION_LOCAL, 0, 5)
     expect(reading.discussions).toHaveLength(0)
   })
 })

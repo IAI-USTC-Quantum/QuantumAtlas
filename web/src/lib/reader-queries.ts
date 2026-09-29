@@ -15,6 +15,7 @@ import {
   type CreateDiscussionInput,
   type DiscussionFilters,
   type DiscussionStatus,
+  type ReaderBlock,
   type ReplyInput,
 } from './reader-api'
 import { useAdminWhoami, usePaperDetail } from './queries'
@@ -55,10 +56,27 @@ export function usePaperParses(paperId: string | null) {
   })
 }
 
+// Blocks of one page, following the cursor chain until the terminal null.
+// Real 17-page parses put up to ~21 top-level blocks on a page — more than
+// one mock/live page of the blocks endpoint — and the overlay + list must
+// show EVERY positioned block or boxes silently go missing (the exact
+// "invisible blocks" symptom the real-paper preview exposed).
 export function useParseBlocks(paperId: string | null, revision: string | null, pageIdx: number) {
   return useQuery({
     queryKey: ['reader-blocks', paperId, revision, pageIdx],
-    queryFn: ({ signal }) => readerClient.listBlocks(paperId!, revision!, pageIdx, undefined, signal),
+    queryFn: async ({ signal }) => {
+      const blocks: ReaderBlock[] = []
+      let cursor: string | undefined
+      // Defensive cap: 100 pages × per-page size is far beyond any real
+      // document; a server looping on the same cursor must not hang the tab.
+      for (let hop = 0; hop < 100; hop += 1) {
+        const page = await readerClient.listBlocks(paperId!, revision!, pageIdx, cursor, signal)
+        blocks.push(...page.blocks)
+        if (!page.next_cursor) break
+        cursor = page.next_cursor
+      }
+      return { blocks }
+    },
     enabled: Boolean(paperId && revision),
     retry: false,
   })

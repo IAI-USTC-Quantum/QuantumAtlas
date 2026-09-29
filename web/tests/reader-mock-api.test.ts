@@ -1,17 +1,20 @@
 import { beforeAll, describe, expect, it } from 'vitest'
 import {
-  BLOCKS_A,
-  BLOCKS_B,
+  BLOCKS_LOCAL,
+  BLOCKS_REMOTE,
   DISCUSSIONS,
   mockClient,
-  REVISION_A,
-  REVISION_B,
+  REVISION_LOCAL,
+  REVISION_REMOTE,
 } from '@/mocks/reader-mock-api'
 import { MOCK_PAPER_ID } from '@/lib/reader-api'
 
 // Contract tests for the mock reader API. The mock MUST obey the same
 // semantics as the planned live backend (§12.2 + §12.5 golden anchors):
 // these tests double as the executable statement of those rules for Q5.
+// Block data is REAL: arXiv 1605.01488 parsed by mineru 4.0.9 (pr_local,
+// current) and the remote engine 3.4.4 (pr_remote) — see
+// tests/fixtures/realpaper/ and scripts/gen-realpaper-mocks.mjs.
 const client = mockClient()
 
 async function expectApiError(promise: Promise<unknown>, status: number) {
@@ -22,23 +25,29 @@ beforeAll(async () => {
   // jsdom fetch can read the public fixture path via the test server only;
   // vitest serves nothing, so stub the single static fetch the mock makes.
   globalThis.fetch = (async (input: RequestInfo | URL) => {
-    expect(String(input)).toBe('/fixtures/blockcomments/minimal-2page.pdf')
+    expect(String(input)).toBe('/fixtures/realpaper/1605.01488.pdf')
     return new Response(new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]), { status: 200 })
   }) as typeof fetch
 })
 
 describe('mock reader: sources and parses', () => {
-  it('lists the two arXiv v2/v3 sources as distinct source_ids', async () => {
+  it('lists the single real arXiv v2 source (one PDF, two parses)', async () => {
     const { sources } = await client.listSources(MOCK_PAPER_ID)
-    expect(sources.map((s) => s.source_id).sort()).toEqual(['src_arxiv_v2', 'src_arxiv_v3'])
-    expect(sources.filter((s) => s.is_current)).toHaveLength(1)
+    expect(sources.map((s) => s.source_id)).toEqual(['src_arxiv_1605_01488_v2'])
+    expect(sources[0].sha256).toBe('d41ff6f92ffb6e610435cef1d7cdb88c80aa796cccd982faf5c1b31c88977eaf')
+    expect(sources[0].size_bytes).toBe(763_119)
+    expect(sources[0].is_current).toBe(true)
   })
 
-  it('lists parse revisions with exactly one current pointer', async () => {
+  it('lists pr_local (current) and pr_remote parse revisions', async () => {
     const { parses } = await client.listParses(MOCK_PAPER_ID)
-    expect(parses.map((p) => p.revision_id)).toEqual([REVISION_A, REVISION_B])
+    expect(parses.map((p) => p.revision_id)).toEqual([REVISION_LOCAL, REVISION_REMOTE])
     expect(parses.filter((p) => p.is_current)).toHaveLength(1)
     expect(parses.every((p) => p.schema === 'docvortex.middle' && p.schema_version === '2.0')).toBe(true)
+    // artifact hashes are the sha256 of the committed raw middle.json files.
+    expect(parses[0].artifact_sha256).toMatch(/^[0-9a-f]{64}$/)
+    expect(parses[1].artifact_sha256).toMatch(/^[0-9a-f]{64}$/)
+    expect(parses[0].artifact_sha256).not.toBe(parses[1].artifact_sha256)
   })
 
   it('404s for any paper outside the fixture (never fake coverage)', async () => {
@@ -48,48 +57,64 @@ describe('mock reader: sources and parses', () => {
 })
 
 describe('mock reader: block listing and the golden anchors (§12.5)', () => {
-  it('preserves non-contiguous block indexes 1,2,5 on parse-A page 1', async () => {
-    const page = await client.listBlocks(MOCK_PAPER_ID, REVISION_A, 0)
-    expect(page.blocks.map((b) => b.index)).toEqual([1, 2, 5])
+  it('serves all 15 blocks of pr_local page 1 in one page of results', async () => {
+    const page = await client.listBlocks(MOCK_PAPER_ID, REVISION_LOCAL, 0)
+    expect(page.blocks.map((b) => b.index)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15])
     expect(page.next_cursor).toBeNull()
+    // Real order: block 1 is the rotated arXiv stamp, block 2 the title.
+    expect(page.blocks[0].type).toBe('aside_text')
+    expect(page.blocks[1].type).toBe('doc_title')
+    expect(page.blocks[1].content).toBe('Fully dynamic data structure for LCE queries in compressed space')
   })
 
-  it('parse-A page 2 has blocks 1,2', async () => {
-    const page = await client.listBlocks(MOCK_PAPER_ID, REVISION_A, 1)
-    expect(page.blocks.map((b) => b.index)).toEqual([1, 2])
+  it('paginates real pages that exceed the per-page budget (page 16: 21 blocks)', async () => {
+    const first = await client.listBlocks(MOCK_PAPER_ID, REVISION_LOCAL, 15)
+    expect(first.blocks).toHaveLength(20)
+    expect(first.next_cursor).toBe('20')
+    const second = await client.listBlocks(MOCK_PAPER_ID, REVISION_LOCAL, 15, '20')
+    expect(second.blocks).toHaveLength(1)
+    expect(second.next_cursor).toBeNull()
   })
 
-  it('parse-B lacks page 2 entirely: readBlock must 404, listBlocks is empty', async () => {
-    await expectApiError(client.readBlock(MOCK_PAPER_ID, REVISION_B, 1, 1), 404)
-    const page = await client.listBlocks(MOCK_PAPER_ID, REVISION_B, 1)
-    expect(page.blocks).toEqual([])
+  it('blocks 0 and 99 do NOT exist on page 1: 404, never nearest-block fallback', async () => {
+    await expectApiError(client.readBlock(MOCK_PAPER_ID, REVISION_LOCAL, 0, 0), 404)
+    await expectApiError(client.readBlock(MOCK_PAPER_ID, REVISION_LOCAL, 0, 99), 404)
+    await expectApiError(client.readBlock(MOCK_PAPER_ID, REVISION_REMOTE, 99, 1), 404)
   })
 
-  it('parse-A page 1 blocks 3/4 do NOT exist: 404, never nearest-block fallback', async () => {
-    await expectApiError(client.readBlock(MOCK_PAPER_ID, REVISION_A, 0, 3), 404)
-    await expectApiError(client.readBlock(MOCK_PAPER_ID, REVISION_A, 0, 4), 404)
-  })
-
-  it('serves the combined block read: source+anchor+content+discussions', async () => {
-    const reading = await client.readBlock(MOCK_PAPER_ID, REVISION_A, 0, 2)
-    expect(reading.anchor).toEqual({ page_idx: 0, block_index: 2 })
+  it('serves the combined block read of the anchored Uniq(P) equation', async () => {
+    const reading = await client.readBlock(MOCK_PAPER_ID, REVISION_LOCAL, 4, 6)
+    expect(reading.anchor).toEqual({ page_idx: 4, block_index: 6 })
     expect(reading.content.type).toBe('equation')
-    expect(reading.content.content).toBe('E = m c^{2}')
-    expect(reading.source.parse_revision).toBe(REVISION_A)
-    expect(reading.source.pdf_sha256).toBe('5eb6980e0eb27b236cdefd9ecbd557b003a8ab9eb23e5c247e04c0f2a3caedb2')
+    expect(reading.content.content).toContain('U n i q (P)')
+    expect(reading.source.parse_revision).toBe(REVISION_LOCAL)
+    expect(reading.source.pdf_sha256).toBe('d41ff6f92ffb6e610435cef1d7cdb88c80aa796cccd982faf5c1b31c88977eaf')
     // Two INDEPENDENT discussions on the same block (plan §6.1).
     expect(reading.discussions.map((d) => d.discussion_id)).toEqual(['dsc_01', 'dsc_02'])
   })
 
-  it('parse-B block 7 carries no bbox: reported as null, not fabricated', async () => {
-    expect(BLOCKS_B.find((b) => b.index === 7)?.bbox).toBeNull()
-    const reading = await client.readBlock(MOCK_PAPER_ID, REVISION_B, 0, 7)
-    expect(reading.content.bbox).toBeNull()
+  it('the two revisions disagree on page-1 block order (same paper, two parses)', async () => {
+    // mineru 4.0.9 puts the arXiv stamp first; engine 3.4.4 starts at the title.
+    expect(BLOCKS_LOCAL.find((b) => b.page_idx === 0 && b.index === 1)?.type).toBe('aside_text')
+    expect(BLOCKS_REMOTE.find((b) => b.page_idx === 0 && b.index === 1)?.type).toBe('doc_title')
+    expect(BLOCKS_LOCAL.find((b) => b.page_idx === 0 && b.index === 2)?.type).toBe('doc_title')
   })
 
-  it('fixture blocks mirror parse-a.middle.json shapes', () => {
-    expect(BLOCKS_A).toHaveLength(5)
-    expect(BLOCKS_A.filter((b) => b.bbox)).toHaveLength(5)
+  it('every real block carries a usable bbox (both revisions)', () => {
+    for (const blocks of [BLOCKS_LOCAL, BLOCKS_REMOTE]) {
+      expect(blocks).toHaveLength(241)
+      for (const block of blocks) {
+        expect(block.bbox, `block ${block.page_idx}/${block.index}`).toBeDefined()
+        const [x0, y0, x1, y1] = block.bbox!
+        expect(x0).toBeGreaterThanOrEqual(0)
+        expect(y0).toBeGreaterThanOrEqual(0)
+        expect(x1).toBeLessThanOrEqual(1)
+        expect(y1).toBeLessThanOrEqual(1)
+        expect(x1).toBeGreaterThan(x0)
+        expect(y1).toBeGreaterThan(y0)
+      }
+      expect(blocks.filter((b) => b.type === 'equation')).toHaveLength(7)
+    }
   })
 })
 
@@ -119,14 +144,17 @@ describe('mock reader: discussions', () => {
     expect(custom.discussions.map((d) => d.discussion_id)).toEqual(['dsc_05'])
   })
 
-  it('filters by parse revision so parse-A and parse-B anchors never mix', async () => {
-    const onlyB = await client.listDiscussions(MOCK_PAPER_ID, { parse_revision: REVISION_B })
-    expect(onlyB.discussions.map((d) => d.discussion_id)).toEqual(['dsc_06'])
-    // Same-looking equation, TWO distinct anchors across parses (§12.5).
-    const aBlock2 = await client.readBlock(MOCK_PAPER_ID, REVISION_A, 0, 2)
-    const bBlock1 = await client.readBlock(MOCK_PAPER_ID, REVISION_B, 0, 1)
-    expect(aBlock2.content.content).toBe(bBlock1.content.content)
-    expect(aBlock2.discussions.map((d) => d.discussion_id)).not.toContain('dsc_06')
+  it('filters by parse revision so pr_local and pr_remote anchors never mix', async () => {
+    const onlyRemote = await client.listDiscussions(MOCK_PAPER_ID, { parse_revision: REVISION_REMOTE })
+    expect(onlyRemote.discussions.map((d) => d.discussion_id)).toEqual(['dsc_06'])
+    // Same VISUAL equation, TWO distinct anchors across parses (§12.5):
+    // pr_remote (4,6) renders slightly different LaTeX/bbox than pr_local.
+    const localReading = await client.readBlock(MOCK_PAPER_ID, REVISION_LOCAL, 4, 6)
+    const remoteReading = await client.readBlock(MOCK_PAPER_ID, REVISION_REMOTE, 4, 6)
+    expect(remoteReading.content.type).toBe('equation')
+    expect(remoteReading.content.content).toContain('U n i q (P)')
+    expect(remoteReading.content.bbox).not.toEqual(localReading.content.bbox)
+    expect(localReading.discussions.map((d) => d.discussion_id)).not.toContain('dsc_06')
   })
 
   it('paginates with an opaque cursor and a terminal null', async () => {
@@ -148,11 +176,11 @@ describe('mock reader: discussions', () => {
 })
 
 describe('mock reader: pdf bytes', () => {
-  it('fetches the fixture pdf', async () => {
-    const bytes = await client.fetchPdfBytes(MOCK_PAPER_ID, 'src_arxiv_v3', undefined)
+  it('fetches the real fixture pdf', async () => {
+    const bytes = await client.fetchPdfBytes(MOCK_PAPER_ID, 'src_arxiv_1605_01488_v2', undefined)
     expect(bytes.byteLength).toBeGreaterThan(4)
     await expectApiError(
-      client.fetchPdfBytes('qa_0otherpaper000000000000000', 'src_arxiv_v3', undefined),
+      client.fetchPdfBytes('qa_0otherpaper000000000000000', 'src_arxiv_1605_01488_v2', undefined),
       404,
     )
   })

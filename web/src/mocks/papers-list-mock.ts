@@ -6,11 +6,11 @@
 // parse explodes with `Unexpected token '<'`. Instead of crashing, the list
 // degrades gracefully to synthetic entries.
 //
-// The dataset deliberately contains ONLY the synthetic block-comments
-// fixture paper: every row must stay clickable into a fully working reader
-// (mock detail + mock parse data + fixture PDF). Adding a row without
-// fixture data would turn the list into a launcher of "reader data
-// unavailable" dead ends.
+// The dataset deliberately contains ONLY the real-paper mock entry
+// (arXiv 1605.01488, the production registry id): every row must stay
+// clickable into a fully working reader (mock detail + real parse data +
+// the committed source PDF). Adding a row without fixture data would turn
+// the list into a launcher of "reader data unavailable" dead ends.
 import type { PapersListItem, PapersListParams, PapersListResponse } from '@/lib/api'
 import { MOCK_PAPER_ID } from '@/lib/reader-shared'
 
@@ -19,11 +19,11 @@ import { MOCK_PAPER_ID } from '@/lib/reader-shared'
 const MOCK_PAPERS: PapersListItem[] = [
   {
     paper_id: MOCK_PAPER_ID,
-    title: 'Synthetic Block-Comments Fixture Paper',
+    title: 'Fully dynamic data structure for LCE queries in compressed space',
     status: 'ready',
     has_pdf: true,
     has_md: true,
-    image_count: 0,
+    image_count: 7,
     created_at: '2026-09-01T00:00:00Z',
     updated_at: '2026-09-23T12:00:00Z',
   },
