@@ -10,7 +10,8 @@ FROM alpine:3.21
 ARG TARGETPLATFORM
 RUN apk add --no-cache poppler-utils ca-certificates tzdata \
     && addgroup -g 65532 nonroot \
-    && adduser -u 65532 -G nonroot -D -H nonroot
+    && adduser -u 65532 -G nonroot -D nonroot \
+    && mkdir -p /home/nonroot && chown -R nonroot:nonroot /home/nonroot
 COPY $TARGETPLATFORM/qatlasd /qatlasd
 VOLUME ["/data/raw", "/data/pb_data"]
 EXPOSE 4200
