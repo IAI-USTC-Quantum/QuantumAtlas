@@ -467,10 +467,14 @@ class SourceContractTests(unittest.TestCase):
     def test_goreleaser_dockerfile_reuses_binaries_without_building_source(self):
         dockerfile = self.configuration_text("Dockerfile.goreleaser")
         instructions = [line.strip() for line in dockerfile.splitlines() if line.strip()]
-        self.assertEqual([line for line in instructions if line.startswith("FROM ")], ["FROM gcr.io/distroless/static-debian12:nonroot"])
+        self.assertEqual([line for line in instructions if line.startswith("FROM ")], ["FROM alpine:3.21"])
         self.assertIn("ARG TARGETPLATFORM", instructions)
         self.assertEqual([line for line in instructions if line.startswith("COPY ")], ["COPY $TARGETPLATFORM/qatlasd /qatlasd"])
-        self.assertFalse(any(line.startswith(("RUN ", "ADD ")) for line in instructions))
+        # The image must reuse the prebuilt binary: no source builds. A
+        # package-install RUN (poppler-utils rasterizer, alpine base) is
+        # fine — it builds nothing. ADD (remote-URL fetch) stays banned.
+        self.assertFalse(any(line.startswith(("RUN go", "ADD ")) for line in instructions))
+        self.assertNotIn("go build", dockerfile)
         local = self.configuration_text("Dockerfile")
         self.assertIn("RUN go build", local)
         self.assertIn("COPY --from=builder /out/qatlasd /qatlasd", local)
