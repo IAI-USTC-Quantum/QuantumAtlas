@@ -1,6 +1,16 @@
-# GoReleaser supplies the prebuilt binary for each target platform, including UI.
-FROM gcr.io/distroless/static-debian12:nonroot
+# GoReleaser supplies the prebuilt (CGO-free, static) binary for each
+# target platform, including UI.
+#
+# Base is alpine (not distroless) so the block-image crop renderer
+# (poppler-utils' pdftoppm, internal/pdfraster default) ships with the
+# service; without it GET .../blocks/{p}/{b}/image answers 503
+# renderer_unavailable. UID/GID 65532 match the historical distroless
+# nonroot identity the deploy docs and data-dir ownership assume.
+FROM alpine:3.21
 ARG TARGETPLATFORM
+RUN apk add --no-cache poppler-utils ca-certificates tzdata \
+    && addgroup -g 65532 nonroot \
+    && adduser -u 65532 -G nonroot -D -H nonroot
 COPY $TARGETPLATFORM/qatlasd /qatlasd
 VOLUME ["/data/raw", "/data/pb_data"]
 EXPOSE 4200
