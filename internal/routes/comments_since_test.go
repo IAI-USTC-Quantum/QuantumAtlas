@@ -7,7 +7,19 @@ package routes
 import (
 	"net/http"
 	"testing"
+	"time"
 )
+
+// sinceTick guarantees the memstore's wall clock crosses into a new
+// millisecond before the next write. The since window compares
+// (updated_at truncated to ms, discussion_id): a row EDITED within the
+// same millisecond as the cursor anchor keeps its (smaller) id and so
+// falls out of the strictly-greater window — on a fast CI runner the
+// whole create→edit sequence can land inside one millisecond, which
+// made these tests flaky. time.Sleep always advances the wall clock by
+// at least its duration, so 2ms deterministically clears the 1ms
+// comparison granularity.
+func sinceTick() { time.Sleep(2 * time.Millisecond) }
 
 // sincePoll runs one GET and returns (items-by-id, top-level since).
 func sincePoll(t *testing.T, h *commentsHarness, pat, query string) (map[string]bool, any) {
@@ -63,6 +75,7 @@ func TestQ2_ListSincePullSync(t *testing.T) {
 	}
 
 	// Edit `first` (bumps updated_at) and add a third row.
+	sinceTick() // edits must land in a strictly later millisecond
 	rec, resp := h.do(http.MethodPatch, "/api/discussions/"+first+"/body",
 		`{"body":"first (edited)"}`, mergeHeaders(bearer(patA), map[string]string{"If-Match": "1"}))
 	if rec.Code != http.StatusOK {
@@ -112,6 +125,7 @@ func TestQ2_ListSinceFilterComposition(t *testing.T) {
 	_, since := sincePoll(t, h, patA, "")
 
 	// Both rows change: normal via an edit, the other via a new reply.
+	sinceTick() // edits must land in a strictly later millisecond
 	rec, resp := h.do(http.MethodPatch, "/api/discussions/"+normal+"/body",
 		`{"body":"normal (edited)"}`, mergeHeaders(bearer(patA), map[string]string{"If-Match": "1"}))
 	if rec.Code != http.StatusOK {
