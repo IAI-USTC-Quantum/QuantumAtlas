@@ -561,7 +561,7 @@ func docPaperMatch() {}
 // @Failure     404 {object} map[string]interface{} "DOI unknown to OpenAlex / no arXiv twin and no OA PDF (contrib upload possible); or paper unknown and silent fetch unavailable"
 // @Failure     409 {object} map[string]interface{} "force_arxiv requested but DOI has no arxiv twin"
 // @Failure     502 {object} map[string]interface{} "prior conversion failed inside the cooldown window, or OpenAlex upstream error"
-// @Failure     503 {object} map[string]interface{} "cache-only mode (no MinerU keys), or DOI resolution unavailable (QATLAS_OPENALEX_MAILTO unset)"
+// @Failure     503 {object} map[string]interface{} "asset storage unavailable (code=asset_store_unavailable, retryable=true, Retry-After); cache-only mode or DOI resolution unavailable"
 // @Router      /api/papers/{id_or_doi}/markdown [get]
 func docPaperMarkdown() {}
 
@@ -594,6 +594,7 @@ func docPaperMarkdown() {}
 // @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string
 // @Failure     404 {object} map[string]string "paper unknown and silent fetch unavailable"
+// @Failure     503 {object} map[string]interface{} "asset storage unavailable; retryable=true with Retry-After"
 // @Router      /api/papers/{id_or_doi}/markdown/status [get]
 func docPaperMarkdownStatus() {}
 
@@ -647,6 +648,7 @@ func docPaperPDF() {}
 // @Failure     400 {object} map[string]string
 // @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string
+// @Failure     503 {object} map[string]interface{} "asset storage unavailable; retryable=true with Retry-After"
 // @Router      /api/papers/{id_or_doi}/pdf/status [get]
 func docPaperPDFStatus() {}
 

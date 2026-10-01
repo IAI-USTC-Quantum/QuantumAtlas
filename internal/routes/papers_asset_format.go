@@ -45,12 +45,12 @@ func assetFormat(re *core.RequestEvent) string {
 // ?format=. A link request degrades to a byte stream when the backend
 // cannot presign (LocalStore dev).
 func serveReadyAsset(re *core.RequestEvent, store objstore.Store, kind, canonical, defaultFormat string) error {
-	ctx := re.Request.Context()
+	ctx, cancel := objstore.ReadContext(re.Request.Context())
+	defer cancel()
+	re.Request = re.Request.WithContext(ctx)
 	key, _, exists, err := paperassets.LocateAssetByID(ctx, store, kind, canonical)
 	if err != nil {
-		return re.JSON(http.StatusInternalServerError, map[string]string{
-			"detail": "locate " + kind + ": " + err.Error(),
-		})
+		return assetStorageUnavailable(re, err)
 	}
 	if !exists {
 		return re.JSON(http.StatusNotFound, map[string]string{
@@ -82,6 +82,12 @@ func serveReadyAsset(re *core.RequestEvent, store objstore.Store, kind, canonica
 // content type for its kind.
 func streamAssetBytes(re *core.RequestEvent, store objstore.Store, kind, canonical, key string) error {
 	ctx := re.Request.Context()
+	// Image archives can be large; preserve their existing streaming lifetime.
+	if kind != "images" {
+		readCtx, cancel := objstore.ReadContext(ctx)
+		defer cancel()
+		ctx = readCtx
+	}
 	rc, info, err := store.Get(ctx, key)
 	if err != nil {
 		if errors.Is(err, objstore.ErrNotFound) {
@@ -90,11 +96,13 @@ func streamAssetBytes(re *core.RequestEvent, store objstore.Store, kind, canonic
 				"arxiv_id": canonical,
 			})
 		}
-		return re.JSON(http.StatusInternalServerError, map[string]string{
-			"detail": "fetch " + kind + ": " + err.Error(),
-		})
+		return assetStorageUnavailable(re, err)
 	}
 	defer rc.Close()
+	reader, err := primeAssetReader(rc)
+	if err != nil {
+		return assetStorageUnavailable(re, err)
+	}
 
 	switch kind {
 	case "pdf":
@@ -112,7 +120,7 @@ func streamAssetBytes(re *core.RequestEvent, store objstore.Store, kind, canonic
 		re.Response.Header().Set("Content-Length", strconv.FormatInt(info.Size, 10))
 	}
 	re.Response.WriteHeader(http.StatusOK)
-	if _, err := io.Copy(re.Response, rc); err != nil {
+	if _, err := io.Copy(re.Response, reader); err != nil {
 		slog.Warn("asset: stream copy failed", "kind", kind, "arxiv_id", canonical, "error", err)
 	}
 	return nil

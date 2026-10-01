@@ -400,7 +400,7 @@ Content-Type: application/json
 }
 ```
 
-#### 进度查询（status，永远 200 除 400 / 404）
+#### 进度查询（status；存储不可用时 503）
 
 ```bash
 curl https://<server>/api/papers/quant-ph/9508027v2/markdown/status \
@@ -633,3 +633,22 @@ PocketBase 自带 collection 级 throttle。`/api/pat` 还挂了自定义 rate-l
 除了上面 `/api/*` 自定义 endpoint，PocketBase 自己暴露 `/api/collections/<name>/records/...` 的 CRUD API。详见 [PocketBase 文档](https://pocketbase.io/docs/api-records/)。**业务上几乎不用**——所有暴露给用户的能力都通过自定义 `/api/...` endpoint 走。
 
 例外：SPA 直接用 PocketBase JS SDK 做 OAuth 登录、读 users 自身记录等。
+
+### 资产读取与存储故障
+
+注册表的 `has_md` / `has_pdf` 及资产路径表示已登记的内容，不是实时存储健康探针。
+Markdown 资产读取，以及单篇 PDF/Markdown status 的存储探测最多等待
+10 秒；更短的请求 deadline 优先。存储 Stat、Get 或首字节读取失败时返回
+HTTP 503、`Retry-After: 5` 和以下结构，详细后端错误留在服务端日志：
+
+```json
+{"code":"asset_store_unavailable","detail":"asset storage temporarily unavailable; retry shortly","kind":"retryable","retryable":true,"state":"unavailable"}
+```
+
+失败不计为缓存 miss，不启动替代下载或 MinerU 转换，不清空登记资产。批量 status
+保持逐项结果：受影响项的 `state=unavailable` 并携带 `error`，就绪布尔值不能单独
+解释为资产缺失。流已开始后发生的失败只能中断传输，客户端应丢弃不完整内容并重试。
+
+旧 `paper_assets` 不会随升级自动回填为不可变 source / parse revision；原始资产
+路径保留，列出 originals 只读，可能得到空列表。需要固定版本时按贡献流程登记
+实际 PDF 和解析产物，并核对 source/revision ID 与 SHA-256。

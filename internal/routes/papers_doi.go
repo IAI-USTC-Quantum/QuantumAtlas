@@ -675,7 +675,9 @@ func getMarkdownByDOIHandler(
 			"detail": fmt.Sprintf("invalid DOI for markdown: %q", rawDOI),
 		})
 	}
-	ctx := re.Request.Context()
+	ctx, cancel := objstore.ReadContext(re.Request.Context())
+	defer cancel()
+	re.Request = re.Request.WithContext(ctx)
 	mdKey := paperassets.DOIAssetKey("markdown", doi)
 	if mdKey == "" {
 		return re.JSON(http.StatusInternalServerError, map[string]string{
@@ -684,9 +686,7 @@ func getMarkdownByDOIHandler(
 	}
 	rc, info, err := store.Get(ctx, mdKey)
 	if err != nil && !errors.Is(err, objstore.ErrNotFound) {
-		return re.JSON(http.StatusInternalServerError, map[string]string{
-			"detail": "fetch markdown: " + err.Error(),
-		})
+		return assetStorageUnavailable(re, err)
 	}
 	if errors.Is(err, objstore.ErrNotFound) {
 		// Cache miss — drive (or join) the fetch+convert LRO.
@@ -707,9 +707,10 @@ func getMarkdownByDOIHandler(
 			// between our Get and EnsureByDOI — re-read and stream.
 			rc, info, err = store.Get(ctx, mdKey)
 			if err != nil {
-				return re.JSON(http.StatusInternalServerError, map[string]string{
-					"detail": "fetch markdown after job completion: " + err.Error(),
-				})
+				if errors.Is(err, objstore.ErrNotFound) {
+					return re.JSON(http.StatusNotFound, map[string]string{"detail": "markdown not found", "doi": doi})
+				}
+				return assetStorageUnavailable(re, err)
 			}
 		case mineru.JobStateQueued, mineru.JobStateRunning:
 			re.Response.Header().Set("Operation-Location", "/api/papers/"+doi+"/markdown/status")
@@ -723,6 +724,9 @@ func getMarkdownByDOIHandler(
 			}
 			return re.JSON(http.StatusAccepted, body)
 		case mineru.JobStateFailed:
+			if errors.Is(job.Err, objstore.ErrUnavailable) {
+				return assetStorageUnavailable(re, job.Err)
+			}
 			re.Response.Header().Set("X-QAtlas-DOI", doi)
 			if errors.Is(job.Err, mineru.ErrNoDOISource) {
 				return re.JSON(http.StatusNotFound, map[string]any{
@@ -754,13 +758,17 @@ func getMarkdownByDOIHandler(
 		}
 	}
 	defer rc.Close()
+	reader, err := primeAssetReader(rc)
+	if err != nil {
+		return assetStorageUnavailable(re, err)
+	}
 	re.Response.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 	if info.Size > 0 {
 		re.Response.Header().Set("Content-Length", strconv.FormatInt(info.Size, 10))
 	}
 	re.Response.Header().Set("X-QAtlas-DOI", doi)
 	re.Response.WriteHeader(http.StatusOK)
-	if _, err := io.Copy(re.Response, rc); err != nil {
+	if _, err := io.Copy(re.Response, reader); err != nil {
 		slog.Warn("doi markdown: stream copy failed", "doi", doi, "error", err)
 	}
 	return nil
@@ -810,21 +818,22 @@ func getPDFByDOIHandler(
 // Returns (pdfReady, mdReady). A nil store argument or invalid DOI both
 // report (false, false); callers validate the DOI separately and emit
 // 400 / 500 there.
-func probeDOIAssetReadiness(ctx context.Context, store objstore.Store, doi string) (pdfReady, mdReady bool) {
+func probeDOIAssetReadiness(ctx context.Context, store objstore.Store, doi string) (pdfReady, mdReady bool, err error) {
 	if store == nil {
-		return false, false
+		return false, false, nil
 	}
+	ctx, cancel := objstore.ReadContext(ctx)
+	defer cancel()
 	if pdfKey := paperassets.DOIAssetKey("pdf", doi); pdfKey != "" {
-		if _, exists, err := store.Stat(ctx, pdfKey); err == nil && exists {
-			pdfReady = true
+		_, pdfReady, err = store.Stat(ctx, pdfKey)
+		if err != nil {
+			return false, false, err
 		}
 	}
 	if mdKey := paperassets.DOIAssetKey("markdown", doi); mdKey != "" {
-		if _, exists, err := store.Stat(ctx, mdKey); err == nil && exists {
-			mdReady = true
-		}
+		_, mdReady, err = store.Stat(ctx, mdKey)
 	}
-	return pdfReady, mdReady
+	return pdfReady, mdReady, err
 }
 
 // markdownStatusByDOIHandler answers GET /api/papers/<doi>/markdown/status
@@ -846,7 +855,10 @@ func markdownStatusByDOIHandler(re *core.RequestEvent, store objstore.Store, con
 		})
 	}
 	ctx := re.Request.Context()
-	pdfReady, mdReady := probeDOIAssetReadiness(ctx, store, doi)
+	pdfReady, mdReady, err := probeDOIAssetReadiness(ctx, store, doi)
+	if err != nil {
+		return assetStorageUnavailable(re, err)
+	}
 	re.Response.Header().Set("X-QAtlas-DOI", doi)
 	if mdReady {
 		return re.JSON(http.StatusOK, map[string]any{
@@ -901,7 +913,10 @@ func pdfStatusByDOIHandler(re *core.RequestEvent, store objstore.Store, rawDOI s
 		})
 	}
 	ctx := re.Request.Context()
-	pdfReady, mdReady := probeDOIAssetReadiness(ctx, store, doi)
+	pdfReady, mdReady, err := probeDOIAssetReadiness(ctx, store, doi)
+	if err != nil {
+		return assetStorageUnavailable(re, err)
+	}
 	re.Response.Header().Set("X-QAtlas-DOI", doi)
 	if pdfReady {
 		return re.JSON(http.StatusOK, map[string]any{

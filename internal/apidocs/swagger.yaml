@@ -1991,8 +1991,8 @@ paths:
             additionalProperties: true
             type: object
         "503":
-          description: cache-only mode (no MinerU keys), or DOI resolution unavailable
-            (QATLAS_OPENALEX_MAILTO unset)
+          description: asset storage unavailable (code=asset_store_unavailable, retryable=true,
+            Retry-After); cache-only mode or DOI resolution unavailable
           schema:
             additionalProperties: true
             type: object
@@ -2061,6 +2061,11 @@ paths:
           schema:
             additionalProperties:
               type: string
+            type: object
+        "503":
+          description: asset storage unavailable; retryable=true with Retry-After
+          schema:
+            additionalProperties: true
             type: object
       security:
       - BearerAuth: []
@@ -2185,6 +2190,11 @@ paths:
           schema:
             additionalProperties:
               type: string
+            type: object
+        "503":
+          description: asset storage unavailable; retryable=true with Retry-After
+          schema:
+            additionalProperties: true
             type: object
       security:
       - BearerAuth: []

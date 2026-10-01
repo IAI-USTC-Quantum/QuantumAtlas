@@ -38,7 +38,9 @@ func markdownHandler(re *core.RequestEvent, cfg *config.Config, store objstore.S
 		})
 	}
 
-	ctx := re.Request.Context()
+	ctx, cancel := objstore.ReadContext(re.Request.Context())
+	defer cancel()
+	re.Request = re.Request.WithContext(ctx)
 	resolution := resolutionFromContext(ctx)
 	applyResolutionHeaders(re.Response, resolution)
 	job := converter.Ensure(ctx, canonical)
@@ -60,6 +62,9 @@ func markdownHandler(re *core.RequestEvent, cfg *config.Config, store objstore.S
 		embedResolutionInBody(body, resolution)
 		return re.JSON(http.StatusAccepted, body)
 	case mineru.JobStateFailed:
+		if errors.Is(job.Err, objstore.ErrUnavailable) {
+			return assetStorageUnavailable(re, job.Err)
+		}
 		if !converter.Enabled() {
 			return re.JSON(http.StatusServiceUnavailable, map[string]string{
 				"detail":   "markdown not cached and converter disabled: " + converter.DisabledReason(),
@@ -132,7 +137,10 @@ func markdownStatusHandler(re *core.RequestEvent, cfg *config.Config, store objs
 	ctx := re.Request.Context()
 	resolution := resolutionFromContext(ctx)
 	applyResolutionHeaders(re.Response, resolution)
-	pdfReady, mdReady := probeAssetReadiness(ctx, store, canonical)
+	pdfReady, mdReady, err := probeAssetReadiness(ctx, store, canonical)
+	if err != nil {
+		return assetStorageUnavailable(re, err)
+	}
 
 	// 1) Cache hit — even if we have no in-flight job for this id.
 	//    Dual-read tolerates pre-A1 bare-stem objects that haven't been
@@ -211,14 +219,15 @@ func markdownStatusHandler(re *core.RequestEvent, cfg *config.Config, store objs
 // the store right now. Read-only, no writes. Cheap enough to call from
 // status endpoints — the underlying LocateAssetByID does two HEADs at
 // most when dual-read fallback fires.
-func probeAssetReadiness(ctx context.Context, store objstore.Store, canonical string) (pdfReady, mdReady bool) {
-	if _, _, exists, err := paperassets.LocateAssetByID(ctx, store, "pdf", canonical); err == nil && exists {
-		pdfReady = true
+func probeAssetReadiness(ctx context.Context, store objstore.Store, canonical string) (pdfReady, mdReady bool, err error) {
+	ctx, cancel := objstore.ReadContext(ctx)
+	defer cancel()
+	_, _, pdfReady, err = paperassets.LocateAssetByID(ctx, store, "pdf", canonical)
+	if err != nil {
+		return false, false, err
 	}
-	if _, _, exists, err := paperassets.LocateAssetByID(ctx, store, "markdown", canonical); err == nil && exists {
-		mdReady = true
-	}
-	return pdfReady, mdReady
+	_, _, mdReady, err = paperassets.LocateAssetByID(ctx, store, "markdown", canonical)
+	return pdfReady, mdReady, err
 }
 
 // snapshotBody renders a Job snapshot into the JSON shape the

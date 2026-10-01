@@ -55,7 +55,13 @@ func (c *Converter) EnsureByDOI(ctx context.Context, doi, oaPdfURL string) *Job 
 	}
 
 	mdKey := paperassets.DOIAssetKey("markdown", norm)
-	if _, exists, err := c.store.Stat(ctx, mdKey); err == nil && exists {
+	readCtx, cancel := objstore.ReadContext(ctx)
+	_, exists, err := c.store.Stat(readCtx, mdKey)
+	cancel()
+	if err != nil {
+		return storageReadFailure(norm, err)
+	}
+	if exists {
 		c.counters.CacheHits.Add(1)
 		return &Job{Canonical: norm, State: JobStateDone, Phase: PhaseReady, FinishedAt: c.now()}
 	}
