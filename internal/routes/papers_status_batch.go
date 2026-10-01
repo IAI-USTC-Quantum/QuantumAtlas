@@ -165,7 +165,11 @@ func paperStatusEntryFor(ctx context.Context, catalog paperCatalog, store objsto
 	switch {
 	case doi != "":
 		e.ResolvedID = doi
-		pdfReady, mdReady := probeDOIAssetReadiness(ctx, store, doi)
+		pdfReady, mdReady, err := probeDOIAssetReadiness(ctx, store, doi)
+		if err != nil {
+			e.State, e.Error = "unavailable", "asset storage unavailable; retry shortly"
+			return e
+		}
 		st := paperAssetStatus{MdReady: mdReady, PdfReady: pdfReady, State: "missing"}
 		if mdReady {
 			st.State, st.Phase = "cached", string(mineru.PhaseReady)
@@ -175,7 +179,11 @@ func paperStatusEntryFor(ctx context.Context, catalog paperCatalog, store objsto
 		e.MdReady, e.PdfReady, e.State, e.Phase = st.MdReady, st.PdfReady, st.State, st.Phase
 	default:
 		e.ResolvedID = arxivID
-		e.MdReady, e.PdfReady, e.State, e.Phase = arxivAssetStatus(ctx, store, converter, arxivID)
+		var err error
+		e.MdReady, e.PdfReady, e.State, e.Phase, err = arxivAssetStatus(ctx, store, converter, arxivID)
+		if err != nil {
+			e.Error = "asset storage unavailable; retry shortly"
+		}
 	}
 	if detail != nil && len(detail.Assets) > 0 {
 		e.ImageCount = detail.Assets[0].ImageCount
@@ -207,10 +215,13 @@ type paperAssetStatus struct {
 // canonical (versioned when known) arXiv id: cached when markdown bytes
 // exist, the converter job's state when one is in flight or recently
 // failed, else none / unavailable.
-func arxivAssetStatus(ctx context.Context, store objstore.Store, converter *mineru.Converter, canonical string) (mdReady, pdfReady bool, state, phase string) {
-	pdfReady, mdReady = probeAssetReadiness(ctx, store, canonical)
+func arxivAssetStatus(ctx context.Context, store objstore.Store, converter *mineru.Converter, canonical string) (mdReady, pdfReady bool, state, phase string, err error) {
+	pdfReady, mdReady, err = probeAssetReadiness(ctx, store, canonical)
+	if err != nil {
+		return false, false, "unavailable", "", err
+	}
 	if mdReady {
-		return mdReady, pdfReady, "cached", string(mineru.PhaseReady)
+		return mdReady, pdfReady, "cached", string(mineru.PhaseReady), nil
 	}
 	if converter != nil {
 		if job, ok := converter.Lookup(canonical); ok {
@@ -220,13 +231,13 @@ func arxivAssetStatus(ctx context.Context, store objstore.Store, converter *mine
 				// — same cached answer the single-id handler gives.
 				state, phase = "cached", string(mineru.PhaseReady)
 			}
-			return mdReady, pdfReady || job.Phase == mineru.PhaseConvertingMD || job.State == mineru.JobStateDone, state, phase
+			return mdReady, pdfReady || job.Phase == mineru.PhaseConvertingMD || job.State == mineru.JobStateDone, state, phase, nil
 		}
 	}
 	if pdfReady && converter != nil && !converter.Enabled() {
-		return mdReady, pdfReady, "unavailable", phase
+		return mdReady, pdfReady, "unavailable", phase, nil
 	}
-	return mdReady, pdfReady, "none", phase
+	return mdReady, pdfReady, "none", phase, nil
 }
 
 // hasDOIJob folds an in-flight DOI fetch+convert job into st; it reports

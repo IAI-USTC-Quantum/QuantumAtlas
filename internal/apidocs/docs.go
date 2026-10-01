@@ -2773,7 +2773,7 @@ const docTemplate = `{
                         }
                     },
                     "503": {
-                        "description": "cache-only mode (no MinerU keys), or DOI resolution unavailable (QATLAS_OPENALEX_MAILTO unset)",
+                        "description": "asset storage unavailable (code=asset_store_unavailable, retryable=true, Retry-After); cache-only mode or DOI resolution unavailable",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -2854,6 +2854,13 @@ const docTemplate = `{
                             "additionalProperties": {
                                 "type": "string"
                             }
+                        }
+                    },
+                    "503": {
+                        "description": "asset storage unavailable; retryable=true with Retry-After",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     }
                 }
@@ -3013,6 +3020,13 @@ const docTemplate = `{
                             "additionalProperties": {
                                 "type": "string"
                             }
+                        }
+                    },
+                    "503": {
+                        "description": "asset storage unavailable; retryable=true with Retry-After",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     }
                 }

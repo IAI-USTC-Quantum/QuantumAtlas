@@ -714,7 +714,13 @@ func (c *Converter) queueSnapshotFor(canonical string, job Job) QueueSnapshot {
 // Safe for concurrent use; concurrent Ensure calls for the same
 // canonical are deduped to a single MinerU submission.
 func (c *Converter) Ensure(ctx context.Context, canonical string) *Job {
-	if _, _, exists, err := paperassets.LocateAssetByID(ctx, c.store, "markdown", canonical); err == nil && exists {
+	readCtx, cancel := objstore.ReadContext(ctx)
+	_, _, exists, err := paperassets.LocateAssetByID(readCtx, c.store, "markdown", canonical)
+	cancel()
+	if err != nil {
+		return storageReadFailure(canonical, err)
+	}
+	if exists {
 		c.counters.CacheHits.Add(1)
 		return &Job{Canonical: canonical, State: JobStateDone, FinishedAt: c.now()}
 	}
@@ -1142,7 +1148,13 @@ func (c *Converter) fetchAndStorePDF(ctx context.Context, canonical string) erro
 // Ensure is already fetching, a /pdf EnsurePDF call piggybacks and
 // returns the same in-flight Job.
 func (c *Converter) EnsurePDF(ctx context.Context, canonical string) *Job {
-	if _, _, exists, err := paperassets.LocateAssetByID(ctx, c.store, "pdf", canonical); err == nil && exists {
+	readCtx, cancel := objstore.ReadContext(ctx)
+	_, _, exists, err := paperassets.LocateAssetByID(readCtx, c.store, "pdf", canonical)
+	cancel()
+	if err != nil {
+		return storageReadFailure(canonical, err)
+	}
+	if exists {
 		c.counters.CacheHits.Add(1)
 		return &Job{Canonical: canonical, State: JobStateDone, Phase: PhaseReady, FinishedAt: c.now()}
 	}

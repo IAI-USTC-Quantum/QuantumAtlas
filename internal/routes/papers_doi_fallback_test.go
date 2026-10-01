@@ -150,7 +150,7 @@ func TestDecideLocalDOIServing(t *testing.T) {
 		// DOI pipeline when an arXiv twin exists (fail toward serving
 		// the bytes we hold).
 		c := failingPublishedProbe{backfilledCatalog(t, arxivBackfilledPaper(3))}
-		if doiNamespaceServable(ctx, c, storeWithKeys(), doi) {
+		if servable, err := doiNamespaceServable(ctx, c, storeWithKeys(), doi); servable || err != nil {
 			t.Fatal("servable should be false when the registry probe errors")
 		}
 		outcome, twin, err := decideLocalDOIServing(ctx, c, storeWithKeys(), doi)

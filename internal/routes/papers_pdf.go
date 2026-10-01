@@ -59,7 +59,10 @@ func pdfStatusHandler(re *core.RequestEvent, cfg *config.Config, store objstore.
 	ctx := re.Request.Context()
 	resolution := resolutionFromContext(ctx)
 	applyResolutionHeaders(re.Response, resolution)
-	pdfReady, mdReady := probeAssetReadiness(ctx, store, canonical)
+	pdfReady, mdReady, err := probeAssetReadiness(ctx, store, canonical)
+	if err != nil {
+		return assetStorageUnavailable(re, err)
+	}
 
 	if pdfReady {
 		body := map[string]any{

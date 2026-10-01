@@ -50,42 +50,56 @@ for arg in "$@"; do
 done
 
 mkdir -p "$DOCS_DIR"
+chmod a+rx "$DOCS_DIR"
+stage="$(mktemp -d "$DOCS_DIR/.update.XXXXXXXX")"
+backup=""
+cid=""
+moved=()
+cleanup() {
+  result=$?
+  trap - EXIT
+  if [ "$result" -ne 0 ] && [ -n "$backup" ]; then
+    for name in "${moved[@]}"; do
+      if [ -e "$DOCS_DIR/$name" ]; then mv "$DOCS_DIR/$name" "$stage/failed-$name"; fi
+      if [ -e "$backup/$name" ]; then mv "$backup/$name" "$DOCS_DIR/$name"; fi
+    done
+    echo "docs refresh failed; previous content restored" >&2
+  fi
+  if [ -n "$cid" ]; then docker rm "$cid" >/dev/null || true; fi
+  rm -rf "$stage"
+  exit "$result"
+}
+trap cleanup EXIT
 
 if [ "$BUILD_LOCAL" -eq 1 ]; then
-  echo ">> copying prebuilt Sphinx sites from $REPO_DIR/web/public"
-  for site in doc devdoc; do
-    if [ ! -f "$REPO_DIR/web/public/$site/index.html" ] && [ ! -f "$REPO_DIR/web/public/$site/dev/index.html" ]; then
-      echo "missing $REPO_DIR/web/public/$site; run uv run --locked --script .github/scripts/build_docs.py first" >&2
-      exit 1
-    fi
-  done
-  rm -rf "$DOCS_DIR/doc" "$DOCS_DIR/devdoc"
-  cp -a "$REPO_DIR/web/public/doc" "$DOCS_DIR/doc"
-  cp -a "$REPO_DIR/web/public/devdoc" "$DOCS_DIR/devdoc"
-  git -C "$REPO_DIR" rev-parse HEAD > "$DOCS_DIR/VERSION" 2>/dev/null || true
+  echo ">> staging prebuilt Sphinx sites from $REPO_DIR/web/public"
+  cp -a "$REPO_DIR/web/public/doc" "$stage/doc"
+  cp -a "$REPO_DIR/web/public/devdoc" "$stage/devdoc"
+  git -C "$REPO_DIR" rev-parse HEAD > "$stage/VERSION"
 else
   echo ">> pulling $DOCS_IMAGE:$DOCS_REF"
-  # Tolerate a pull failure when the image already exists locally
-  # (air-gapped deploy hosts, or a locally built stand-in for testing).
+  # An existing exact local image can still be used on an offline host.
   docker pull "$DOCS_IMAGE:$DOCS_REF" || \
     docker image inspect "$DOCS_IMAGE:$DOCS_REF" >/dev/null
-  # The scratch image has no CMD and is never STARTED — the dummy
-  # command only satisfies `docker create`'s config validation; we
-  # docker-cp the content out and discard the container.
   cid="$(docker create "$DOCS_IMAGE:$DOCS_REF" true)"
-  trap 'docker rm "$cid" >/dev/null' EXIT
-  rm -rf "$DOCS_DIR/doc" "$DOCS_DIR/devdoc"
-  # Tar-stream extraction with --no-same-owner: files land owned by the
-  # invoking user (docker cp would preserve the image's root ownership
-  # and block the next refresh's rm -rf for non-root operators).
-  docker cp "$cid:/doc" - | tar -x -C "$DOCS_DIR" --no-same-owner
-  docker cp "$cid:/devdoc" - | tar -x -C "$DOCS_DIR" --no-same-owner
-  docker cp "$cid:/VERSION" - | tar -x -C "$DOCS_DIR" --no-same-owner 2>/dev/null || true
+  # Extract both sites BEFORE touching the serving tree. Never preserve root
+  # ownership from the scratch image when running as a deployment account.
+  for name in doc devdoc VERSION; do
+    docker cp "$cid:/$name" - | tar -x -C "$stage" --no-same-owner
+  done
 fi
 
-# qatlasd runs as the distroless nonroot user (UID 65532) and only READS
-# the directory, so world-readable is sufficient.
-chmod -R a+rX "$DOCS_DIR"
+test -s "$stage/doc/index.html"
+test -s "$stage/devdoc/dev/index.html"
+[[ "$(cat "$stage/VERSION")" =~ ^[0-9a-f]{40}$ ]]
+chmod -R a+rX "$stage/doc" "$stage/devdoc" "$stage/VERSION"
+backup="$(mktemp -d "$DOCS_DIR/.previous.XXXXXXXX")"
+for name in doc devdoc VERSION; do
+  if [ -e "$DOCS_DIR/$name" ]; then mv "$DOCS_DIR/$name" "$backup/$name"; fi
+  moved+=("$name")
+  mv "$stage/$name" "$DOCS_DIR/$name"
+done
 
-echo ">> docs refreshed in $DOCS_DIR (source: $(cat "$DOCS_DIR/VERSION" 2>/dev/null || echo unknown))"
+echo ">> docs refreshed in $DOCS_DIR (source: $(cat "$DOCS_DIR/VERSION"))"
+echo ">> previous content retained in $backup"
 echo ">> qatlasd keeps running; the next page load serves the new docs"

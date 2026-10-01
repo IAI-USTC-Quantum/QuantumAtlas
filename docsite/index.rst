@@ -1,44 +1,65 @@
 QuantumAtlas 使用文档
 =====================
 
-**论文收集（Paper Collection） · 数据库（Database） · 多范式搜索（Search）**
+.. rst-class:: docs-intro
 
-QuantumAtlas 是一个聚焦论文资产的框架，只做三件事：
+   收集论文，确认身份，搜索证据，固定可复现的阅读版本。
 
-- **论文收集** —— 从 arXiv 等来源抓取论文 PDF，存入对象存储，并惰性收录新论文；
-- **数据库** —— 以 PostgreSQL 注册表维护论文的唯一编号、身份与资产记录；
-- **搜索** —— 多范式、可插拔的检索：输入一个 Search Entry，输出候选论文 ID 列表。
+QuantumAtlas 把论文资产存入对象存储，以 PostgreSQL 注册表维护统一作品编号，
+通过多源检索找到论文。MinerU 将 PDF 转为带图片的 Markdown；不可变 source 和
+parse revision 支持固定字节与解析版本。
 
-收录的论文会经由 MinerU（VLM 模型）批量转换为带图片的 Markdown，供后续阅读与检索使用。
+.. grid:: 1 1 3 3
+   :gutter: 3
 
-下载仍是本地优先，也可交给多个经管理员批准、主动接入的 downloader-worker。
-worker 暂存并上传 PDF，主服务完成存储与资产登记后确认交付；解析与索引是
-后续步骤。使用流程见 :doc:`guide/search`，节点审批见 :doc:`guide/admin`。
+   .. grid-item-card:: 从搜索到阅读
+      :link: guide/reading
+      :link-type: doc
 
-本文档是**用户指南**，面向使用者，从 Web 界面、命令行（CLI）和 HTTP API
-三个角度讲解如何使用。开发文档（代码组织、插件架构、发布流程）单独托管，
-仅管理员可见。
+      安装 CLI、确认 ``qa_`` 身份、读 Markdown，或固定 PDF 与解析版本。
+
+   .. grid-item-card:: 使用 Web 界面
+      :link: guide/web
+      :link-type: doc
+
+      搜索、选择下载，浏览论文与讨论；无需登录服务器。
+
+   .. grid-item-card:: 调用 HTTP API
+      :link: guide/api
+      :link-type: doc
+
+      认证、配额、搜索与资产接口；处理缓存未命中和重试。
 
 .. note::
 
-   本文档站点（``/doc``）是公开页面，无需登录。Web 界面与 API 需要 GitHub
-   白名单账号登录，详见 :doc:`guide/api` 的认证章节。
+   文档可公开阅读。实际 Web 应用与 API 位于
+   `线上实例 <https://qatlas.hfnl.app.chenzhaoyun.com/>`_，需要获授权的账号。
+   GitHub Pages 是静态文档入口，不提供登录、Swagger 或业务 API。
+
+先读 :doc:`guide/reading` 完成一次完整的论文获取，再按角色选用下面的指南。
+管理员的开发文档由实例的管理入口提供；公开 Pages 只发布这套使用文档。
 
 .. toctree::
    :maxdepth: 1
-   :caption: 用户指南
+   :caption: 开始使用
 
+   guide/reading
    guide/concepts
    guide/web
    guide/cli
    guide/api
+
+.. toctree::
+   :maxdepth: 1
+   :caption: 检索、收录与管理
+
    guide/search
    guide/mineru
    guide/admin
 
 .. toctree::
    :maxdepth: 2
-   :caption: 组件文档（随本次构建固定版本）
+   :caption: 组件文档
 
    _collections/qatlas-cli/index
    _collections/qatlas-search/index
@@ -50,7 +71,6 @@ worker 暂存并上传 PDF，主服务完成存储与资产登记后确认交付
 
    manual/contents
 
-组件正文由各组件仓库维护；主仓在构建时按 ``components.lock.json`` 中的固定
-提交收集，一次生成整个站点和搜索索引。固定文档提交不代表各服务已经完成
-运行时兼容性测试。平台参考保留了原 Markdown 站的完整内容，部分历史设计与
-当前使用手册的侧重点不同；迁移没有恢复已经退役的业务模块。
+组件正文在对应仓库维护，构建按 ``components.lock.json`` 固定提交并生成统一
+搜索索引。文档提交不等于已验证的服务版本组合；运行版本以实例健康接口为准。
+平台参考含部分历史设计，当前操作请优先按使用指南执行。

@@ -83,41 +83,41 @@ func TestProbeDOIAssetReadiness(t *testing.T) {
 
 	t.Run("both missing", func(t *testing.T) {
 		s := &statMockStore{present: map[string]bool{}}
-		pdf, md := probeDOIAssetReadiness(context.Background(), s, doi)
+		pdf, md, _ := probeDOIAssetReadiness(context.Background(), s, doi)
 		if pdf || md {
 			t.Errorf("got (%v,%v), want (false,false)", pdf, md)
 		}
 	})
 	t.Run("pdf only", func(t *testing.T) {
 		s := &statMockStore{present: map[string]bool{pdfKey: true}}
-		pdf, md := probeDOIAssetReadiness(context.Background(), s, doi)
+		pdf, md, _ := probeDOIAssetReadiness(context.Background(), s, doi)
 		if !pdf || md {
 			t.Errorf("got (%v,%v), want (true,false)", pdf, md)
 		}
 	})
 	t.Run("md only", func(t *testing.T) {
 		s := &statMockStore{present: map[string]bool{mdKey: true}}
-		pdf, md := probeDOIAssetReadiness(context.Background(), s, doi)
+		pdf, md, _ := probeDOIAssetReadiness(context.Background(), s, doi)
 		if pdf || !md {
 			t.Errorf("got (%v,%v), want (false,true)", pdf, md)
 		}
 	})
 	t.Run("both present", func(t *testing.T) {
 		s := &statMockStore{present: map[string]bool{pdfKey: true, mdKey: true}}
-		pdf, md := probeDOIAssetReadiness(context.Background(), s, doi)
+		pdf, md, _ := probeDOIAssetReadiness(context.Background(), s, doi)
 		if !pdf || !md {
 			t.Errorf("got (%v,%v), want (true,true)", pdf, md)
 		}
 	})
 	t.Run("invalid DOI returns (false,false) without panic", func(t *testing.T) {
 		s := &statMockStore{present: map[string]bool{}}
-		pdf, md := probeDOIAssetReadiness(context.Background(), s, "not-a-doi")
+		pdf, md, _ := probeDOIAssetReadiness(context.Background(), s, "not-a-doi")
 		if pdf || md {
 			t.Errorf("got (%v,%v), want (false,false)", pdf, md)
 		}
 	})
 	t.Run("nil store is safe", func(t *testing.T) {
-		pdf, md := probeDOIAssetReadiness(context.Background(), nil, doi)
+		pdf, md, _ := probeDOIAssetReadiness(context.Background(), nil, doi)
 		if pdf || md {
 			t.Errorf("got (%v,%v), want (false,false)", pdf, md)
 		}

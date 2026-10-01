@@ -295,6 +295,9 @@ func RegisterPapers(
 					// dead-ending the DOI pipeline.
 					outcome, twin, derr := decideLocalDOIServing(ctx, catalog, rawStore, doi)
 					if derr != nil {
+						if errors.Is(derr, objstore.ErrUnavailable) {
+							return assetStorageUnavailable(re, derr)
+						}
 						return re.JSON(http.StatusServiceUnavailable, map[string]any{
 							"detail": "catalog unavailable (PostgreSQL unreachable); retry shortly",
 							"doi":    doi,
@@ -760,7 +763,11 @@ func decideLocalDOIServing(ctx context.Context, catalog doiLocalCatalog, store o
 	if err != nil || !hit {
 		return doiServeDefer, "", err
 	}
-	if doiNamespaceServable(ctx, catalog, store, doi) {
+	servable, err := doiNamespaceServable(ctx, catalog, store, doi)
+	if err != nil {
+		return doiServeDefer, "", err
+	}
+	if servable {
 		return doiServeDOI, "", nil
 	}
 	if twin, ok := doiArxivTwinFromCatalog(ctx, catalog, doi); ok {
@@ -773,23 +780,27 @@ func decideLocalDOIServing(ctx context.Context, catalog doiLocalCatalog, store o
 // serve bytes: a published-source asset in the registry (what the
 // arXiv-input redirect checks) or a markdown/pdf object under the DOI
 // key layout (contributed bytes that may predate a registry sync).
-func doiNamespaceServable(ctx context.Context, catalog doiLocalCatalog, store objstore.Store, doi string) bool {
+func doiNamespaceServable(ctx context.Context, catalog doiLocalCatalog, store objstore.Store, doi string) (bool, error) {
 	if hasPub, err := catalog.HasPublishedAsset(ctx, doi); err == nil && hasPub {
-		return true
+		return true, nil
 	}
 	if store == nil {
-		return false
+		return false, nil
 	}
+	ctx, cancel := objstore.ReadContext(ctx)
+	defer cancel()
 	for _, kind := range []string{"markdown", "pdf"} {
 		key := paperassets.DOIAssetKey(kind, doi)
 		if key == "" {
 			continue
 		}
-		if _, exists, err := store.Stat(ctx, key); err == nil && exists {
-			return true
+		if _, exists, err := store.Stat(ctx, key); err != nil {
+			return false, errors.Join(objstore.ErrUnavailable, err)
+		} else if exists {
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 // doiArxivTwinFromCatalog returns the arXiv identity of the paper a DOI

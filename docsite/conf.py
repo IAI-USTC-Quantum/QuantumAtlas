@@ -17,7 +17,12 @@ copyright = "2026, QuantumAtlas Team"
 language = "zh_CN"
 html_theme = "furo"
 html_title = "QuantumAtlas 使用文档"
-html_static_path = []
+html_static_path = ["_static"]
+html_css_files = ["docs.css"]
+html_theme_options = {
+    "light_css_variables": {"color-brand-primary": "#2458a6", "color-brand-content": "#2458a6"},
+    "dark_css_variables": {"color-brand-primary": "#8bb7ff", "color-brand-content": "#8bb7ff"},
+}
 html_use_index = True
 extensions = [
     "myst_parser",

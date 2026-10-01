@@ -1,5 +1,9 @@
 # API Explorer（OpenAPI / Swagger）
 
+> GitHub Pages 只托管静态文档，不提供 API。在线测试请打开
+> [部署实例的 Swagger](https://qatlas.hfnl.app.chenzhaoyun.com/swagger/)。
+> 下文的“当前实例”相对链接用于 qatlasd 内的 `/doc/`，在 Pages 上请使用该完整地址。
+
 下面是 QuantumAtlas server 全部 `/api` endpoint 的交互式 OpenAPI 文档。它由
 [swaggo](https://github.com/swaggo/swag) 从服务端代码注解
 （`internal/routes/openapi.go`）**自动生成**，与 [REST API 总览](rest-api.md)

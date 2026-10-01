@@ -51,7 +51,11 @@ async function main() {
           status = 405;
           throw new Error('Only read-only static requests are supported');
         }
-        const pathname = decodeURIComponent(new URL(request.url, 'http://localhost').pathname);
+        const requestedPath = decodeURIComponent(new URL(request.url, 'http://localhost').pathname);
+        // Mirror the public site at a project Pages prefix; all Sphinx assets
+        // and navigation must resolve without assuming /doc or domain root.
+        const pathname = requestedPath.startsWith('/QuantumAtlas/')
+          ? '/doc/' + requestedPath.slice('/QuantumAtlas/'.length) : requestedPath;
         let file = path.resolve(realRoot, '.' + pathname);
         assert.ok(isWithin(realRoot, file), 'Path escapes site root');
         if ((await fs.stat(file)).isDirectory()) file = path.join(file, 'index.html');
@@ -181,6 +185,20 @@ async function main() {
       await page.waitForURL('**/doc/_collections/qatlas-cli/index.html');
       assert.match(await page.locator('article h1').innerText(), /qatlas-cli/);
       result.componentNavigationClicked = true;
+    });
+
+    await check('pages-project-prefix', async result => {
+      await open('/QuantumAtlas/');
+      await page.locator('.sd-card').filter({ has: page.locator('a[href="guide/reading.html"]') }).click();
+      await page.waitForURL('**/QuantumAtlas/guide/reading.html');
+      assert.match(await page.locator('article').innerText(), /source-list/);
+      await screenshot('reading-guide');
+      await open('/QuantumAtlas/search.html?q=source');
+      await page.waitForFunction(() => typeof Search !== 'undefined' && Search.hasIndex(), null, { timeout: 30000 });
+      await page.waitForFunction(() => document.querySelectorAll('#search-results li a').length > 0);
+      const links = await page.locator('#search-results li a').evaluateAll(nodes => nodes.map(node => node.href));
+      assert.ok(links.every(href => new URL(href).pathname.startsWith('/QuantumAtlas/')), 'Pages searches must retain the project prefix');
+      result.matches = links.length;
     });
 
     await check('component-pages', async result => {
