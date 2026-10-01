@@ -92,6 +92,11 @@ jobs:
           name: docs-browser-${{ github.sha }}
           path: build/docs-browser/
           retention-days: 7
+      - name: Upload the verified public site for GitHub Pages
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: web/public/doc
       - name: Set up Docker Buildx
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         uses: docker/setup-buildx-action@v3
@@ -112,3 +117,20 @@ jobs:
           tags: |
             ghcr.io/iai-ustc-quantum/qatlas-docs:latest
             ghcr.io/iai-ustc-quantum/qatlas-docs:${{ github.sha }}
+
+  deploy-pages:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v5
+      - name: Publish public documentation
+        id: deployment
+        uses: actions/deploy-pages@v4

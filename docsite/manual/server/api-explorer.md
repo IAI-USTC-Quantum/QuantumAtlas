@@ -1,5 +1,9 @@
 # API Explorer（OpenAPI / Swagger）
 
+> GitHub Pages 只托管静态文档，不提供 API。在线测试请打开
+> [部署实例的 Swagger](https://qatlas.hfnl.app.chenzhaoyun.com/swagger/)。
+> 下文的“当前实例”相对链接用于 qatlasd 内的 `/doc/`，在 Pages 上请使用该完整地址。
+
 ## 当前 Sphinx 文档的只读入口
 
 当前可直接阅读的 API 静态参考是 [REST API 总览](rest-api.md)。本页不迁移旧版

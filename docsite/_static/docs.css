@@ -1,0 +1,15 @@
+/* Keep Furo's navigation, search and theme controls; improve reading rhythm. */
+.content { max-width: 58rem; }
+article { line-height: 1.8; }
+article h1 { letter-spacing: -.025em; }
+article h2 { margin-top: 2.2rem; }
+.sd-card { border-radius: .7rem; box-shadow: none; }
+.sd-card-title { font-size: 1.05rem; }
+.sd-card-body { padding: 1.2rem; }
+.sd-card-text { line-height: 1.65; }
+.docs-intro { font-size: 1.12rem; color: var(--color-foreground-secondary); }
+table.docutils td, table.docutils th { padding: .65rem .8rem; }
+@media (max-width: 46rem) {
+  article { line-height: 1.75; }
+  .sd-card-body { padding: 1rem; }
+}

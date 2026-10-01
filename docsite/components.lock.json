@@ -5,13 +5,13 @@
     {
       "name": "qatlas-cli",
       "repository": "IAI-USTC-Quantum/qatlas-cli",
-      "sha": "ff84c6a6c28b0aaa66a697b7be3dd9f4ec890d5e",
+      "sha": "5a74e073c87a09a7dbc8f4f571be33da04e17b26",
       "docs_dir": "docs"
     },
     {
       "name": "qatlas-search",
       "repository": "IAI-USTC-Quantum/qatlas-search",
-      "sha": "10d0f135d9fa753dddbb08b9b61a17b5a3dbe5d4",
+      "sha": "6d3ae228dba90d5d12022c595371b0435c2e7701",
       "docs_dir": "docs"
     },
     {

@@ -6,7 +6,7 @@
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![PocketBase v0.38](https://img.shields.io/badge/PocketBase-v0.38-B8DBE4?style=flat&logo=pocketbase&logoColor=black)](https://pocketbase.io/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16+-336791?style=flat&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
-> 📚 **Documentation** is the Sphinx/Furo site served by qatlasd at `/doc` (user guide) and `/devdoc` (developer guide). The current internal instance is <https://qatlas.hfnl.app.chenzhaoyun.com/doc/>. It is not published to Read the Docs.
+> 📚 **[Documentation](https://iai-ustc-quantum.github.io/QuantumAtlas/)** — public Sphinx/Furo user and component guides, published to GitHub Pages after strict builds and browser checks. The running instance also serves the user guide at [/doc](https://qatlas.hfnl.app.chenzhaoyun.com/doc/) and an administrator entry at `/devdoc`.
 
 QuantumAtlas collects quantum-algorithm papers from arXiv, parses them into structured assets, registers every paper and asset in a PostgreSQL database, and answers queries through a single search endpoint that fans out across multiple paradigms — the local catalog, arXiv, OpenAlex, and (optionally) semantic vector retrieval via Qdrant.
 
