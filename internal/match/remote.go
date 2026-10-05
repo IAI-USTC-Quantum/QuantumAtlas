@@ -137,8 +137,9 @@ func (c *RemoteClient) Healthz(ctx context.Context) error {
 	return nil
 }
 
-// Match proxies one match query. Non-2xx and network/timeout failures are
-// returned as errors (the route maps them to 502).
+// Match proxies one match query without retries. Failures retain typed
+// status/timeout information so routes can distinguish 502 from 504 without
+// returning internal addresses, credentials, or upstream response bodies.
 func (c *RemoteClient) Match(ctx context.Context, q Query) (MatchResponse, error) {
 	if c == nil || c.baseURL == "" {
 		return MatchResponse{}, fmt.Errorf("match remote: no base URL configured")
@@ -170,16 +171,22 @@ func (c *RemoteClient) Match(ctx context.Context, q Query) (MatchResponse, error
 		return MatchResponse{}, fmt.Errorf("match remote: %w", err)
 	}
 	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// Drain only a bounded amount for connection reuse. The upstream
+		// error body is not part of our public API (it may include secrets).
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
+		return MatchResponse{}, &HTTPError{Status: resp.StatusCode}
+	}
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
 	if err != nil {
 		return MatchResponse{}, fmt.Errorf("match remote: read body: %w", err)
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return MatchResponse{}, fmt.Errorf("match remote: status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	if len(raw) > 1<<20 {
+		return MatchResponse{}, ErrInvalidResponse
 	}
 	var out MatchResponse
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return MatchResponse{}, fmt.Errorf("match remote: decode body: %w", err)
+	if err := json.Unmarshal(raw, &out); err != nil || out.Results == nil {
+		return MatchResponse{}, ErrInvalidResponse
 	}
 	return out, nil
 }

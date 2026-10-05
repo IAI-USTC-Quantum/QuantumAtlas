@@ -2016,7 +2016,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Decides whether papers (qatlas-id / DOI / arXiv id /\nOpenAlex id / paper URL / title) are already inside the\nqatlas registry and returns the unified qa_… id.\nPrecision-first: identifiers match exactly after strict\nnormalization (trim / lowercase / known URL prefix /\narXiv vN); titles match only when EVERY word matches\n(case-insensitive, order-insensitive). Merged papers\nresolve to the surviving paper. Free-form ` + "`" + `inputs` + "`" + ` are\nauto-detected per entry; the typed fields force a kind;\nauthor/year narrow ambiguous title matches.",
+                "description": "Decides whether papers (qatlas-id / DOI / arXiv id /\nOpenAlex id / paper URL / title) are already inside the\nqatlas registry and returns the unified qa_… id.\nPrecision-first: identifiers match exactly after strict\nnormalization (trim / lowercase / known URL prefix /\narXiv vN); titles match only when EVERY word matches\n(case-insensitive, order-insensitive). Merged papers\nresolve to the surviving paper. Free-form ` + "`" + `inputs` + "`" + ` are\nauto-detected per entry; the typed fields force a kind;\nauthor/year narrow ambiguous title matches.\nUpstream failures are never reported as empty matches: HTTP 504\ndenotes timeout; HTTP 502 includes a stable code distinguishing\ntransport, upstream HTTP and invalid response failures. Only the\nnumeric upstream_status is exposed, never private upstream bodies.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2074,7 +2074,14 @@ const docTemplate = `{
                         }
                     },
                     "502": {
-                        "description": "Bad Gateway",
+                        "description": "code, detail, optional numeric upstream_status",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "match backend disabled",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -2082,13 +2089,11 @@ const docTemplate = `{
                             }
                         }
                     },
-                    "503": {
-                        "description": "Service Unavailable",
+                    "504": {
+                        "description": "match_upstream_timeout; no match result available",
                         "schema": {
                             "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "additionalProperties": true
                         }
                     }
                 }

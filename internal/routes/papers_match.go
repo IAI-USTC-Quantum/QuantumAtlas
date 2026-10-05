@@ -18,7 +18,9 @@ package routes
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 
@@ -119,9 +121,33 @@ func RegisterPaperMatch(se *core.ServeEvent, backend MatchBackend, enforcer *cas
 
 		resp, err := backend.Match(re.Request.Context(), query)
 		if err != nil {
-			return re.JSON(http.StatusBadGateway, map[string]string{
-				"detail": "match upstream failed: " + err.Error(),
-			})
+			status := http.StatusBadGateway
+			body := map[string]any{
+				"code":   "match_upstream_failed",
+				"detail": "match upstream request failed; no match result is available",
+			}
+			var networkErr net.Error
+			var httpErr *match.HTTPError
+			switch {
+			case errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &networkErr) && networkErr.Timeout()):
+				status = http.StatusGatewayTimeout
+				body["code"] = "match_upstream_timeout"
+				body["detail"] = "match upstream timed out; no match result is available"
+			case errors.As(err, &httpErr):
+				body["code"] = "match_upstream_http_error"
+				body["detail"] = httpErr.Error()
+				body["upstream_status"] = httpErr.Status
+			case errors.Is(err, match.ErrInvalidResponse):
+				body["code"] = "match_upstream_invalid_response"
+				body["detail"] = "match upstream returned an invalid response; no match result is available"
+			case errors.As(err, &networkErr):
+				body["code"] = "match_upstream_transport_error"
+				body["detail"] = "could not communicate with match upstream; no match result is available"
+			}
+			// Log only the bounded classification: do not copy service URLs,
+			// DB errors, credentials or user query text into public diagnostics.
+			re.App.Logger().Warn("paper match upstream failure", "code", body["code"], "status", status, "input_count", len(query.Inputs), "upstream_status", body["upstream_status"])
+			return re.JSON(status, body)
 		}
 		if resp.Results == nil {
 			resp.Results = []match.MatchResult{}

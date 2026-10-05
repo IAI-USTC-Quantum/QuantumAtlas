@@ -3192,6 +3192,10 @@ paths:
         resolve to the surviving paper. Free-form `inputs` are
         auto-detected per entry; the typed fields force a kind;
         author/year narrow ambiguous title matches.
+        Upstream failures are never reported as empty matches: HTTP 504
+        denotes timeout; HTTP 502 includes a stable code distinguishing
+        transport, upstream HTTP and invalid response failures. Only the
+        numeric upstream_status is exposed, never private upstream bodies.
       parameters:
       - description: '{inputs: [string], doi?, arxiv_id?, openalex_id?, qatlas_id?,
           url?, title?, author?, year?}'
@@ -3228,16 +3232,20 @@ paths:
               type: string
             type: object
         "502":
-          description: Bad Gateway
+          description: code, detail, optional numeric upstream_status
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: match backend disabled
           schema:
             additionalProperties:
               type: string
             type: object
-        "503":
-          description: Service Unavailable
+        "504":
+          description: match_upstream_timeout; no match result available
           schema:
-            additionalProperties:
-              type: string
+            additionalProperties: true
             type: object
       security:
       - BearerAuth: []

@@ -484,6 +484,10 @@ func docPaperLookup() {}
 // @Description resolve to the surviving paper. Free-form `inputs` are
 // @Description auto-detected per entry; the typed fields force a kind;
 // @Description author/year narrow ambiguous title matches.
+// @Description Upstream failures are never reported as empty matches: HTTP 504
+// @Description denotes timeout; HTTP 502 includes a stable code distinguishing
+// @Description transport, upstream HTTP and invalid response failures. Only the
+// @Description numeric upstream_status is exposed, never private upstream bodies.
 // @Tags        Papers
 // @Accept      json
 // @Produce     json
@@ -493,8 +497,9 @@ func docPaperLookup() {}
 // @Failure     400 {object} map[string]string
 // @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string
-// @Failure     502 {object} map[string]string
-// @Failure     503 {object} map[string]string
+// @Failure     502 {object} map[string]interface{} "code, detail, optional numeric upstream_status"
+// @Failure     503 {object} map[string]string "match backend disabled"
+// @Failure     504 {object} map[string]interface{} "match_upstream_timeout; no match result available"
 // @Router      /api/papers/match [post]
 func docPaperMatch() {}
 
