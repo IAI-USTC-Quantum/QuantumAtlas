@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/registry"
@@ -64,6 +65,17 @@ func (d *Downloader) tryRemote(ctx context.Context, ref registry.PaperRef, out *
 			out.Trace = append(out.Trace, attemptOf("remote-worker", "", fmt.Errorf("worker returned no PDF or archive receipt"), start))
 			return false
 		}
+		if !remote.Archived && remote.ArxivCanonical == "" {
+			guard := &FetchOutcome{DOI: remote.DOI, PublishedTitle: strings.TrimSpace(ref.Title)}
+			if guard.DOI == "" {
+				guard.DOI = out.DOI
+			}
+			if err := d.verifyPublishedCandidate(ctx, remote.Result, guard); err != nil {
+				out.Trace = append(out.Trace, attemptOf("remote-worker", "", err, start))
+				return false
+			}
+			remote.PublishedTitle = guard.PublishedTitle
+		}
 		trace := out.Trace
 		*out = *remote
 		out.Trace = append(trace, attemptOf("remote-worker", remote.URL, nil, start))
@@ -73,6 +85,10 @@ func (d *Downloader) tryRemote(ctx context.Context, ref registry.PaperRef, out *
 	out.Trace = append(out.Trace, attempts...)
 	if err != nil {
 		out.Trace = append(out.Trace, attemptOf("remote-proxy", "", err, start))
+		return false
+	}
+	if err := d.verifyPublishedCandidate(ctx, res, out); err != nil {
+		out.Trace = append(out.Trace, attemptOf("remote-proxy", res.URL, err, start))
 		return false
 	}
 	out.Result, out.Strategy, out.URL = res, strategy, res.URL

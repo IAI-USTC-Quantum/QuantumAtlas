@@ -79,7 +79,7 @@ func TestExistingObjectRegistersActualHash(t *testing.T) {
 	}
 	replacement := makePDF(20000)
 	out := &FetchOutcome{DOI: doi, Strategy: "remote-worker:browser", Result: &FetchResult{Body: bytes.NewReader(replacement), Size: int64(len(replacement)), Sha256: "not-the-stored-hash"}}
-	if err := d.storeOutcome(ctx, job{ref: registry.PaperRef{DOI: doi}}, out); err != nil {
+	if err := d.storeOutcome(ctx, job{ref: registry.PaperRef{DOI: doi, Title: pipelineTitle}}, out); err != nil {
 		t.Fatal(err)
 	}
 	h := sha256.Sum256(original)
@@ -102,7 +102,7 @@ func TestRemoteArchiveDoesNotWaitForMinerU(t *testing.T) {
 	pdf := makePDF(16384)
 	h := sha256.Sum256(pdf)
 	out := &FetchOutcome{DOI: "10.1000/archive", Strategy: "remote-worker:browser", Result: &FetchResult{Body: bytes.NewReader(pdf), Size: int64(len(pdf)), Sha256: hex.EncodeToString(h[:])}}
-	if err := d.ArchiveRemote(ctx, registry.PaperRef{DOI: out.DOI}, out); err != nil {
+	if err := d.ArchiveRemote(ctx, registry.PaperRef{DOI: out.DOI, Title: pipelineTitle}, out); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 0 {
@@ -111,7 +111,7 @@ func TestRemoteArchiveDoesNotWaitForMinerU(t *testing.T) {
 	if reg.upsertDOI[out.DOI] == "" {
 		t.Fatal("archive did not register PDF")
 	}
-	if err := d.AfterRemoteArchive(ctx, registry.PaperRef{DOI: out.DOI}, out); err != nil {
+	if err := d.AfterRemoteArchive(ctx, registry.PaperRef{DOI: out.DOI, Title: pipelineTitle}, out); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 1 {

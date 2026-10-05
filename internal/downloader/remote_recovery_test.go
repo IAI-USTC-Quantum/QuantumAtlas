@@ -75,7 +75,7 @@ func TestArchiveRejectsCorruptExistingObject(t *testing.T) {
 	d := &Downloader{reg: reg, store: store}
 	pdf := makePDF(16384)
 	out := &FetchOutcome{DOI: doi, URL: "https://new-source.example/paper.pdf", Result: &FetchResult{Body: bytes.NewReader(pdf), Size: int64(len(pdf)), Sha256: "new"}}
-	err := d.storeOutcome(ctx, job{ref: registry.PaperRef{DOI: doi}}, out)
+	err := d.storeOutcome(ctx, job{ref: registry.PaperRef{DOI: doi, Title: pipelineTitle}}, out)
 	if !errors.Is(err, ErrNotPDF) || len(reg.upsertDOI) != 0 {
 		t.Fatalf("corrupt existing object accepted: %v %+v", err, reg.upsertDOI)
 	}

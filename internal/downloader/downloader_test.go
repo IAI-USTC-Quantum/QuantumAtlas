@@ -19,7 +19,7 @@ import (
 // makePDF builds a minimal valid PDF body (magic + objects + startxref +
 // %%EOF) padded past the minimum size.
 func makePDF(padTo int) []byte {
-	body := "%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<< /Size 1 >>\nstartxref\n0\n%%EOF\n"
+	body := string(provenanceFixturePDF([]string{pipelineTitle, "Alice Smith", "Abstract", "A deterministic PDF fixture."}))
 	if padTo > len(body) {
 		body += strings.Repeat("% padding to satisfy the minimum size check; harmless PDF comment\n", (padTo-len(body))/57+1)
 	}
@@ -280,7 +280,7 @@ func TestLadder_OAResolverWins(t *testing.T) {
 			LandingBaseURL: h.srv.URL + "/doi/",
 		},
 	}, WithOAResolvers(&urlRewriteOA{inner: oa, name: "unpaywall"}))
-	out, err := h.dl.FetchPDF(context.Background(), registry.PaperRef{DOI: "10.1000/x"})
+	out, err := h.dl.FetchPDF(context.Background(), registry.PaperRef{DOI: "10.1000/x", Title: pipelineTitle})
 	if err != nil {
 		t.Fatalf("FetchPDF: %v (trace: %+v)", err, out.Trace)
 	}
@@ -330,7 +330,7 @@ func TestLadder_LandingFallback(t *testing.T) {
 			_, _ = w.Write(makePDF(0))
 		})
 	}, []OAResolver{&stubOA{name: "unpaywall", err: errors.New("no result")}}, nil)
-	out, err := h.dl.FetchPDF(context.Background(), registry.PaperRef{DOI: "10.1093/xyz/article"})
+	out, err := h.dl.FetchPDF(context.Background(), registry.PaperRef{DOI: "10.1093/xyz/article", Title: pipelineTitle})
 	if err != nil {
 		t.Fatalf("FetchPDF: %v (trace: %+v)", err, out.Trace)
 	}
@@ -360,7 +360,7 @@ func TestLadder_AgentFallback(t *testing.T) {
 	}, []OAResolver{&stubOA{name: "unpaywall", err: errors.New("no result")}}, nil)
 	agentURL = h.srv.URL + "/agent-found.pdf"
 	h.dl.agent = &fakeAgent{urls: []string{agentURL}}
-	out, err := h.dl.FetchPDF(context.Background(), registry.PaperRef{DOI: "10.1099/agent"})
+	out, err := h.dl.FetchPDF(context.Background(), registry.PaperRef{DOI: "10.1099/agent", Title: pipelineTitle})
 	if err != nil {
 		t.Fatalf("FetchPDF: %v (trace: %+v)", err, out.Trace)
 	}
@@ -486,7 +486,7 @@ func TestQueueStoresAndRegisters(t *testing.T) {
 		},
 	}, WithOAResolvers(&stubOA{name: "unpaywall", cands: []string{srv.URL + "/paper.pdf"}}))
 
-	ref := registry.PaperRef{DOI: "10.1000/queued"}
+	ref := registry.PaperRef{DOI: "10.1000/queued", Title: pipelineTitle}
 	if !d.Enqueue(context.Background(), "paper-1", "10.1000/queued", KindDOI, ref) {
 		t.Fatal("Enqueue rejected")
 	}

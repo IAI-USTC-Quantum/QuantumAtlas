@@ -1,9 +1,11 @@
 package downloader
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -82,7 +84,8 @@ type Config struct {
 	Fetch             FetchConfig
 	Agent             AgentConfig
 	Browser           BrowserConfig
-	Proxy             *RemoteProxy // legacy, mutually exclusive with Remote
+	Provenance        PDFProvenanceConfig // local administrator/test extractor configuration
+	Proxy             *RemoteProxy        // legacy, mutually exclusive with Remote
 	Remote            RemoteFetcher
 	RemoteConcurrency int             // additional bounded waiters; remote waits release local slots
 	Journal           DownloadJournal // persistent admission before remote delegation
@@ -158,6 +161,8 @@ type FetchOutcome struct {
 	ArxivCanonical string
 	ArxivVersion   int
 	DOI            string
+	PublishedTitle string // trusted expected title, never inferred from downloaded bytes
+	titleResolved  bool
 	Trace          []Attempt
 	Archived       bool // fleet already committed storage+registry; Body may be nil
 	Pending        bool // durable remote task continues after waiter detaches
@@ -338,7 +343,10 @@ func (d *Downloader) FetchPDF(ctx context.Context, ref registry.PaperRef) (*Fetc
 		defer permit.release()
 		ctx = context.WithValue(ctx, localPermitKey{}, permit)
 	}
-	out := &FetchOutcome{DOI: ref.DOI}
+	if normalized, ok := paperassets.ValidateDOI(ref.DOI); ok {
+		ref.DOI = normalized
+	}
+	out := &FetchOutcome{DOI: ref.DOI, PublishedTitle: strings.TrimSpace(ref.Title)}
 
 	if ref.ArxivID != "" {
 		if res := d.tryArxiv(ctx, ref.ArxivID, out); res != nil {
@@ -481,6 +489,12 @@ func (d *Downloader) FetchPDF(ctx context.Context, ref registry.PaperRef) (*Fetc
 		for _, u := range browserTargets(out, doi) {
 			res, berr, attempt := browserAttempt(ctx, u, d.browser.FetchPDF)
 			if berr == nil {
+				berr = d.verifyPublishedCandidate(ctx, res, out)
+				if berr != nil {
+					attempt.Error, attempt.FailureKind = berr.Error(), "identity_unproven"
+				}
+			}
+			if berr == nil {
 				out.Strategy = "browser"
 				out.URL = res.URL
 				out.Result = res
@@ -585,6 +599,9 @@ func (d *Downloader) arxivBaseURL() string { return "https://arxiv.org/pdf/" }
 func (d *Downloader) tryCandidate(ctx context.Context, strategy, rawURL string, out *FetchOutcome) *FetchResult {
 	start := time.Now()
 	res, err := d.fetch.FetchPDF(ctx, rawURL)
+	if err == nil {
+		err = d.verifyPublishedCandidate(ctx, res, out)
+	}
 	if err != nil {
 		out.Trace = append(out.Trace, attemptOf(strategy, rawURL, err, start))
 		return nil
@@ -866,6 +883,17 @@ func (d *Downloader) storeOutcome(ctx context.Context, j job, out *FetchOutcome)
 	if assetKey == "" {
 		return fmt.Errorf("no asset key for outcome")
 	}
+	if isDOI {
+		// Re-establish expected identity from the server-owned job/catalog,
+		// never from fields in a remote worker's candidate/archive receipt.
+		out.PublishedTitle = strings.TrimSpace(j.ref.Title)
+		out.titleResolved = false
+		// This is also the central fleet archive boundary: even an older
+		// worker or a proxy must prove ownership before writing published bytes.
+		if err := d.verifyPublishedCandidate(ctx, out.Result, out); err != nil {
+			return fmt.Errorf("validate published provenance: %w", err)
+		}
+	}
 	_, putErr := d.store.PutWithOptions(ctx, assetKey, out.Result.Body, out.Result.Size, objstore.PutOptions{
 		ContentType: "application/pdf",
 		IfNoneMatch: "*",
@@ -887,13 +915,26 @@ func (d *Downloader) storeOutcome(ctx context.Context, j job, out *FetchOutcome)
 		if err != nil {
 			return fmt.Errorf("read existing pdf: %w", err)
 		}
-		sha, n, readErr := inspectStoredPDF(body)
+		stored, readErr := io.ReadAll(io.LimitReader(body, DefaultMaxPDFBytes+1))
 		closeErr := body.Close()
 		if readErr != nil {
-			return fmt.Errorf("hash existing pdf: %w", readErr)
+			return fmt.Errorf("read existing pdf: %w", readErr)
 		}
 		if closeErr != nil {
 			return fmt.Errorf("close existing pdf: %w", closeErr)
+		}
+		if int64(len(stored)) > DefaultMaxPDFBytes {
+			return fmt.Errorf("existing pdf exceeds bound: %w", ErrTooLarge)
+		}
+		sha, n, readErr := inspectStoredPDF(bytes.NewReader(stored))
+		if readErr != nil {
+			return fmt.Errorf("hash existing pdf: %w", readErr)
+		}
+		if isDOI {
+			existing := &FetchResult{Body: bytes.NewReader(stored), Sha256: sha, Size: n, URL: info.Metadata["source_url"]}
+			if err := d.verifyPublishedCandidate(ctx, existing, out); err != nil {
+				return fmt.Errorf("existing published PDF ownership: %w", err)
+			}
 		}
 		out.Result.Sha256, out.Result.Size = sha, n
 		// Unknown existing provenance stays unknown: never attribute OLD bytes

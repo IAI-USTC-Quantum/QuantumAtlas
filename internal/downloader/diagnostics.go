@@ -122,6 +122,7 @@ func failureKind(err error) string {
 	}{
 		{ErrChallenge, "challenge"}, {ErrPaywall, "paywall"}, {ErrRobots, "robots"},
 		{ErrNotPDF, "not_pdf"}, {ErrTooLarge, "too_large"}, {ErrTooSmall, "too_small"}, {ErrTruncated, "truncated"},
+		{ErrPDFIdentityUnproven, "identity_unproven"},
 		{errNoCandidates, "no_candidates"}, {errNoLandingCandidates, "no_candidates"}, {errNoRepositoryCandidates, "no_candidates"},
 		{ErrBrowserNotConfigured, "not_configured"}, {ErrProxyNotConfigured, "not_configured"},
 	} {
