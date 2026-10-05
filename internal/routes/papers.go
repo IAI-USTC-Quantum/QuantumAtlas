@@ -908,7 +908,7 @@ func applyDOICanonicalHeaders(re *core.RequestEvent, requestedID, doi, arxivTwin
 		// parsing the header can detect the redirect cleanly.
 		h.Set("X-QAtlas-Defaults-Applied",
 			"served_as_doi_canonical (arxiv "+arxivTwin+
-				" → DOI "+doi+"; pass ?force_arxiv=1 to opt out)")
+				" -> DOI "+doi+"; pass ?force_arxiv=1 to opt out)")
 	}
 }
 

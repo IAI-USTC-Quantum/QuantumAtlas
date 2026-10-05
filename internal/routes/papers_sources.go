@@ -229,7 +229,7 @@ func paperResolution(requested, canonical string) resolvedPaper {
 	}}
 	if requested != canonical {
 		r.resolution.DefaultsApplied = append(r.resolution.DefaultsApplied,
-			"paper_id_resolved ("+requested+" → "+canonical+")")
+			"paper_id_resolved ("+requested+" -> "+canonical+")")
 	}
 	return r
 }

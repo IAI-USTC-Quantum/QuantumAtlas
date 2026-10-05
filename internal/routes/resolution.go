@@ -109,10 +109,10 @@ func computeResolution(requestedID, bareIDPostDOI, finalID string) *idResolution
 	if bareIDPostDOI != requestedID {
 		if strings.HasPrefix(requestedID, "qa_") {
 			r.DefaultsApplied = append(r.DefaultsApplied,
-				"paper_id_resolved ("+requestedID+" → arxiv id "+bareIDPostDOI+")")
+				"paper_id_resolved ("+requestedID+" -> arxiv id "+bareIDPostDOI+")")
 		} else {
 			r.DefaultsApplied = append(r.DefaultsApplied,
-				"doi_resolved_via_openalex (DOI → arxiv id "+bareIDPostDOI+")")
+				"doi_resolved_via_openalex (DOI -> arxiv id "+bareIDPostDOI+")")
 		}
 	}
 
@@ -133,7 +133,7 @@ func computeResolution(requestedID, bareIDPostDOI, finalID string) *idResolution
 	if bErr == nil && bareParsed.IsValid() && bareParsed.IsOldStyle && bareParsed.IsBare {
 		r.DefaultsApplied = append(r.DefaultsApplied,
 			"category="+paperassets.DefaultOldStyleCategory+
-				" (no category prefix; server default per docs/reference/arxiv-ids.md §3.1)")
+				" (no category prefix; server default per docs/reference/arxiv-ids.md section 3.1)")
 	}
 
 	return r
