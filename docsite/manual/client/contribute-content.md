@@ -238,7 +238,7 @@ N 个并发请求同一篇论文被**同一 process** 内 server-side 自动 ded
 所有调用方看到同一份 Job snapshot。**跨 edge 不 dedupe**（issue [#13](https://github.com/IAI-USTC-Quantum/QuantumAtlas/issues/13)
 跟踪 active-active 部署的优化）。完整 LRO 状态表、各 phase 字段含义、
 agent 决策三元组（state / pdf_ready / md_ready）见
-[REST API · 长任务](../server/rest-api.md#长任务lroapipapersid_or_doimarkdownpdf)。
+[冻结内容访问 · 异步读取](../server/paper-content.md)。
 
 **鉴权**：`papers:read` scope（与现有 `/api/papers/stats` 同）。**没有匿名入口**——
 对外受众范围由 PAT / session token 控制，部署方对 markdown / PDF 字节的对外

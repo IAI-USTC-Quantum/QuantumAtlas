@@ -262,7 +262,7 @@ ID 解析到了哪一步所有信息。
 - `status`：单次 `GET .../{kind}/status`
 
 详细 LRO 协议、Phase 字段语义、agent 决策三元组见
-[REST API · 长任务（LRO）](../server/rest-api.md#长任务lroapipapersid_or_doimarkdownpdf)。
+[冻结内容访问 · 异步读取](../server/paper-content.md)。
 
 ---
 
