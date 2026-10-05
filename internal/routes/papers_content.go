@@ -20,6 +20,12 @@ import (
 // revision originals are dispatched separately, under the same master gate.
 // Identity selection occurs before the old DOI-canonical dispatcher can run.
 func dispatchContentGET(re *core.RequestEvent, cfg *config.Config, store objstore.Store, catalog contentCatalog, converter *mineru.Converter, raw string) (bool, error) {
+	// Immutable originals own their entire nested namespace. In particular,
+	// /parses/{revision}/files/images/{name} must not be mistaken for the
+	// convenience /{paper}/images/{name} endpoint merely by its member path.
+	if strings.Contains(raw, "/parses/") || strings.Contains(raw, "/sources/") {
+		return false, nil
+	}
 	id, action := "", ""
 	for _, suffix := range []string{"/read/status", "/markdown/status", "/pdf/status", "/images/zip", "/read", "/markdown", "/pdf", "/images", "/figures"} {
 		if prefix, ok := strings.CutSuffix(raw, suffix); ok {
