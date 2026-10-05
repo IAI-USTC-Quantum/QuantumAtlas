@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperassets"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperbundle"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/registry"
 )
 
@@ -69,14 +70,19 @@ func TestArchiveRejectsCorruptExistingObject(t *testing.T) {
 	reg := newFakeReg()
 	doi := "10.1000/corrupt"
 	bad := []byte("<html>access denied" + strings.Repeat("x", 16384))
-	if _, err := store.Put(ctx, paperassets.DOIAssetKey("pdf", doi), bytes.NewReader(bad), int64(len(bad)), "application/pdf"); err != nil {
+	paper, _, _ := reg.ResolveOrMint(ctx, registry.PaperRef{DOI: doi})
+	src, err := reg.RegisterFrozenPDF(ctx, store, paper, "legacy", bad)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reg.BindPaperSourceImport(ctx, store, paper, src.SourceID, paperassets.DOIAssetKey("pdf", doi)); err != nil {
 		t.Fatal(err)
 	}
 	d := &Downloader{reg: reg, store: store}
 	pdf := makePDF(16384)
 	out := &FetchOutcome{DOI: doi, URL: "https://new-source.example/paper.pdf", Result: &FetchResult{Body: bytes.NewReader(pdf), Size: int64(len(pdf)), Sha256: "new"}}
-	err := d.storeOutcome(ctx, job{ref: registry.PaperRef{DOI: doi}}, out)
-	if !errors.Is(err, ErrNotPDF) || len(reg.upsertDOI) != 0 {
+	err = d.storeOutcome(ctx, job{ref: registry.PaperRef{DOI: doi, Title: pipelineTitle}}, out)
+	if !errors.Is(err, paperbundle.ErrIntegrity) || len(reg.upsertDOI) != 0 {
 		t.Fatalf("corrupt existing object accepted: %v %+v", err, reg.upsertDOI)
 	}
 }

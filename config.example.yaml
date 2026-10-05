@@ -80,6 +80,7 @@
 #   bucket_pdf: qatlas-pdf
 #   bucket_md: qatlas-md
 #   bucket_images: qatlas-images
+#   bucket_content: qatlas-content               # frozen PDFs + complete parse bundles
 #   access_key_id: ""                            # svcacct, NEVER root keys
 #   secret_access_key: ""
 #   # Optional: separate public endpoint for presigned URLs:
@@ -183,11 +184,9 @@
 #   arxiv_fetch_rps: 0.33                  # ≈ 1 req / 3 s, per arxiv guidance
 #   block_image_command: pdftoppm          # block-comments block-image crop
 #                                          # rasterizer (poppler-utils);
-#                                          # NOT gated by enabled — the
-#                                          # /sources + /parses surface is
-#                                          # the normal logged-in reading
-#                                          # API (plan §12.2). Install the
-#                                          # package or point at another
+#                                          # gated by enabled + papers:read,
+#                                          # like PDF/read/raw parse access.
+#                                          # Install the package or point at another
 #                                          # pdftoppm-compatible binary.
 #   block_image_dpi: 150                   # crop rasterization density
 #   mineru:                                # only parsed when enabled: true
@@ -195,8 +194,9 @@
 #                                          # mineru_tokens pool; the admin
 #                                          # pipelines page manages the pool
 #                                          # at runtime (DB wins from boot)
-#     api_base_url: https://mineru.net
-#     model_version: vlm
+#     api_base_url: https://mineru.net/api
+#     tier: standard                        # V1 quality tier, not legacy model_version
+#     model_version: vlm                    # legacy V4 client only
 #     language: ch
 #     is_ocr: false
 #     enable_formula: true

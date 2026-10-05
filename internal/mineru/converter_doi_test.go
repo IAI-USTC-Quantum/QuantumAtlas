@@ -1,11 +1,5 @@
 package mineru
 
-// Tests for the DOI fetch+convert pipeline (converter_doi.go, plan §A):
-// EnsureByDOI fetches an OA PDF URL when no DOI-keyed PDF is stored,
-// converts a stored contributed PDF without fetching, fails fast with
-// ErrNoDOISource when neither exists, and short-circuits on a markdown
-// cache hit.
-
 import (
 	"context"
 	"errors"
@@ -14,96 +8,55 @@ import (
 	"time"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperassets"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperbundle"
 )
 
 const testDOI = "10.1038/s41534-020-00001-0"
 
 func TestEnsureByDOI_FetchThenConvert(t *testing.T) {
 	store := newFakeStore()
-	// No PDF pre-seeded → forces the OA fetch.
-
 	oaURL, hits := newFakeArxivServer(t, fakePDFBytes)
 	stub := newMinerUStub(t)
 	defer stub.close()
 	c := makeConverterWithFetcher(t, store, stub.url(), oaURL)
-
-	job := c.EnsureByDOI(context.Background(), testDOI, oaURL+"paper.pdf")
-	if job.State != JobStateQueued {
-		t.Fatalf("initial EnsureByDOI state = %v, want queued", job.State)
+	j := c.EnsureByDOI(context.Background(), testDOI, oaURL+"paper.pdf")
+	if j.State != JobStateQueued {
+		t.Fatalf("initial job: %+v", j)
 	}
-	if job.Canonical != testDOI {
-		t.Errorf("job.Canonical = %q, want %q", job.Canonical, testDOI)
-	}
-
 	if !waitForJobState(c, doiJobKey(testDOI), JobStateDone, 5*time.Second) {
-		final, _ := c.LookupDOI(testDOI)
-		t.Fatalf("job did not reach Done; final = %+v", final)
+		j, _ = c.LookupDOI(testDOI)
+		t.Fatalf("final: %+v", j)
 	}
-
-	// PDF must have landed under the DOI layout.
-	pdfKey := paperassets.DOIAssetKey("pdf", testDOI)
-	if pdf, ok := store.get(pdfKey); !ok {
-		t.Errorf("PDF not written to store at %q", pdfKey)
-	} else if !strings.HasPrefix(string(pdf), "%PDF-") {
-		t.Errorf("stored PDF missing %%PDF- magic; got %q", string(pdf)[:8])
+	final := assertCompleteStored(t, c, store, doiJobKey(testDOI))
+	if hits.load() != 1 || final.Fetch == nil || final.Convert == nil {
+		t.Fatalf("fetch+parse progress missing: %+v", final)
 	}
-	// Markdown + images zip under the DOI layout too.
-	if _, ok := store.get(paperassets.DOIAssetKey("markdown", testDOI)); !ok {
-		t.Errorf("markdown not written to store")
+	if _, ok := store.get(paperassets.DOIAssetKey("pdf", testDOI)); ok {
+		t.Fatal("fresh DOI PDF wrote legacy bucket")
 	}
-	if _, ok := store.get(paperassets.DOIAssetKey("images", testDOI)); !ok {
-		t.Errorf("images zip not written to store")
-	}
-	if hits.load() != 1 {
-		t.Errorf("OA host hits = %d, want exactly 1", hits.load())
-	}
-
-	final, _ := c.LookupDOI(testDOI)
-	if final.Phase != PhaseReady {
-		t.Errorf("final Phase = %q, want %q", final.Phase, PhaseReady)
-	}
-	if final.Fetch == nil || final.Fetch.Sha256 == "" {
-		t.Errorf("Fetch progress not populated: %+v", final.Fetch)
-	}
-	if final.Convert == nil {
-		t.Errorf("Convert progress not populated")
-	}
-	// MinerU must have seen a .pdf upload name and the doi: data id.
-	stub.mu.Lock()
-	gotDataID := stub.lastDataID
-	stub.mu.Unlock()
-	if gotDataID != doiJobKey(testDOI) {
-		t.Errorf("stub.lastDataID = %q, want %q", gotDataID, doiJobKey(testDOI))
+	if pdf, ok := store.get(paperbundle.PDFKey(final.PaperID, final.SourceID)); !ok || !strings.HasPrefix(string(pdf), "%PDF-") {
+		t.Fatal("frozen PDF missing")
 	}
 }
 
 func TestEnsureByDOI_ConvertStoredPDFWithoutFetch(t *testing.T) {
 	store := newFakeStore()
 	store.put(paperassets.DOIAssetKey("pdf", testDOI), fakePDFBytes)
-
 	oaURL, hits := newFakeArxivServer(t, fakePDFBytes)
 	stub := newMinerUStub(t)
 	defer stub.close()
 	c := makeConverterWithFetcher(t, store, stub.url(), oaURL)
-
-	// Empty OA URL: convert the contributed PDF only.
-	job := c.EnsureByDOI(context.Background(), testDOI, "")
-	if job.State != JobStateQueued {
-		t.Fatalf("initial state = %v, want queued", job.State)
+	j := c.EnsureByDOI(context.Background(), testDOI, "")
+	if j.State != JobStateQueued {
+		t.Fatalf("initial: %+v", j)
 	}
 	if !waitForJobState(c, doiJobKey(testDOI), JobStateDone, 5*time.Second) {
-		final, _ := c.LookupDOI(testDOI)
-		t.Fatalf("job did not reach Done; final = %+v", final)
+		j, _ = c.LookupDOI(testDOI)
+		t.Fatalf("final: %+v", j)
 	}
+	assertCompleteStored(t, c, store, doiJobKey(testDOI))
 	if hits.load() != 0 {
-		t.Errorf("OA host hits = %d, want 0 (PDF was already stored)", hits.load())
-	}
-	if _, ok := store.get(paperassets.DOIAssetKey("markdown", testDOI)); !ok {
-		t.Errorf("markdown not written to store")
-	}
-	final, _ := c.LookupDOI(testDOI)
-	if final.Fetch != nil {
-		t.Errorf("Fetch should be nil when no fetch happened, got %+v", final.Fetch)
+		t.Fatal("stored PDF refetched")
 	}
 }
 
@@ -112,58 +65,37 @@ func TestEnsureByDOI_NoSourceIsFatal404Material(t *testing.T) {
 	stub := newMinerUStub(t)
 	defer stub.close()
 	c := makeConverterWithFetcher(t, store, stub.url(), "http://unused/")
-
-	job := c.EnsureByDOI(context.Background(), testDOI, "")
-	if job.State != JobStateQueued {
-		t.Fatalf("initial state = %v, want queued", job.State)
-	}
-	if !waitForJobState(c, doiJobKey(testDOI), JobStateFailed, 5*time.Second) {
-		t.Fatal("job did not fail")
-	}
-	final, _ := c.LookupDOI(testDOI)
-	if !errors.Is(final.Err, ErrNoDOISource) {
-		t.Errorf("Err = %v, want ErrNoDOISource", final.Err)
-	}
-	if !errors.Is(final.ErrKind, ErrFatal) {
-		t.Errorf("ErrKind = %v, want ErrFatal (404 semantics, not 502)", final.ErrKind)
-	}
-	if stub.submissions.load() != 0 {
-		t.Errorf("mineru submissions = %d, want 0 (no PDF, no submission)", stub.submissions.load())
+	j := c.EnsureByDOI(context.Background(), testDOI, "")
+	if j.State != JobStateFailed || !errors.Is(j.Err, ErrNoDOISource) || !errors.Is(j.ErrKind, ErrFatal) || stub.submissions.load() != 0 {
+		t.Fatalf("missing DOI source: %+v", j)
 	}
 }
 
 func TestEnsureByDOI_CacheHitShortCircuits(t *testing.T) {
 	store := newFakeStore()
-	store.put(paperassets.DOIAssetKey("markdown", testDOI), []byte("# cached"))
-
+	store.put(paperassets.DOIAssetKey("pdf", testDOI), fakePDFBytes)
+	store.put(paperassets.DOIAssetKey("markdown", testDOI), []byte("# old ignored"))
 	stub := newMinerUStub(t)
 	defer stub.close()
 	c := makeConverter(t, store, stub.url())
-
-	job := c.EnsureByDOI(context.Background(), testDOI, "https://example.com/oa.pdf")
-	if job.State != JobStateDone {
-		t.Fatalf("State = %v, want Done (cache hit)", job.State)
+	first := c.EnsureByDOI(context.Background(), testDOI, "")
+	if first.State != JobStateQueued {
+		t.Fatalf("old MD cache accepted: %+v", first)
 	}
-	if job.Phase != PhaseReady {
-		t.Errorf("Phase = %q, want ready", job.Phase)
+	if !waitForJobState(c, doiJobKey(testDOI), JobStateDone, 2*time.Second) {
+		t.Fatal("parse not done")
 	}
-	if stub.submissions.load() != 0 {
-		t.Errorf("stub.submissions = %d, want 0", stub.submissions.load())
+	second := c.EnsureByDOI(context.Background(), testDOI, "")
+	if second.State != JobStateDone || second.RevisionID == "" || stub.submissions.load() != 1 {
+		t.Fatalf("verified full cache: %+v", second)
 	}
 }
 
 func TestEnsureByDOI_InvalidDOI(t *testing.T) {
-	store := newFakeStore()
-	stub := newMinerUStub(t)
-	defer stub.close()
-	c := makeConverter(t, store, stub.url())
-
-	job := c.EnsureByDOI(context.Background(), "not-a-doi", "")
-	if job.State != JobStateFailed {
-		t.Fatalf("State = %v, want Failed", job.State)
-	}
-	if !errors.Is(job.ErrKind, ErrFatal) {
-		t.Errorf("ErrKind = %v, want ErrFatal", job.ErrKind)
+	c := makeConverter(t, newFakeStore(), "http://unused/")
+	j := c.EnsureByDOI(context.Background(), "not-a-doi", "")
+	if j.State != JobStateFailed || !errors.Is(j.ErrKind, ErrFatal) {
+		t.Fatalf("invalid DOI: %+v", j)
 	}
 }
 
@@ -173,15 +105,14 @@ func TestLookupDOI_NormalizesInput(t *testing.T) {
 	stub := newMinerUStub(t)
 	defer stub.close()
 	c := makeConverterWithFetcher(t, store, stub.url(), oaURL)
-
-	// Queue a job, then look it up via an un-normalized (mixed-case)
-	// spelling — ValidateDOI lower-cases, so both agree on the key.
 	c.EnsureByDOI(context.Background(), testDOI, oaURL+"paper.pdf")
-	upper := strings.ToUpper(testDOI)
-	if _, ok := c.LookupDOI(upper); !ok {
-		t.Errorf("LookupDOI(%q) missed the job queued under %q", upper, testDOI)
+	if _, ok := c.LookupDOI(strings.ToUpper(testDOI)); !ok {
+		t.Fatal("normalized lookup missed")
 	}
 	if _, ok := c.LookupDOI("garbage"); ok {
-		t.Errorf("LookupDOI(garbage) should be (nil,false)")
+		t.Fatal("invalid lookup hit")
+	}
+	if !waitForJobState(c, doiJobKey(testDOI), JobStateDone, 2*time.Second) {
+		t.Fatal("lookup job did not finish")
 	}
 }

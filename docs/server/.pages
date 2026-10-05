@@ -13,6 +13,7 @@ nav:
     - RustFS / S3: rustfs.md
   - API:
     - REST API 总览: rest-api.md
+    - 论文不可变内容与续读: paper-content.md
     - Upload API 详解: upload-api.md
     - PG 库设计: pg-schema.md
     - API Explorer: api-explorer.md

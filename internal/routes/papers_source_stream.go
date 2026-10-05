@@ -11,15 +11,16 @@ package routes
 // http.ServeContent still drives Range/206/If-Range semantics, but each
 // Read turns into a bounded ranged GetObject / file section read.
 //
-// Verification trade-off on the large path: the server can't hash what
-// it doesn't read. The ETag and X-QAtlas-Sha256 headers still carry the
-// sha256 the registry row pins, so clients verify end-to-end; the row
-// size is cross-checked against the object's actual size (Stat) before
-// streaming so a truncated/replaced object is caught up-front.
+// Large PDFs are hashed with a bounded streaming reader before headers or
+// Range bytes are emitted. Size-only metadata cannot prove byte identity.
+// Delivery then uses ranged reads, preserving bounded memory at the cost of
+// an integrity-read pass before the requested byte range.
 
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -27,6 +28,7 @@ import (
 	"time"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperbundle"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/registry"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -47,12 +49,18 @@ const streamRangeThreshold = 4 << 20 // 4 MiB
 func serveSourcePDF(re *core.RequestEvent, store objstore.Store, src registry.PaperSource, name string) error {
 	ctx := re.Request.Context()
 
-	// Small object: whole read + server-side hash verification. This is
-	// also the fallback when the size is unknown.
-	if src.SizeBytes >= 0 && src.SizeBytes <= streamRangeThreshold {
-		pdfBytes, err := blockReadVerified(ctx, store, src.ObjstoreKey, src.Sha256)
+	if src.SizeBytes <= 0 {
+		return paperbundle.ErrInvalid
+	}
+	// Verify actual persisted bytes before any response, including large
+	// and ranged requests. A pinned hash is not merely a client hint.
+	if src.SizeBytes <= streamRangeThreshold {
+		pdfBytes, err := readSourcePDFBounded(ctx, store, src)
 		if err != nil {
 			return err
+		}
+		if int64(len(pdfBytes)) != src.SizeBytes {
+			return paperbundle.ErrIntegrity
 		}
 		setSourcePDFHeaders(re, src, name)
 		http.ServeContent(re.Response, re.Request, src.SourceID+".pdf", time.Time{}, bytes.NewReader(pdfBytes))
@@ -69,8 +77,24 @@ func serveSourcePDF(re *core.RequestEvent, store objstore.Store, src registry.Pa
 		return objstore.ErrNotFound
 	}
 	if info.Size >= 0 && info.Size != src.SizeBytes {
-		return fmt.Errorf("source pdf %s size drift: row pins %d bytes, store has %d",
-			src.ObjstoreKey, src.SizeBytes, info.Size)
+		return fmt.Errorf("%w: source pdf %s size drift: row pins %d bytes, store has %d",
+			paperbundle.ErrIntegrity, src.ObjstoreKey, src.SizeBytes, info.Size)
+	}
+	r, _, err := store.Get(ctx, src.ObjstoreKey)
+	if err != nil {
+		return err
+	}
+	h := sha256.New()
+	n, readErr := io.Copy(h, io.LimitReader(r, src.SizeBytes+1))
+	closeErr := r.Close()
+	if readErr != nil {
+		return readErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if n != src.SizeBytes || hex.EncodeToString(h.Sum(nil)) != src.Sha256 {
+		return paperbundle.ErrIntegrity
 	}
 	setSourcePDFHeaders(re, src, name)
 	rs := newRangedReadSeeker(ctx, store, src.ObjstoreKey, src.SizeBytes)
@@ -78,12 +102,35 @@ func serveSourcePDF(re *core.RequestEvent, store objstore.Store, src registry.Pa
 	return rs.err // surface a mid-stream read failure honestly
 }
 
+func readSourcePDFBounded(ctx context.Context, store objstore.Store, src registry.PaperSource) ([]byte, error) {
+	r, _, err := store.Get(ctx, src.ObjstoreKey)
+	if err != nil {
+		return nil, err
+	}
+	body, readErr := io.ReadAll(io.LimitReader(r, src.SizeBytes+1))
+	closeErr := r.Close()
+	if readErr != nil {
+		return nil, readErr
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	if int64(len(body)) != src.SizeBytes || paperbundle.SHA256(body) != src.Sha256 {
+		return nil, paperbundle.ErrIntegrity
+	}
+	return body, nil
+}
+
 // setSourcePDFHeaders stamps the shared caching/identity headers on the
 // response before ServeContent writes the body.
 func setSourcePDFHeaders(re *core.RequestEvent, src registry.PaperSource, name string) {
+	re.Response.Header().Set("Content-Type", "application/pdf")
+	re.Response.Header().Set("X-QAtlas-Source-Id", src.SourceID)
+	re.Response.Header().Set("X-QAtlas-Source-Origin", normalizedSourceOrigin(src.Origin))
 	re.Response.Header().Set("ETag", `"`+src.Sha256+`"`)
 	re.Response.Header().Set("X-QAtlas-Sha256", src.Sha256)
-	re.Response.Header().Set("Cache-Control", "private, max-age=86400")
+	re.Response.Header().Set("X-QAtlas-PDF-SHA256", src.Sha256)
+	re.Response.Header().Set("Cache-Control", "private, max-age=0, must-revalidate")
 	re.Response.Header().Set("Content-Disposition",
 		fmt.Sprintf("inline; filename=%q", sanitizeFilename(name)))
 }

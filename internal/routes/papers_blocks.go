@@ -21,6 +21,7 @@ package routes
 // stays forward-compatible.
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -80,6 +81,19 @@ func loadParseDoc(re *core.RequestEvent, store objstore.Store, catalog blockCata
 			"detail": "object store not configured on this server",
 		})
 		return rp, rev, nil, false
+	}
+	if cc, isContent := catalog.(contentCatalog); isContent {
+		_, published, bundleErr := cc.GetParseBundle(ctx, rp.canonical, revisionID)
+		if bundleErr != nil {
+			_ = contentAccessErrorResponse(re, bundleErr)
+			return rp, rev, nil, false
+		}
+		if published {
+			_, _, _, _, handled, bundleErr := pinnedContentBundle(re, &config.Config{PaperAccessEnabled: true}, store, cc, requestedID, revisionID)
+			if handled || bundleErr != nil {
+				return rp, rev, nil, false
+			}
+		}
 	}
 	data, err := blockReadVerified(ctx, store, rev.ObjstoreKey, rev.ArtifactSha256)
 	if err != nil {
@@ -376,6 +390,9 @@ func paperBlockGetHandler(re *core.RequestEvent, store objstore.Store, catalog b
 //	rasterizer not installed        → 503 (config hint)
 //	page beyond the source PDF      → 404
 func paperBlockImageHandler(re *core.RequestEvent, cfg *config.Config, store objstore.Store, catalog blockCatalog, requestedID, revisionID, pageBlockSeg string) error {
+	if !contentAccessEnabled(cfg) {
+		return re.JSON(http.StatusNotFound, map[string]string{"detail": "paper access disabled"})
+	}
 	pageIdx, blockIndex, ok := parsePageBlockSegments(pageBlockSeg)
 	if !ok {
 		return re.JSON(http.StatusBadRequest, map[string]string{
@@ -417,6 +434,16 @@ func paperBlockImageHandler(re *core.RequestEvent, cfg *config.Config, store obj
 		return re.JSON(http.StatusInternalServerError, map[string]string{
 			"detail": "parse revision " + rev.RevisionID + " references missing source " + rev.SourceID,
 		})
+	}
+	freezer, ok := catalog.(interface {
+		FreezePaperSource(context.Context, objstore.Store, registry.PaperSource) (registry.PaperSource, error)
+	})
+	if !ok {
+		return re.JSON(http.StatusServiceUnavailable, map[string]string{"detail": "content catalog unavailable"})
+	}
+	src, err = freezer.FreezePaperSource(ctx, store, src)
+	if err != nil {
+		return contentAccessErrorResponse(re, err)
 	}
 	pdfBytes, err := blockReadVerified(ctx, store, src.ObjstoreKey, src.Sha256)
 	if err != nil {
@@ -469,7 +496,7 @@ func paperBlockImageHandler(re *core.RequestEvent, cfg *config.Config, store obj
 	etag := blockImageETag(etagInput)
 	re.Response.Header().Set("ETag", `"`+etag+`"`)
 	re.Response.Header().Set("X-QAtlas-Source-Sha256", src.Sha256)
-	re.Response.Header().Set("Cache-Control", "private, max-age=86400")
+	re.Response.Header().Set("Cache-Control", "private, max-age=0, must-revalidate")
 	return re.Blob(http.StatusOK, "image/png", crop)
 }
 

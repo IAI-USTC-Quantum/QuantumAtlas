@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/ingest"
@@ -73,17 +74,10 @@ func paperAcquisition(
 				errText = job.Err.Error()
 			}
 		}
-	} else if asset != nil {
-		if asset.MinerUMDPath != "" {
-			state, phase, active = "done", "ready", false
-			if !asset.FetchedAt.IsZero() && !hasAcquisitionPhase(events, "ready") {
-				events = append(events, acquisitionEvent{Phase: "ready", State: "done", At: asset.FetchedAt})
-			}
-		} else if !active {
-			// A stored PDF is not evidence of an accepted conversion job.
-			// Preserve any actual ingestion progress already observed above.
-			state, phase = "idle", "waiting_mineru"
-		}
+	} else if asset != nil && !active {
+		// Historical markdown pointers do not establish complete content
+		// readiness. The next explicit content read will lazily parse the PDF.
+		state, phase = "idle", "waiting_mineru"
 	}
 
 	sort.SliceStable(events, func(a, b int) bool { return events[a].At.Before(events[b].At) })
@@ -130,6 +124,10 @@ func defaultAcquisitionAsset(assets []registry.Asset) *registry.Asset {
 func lookupConversion(p *registry.Paper, asset *registry.Asset, c *mineru.Converter) *mineru.Job {
 	if c == nil || asset == nil {
 		return nil
+	}
+	if parts := strings.Split(asset.PDFPath, "/"); len(parts) == 4 && parts[0] == "content" && parts[1] == p.PaperID {
+		job, _ := c.LookupSource(p.PaperID, parts[2])
+		return job
 	}
 	if asset.Source == "published" && p.DOI != "" {
 		job, _ := c.LookupDOI(p.DOI)

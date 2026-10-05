@@ -88,6 +88,9 @@ func parseStatusBatchIDs(raw string) []string {
 // identity and probes its assets. It never fails: lookup / probe errors
 // land in the entry's Error field so one bad id cannot blank the batch.
 func paperStatusEntryFor(ctx context.Context, catalog paperCatalog, store objstore.Store, converter *mineru.Converter, requestedID string) paperStatusEntry {
+	if cc, ok := catalog.(contentCatalog); ok {
+		return frozenPaperStatus(ctx, cc, store, converter, requestedID)
+	}
 	e := paperStatusEntry{RequestedID: requestedID}
 	ident := normalizeIDForDispatch(strings.TrimSpace(requestedID))
 
@@ -227,11 +230,9 @@ func arxivAssetStatus(ctx context.Context, store objstore.Store, converter *mine
 		if job, ok := converter.Lookup(canonical); ok {
 			state, phase = string(job.State), string(job.Phase)
 			if job.State == mineru.JobStateDone {
-				// Job finished but the bytes are gone (race with delete)
-				// — same cached answer the single-id handler gives.
-				state, phase = "cached", string(mineru.PhaseReady)
+				state, phase = "none", ""
 			}
-			return mdReady, pdfReady || job.Phase == mineru.PhaseConvertingMD || job.State == mineru.JobStateDone, state, phase, nil
+			return mdReady, pdfReady, state, phase, nil
 		}
 	}
 	if pdfReady && converter != nil && !converter.Enabled() {
@@ -252,9 +253,8 @@ func hasDOIJob(converter *mineru.Converter, doi string, st *paperAssetStatus) bo
 	}
 	st.State, st.Phase = string(job.State), string(job.Phase)
 	if job.State == mineru.JobStateDone {
-		st.State, st.Phase = "cached", string(mineru.PhaseReady)
-		st.MdReady = true
+		st.State, st.Phase = "none", ""
 	}
-	st.PdfReady = st.PdfReady || job.Phase == mineru.PhaseConvertingMD || job.State == mineru.JobStateDone
+	// Only durable verified bundles can set readiness, never a process snapshot.
 	return true
 }

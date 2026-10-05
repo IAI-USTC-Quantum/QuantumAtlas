@@ -42,18 +42,18 @@ func docHealthCheck() {}
 // @Summary     Server info
 // @Description Capability discovery: mode / version / engine plus a
 // @Description capabilities block — paper_access, markdown_delivery,
-// @Description pdf_delivery (always false — the /pdf endpoint answers
-// @Description 410 by design), agentic_search, and a nested mineru
+// @Description pdf_delivery (available when paper_access is enabled;
+// @Description stored PDF delivery requires no MinerU token), agentic_search, and a nested mineru
 // @Description object (enabled / on_demand). Privacy mirrors /api/health:
 // @Description anonymous callers see the booleans only; authenticated
 // @Description callers (system PAT or session) additionally get
 // @Description mineru.daily_cap and mineru.converted_today from the
 // @Description batch-scheduler snapshot. Note the quota semantics:
-// @Description daily_cap self-limits the nightly BATCH scheduler
-// @Description (default 4000/day, reserving headroom for interactive
-// @Description traffic); on-demand conversions triggered by GET
-// @Description /markdown are NOT counted against it — they only share
-// @Description the upstream per-token daily quota.
+// @Description daily_cap bounds explicit operator/manual batch runs;
+// @Description there is no automatic nightly, boot, PDF-ingest or bulk
+// @Description conversion. Only explicit content access triggers lazy
+// @Description source-bound inference; stored PDF reads are token-independent.
+// @Description Manual and on-demand work still share upstream token quotas.
 // @Tags        System
 // @Produce     json
 // @Success     200 {object} map[string]interface{}
@@ -394,25 +394,28 @@ func docPapersList() {}
 // @Router      /api/papers/{paper_id} [get]
 func docPaperDetail() {}
 
-// paperImages lists one paper's image files from the object store, on demand.
+// paperImages lists original image members from one complete immutable bundle.
 //
-// @Summary     List paper images
-// @Description Lists the image objects of every asset of the paper,
-// @Description fetched on demand from the images bucket (no separate sync
-// @Description listing exists). Each asset reports kind "zip" (single
-// @Description images zip) or "dir" (per-paper directory) depending on the
-// @Description layout found, its files, and whether the 200-object cap
-// @Description truncated the listing. Empty files when the asset has no
-// @Description images. Requires the papers:read scope.
+// @Summary     List source/revision-pinned paper images
+// @Description Requires paper_access.enabled and papers:read for every identity. Original producer-relative names, SHA and authenticated revision/member URLs come from a verified manifest, never old image buckets. No-pin unready content may return202; only content GET can trigger lazy parsing. Metadata registry listings are separate from this gated content inventory.
 // @Tags        Papers
 // @Produce     json
 // @Security    BearerAuth
-// @Param       paper_id path string true "surrogate paper id (qa_...)"
-// @Success     200 {object} map[string]interface{} "{paper_id, assets:[{asset_id, source, arxiv_version, kind, files:[{key,size}], truncated}]}"
+// @Param       paper_id path string true "paper id: qa_... | arXiv id | DOI"
+// @Param       source_id query string false "exact source; mutually exclusive with version"
+// @Param       version query string false "exact semantic arXiv vN"
+// @Param       revision query string false "complete immutable revision"
+// @Success     200 {object} map[string]interface{} "{paper_id,source_id,revision,files:[{key,name,size,sha256,url}],truncated:false,assets}"
+// @Success     202 {object} map[string]interface{} "source-specific parse pending"
+// @Header      202 {string} Operation-Location "pure readiness poll URL"
+// @Header      202 {string} Retry-After "poll delay in seconds"
+// @Failure     400 {object} map[string]string
 // @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string
-// @Failure     404 {object} map[string]string
-// @Failure     503 {object} map[string]string "registry unavailable"
+// @Failure     404 {object} map[string]string "disabled or exact pins missing"
+// @Failure     409 {object} map[string]string
+// @Failure     422 {object} map[string]string
+// @Failure     503 {object} map[string]string
 // @Router      /api/papers/{paper_id}/images [get]
 func docPaperImages() {}
 
@@ -498,141 +501,155 @@ func docPaperLookup() {}
 // @Router      /api/papers/match [post]
 func docPaperMatch() {}
 
-// paperResources stanzas were removed in v0.9.0 — the server no longer
-// serves PDF or image bytes outbound by default. paperMarkdown /
-// paperMarkdownStatus / paperPDF / paperPDFStatus / paperImagesZip are
-// conditional on QATLAS_PAPER_ACCESS_ENABLED=true (default off). The
-// /pdf endpoint itself now always answers 410 Gone (PDF delivery
-// disabled, plan §B); only its side-effect-free status probe remains.
-// See the RegisterPapers doc comment for the compliance rationale.
+// Content delivery is conditional on paper_access.enabled (default off).
+// The gate covers PDF, read, original JSON/bundle members, block originals,
+// figures and images for canonical IDs and aliases alike. Disabled => 404
+// without catalog/storage/parse side effects; metadata is not byte delivery.
+// Stored PDFs do not need parse tokens. See docs/server/paper-content.md.
 
-// paperMarkdown serves the cached markdown bytes for a paper.
+// paperMarkdown serves the original Markdown member of a complete bundle.
 //
-// @Summary     Get paper markdown
-// @Description Returns the cached MinerU markdown for the given arxiv id
-// @Description (or DOI — the id_or_doi path component is auto-detected
-// @Description against the IANA prefix `10.<registrant>/...`). A qa_
-// @Description paper_id is also accepted: the server resolves the
-// @Description surrogate to the paper's canonical identity (pinned to
-// @Description the highest ingested arXiv version; DOI-only papers are
-// @Description served from the DOI namespace). Only
-// @Description registered when QATLAS_PAPER_ACCESS_ENABLED=true on the
-// @Description server (default off).
-// @Description
-// @Description Canonical resolution: a `:PaperWork` node with
-// @Description `identifier_scheme='doi'` ALWAYS wins over its arxiv
-// @Description twin when both exist — DOI is the canonical identity of
-// @Description the published version. The dispatcher serves DOI bytes
-// @Description for either id form when a DOI contribution is on file;
-// @Description pass `?force_arxiv=1` to opt out per request (DOI input
-// @Description with force_arxiv + no arxiv twin returns 409). See
-// @Description docs/server/upload-api.md §Canonical resolution.
-// @Description
-// @Description Long-running operation semantics: on cache miss the
-// @Description server may transparently fetch the PDF from arxiv.org
-// @Description (silent_fetch) — or, for a DOI without an arXiv twin,
-// @Description from the open-access PDF URL OpenAlex surfaces
-// @Description (best_oa_location.pdf_url) — and trigger a MinerU
-// @Description conversion. The first call returns 202 with
-// @Description `Operation-Location:
-// @Description /api/papers/{id}/markdown/status` and `Retry-After: 5`;
-// @Description clients poll the status endpoint until state=cached then
-// @Description re-GET this resource for the bytes. A DOI with no arXiv
-// @Description twin and no OA PDF stays 404 (contribute the PDF via
-// @Description POST /api/papers/{doi}/upload-pdf).
-// @Description
-// @Description Transport (ADR 0011): markdown DEFAULTS to a byte stream
-// @Description (text/markdown). Pass `?format=link` to instead receive a
-// @Description JSON body with a short-lived RustFS direct link
-// @Description (`{markdown_url, format:"link", expires_in}`); on a backend
-// @Description that cannot presign (dev LocalStore) a link request
-// @Description transparently falls back to bytes.
+// @Summary     Get source/revision-pinned Markdown
+// @Description Requires paper_access.enabled and papers:read for canonical IDs and aliases. Uses a verified complete immutable bundle of the exact frozen source, not legacy MD/JSON/images. Original Markdown bytes are preserved (this is not /read's derived JSON). Missing no-pin content may start lazy parsing and return 202; explicit pins never repair/fall back. Only content access triggers inference, never nightly/boot/ingest.
+// @Description format=link returns an authenticated same-origin /parses/{revision}/files/{original_path} locator, not a private NAS/S3 presign. Every follow-up download remains gated/authenticated. Poll Operation-Location read/status until verified ready, then re-GET with source/revision pins.
 // @Tags        Papers
 // @Produce     plain
 // @Security    BearerAuth
-// @Param       id_or_doi path string true "arXiv canonical id with vN suffix, or a DOI (e.g. 10.1103/PhysRevLett.103.150502)"
-// @Param       force_arxiv query string false "1/true: bypass the DOI-canonical default and serve the arxiv twin (or 409 if no twin exists)"
-// @Param       format query string false "link|bytes — override the default transport (markdown defaults to bytes)"
-// @Success     200 {string} string "markdown bytes (text/markdown), or a JSON {markdown_url} when ?format=link"
-// @Success     202 {object} map[string]interface{} "long-running operation started; poll status_url"
-// @Failure     400 {object} map[string]string "invalid arxiv_id or DOI"
-// @Failure     401 {object} map[string]string
-// @Failure     403 {object} map[string]string
-// @Failure     404 {object} map[string]interface{} "DOI unknown to OpenAlex / no arXiv twin and no OA PDF (contrib upload possible); or paper unknown and silent fetch unavailable"
-// @Failure     409 {object} map[string]interface{} "force_arxiv requested but DOI has no arxiv twin"
-// @Failure     502 {object} map[string]interface{} "prior conversion failed inside the cooldown window, or OpenAlex upstream error"
-// @Failure     503 {object} map[string]interface{} "asset storage unavailable (code=asset_store_unavailable, retryable=true, Retry-After); cache-only mode or DOI resolution unavailable"
-// @Router      /api/papers/{id_or_doi}/markdown [get]
-func docPaperMarkdown() {}
-
-// paperMarkdownStatus reports current markdown / conversion state.
-//
-// @Summary     Get markdown conversion status
-// @Description Side-effect-free poll surface. Never starts a job and
-// @Description never triggers a fetch. Only registered when
-// @Description QATLAS_PAPER_ACCESS_ENABLED=true on the server. Like the
-// @Description markdown endpoint, the id may be an arXiv id, a DOI, or
-// @Description a qa_ paper_id.
-// @Description
-// @Description Canonical resolution: same DOI-wins rule as
-// @Description /api/papers/{id_or_doi}/markdown. Pass `?force_arxiv=1`
-// @Description to query the arxiv-side status instead.
-// @Description
-// @Description Response shape always carries the agent-decision triple
-// @Description `state / pdf_ready / md_ready` plus an optional `phase`
-// @Description (fetching_pdf | converting_md | ready | error_fetching |
-// @Description error_converting) and `fetch` / `convert` sub-objects
-// @Description with bytes_received / mineru_task_id / polled_count so a
-// @Description polling client can show precise progress.
-// @Tags        Papers
-// @Produce     json
-// @Security    BearerAuth
-// @Param       id_or_doi path string true "arXiv canonical id or DOI"
-// @Param       force_arxiv query string false "1/true: bypass DOI-canonical default"
-// @Success     200 {object} map[string]interface{} "status payload (state ∈ cached|queued|running|none|failed|cooldown|unavailable)"
+// @Param       id_or_doi path string true "paper id: qa_... | arXiv id | DOI"
+// @Param       source_id query string false "exact frozen source; mutually exclusive with version"
+// @Param       version query string false "exact semantic arXiv vN"
+// @Param       revision query string false "immutable complete parse revision"
+// @Param       format query string false "bytes (default) or authenticated internal link"
+// @Success     200 {string} string "original Markdown bytes or source/revision-pinned link JSON"
+// @Success     202 {object} map[string]interface{} "pending source-specific parsing"
+// @Header      202 {string} Operation-Location "pure readiness poll URL"
+// @Header      202 {string} Retry-After "poll delay in seconds"
 // @Failure     400 {object} map[string]string
 // @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string
-// @Failure     404 {object} map[string]string "paper unknown and silent fetch unavailable"
-// @Failure     503 {object} map[string]interface{} "asset storage unavailable; retryable=true with Retry-After"
-// @Router      /api/papers/{id_or_doi}/markdown/status [get]
-func docPaperMarkdownStatus() {}
+// @Failure     404 {object} map[string]string "disabled or exact pins/members missing"
+// @Failure     409 {object} map[string]string "source/revision conflict"
+// @Failure     422 {object} map[string]string "immutable content integrity failure"
+// @Failure     503 {object} map[string]string "backend or parser unavailable"
+// @Router      /api/papers/{id_or_doi}/markdown [get]
+func docPaperMarkdown() {}
 
-// paperPDF is disabled: PDF delivery was turned off in favour of the
-// markdown endpoint, so the route now always answers 410 Gone.
+// paperMarkdownStatus shares the pure source-specific complete-bundle poll.
 //
-// @Summary     Get paper PDF (disabled — 410 Gone)
-// @Description PDF delivery is disabled. This endpoint no longer
-// @Description serves PDF bytes (or direct links) in any state: it
-// @Description validates the id and always returns 410 Gone with
-// @Description `{"detail": "PDF delivery is disabled; use the markdown
-// @Description endpoint instead"}`. Use
-// @Description /api/papers/{id_or_doi}/markdown instead. The id may be
-// @Description an arXiv id, a DOI, or a qa_ paper_id (resolved to the
-// @Description canonical identity first). Only registered when
-// @Description QATLAS_PAPER_ACCESS_ENABLED=true on the server.
+// @Summary     Get complete Markdown readiness status
+// @Description Same gate/auth/pure verified bundle readiness as /read/status. Never downloads or starts parsing. Historical MD/Middle or process Done alone is not readiness. Returns top-level source_id/revision pins and ready/state; pending may be 202 with Operation-Location and Retry-After. Compatibility flags may additionally include pdf_ready/md_ready.
 // @Tags        Papers
 // @Produce     json
 // @Security    BearerAuth
-// @Param       id_or_doi path string true "arXiv canonical id with vN suffix, or a DOI"
-// @Param       force_arxiv query string false "1/true: bypass DOI-canonical default; return 409 if DOI has no arxiv twin"
-// @Success     410 {object} map[string]string "PDF delivery is disabled; use the markdown endpoint instead"
-// @Failure     400 {object} map[string]string "invalid arxiv_id or DOI"
+// @Param       id_or_doi path string true "paper id: qa_... | arXiv id | DOI"
+// @Param       source_id query string false "exact frozen PDF source"
+// @Param       revision query string false "immutable complete parse revision"
+// @Success     200 {object} map[string]interface{} "source/revision-pinned readiness payload"
+// @Success     202 {object} map[string]interface{} "source-specific operation pending"
+// @Header      202 {string} Operation-Location "pure readiness poll URL"
+// @Header      202 {string} Retry-After "poll delay in seconds"
+// @Failure     400 {object} map[string]string
 // @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string
-// @Failure     409 {object} map[string]interface{} "force_arxiv requested but DOI has no arxiv twin"
-// @Failure     502 {object} map[string]interface{} "OpenAlex upstream error (DOI dispatch)"
-// @Failure     503 {object} map[string]interface{} "DOI resolution unavailable"
+// @Failure     404 {object} map[string]string "disabled or exact pins missing"
+// @Failure     409 {object} map[string]string
+// @Failure     422 {object} map[string]string
+// @Failure     503 {object} map[string]string
+// @Router      /api/papers/{id_or_doi}/markdown/status [get]
+func docPaperMarkdownStatus() {}
+
+// paperPDF streams an authenticated, immutable source PDF.
+//
+// @Summary     Get source-pinned paper PDF
+// @Description Requires paper_access.enabled and papers:read for every ID, including qa_ aliases and Range. Disabled returns 404, not 410. Direct access does not require source-list rows first: a legacy PDF may be lazily frozen; no old MD/JSON/images are copied. Stored PDF retrieval requires no MinerU token or parsing. Frozen missing/corrupt bytes fail closed, never fall back to legacy/current/latest bytes.
+// @Description source_id and version are mutually exclusive exact pins. arXiv vN is semantic source origin, not S3VersionId. Same paper/SHA may reuse a source ID. Explicit pin mismatch or ambiguity never substitutes a source/version. Full response SHA headers describe the whole PDF, not a partial Range.
+// @Tags        Papers
+// @Produce     application/pdf
+// @Security    BearerAuth
+// @Param       id_or_doi path string true "paper id: qa_... | arXiv id | DOI"
+// @Param       source_id query string false "exact source PDF id; mutually exclusive with version"
+// @Param       version query string false "exact semantic arXiv version vN; not an S3 VersionId"
+// @Param       format query string false "bytes (default) or link: same-origin authenticated pinned PDF locator, never bucket presign"
+// @Param       Range header string false "standard bytes range; same authentication as full GET"
+// @Success     200 {file} binary "source PDF original bytes"
+// @Success     206 {file} binary "authenticated partial content"
+// @Header      200 {string} X-QAtlas-Paper-Id "canonical paper id"
+// @Header      200 {string} X-QAtlas-Resolved-Id "resolved canonical identity"
+// @Header      200 {string} X-QAtlas-Source-Id "immutable PDF source id"
+// @Header      200 {string} X-QAtlas-Source-Origin "semantic origin, e.g. arxiv:v2"
+// @Header      200 {string} X-QAtlas-Sha256 "whole PDF SHA-256"
+// @Header      200 {string} X-QAtlas-PDF-SHA256 "whole PDF SHA-256"
+// @Failure     400 {object} map[string]string "malformed or mutually exclusive query pins"
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Failure     404 {object} map[string]string "paper access disabled or exact source/version/bytes missing"
+// @Failure     409 {object} map[string]string "ambiguous source or identity conflict"
+// @Failure     416 {object} map[string]string "invalid byte range"
+// @Failure     422 {object} map[string]string "frozen PDF integrity mismatch"
+// @Failure     503 {object} map[string]string "registry/store unavailable"
 // @Router      /api/papers/{id_or_doi}/pdf [get]
 func docPaperPDF() {}
+
+// paperRead returns a resumable Middle-derived reading envelope.
+//
+// @Summary     Read paper content with immutable pins and continuation
+// @Description Requires paper_access.enabled and papers:read. This is derived Markdown-reading JSON, NOT raw Middle or Structured Content. Returns paper_id/source_id/revision/source_sha256/artifact_sha256/bundle_sha256?/renderer/format/content, request_scope, content_ranges, truncated, next_request and warnings?. page and block are 1-based exact producer indexes (not array offsets); block requires page. limit is a Unicode content budget, default 30000, max 100000.
+// @Description An opaque cursor pins canonical paper/source/revision, PDF/Middle/bundle hashes, renderer and selection. Cursor-only resolves pins BEFORE selecting current; conflicting explicit pins/selectors are 409. Pinned failures never trigger repair, reparse, fallback or a current/latest substitution. Only content GET without a fixed revision/cursor may parse the selected verified source. source_id pins PDF, not a parse revision; absent PDF acquisition requires no source/revision/cursor pin. Old MD/JSON/images are ignored; legacy PDFs may be lazily frozen without deleting old storage.
+// @Description Pending work returns 202 + Operation-Location=/api/papers/{canonical}/read/status?source_id=S once the source is known (otherwise retains the exact requested DOI/arXiv identity), plus Retry-After. Poll status without starting another job; only verified complete bundle readiness, not process Done or historical Middle existence, permits re-GET with fixed source/revision.
+// @Tags        Papers
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id path string true "paper id: qa_... | arXiv id | DOI"
+// @Param       source_id query string false "exact PDF source id; mutually exclusive with version"
+// @Param       version query string false "exact semantic arXiv vN source pin"
+// @Param       revision query string false "immutable parse revision pin"
+// @Param       page query int false "1-based page number" minimum(1)
+// @Param       block query int false "1-based exact producer block index; requires page" minimum(1)
+// @Param       cursor query string false "opaque next_request.cursor; pinned revision loaded before current"
+// @Param       limit query int false "Unicode character budget" default(30000) minimum(1) maximum(100000)
+// @Success     200 {object} map[string]interface{} "Middle-derived reading envelope; truncated=true includes next_request.cursor"
+// @Success     202 {object} map[string]interface{} "source-pinned operation pending"
+// @Header      202 {string} Operation-Location "pure status poll URL"
+// @Header      202 {string} Retry-After "poll delay in seconds"
+// @Failure     400 {object} map[string]string "malformed query/cursor or invalid bounds"
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Failure     404 {object} map[string]string "paper access disabled or exact pins/members missing"
+// @Failure     409 {object} map[string]string "pin/selection/renderer/hash identity conflict"
+// @Failure     422 {object} map[string]string "frozen bytes or bundle integrity failure"
+// @Failure     503 {object} map[string]string "backend or parser unavailable"
+// @Router      /api/papers/{id}/read [get]
+func docPaperRead() {}
+
+// @Summary     Poll source-specific paper reading readiness
+// @Description Pure status request: never calls EnsureSource, downloads or starts parsing. Gate and auth match /read. Verifies frozen source and the published complete manifest/members. Historical Middle or a process Done flag is not readiness. Returns top-level paper_id/source_id/source_sha256/revision/state/ready; ready is 200, queued/running/pending may be 202 with the same Operation-Location and Retry-After. Explicit pins never fall back.
+// @Tags        Papers
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id path string true "paper id: qa_... | arXiv id | DOI"
+// @Param       source_id query string false "exact PDF source id"
+// @Param       revision query string false "immutable parse revision pin"
+// @Success     200 {object} map[string]interface{} "{paper_id,source_id,source_sha256,revision,state,ready,md_ready,pdf_ready,read_url,markdown_url}; cached|failed|none"
+// @Success     202 {object} map[string]interface{} "{paper_id,source_id,source_sha256,revision,state,ready:false}; pending|queued|running"
+// @Header      202 {string} Operation-Location "same status URL"
+// @Header      202 {string} Retry-After "poll delay in seconds"
+// @Failure     400 {object} map[string]string
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Failure     404 {object} map[string]string "disabled or specified pins missing"
+// @Failure     409 {object} map[string]string "source/revision identity conflict"
+// @Failure     422 {object} map[string]string "bundle/source integrity failure"
+// @Failure     503 {object} map[string]string "backend unavailable"
+// @Router      /api/papers/{id}/read/status [get]
+func docPaperReadStatus() {}
 
 // paperPDFStatus reports current PDF / fetch state.
 //
 // @Summary     Get PDF fetch status
 // @Description Side-effect-free probe reporting the pdf_ready /
-// @Description md_ready booleans for a paper. Retained for debugging
-// @Description after PDF delivery was disabled (GET .../pdf answers
-// @Description 410 Gone); the body no longer carries a pdf_url. The id
+// @Description md_ready booleans for a paper. This compatibility probe
+// @Description does not start parsing; direct /pdf now serves authenticated
+// @Description immutable bytes. The body carries no bucket/presigned URL. The id
 // @Description may be an arXiv id, a DOI, or a qa_ paper_id. Only
 // @Description registered when QATLAS_PAPER_ACCESS_ENABLED=true.
 // @Description
@@ -652,106 +669,79 @@ func docPaperPDF() {}
 // @Router      /api/papers/{id_or_doi}/pdf/status [get]
 func docPaperPDFStatus() {}
 
-// paperImagesZip downloads the paper's images bundle (one zip produced
-// by the MinerU conversion).
+// paperImagesZip packages original image members from a complete bundle.
 //
-// @Summary     Get paper images zip
-// @Description Returns the images zip (application/zip) for the given
-// @Description arxiv id or DOI — the bundle the MinerU conversion
-// @Description produced alongside the markdown. The id may also be a
-// @Description qa_ paper_id (resolved to the canonical identity
-// @Description first). Only registered when
-// @Description QATLAS_PAPER_ACCESS_ENABLED=true on the server.
-// @Description
-// @Description Canonical resolution: same DOI-wins rule as
-// @Description /api/papers/{id_or_doi}/markdown; pass `?force_arxiv=1`
-// @Description to opt out per request.
-// @Description
-// @Description This endpoint has no long-running-operation semantics:
-// @Description when no images zip is stored it answers 404 (fetch
-// @Description /markdown first to trigger the conversion that produces
-// @Description the images).
-// @Description
-// @Description Transport (ADR 0011): defaults to a byte stream
-// @Description (application/zip). Pass `?format=link` to instead
-// @Description receive a JSON body with a short-lived RustFS direct
-// @Description link (`{images_url, format:"link", expires_in}`); on a
-// @Description backend that cannot presign (dev LocalStore) a link
-// @Description request transparently falls back to bytes. Any other
-// @Description ?format= value is a 400.
+// @Summary     Get source/revision-pinned images ZIP
+// @Description Requires paper_access.enabled and papers:read for every identity. Uses verified original members of a complete immutable bundle; legacy image buckets/ZIPs are ignored. Preserves producer-relative member names/bytes. No-pin missing content may return 202 and start lazy parsing; poll the shared pure read/status until ready then re-GET pinned source/revision. Does not expose NAS/S3 presigns.
 // @Tags        Papers
 // @Produce     application/zip
 // @Security    BearerAuth
-// @Param       id_or_doi path string true "arXiv canonical id with vN suffix, or a DOI"
-// @Param       force_arxiv query string false "1/true: bypass DOI-canonical default; return 409 if DOI has no arxiv twin"
-// @Param       format query string false "link|bytes — override the default transport (images zip defaults to bytes)"
-// @Success     200 {string} string "images zip bytes (application/zip), or a JSON {images_url} when ?format=link"
-// @Failure     400 {object} map[string]string "invalid arxiv_id or DOI, or invalid ?format= value"
+// @Param       id_or_doi path string true "paper id: qa_... | arXiv id | DOI"
+// @Param       source_id query string false "exact source; mutually exclusive with version"
+// @Param       version query string false "exact semantic arXiv vN"
+// @Param       revision query string false "complete immutable parse revision"
+// @Success     200 {file} binary "images ZIP assembled from verified original members"
+// @Success     202 {object} map[string]interface{} "source-specific parse pending"
+// @Header      202 {string} Operation-Location "pure readiness poll URL"
+// @Header      202 {string} Retry-After "poll delay in seconds"
+// @Failure     400 {object} map[string]string
 // @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string
-// @Failure     404 {object} map[string]string "no images available (fetch /markdown first to trigger conversion)"
-// @Failure     409 {object} map[string]interface{} "force_arxiv requested but DOI has no arxiv twin"
-// @Failure     503 {object} map[string]interface{} "DOI resolution unavailable"
+// @Failure     404 {object} map[string]string "disabled or exact pins/members missing"
+// @Failure     409 {object} map[string]string
+// @Failure     422 {object} map[string]string
+// @Failure     503 {object} map[string]string
 // @Router      /api/papers/{id_or_doi}/images/zip [get]
 func docPaperImagesZip() {}
 
-// paperFigures returns the figure/caption index extracted from the
-// paper's MinerU markdown.
+// paperFigures derives a figure/caption index from a verified bundle.
 //
-// @Summary     Get paper figures index
-// @Description Groups the markdown's image references into figures:
-// @Description consecutive `![](images/<sha256>.<ext>)` lines form one
-// @Description multi-panel figure sharing a caption (searched up to 12
-// @Description lines below the group, then 4 lines above). Each figure
-// @Description reports its number, caption, the preceding prose line as
-// @Description context (≤200 runes) and its image files with sizes plus
-// @Description per-image download URLs; images no figure references come
-// @Description back as unmatched_images, and image_count is the total
-// @Description listed. Sizes come from the images zip's central
-// @Description directory (no member decompression) or the legacy
-// @Description per-paper directory listing. A paper with no markdown
-// @Description answers 200 with markdown_ready:false and empty figures
-// @Description (its conversion has not produced markdown yet). The id
-// @Description may be a qa_ surrogate, an arXiv id, or a DOI; arXiv/DOI
-// @Description forms are only dispatched when
-// @Description QATLAS_PAPER_ACCESS_ENABLED=true.
+// @Summary     Get source/revision-pinned figures index
+// @Description Requires paper_access.enabled and papers:read for every ID including qa_. Uses original Markdown and manifest image members from one verified complete bundle. Member URLs target authenticated immutable /parses/{revision}/files/{original_path}, never flattened hashes or NAS presigns. No-pin missing content may be 202; poll shared read/status then re-GET source/revision pinned.
 // @Tags        Papers
 // @Produce     json
 // @Security    BearerAuth
 // @Param       id path string true "paper id: qa_... | arXiv id | DOI"
-// @Success     200 {object} map[string]interface{} "{paper_id, resolved_id, markdown_ready, figures:[{fig_no, caption, context, images:[{name,size,url}]}], unmatched_images:[{name,size,url}], image_count}"
-// @Failure     400 {object} map[string]string "unrecognized paper id"
+// @Param       source_id query string false "exact source; mutually exclusive with version"
+// @Param       version query string false "exact semantic arXiv vN"
+// @Param       revision query string false "complete immutable revision"
+// @Success     200 {object} map[string]interface{} "{paper_id,resolved_id,source_id,revision,markdown_ready,figures,unmatched_images,image_count}"
+// @Success     202 {object} map[string]interface{} "source-specific parse pending"
+// @Header      202 {string} Operation-Location "pure readiness poll URL"
+// @Header      202 {string} Retry-After "poll delay in seconds"
+// @Failure     400 {object} map[string]string
 // @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string
-// @Failure     404 {object} map[string]string "no such paper"
-// @Failure     503 {object} map[string]string "registry unavailable"
+// @Failure     404 {object} map[string]string "disabled or exact pins/members missing"
+// @Failure     409 {object} map[string]string
+// @Failure     422 {object} map[string]string
+// @Failure     503 {object} map[string]string
 // @Router      /api/papers/{id}/figures [get]
 func docPaperFigures() {}
 
-// paperImageGet streams one extracted image of a paper.
+// paperImageGet serves one original image member from a verified bundle.
 //
-// @Summary     Get paper image
-// @Description Serves a single MinerU-extracted image (content-addressed
-// @Description `<sha256>.<jpg|jpeg|png|gif|webp>`) without downloading
-// @Description the whole images zip — the URLs in the figures index and
-// @Description the images listing point here. Bytes come from the
-// @Description paper's images zip (member extracted in memory) or its
-// @Description legacy per-paper directory. Responses are immutable
-// @Description content-addressed files and carry
-// @Description `Cache-Control: public, max-age=86400`. The id may be a
-// @Description qa_ surrogate, an arXiv id, or a DOI; arXiv/DOI forms are
-// @Description only dispatched when QATLAS_PAPER_ACCESS_ENABLED=true.
+// @Summary     Get source/revision-pinned image
+// @Description Requires paper_access.enabled and papers:read for every identity. Resolves the original producer-relative image path inside one complete immutable bundle, without flattening names or guessing another revision. No-pin unready content may return202; poll shared read/status then re-GET fixed source/revision. Downloads remain authenticated and private/no-cache; no public NAS presigns. Exact pins/missing members never fall back.
 // @Tags        Papers
-// @Produce     image/jpeg
+// @Produce     application/octet-stream
 // @Security    BearerAuth
 // @Param       id path string true "paper id: qa_... | arXiv id | DOI"
-// @Param       name path string true "image file name: <sha256-hex>.<jpg|jpeg|png|gif|webp>"
-// @Success     200 {file} binary "image bytes with the per-extension Content-Type"
-// @Failure     400 {object} map[string]string "name is not a whitelisted image file name"
+// @Param       name path string true "original relative image name/path from figures or manifest"
+// @Param       source_id query string false "exact source; mutually exclusive with version"
+// @Param       version query string false "exact semantic arXiv vN"
+// @Param       revision query string false "complete immutable revision"
+// @Success     200 {file} binary "verified original image bytes"
+// @Success     202 {object} map[string]interface{} "source-specific parse pending"
+// @Header      202 {string} Operation-Location "pure readiness poll URL"
+// @Header      202 {string} Retry-After "poll delay in seconds"
+// @Failure     400 {object} map[string]string
 // @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string
-// @Failure     404 {object} map[string]string "no such paper, or the paper's images hold no such member"
-// @Failure     503 {object} map[string]string "registry unavailable"
+// @Failure     404 {object} map[string]string "disabled or exact pins/member missing"
+// @Failure     409 {object} map[string]string
+// @Failure     422 {object} map[string]string
+// @Failure     503 {object} map[string]string
 // @Router      /api/papers/{id}/images/{name} [get]
 func docPaperImageGet() {}
 
@@ -793,8 +783,8 @@ func docPaperSourcesList() {}
 // @Description full GETs. ?version=vN is a pin, not a hint: on mismatch
 // @Description with the source's own origin the answer is 404 — the
 // @Description server never substitutes a newer version or the journal
-// @Description edition. This is the block-comments reading surface; the
-// @Description legacy /api/papers/{id}/pdf route stays 410.
+// @Description edition. Requires paper_access.enabled even for historical
+// @Description sources; /api/papers/{id}/pdf is the direct alias-aware source-pin entry point.
 // @Tags        BlockComments
 // @Produce     application/pdf
 // @Security    BearerAuth
@@ -842,7 +832,7 @@ func docPaperParsesList() {}
 // @Description row pins; the server verifies the stored bytes against
 // @Description it before serving (a mismatch is a 500, never silent).
 // @Description Revisions are immutable: the bytes for a revision_id
-// @Description never change. Requires login or papers:read.
+// @Description never change. Requires paper_access.enabled plus login/papers:read. Historical pinned Middle remains available for old comments, but is not evidence that a new complete bundle is ready; use /read for the derived view or /manifest and /files/{path} for all producer originals.
 // @Tags        BlockComments
 // @Produce     json
 // @Security    BearerAuth
@@ -857,6 +847,45 @@ func docPaperParsesList() {}
 // @Router      /api/papers/{paper_id}/parses/{revision}/json [get]
 func docPaperParseJSON() {}
 
+// @Summary     Get immutable complete-bundle manifest
+// @Description Requires paper_access.enabled and papers:read; only published complete new bundles are accepted. Verifies exact frozen source, manifest and every original member before serving. Manifest is generated separately from originals: version,paper_id,source_id,revision_id,source_pdf_sha256,middle_path,markdown_path,files[{path,size_bytes,sha256}]. Old historical Middle alone is not bundle readiness. Never repairs or falls back to current.
+// @Tags        Papers
+// @Produce     json
+// @Security    BearerAuth
+// @Param       paper_id path string true "paper id or resolvable alias"
+// @Param       revision path string true "immutable complete parse revision"
+// @Param       source_id query string false "optional exact source consistency pin"
+// @Success     200 {file} binary "generated manifest JSON bytes, ETag is manifest SHA-256"
+// @Failure     400 {object} map[string]string
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Failure     404 {object} map[string]string "disabled or exact published bundle missing"
+// @Failure     409 {object} map[string]string "source/revision conflict"
+// @Failure     422 {object} map[string]string "bundle/source integrity failure"
+// @Failure     503 {object} map[string]string "backend unavailable"
+// @Router      /api/papers/{paper_id}/parses/{revision}/manifest [get]
+func docPaperBundleManifest() {}
+
+// @Summary     Get a producer-original immutable bundle member
+// @Description Requires paper_access.enabled and papers:read; serves the exact original relative member path, including nested directories and all JSON/Markdown/images/unknown valid files. No renaming, flattening or JSON reserialization. Verifies the complete published manifest/source/members and the selected member SHA before bytes; exact pins never fall back. Unknown/untrusted types use attachment+nosniff, allowlisted raster images may be inline. Generated manifest lives separately from producer files. No raw S3 presigns.
+// @Tags        Papers
+// @Produce     application/octet-stream
+// @Security    BearerAuth
+// @Param       paper_id path string true "paper id or resolvable alias"
+// @Param       revision path string true "immutable complete parse revision"
+// @Param       path path string true "original producer relative member path, may contain /; as listed by manifest"
+// @Param       source_id query string false "optional exact source consistency pin"
+// @Success     200 {file} binary "byte-exact original member; ETag is member SHA-256"
+// @Failure     400 {object} map[string]string "unsafe member path"
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
+// @Failure     404 {object} map[string]string "disabled, pins missing or member not in manifest"
+// @Failure     409 {object} map[string]string "source/revision conflict"
+// @Failure     422 {object} map[string]string "bundle/source/member integrity failure"
+// @Failure     503 {object} map[string]string "backend unavailable"
+// @Router      /api/papers/{paper_id}/parses/{revision}/files/{path} [get]
+func docPaperBundleFile() {}
+
 // paperBlocksList keyset-paginates the top-level blocks of one parse.
 //
 // @Summary     List parse blocks (keyset)
@@ -868,7 +897,7 @@ func docPaperParseJSON() {}
 // @Description (page_no in each item is the public 1-based number).
 // @Description cursor is the opaque next_cursor token (keyset on the
 // @Description last emitted block); per_page defaults to 20, max 100.
-// @Description Requires login or papers:read.
+// @Description Requires paper_access.enabled plus login/papers:read, including historical revisions and qa_ identities; disabled is 404.
 // @Tags        BlockComments
 // @Produce     json
 // @Security    BearerAuth
@@ -900,10 +929,9 @@ func docPaperBlocksList() {}
 // @Description page the parse lacks answers 404 — never a
 // @Description nearest-block fallback. The same visual text under two
 // @Description parses of one PDF is TWO distinct anchors; comments
-// @Description never migrate between revisions. discussions is an
-// @Description empty placeholder until the Q2 comment API lands
-// @Description (discussions_ready=false). Requires login or
-// @Description papers:read.
+// @Description never migrate between revisions. Original block content requires
+// @Description paper_access.enabled plus login/papers:read for all IDs; comment
+// @Description metadata does not provide an original-content gate bypass.
 // @Tags        BlockComments
 // @Produce     json
 // @Security    BearerAuth
@@ -936,7 +964,7 @@ func docPaperBlockGet() {}
 // @Description poppler-utils or set paper_access.block_image_command;
 // @Description resolution via paper_access.block_image_dpi, default
 // @Description 150). ETag is deterministic over (source sha, page,
-// @Description bbox, dpi). Requires login or papers:read.
+// @Description bbox, dpi). Requires paper_access.enabled plus login/papers:read, including historical sources; Range/aliases do not bypass the gate.
 // @Tags        BlockComments
 // @Produce     image/png
 // @Security    BearerAuth
@@ -981,14 +1009,12 @@ func docPaperStatusBatch() {}
 // uploadPDF stores a paper PDF.
 //
 // @Summary     Upload paper PDF (arXiv id or DOI)
-// @Description Content-addressed upload with sha256 idempotency. 200 when
-// @Description bytes are unchanged, 201 when written, 409 on a content
-// @Description conflict without overwrite=true.
+// @Description Freeze exact PDF bytes into the new content bucket and publish the alias/source identity through PostgreSQL (PG required, no deferred-success indexing). 200 for the same bound alias/SHA, 201 for a new frozen binding. The identifier alias is permanently bound to the first successful exact PDF: different bytes return 409 EVEN with overwrite=true. Same paper/SHA may reuse a source ID; semantic arXiv vN is not S3VersionId. Never mutate an old source or parse revision.
 // @Description
 // @Description The {arxiv_id} slot also accepts a DOI (`10.<registrant>/<suffix>`)
 // @Description for contributing a *published* version that may have no arXiv
-// @Description preprint. DOI uploads are stored under a disjoint `pdf/doi/...`
-// @Description namespace and the server resolves the DOI's title / authors /
+// @Description preprint. DOI PDF bytes also use immutable content/{paper}/{source}/source.pdf;
+// @Description its canonical import alias is separate from arXiv vN. The server resolves the DOI's title / authors /
 // @Description linked arxiv id from OpenAlex — the contributor cannot supply
 // @Description that metadata. The result is reported in `X-QAtlas-Verification`
 // @Description and the JSON `verification` block; `verify=strict` rejects a
@@ -999,44 +1025,58 @@ func docPaperStatusBatch() {}
 // @Produce     json
 // @Security    BearerAuth
 // @Param       arxiv_id        path     string true  "arXiv identifier (with vN) OR DOI (10.x/...)"
-// @Param       overwrite       query    bool   false "overwrite on content conflict"
+// @Param       overwrite       query    bool   false "legacy input accepted; never replaces a frozen source or published revision"
 // @Param       expected_sha256 query    string false "client-computed PDF sha256 (in-transit guard)"
 // @Param       verify          query    string false "DOI only: 'strict' rejects when OpenAlex cannot resolve the DOI (default warn)"
 // @Param       pdf             formData file   true  "PDF file"
 // @Success     201 {object} map[string]interface{} "created"
 // @Success     200 {object} map[string]interface{} "unchanged"
 // @Failure     400 {object} map[string]interface{}
-// @Failure     409 {object} map[string]interface{}
+// @Failure     409 {object} map[string]interface{} "frozen alias conflict, including overwrite=true"
+// @Failure     401 {object} map[string]interface{}
+// @Failure     403 {object} map[string]interface{}
+// @Failure     413 {object} map[string]interface{} "PDF byte cap exceeded"
+// @Failure     422 {object} map[string]interface{} "frozen source integrity failure"
+// @Failure     503 {object} map[string]interface{} "PG/object store unavailable; no deferred success"
 // @Router      /api/papers/{arxiv_id}/upload-pdf [post]
 func docUploadPDF() {}
 
 // uploadMineRU stores a MinerU result zip (markdown + images bundle) for a paper.
 //
 // @Summary     Upload paper MinerU bundle (arXiv id or DOI)
-// @Description Accepts the entire MinerU result zip exactly as returned by `full_zip_url`. Server extracts `full.md` plus every `images/*` entry and stores them to the markdown and images object buckets respectively. Images are written before the markdown so any reader that observes the markdown also observes all referenced images. Replaces the v0.7.x `upload-markdown` endpoint (which only accepted a single .md file and silently dropped images).
+// @Description Requires a COMPLETE supported docvortex.middle/schema_version 2.0 Middle (middle_json.json or supported layout.json) AND markdown.md/full.md; MD-only, ContentList-only, incomplete or invalid schema packages are 422. All valid producer-original relative paths/names/bytes, including every JSON and unknown file, are retained; originals are never renamed or reserialized. Traversal, absolute/backslash paths, duplicate names, symlinks, CRC/ZIP errors fail the whole archive. Limits: ZIP/member 128MiB, expanded aggregate 256MiB, at most 10000 files.
+// @Description Writes create-only revision-scoped files into the new content bucket, verifies frozen exact PDF and every persisted member, writes separate manifest LAST, then publishes through PG (required). Every reupload is a new immutable revision/current publication; overwrite never changes historical revisions. Raw ZIP retention is optional; verified members+manifest are mandatory. No deferred-success indexing.
 // @Description
-// @Description The {arxiv_id} slot also accepts a DOI (`10.<registrant>/<suffix>`) to contribute the converted *published* version. DOI bundles are stored under the `markdown/doi/...` + `images/doi/...` namespace; the server resolves canonical metadata (title, authors, linked arxiv id) from OpenAlex on the contributor's behalf — there is no `title` / `authors` form field. `verify=strict` rejects when OpenAlex cannot resolve the DOI (see upload-pdf). The result is reported in `X-QAtlas-Verification`.
+// @Description The {arxiv_id} slot also accepts a DOI for a published edition's exact already-uploaded PDF. Both paths share source-bound immutable bundle publication; there is no title/authors metadata override. PDF contribution establishes DOI metadata (see upload-pdf). A tier label records producer/request metadata, not proof of an executed provider quality mode.
 // @Tags        Papers
 // @Accept      mpfd
 // @Produce     json
 // @Security    BearerAuth
 // @Param       arxiv_id        path     string true  "arXiv identifier (with vN) OR DOI (10.x/...)"
-// @Param       overwrite       query    bool   false "overwrite on content conflict"
+// @Param       overwrite       query    bool   false "legacy input accepted; never replaces a frozen source or published revision"
 // @Param       expected_sha256 query    string false "client-computed zip sha256 (in-transit integrity check)"
-// @Param       pdf_sha256      query    string false "sha256 of the source PDF that was converted (cross-checked against stored PDF)"
-// @Param       verify          query    string false "DOI only: 'strict' rejects when OpenAlex cannot resolve the DOI (default warn)"
-// @Param       source          query    string false "short label of the contributor's MinerU run (truncated to 64 chars)"
-// @Param       mineru_zip      formData file   true  "MinerU result zip (must contain full.md; optional images/*)"
-// @Success     201 {object} map[string]interface{}
-// @Success     200 {object} map[string]interface{}
-// @Failure     400 {object} map[string]interface{}
-// @Failure     409 {object} map[string]interface{}
+// @Param       pdf_sha256      query    string false "sha256 of the exact frozen PDF parsed; cross-checked before publication"
+// @Param       verify          query    string false "legacy input; DOI metadata belongs to PDF contribution, not a parse metadata override"
+// @Param       source          query    string false "producer/contributor run label"
+// @Param       source_id       query    string false "exact source id under this paper; source/version must match"
+// @Param       tier            query    string false "producer metadata label; default standard, not legacy model_version"
+// @Param       mineru_zip      formData file   true  "complete supported Middle + Markdown ZIP; all original members retained"
+// @Success     201 {object} map[string]interface{} "{paper_id,source_id,source_sha256,revision_id,revision,is_current,tier,schema,schema_version,artifact_sha256,manifest_sha256,manifest,read_endpoint,blocks_endpoint}"
+// @Failure     400 {object} map[string]interface{} "malformed upload or source PDF SHA mismatch"
+// @Failure     401 {object} map[string]interface{}
+// @Failure     403 {object} map[string]interface{}
+// @Failure     404 {object} map[string]interface{} "upload exact source PDF first"
+// @Failure     409 {object} map[string]interface{} "source/version identity conflict"
+// @Failure     413 {object} map[string]interface{} "multipart ZIP byte cap exceeded"
+// @Failure     422 {object} map[string]interface{} "unsupported/incomplete package or integrity failure"
+// @Failure     503 {object} map[string]interface{} "PG/object store unavailable; no deferred success"
 // @Router      /api/papers/{arxiv_id}/upload-mineru [post]
 func docUploadMineRU() {}
 
 // mineruClaim acquires a MinerU processing claim for a paper.
 //
 // @Summary     Claim MinerU processing
+// @Description Same claim_id/exact-source locator contract as /api/v1/papers/{id}/mineru-lease. Gate on: authenticated same-origin pdf_url with source_id,pdf_requires_auth:true,verifiedSHA; gate off: external arXiv URL+catalogSHA only. No NAS/S3 presigns or user authentication forwarding to providers.
 // @Tags        Papers
 // @Produce     json
 // @Security    BearerAuth
@@ -1053,7 +1093,7 @@ func docMineruClaim() {}
 // mineruLease acquires a MinerU processing lease for a paper.
 //
 // @Summary     Acquire MinerU processing lease
-// @Description Acquires the same MinerU processing lease returned by the claim path. The response body uses claim_id as the lease identifier.
+// @Description Acquires the same MinerU processing lease returned by the claim path. The response body uses claim_id as the lease identifier. With paper_access enabled, pdf_url is a same-origin authenticated exact-source locator, source_id/pdf_requires_auth:true and verified PDF SHA are returned; never forward the user's auth to an external parser. Download exact bytes with auth, then use provider upload. With the gate off, only the external arXiv URL and grant catalog SHA are returned; no hosted PDF bytes.
 // @Tags        Papers
 // @Produce     json
 // @Security    BearerAuth

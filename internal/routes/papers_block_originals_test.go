@@ -33,6 +33,7 @@ import (
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperbundle"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/pdfraster"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/registry"
 
@@ -158,6 +159,24 @@ func (f *fakeBlockCatalog) GetPaperSource(_ context.Context, paperID, sourceID s
 	return s, ok, nil
 }
 
+func (f *fakeBlockCatalog) FreezePaperSource(ctx context.Context, store objstore.Store, src registry.PaperSource) (registry.PaperSource, error) {
+	if src.ObjstoreKey == paperbundle.PDFKey(src.PaperID, src.SourceID) {
+		_, err := paperbundle.New(store).ReadPDF(ctx, src.PaperID, src.SourceID, src.Sha256, src.SizeBytes)
+		return src, err
+	}
+	data, err := blockReadVerified(ctx, store, src.ObjstoreKey, src.Sha256)
+	if err != nil {
+		return src, err
+	}
+	frozen, err := paperbundle.New(store).FreezePDF(ctx, src.PaperID, src.SourceID, data, src.Sha256)
+	if err != nil {
+		return src, err
+	}
+	src.ObjstoreKey = frozen.Key
+	f.sources[src.PaperID][src.SourceID] = src
+	return src, nil
+}
+
 func (f *fakeBlockCatalog) ListParseRevisions(_ context.Context, paperID string) ([]registry.ParseRevision, error) {
 	var out []registry.ParseRevision
 	for _, r := range f.parses[paperID] {
@@ -193,7 +212,7 @@ func callBlockOriginals(t *testing.T, c blockCatalog, store objstore.Store, path
 	if i := strings.IndexByte(raw, '?'); i >= 0 {
 		raw = raw[:i]
 	}
-	handled, err := dispatchBlockOriginalsGET(re, &config.Config{}, store, c, raw)
+	handled, err := dispatchBlockOriginalsGET(re, &config.Config{PaperAccessEnabled: true}, store, c, raw)
 	if !handled {
 		t.Fatalf("dispatcher did not handle %q", path)
 	}
@@ -327,7 +346,7 @@ func TestSourcePDFMissingBytesHonest(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 (never a ready pointer at missing bytes)", rec.Code)
 	}
-	if !strings.Contains(body["detail"].(string), "missing from the store") {
+	if !strings.Contains(body["detail"].(string), "missing") {
 		t.Errorf("detail = %v", body["detail"])
 	}
 }
@@ -733,7 +752,7 @@ func TestDispatcherLeavesNonBlockPathsAlone(t *testing.T) {
 		re := &core.RequestEvent{}
 		re.Request = httptest.NewRequest(http.MethodGet, "/", nil)
 		re.Response = httptest.NewRecorder()
-		handled, _ := dispatchBlockOriginalsGET(re, &config.Config{}, store, c, raw)
+		handled, _ := dispatchBlockOriginalsGET(re, &config.Config{PaperAccessEnabled: true}, store, c, raw)
 		if handled {
 			t.Errorf("dispatcher wrongly claimed %q", raw)
 		}

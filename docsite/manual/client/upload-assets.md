@@ -1,5 +1,17 @@
 # 上传 PDF
 
+> **当前内容契约更新**：固定来源 PDF 已恢复为 paper_access 开关下的鉴权字节，
+> 关闭404，qa_、别名、Range、历史原件不能绕过。新内容在独立 qatlas-content 桶的
+> content/ 命名空间不可变发布：source 绑定确切 PDF SHA，arXiv vN 是语义版本、
+> S3VersionId 是物理版本、parse revision 是独立不可变身份；三者不可混用。
+> 同 paper/SHA 可复用 source；冻结导入别名不同字节409（overwrite也不替换）。
+> 解析上传必须完整支持的 Middle+Markdown，保留所有成员原名/字节，MD-only拒收；
+> manifest最后核验发布且PG必需，重传新revision，不覆盖历史。旧MD/JSON/images忽略，
+> 只在内容/PDF访问按需冻结旧PDF，不bulk回填、不删除旧桶；没有nightly/boot/入库自动推理。
+> 下文涉及旧三桶覆盖、仅full.md+images、原PDF410/外部直链的段落保留为历史背景，
+> **不作为当前操作规则**。当前API/上传/续读统一见[论文内容契约](../server/paper-content.md)
+> 与[Upload API](../server/upload-api.md)；完整read视图不是原Middle JSON。
+
 当你**手里已经有 PDF**——本地论文、扫描件、preprint 私下流传版本——用 `qatlas contrib pdf` 直接推到 server。（用自己的 MinerU 配额把 PDF 解析成 markdown 再推回，走 [`qatlas contrib mineru`](parse-with-mineru.md)。）
 
 ## 前置条件

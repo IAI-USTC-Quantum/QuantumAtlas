@@ -25,7 +25,7 @@ func TestCacheProbeFailureDoesNotAcquire(t *testing.T) {
 		t.Run(entry, func(t *testing.T) {
 			err := errors.New("connection reset by peer")
 			store := &failedCacheProbe{Store: newFakeStore(), err: err}
-			c := NewConverter(ConverterConfig{PaperAccessEnabled: true, MinerUAPITokens: []string{"test"}}, store, nil, nil)
+			c := NewConverter(ConverterConfig{PaperAccessEnabled: true, MinerUAPITokens: []string{"test"}, SourceCatalog: newFakeSourceCatalog()}, store, nil, nil)
 			var job *Job
 			switch entry {
 			case "markdown":

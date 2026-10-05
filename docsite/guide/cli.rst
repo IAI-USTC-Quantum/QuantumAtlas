@@ -195,7 +195,14 @@ Markdown 对普通用户始终可用 ``paper get markdown`` 获取。
 .. code-block:: bash
 
    qatlas paper get markdown ID_OR_DOI [--output FILE] [--no-wait]
-   qatlas paper get images   ID_OR_DOI [--output FILE]
+   qatlas paper get images   ID_OR_DOI [--output FILE] [--no-wait]
+   qatlas paper get figures  ID_OR_DOI [--no-wait]
+   qatlas paper get image    ID_OR_DOI ORIGINAL_NAME [-o FILE] [--no-wait]
+   qatlas paper pdf          ID [--source-id S|--version vN] [-o FILE]
+   qatlas paper read         ID [--source-id S] [--revision R] [--page N] [--block N] [--cursor C] [--limit N] [--json]
+   qatlas paper source-list  ID [--json]
+   qatlas paper parse-list   ID [--json]
+   qatlas paper parse-json   ID REVISION [-o FILE]
    qatlas paper get metadata ID_OR_DOI
    qatlas paper status       ID_OR_DOI [--kind markdown]
    qatlas paper list         [--has-md true] [--status …] [-q …] [--json]
@@ -206,7 +213,9 @@ Markdown 对普通用户始终可用 ``paper get markdown`` 获取。
    qatlas paper mineru-lease release ID_OR_DOI CLAIM_ID
 
 - ``--output / -o``：写入文件（默认 stdout）；
-- ``--no-wait``：缓存未命中时只触发服务端抓取、不阻塞等待转换完成；
+- ``--no-wait``：内容未就绪时返回初始202 JSON（operation.status_url/重试间隔），不阻塞；
+  markdown/images/figures/image均支持有界同源poll，再带source/revision重取。``--max-wait``
+  限等待，进度stderr；PDF存储获取不解析、不需MinerU token；
 - ``--ttl-seconds``：MinerU 租约时长（服务端有默认值与上限）；
 - 服务端 ``paper_access`` 的默认值提示输出在 stderr，用 ``--quiet-notes``
   关闭。
@@ -244,8 +253,18 @@ Markdown 对普通用户始终可用 ``paper get markdown`` 获取。
    qatlas contrib mineru <DOI> --zip <path> [--verify warn|strict]
                                                        # 上传现成 MinerU zip（DOI-only）
 
-``--verify strict`` 在校验失败时硬失败，``warn`` 仅告警；``--overwrite``
-覆盖服务端已有 PDF。
+PDF的 ``--verify strict`` 在校验失败时硬失败，``warn`` 仅告警。
+冻结导入别名不同PDF字节409，**即使 --overwrite 也不替换来源**；相同SHA可复用source。
+解析zip必须完整支持的Middle+Markdown，MD-only/ContentList-only/缺件拒收，所有原名/字节
+保留；PG发布必需，重传是新revision，overwrite不修改历史。旧runner实际产物若不符合
+支持profile也会拒收，不把legacyV4模型字段当成hostedV1 tier=standard。
+
+``paper read`` 是Middle派生JSON信封；page/block为1-based原编号（block须page），
+Unicode预算默认30000上限100000。truncated时原样传回next_request.cursor，固定来源、
+修订、摘要和renderer，不选“最新”。``paper parse-json`` 仍输出固定revision原Middle字节。
+``paper pdf`` 对qa_与别名均验证SHA，缓存命中也先取得当前gate/auth许可。
+source ID、语义arXiv vN、物理S3VersionId和parse revision不可混用；详细契约见
+:doc:`reading` 与 :doc:`../manual/server/paper-content`。
 
 ``qatlas parser`` — 本地解析
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~

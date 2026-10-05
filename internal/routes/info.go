@@ -63,12 +63,11 @@ func RegisterServerInfo(
 		capabilities := map[string]any{
 			"paper_access":      cfg.PaperAccessEnabled,
 			"markdown_delivery": cfg.PaperAccessEnabled,
-			// PDF delivery is disabled by design (the /pdf endpoint
-			// answers 410); the constant false lets clients branch
-			// without probing.
-			"pdf_delivery":   false,
-			"agentic_search": agenticConfigured,
-			"mineru":         mineruCaps,
+			"pdf_delivery":      cfg.PaperAccessEnabled,
+			"json_reading":      cfg.PaperAccessEnabled,
+			"immutable_bundles": cfg.PaperAccessEnabled,
+			"agentic_search":    agenticConfigured,
+			"mineru":            mineruCaps,
 		}
 		return re.JSON(http.StatusOK, map[string]any{
 			"mode":         "server",

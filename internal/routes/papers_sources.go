@@ -14,12 +14,9 @@ package routes
 // Auth: every endpoint rides the existing
 // scopeGuard(papers, read) catch-all in RegisterPapers, so anonymous
 // callers get 401, PATs need papers:read, and Range requests are
-// authenticated identically (plan §12.2 "Range 同样鉴权"). Unlike the
-// legacy /markdown surface these endpoints are NOT gated behind
-// QATLAS_PAPER_ACCESS_ENABLED: §12.2 locks them as the normal
-// logged-in reading surface for block comments. The legacy
-// GET /api/papers/{id}/pdf route stays 410 — this is a different,
-// source-pinned contract.
+// authenticated identically. The paper_access master switch gates this
+// entire originals surface, including source PDFs, raw JSON, blocks and crops.
+// Original sources are frozen into dedicated content storage before delivery.
 
 import (
 	"context"
@@ -29,13 +26,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperassets"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperbundle"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/registry"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -98,7 +95,10 @@ func dispatchBlockOriginalsGET(
 	if marker < 0 {
 		return false, nil
 	}
-	id := strings.Join(segs[:marker], "/")
+	if !contentAccessEnabled(cfg) {
+		return true, re.JSON(http.StatusNotFound, map[string]string{"detail": "paper access disabled"})
+	}
+	id := normalizeIDForDispatch(strings.Join(segs[:marker], "/"))
 	rest := segs[marker+1:]
 	if id == "" {
 		return true, re.JSON(http.StatusNotFound, map[string]string{
@@ -123,6 +123,18 @@ func dispatchBlockOriginalsGET(
 		switch {
 		case len(rest) == 0:
 			return true, paperParsesListHandler(re, catalog, id)
+		case len(rest) == 2 && rest[1] == "manifest":
+			cc, ok := catalog.(contentCatalog)
+			if !ok {
+				return true, re.JSON(http.StatusServiceUnavailable, map[string]string{"detail": "content catalog unavailable"})
+			}
+			return true, paperBundleManifestHandler(re, cfg, store, cc, id, rest[0])
+		case len(rest) >= 3 && rest[1] == "files":
+			cc, ok := catalog.(contentCatalog)
+			if !ok {
+				return true, re.JSON(http.StatusServiceUnavailable, map[string]string{"detail": "content catalog unavailable"})
+			}
+			return true, paperBundleFileHandler(re, cfg, store, cc, id, rest[0], strings.Join(rest[2:], "/"))
 		case len(rest) == 2 && rest[1] == "json":
 			return true, paperParseJSONHandler(re, store, catalog, id, rest[0])
 		case len(rest) == 2 && rest[1] == "blocks":
@@ -334,9 +346,16 @@ func paperSourcePDFHandler(re *core.RequestEvent, store objstore.Store, catalog 
 			"detail": fmt.Sprintf("no such source %q under paper %s", sourceID, rp.canonical),
 		})
 	}
+	centralSelection := false
+	if cc, ok := catalog.(contentCatalog); ok {
+		centralSelection = true
+		rp, src, err = sourceForAccess(ctx, store, cc, requestedID, sourceID, re.Request.URL.Query().Get("version"))
+		if err != nil {
+			return contentAccessErrorResponse(re, err)
+		}
+	}
 	if v := re.Request.URL.Query().Get("version"); v != "" {
-		want := strings.TrimPrefix(v, "v")
-		if n, cerr := strconv.Atoi(want); cerr != nil || fmt.Sprintf("arxiv:v%d", n) != src.Origin {
+		if !sourceVersionMatches(src.Origin, v) {
 			return re.JSON(http.StatusNotFound, map[string]string{
 				"detail": fmt.Sprintf(
 					"requested source version %s does not match source %s (origin %s); refusing to substitute another version",
@@ -351,6 +370,21 @@ func paperSourcePDFHandler(re *core.RequestEvent, store objstore.Store, catalog 
 			"detail": "object store not configured on this server",
 		})
 	}
+	// Import only the exact pinned PDF, once. A frozen source is authoritative;
+	// missing/corrupt frozen bytes never fall back to the mutable legacy key.
+	freezer, ok := catalog.(interface {
+		FreezePaperSource(context.Context, objstore.Store, registry.PaperSource) (registry.PaperSource, error)
+	})
+	if !ok {
+		return re.JSON(http.StatusServiceUnavailable, map[string]string{"detail": "content catalog unavailable"})
+	}
+	if !centralSelection {
+		src, err = freezer.FreezePaperSource(ctx, store, src)
+		if err != nil {
+			return contentAccessErrorResponse(re, err)
+		}
+	}
+	setContentSourceHeaders(re, rp, src)
 	// Small PDFs buffer whole + sha-verify server-side; larger ones
 	// stream via ranged reads (see papers_source_stream.go).
 	if err := serveSourcePDF(re, store, src, rp.canonical+"-"+src.SourceID+".pdf"); err != nil {
@@ -387,7 +421,7 @@ func blockReadVerified(ctx context.Context, store objstore.Store, key, want stri
 	if want != "" {
 		sum := sha256.Sum256(data)
 		if hex.EncodeToString(sum[:]) != want {
-			return nil, fmt.Errorf("object %s sha256 mismatch (row pins %s)", key, want)
+			return nil, fmt.Errorf("%w: object %s sha256 mismatch (row pins %s)", paperbundle.ErrIntegrity, key, want)
 		}
 	}
 	return data, nil

@@ -194,6 +194,9 @@ type Config struct {
 	S3BucketMD       string
 	S3BucketImages   string
 	S3BucketOpenAlex string
+	// S3BucketContent holds frozen PDFs and complete immutable parse bundles.
+	// Legacy buckets are read only for access-triggered PDF import.
+	S3BucketContent string
 
 	S3AccessKeyID     string
 	S3SecretAccessKey string
@@ -208,15 +211,11 @@ type Config struct {
 
 	// PaperAccessEnabled is the master switch for the opt-in
 	// paper-access serving + server-side MinerU surface (issue #8).
-	// When false (default) the /api/papers/{id}/markdown and
-	// /markdown/status endpoints are NOT registered and the entire
-	// MinerU* block below is ignored — even garbage values are tolerated
-	// silently.
-	//
-	// When true the operator opts into:
-	//   - serving cached markdown bytes (papers:read scope)
-	//   - when MinerUAPITokens contains at least one entry, transparently
-	//     triggering a MinerU conversion on cache miss
+	// When false (default), PDF, content, raw parse artifacts and block
+	// reading endpoints are unavailable, and MinerU settings are ignored.
+	// Metadata, searches and comment records remain separately authorized.
+	// When true, papers:read callers may retrieve frozen PDFs and content;
+	// content cache misses trigger parsing when API tokens are configured.
 	PaperAccessEnabled bool
 
 	// Block-image crop renderer for the Q1 block-comments surface
@@ -225,9 +224,8 @@ type Config struct {
 	// (default poppler-utils' pdftoppm; the Docker image does not
 	// bundle it — installs that want block images add the package).
 	// Empty → the default. BlockImageDPI is the rasterization density
-	// (default 150; <=0 → default). These knobs are NOT gated by
-	// PaperAccessEnabled: the block-originals endpoints are a separate
-	// auth-gated surface (plan §12.2).
+	// (default 150; <=0 → default). All original-content reads, including
+	// block images, require PaperAccessEnabled and papers:read.
 	BlockImageCommand string
 	BlockImageDPI     int
 
@@ -240,7 +238,8 @@ type Config struct {
 	// reports daily-limit. Empty pool ⇒ cache-only mode.
 	MinerUAPITokens         []string
 	MinerUAPIBaseURL        string
-	MinerUModelVersion      string
+	MinerUModelVersion      string // retained for legacy client compatibility
+	MinerUTier              string // V1 parse quality tier; defaults to standard
 	MinerULanguage          string
 	MinerUIsOCR             bool
 	MinerUEnableFormula     bool
@@ -481,6 +480,7 @@ type fileConfig struct {
 		BucketMD        string `yaml:"bucket_md"`
 		BucketImages    string `yaml:"bucket_images"`
 		BucketOpenAlex  string `yaml:"bucket_openalex"`
+		BucketContent   string `yaml:"bucket_content"`
 		AccessKeyID     string `yaml:"access_key_id"`
 		SecretAccessKey string `yaml:"secret_access_key"`
 	} `yaml:"s3"`
@@ -494,6 +494,7 @@ type fileConfig struct {
 			APITokens         []string `yaml:"api_tokens"`
 			APIBaseURL        string   `yaml:"api_base_url"`
 			ModelVersion      string   `yaml:"model_version"`
+			Tier              string   `yaml:"tier"`
 			Language          string   `yaml:"language"`
 			IsOCR             *bool    `yaml:"is_ocr"`
 			EnableFormula     *bool    `yaml:"enable_formula"`
@@ -815,6 +816,7 @@ func (fc *fileConfig) toConfig(anchor string) (*Config, error) {
 		S3BucketMD:               fc.S3.BucketMD,
 		S3BucketImages:           fc.S3.BucketImages,
 		S3BucketOpenAlex:         fc.S3.BucketOpenAlex,
+		S3BucketContent:          defaultIfEmpty(strings.TrimSpace(fc.S3.BucketContent), "qatlas-content"),
 		S3AccessKeyID:            fc.S3.AccessKeyID,
 		S3SecretAccessKey:        fc.S3.SecretAccessKey,
 		PaperAccessEnabled:       fc.PaperAccess.Enabled,
@@ -999,6 +1001,7 @@ func (fc *fileConfig) loadMinerUConfig(cfg *Config) error {
 	cfg.MinerUAPITokens = m.APITokens
 	cfg.MinerUAPIBaseURL = defaultIfEmpty(m.APIBaseURL, "https://mineru.net")
 	cfg.MinerUModelVersion = defaultIfEmpty(m.ModelVersion, "vlm")
+	cfg.MinerUTier = defaultIfEmpty(strings.ToLower(strings.TrimSpace(m.Tier)), "standard")
 	cfg.MinerULanguage = defaultIfEmpty(m.Language, "ch")
 	cfg.MinerUIsOCR = boolOrDefault(m.IsOCR, false)
 	cfg.MinerUEnableFormula = boolOrDefault(m.EnableFormula, true)
@@ -1047,7 +1050,18 @@ func (c *Config) S3Enabled() bool {
 // restarts. Non-serve subcommands (`qatlasd --help`, `qatlasd pat
 // list`, etc.) deliberately skip this strict check.
 func (c *Config) ValidateForServe() error {
-	return validatePartialS3Config(c)
+	if err := validatePartialS3Config(c); err != nil {
+		return err
+	}
+	if c.S3Enabled() {
+		content := defaultIfEmpty(strings.TrimSpace(c.S3BucketContent), "qatlas-content")
+		for _, bucket := range []string{c.S3BucketPDF, c.S3BucketMD, c.S3BucketImages, c.S3BucketOpenAlex} {
+			if content == bucket {
+				return fmt.Errorf("s3.bucket_content must be a dedicated bucket, distinct from legacy and corpus buckets")
+			}
+		}
+	}
+	return nil
 }
 
 // validatePartialS3Config returns an error iff the S3 connection

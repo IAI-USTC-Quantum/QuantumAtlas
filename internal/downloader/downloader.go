@@ -1,9 +1,11 @@
 package downloader
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -82,7 +84,8 @@ type Config struct {
 	Fetch             FetchConfig
 	Agent             AgentConfig
 	Browser           BrowserConfig
-	Proxy             *RemoteProxy // legacy, mutually exclusive with Remote
+	Provenance        PDFProvenanceConfig // local administrator/test extractor configuration
+	Proxy             *RemoteProxy        // legacy, mutually exclusive with Remote
 	Remote            RemoteFetcher
 	RemoteConcurrency int             // additional bounded waiters; remote waits release local slots
 	Journal           DownloadJournal // persistent admission before remote delegation
@@ -158,6 +161,8 @@ type FetchOutcome struct {
 	ArxivCanonical string
 	ArxivVersion   int
 	DOI            string
+	PublishedTitle string // trusted expected title, never inferred from downloaded bytes
+	titleResolved  bool
 	Trace          []Attempt
 	Archived       bool // fleet already committed storage+registry; Body may be nil
 	Pending        bool // durable remote task continues after waiter detaches
@@ -338,7 +343,10 @@ func (d *Downloader) FetchPDF(ctx context.Context, ref registry.PaperRef) (*Fetc
 		defer permit.release()
 		ctx = context.WithValue(ctx, localPermitKey{}, permit)
 	}
-	out := &FetchOutcome{DOI: ref.DOI}
+	if normalized, ok := paperassets.ValidateDOI(ref.DOI); ok {
+		ref.DOI = normalized
+	}
+	out := &FetchOutcome{DOI: ref.DOI, PublishedTitle: strings.TrimSpace(ref.Title)}
 
 	if ref.ArxivID != "" {
 		if res := d.tryArxiv(ctx, ref.ArxivID, out); res != nil {
@@ -481,6 +489,12 @@ func (d *Downloader) FetchPDF(ctx context.Context, ref registry.PaperRef) (*Fetc
 		for _, u := range browserTargets(out, doi) {
 			res, berr, attempt := browserAttempt(ctx, u, d.browser.FetchPDF)
 			if berr == nil {
+				berr = d.verifyPublishedCandidate(ctx, res, out)
+				if berr != nil {
+					attempt.Error, attempt.FailureKind = berr.Error(), "identity_unproven"
+				}
+			}
+			if berr == nil {
 				out.Strategy = "browser"
 				out.URL = res.URL
 				out.Result = res
@@ -585,6 +599,9 @@ func (d *Downloader) arxivBaseURL() string { return "https://arxiv.org/pdf/" }
 func (d *Downloader) tryCandidate(ctx context.Context, strategy, rawURL string, out *FetchOutcome) *FetchResult {
 	start := time.Now()
 	res, err := d.fetch.FetchPDF(ctx, rawURL)
+	if err == nil {
+		err = d.verifyPublishedCandidate(ctx, res, out)
+	}
 	if err != nil {
 		out.Trace = append(out.Trace, attemptOf(strategy, rawURL, err, start))
 		return nil
@@ -783,16 +800,20 @@ func (d *Downloader) process(j job) {
 	ctx := j.ctx
 	log := d.log.With("paper_id", j.paperID)
 
-	// Already-stored PDF? Skip straight to the downstream hook.
-	if d.reg != nil {
-		if lookup, ok := d.reg.(assetLookup); ok {
-			if detail, found, err := lookup.GetWithAssets(ctx, j.paperID); err == nil && found && hasPDFAsset(detail) {
-				d.transition(ctx, j.paperID, "pdf_ready", "done", "pdf already stored", true)
-				d.fireHooks(ctx, j.ref, log)
-				d.skipped.Add(1)
-				d.finishProgress(ctx, j.paperID, "done", "", "already-stored")
-				return
-			}
+	// Recovery trusts only a verified bound immutable source, never mere
+	// paper_assets existence. Missing/corrupt frozen data fails, not restores.
+	if d.reg != nil && d.store != nil {
+		_, found, err := d.recoveredFrozenSource(ctx, j.ref, j.paperID)
+		if err != nil {
+			d.fail(ctx, log, j.paperID, nil, err)
+			return
+		}
+		if found {
+			d.transition(ctx, j.paperID, "pdf_ready", "done", "frozen PDF verified", true)
+			d.fireHooks(ctx, j.ref, log)
+			d.skipped.Add(1)
+			d.finishProgress(ctx, j.paperID, "done", "", "already-stored")
+			return
 		}
 	}
 
@@ -811,6 +832,23 @@ func (d *Downloader) process(j job) {
 	}
 
 	if outcome.Archived {
+		if d.store != nil && d.reg != nil {
+			ref := j.ref
+			if outcome.ArxivCanonical != "" {
+				ref.ArxivID = outcome.ArxivCanonical
+			}
+			if outcome.DOI != "" {
+				ref.DOI = outcome.DOI
+			}
+			_, found, err := d.boundFrozenSource(ctx, ref)
+			if err != nil || !found {
+				if err == nil {
+					err = fmt.Errorf("remote archive has no verified frozen source binding")
+				}
+				d.fail(ctx, log, j.paperID, outcome, err)
+				return
+			}
+		}
 		// The fleet commits independently of this in-memory waiter and owns a
 		// durable downstream-hook retry. Do not store or trigger hooks twice.
 		d.transition(ctx, j.paperID, "pdf_ready", "done", outcome.Strategy, true)
@@ -845,6 +883,9 @@ func (d *Downloader) process(j job) {
 // key and records it in the registry, mirroring the ingest pipeline
 // (IfNoneMatch:"*" conditional write + provenance metadata).
 func (d *Downloader) storeOutcome(ctx context.Context, j job, out *FetchOutcome) error {
+	if out == nil || out.Result == nil || out.Result.Body == nil {
+		return fmt.Errorf("missing validated PDF candidate")
+	}
 	var assetKey string
 	isDOI := false
 	switch {
@@ -853,6 +894,14 @@ func (d *Downloader) storeOutcome(ctx context.Context, j job, out *FetchOutcome)
 		if err != nil {
 			return fmt.Errorf("parse canonical %q: %w", out.ArxivCanonical, err)
 		}
+		if parsed.Version == "" {
+			return fmt.Errorf("acquisition requires exact arXiv version")
+		}
+		actualVersion := registry.ArxivVersionOf(parsed.Canonical)
+		if out.ArxivVersion > 0 && out.ArxivVersion != actualVersion {
+			return fmt.Errorf("outcome arXiv version mismatch")
+		}
+		out.ArxivVersion = actualVersion
 		assetKey = paperassets.AssetKeyFor("pdf", parsed)
 	default:
 		doi, ok := paperassets.ValidateDOI(out.DOI)
@@ -866,51 +915,56 @@ func (d *Downloader) storeOutcome(ctx context.Context, j job, out *FetchOutcome)
 	if assetKey == "" {
 		return fmt.Errorf("no asset key for outcome")
 	}
-	_, putErr := d.store.PutWithOptions(ctx, assetKey, out.Result.Body, out.Result.Size, objstore.PutOptions{
-		ContentType: "application/pdf",
-		IfNoneMatch: "*",
-		Metadata: map[string]string{
-			"sha256":     out.Result.Sha256,
-			"source":     "downloader:" + out.Strategy,
-			"source_url": out.URL,
-			"fetched_by": "qatlasd-downloader",
-			"fetched_at": time.Now().UTC().Format(time.RFC3339),
-		},
-	})
-	if putErr != nil && !errors.Is(putErr, objstore.ErrPreconditionFailed) {
-		return fmt.Errorf("store pdf: %w", putErr)
+	if isDOI {
+		// Re-establish expected identity from the server-owned job/catalog,
+		// never from fields in a remote worker's candidate/archive receipt.
+		out.PublishedTitle = strings.TrimSpace(j.ref.Title)
+		out.titleResolved = false
+		// This is also the central fleet archive boundary: even an older
+		// worker or a proxy must prove ownership before writing published bytes.
+		if err := d.verifyPublishedCandidate(ctx, out.Result, out); err != nil {
+			return fmt.Errorf("validate published provenance: %w", err)
+		}
 	}
-	if errors.Is(putErr, objstore.ErrPreconditionFailed) {
-		// A different accepted copy may already occupy this canonical key.
-		// Register the actual stored bytes, never the new candidate's metadata.
-		body, info, err := d.store.Get(ctx, assetKey)
-		if err != nil {
-			return fmt.Errorf("read existing pdf: %w", err)
-		}
-		sha, n, readErr := inspectStoredPDF(body)
-		closeErr := body.Close()
-		if readErr != nil {
-			return fmt.Errorf("hash existing pdf: %w", readErr)
-		}
-		if closeErr != nil {
-			return fmt.Errorf("close existing pdf: %w", closeErr)
-		}
-		out.Result.Sha256, out.Result.Size = sha, n
-		// Unknown existing provenance stays unknown: never attribute OLD bytes
-		// to the URL of the newly downloaded candidate that lost the CAS race.
-		out.URL = info.Metadata["source_url"]
-		out.Result.URL = out.URL
+	pdf, err := io.ReadAll(io.LimitReader(out.Result.Body, DefaultMaxPDFBytes+1))
+	if err != nil {
+		return fmt.Errorf("read validated PDF: %w", err)
 	}
-
+	if int64(len(pdf)) > DefaultMaxPDFBytes {
+		return ErrTooLarge
+	}
+	minimum := int64(DefaultMinPDFBytes)
+	if d.fetch != nil && d.fetch.cfg.MinPDFBytes > 0 {
+		minimum = d.fetch.cfg.MinPDFBytes
+	}
+	sha, size, err := inspectPDFWithMinimum(bytes.NewReader(pdf), minimum)
+	if err != nil {
+		return fmt.Errorf("validate actual PDF bytes: %w", err)
+	}
+	out.Result.Sha256, out.Result.Size = sha, size
+	// Legacy PDF objects are never candidates for fresh-write conflict
+	// resolution. A frozen alias either agrees with THESE bytes or fails
+	// explicitly; no candidate URL can be attributed to different retained data.
 	ref := j.ref
+	origin := "arxiv:" + out.ArxivCanonical
 	if isDOI {
 		ref.DOI = out.DOI
-		if _, _, err := d.reg.UpsertPDFByDOI(ctx, ref, out.Result.Sha256, out.Result.Size, bucketRelKey(assetKey)); err != nil {
+		origin = "doi:" + out.DOI
+	} else {
+		ref.ArxivID = out.ArxivCanonical
+	}
+	src, err := d.registerFrozenOutcome(ctx, ref, origin, assetKey, pdf)
+	if err != nil {
+		return fmt.Errorf("freeze/register PDF: %w", err)
+	}
+	if isDOI {
+		ref.DOI = out.DOI
+		if _, _, err := d.reg.UpsertPDFByDOI(ctx, ref, src.Sha256, src.SizeBytes, src.ObjstoreKey); err != nil {
 			return fmt.Errorf("upsert pdf by doi: %w", err)
 		}
 	} else {
 		ref.ArxivID = out.ArxivCanonical
-		if _, _, err := d.reg.UpsertPDF(ctx, ref, out.ArxivVersion, out.Result.Sha256, out.Result.Size, bucketRelKey(assetKey)); err != nil {
+		if _, _, err := d.reg.UpsertPDF(ctx, ref, out.ArxivVersion, src.Sha256, src.SizeBytes, src.ObjstoreKey); err != nil {
 			return fmt.Errorf("upsert pdf: %w", err)
 		}
 	}

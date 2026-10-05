@@ -12,7 +12,7 @@
 //     in unversioned (OpenAlex landing_page_url never carries vN),
 //  3. fetches the PDF through the shared rate-limited, size-bounded PDF
 //     validator,
-//  4. writes the bytes under the canonical arXiv or DOI AssetKey,
+//  4. freezes the bytes under a source-pinned content/ key, binding aliases,
 //  5. records the asset via registry.UpsertPDF or UpsertPDFByDOI, which
 //     flips the paper to 'ready'.
 //
@@ -62,10 +62,10 @@ type doiResolver interface {
 }
 
 // assetPutter is the slice of objstore.Store the ingester needs. Both
-// *objstore.Router (production: routes the "pdf/" prefix to the pdf
-// bucket) and *objstore.LocalStore (dev) satisfy it implicitly.
+// *objstore.Router (production: routes "content/" to the dedicated
+// content bucket) and *objstore.LocalStore (dev) satisfy it implicitly.
 type assetPutter interface {
-	Put(ctx context.Context, key string, r io.Reader, size int64, contentType string) (int64, error)
+	objstore.Store
 }
 
 // IndexPusher is the slice of the qatlas-rag client (internal/rag) the
@@ -283,6 +283,27 @@ func (i *Ingester) process(j job) {
 	ctx := j.ctx
 
 	if j.ref.ArxivID == "" && j.ref.DOI != "" {
+		if doi, valid := paperassets.ValidateDOI(j.ref.DOI); valid {
+			ref := j.ref
+			ref.DOI = doi
+			src, bound, err := i.boundSource(ctx, ref, paperassets.DOIAssetKey("pdf", doi))
+			if err != nil {
+				i.fail(ctx, log, j.paperID, "frozen-source", err)
+				return
+			}
+			if bound {
+				if err := i.recordFrozenSource(ctx, ref, 0, true, src); err != nil {
+					i.fail(ctx, log, j.paperID, "upsert-pdf-doi", err)
+					return
+				}
+				i.transition(ctx, j.paperID, "pdf_ready", "done", "frozen source reused", true)
+				if i.onPDFReady != nil {
+					i.onPDFReady(ctx, doi, true)
+				}
+				i.fetched.Add(1)
+				return
+			}
+		}
 		i.transition(ctx, j.paperID, "resolving_source", "running", "", false)
 		if i.doiResolver == nil {
 			i.skipped.Add(1)
@@ -326,31 +347,40 @@ func (i *Ingester) process(j job) {
 		return
 	}
 
-	i.transition(ctx, j.paperID, "downloading_pdf", "running", "", false)
-	res, err := i.fetcher.Fetch(ctx, parsed)
-	if err != nil {
-		i.fail(ctx, log, j.paperID, "fetch", err)
-		return
-	}
-
 	assetKey := paperassets.AssetKeyFor("pdf", parsed)
 	if assetKey == "" {
 		i.fail(ctx, log, j.paperID, "asset-key", fmt.Errorf("no pdf asset key for %q", parsed.Canonical))
 		return
 	}
-	i.transition(ctx, j.paperID, "storing_pdf", "running", "", false)
-	if _, err := i.store.Put(ctx, assetKey, res.Body, res.Size, "application/pdf"); err != nil {
-		i.fail(ctx, log, j.paperID, "store-put", err)
-		return
-	}
-
-	// paper_assets.pdf_path is bucket-relative (the legacy
-	// bucketRelKey convention): strip the leading "pdf/" kind segment
-	// the Router re-adds on write.
 	ref := j.ref
 	ref.ArxivID = parsed.Canonical
+	src, found, err := i.boundSource(ctx, ref, assetKey)
+	if err != nil {
+		i.fail(ctx, log, j.paperID, "frozen-source", err)
+		return
+	}
+	res := &arxiv.Result{Sha256: src.Sha256, Size: src.SizeBytes}
+	if !found {
+		i.transition(ctx, j.paperID, "downloading_pdf", "running", "", false)
+		res, err = i.fetcher.Fetch(ctx, parsed)
+		if err != nil {
+			i.fail(ctx, log, j.paperID, "fetch", err)
+			return
+		}
+		pdf, readErr := io.ReadAll(res.Body)
+		if readErr != nil {
+			i.fail(ctx, log, j.paperID, "read-pdf", readErr)
+			return
+		}
+		i.transition(ctx, j.paperID, "storing_pdf", "running", "", false)
+		src, err = i.registerFreshSource(ctx, ref, "arxiv:"+parsed.Canonical, assetKey, pdf, res.Sha256, res.Size)
+		if err != nil {
+			i.fail(ctx, log, j.paperID, "freeze-pdf", err)
+			return
+		}
+	}
 	i.transition(ctx, j.paperID, "registering_asset", "running", "", false)
-	if _, _, err := i.reg.UpsertPDF(ctx, ref, version, res.Sha256, res.Size, bucketRelKey(assetKey)); err != nil {
+	if err := i.recordFrozenSource(ctx, ref, version, false, src); err != nil {
 		i.fail(ctx, log, j.paperID, "upsert-pdf", err)
 		return
 	}
@@ -386,32 +416,44 @@ func (i *Ingester) processDOI(ctx context.Context, log *slog.Logger, j job, oaPD
 		i.fail(ctx, log, j.paperID, "parse-doi", fmt.Errorf("invalid DOI %q", j.ref.DOI))
 		return
 	}
-	if strings.TrimSpace(oaPDFURL) == "" {
-		i.fail(ctx, log, j.paperID, "resolve-doi", fmt.Errorf("no open-access PDF URL for %q", doi))
-		return
-	}
-
-	i.transition(ctx, j.paperID, "downloading_pdf", "running", "", false)
-	res, err := i.fetcher.FetchURL(ctx, oaPDFURL)
-	if err != nil {
-		i.fail(ctx, log, j.paperID, "fetch-doi", err)
-		return
-	}
 	assetKey := paperassets.DOIAssetKey("pdf", doi)
 	if assetKey == "" {
-		i.fail(ctx, log, j.paperID, "asset-key", fmt.Errorf("no pdf asset key for DOI %q", doi))
+		i.fail(ctx, log, j.paperID, "asset-key", fmt.Errorf("no PDF alias for DOI %q", doi))
 		return
 	}
-	i.transition(ctx, j.paperID, "storing_pdf", "running", "", false)
-	if _, err := i.store.Put(ctx, assetKey, res.Body, res.Size, "application/pdf"); err != nil {
-		i.fail(ctx, log, j.paperID, "store-put", err)
-		return
-	}
-
 	ref := j.ref
 	ref.DOI = doi
+	src, found, err := i.boundSource(ctx, ref, assetKey)
+	if err != nil {
+		i.fail(ctx, log, j.paperID, "frozen-source", err)
+		return
+	}
+	res := &arxiv.Result{Sha256: src.Sha256, Size: src.SizeBytes}
+	if !found {
+		if strings.TrimSpace(oaPDFURL) == "" {
+			i.fail(ctx, log, j.paperID, "resolve-doi", fmt.Errorf("no open-access PDF URL for %q", doi))
+			return
+		}
+		i.transition(ctx, j.paperID, "downloading_pdf", "running", "", false)
+		res, err = i.fetcher.FetchURL(ctx, oaPDFURL)
+		if err != nil {
+			i.fail(ctx, log, j.paperID, "fetch-doi", err)
+			return
+		}
+		pdf, readErr := io.ReadAll(res.Body)
+		if readErr != nil {
+			i.fail(ctx, log, j.paperID, "read-pdf", readErr)
+			return
+		}
+		i.transition(ctx, j.paperID, "storing_pdf", "running", "", false)
+		src, err = i.registerFreshSource(ctx, ref, "doi:"+doi, assetKey, pdf, res.Sha256, res.Size)
+		if err != nil {
+			i.fail(ctx, log, j.paperID, "freeze-pdf", err)
+			return
+		}
+	}
 	i.transition(ctx, j.paperID, "registering_asset", "running", "", false)
-	if _, _, err := i.reg.UpsertPDFByDOI(ctx, ref, res.Sha256, res.Size, bucketRelKey(assetKey)); err != nil {
+	if err := i.recordFrozenSource(ctx, ref, 0, true, src); err != nil {
 		i.fail(ctx, log, j.paperID, "upsert-pdf-doi", err)
 		return
 	}

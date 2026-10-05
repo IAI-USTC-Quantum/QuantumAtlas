@@ -62,6 +62,7 @@ Go 服务端
    server/github-oauth
    server/rustfs
    server/rest-api
+   server/paper-content
    server/upload-api
    server/pg-schema
    server/api-explorer

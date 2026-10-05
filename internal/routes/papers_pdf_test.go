@@ -12,8 +12,12 @@ import (
 	"testing"
 	"time"
 
+	"bytes"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineru"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperbundle"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/registry"
 
 	"github.com/pocketbase/pocketbase/core"
 )
@@ -145,21 +149,21 @@ func newGetReq(t *testing.T, url string) (*core.RequestEvent, *httptest.Response
 	return re, rec
 }
 
-func TestPDFHandler_Gone(t *testing.T) {
+func TestPDFHandler_GatedOff(t *testing.T) {
 	// pdfHandler takes cfg/store/converter but the 410 path touches none
 	// of them — nil is safe by construction.
 	re, rec := newGetReq(t, "/api/papers/2501.00010v1/pdf")
 	if err := pdfHandler(re, nil, nil, nil, "2501.00010v1"); err != nil {
 		t.Fatalf("handler: %v", err)
 	}
-	if rec.Code != http.StatusGone {
-		t.Fatalf("status = %d, want 410", rec.Code)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want gated 404", rec.Code)
 	}
 	var body map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if got := body["detail"]; got != "PDF delivery is disabled; use the markdown endpoint instead" {
+	if got := body["detail"]; got != "paper access disabled" {
 		t.Errorf("body.detail = %v", got)
 	}
 }
@@ -174,31 +178,31 @@ func TestPDFHandler_BadIDStill400(t *testing.T) {
 	}
 }
 
-func TestGetPDFByDOIHandler_Gone(t *testing.T) {
+func TestGetPDFByDOIHandler_GatedOff(t *testing.T) {
 	doi := "10.1103/physrevlett.123.070501"
 	re, rec := newGetReq(t, "/api/papers/"+doi+"/pdf")
 	if err := getPDFByDOIHandler(re, nil, nil, nil, doi); err != nil {
 		t.Fatalf("handler: %v", err)
 	}
-	if rec.Code != http.StatusGone {
-		t.Fatalf("status = %d, want 410", rec.Code)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want gated 404", rec.Code)
 	}
 	var body map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if got := body["detail"]; got != "PDF delivery is disabled; use the markdown endpoint instead" {
+	if got := body["detail"]; got != "paper access disabled" {
 		t.Errorf("body.detail = %v", got)
 	}
 }
 
-func TestGetPDFByDOIHandler_BadDOIStill400(t *testing.T) {
+func TestGetPDFByDOIHandler_DisabledGatePrecedesBadDOI(t *testing.T) {
 	re, rec := newGetReq(t, "/api/papers/not-a-doi/pdf")
 	if err := getPDFByDOIHandler(re, nil, nil, nil, "not-a-doi"); err != nil {
 		t.Fatalf("handler: %v", err)
 	}
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400 for invalid DOI", rec.Code)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want disabled-gate 404", rec.Code)
 	}
 }
 
@@ -271,6 +275,136 @@ func (s *statOnlyStore) PresignGet(context.Context, string, time.Duration) (stri
 // TestProbeAssetReadiness_ContractIsBooleanPair just locks in the
 // (pdf_ready, md_ready) tuple contract. It's a smoke test — exhaustive
 // path probing lives in paperassets/path_test.go.
+type fakePDFOnlyConverter struct {
+	calls  int
+	job    *mineru.Job
+	lookup *mineru.Job
+}
+
+func (c *fakePDFOnlyConverter) EnsurePDF(context.Context, string) *mineru.Job {
+	c.calls++
+	return c.job
+}
+func (c *fakePDFOnlyConverter) Lookup(string) (*mineru.Job, bool) { return c.lookup, c.lookup != nil }
+
+func TestContentPDFTokenIndependentFrozenBytesAndRange(t *testing.T) {
+	c, s := newAccessFixture(t)
+	pdf := []byte("%PDF-1.7\noriginal PDF bytes\n")
+	accessSource(t, c, s, "src_pdf", "arxiv:1605.01488v2", "pdf/v2.pdf", pdf)
+	for _, rangeHeader := range []string{"", "bytes=0-7"} {
+		re, rec := newGetReq(t, "/api/papers/qa_access/pdf?source_id=src_pdf&version=v2")
+		if rangeHeader != "" {
+			re.Request.Header.Set("Range", rangeHeader)
+		}
+		if err := contentPDFHandler(re, &config.Config{PaperAccessEnabled: true}, s, c, nil, "qa_access"); err != nil {
+			t.Fatal(err)
+		}
+		want := pdf
+		status := http.StatusOK
+		if rangeHeader != "" {
+			want = pdf[:8]
+			status = http.StatusPartialContent
+		}
+		if rec.Code != status || !bytes.Equal(rec.Body.Bytes(), want) {
+			t.Fatalf("PDF body/code mismatch %d %q", rec.Code, rec.Body.Bytes())
+		}
+		for key, want := range map[string]string{"X-QAtlas-Paper-Id": "qa_access", "X-QAtlas-Source-Id": "src_pdf", "X-QAtlas-Sha256": paperbundle.SHA256(pdf), "X-QAtlas-PDF-SHA256": paperbundle.SHA256(pdf), "X-QAtlas-Source-Origin": "arxiv:v2"} {
+			if got := rec.Header().Get(key); got != want {
+				t.Fatalf("%s=%q want %q", key, got, want)
+			}
+		}
+	}
+}
+
+func TestContentPDFLinkIsAuthenticatedFrozenLocator(t *testing.T) {
+	c, s := newAccessFixture(t)
+	accessSource(t, c, s, "src_pdf", "arxiv:v2", "pdf/v2.pdf", []byte("%PDF-original"))
+	re, rec := newGetReq(t, "/api/papers/1605.01488v2/pdf?format=link")
+	if err := contentPDFHandler(re, &config.Config{PaperAccessEnabled: true}, s, c, nil, "1605.01488v2"); err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	link, _ := body["pdf_url"].(string)
+	if rec.Code != 200 || !strings.HasPrefix(link, "/api/papers/qa_access/pdf?") || !strings.Contains(link, "source_id=src_pdf") || !strings.Contains(link, "format=bytes") {
+		t.Fatalf("unsafe locator: %s", link)
+	}
+	// The very same locator becomes unavailable when distribution is disabled.
+	re, rec = newGetReq(t, link)
+	if err := contentPDFHandler(re, &config.Config{}, nil, nil, nil, "qa_access"); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != 404 {
+		t.Fatalf("disabled gate bypassed: %d", rec.Code)
+	}
+}
+
+func TestContentPDFPinnedMissingNeverFetchesOrParses(t *testing.T) {
+	c, s := newAccessFixture(t)
+	pdf := []byte("%PDF-original")
+	src := accessSource(t, c, s, "src_pdf", "arxiv:v2", "pdf/v2.pdf", pdf)
+	frozen, err := c.FreezePaperSource(context.Background(), s, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Delete(context.Background(), frozen.ObjstoreKey); err != nil {
+		t.Fatal(err)
+	}
+	// Good mutable old bytes and a different source cannot repair/substitute.
+	if _, err := s.Put(context.Background(), src.ObjstoreKey, bytes.NewReader(pdf), int64(len(pdf)), "application/pdf"); err != nil {
+		t.Fatal(err)
+	}
+	conv := &fakePDFOnlyConverter{job: &mineru.Job{State: mineru.JobStateQueued}}
+	re, rec := newGetReq(t, "/api/papers/qa_access/pdf?source_id=src_pdf")
+	if err := contentPDFHandler(re, &config.Config{PaperAccessEnabled: true}, s, c, conv, "qa_access"); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != 404 || conv.calls != 0 {
+		t.Fatalf("pinned PDF fetch/substitution %d %d", rec.Code, conv.calls)
+	}
+}
+
+func TestContentPDFGenuineMissStartsOnlyFetchJob(t *testing.T) {
+	c, s := newAccessFixture(t)
+	c.assets = []registry.Asset{{Source: "arxiv", ArxivVersion: 2, PDFPath: "pdf/missing.pdf"}}
+	conv := &fakePDFOnlyConverter{job: &mineru.Job{Canonical: "1605.01488v2", State: mineru.JobStateQueued, Phase: mineru.PhaseFetchingPDF}}
+	re, rec := newGetReq(t, "/api/papers/1605.01488v2/pdf")
+	if err := contentPDFHandler(re, &config.Config{PaperAccessEnabled: true}, s, c, conv, "1605.01488v2"); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != 202 || conv.calls != 1 {
+		t.Fatalf("fetch-only=%d calls=%d body=%s", rec.Code, conv.calls, rec.Body.String())
+	}
+	var body map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if _, ok := body["convert"]; ok {
+		t.Fatal("PDF response contains parse progress")
+	}
+	if body["md_ready"] != false || body["pdf_ready"] != false {
+		t.Fatal(body)
+	}
+	if _, exists, _ := s.Stat(context.Background(), "markdown/1605.01488v2.md"); exists {
+		t.Fatal("legacy parse touched")
+	}
+}
+
+func TestContentPDFStatusRejectsStaleDoneWithoutSource(t *testing.T) {
+	c, s := newAccessFixture(t)
+	c.assets = []registry.Asset{{Source: "arxiv", ArxivVersion: 2, PDFPath: "pdf/missing.pdf"}}
+	conv := &fakePDFOnlyConverter{lookup: &mineru.Job{State: mineru.JobStateDone, Phase: mineru.PhaseReady}}
+	re, rec := newGetReq(t, "/api/papers/1605.01488v2/pdf/status")
+	if err := contentPDFStatusHandler(re, &config.Config{PaperAccessEnabled: true}, s, c, conv, "1605.01488v2"); err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if rec.Code != 200 || body["pdf_ready"] != false || body["state"] != "none" || conv.calls != 0 {
+		t.Fatalf("stale Done trusted: %s calls=%d", rec.Body.String(), conv.calls)
+	}
+}
+
 func TestProbeAssetReadiness_ContractIsBooleanPair(t *testing.T) {
 	// Because statOnlyStore doesn't fully satisfy objstore.Store
 	// (the panic stubs use wrong signatures intentionally for

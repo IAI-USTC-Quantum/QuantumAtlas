@@ -53,7 +53,14 @@ type TaskState struct {
 
 // Result is the extracted content of a finished MinerU task.
 type Result struct {
-	Markdown []byte
+	// Members retains EVERY original ZIP file path and byte payload.
+	Members               map[string][]byte
+	MiddleJSON            []byte
+	StructuredContent     []byte
+	MiddlePath            string
+	MarkdownPath          string
+	StructuredContentPath string
+	Markdown              []byte
 	// Images maps the relative filename (as referenced from full.md, e.g.
 	// "images/abc.jpg" or just "abc.jpg") to its raw bytes.
 	Images map[string][]byte
@@ -454,7 +461,7 @@ func (c *Client) FetchResult(ctx context.Context, fullZipURL string) (Result, er
 	}
 	// MinerU zips are bounded (a single paper's markdown + images); read
 	// into memory so we can random-access via zip.NewReader.
-	raw, err := io.ReadAll(resp.Body)
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, MaxArchiveBytes+1))
 	if err != nil {
 		return Result{}, err
 	}
@@ -470,46 +477,16 @@ func (c *Client) FetchResult(ctx context.Context, fullZipURL string) (Result, er
 // can reuse the same parsing logic the server-side silent-conversion
 // converter uses, without copy/paste drift.
 func ExtractResult(zipBytes []byte) (Result, error) {
-	zr, err := zip.NewReader(bytes.NewReader(zipBytes), int64(len(zipBytes)))
+	files, err := extractMembers(zipBytes)
 	if err != nil {
-		return Result{}, &Error{Msg: "open result zip: " + err.Error()}
+		return Result{}, err
 	}
-
-	var mdName string
-	for _, f := range zr.File {
-		if strings.HasSuffix(f.Name, "full.md") {
-			mdName = f.Name
-			break
-		}
+	res, err := resultFromMembers(files)
+	if err != nil {
+		return Result{}, err
 	}
-	if mdName == "" {
-		return Result{}, &Error{Msg: "result zip did not contain full.md"}
-	}
-	// The directory full.md lives in is the root for relative image refs.
-	mdDir := path.Dir(mdName)
-
-	res := Result{Images: map[string][]byte{}}
-	for _, f := range zr.File {
-		if f.FileInfo().IsDir() {
-			continue
-		}
-		switch {
-		case f.Name == mdName:
-			b, err := readZipEntry(f)
-			if err != nil {
-				return Result{}, err
-			}
-			res.Markdown = b
-		case IsImageEntry(f.Name):
-			b, err := readZipEntry(f)
-			if err != nil {
-				return Result{}, err
-			}
-			res.Images[RelImageName(f.Name, mdDir)] = b
-		}
-	}
-	if res.Markdown == nil {
-		return Result{}, &Error{Msg: "result zip full.md was empty / unreadable"}
+	if res.MarkdownPath == "" {
+		return Result{}, archiveError("result zip did not contain markdown.md or full.md")
 	}
 	return res, nil
 }

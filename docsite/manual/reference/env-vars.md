@@ -1,5 +1,17 @@
 # 环境变量与配置边界
 
+> **当前内容契约更新**：固定来源 PDF 已恢复为 paper_access 开关下的鉴权字节，
+> 关闭404，qa_、别名、Range、历史原件不能绕过。新内容在独立 qatlas-content 桶的
+> content/ 命名空间不可变发布：source 绑定确切 PDF SHA，arXiv vN 是语义版本、
+> S3VersionId 是物理版本、parse revision 是独立不可变身份；三者不可混用。
+> 同 paper/SHA 可复用 source；冻结导入别名不同字节409（overwrite也不替换）。
+> 解析上传必须完整支持的 Middle+Markdown，保留所有成员原名/字节，MD-only拒收；
+> manifest最后核验发布且PG必需，重传新revision，不覆盖历史。旧MD/JSON/images忽略，
+> 只在内容/PDF访问按需冻结旧PDF，不bulk回填、不删除旧桶；没有nightly/boot/入库自动推理。
+> 下文涉及旧三桶覆盖、仅full.md+images、原PDF410/外部直链的段落保留为历史背景，
+> **不作为当前操作规则**。当前API/上传/续读统一见[论文内容契约](../server/paper-content.md)
+> 与[Upload API](../server/upload-api.md)；完整read视图不是原Middle JSON。
+
 主服务 **`qatlasd` 的业务配置是 YAML-only**，不是旧 Python 包的 `.env` 模式。默认文件为 `~/.qatlas/config.yaml`，通过 `qatlasd config init` 创建、`--config` 选择；完整字段见[服务端配置](../server/server-config.md)。旧 `QATLAS_*` 业务变量、`MINERU_*`、`POSTGRES_*` 等残留会触发明确错误，不会默默覆盖 YAML。
 
 本页只保留目前仍有用途的环境变量类别，以及从旧配置迁移的入口。环境变量属于哪个进程，必须先分清。
@@ -57,7 +69,7 @@ Vite 使用 `VITE_DEV_API_TARGET`、`VITE_DEV_FAKE_AUTH`、`VITE_DEV_ALLOWED_HOS
 
 ## Server：论文访问开关（self-hosted 可选）
 
-当前使用 YAML 的 `paper_access.enabled`，默认 false。启用前确认版权、访问权限与外部服务预算；PDF 对外交付仍按当前 API 契约保持禁用，不因启用转换而自动恢复。见[版权与资源访问](../about/license-and-attribution.md)。
+当前使用 YAML 的 `paper_access.enabled`，默认 false。启用前确认版权、访问权限与外部服务预算；PDF/content/raw原件/图片随 paper_access 开关统一鉴权交付；已存PDF不需解析token，关闭404。见[版权与资源访问](../about/license-and-attribution.md)。
 
 ### Server-side MinerU
 

@@ -153,7 +153,7 @@ func (r *Router) PresignGet(ctx context.Context, key string, ttl time.Duration) 
 }
 
 func unknownKind(kind string) error {
-	return fmt.Errorf("objstore: no backend for kind %q (json is dropped in v0.7.0; pdf/markdown/images only)", kind)
+	return fmt.Errorf("objstore: no backend for kind %q", kind)
 }
 
 // S3Backends returns every distinct *S3Store backing this Router, so

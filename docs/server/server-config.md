@@ -1,5 +1,15 @@
 # qatlasd 服务端配置（YAML）
 
+> **新不可变内容边界**：fresh PDF 与完整解析成员写独立 `s3.bucket_content`
+> （默认 qatlas-content，必须区别于旧桶/corpus），本地后端使用同一 content/ 逻辑命名空间。
+> 成员 create-only、持久SHA复核、manifest最后发布，PG成功后才切current；PG不可用不延期报成功。
+> 同SHA可复用source ID；arXiv vN语义、source字节身份、S3VersionId物理版本、parse revision
+> 不同。冻结导入别名不同字节409（overwrite也不替换），解析重传新revision。
+> 旧三桶/layout/versioning/prune步骤保留为历史与旧资源运维，**不得据此覆盖冻结原件**；
+> 新功能不bulk回填，不删除旧桶，不复制旧MD/JSON/images，只在内容/PDF访问懒冻结旧PDF。
+> 无nightly/boot/入库自动解析，只有显式内容访问或管理员明确RunNow。
+> 当前API/存储/错误与上传规则见[论文内容契约](paper-content.md)和[Upload API](upload-api.md)。
+
 `qatlasd` 是 Go 程序。业务配置只从 **YAML 文件**读取，默认 `~/.qatlas/config.yaml`，用 `--config /path/to/config.yaml` 选择其他文件。旧的 Python/Go dotenv 模式已经移除：没有 `CLI > env > .env` 的业务配置优先级，也没有 `--postgres-dsn`、`--system-pat`、`--dotenv-path` 等旧参数。
 
 完整字段由 [`config.example.yaml`](https://github.com/IAI-USTC-Quantum/QuantumAtlas/blob/main/config.example.yaml) 与 `internal/config/config.go` 定义；`qatlasd config init` 的内嵌模板与根示例同步检查。不要把本页示例当成需要全部填写的生产配置。
@@ -69,7 +79,7 @@ postgres:
 
 DSN 示例仅供一次性本地测试库。正式环境应按部署策略使用 TLS 与最小权限；不要在聊天、日志或 Git 中保存真实凭据。paper registry 与 OpenAlex corpus 共用连接池，但不是同一类数据。已有大型 corpus 的索引策略见 [ADR 0013](../adr/0013-corpus-schema-base-index-split.md)。
 
-S3 的核心键是 `endpoint`、`bucket_pdf`、`bucket_md`、`bucket_images`、`access_key_id`、`secret_access_key`。全部省略时使用 `paths.raw_dir` 的本地存储；部分填写时 `serve` 拒绝启动。`s3.public_endpoint` 是可选的公开预签名 URL 入口，不代替服务端连接端点。
+S3旧资源键保留 `endpoint`、`bucket_pdf`、`bucket_md`、`bucket_images`、`access_key_id`、`secret_access_key`；新内容另有独立 `bucket_content`（默认qatlas-content，不可复用旧/corpus桶）。全部省略时使用 `paths.raw_dir` 的本地存储；部分填写时 `serve` 拒绝启动。`s3.public_endpoint` 是可选的公开预签名 URL 入口，不代替服务端连接端点。
 
 ### OAuth 与运维权限
 
@@ -104,7 +114,7 @@ paper_access:
   enabled: false
 ```
 
-`search.remote` 接入独立 `qatlas-search`，支持 multi/backend 与 agentic 路径；本地 agentic 后端的 `search.agentic.local` 详见完整 YAML 模板。`paper_access.mineru` 下的 `api_tokens`、`api_base_url`、模型、轮询和并发设置仅供服务端，不是独立客户端的配置文件。启用转换会消耗外部服务额度；默认测试不应使用这些真实资源。PDF 的对外交付仍以当前 API 契约为准，不能因开启此配置就假定 PDF 下载已恢复。
+`search.remote` 接入独立 `qatlas-search`，支持 multi/backend 与 agentic 路径；本地 agentic 后端的 `search.agentic.local` 详见完整 YAML 模板。`paper_access.mineru` 下的 `api_tokens`、`api_base_url`、模型、轮询和并发设置仅供服务端，不是独立客户端的配置文件。启用转换会消耗外部服务额度；默认测试不应使用这些真实资源。PDF及全部内容/原件随paper_access统一鉴权交付，开关关闭404；已存PDF不需要MinerU token。
 
 ### 下载器与 worker fleet
 

@@ -165,8 +165,13 @@ func validateKey(key string) error {
 	if key == "" {
 		return errors.New("objstore: key required")
 	}
-	if strings.HasPrefix(key, "/") || strings.Contains(key, "..") || strings.Contains(key, "\\") {
+	if strings.HasPrefix(key, "/") || strings.ContainsAny(key, "\\\x00") {
 		return fmt.Errorf("objstore: invalid key %q", key)
+	}
+	for _, component := range strings.Split(key, "/") {
+		if component == "" || component == "." || component == ".." {
+			return fmt.Errorf("objstore: invalid key %q", key)
+		}
 	}
 	return nil
 }
@@ -462,8 +467,8 @@ func (s *S3Store) ListPrefix(ctx context.Context, prefix string, limit int) ([]O
 	if prefix != "" {
 		// Same validation rule as keys, except empty prefix is OK
 		// (listing everything in the bucket).
-		if strings.HasPrefix(prefix, "/") || strings.Contains(prefix, "..") || strings.Contains(prefix, "\\") {
-			return nil, fmt.Errorf("objstore: invalid prefix %q", prefix)
+		if err := validateKey(strings.TrimSuffix(prefix, "/")); err != nil {
+			return nil, fmt.Errorf("objstore: invalid prefix %q: %w", prefix, err)
 		}
 	}
 	opts := minio.ListObjectsOptions{
@@ -496,8 +501,8 @@ func (s *S3Store) ListPrefix(ctx context.Context, prefix string, limit int) ([]O
 func (s *S3Store) ListDirs(ctx context.Context, prefix string) ([]string, error) {
 	if prefix != "" {
 		// Same validation rule as ListPrefix.
-		if strings.HasPrefix(prefix, "/") || strings.Contains(prefix, "..") || strings.Contains(prefix, "\\") {
-			return nil, fmt.Errorf("objstore: invalid prefix %q", prefix)
+		if err := validateKey(strings.TrimSuffix(prefix, "/")); err != nil {
+			return nil, fmt.Errorf("objstore: invalid prefix %q: %w", prefix, err)
 		}
 	}
 	opts := minio.ListObjectsOptions{
@@ -606,8 +611,8 @@ type ObjectVersion struct {
 // objects) make it a non-issue.
 func (s *S3Store) ListAllVersions(ctx context.Context, prefix string) ([]ObjectVersion, error) {
 	if prefix != "" {
-		if strings.HasPrefix(prefix, "/") || strings.Contains(prefix, "..") || strings.Contains(prefix, "\\") {
-			return nil, fmt.Errorf("objstore: invalid prefix %q", prefix)
+		if err := validateKey(strings.TrimSuffix(prefix, "/")); err != nil {
+			return nil, fmt.Errorf("objstore: invalid prefix %q: %w", prefix, err)
 		}
 	}
 	opts := minio.ListObjectsOptions{

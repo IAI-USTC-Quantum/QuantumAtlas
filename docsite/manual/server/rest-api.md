@@ -54,7 +54,7 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
 | Method | Path | 用途 |
 |---|---|---|
 | `GET` | `/api/health` | 健康检查 + 依赖探活 |
-| `GET` | `/api/server/info` | 版本 / 引擎信息 + **能力发现**（`capabilities`：匿名可见布尔位 `paper_access` / `markdown_delivery` / `pdf_delivery`（恒 false——PDF 分发设计性停用）/ `agentic_search` / `mineru.enabled` / `mineru.on_demand`；认证调用者额外见 `mineru.daily_cap` 与 `mineru.converted_today`，来自批处理调度器快照）|
+| `GET` | `/api/server/info` | 版本 / 引擎信息 + **能力发现**（`capabilities`：匿名可见布尔位 `paper_access` / `markdown_delivery` / `pdf_delivery`（随 paper_access 开关；已存 PDF 无需解析 token）/ `agentic_search` / `mineru.enabled` / `mineru.on_demand`；认证调用者额外见 `mineru.daily_cap` 与 `mineru.converted_today`，来自批处理调度器快照）|
 | `GET` | `/install-qatlasd.sh` | qatlasd 安装脚本 |
 | `GET` | `/swagger/index.html` | 交互式 API 文档（Swagger UI）|
 | `GET` | `/swagger/doc.json` | OpenAPI 2.0 JSON spec |
@@ -74,33 +74,38 @@ swag CLI 通过 `go.mod` 的 `tool` 指令钉版本（`go tool swag`），生成
 | `GET` | `/api/papers/stats` | `papers:read` | 论文资产统计（`available`、`total`、`has_pdf`、`has_md`、`has_json`、`needs_mineru`、`total_images`、`loaded_at`）；paperindex 不可用时返回 `{available:false}` |
 | `GET` | `/api/papers/needs-mineru?limit=&include_claimed=` | `papers:read` | 列等待 MinerU 解析的论文 |
 | `POST` | `/api/papers/{arxiv_id}/upload-pdf` | `papers:write` | 上传 PDF，见 [Upload API](upload-api.md) |
-| `POST` | `/api/papers/{arxiv_id}/upload-mineru` | `papers:write` | 上传 MinerU 结果 zip（含 markdown + images）|
+| `POST` | `/api/papers/{arxiv_id}/upload-mineru` | `papers:write` | 上传完整受支持 Middle + Markdown ZIP；所有原名/字节保留，重传新 revision；MD-only 拒收|
 | `POST` | `/api/v1/papers/{arxiv_id}/mineru-lease` | `papers:write` | 申请 MinerU 处理 lease（响应字段含 `claim_id`）|
 | `DELETE` | `/api/v1/papers/{arxiv_id}/mineru-lease/{claim_id}` | `papers:write` | 释放 MinerU lease |
 | `POST` | `/api/papers/{arxiv_id}/mineru-claim` | `papers:write` | 申请 MinerU 处理 lease |
 | `DELETE` | `/api/papers/{arxiv_id}/mineru-claim/{claim_id}` | `papers:write` | 释放 MinerU lease |
-| `GET` | `/api/papers/{id_or_doi}/markdown` | `papers:read` | **PAPER_ACCESS** · 默认返回缓存的 markdown **字节流**（`text/markdown`）；`?format=link` 改为返回 JSON `{markdown_url}` RustFS 直链。未命中走 LRO：202 → 后台 silent fetch PDF + MinerU convert → poll 后再 GET 200 |
-| `GET` | `/api/papers/{id_or_doi}/markdown/status` | `papers:read` | **PAPER_ACCESS** · side-effect-free 进度查询；body 含 `state` / `phase` / `pdf_ready` / `md_ready` / `fetch.*` / `convert.*` |
-| `GET` | `/api/papers/{id_or_doi}/pdf` | `papers:read` | **已停用（410 Gone）** · PDF 不再对终端用户交付；请改用 `/markdown`。PDF 仍作为内部资产为 MinerU 转换与贡献者 lease 保留 |
-| `GET` | `/api/papers/{id_or_doi}/pdf/status` | `papers:read` | **PAPER_ACCESS** · 内部抓取管线的 side-effect-free 进度查询；状态机比 markdown 少 convert 阶段；body 不再含 `pdf_url` |
-| `GET` | `/api/papers/{id_or_doi}/images/zip` | `papers:read` | **PAPER_ACCESS** · 显式获取 MinerU 产出的图片 zip：默认流 `application/zip` 字节；`?format=link` 返回 JSON `{images_url, format:"link", expires_in}` 直链。无 LRO——图片由 `/markdown` 端点的转换流程产生，无资产时 404 并提示先取 markdown |
+| `GET` | `/api/papers/{id_or_doi}/markdown` | `papers:read` | **PAPER_ACCESS** · 所选完整不可变 bundle 的原始 Markdown 字节；format=link 仅返回同源认证成员 locator。无 pin 未就绪时 202 →纯 read/status 轮询→带 source/revision 重取；旧 MD/JSON/images 忽略 |
+| `GET` | `/api/papers/{id_or_doi}/markdown/status` | `papers:read` | **PAPER_ACCESS** · 与 read/status 共享完整包/冻结来源 readiness 纯轮询，不启动下载/解析；顶层 source_id/revision/state/ready（兼容 flags 可附加） |
+| `GET` | `/api/papers/{id_or_doi}/pdf` | `papers:read` | **PAPER_ACCESS** · 鉴权固定来源 PDF 字节，source_id 或语义 version=vN 互斥；完整 SHA headers，Range 同样鉴权；无需先枚举 source 或 MinerU token。format=link 仅返回同源认证 locator |
+| `GET` | `/api/papers/{id_or_doi}/pdf/status` | `papers:read` | **PAPER_ACCESS** · PDF 来源就绪纯探测，不解析；若含 pdf_url 仅是同源固定 source 的认证 locator，不暴露对象桶 |
+| `GET` | `/api/papers/{id_or_doi}/images/zip` | `papers:read` | **PAPER_ACCESS** · 从完整 bundle 核验原名/字节后组装图片 ZIP；无 pin 未就绪可202，纯 read/status 轮询后重取固定 source/revision；无 NAS presign |
+
+
+| `GET` | `/api/papers/{id}/read` | `papers:read` | **PAPER_ACCESS** · Middle 派生 Markdown JSON 信封；source_id/revision/page/block/cursor/limit，1-based定位、预算1..100000默认30000；truncated/next_request.cursor 固定全部身份 |
+| `GET` | `/api/papers/{id}/read/status` | `papers:read` | **PAPER_ACCESS** · 纯轮询；ready须完整包+冻结PDF核验，顶层source_id/revision；pending202 + Operation-Location/Retry-After，不创建任务 |
+| `GET` | `/api/papers/{id}/parses/{revision}/manifest` | `papers:read` | **PAPER_ACCESS** · 已发布完整包清单，source PDF与每成员SHA/原path；不以旧Middle代替 readiness |
+| `GET` | `/api/papers/{id}/parses/{revision}/files/{original_relative_path}` | `papers:read` | **PAPER_ACCESS** · 所有生产者成员原名/原字节，含嵌套目录及全部JSON，不重命名/重序列化 |
+| `GET` | `/api/papers/{id}/parses/{revision}/json` | `papers:read` | **PAPER_ACCESS** · 原始Middle字节固定artifact SHA；历史评论仍用，不是read派生JSON，也不是完整包ready证据 |
+
+完整身份、原件、懒迁移、上传与错误规则见[论文内容契约](paper-content.md)。当前新内容不运行自动 nightly/boot/入库转换；只有显式内容访问懒解析，管理员显式 RunNow/batch 另按授权。
 
 > `papers:write` 隐式含 `papers:read`。
 >
-> **PAPER_ACCESS** 标记的端点**只在部署方开启 `QATLAS_PAPER_ACCESS_ENABLED=true`
-> 时才注册**（默认 OFF；关闭时是 404 而非 403）。开启等于自愿承担对外重分发
+> **PAPER_ACCESS** 及 raw JSON/block 原件/完整包成员/images/figures **均由 YAML `paper_access.enabled` 控制**
+> （默认 OFF；关闭 404，无存储/解析副作用；qa_、别名、Range、历史 pin 不绕过）。开启等于自愿承担对外重分发
 > PDF / markdown 字节（或 RAG snippet 形式的派生片段）的合规义务，见
 > [License & Attribution · 论文访问开关](../about/license-and-attribution.md#论文访问开关-self-hosted)。
 > 公共 `quantum-atlas.ai` 部署默认 OFF。
 >
-> `{id_or_doi}` 路径段同时接受 arxiv canonical id（含 `vN`，例
-> `quant-ph/9508027v2` 或 `2501.00010v1`）、DOI（IANA 前缀 `10.<registrant>/`
-> 自动 detect，例 `10.1103/PhysRevLett.103.150502`）以及 **`qa_` paper_id**
-> （server 内部解析成该论文的 canonical 身份，取最高已收录的 arXiv 版本；
-> DOI-only 论文走 DOI 管线）。bare arXiv ID 补版本时优先查本地 catalog，
-> 未收录才抓 arxiv.org。DOI 经 OpenAlex 反查到 canonical arxiv id 后
-> 走同一套 handler；缺 `QATLAS_OPENALEX_MAILTO` 时 DOI 路径返回 503，
-> arxiv 路径不受影响。
+> `{id_or_doi}` 接受qa_、明确/裸arXiv或DOI别名。规范作品ID不等于版本pin；
+> source_id或version=vN是确切来源选择，revision/cursor固定解析。先解析明确pin，
+> 不按旧“DOI总优先/最高版本”规则替换。默认来源歧义应显式pin；未知论文/来源、
+> 关开关和后端不可用分别报告，不将旧MD/JSON/images当新ready。
 
 ### Search
 
@@ -305,11 +310,17 @@ MinerU——这是 Robust Downloader 的失败兜底闭环，见
 - 状态码：
     - `201 Created` — 写了新对象
     - `200 OK` — 全部 unchanged 短路，零写入
-    - `409 Conflict` — sha256 不同且没 `overwrite`，body 含 `existing_sha256` + `new_sha256`
+    - `409 Conflict` — 已冻结别名不同SHA，**即使 overwrite=true**；body含已有/新SHA，禁止替换来源
     - `400 Bad Request` — sha256 mismatch / 损坏的 multipart / PDF header 不对等
 - 并发安全（S3 conditional PUT `If-None-Match`），多 client 同字节并发只产生 1 个 201 + 其余 200
 
-### 长任务（LRO）：`/api/papers/{id_or_doi}/{markdown,pdf}`
+### 历史兼容 LRO 示例（旧缓存状态字段）
+
+> 以下图/示例保留旧接口的历史状态字段，不作为新不可变完整包/readiness或覆盖写规则。
+> 当前PDF按gate鉴权交付，无解析token也可读；正文/图片/figures可202，纯read/status
+> 核验完整包后state=cached/ready=true才固定source/revision重取。新信封、headers与
+> 懒迁移/严格上传请以[论文内容契约](paper-content.md)和[Upload API](upload-api.md)为准。
+> YAML paper_access.enabled取代旧环境变量；format=link仅同源认证locator，无NAS presign。
 
 仅在 `QATLAS_PAPER_ACCESS_ENABLED=true` 时注册。两类资源
 （`markdown` 与 `pdf`）共享同一套**异步 + 进度可拉**的协议，让 agent
@@ -331,8 +342,8 @@ GET /md ── miss ──┬→ queued ──→ fetching ──→ converting 
                          phase ∈ {error_fetching, error_converting})              │
                   └→ not_in_arxiv (404)                                            │
 
-注：PDF 抓取仍是上述管线的第一阶段（内部资产）；对外的 GET /pdf 已停用
-（410 Gone），不再有独立的 PDF 状态机对外暴露。
+注：这是历史状态图；PDF410停用阶段已被当前固定来源鉴权交付取代。
+已存PDF无推理依赖，原件未就绪与完整包ready按新契约区分。
 ```
 
 #### 触发 GET（202 / 200 / 404）

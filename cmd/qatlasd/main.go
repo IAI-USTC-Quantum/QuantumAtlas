@@ -455,7 +455,8 @@ func main() {
 		)
 		if ragClient != nil {
 			mineruPusher = ragClient
-			ingestPusher = ragClient
+			// PDF acquisition must not cause an indexer to read/parse content
+			// implicitly. Push indexing only after authorized content parsing.
 		}
 
 		// MinerU token pool: the registry DB (mineru_tokens, migration
@@ -482,6 +483,7 @@ func main() {
 				TokenStore:              mineruTokenStore,
 				MinerUAPIBaseURL:        cfg.MinerUAPIBaseURL,
 				MinerUModelVersion:      cfg.MinerUModelVersion,
+				MinerUTier:              cfg.MinerUTier,
 				MinerULanguage:          cfg.MinerULanguage,
 				MinerUIsOCR:             cfg.MinerUIsOCR,
 				MinerUEnableFormula:     cfg.MinerUEnableFormula,
@@ -490,6 +492,8 @@ func main() {
 				MinerUTimeout:           cfg.MinerUTimeout,
 				MinerUMaxConcurrentJobs: cfg.MinerUMaxConcurrentJobs,
 				Fetcher:                 arxivFetcher,
+				DOIPDFURL:               knownPublishedPDFURL(doiResolver),
+				VerifyDOIPDF:            verifyPublishedSource(doiResolver),
 				ArxivFetchConcurrent:    cfg.ArxivFetchConcurrent,
 				IndexPusher:             mineruPusher,
 			},
@@ -563,15 +567,8 @@ func main() {
 		var mineruScheduler *mineru.Scheduler
 		if cfg.PaperAccessEnabled {
 			mineruScheduler = mineru.NewScheduler(mineruConverter, registryStore, slog.Default())
-			mineruScheduler.Start(context.Background())
-			// Boot kick: don't make operators wait for the next midnight
-			// tick after a (re)deploy — if the queue has work, start
-			// today's batch immediately. Coalesced by the scheduler's
-			// own singleflight; no-ops when the converter is disabled.
-			go func() {
-				started, reason := mineruScheduler.RunNow(context.Background())
-				slog.Info("mineru scheduler boot kick", "started", started, "reason", reason)
-			}()
+			// No automatic batch/boot reparse: only content access starts
+			// inference. Keep the scheduler for explicit operator RunNow.
 			app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
 				mineruScheduler.Stop()
 				return e.Next()
@@ -598,13 +595,6 @@ func main() {
 		ingester := ingest.New(registryStore, arxivFetcher, rawStore,
 			ingest.WithIndexPusher(ingestPusher),
 			ingest.WithDOIResolver(doiResolver),
-			ingest.WithPDFReadyHook(func(ctx context.Context, canonical string, isDOI bool) {
-				if isDOI {
-					mineruConverter.EnsureByDOI(ctx, canonical, "")
-					return
-				}
-				mineruConverter.Ensure(ctx, canonical)
-			}),
 		)
 		// Fleet mode adopts pending papers into the downloader's durable journal.
 		// Never replay them simultaneously through a separate ingestion pool.
@@ -710,13 +700,6 @@ func main() {
 				},
 			},
 				downloader.WithIndexPusher(ingestPusher),
-				downloader.WithPDFReadyHook(func(ctx context.Context, canonical string, isDOI bool) {
-					if isDOI {
-						mineruConverter.EnsureByDOI(ctx, canonical, "")
-						return
-					}
-					mineruConverter.Ensure(ctx, canonical)
-				}),
 			)
 			if downloadFleet != nil {
 				downloadFleet.SetArchive(downloaderModule.ArchiveRemote)
@@ -1170,6 +1153,14 @@ func buildLocalAgentic(cfg *config.Config, engine *search.Engine) *agentic.Runne
 	return runner
 }
 
+// contentBucket keeps manually constructed configs consistent with Load defaults.
+func contentBucket(cfg *config.Config) string {
+	if cfg.S3BucketContent != "" {
+		return cfg.S3BucketContent
+	}
+	return "qatlas-content"
+}
+
 // initRawStore returns the objstore.Store backing raw paper assets.
 // Selects between a single LocalStore (cfg.RawDir) and the v0.7.0
 // three-bucket S3 split (qatlas-pdf / qatlas-md / qatlas-images behind
@@ -1191,11 +1182,9 @@ func initRawStore(cfg *config.Config) (objstore.Store, error) {
 		return objstore.NewLocalStore(cfg.RawDir)
 	}
 	dual := cfg.S3PublicEndpoint != "" && cfg.S3PublicEndpoint != cfg.S3Endpoint
-	// "papers" carries the Q1 block-comments parse bundles
-	// (papers/<qa>/parses/<rev>/…) alongside the source PDFs they pin.
-	// It shares the pdf bucket for now — the plan's §13 storage-layout
-	// decision may split it into a dedicated bucket (then this entry
-	// grows its own cfg field).
+	// New frozen PDFs and complete original-named parse bundles use only
+	// "content" in its dedicated bucket. Legacy kinds remain read-compatible
+	// for the one-time PDF import and explicitly pinned historical comments.
 	kinds := []struct {
 		kind   string
 		bucket string
@@ -1203,7 +1192,8 @@ func initRawStore(cfg *config.Config) (objstore.Store, error) {
 		{"pdf", cfg.S3BucketPDF},
 		{"markdown", cfg.S3BucketMD},
 		{"images", cfg.S3BucketImages},
-		{"papers", cfg.S3BucketPDF},
+		{"papers", cfg.S3BucketPDF}, // historical explicit revisions only
+		{"content", contentBucket(cfg)},
 	}
 	backends := make(map[string]objstore.Store, len(kinds))
 	for _, k := range kinds {
@@ -1655,7 +1645,7 @@ func registerRoutes(se *core.ServeEvent, app core.App, cfg *config.Config, rawSt
 	// plugin registry and proxies manifest/config to the qatlas-search
 	// microservice (503 when remote search is disabled).
 	routes.RegisterAdmin(se, cfg, app, registryStore.Pool(), mineruScheduler, mineruConverter, usageStore, pluginRegistry, remoteProvider)
-	routes.RegisterAdminAssets(se, rawStore, registryStore)
+	routes.RegisterAdminAssets(se, cfg, rawStore, registryStore, mineruConverter)
 }
 
 // probeRemoteSearch probes the qatlas-search microservice's /healthz

@@ -315,7 +315,7 @@ LEGACY ``downloader.proxy.*``、代理自身的 ``/v1/jobs`` / ``/v1/files/*``
        认领工作流的数据源；registry 不可用时同样降级 ``{available: false}``
    * - GET
      - ``/api/papers/{id}/pdf``
-     - **已停用（410 Gone）**——PDF 分发设计性禁用，改用 markdown 端点；
+     - paper_access 下鉴权固定来源PDF字节；source_id/语义version互斥，Range同样鉴权，SHA headers；
        PDF 仍作为内部资产服务转换与贡献者 lease
    * - GET
      - ``/api/papers/{id}/pdf/status``
@@ -323,7 +323,7 @@ LEGACY ``downloader.proxy.*``、代理自身的 ``/v1/jobs`` / ``/v1/files/*``
        内部阶段）
    * - GET
      - ``/api/papers/{id}/markdown``
-     - 获取 MinerU 转换的 Markdown（支持 ``?format=link|bytes|stream``）；
+     - 获取所选完整bundle原始Markdown（format=link仅同源认证locator），无pin未ready可202；
        ``{id}`` 也接受 ``qa_`` paper_id（服务端解析成最高 arXiv 版本，
        DOI-only 论文走 DOI 管线）；元数据回填 DOI 的 arXiv 论文在 DOI
        命名空间无资产时自动回落 arXiv 身份服务
@@ -335,13 +335,13 @@ LEGACY ``downloader.proxy.*``、代理自身的 ``/v1/jobs`` / ``/v1/files/*``
      - 列出该论文 Markdown 引用的图片文件
    * - GET
      - ``/api/papers/{id}/images/zip``
-     - 打包下载全部图片（支持 ``?format=link`` 预签名 URL）
+     - 完整bundle原路径图片打包；无pin未ready可202，轮询后固定source/revision重取；无NAS presign
    * - POST
      - ``/api/papers/{id}/upload-pdf``
-     - 上传本地 PDF（multipart form，``?overwrite=true`` 覆盖）
+     - 冻结PDF并通过PG发布；别名首次exactSHA永久绑定，不同字节409（overwrite也不替换）
    * - POST
      - ``/api/papers/{id}/upload-mineru``
-     - 上传本地 MinerU 转换结果
+     - 完整受支持Middle+Markdown ZIP，MD-only拒收、所有原名/字节保留；新revision/manifest最后发布，PG必需
    * - POST / DELETE
      - ``/api/papers/{arxiv_id}/mineru-claim``
        （DELETE 路径为 ``.../mineru-claim/{claim_id}``）
@@ -351,6 +351,33 @@ LEGACY ``downloader.proxy.*``、代理自身的 ``/v1/jobs`` / ``/v1/files/*``
        （DELETE 路径为 ``.../mineru-lease/{claim_id}``）
      - 获取 / 释放 MinerU 转换租约；POST 支持 ``?ttl_seconds=N``
        指定租期（缺省用服务端默认值）。需 ``papers:write``
+
+固定内容与可续读视图
+~~~~~~~~~~~~~~~~~~~~
+
+所有PDF、正文、raw JSON、完整包成员、block原件/裁图、images/figures均要求
+``paper_access.enabled`` 与 ``papers:read``；关闭404，无catalog/storage/parse副作用。
+明确source/version/revision pins先于current或历史DOI默认选择，失败不回退。
+只有显式内容GET懒解析，没有nightly/boot/入库自动推理；管理员显式batch仍独立支持。
+
+- ``GET /api/papers/{id}/read``：Middle派生Markdown JSON信封（不是原artifact）；
+  source_id/revision/page/block/cursor/limit，page/block 1-based原编号、block须page，
+  Unicode预算默认30000、1..100000。返回完整来源/修订/hash/renderer、content_ranges、
+  truncated 与可空 next_request；续读将 next_request.cursor 原样回传。
+- ``GET /api/papers/{id}/read/status``：纯poll、不submit任务；完整包+冻结PDF核验后
+  state=cached、ready=true（兼容ready/done客户端）；pending/queued/running为202
+  +Operation-Location/Retry-After，已知source后顶层source_id/revision固定再GET。
+  processDone或旧Middle存在不能判ready。
+- ``GET /api/papers/{id}/parses/{revision}/manifest``：已发布完整包的独立生成清单。
+- ``GET /api/papers/{id}/parses/{revision}/files/{original_relative_path}``：所有原成员
+  的原名/原字节，含嵌套目录/全部JSON；SHA复核、attachment/nosniff，栅格图片可inline。
+- ``GET /api/papers/{id}/parses/{revision}/json``：字节一致的原Middle；历史评论仍
+  固定旧source/revision，不参加新完整包readiness，也不替换成派生read输出。
+
+格式/输入错误400，pin/selector/renderer冲突409，缺少明确原件404，完整性失败422，
+后端不可用503。PDF默认字节；``format=link`` 只给同源固定source的认证API位置，
+不暴露NAS/S3 presign，每次download仍受gate。详细身份、冻结/上传/懒迁移规则见
+:doc:`../manual/server/paper-content`，上传限制见 :doc:`../manual/server/upload-api`。
 
 Dashboard / Me
 --------------
@@ -386,7 +413,7 @@ Dashboard / Me
      - ``/api/server/info`` **公开**
      - 服务器版本与能力信息（``capabilities``：匿名只见布尔位——
        ``paper_access`` / ``markdown_delivery`` / ``pdf_delivery``
-       （恒 false）/ ``agentic_search`` / ``mineru.*``；认证调用者
+       （随paper_access，已存PDF无需parse token）/ ``agentic_search`` / ``mineru.*``；认证调用者
        额外见 ``mineru.daily_cap`` / ``mineru.converted_today``）
    * - GET
      - ``/api/pat/scopes`` **公开**

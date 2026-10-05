@@ -31,13 +31,13 @@ func TestPaperAcquisitionPendingWithPDFRemainsQueued(t *testing.T) {
 	}
 }
 
-func TestPaperAcquisitionReadyFromMarkdownAsset(t *testing.T) {
+func TestPaperAcquisitionIgnoresLegacyMarkdownReadiness(t *testing.T) {
 	body := paperAcquisition(context.Background(), &registry.Paper{
 		PaperID: "qa_ready", DOI: "10.1000/ready", Status: "ready",
 	}, []registry.Asset{{
 		Source: "published", PDFPath: "doi/10.1000/ready.pdf", MinerUMDPath: "doi/10.1000/ready.md",
 	}}, nil, nil)
-	if body["state"] != "done" || body["phase"] != "ready" || body["active"] != false {
+	if body["state"] != "idle" || body["phase"] != "waiting_mineru" || body["active"] != false {
 		t.Fatalf("body = %+v", body)
 	}
 }

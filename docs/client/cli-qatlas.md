@@ -1,5 +1,17 @@
 # `qatlas` 客户端 CLI 参考
 
+> **当前内容契约更新**：固定来源 PDF 已恢复为 paper_access 开关下的鉴权字节，
+> 关闭404，qa_、别名、Range、历史原件不能绕过。新内容在独立 qatlas-content 桶的
+> content/ 命名空间不可变发布：source 绑定确切 PDF SHA，arXiv vN 是语义版本、
+> S3VersionId 是物理版本、parse revision 是独立不可变身份；三者不可混用。
+> 同 paper/SHA 可复用 source；冻结导入别名不同字节409（overwrite也不替换）。
+> 解析上传必须完整支持的 Middle+Markdown，保留所有成员原名/字节，MD-only拒收；
+> manifest最后核验发布且PG必需，重传新revision，不覆盖历史。旧MD/JSON/images忽略，
+> 只在内容/PDF访问按需冻结旧PDF，不bulk回填、不删除旧桶；没有nightly/boot/入库自动推理。
+> 下文涉及旧三桶覆盖、仅full.md+images、原PDF410/外部直链的段落保留为历史背景，
+> **不作为当前操作规则**。当前API/上传/续读统一见[论文内容契约](../server/paper-content.md)
+> 与[Upload API](../server/upload-api.md)；完整read视图不是原Middle JSON。
+
 `qatlas` 是独立 PyPI 包 [`qatlas-cli`](https://pypi.org/project/qatlas-cli/) 提供的 console script，由 [IAI-USTC-Quantum/qatlas-cli](https://github.com/IAI-USTC-Quantum/qatlas-cli) 独立维护和发版。本文保留与 QuantumAtlas 服务端集成相关的命令参考；客户端源码、完整命令和版本更新以该仓库及 `qatlas --help` 为准。
 
 !!! warning "旧包 quantum-atlas 退役"
@@ -185,7 +197,7 @@ qatlas paper get images   ID_OR_DOI [--output FILE]   # MinerU 图片 zip（显�
 qatlas paper get metadata ID_OR_DOI                   # 论文详情 JSON（JSON-only、无 abstract，机器可读出口）
 qatlas paper status       ID_OR_DOI [--kind markdown]
 
-# 注：PDF 交付已在服务端停用（GET /pdf → 410），用户侧始终拿 MinerU markdown
+# 当前固定原PDF用 qatlas paper pdf；可续读派生JSON用 qatlas paper read
 ```
 
 #### ID 形态（server 自动归一）

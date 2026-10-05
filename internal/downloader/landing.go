@@ -17,7 +17,7 @@ import (
 var (
 	citationPDFURLRe  = regexp.MustCompile(`(?is)<meta[^>]+name=["']citation_pdf_url["'][^>]+content=["']([^"']+)["']`)
 	citationPDFURLRe2 = regexp.MustCompile(`(?is)<meta[^>]+content=["']([^"']+)["'][^>]+name=["']citation_pdf_url["']`)
-	pdfHrefRe         = regexp.MustCompile(`(?is)(?:href|src)=["']([^"'\s<>]+\.pdf(?:\?[^"'\s<>]*)?)["']`)
+	pdfHrefRe         = regexp.MustCompile(`(?is)<a\b[^>]*\bhref=["']([^"'\s<>]+\.pdf(?:\?[^"'\s<>]*)?)["']`)
 	ieeeDocRe         = regexp.MustCompile(`(?i)ieeexplore\.ieee\.org/document/(\d+)`)
 	ieeeFrameSrcRe    = regexp.MustCompile(`(?is)(?:iframe[^>]+src|window\.open\(["'])\s*(/stamp/stampPDF\.jsp[^"'\s)]+|/iel[0-9x]+/[^"'\s)]+\.pdf)`)
 	// jsonPDFURLRe matches inline-JSON pdf links ("pdfUrl": "/…"),
@@ -57,14 +57,15 @@ func (d *Downloader) scrapeLanding(ctx context.Context, landingURL string) (*Lan
 		return nil, err
 	}
 	info := &LandingInfo{FinalURL: finalURL, HTML: html, HTTPStatus: status}
+	resolutionBase := documentBaseURL(html, finalURL)
 	seen := map[string]bool{}
 	add := func(raw string) {
 		raw = strings.TrimSpace(raw)
 		if raw == "" {
 			return
 		}
-		abs := absolutize(raw, finalURL)
-		if abs != "" && !seen[abs] {
+		abs := absolutize(raw, resolutionBase)
+		if browserHTTPURL(abs) != "" && !seen[abs] {
 			seen[abs] = true
 			info.Candidates = append(info.Candidates, abs)
 		}
@@ -82,7 +83,7 @@ func (d *Downloader) scrapeLanding(ctx context.Context, landingURL string) (*Lan
 	if len(info.Candidates) == 0 {
 		for _, m := range pdfHrefRe.FindAllStringSubmatch(string(html), 16) {
 			raw := htmlUnescape(m[1])
-			if !sameHostOrRelative(raw, finalURL) {
+			if !sameHostOrRelative(absolutize(raw, resolutionBase), finalURL) {
 				continue
 			}
 			add(raw)
@@ -116,7 +117,11 @@ func (d *Downloader) resolveIEEEStamp(ctx context.Context, stampURL string) stri
 	if m == nil {
 		return ""
 	}
-	return absolutize(m[1], finalURL)
+	resolved := absolutize(htmlUnescape(m[1]), documentBaseURL(html, finalURL))
+	if !sameHostOrRelative(resolved, finalURL) {
+		return ""
+	}
+	return resolved
 }
 
 // absolutize resolves raw against base; empty when hopeless.
@@ -146,18 +151,18 @@ func sameHostOrRelative(raw, base string) bool {
 	if raw == "" {
 		return false
 	}
-	if !strings.HasPrefix(raw, "http://") && !strings.HasPrefix(raw, httpsPrefix) {
-		return true // relative
-	}
 	bu, err := url.Parse(base)
-	if err != nil {
+	if err != nil || bu.Host == "" {
 		return false
 	}
 	ru, err := url.Parse(raw)
 	if err != nil {
 		return false
 	}
-	return strings.EqualFold(ru.Host, bu.Host)
+	// Scheme-relative URLs (//other.example/reference.pdf) are NOT
+	// relative paths: resolve before comparing, and reject non-HTTP URLs.
+	ru = bu.ResolveReference(ru)
+	return (ru.Scheme == "http" || ru.Scheme == "https") && ru.User == nil && strings.EqualFold(ru.Host, bu.Host)
 }
 
 func findString(list []string, pred func(string) bool) (string, bool) {

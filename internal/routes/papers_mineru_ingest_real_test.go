@@ -1,123 +1,97 @@
 package routes
 
-// papers_mineru_ingest_real_test.go: re-verification of the new-format
-// ingest against a GENUINE MinerU 4.x result zip. Opt-in via env:
-//
-//	QATLAS_REAL_MINERU_ZIP=/path/to/full.zip
-//
-// Unset → skip with an explicit pending marker (same contract as
-// internal/mineru/realartifact_test.go). Drives ingestMinerUNewFormat
-// over a real zip + fake catalog + LocalStore and asserts the bundle
-// layout, then reads the combined block back through the stored
-// artifact bytes.
+// This optional test ingests the genuine archived MinerU output with its
+// captured source PDF. It verifies stored source SHA and every original ZIP
+// member, without contacting MinerU or running inference.
 import (
-	"context"
-	"encoding/hex"
+	"bytes"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"os"
-	"strings"
+	"path/filepath"
 	"testing"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineru"
-	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
-	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/registry"
-	"github.com/pocketbase/pocketbase/core"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperassets"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperbundle"
 )
 
 func TestRealMinerUIngestEndToEnd(t *testing.T) {
 	zipPath := os.Getenv("QATLAS_REAL_MINERU_ZIP")
 	if zipPath == "" {
-		t.Skip("QATLAS_REAL_MINERU_ZIP unset; real-ingest re-verification pending (synthetic tests only)")
+		t.Skip("QATLAS_REAL_MINERU_ZIP unset; genuine ingest verification pending")
 	}
-	zipBytes, err := os.ReadFile(zipPath)
+	archive, err := os.ReadFile(zipPath)
 	if err != nil {
-		t.Fatalf("read %s: %v", zipPath, err)
+		t.Fatal(err)
 	}
-
-	store, err := objstore.NewLocalStore(t.TempDir())
+	pdfPath := os.Getenv("QATLAS_REAL_MINERU_PDF")
+	if pdfPath == "" {
+		pdfPath = filepath.Join(filepath.Dir(filepath.Dir(zipPath)), "1605.01488.pdf")
+	}
+	pdf, err := os.ReadFile(pdfPath)
 	if err != nil {
-		t.Fatalf("local store: %v", err)
+		t.Fatalf("captured source PDF required (set QATLAS_REAL_MINERU_PDF): %v", err)
 	}
-	c := &fakeIngestCatalog{
-		byArxiv:   map[string]string{"2501.09999": fixturePaperID},
-		sources:   map[string][]registry.PaperSource{},
-		revisions: map[string][]registry.ParseRevision{},
+	if !bytes.HasPrefix(pdf, []byte("%PDF-")) {
+		t.Fatal("fixture source is not PDF bytes")
 	}
-
-	req := httptest.NewRequest(http.MethodPost, "/api/papers/2501.09999v1/upload-mineru", nil)
-	rec := httptest.NewRecorder()
-	re := &core.RequestEvent{}
-	re.Request = req
-	re.Response = rec
-	pdfSha := strings.Repeat("77", 32)
-	if err := ingestMinerUNewFormat(re, store, c, "2501.09999v1", zipBytes,
-		pdfSha, "", "real-verify", "realpaper"); err != nil {
-		t.Fatalf("ingest genuine zip: %v", err)
+	c, store := newIngestFixture(t)
+	c.byArxiv["1605.01488"] = fixturePaperID
+	canonical := "1605.01488v1"
+	if _, err := store.Put(t.Context(), paperassets.AssetKey("pdf", canonical), bytes.NewReader(pdf), int64(len(pdf)), "application/pdf"); err != nil {
+		t.Fatal(err)
 	}
+	sha := paperbundle.SHA256(pdf)
+	rec, body := callIngest(t, store, c, canonical, sha, "", archive)
 	if rec.Code != http.StatusCreated {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("real intake %d %s", rec.Code, rec.Body.String())
 	}
-	var body map[string]any
-	_ = json.Unmarshal(rec.Body.Bytes(), &body)
-
-	// Bundle members exist in the store.
-	keys := body["objstore_keys"].(map[string]any)
-	midKey := keys["middle_json"].(string)
-	if mid, err := readAllFromStore(t, store, midKey); err != nil || len(mid) == 0 {
-		t.Fatalf("stored middle.json unreadable: %v", err)
+	revision := body["revision_id"].(string)
+	bundle := c.bundles[revision]
+	manifest, err := paperbundle.New(store).VerifyBundle(t.Context(), fixturePaperID, bundle.SourceID, revision)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if imgs, ok := keys["images"].([]any); !ok || len(imgs) == 0 {
-		t.Log("note: no images in this zip")
-	} else {
-		for _, k := range imgs {
-			if _, err := readAllFromStore(t, store, k.(string)); err != nil {
-				t.Fatalf("stored image %v unreadable: %v", k, err)
-			}
+	if manifest.SourcePDFSHA256 != sha || bundle.SourcePDFSHA256 != sha || body["source_sha256"] != sha {
+		t.Fatal("claimed/frozen/manifest source SHA mismatch")
+	}
+	frozen, err := paperbundle.New(store).ReadPDF(t.Context(), fixturePaperID, bundle.SourceID, sha, int64(len(pdf)))
+	if err != nil || !bytes.Equal(frozen, pdf) {
+		t.Fatalf("captured PDF not frozen byte-for-byte: %v", err)
+	}
+	result, err := mineru.ExtractPackage(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Files) != len(result.Members) {
+		t.Fatal("complete member inventory changed")
+	}
+	for name, original := range result.Members {
+		stored, err := readAllFromStore(t, store, paperbundle.FileKey(fixturePaperID, bundle.SourceID, revision, name))
+		if err != nil || !bytes.Equal(stored, original) {
+			t.Fatalf("original %s lost/renamed/rewritten: %v", name, err)
 		}
 	}
-
-	// The revision row points at the stored bytes and parses.
-	revs := c.revisions[fixturePaperID]
-	if len(revs) != 1 {
-		t.Fatalf("revisions = %d, want 1", len(revs))
+	if bundle.MiddlePath != result.MiddlePath || bundle.MarkdownPath != result.MarkdownPath || bundle.ArtifactSha256 != paperbundle.SHA256(result.MiddleJSON) {
+		t.Fatal("producer path/artifact SHA changed")
 	}
-	revBytes, err := readAllFromStore(t, store, revs[0].ObjstoreKey)
+	rawManifest, err := readAllFromStore(t, store, bundle.ManifestKey)
+	if err != nil || paperbundle.SHA256(rawManifest) != bundle.ManifestSHA256 {
+		t.Fatal("published manifest not pinned to persisted bytes")
+	}
+	var decoded paperbundle.Manifest
+	if json.Unmarshal(rawManifest, &decoded) != nil || decoded.SourcePDFSHA256 != sha {
+		t.Fatal("manifest not exact source-pinned")
+	}
+	doc, err := mineru.ParseMiddleJSON(result.MiddleJSON)
 	if err != nil {
-		t.Fatalf("revision key unreadable: %v", err)
-	}
-	revSum := sha256Bytes(revBytes)
-	if hex.EncodeToString(revSum[:]) != revs[0].ArtifactSha256 {
-		t.Error("artifact_sha256 does not match the stored genuine middle.json")
-	}
-
-	// 00009 tier round-trip: no tier metadata in a genuine zip → default.
-	if revs[0].Tier != "standard" {
-		t.Errorf("tier = %q, want standard (genuine zips carry no tier metadata)", revs[0].Tier)
-	}
-
-	// Source row pinned to the claimed PDF sha.
-	src := c.sources[fixturePaperID]
-	if len(src) != 1 || src[0].Sha256 != pdfSha {
-		t.Errorf("source rows = %+v", src)
-	}
-
-	// Locator chain over real data: the stored artifact's first
-	// normalized block + the source sha render a well-formed locator
-	// (doc:<7hex>/tier:standard/page:1/block:1).
-	doc, err := mineru.ParseMiddleJSON(revBytes)
-	if err != nil {
-		t.Fatalf("re-parse stored artifact: %v", err)
+		t.Fatal(err)
 	}
 	first := doc.OrderedBlocks()[0]
-	got := mineru.Locator(src[0].Sha256, revs[0].Tier, first.PageIdx, first.Index)
-	want := "doc:" + pdfSha[:7] + "/tier:standard/page:1/block:1"
-	if got != want {
-		t.Errorf("locator = %q, want %q", got, want)
+	locator := mineru.Locator(sha, bundle.Tier, first.PageIdx, first.Index)
+	if locator != "doc:"+sha[:7]+"/tier:standard/page:1/block:1" {
+		t.Fatal("real block/source locator changed: ", locator)
 	}
-
-	t.Logf("real ingest OK: revision=%s tier=%s images=%d locator=%q",
-		revs[0].RevisionID, revs[0].Tier, len(keys["images"].([]any)), got)
-	_ = context.Background()
+	t.Logf("genuine intake source=%s revision=%s members=%d pages=%d blocks=%d", sha, revision, len(manifest.Files), doc.Pages, len(doc.Blocks))
 }

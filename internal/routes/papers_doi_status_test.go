@@ -9,17 +9,20 @@ package routes
 // DOI.
 
 import (
+	"bytes"
 	"context"
-	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineru"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperassets"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/registry"
 	"github.com/pocketbase/pocketbase/core"
 )
 
@@ -98,15 +101,15 @@ func TestProbeDOIAssetReadiness(t *testing.T) {
 	t.Run("md only", func(t *testing.T) {
 		s := &statMockStore{present: map[string]bool{mdKey: true}}
 		pdf, md, _ := probeDOIAssetReadiness(context.Background(), s, doi)
-		if pdf || !md {
-			t.Errorf("got (%v,%v), want (false,true)", pdf, md)
+		if pdf || md {
+			t.Errorf("got (%v,%v), want (false,false); legacy MD is not ready", pdf, md)
 		}
 	})
 	t.Run("both present", func(t *testing.T) {
 		s := &statMockStore{present: map[string]bool{pdfKey: true, mdKey: true}}
 		pdf, md, _ := probeDOIAssetReadiness(context.Background(), s, doi)
-		if !pdf || !md {
-			t.Errorf("got (%v,%v), want (true,true)", pdf, md)
+		if !pdf || md {
+			t.Errorf("got (%v,%v), want (true,false); legacy MD is not ready", pdf, md)
 		}
 	})
 	t.Run("invalid DOI returns (false,false) without panic", func(t *testing.T) {
@@ -125,121 +128,76 @@ func TestProbeDOIAssetReadiness(t *testing.T) {
 }
 
 func TestMarkdownStatusByDOIHandler_Cached(t *testing.T) {
-	doi := "10.1103/physrevlett.123.070501"
-	mdKey := paperassets.DOIAssetKey("markdown", doi)
-	pdfKey := paperassets.DOIAssetKey("pdf", doi)
-	store := &statMockStore{present: map[string]bool{mdKey: true, pdfKey: true}}
-
-	re, rec := mustDOIStatusReq(t, doi, "markdown")
-	if err := markdownStatusByDOIHandler(re, store, nil, doi); err != nil {
-		t.Fatalf("handler: %v", err)
-	}
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
-	}
-	var body map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if got := body["doi"]; got != doi {
-		t.Errorf("body.doi = %v, want %q", got, doi)
-	}
-	if body["state"] != "cached" {
-		t.Errorf("body.state = %v, want cached", body["state"])
-	}
-	if mdReady, _ := body["md_ready"].(bool); !mdReady {
-		t.Errorf("body.md_ready = %v, want true", body["md_ready"])
-	}
-	if pdfReady, _ := body["pdf_ready"].(bool); !pdfReady {
-		t.Errorf("body.pdf_ready = %v, want true", body["pdf_ready"])
-	}
-	if got := body["markdown_url"]; got != "/api/papers/"+doi+"/markdown" {
-		t.Errorf("body.markdown_url = %v, want /api/papers/<doi>/markdown", got)
-	}
-	if got := rec.Header().Get("X-QAtlas-DOI"); got != doi {
-		t.Errorf("X-QAtlas-DOI = %q, want %q", got, doi)
+	c, store, b := newDOIReadingFixture(t)
+	rec, body := readRouteRequest(t, "/api/papers/"+c.doi+"/read/status?source_id="+readTestSource, func(re *core.RequestEvent) error {
+		return contentReadStatusHandler(re, &config.Config{PaperAccessEnabled: true}, store, c, nil, c.doi)
+	})
+	if rec.Code != 200 || body["ready"] != true || body["md_ready"] != true || body["pdf_ready"] != true || body["revision"] != b.RevisionID || body["source_id"] != readTestSource {
+		t.Fatalf("complete status %d %+v", rec.Code, body)
 	}
 }
-
 func TestMarkdownStatusByDOIHandler_Missing(t *testing.T) {
-	doi := "10.1103/physrevlett.123.070501"
-	pdfKey := paperassets.DOIAssetKey("pdf", doi)
-	// PDF is on disk but markdown is not — md/status should still 200
-	// with state=missing rather than 404 (lets the client poll for
-	// readiness without falling back to a separate "not found" branch).
-	store := &statMockStore{present: map[string]bool{pdfKey: true}}
-
-	re, rec := mustDOIStatusReq(t, doi, "markdown")
-	if err := markdownStatusByDOIHandler(re, store, nil, doi); err != nil {
-		t.Fatalf("handler: %v", err)
+	c, store, _ := newDOIReadingFixture(t)
+	c.bundles = map[string]registry.ParseBundle{}
+	_, _ = store.Put(t.Context(), paperassets.DOIAssetKey("markdown", c.doi), strings.NewReader("legacy cached bytes"), 19, "text/markdown")
+	conv := &readTestConverter{job: &mineru.Job{State: mineru.JobStateDone, RevisionID: "pr_stale"}}
+	rec, body := readRouteRequest(t, "/api/papers/"+c.doi+"/read/status?source_id="+readTestSource, func(re *core.RequestEvent) error {
+		return contentReadStatusHandler(re, &config.Config{PaperAccessEnabled: true}, store, c, conv, c.doi)
+	})
+	if rec.Code != 202 || body["ready"] != false || body["md_ready"] != false || body["pdf_ready"] != true || conv.ensureCalls != 0 {
+		t.Fatalf("stale MD/Done faked readiness %d %+v", rec.Code, body)
 	}
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
+}
+func TestPDFByDOIAndPinnedStatusWithoutConverter(t *testing.T) {
+	c, store, _ := newDOIReadingFixture(t)
+	c.bundles = map[string]registry.ParseBundle{}
+	original, err := readAllFromStore(t, store, c.source.ObjstoreKey)
+	if err != nil {
+		t.Fatal(err)
 	}
-	var body map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode: %v", err)
+	rec, _ := readRouteRequest(t, "/api/papers/"+c.doi+"/pdf?source_id="+readTestSource, func(re *core.RequestEvent) error {
+		return contentPDFHandler(re, &config.Config{PaperAccessEnabled: true}, store, c, nil, c.doi)
+	})
+	if rec.Code != 200 || !bytes.Equal(rec.Body.Bytes(), original) || rec.Header().Get("X-QAtlas-Source-Id") != readTestSource {
+		t.Fatalf("PDF-only delivery %d %s", rec.Code, rec.Body.String())
 	}
-	if body["state"] != "missing" {
-		t.Errorf("body.state = %v, want missing", body["state"])
-	}
-	if mdReady, _ := body["md_ready"].(bool); mdReady {
-		t.Errorf("body.md_ready = %v, want false", body["md_ready"])
-	}
-	if pdfReady, _ := body["pdf_ready"].(bool); !pdfReady {
-		t.Errorf("body.pdf_ready = %v, want true", body["pdf_ready"])
+	status, body := readRouteRequest(t, "/api/papers/"+c.doi+"/pdf/status?source_id="+readTestSource, func(re *core.RequestEvent) error {
+		return contentPDFStatusHandler(re, &config.Config{PaperAccessEnabled: true}, store, c, nil, c.doi)
+	})
+	if status.Code != 200 || body["pdf_ready"] != true || body["md_ready"] != false || body["source_id"] != readTestSource || !strings.Contains(body["pdf_url"].(string), readTestSource) {
+		t.Fatalf("source-bound PDF readiness %d %+v", status.Code, body)
 	}
 }
 
 func TestPDFStatusByDOIHandler_Cached(t *testing.T) {
 	doi := "10.1103/physrevlett.123.070501"
-	pdfKey := paperassets.DOIAssetKey("pdf", doi)
-	store := &statMockStore{present: map[string]bool{pdfKey: true}}
-
+	store := &statMockStore{present: map[string]bool{paperassets.DOIAssetKey("pdf", doi): true, paperassets.DOIAssetKey("markdown", doi): true}}
 	re, rec := mustDOIStatusReq(t, doi, "pdf")
 	if err := pdfStatusByDOIHandler(re, store, doi); err != nil {
-		t.Fatalf("handler: %v", err)
+		t.Fatal(err)
 	}
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
-	}
-	var body map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if body["state"] != "cached" {
-		t.Errorf("body.state = %v, want cached", body["state"])
-	}
-	// PDF delivery is disabled (plan §B): the status probe keeps only
-	// the pdf_ready/md_ready booleans — no pdf_url pointer.
-	if _, has := body["pdf_url"]; has {
-		t.Errorf("body.pdf_url must be absent (PDF delivery disabled); body = %+v", body)
-	}
-	if pdfReady, _ := body["pdf_ready"].(bool); !pdfReady {
-		t.Errorf("body.pdf_ready = %v, want true", body["pdf_ready"])
+	if rec.Code != 503 {
+		t.Fatal("catalog-less legacy metadata was accepted as frozen PDF proof")
 	}
 }
-
+func TestDOIStatusCompatibilityCannotTrustLegacyStore(t *testing.T) {
+	doi := "10.1103/physrevlett.123.070501"
+	store := &statMockStore{present: map[string]bool{paperassets.DOIAssetKey("pdf", doi): true, paperassets.DOIAssetKey("markdown", doi): true}}
+	re, rec := mustDOIStatusReq(t, doi, "markdown")
+	if err := markdownStatusByDOIHandler(re, store, nil, doi); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != 503 {
+		t.Fatal("compatibility status leaked legacy cache readiness")
+	}
+}
 func TestStatusByDOIHandlerRejectsBadDOI(t *testing.T) {
-	store := &statMockStore{present: map[string]bool{}}
-	for _, kind := range []string{"markdown", "pdf"} {
-		req := httptest.NewRequest(http.MethodGet, "/api/papers/not-a-doi/"+kind+"/status", nil)
-		rec := httptest.NewRecorder()
-		re := &core.RequestEvent{}
-		re.Request = req
-		re.Response = rec
-		var err error
-		if kind == "markdown" {
-			err = markdownStatusByDOIHandler(re, store, nil, "not-a-doi")
-		} else {
-			err = pdfStatusByDOIHandler(re, store, "not-a-doi")
-		}
-		if err != nil {
-			t.Fatalf("%s/status handler returned err: %v", kind, err)
-		}
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("%s/status code = %d, want 400 for invalid DOI", kind, rec.Code)
-		}
+	c, store, _ := newDOIReadingFixture(t)
+	rec, _ := readRouteRequest(t, "/api/papers/not-a-doi/read/status", func(re *core.RequestEvent) error {
+		return contentReadStatusHandler(re, &config.Config{PaperAccessEnabled: true}, store, c, nil, "not-a-doi")
+	})
+	if rec.Code != 400 {
+		t.Fatalf("invalid status identity: %d", rec.Code)
 	}
 }
 
@@ -285,5 +243,4 @@ func TestStatusSuffixPeel(t *testing.T) {
 	// Sanity: errors.Is import is not required here, but the test
 	// file imports it for future cases. Touch it so the import never
 	// goes silently unused.
-	_ = errors.Is
 }

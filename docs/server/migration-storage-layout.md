@@ -1,5 +1,15 @@
 # 存储路径迁移
 
+> **新不可变内容边界**：fresh PDF 与完整解析成员写独立 `s3.bucket_content`
+> （默认 qatlas-content，必须区别于旧桶/corpus），本地后端使用同一 content/ 逻辑命名空间。
+> 成员 create-only、持久SHA复核、manifest最后发布，PG成功后才切current；PG不可用不延期报成功。
+> 同SHA可复用source ID；arXiv vN语义、source字节身份、S3VersionId物理版本、parse revision
+> 不同。冻结导入别名不同字节409（overwrite也不替换），解析重传新revision。
+> 旧三桶/layout/versioning/prune步骤保留为历史与旧资源运维，**不得据此覆盖冻结原件**；
+> 新功能不bulk回填，不删除旧桶，不复制旧MD/JSON/images，只在内容/PDF访问懒冻结旧PDF。
+> 无nightly/boot/入库自动解析，只有显式内容访问或管理员明确RunNow。
+> 当前API/存储/错误与上传规则见[论文内容契约](paper-content.md)和[Upload API](upload-api.md)。
+
 > 历史文档：0.x 阶段默认存储路径变更的记录，给操作员排查"旧 install 找不到 pb_data"用。新 install 不需要看。
 
 ## 关键变更

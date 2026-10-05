@@ -11,6 +11,9 @@ import (
 // the winner of a conditional write. It streams instead of allocating a PDF-sized
 // buffer, using the same signature/minimum/maximum/trailer checks as FetchClient.
 func inspectStoredPDF(r io.Reader) (string, int64, error) {
+	return inspectPDFWithMinimum(r, DefaultMinPDFBytes)
+}
+func inspectPDFWithMinimum(r io.Reader, minimum int64) (string, int64, error) {
 	h := sha256.New()
 	scan := &pdfStreamCheck{}
 	n, err := io.Copy(io.MultiWriter(h, scan), io.LimitReader(r, DefaultMaxPDFBytes+1))
@@ -20,7 +23,7 @@ func inspectStoredPDF(r io.Reader) (string, int64, error) {
 	if n > DefaultMaxPDFBytes {
 		return "", n, ErrTooLarge
 	}
-	if n < DefaultMinPDFBytes {
+	if n < minimum {
 		return "", n, ErrTooSmall
 	}
 	if ClassifyBody(scan.head) != BodyPDF {

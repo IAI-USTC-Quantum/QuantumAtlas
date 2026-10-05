@@ -13,6 +13,9 @@ package mineru
 // and realpaper/local's middle.json.
 
 import (
+	"archive/zip"
+	"bytes"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -26,6 +29,37 @@ func TestRealMinerUArtifact(t *testing.T) {
 	zipBytes, err := os.ReadFile(zipPath)
 	if err != nil {
 		t.Fatalf("read %s: %v", zipPath, err)
+	}
+
+	complete, err := ExtractPackage(zipBytes)
+	if err != nil {
+		t.Fatalf("complete production package extraction: %v", err)
+	}
+	archive, err := zip.NewReader(bytes.NewReader(zipBytes), int64(len(zipBytes)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, member := range archive.File {
+		if member.FileInfo().IsDir() {
+			continue
+		}
+		reader, err := member.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		original, err := io.ReadAll(reader)
+		reader.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(complete.Members[member.Name], original) {
+			t.Fatalf("original member changed or dropped: %s", member.Name)
+		}
+		count++
+	}
+	if len(complete.Members) != count {
+		t.Fatal("complete member inventory mismatch")
 	}
 
 	if !HasMiddleJSON(zipBytes) {

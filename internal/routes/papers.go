@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -123,6 +122,11 @@ func RegisterPapers(
 		if raw == "lookup" {
 			return paperLookupHandler(re, catalog, corpus, corpusLoader)
 		}
+		// Content access is resolved before legacy identity dispatch: explicit
+		// source/revision/version pins may never be redirected to DOI twins.
+		if handled, err := dispatchContentGET(re, cfg, rawStore, catalog, converter, raw); handled {
+			return err
+		}
 		// Q1 block-comments originals surface (plan §12.2): every
 		// /sources and /parses path, for any paper id form (qa_
 		// surrogate or alias). Dispatched ahead of the qa_ / identifier
@@ -131,344 +135,12 @@ func RegisterPapers(
 		if handled, herr := dispatchBlockOriginalsGET(re, cfg, rawStore, catalog, raw); handled {
 			return herr
 		}
-		// Paper detail by surrogate id: GET /api/papers/qa_<ulid>, the
-		// on-demand image listing: GET /api/papers/qa_<ulid>/images, the
-		// figure/caption index: GET /api/papers/qa_<ulid>/figures, and
-		// the single-image download: GET /api/papers/qa_<ulid>/images/<name>.
-		// "qa_" never collides with an arXiv id / DOI, so it dispatches
-		// ahead of the asset-download handlers below.
-		if strings.HasPrefix(raw, "qa_") {
-			if id, ok := strings.CutSuffix(raw, "/images"); ok && !strings.Contains(id, "/") {
-				return paperImagesHandler(re, catalog, rawStore, id)
-			}
-			if id, ok := strings.CutSuffix(raw, "/figures"); ok && !strings.Contains(id, "/") {
-				return paperFiguresHandler(re, catalog, rawStore, id)
-			}
-			if id, name, ok := splitQAImagesMember(raw); ok {
-				return paperImageGetHandler(re, catalog, rawStore, id, name)
-			}
-			if !strings.Contains(raw, "/") {
-				return paperDetailHandler(re, catalog, raw, ingester, converter)
-			}
+		// Bibliographic detail remains metadata-only and never starts parsing.
+		if strings.HasPrefix(raw, "qa_") && !strings.Contains(raw, "/") {
+			return paperDetailHandler(re, catalog, raw, ingester, converter)
 		}
-		// Detail by external identifier: GET /api/papers/<arxiv id or
-		// DOI>. splitPapersPath's last-slash rule turns old-style ids
-		// ("quant-ph/9508027") into a bogus (id, action) pair and leaves
-		// any bare id as a bogus action, so identifier-shaped paths used
-		// to dead-end at the generic 404 below. When the trailing
-		// segment is NOT a known asset action we treat the whole raw
-		// path as an identifier and resolve it against the registry.
-		// Like the qa_ detail above this is metadata-only and served
-		// regardless of PaperAccessEnabled.
 		if handled, err := dispatchDetailByIdentifier(re, catalog, raw, ingester, converter); handled {
 			return err
-		}
-		// Asset-download endpoints are only registered when the
-		// operator opted in via QATLAS_PAPER_ACCESS_ENABLED. When
-		// the switch is off the catch-all path below returns 404 so
-		// requests are indistinguishable from "no such handler" — the
-		// public deployment posture remains "server does not
-		// redistribute markdown bytes".
-		if cfg.PaperAccessEnabled {
-			arxivPart, action := splitPapersPath(raw)
-			// Normalize DOI URL prefixes (https://doi.org/, doi:, etc.)
-			// so web UIs that paste a full link are still dispatched to
-			// the DOI handlers. Pass through unchanged for non-DOI ids
-			// (NormalizeDOI lower-cases; arxiv ids are case-sensitive).
-			arxivPart = normalizeIDForDispatch(arxivPart)
-			// Peel the 2-segment status actions (.../markdown/status,
-			// .../pdf/status) at the top so the rest of the dispatcher
-			// sees a single concrete action and a clean id. Without
-			// this, splitPapersPath's last-slash rule glues the trailing
-			// kind onto arxivPart (".../markdown" / ".../pdf"), which
-			// for DOI ids slipped past isDOICandidate as a malformed
-			// DOI and dead-ended at OpenAlex 404 (PR #19 review fix).
-			statusKind := ""
-			if action == "status" {
-				switch {
-				case strings.HasSuffix(arxivPart, "/markdown"):
-					arxivPart = strings.TrimSuffix(arxivPart, "/markdown")
-					statusKind = "markdown"
-				case strings.HasSuffix(arxivPart, "/pdf"):
-					arxivPart = strings.TrimSuffix(arxivPart, "/pdf")
-					statusKind = "pdf"
-				}
-			}
-			// Peel the 2-segment images-download action
-			// (.../images/zip) the same way: splitPapersPath's
-			// last-slash rule leaves action="zip" with "/images"
-			// glued onto the id.
-			arxivPart, action = peelImagesZipAction(arxivPart, action)
-			// .../images/<sha>.<ext> peels the same way into the
-			// single-image download action.
-			arxivPart, action = peelImagesMemberAction(arxivPart, action)
-			requestedID := arxivPart
-			bareIDPostDOI := arxivPart
-			forceArxiv := parseForceArxivQuery(re)
-			ctx := re.Request.Context()
-
-			// qa_ paper_id input: resolve the surrogate through the
-			// catalog and re-enter the dispatcher with the paper's
-			// canonical identity, so every asset endpoint below also
-			// answers GET /api/papers/qa_<ulid>/(markdown|pdf|...).
-			// The POST upload endpoints deliberately keep requiring
-			// the contributor-declared arXiv id: upload identity is
-			// an input to record, not a registry lookup.
-			if pid, ok := strings.CutPrefix(arxivPart, "qa_"); ok && pid != "" && !strings.Contains(pid, "/") {
-				target, terr := resolvePaperAssetTarget(ctx, catalog, arxivPart)
-				if terr != nil {
-					if errors.Is(terr, registry.ErrCatalogUnavailable) {
-						return re.JSON(http.StatusServiceUnavailable, map[string]string{
-							"detail": "catalog unavailable (PostgreSQL unreachable); retry shortly",
-						})
-					}
-					return re.JSON(http.StatusInternalServerError, map[string]string{"detail": terr.Error()})
-				}
-				if target.NotFound {
-					return re.JSON(http.StatusNotFound, map[string]string{
-						"detail": "no such paper: " + arxivPart,
-					})
-				}
-				if target.DOI != "" {
-					// DOI-only paper (no arXiv identity): serve from
-					// the DOI namespace directly.
-					applyDOICanonicalHeaders(re, requestedID, target.DOI, "")
-					return dispatchGETDOIHandlers(re, cfg, rawStore, catalog, converter, target.DOI, action, statusKind, raw, "")
-				}
-				// arXiv identity: rewrite arxivPart to the version the
-				// catalog already holds (highest ingested arXiv asset
-				// version; bare when no asset carries one — the
-				// latest-version inference below then scrapes
-				// arxiv.org) and continue. The shape-(b) DOI-twin
-				// check below applies DOI-canonical as usual.
-				if target.ArxivVersioned != "" {
-					arxivPart = target.ArxivVersioned
-					bareIDPostDOI = target.ArxivVersioned
-				} else {
-					arxivPart = target.ArxivBare
-					bareIDPostDOI = target.ArxivBare
-				}
-			}
-
-			// Canonical resolution rule (see
-			// docs/server/upload-api.md §Canonical resolution): a
-			// paper_works row with `identifier_scheme='doi'` ALWAYS
-			// wins over its arxiv twin when both exist. The DOI is the
-			// canonical identity of the published version; the arxiv
-			// preprint is a SECONDARY artifact (often older / shorter).
-			// The caller can override per-request with `?force_arxiv=1`.
-			//
-			// Two dispatch shapes hit this rule:
-			//
-			//   (a) caller passes a DOI — try the local catalog FIRST
-			//       (skip the OpenAlex round-trip when the DOI is
-			//       already known locally). On miss fall through to
-			//       OpenAlex; the DOI might have an arxiv preprint we
-			//       can serve.
-			//
-			//   (b) caller passes an arxiv id — reverse-lookup whether
-			//       any DOI node has `doi_arxiv_id` matching the
-			//       version-stripped form. If so, redirect to the DOI
-			//       handlers; otherwise serve arxiv as before.
-			//
-			// Either shape, with `?force_arxiv=1`, bypasses (a)/(b)
-			// entirely and forces the arxiv path: (a) becomes a pure
-			// OpenAlex DOI→arxiv resolve (409 when no twin exists),
-			// (b) skips the reverse lookup and lands directly on the
-			// arxiv handlers.
-			if isDOICandidate(arxivPart) {
-				// Shape (a): DOI input.
-				doi := arxivPart
-				if !forceArxiv {
-					// DOI-canonical fast path: serve from the local DOI
-					// namespace when it can actually serve bytes. Skips
-					// OpenAlex entirely (one fewer round-trip and one
-					// fewer failure mode).
-					//
-					// Three-state decision (PR #19 review-5 lineage):
-					// genuine miss → fall through to OpenAlex; query-time
-					// error → 503 (treating it as a miss would serve a
-					// stale 404 when the local DOI bytes are in fact
-					// present, breaking DOI-canonical); hit but nothing
-					// DOI-side to serve → fall back to the paper's arXiv
-					// identity (metadata-backfilled DOI) instead of
-					// dead-ending the DOI pipeline.
-					outcome, twin, derr := decideLocalDOIServing(ctx, catalog, rawStore, doi)
-					if derr != nil {
-						if errors.Is(derr, objstore.ErrUnavailable) {
-							return assetStorageUnavailable(re, derr)
-						}
-						return re.JSON(http.StatusServiceUnavailable, map[string]any{
-							"detail": "catalog unavailable (PostgreSQL unreachable); retry shortly",
-							"doi":    doi,
-						})
-					}
-					switch outcome {
-					case doiServeDOI:
-						applyDOICanonicalHeaders(re, requestedID, doi, "")
-						return dispatchGETDOIHandlers(re, cfg, rawStore, catalog, converter, doi, action, statusKind, raw, "")
-					case doiServeArxiv:
-						// Mirror of the HasPublishedAsset guard the
-						// arXiv-input shape (b) applies before
-						// redirecting TO the DOI namespace: without
-						// DOI-side bytes, the arXiv twin serves.
-						arxivPart = twin
-						bareIDPostDOI = twin
-					}
-					// doiServeDefer (or no twin): don't 503 here —
-					// OpenAlex may still resolve an arxiv twin we can
-					// serve as a best-effort fallback. The
-					// ErrDOINotFound branch below re-probes the local
-					// catalog for the definitive 404 / 503.
-				}
-				if arxivPart == doi {
-					res, err := resolveDOIToCanonical(ctx, doiResolver, doi)
-					if err != nil {
-						if errors.Is(err, openalex.ErrDOINotFound) {
-							// No fetchable full text known. Under force_arxiv
-							// this is a hard 409 (caller asked for arxiv, we
-							// have none).
-							if forceArxiv {
-								return re.JSON(http.StatusConflict, map[string]any{
-									"detail": "DOI has no arxiv presence in OpenAlex; remove ?force_arxiv to fetch the DOI version",
-									"doi":    doi,
-									"hint":   "GET /api/papers/" + doi + "/" + actionLabel(action, statusKind),
-								})
-							}
-							// Without force_arxiv we may STILL have a local
-							// DOI node (e.g. catalog was momentarily down
-							// during the fast-path check above). Re-probe.
-							// Note: this branch is only reachable when the
-							// fast path saw a MISS — a paper registered in
-							// the race window between the two probes — so
-							// no servability guard is applied here; the DOI
-							// handler's own 404/202 answer stands.
-							_, hit, lerr := catalog.LookupDOI(ctx, doi)
-							if lerr != nil {
-								return re.JSON(http.StatusServiceUnavailable, map[string]any{
-									"detail": "catalog unavailable (PostgreSQL unreachable); retry shortly",
-									"doi":    doi,
-								})
-							}
-							if hit {
-								applyDOICanonicalHeaders(re, requestedID, doi, "")
-								return dispatchGETDOIHandlers(re, cfg, rawStore, catalog, converter, doi, action, statusKind, raw, "")
-							}
-							// Catalog reachable + no local DOI node + no
-							// OpenAlex arxiv twin + no OA PDF → genuine 404.
-							// If the catalog has never been configured (ensure
-							// short-circuits, no err), Available() will
-							// be false and 503 is the more honest answer.
-							if !catalog.Available(ctx) {
-								return re.JSON(http.StatusServiceUnavailable, map[string]any{
-									"detail": "catalog unavailable (PostgreSQL unreachable); retry shortly",
-									"doi":    doi,
-								})
-							}
-							return re.JSON(http.StatusNotFound, map[string]any{
-								"detail": "DOI unknown to OpenAlex (or no arXiv twin and no open-access PDF) and no local DOI contribution exists; if you hold the PDF, contribute it via POST /api/papers/" + doi + "/upload-pdf",
-								"doi":    doi,
-							})
-						}
-						return doiErrorResponse(re, doi, err)
-					}
-					if res.ArxivID == "" {
-						// Published-only OA work: no arxiv twin, but OpenAlex
-						// surfaced a direct OA PDF URL — serve through the
-						// DOI pipeline, which fetches + converts on demand
-						// (202 LRO on the markdown endpoint).
-						if forceArxiv {
-							return re.JSON(http.StatusConflict, map[string]any{
-								"detail": "DOI has no arxiv presence in OpenAlex; remove ?force_arxiv to fetch the DOI version",
-								"doi":    doi,
-								"hint":   "GET /api/papers/" + doi + "/" + actionLabel(action, statusKind),
-							})
-						}
-						applyDOICanonicalHeaders(re, requestedID, doi, "")
-						return dispatchGETDOIHandlers(re, cfg, rawStore, catalog, converter, doi, action, statusKind, raw, res.OAPdfURL)
-					}
-					bareIDPostDOI = res.ArxivID
-					arxivPart = res.ArxivID
-				}
-			} else if !forceArxiv {
-				// Shape (b): arxiv input. Honour DOI canonical by
-				// looking up whether any DOI node has this arxiv id as
-				// its `doi_arxiv_id` twin. Hit → serve DOI bytes; miss
-				// → fall through to the regular arxiv path.
-				//
-				// Reverse lookup needs the BARE arxiv id (DOI nodes
-				// store doi_arxiv_id as the version-stripped form
-				// returned by openalex.ExtractArxivID).
-				//
-				// Query-time error here is intentionally NOT a 503:
-				// the arxiv path is designed to be independent of the
-				// catalog (PostgreSQL outage MUST NOT gate arxiv access),
-				// so we fall through to the arxiv handlers — same
-				// behaviour as a clean "no twin" result.
-				doi, hit, _ := catalog.LookupArxivToDOI(ctx, paperassets.StripVersion(arxivPart))
-				if hit {
-					// Only honour the DOI-canonical redirect when the DOI
-					// paper actually has a published asset to serve. A DOI
-					// attached by metadata backfill (the common case) has
-					// none — falling through to the arxiv handlers is what
-					// the caller expects.
-					if hasPub, err := catalog.HasPublishedAsset(ctx, doi); err == nil && hasPub {
-						applyDOICanonicalHeaders(re, requestedID, doi, arxivPart)
-						return dispatchGETDOIHandlers(re, cfg, rawStore, catalog, converter, doi, action, statusKind, raw, "")
-					}
-				}
-				// catalog down / lookup error / no DOI twin: fall
-				// through to arxiv handlers.
-			}
-
-			// Latest-version inference: if the (post-DOI) id has no
-			// explicit `vN`, resolve via arxiv.org `/abs/<id>` HTML
-			// scrape (og:url meta tag carries the canonical latest
-			// version). Applies to BOTH DOI-derived bare ids and
-			// direct-bare arxiv inputs from the caller.
-			//
-			// Catalog-first: a hosted paper already knows its latest
-			// INGESTED version — reuse it and skip the scrape. Miss or
-			// catalog error falls through to the scrape: the arxiv
-			// path is designed to be independent of PostgreSQL
-			// availability, so a catalog outage must not gate arxiv
-			// access.
-			if parsed, perr := paperassets.Parse(arxivPart); perr == nil && parsed.IsValid() && parsed.Version == "" {
-				bare := paperassets.StripVersion(arxivPart)
-				if v, found, verr := catalog.LatestArxivAssetVersion(ctx, bare); verr == nil && found && v > 0 {
-					arxivPart = fmt.Sprintf("%sv%d", bare, v)
-				} else {
-					versioned, err := resolveBareToVersioned(ctx, arxivFetcher, arxivPart)
-					if err != nil {
-						return doiVersionErrorResponse(re, requestedID, arxivPart, err)
-					}
-					arxivPart = versioned
-				}
-			}
-
-			// Stash the resolution chain on the request context so
-			// snapshotBody / streamMarkdown / streamPDF can surface
-			// it back to the caller via X-QAtlas-* headers + JSON
-			// body fields. See resolution.go for the contract.
-			res := computeResolution(requestedID, bareIDPostDOI, arxivPart)
-			re.Request = re.Request.WithContext(withResolution(ctx, res))
-
-			switch {
-			case statusKind == "markdown":
-				return markdownStatusHandler(re, cfg, rawStore, converter, arxivPart)
-			case statusKind == "pdf":
-				return pdfStatusHandler(re, cfg, rawStore, converter, arxivPart)
-			case action == "markdown":
-				return markdownHandler(re, cfg, rawStore, converter, arxivPart)
-			case action == "pdf":
-				return pdfHandler(re, cfg, rawStore, converter, arxivPart)
-			case action == "images/zip":
-				return imagesZipHandler(re, rawStore, arxivPart)
-			case action == "figures":
-				return paperFiguresHandler(re, catalog, rawStore, arxivPart)
-			case isImagesMemberAction(action):
-				return paperImageGetHandler(re, catalog, rawStore, arxivPart, strings.TrimPrefix(action, "images/"))
-			}
 		}
 		return re.JSON(http.StatusNotFound, map[string]string{
 			"detail": fmt.Sprintf("no GET handler for /api/papers/%s", raw),
@@ -605,14 +277,14 @@ func isKnownGETAction(raw string) bool {
 	arxivPart = normalizeIDForDispatch(arxivPart)
 	if action == "status" {
 		switch {
-		case strings.HasSuffix(arxivPart, "/markdown"), strings.HasSuffix(arxivPart, "/pdf"):
+		case strings.HasSuffix(arxivPart, "/markdown"), strings.HasSuffix(arxivPart, "/pdf"), strings.HasSuffix(arxivPart, "/read"):
 			return true // 2-segment status variant
 		}
 	}
 	arxivPart, action = peelImagesZipAction(arxivPart, action)
 	arxivPart, action = peelImagesMemberAction(arxivPart, action)
 	switch action {
-	case "markdown", "pdf", "images", "images/zip", "figures", "status":
+	case "markdown", "pdf", "read", "images", "images/zip", "figures", "status":
 		return true
 	}
 	return isImagesMemberAction(action)
@@ -1236,8 +908,19 @@ func mineruClaimHandler(re *core.RequestEvent, cfg *config.Config, store objstor
 		requester = re.Request.Header.Get(cfg.UserHeader)
 	}
 
-	pdfURL := claimPDFURL(ctx, store, canonical)
-	pdfSha256 := lookupStoredPDFSha256(ctx, store, canonical)
+	// External arXiv links do not redistribute server bytes. When the master
+	// switch is enabled, use an authenticated exact-source locator instead of
+	// issuing a bucket presign that would bypass future access revocation.
+	pdfURL := arxivVersionedURL(canonical)
+	pdfSha256, sourceID := "", ""
+	if contentAccessEnabled(cfg) {
+		rp, src, accessErr := sourceForAccess(ctx, store, catalog, canonical, "", "")
+		if accessErr != nil {
+			return contentAccessErrorResponse(re, accessErr)
+		}
+		pdfURL = "/api/papers/" + rp.canonical + "/pdf?source_id=" + src.SourceID
+		pdfSha256, sourceID = src.Sha256, src.SourceID
+	}
 
 	// Routes address papers by arXiv id; the registry leases by surrogate
 	// paper_id, so resolve through the arXiv identity key first.
@@ -1307,6 +990,10 @@ func mineruClaimHandler(re *core.RequestEvent, cfg *config.Config, store objstor
 	}
 	if pdfSha256 != "" {
 		resp["pdf_sha256"] = pdfSha256
+	}
+	if sourceID != "" {
+		resp["source_id"] = sourceID
+		resp["pdf_requires_auth"] = true
 	}
 	return re.JSON(http.StatusCreated, resp)
 }
@@ -1414,430 +1101,11 @@ func mineruClaimReleaseHandler(re *core.RequestEvent, catalog *registry.Store, a
 // ---------------------------------------------------------------------------
 
 func uploadPDFHandler(re *core.RequestEvent, cfg *config.Config, store objstore.Store, catalog *registry.Store, arxivID string) error {
-	ctx := re.Request.Context()
-	canonical, ok := paperassets.ValidateUploadID(arxivID)
-	if !ok {
-		return re.JSON(http.StatusBadRequest, map[string]string{
-			"detail": fmt.Sprintf("invalid arxiv_id for upload: %q. Expected new-style 'YYMM.NNNNNvN' (post April 2007, e.g. '2501.00010v1') or old-style 'category/YYMMNNNvN' (pre April 2007, e.g. 'quant-ph/9508027v1'). An explicit version suffix is required.", arxivID),
-		})
-	}
-	overwrite := re.Request.URL.Query().Get("overwrite") == "true"
-	expectedPdfSha := normaliseSha256Hex(re.Request.URL.Query().Get("expected_sha256"))
-
-	pdfKey := paperassets.AssetKey("pdf", canonical)
-
-	if err := re.Request.ParseMultipartForm(int64(paperassets.MaxPDFBytes) + 1<<20); err != nil {
-		return re.JSON(http.StatusBadRequest, map[string]string{"detail": "parse multipart: " + err.Error()})
-	}
-
-	if _, has := re.Request.MultipartForm.File["pdf"]; !has {
-		return re.JSON(http.StatusBadRequest, map[string]string{"detail": "missing 'pdf' multipart part"})
-	}
-	pdfPart, hdr, err := re.Request.FormFile("pdf")
-	if err != nil {
-		return re.JSON(http.StatusBadRequest, map[string]string{"detail": "open pdf part: " + err.Error()})
-	}
-	defer pdfPart.Close()
-
-	contentType := hdr.Header.Get("Content-Type")
-	if contentType != "" && !strings.Contains(strings.ToLower(contentType), "pdf") && contentType != "application/octet-stream" {
-		return re.JSON(http.StatusUnsupportedMediaType, map[string]string{
-			"detail": fmt.Sprintf("expected application/pdf for 'pdf' part, got %q", contentType),
-		})
-	}
-
-	// Stage PDF to a tmp file. The 100 MiB cap × concurrency would
-	// blow process RAM on a memory-tight VM (~1 GB class); spooling to
-	// disk trades a few syscalls for predictable memory use. The head-
-	// peek validates %PDF- before we commit to copying the rest.
-	pdfStaged, vErr := stageToTmpFile(ctx, pdfPart, paperassets.MaxPDFBytes, "pdf",
-		5, // peek the first 5 bytes for the %PDF- magic
-		func(head []byte) *uploadError {
-			if len(head) < 5 || string(head[:5]) != "%PDF-" {
-				return &uploadError{Status: http.StatusBadRequest,
-					Detail: "uploaded file does not look like a PDF (missing %PDF- header)"}
-			}
-			return nil
-		})
-	if vErr != nil {
-		return re.JSON(vErr.Status, map[string]string{"detail": vErr.Detail})
-	}
-	defer pdfStaged.Close()
-	pdfSha := pdfStaged.Sha256()
-	pdfSize := pdfStaged.Size()
-
-	if expectedPdfSha != "" && expectedPdfSha != pdfSha {
-		return re.JSON(http.StatusBadRequest, map[string]any{
-			"detail":          "expected_sha256 mismatch — upload may be corrupt in transit",
-			"expected_sha256": expectedPdfSha,
-			"actual_sha256":   pdfSha,
-		})
-	}
-
-	// v0.7.0: the json/metadata sidecar bucket was cut — paper metadata
-	// now lives in the PostgreSQL catalog (sourced from OpenAlex / DOI verification), so the
-	// handler only accepts a single 'pdf' multipart part. Any other
-	// parts in the request are ignored.
-	pdfOutcome, err := uploadOne(ctx, store, pdfKey, pdfStaged, "application/pdf", overwrite, "PDF")
-	if err != nil {
-		return re.JSON(http.StatusInternalServerError, map[string]string{"detail": err.Error()})
-	}
-
-	if pdfOutcome.kind == outcomeConflict {
-		body := map[string]any{
-			"detail":        "upload conflict; pass overwrite=true to replace (prior version preserved by bucket versioning when enabled)",
-			"new_sha256":    pdfSha,
-			"existing_path": pdfKey,
-		}
-		body["existing_sha256"] = pdfOutcome.existingShaJSON()
-		if pdfOutcome.existingSha == "" {
-			body["note"] = "existing object has no sha256 metadata (legacy upload or LocalStore backend) — content equality cannot be verified without overwrite=true"
-		}
-		return re.JSON(http.StatusConflict, body)
-	}
-
-	requester := ""
-	if cfg.UserHeader != "" {
-		requester = re.Request.Header.Get(cfg.UserHeader)
-	}
-	overallUnchanged := pdfOutcome.kind == outcomeUnchanged
-
-	// Registry write-through: resolve-or-mint the paper and record the
-	// PDF asset for this version. When PostgreSQL is down we still return
-	// success — the object is durably written; `papers sync` reconciles later.
-	catalogDeferred := false
-	if _, _, err := catalog.UpsertPDF(ctx,
-		registry.PaperRef{ArxivID: canonical},
-		registry.ArxivVersionOf(canonical), pdfSha, pdfSize, bucketRelKey(pdfKey)); err != nil {
-		if errors.Is(err, registry.ErrCatalogUnavailable) {
-			catalogDeferred = true
-		} else {
-			slog.Warn("papers: UpsertPDF write-through failed", "arxiv_id", canonical, "error", err)
-			catalogDeferred = true
-		}
-	}
-
-	slog.Info("uploaded pdf",
-		"arxiv_id", canonical,
-		"requester", requester,
-		"pdf_bytes", pdfSize,
-		"pdf_sha256", pdfSha,
-		"pdf_unchanged", pdfOutcome.kind == outcomeUnchanged,
-		"catalog_deferred", catalogDeferred,
-		"pdf_key", pdfKey,
-	)
-
-	resp := map[string]any{
-		"arxiv_id":      canonical,
-		"key":           paperassets.StorageKey(canonical),
-		"pdf_path":      pdfKey,
-		"pdf_bytes":     pdfSize,
-		"pdf_sha256":    pdfSha,
-		"pdf_unchanged": pdfOutcome.kind == outcomeUnchanged,
-		"uploaded_by":   nil,
-		"overwritten":   overwrite,
-		"unchanged":     overallUnchanged,
-	}
-	if requester != "" {
-		resp["uploaded_by"] = requester
-	}
-	if catalogDeferred {
-		re.Response.Header().Set("X-Catalog-Sync", "deferred")
-	}
-	// Status: 200 OK if everything was a no-op (idempotent re-upload
-	// of identical content), 201 Created otherwise.
-	if overallUnchanged {
-		re.Response.WriteHeader(http.StatusOK)
-	} else {
-		re.Response.WriteHeader(http.StatusCreated)
-	}
-	return jsonBody(re, resp)
+	return uploadFrozenPDF(re, cfg, store, catalog, nil, arxivID, false)
 }
 
-// uploadMinerUHandler accepts a MinerU output bundle (a zip containing
-// `full.md` and optional `images/<file>` entries) and stores the
-// markdown plus every extracted image to the asset backend.
-//
-// This endpoint replaces the v0.7.x `upload-markdown` route (which
-// only accepted a single .md file and silently dropped any images).
-// The new contract:
-//
-//   - Request: multipart/form-data, single part `mineru_zip` containing
-//     the raw MinerU result zip exactly as returned by MinerU's
-//     `full_zip_url`. Query params: overwrite=true (default false),
-//     expected_sha256=<hex> (validates the zip bytes haven't been
-//     corrupted in transit), pdf_sha256=<hex> (the sha256 of the
-//     source PDF the contributor fed to MinerU; cross-checked against
-//     the catalog's stored PDF metadata to catch contributors who ran
-//     MinerU on the wrong arxiv version or a corrupted PDF — empty
-//     when the stored PDF has no sha256 metadata or the contributor
-//     opted out), source=<short label>.
-//   - On success: markdown lands at AssetKey("markdown", canonical),
-//     each image at AssetKey("images", canonical)+"/"+<name>. Catalog
-//     write-through flips has_md=true and clears any pending claim.
-//   - Order: images first, markdown last — markdown is the completion
-//     marker (`papers sync` and detail-page readers use the markdown
-//     object's presence to know "this paper is parsed"), so writing
-//     every image before flipping that marker guarantees no reader
-//     ever sees the md before its referenced images are stored.
-//   - Conflict semantics: each object is uploaded via uploadOne's
-//     race-safe conditional Put. Same-bytes re-upload short-circuits
-//     to 200 unchanged (no S3 write); different bytes + no overwrite
-//     returns 409 with both sha256 values. A single 409 on any one
-//     image aborts the whole bundle — markdown is NOT written when
-//     any image conflicts (the bundle is treated as atomic from the
-//     contributor's POV).
-//   - pdf_sha256 verification: when both the contributor's claimed
-//     pdf_sha256 and the catalog's stored sha256 are present, mismatch
-//     returns 400 (the contributor fetched / converted the wrong PDF
-//     and would pollute the catalog with mismatched markdown). When
-//     either side is empty we skip — the catalog has no reference
-//     for legacy uploads, and the contributor may legitimately opt
-//     out (e.g. backfilling old papers).
-//
-// Memory note: the zip is held in memory once (capped at
-// MaxMineruZipBytes). After ExtractResult parses it into md + image
-// bytes the raw zip slice is dropped, so peak memory per upload is
-// ~zip_size during parsing then drops to ~sum(part_size). On a
-// memory-tight VM (~1 GB class), concurrent contributors should keep
-// total in-flight zip volume under ~800 MB to leave headroom for
-// everything else.
 func uploadMinerUHandler(re *core.RequestEvent, cfg *config.Config, store objstore.Store, catalog *registry.Store, arxivID string) error {
-	ctx := re.Request.Context()
-	canonical, ok := paperassets.ValidateUploadID(arxivID)
-	if !ok {
-		return re.JSON(http.StatusBadRequest, map[string]string{
-			"detail": fmt.Sprintf("invalid arxiv_id for upload: %q. version suffix vN required.", arxivID),
-		})
-	}
-	overwrite := re.Request.URL.Query().Get("overwrite") == "true"
-	expectedSha := normaliseSha256Hex(re.Request.URL.Query().Get("expected_sha256"))
-	claimedPDFSha := normaliseSha256Hex(re.Request.URL.Query().Get("pdf_sha256"))
-	source := re.Request.URL.Query().Get("source")
-	if len(source) > 64 {
-		source = source[:64]
-	}
-
-	// Cross-check the contributor's claimed source-PDF sha256 against
-	// the PDF currently stored in the catalog (read from object
-	// metadata via the same helper mineru-claim uses). Mismatch ⇒
-	// contributor ran MinerU on a different PDF than the catalog has
-	// — refuse before we waste cycles parsing the zip and write the
-	// wrong markdown. Both sides empty ⇒ skip (legacy / opt-out).
-	if claimedPDFSha != "" {
-		storedPDFSha := lookupStoredPDFSha256(ctx, store, canonical)
-		if storedPDFSha != "" && storedPDFSha != claimedPDFSha {
-			return re.JSON(http.StatusBadRequest, map[string]any{
-				"detail":             "pdf_sha256 mismatch — the PDF you converted does not match the one in the catalog (wrong arxiv version, or corrupted source PDF). Re-fetch the PDF from the pdf_url returned by mineru-claim and try again.",
-				"claimed_pdf_sha256": claimedPDFSha,
-				"catalog_pdf_sha256": storedPDFSha,
-			})
-		}
-	}
-
-	if err := re.Request.ParseMultipartForm(int64(paperassets.MaxMineruZipBytes) + 1<<20); err != nil {
-		return re.JSON(http.StatusBadRequest, map[string]string{"detail": "parse multipart: " + err.Error()})
-	}
-
-	zipPart, _, err := re.Request.FormFile("mineru_zip")
-	if err != nil {
-		return re.JSON(http.StatusBadRequest, map[string]string{
-			"detail": "missing 'mineru_zip' multipart part: " + err.Error(),
-		})
-	}
-	defer zipPart.Close()
-
-	// Stage the entire zip in memory, validating the magic prefix as
-	// the first 4 bytes arrive so obvious garbage (a stray .md, a PDF,
-	// etc.) is rejected cheaply before paying the full read.
-	zipStaged, vErr := stageInMemory(ctx, zipPart, paperassets.MaxMineruZipBytes, "mineru_zip",
-		func(b []byte) *uploadError {
-			if len(b) < 4 || b[0] != 'P' || b[1] != 'K' {
-				return &uploadError{Status: http.StatusBadRequest, Detail: "payload is not a zip archive (missing PK signature)"}
-			}
-			return nil
-		})
-	if vErr != nil {
-		return re.JSON(vErr.Status, map[string]string{"detail": vErr.Detail})
-	}
-	defer zipStaged.Close()
-	zipSha := zipStaged.Sha256()
-	zipSize := zipStaged.Size()
-	if expectedSha != "" && expectedSha != zipSha {
-		return re.JSON(http.StatusBadRequest, map[string]any{
-			"detail":          "expected_sha256 mismatch — upload may be corrupt in transit",
-			"expected_sha256": expectedSha,
-			"actual_sha256":   zipSha,
-		})
-	}
-
-	// archive/zip needs the whole byte slice for random access. Open
-	// the staged body once, slurp, then close — we don't need the
-	// staged body again after extraction.
-	zipR, err := zipStaged.Open()
-	if err != nil {
-		return re.JSON(http.StatusInternalServerError, map[string]string{"detail": "open zip: " + err.Error()})
-	}
-	zipBytes, err := io.ReadAll(zipR)
-	_ = zipR.Close()
-	if err != nil {
-		return re.JSON(http.StatusInternalServerError, map[string]string{"detail": "read zip: " + err.Error()})
-	}
-
-	// NEW-format branch (plan §5): a zip carrying middle_json.json is
-	// the Doclib layout — route it to the source/revision ingest
-	// (papers_mineru_ingest.go) instead of the legacy full.md
-	// extraction below.
-	if mineru.HasMiddleJSON(zipBytes) {
-		requester0 := ""
-		if cfg.UserHeader != "" {
-			requester0 = re.Request.Header.Get(cfg.UserHeader)
-		}
-		return ingestMinerUNewFormat(re, store, catalog, canonical, zipBytes,
-			claimedPDFSha, normaliseTierParam(re.Request.URL.Query().Get("tier")),
-			requester0, source)
-	}
-
-	result, err := mineru.ExtractResult(zipBytes)
-	if err != nil {
-		// ExtractResult's errors wrap "open zip", "result zip did not
-		// contain full.md", "result zip full.md was empty / unreadable"
-		// — all client mistakes from the server's POV.
-		return re.JSON(http.StatusBadRequest, map[string]string{"detail": err.Error()})
-	}
-	// Drop the raw zip bytes; from here on we only need result.Markdown
-	// and result.Images.
-	zipBytes = nil
-	_ = zipStaged.Close()
-
-	requester := ""
-	if cfg.UserHeader != "" {
-		requester = re.Request.Header.Get(cfg.UserHeader)
-	}
-
-	// Images first, markdown last (see top-of-function comment for
-	// rationale). Build a single zip archive from the extracted images
-	// and write it as one object at images/<shard>/<arxiv_id>.zip.
-	// Build is delegated to mineru.BuildImagesZip so the byte stream is
-	// **deterministic** (sorted entries, zero mtime) — re-uploading the
-	// same MinerU result must hit the unchanged path, not 409.
-	imgZipKey := paperassets.AssetKey("images", canonical)
-	imgZipUnchanged := false
-	imageCount := 0
-	for rel := range result.Images {
-		name := strings.TrimPrefix(rel, "images/")
-		if name == "" || strings.Contains(name, "..") {
-			continue
-		}
-		imageCount++
-	}
-	if imageCount > 0 {
-		imgZipBytes, err := mineru.BuildImagesZip(result.Images)
-		if err != nil {
-			return re.JSON(http.StatusInternalServerError, map[string]string{
-				"detail": "build images zip: " + err.Error(),
-			})
-		}
-
-		imgBody := newInMemoryBodyFromBytes(imgZipBytes)
-		imgOutcome, err := uploadOne(ctx, store, imgZipKey, imgBody, "application/zip", overwrite, "images-zip")
-		_ = imgBody.Close()
-		if err != nil {
-			return re.JSON(http.StatusInternalServerError, map[string]string{
-				"detail": "upload images zip: " + err.Error(),
-			})
-		}
-		if imgOutcome.kind == outcomeConflict {
-			return re.JSON(http.StatusConflict, map[string]any{
-				"detail":          "images zip already exists at " + imgZipKey + " with different content; pass overwrite=true to replace",
-				"existing_path":   imgZipKey,
-				"new_sha256":      imgBody.Sha256(),
-				"existing_sha256": imgOutcome.existingShaJSON(),
-			})
-		}
-		imgZipUnchanged = imgOutcome.kind == outcomeUnchanged
-	}
-
-	mdKey := paperassets.AssetKey("markdown", canonical)
-	mdBody := newInMemoryBodyFromBytes(result.Markdown)
-	defer mdBody.Close()
-	mdSha := mdBody.Sha256()
-	mdSize := mdBody.Size()
-	mdOutcome, err := uploadOne(ctx, store, mdKey, mdBody, "text/markdown; charset=utf-8", overwrite, "markdown")
-	if err != nil {
-		return re.JSON(http.StatusInternalServerError, map[string]string{"detail": err.Error()})
-	}
-	if mdOutcome.kind == outcomeConflict {
-		body := map[string]any{
-			"detail":        "markdown already exists at " + mdKey + " with different content; pass overwrite=true to replace (prior version preserved by bucket versioning when enabled)",
-			"existing_path": mdKey,
-			"new_sha256":    mdSha,
-		}
-		if mdOutcome.existingSha != "" {
-			body["existing_sha256"] = mdOutcome.existingSha
-		} else {
-			body["existing_sha256"] = nil
-			body["note"] = "existing object has no sha256 metadata (legacy upload or LocalStore backend) — content equality cannot be verified without overwrite=true"
-		}
-		return re.JSON(http.StatusConflict, body)
-	}
-
-	slog.Info("uploaded mineru bundle",
-		"arxiv_id", canonical,
-		"requester", requester,
-		"source", source,
-		"zip_bytes", zipSize,
-		"zip_sha256", zipSha,
-		"md_bytes", mdSize,
-		"md_sha256", mdSha,
-		"md_unchanged", mdOutcome.kind == outcomeUnchanged,
-		"md_key", mdKey,
-		"image_count", imageCount,
-		"images_zip_key", imgZipKey,
-		"images_zip_unchanged", imgZipUnchanged,
-	)
-
-	catalogDeferred := false
-	if err := upsertMDWriteThrough(ctx, catalog, canonical, mdSha, mdSize, imageCount); err != nil {
-		if !errors.Is(err, registry.ErrCatalogUnavailable) {
-			slog.Warn("papers: UpsertMD write-through failed", "arxiv_id", canonical, "error", err)
-		}
-		catalogDeferred = true
-	}
-
-	resp := map[string]any{
-		"arxiv_id":             canonical,
-		"key":                  paperassets.StorageKey(canonical),
-		"markdown_path":        mdKey,
-		"markdown_bytes":       mdSize,
-		"markdown_sha256":      mdSha,
-		"markdown_unchanged":   mdOutcome.kind == outcomeUnchanged,
-		"image_count":          imageCount,
-		"images_zip_path":      imgZipKey,
-		"images_zip_unchanged": imgZipUnchanged,
-		"zip_bytes":            zipSize,
-		"zip_sha256":           zipSha,
-		"source":               nil,
-		"uploaded_by":          nil,
-		"overwritten":          overwrite,
-	}
-	if source != "" {
-		resp["source"] = source
-	}
-	if requester != "" {
-		resp["uploaded_by"] = requester
-	}
-	if catalogDeferred {
-		re.Response.Header().Set("X-Catalog-Sync", "deferred")
-	}
-
-	allUnchanged := mdOutcome.kind == outcomeUnchanged && imgZipUnchanged
-	if allUnchanged {
-		re.Response.WriteHeader(http.StatusOK)
-	} else {
-		re.Response.WriteHeader(http.StatusCreated)
-	}
-	return jsonBody(re, resp)
+	return uploadFrozenMinerU(re, cfg, store, catalog, arxivID, false)
 }
 
 // ---------------------------------------------------------------------------

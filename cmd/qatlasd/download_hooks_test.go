@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/downloader"
@@ -9,54 +10,44 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/registry"
 )
 
-type hookConverter struct {
-	enabled    bool
-	state      mineru.JobState
-	doi, arxiv string
-	calls      int
+type hookConverter struct{ calls int }
+
+func (c *hookConverter) Enabled() bool { return true }
+func (c *hookConverter) Ensure(context.Context, string) *mineru.Job {
+	c.calls++
+	return &mineru.Job{State: mineru.JobStateQueued}
+}
+func (c *hookConverter) EnsureByDOI(context.Context, string, string) *mineru.Job {
+	c.calls++
+	return &mineru.Job{State: mineru.JobStateQueued}
 }
 
-func (c *hookConverter) Enabled() bool { return c.enabled }
-func (c *hookConverter) Ensure(_ context.Context, id string) *mineru.Job {
-	c.arxiv = id
-	c.calls++
-	return &mineru.Job{State: c.state}
-}
-func (c *hookConverter) EnsureByDOI(_ context.Context, id, _ string) *mineru.Job {
-	c.doi = id
-	c.calls++
-	return &mineru.Job{State: c.state}
-}
-func TestRemoteHookReconcilesVolatileDOIConversion(t *testing.T) {
-	converter := &hookConverter{enabled: true, state: mineru.JobStateQueued}
-	afterCalls := 0
-	after := func(context.Context, registry.PaperRef, *downloader.FetchOutcome) error { afterCalls++; return nil }
-	hook := durableRemoteHooks(converter, after)
-	ctx := context.Background()
-	ref := registry.PaperRef{DOI: "10.1000/recover-hook"}
-	if err := hook(ctx, ref, nil); err == nil || afterCalls != 0 {
-		t.Fatal("memory-only queued conversion acknowledged as durable")
-	}
-	// Simulate a restarted converter: the outbox must call Ensure again rather
-	// than having been permanently acknowledged when the first goroutine started.
-	converter.calls = 0
-	if err := hook(ctx, ref, nil); err == nil || converter.calls != 1 {
-		t.Fatal("lost conversion admission not replayed")
-	}
-	converter.state = mineru.JobStateDone
-	if err := hook(ctx, ref, nil); err != nil || afterCalls != 1 || converter.doi != ref.DOI {
-		t.Fatalf("completed hook err=%v calls=%d", err, afterCalls)
+func TestPDFArchiveHooksNeverStartContentParsing(t *testing.T) {
+	for _, ref := range []registry.PaperRef{{ArxivID: "2401.12345v2"}, {DOI: "10.1000/archive"}} {
+		converter := &hookConverter{}
+		called := 0
+		hook := durableRemoteHooks(converter, func(context.Context, registry.PaperRef, *downloader.FetchOutcome) error { called++; return nil })
+		if err := hook(t.Context(), ref, nil); err != nil {
+			t.Fatal(err)
+		}
+		if called != 1 || converter.calls != 0 {
+			t.Fatalf("archive=%d inference=%d", called, converter.calls)
+		}
+		if err := hook(t.Context(), ref, nil); err != nil {
+			t.Fatal(err)
+		}
+		if converter.calls != 0 {
+			t.Fatal("outbox replay started inference")
+		}
 	}
 }
-func TestRemoteHookRespectsResolvedVersionAndDisabledConverter(t *testing.T) {
-	c := &hookConverter{enabled: true, state: mineru.JobStateDone}
-	hook := durableRemoteHooks(c, nil)
-	if err := hook(context.Background(), registry.PaperRef{ArxivID: "2401.12345"}, &downloader.FetchOutcome{ArxivCanonical: "2401.12345v2"}); err != nil || c.arxiv != "2401.12345v2" {
-		t.Fatal("resolved arxiv version lost")
+func TestPDFArchiveHookPreservesAfterFailure(t *testing.T) {
+	want := errors.New("index unavailable")
+	hook := durableRemoteHooks(nil, func(context.Context, registry.PaperRef, *downloader.FetchOutcome) error { return want })
+	if !errors.Is(hook(t.Context(), registry.PaperRef{}, nil), want) {
+		t.Fatal("archive hook lost durable callback failure")
 	}
-	c.enabled = false
-	c.calls = 0
-	if err := hook(context.Background(), registry.PaperRef{DOI: "10.1000/disabled"}, nil); err != nil || c.calls != 0 {
-		t.Fatal("explicitly disabled converter should not block hook completion")
+	if err := durableRemoteHooks(nil, nil)(t.Context(), registry.PaperRef{}, nil); err != nil {
+		t.Fatal(err)
 	}
 }

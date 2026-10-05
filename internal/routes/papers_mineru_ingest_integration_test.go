@@ -19,6 +19,8 @@ import (
 	"testing"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperassets"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperbundle"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/registry"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/testutil"
 
@@ -69,7 +71,10 @@ func TestIntegrationIngestNewFormatRealRegistry(t *testing.T) {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM papers WHERE paper_id = $1`, paperID)
 	})
 
-	pdfSha := strings.Repeat("9a", 32)
+	pdfSha := paperbundle.SHA256(ingestPDF)
+	if _, err := store.Put(ctx, paperassets.AssetKey("pdf", arxiv+"v1"), bytes.NewReader(ingestPDF), int64(len(ingestPDF)), "application/pdf"); err != nil {
+		t.Fatal(err)
+	}
 	run := func(tier, text string) map[string]any {
 		t.Helper()
 		middle := map[string]any{
@@ -110,8 +115,20 @@ func TestIntegrationIngestNewFormatRealRegistry(t *testing.T) {
 	if body1["source_id"] != body2["source_id"] {
 		t.Errorf("source ids differ: %v vs %v", body1["source_id"], body2["source_id"])
 	}
-	if body1["source_minted"] != true || body2["source_minted"] != false {
-		t.Errorf("minted flags: %v/%v", body1["source_minted"], body2["source_minted"])
+	if body1["revision_id"] == body2["revision_id"] {
+		t.Fatal("new upload overwrote immutable revision")
+	}
+	for _, body := range []map[string]any{body1, body2} {
+		bundle, found, err := s.GetParseBundle(ctx, paperID, body["revision_id"].(string))
+		if err != nil || !found {
+			t.Fatalf("publication missing: %v", err)
+		}
+		if _, err := paperbundle.New(store).VerifyBundle(ctx, paperID, bundle.SourceID, bundle.RevisionID); err != nil {
+			t.Fatal(err)
+		}
+		if bundle.SourcePDFSHA256 != pdfSha || !strings.HasSuffix(bundle.ObjstoreKey, "/files/out/middle_json.json") {
+			t.Fatal("unverified/renamed real-registry bundle")
+		}
 	}
 
 	// Registry rows read back through the store.

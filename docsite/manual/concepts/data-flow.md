@@ -1,5 +1,17 @@
 # 数据流：论文从 arXiv 到可检索资产
 
+> **当前内容契约更新**：固定来源 PDF 已恢复为 paper_access 开关下的鉴权字节，
+> 关闭404，qa_、别名、Range、历史原件不能绕过。新内容在独立 qatlas-content 桶的
+> content/ 命名空间不可变发布：source 绑定确切 PDF SHA，arXiv vN 是语义版本、
+> S3VersionId 是物理版本、parse revision 是独立不可变身份；三者不可混用。
+> 同 paper/SHA 可复用 source；冻结导入别名不同字节409（overwrite也不替换）。
+> 解析上传必须完整支持的 Middle+Markdown，保留所有成员原名/字节，MD-only拒收；
+> manifest最后核验发布且PG必需，重传新revision，不覆盖历史。旧MD/JSON/images忽略，
+> 只在内容/PDF访问按需冻结旧PDF，不bulk回填、不删除旧桶；没有nightly/boot/入库自动推理。
+> 下文涉及旧三桶覆盖、仅full.md+images、原PDF410/外部直链的段落保留为历史背景，
+> **不作为当前操作规则**。当前API/上传/续读统一见[论文内容契约](../server/paper-content.md)
+> 与[Upload API](../server/upload-api.md)；完整read视图不是原Middle JSON。
+
 这张图是 QuantumAtlas 端到端的「主线剧情」。每个箭头都对应一个真实的 CLI 命令或 server 操作。
 
 ```{mermaid}
@@ -93,7 +105,7 @@ POST /api/downloader/fetch
 ## 懒加载摄入（lazy ingest）
 
 `GET /api/papers/{id_or_doi}/markdown`（仅当部署方开启
-`QATLAS_PAPER_ACCESS_ENABLED`；PDF 分发已停用——`/pdf` 恒 410，PDF 抓取只是
+`QATLAS_PAPER_ACCESS_ENABLED`；历史PDF410说明已被不可变内容契约替代；当前`/pdf`按gate鉴权交付，旧图中PDF抓取是
 markdown 管线的内部阶段）在缓存未命中时**不阻塞**：server 立即返回
 202 + `Operation-Location`，后台静默从 arxiv.org fetch PDF 并串 MinerU 转换，
 客户端轮询 `/markdown/status` 直到 `state == cached` 再 GET 拿字节。同一篇

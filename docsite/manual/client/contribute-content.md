@@ -1,5 +1,17 @@
 # 贡献工作流
 
+> **当前内容契约更新**：固定来源 PDF 已恢复为 paper_access 开关下的鉴权字节，
+> 关闭404，qa_、别名、Range、历史原件不能绕过。新内容在独立 qatlas-content 桶的
+> content/ 命名空间不可变发布：source 绑定确切 PDF SHA，arXiv vN 是语义版本、
+> S3VersionId 是物理版本、parse revision 是独立不可变身份；三者不可混用。
+> 同 paper/SHA 可复用 source；冻结导入别名不同字节409（overwrite也不替换）。
+> 解析上传必须完整支持的 Middle+Markdown，保留所有成员原名/字节，MD-only拒收；
+> manifest最后核验发布且PG必需，重传新revision，不覆盖历史。旧MD/JSON/images忽略，
+> 只在内容/PDF访问按需冻结旧PDF，不bulk回填、不删除旧桶；没有nightly/boot/入库自动推理。
+> 下文涉及旧三桶覆盖、仅full.md+images、原PDF410/外部直链的段落保留为历史背景，
+> **不作为当前操作规则**。当前API/上传/续读统一见[论文内容契约](../server/paper-content.md)
+> 与[Upload API](../server/upload-api.md)；完整read视图不是原Middle JSON。
+
 这份文档描述如何把内容贡献到 QuantumAtlas：把论文 PDF、解析 Markdown、元数据
 落到对象存储，并登记进 PostgreSQL paper registry。
 
@@ -186,7 +198,7 @@ qatlas paper get markdown quant-ph/9508027v2 -o paper.md
 # 图片 zip（MinerU 转换产物；不带 vN → server 自动补 latest）
 qatlas paper get images 0811.3171 -o hhl-images.zip
 
-# 注：PDF 交付已停用（410）；用户侧只拿 markdown / 图片 zip
+# 当前可获取固定PDF及完整解析成员；所有内容受paper_access与认证约束
 
 # DOI 入口
 qatlas paper get markdown 10.1103/PhysRevLett.103.150502 -o hhl.md
@@ -204,7 +216,7 @@ qatlas paper status 0811.3171v3 --kind markdown
 curl -i https://<server>/api/papers/quant-ph/9508027v2/markdown \
      -H "Authorization: Bearer $QATLAS_TOKEN"
 
-# 注：PDF 分发已停用——GET /pdf 恒返 410（设计性禁用，用 markdown 端点）。
+# 当前 GET /pdf 是鉴权固定来源原字节；禁用开关404，不是恒410。
 # PDF 抓取仍作为 markdown 转换管线的内部阶段存在。
 
 # DOI 入口

@@ -11,7 +11,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperbundle"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -67,7 +69,7 @@ func callSourcePDF(t *testing.T, c blockCatalog, store objstore.Store, path, ran
 	re.Request = req
 	re.Response = rec
 	raw := path[len("/api/papers/"):]
-	handled, err := dispatchBlockOriginalsGET(re, &config.Config{}, store, c, raw)
+	handled, err := dispatchBlockOriginalsGET(re, &config.Config{PaperAccessEnabled: true}, store, c, raw)
 	if !handled {
 		t.Fatalf("dispatcher did not handle %q", path)
 	}
@@ -152,6 +154,23 @@ func TestSourcePDFStreamSizeDriftIs500(t *testing.T) {
 // TestSourcePDFSmallStillWholeRead locks the threshold behaviour: a
 // <=4 MiB source takes the buffered, server-side sha-verified path —
 // a corrupted small object must 500 (hash mismatch), not stream.
+func TestSourcePDFLargeSameSizeCorruptionRejectedBeforeRange(t *testing.T) {
+	c, store := newFakeBlockCatalog(t)
+	id := bigSourceFixture(t, c, store)
+	src := c.sources[fixturePaperID][id]
+	bad := bigFakePDF()
+	bad[100] ^= 0xff
+	if _, err := store.Put(context.Background(), src.ObjstoreKey, bytes.NewReader(bad), int64(len(bad)), "application/pdf"); err != nil {
+		t.Fatal(err)
+	}
+	re, rec := newGetReq(t, "/pdf")
+	re.Request.Header.Set("Range", "bytes=0-1023")
+	err := serveSourcePDF(re, store, src, "source.pdf")
+	if !errors.Is(err, paperbundle.ErrIntegrity) || rec.Body.Len() != 0 {
+		t.Fatalf("same-size corrupt PDF streamed: %v %d bytes", err, rec.Body.Len())
+	}
+}
+
 func TestSourcePDFSmallStillWholeRead(t *testing.T) {
 	c, store := newFakeBlockCatalog(t)
 	// Tamper with the fixture PDF bytes behind the row's back.

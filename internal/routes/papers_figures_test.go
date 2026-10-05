@@ -468,11 +468,11 @@ func TestPaperStatusBatchHandler_HitAndMiss(t *testing.T) {
 	if r0["resolved_id"] != canonical {
 		t.Errorf("results[0].resolved_id = %v, want %q (bare id pinned to latest asset version)", r0["resolved_id"], canonical)
 	}
-	if r0["md_ready"] != true || r0["pdf_ready"] != true {
-		t.Errorf("results[0] readiness = %v/%v, want true/true", r0["md_ready"], r0["pdf_ready"])
+	if r0["md_ready"] != false || r0["pdf_ready"] != true {
+		t.Errorf("results[0] legacy outputs must not be ready: %v/%v", r0["md_ready"], r0["pdf_ready"])
 	}
-	if r0["phase"] != "ready" || r0["state"] != "cached" {
-		t.Errorf("results[0] phase/state = %v/%v, want ready/cached", r0["phase"], r0["state"])
+	if r0["phase"] != "" || r0["state"] != "none" {
+		t.Errorf("results[0] phase/state = %v/%v, want empty/none", r0["phase"], r0["state"])
 	}
 	if r0["image_count"] != float64(2) {
 		t.Errorf("results[0].image_count = %v, want 2", r0["image_count"])
@@ -480,8 +480,8 @@ func TestPaperStatusBatchHandler_HitAndMiss(t *testing.T) {
 
 	r1 := results[1].(map[string]any)
 	// The qa_ surrogate resolves onto the paper's serving identity.
-	if r1["resolved_id"] != "2501.00010v1" || r1["md_ready"] != true {
-		t.Errorf("results[1] = %v, want the surrogate resolved with md_ready", r1)
+	if r1["resolved_id"] != "2501.00010v1" || r1["md_ready"] != false {
+		t.Errorf("results[1] = %v, want resolved PDF identity but no complete-bundle readiness", r1)
 	}
 
 	r2 := results[2].(map[string]any)
@@ -556,7 +556,7 @@ var (
 // ---------------------------------------------------------------------------
 
 func TestAPI_PapersNewGetBranchesDispatch(t *testing.T) {
-	h := newPapersHarness(t, &config.Config{})
+	h := newPapersHarness(t, &config.Config{PaperAccessEnabled: true})
 	auth := rawHeader(h.sessionToken())
 
 	// status/batch with an empty ids list reaches the batch handler (400),
@@ -590,8 +590,8 @@ func TestAPI_PapersFiguresDispatchBehindAccessSwitch(t *testing.T) {
 	if status != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 with access off", status)
 	}
-	if detail, _ := body["detail"].(string); !strings.Contains(detail, "no GET handler") {
-		t.Errorf("detail = %q, want the generic no-handler message", detail)
+	if detail, _ := body["detail"].(string); !strings.Contains(detail, "paper access disabled") {
+		t.Errorf("detail = %q, want the explicit master-switch denial", detail)
 	}
 
 	// With paper access ON, the same path reaches the registry (nil pool

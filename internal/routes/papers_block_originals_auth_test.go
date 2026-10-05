@@ -67,7 +67,7 @@ func newBlockOriginalsHarness(t testing.TB) *blockOriginalsHarness {
 		// No PostgreSQL pool and no raw store in this harness: auth
 		// failures (401/403) happen before any catalog access, and a
 		// passed gate lands on the handler's honest 503.
-		RegisterPapers(e, &config.Config{}, nil, registry.NewStore(nil), nil, enforcer, nil, nil, nil, nil)
+		RegisterPapers(e, &config.Config{PaperAccessEnabled: true}, nil, registry.NewStore(nil), nil, enforcer, nil, nil, nil, nil)
 		e.Router.Bind(&hook.Handler[*core.RequestEvent]{
 			Func:     func(re *core.RequestEvent) error { return re.Next() },
 			Priority: -9999,

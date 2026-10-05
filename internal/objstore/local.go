@@ -3,6 +3,7 @@ package objstore
 import (
 	"context"
 	crand "crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -56,8 +57,11 @@ func (s *LocalStore) resolve(key string) (string, error) {
 	if key == "" {
 		return "", errors.New("objstore: key required")
 	}
-	if strings.HasPrefix(key, "/") || strings.Contains(key, "..") || strings.Contains(key, "\\") {
-		return "", fmt.Errorf("objstore: invalid key %q", key)
+	if err := validateKey(key); err != nil {
+		return "", err
+	}
+	if key == metadataDir || strings.HasPrefix(key, metadataDir+"/") {
+		return "", fmt.Errorf("objstore: reserved metadata key %q", key)
 	}
 	// filepath.FromSlash handles Windows separators correctly; on Unix
 	// it's a no-op. We then re-validate that the final cleaned path
@@ -81,7 +85,7 @@ func (s *LocalStore) Put(ctx context.Context, key string, r io.Reader, size int6
 }
 
 // PutWithMeta delegates to PutWithOptions. LocalStore persists metadata
-// as a sidecar JSON file (<key>.meta.json) alongside the object so the
+// in its reserved root metadata directory so the
 // content-aware idempotency path (Stat → compare sha256 metadata) works
 // identically to the S3 backend in dev. This keeps dev-vs-prod fidelity
 // for the upload handler's race-safe flow at the cost of one extra small
@@ -108,7 +112,7 @@ func (s *LocalStore) PutWithMeta(ctx context.Context, key string, r io.Reader, s
 //   - Empty preconditions → unconditional write, identical to old
 //     PutWithMeta semantics (write via .part + rename).
 //
-// Metadata is persisted as a sidecar JSON file (<dest>.meta.json) only
+// Metadata is persisted outside the object namespace, only
 // after the primary object is successfully in place — so a 412
 // (precondition failed) leaves no orphan sidecars. The sidecar write
 // uses the same .part + rename atomicity dance to avoid partial files.
@@ -177,17 +181,20 @@ func (s *LocalStore) PutWithOptions(_ context.Context, key string, r io.Reader, 
 	return written, nil
 }
 
-// writeSidecar atomically persists metadata as <dest>.meta.json. When
-// metadata is empty/nil we remove any pre-existing sidecar so a Put
-// without metadata behaves as "clear metadata", matching how an S3
-// PutObject without x-amz-meta-* headers replaces the prior metadata.
+// Metadata is kept outside the object namespace so a ZIP member named
+// "foo.meta.json" remains an ordinary object, never a sidecar for "foo".
+// Even empty metadata gets a marker, preventing legacy sidecar fallback from
+// resurrecting stale metadata after an unconditional replacement.
+func (s *LocalStore) metadataPath(dest string) string {
+	rel, _ := filepath.Rel(s.BaseDir, dest)
+	h := sha256.Sum256([]byte(filepath.ToSlash(rel)))
+	return filepath.Join(s.BaseDir, metadataDir, hex.EncodeToString(h[:])+".json")
+}
+
 func (s *LocalStore) writeSidecar(dest string, metadata map[string]string) error {
-	sidecar := dest + sidecarExt
-	if len(metadata) == 0 {
-		if err := os.Remove(sidecar); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-		return nil
+	sidecar := s.metadataPath(dest)
+	if err := os.MkdirAll(filepath.Dir(sidecar), 0o755); err != nil {
+		return err
 	}
 	body, err := jsonMarshal(metadata)
 	if err != nil {
@@ -214,7 +221,13 @@ func (s *LocalStore) writeSidecar(dest string, metadata map[string]string) error
 // itself is still usable and we'd rather degrade to legacy semantics
 // than 500 the caller.
 func (s *LocalStore) readSidecar(dest string) map[string]string {
-	body, err := os.ReadFile(dest + sidecarExt)
+	body, err := os.ReadFile(s.metadataPath(dest))
+	if errors.Is(err, os.ErrNotExist) {
+		// Read-only compatibility for objects written before metadata moved
+		// out of the namespace. Never remove/overwrite these legacy paths:
+		// they may now be real parser members.
+		body, err = os.ReadFile(dest + sidecarExt)
+	}
 	if err != nil {
 		return nil
 	}
@@ -228,11 +241,10 @@ func (s *LocalStore) readSidecar(dest string) map[string]string {
 	return m
 }
 
-// sidecarExt is the suffix LocalStore appends to per-object metadata
-// sidecar files. It must not appear in any real storage key (see
-// ListPrefix filter) — ".meta.json" satisfies that because our keys are
-// driven by paperassets.AssetKey which uses ".pdf"/".json"/".md".
+// sidecarExt is used only to read legacy metadata. New metadata lives in a
+// reserved root directory; nested member paths with this name are valid.
 const sidecarExt = ".meta.json"
+const metadataDir = ".objstore-meta"
 
 // localSidecarCorruptOnce throttles the warn for corrupt sidecars. A
 // single bad upload shouldn't flood the log; we tolerate the situation
@@ -352,7 +364,8 @@ func (s *LocalStore) Stat(_ context.Context, key string) (ObjectInfo, bool, erro
 		return ObjectInfo{}, false, nil
 	}
 	meta := s.readSidecar(path)
-	if meta == nil {
+	_, markerErr := os.Stat(s.metadataPath(path))
+	if meta == nil && errors.Is(markerErr, os.ErrNotExist) {
 		// Close the publish-window race: see if the sidecar arrives
 		// shortly. The total budget is ~25ms which is huge compared to
 		// the typical ~10µs gap between os.Link(data) and os.Rename
@@ -386,7 +399,7 @@ func (s *LocalStore) Delete(_ context.Context, key string) error {
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if err := os.Remove(path + sidecarExt); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := os.Remove(s.metadataPath(path)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	return nil
@@ -402,11 +415,12 @@ func (s *LocalStore) Delete(_ context.Context, key string) error {
 // This avoids re-walking BaseDir on every prefix probe in
 // ResolveAssets, which is hot path for the paper resources endpoint.
 func (s *LocalStore) ListPrefix(_ context.Context, prefix string, limit int) ([]ObjectInfo, error) {
+	requestedPrefix := prefix
 	prefix = strings.TrimRight(prefix, "/")
 	if prefix != "" {
 		// Same traversal-rejection rules as resolve().
-		if strings.HasPrefix(prefix, "/") || strings.Contains(prefix, "..") || strings.Contains(prefix, "\\") {
-			return nil, fmt.Errorf("objstore: invalid prefix %q", prefix)
+		if _, err := s.resolve(prefix); err != nil {
+			return nil, err
 		}
 	}
 
@@ -417,6 +431,9 @@ func (s *LocalStore) ListPrefix(_ context.Context, prefix string, limit int) ([]
 		if info, err := os.Stat(full); err == nil && info.IsDir() {
 			walkRoot = full
 		} else {
+			if strings.HasSuffix(requestedPrefix, "/") {
+				return nil, nil
+			}
 			// Either a file (return single match) or a partial filename
 			// prefix inside the parent dir.
 			parent := filepath.Dir(full)
@@ -440,13 +457,12 @@ func (s *LocalStore) ListPrefix(_ context.Context, prefix string, limit int) ([]
 			return err
 		}
 		if info.IsDir() {
+			if path == filepath.Join(s.BaseDir, metadataDir) {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if !info.Mode().IsRegular() {
-			return nil
-		}
-		// Don't surface our own sidecar metadata files as objects.
-		if strings.HasSuffix(filepath.Base(path), sidecarExt) {
 			return nil
 		}
 		if stemFilter != "" && !strings.HasPrefix(filepath.Base(path), stemFilter) {
@@ -456,8 +472,12 @@ func (s *LocalStore) ListPrefix(_ context.Context, prefix string, limit int) ([]
 		if err != nil {
 			return nil
 		}
+		logicalKey := filepath.ToSlash(rel)
+		if !strings.HasPrefix(logicalKey, requestedPrefix) {
+			return nil
+		}
 		out = append(out, ObjectInfo{
-			Key:       filepath.ToSlash(rel),
+			Key:       logicalKey,
 			Size:      info.Size(),
 			UpdatedAt: info.ModTime().UTC(),
 		})
@@ -484,8 +504,8 @@ func (s *LocalStore) ListDirs(_ context.Context, prefix string) ([]string, error
 	prefix = strings.TrimRight(prefix, "/")
 	if prefix != "" {
 		// Same traversal-rejection rules as resolve().
-		if strings.HasPrefix(prefix, "/") || strings.Contains(prefix, "..") || strings.Contains(prefix, "\\") {
-			return nil, fmt.Errorf("objstore: invalid prefix %q", prefix)
+		if _, err := s.resolve(prefix); err != nil {
+			return nil, err
 		}
 	}
 	dir := s.BaseDir
@@ -501,7 +521,7 @@ func (s *LocalStore) ListDirs(_ context.Context, prefix string) ([]string, error
 	}
 	var out []string
 	for _, e := range entries {
-		if !e.IsDir() {
+		if !e.IsDir() || (prefix == "" && e.Name() == metadataDir) {
 			continue
 		}
 		if prefix == "" {

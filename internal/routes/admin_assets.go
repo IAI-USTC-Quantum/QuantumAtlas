@@ -33,6 +33,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineru"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/registry"
 
@@ -70,14 +72,24 @@ type adminAssetListResponse struct {
 }
 
 // RegisterAdminAssets wires the admin asset browser surface.
-func RegisterAdminAssets(se *core.ServeEvent, rawStore objstore.Store, catalog *registry.Store) {
+func RegisterAdminAssets(se *core.ServeEvent, cfg *config.Config, rawStore objstore.Store, catalog *registry.Store, converter *mineru.Converter) {
 	se.Router.GET("/api/admin/assets/{paper_id}", adminGuard(adminAssetListHandler(rawStore, catalog)))
-	se.Router.GET("/api/admin/assets/{paper_id}/{kind}", adminGuard(adminAssetDetailHandler(rawStore, catalog)))
-	se.Router.GET("/api/admin/assets/{paper_id}/{kind}/download", adminGuard(adminAssetDownloadHandler(rawStore, catalog)))
-	se.Router.GET("/api/admin/assets/{paper_id}/{kind}/inline", adminGuard(adminAssetInlineHandler(rawStore, catalog)))
-	se.Router.GET("/api/admin/assets/{paper_id}/{kind}/url", adminGuard(adminAssetURLHandler(rawStore, catalog)))
+	se.Router.GET("/api/admin/assets/{paper_id}/{kind}", adminGuard(func(re *core.RequestEvent) error {
+		if re.Request.URL.Query().Get("presign") == "true" {
+			return adminFrozenAsset(re, cfg, rawStore, catalog, converter, true)
+		}
+		return adminAssetDetailHandler(rawStore, catalog)(re)
+	}))
+	for _, action := range []string{"download", "inline"} {
+		se.Router.GET("/api/admin/assets/{paper_id}/{kind}/"+action, adminGuard(func(re *core.RequestEvent) error {
+			return adminFrozenAsset(re, cfg, rawStore, catalog, converter, false)
+		}))
+	}
+	se.Router.GET("/api/admin/assets/{paper_id}/{kind}/url", adminGuard(func(re *core.RequestEvent) error {
+		return adminFrozenAsset(re, cfg, rawStore, catalog, converter, true)
+	}))
 	se.Router.GET("/api/admin/assets/batch", adminGuard(adminAssetBatchHandler(rawStore, catalog)))
-	se.Router.GET("/api/admin/assets/batch/download", adminGuard(adminAssetBatchDownloadHandler(rawStore, catalog)))
+	se.Router.GET("/api/admin/assets/batch/download", adminGuard(func(re *core.RequestEvent) error { return adminFrozenBatch(re, cfg, rawStore, catalog, converter) }))
 	se.Router.GET("/api/admin/assets/search", adminGuard(adminAssetSearchHandler(catalog)))
 }
 

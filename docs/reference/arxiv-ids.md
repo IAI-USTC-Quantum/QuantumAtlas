@@ -1,5 +1,17 @@
 # arXiv ID 格式
 
+> **当前内容契约更新**：固定来源 PDF 已恢复为 paper_access 开关下的鉴权字节，
+> 关闭404，qa_、别名、Range、历史原件不能绕过。新内容在独立 qatlas-content 桶的
+> content/ 命名空间不可变发布：source 绑定确切 PDF SHA，arXiv vN 是语义版本、
+> S3VersionId 是物理版本、parse revision 是独立不可变身份；三者不可混用。
+> 同 paper/SHA 可复用 source；冻结导入别名不同字节409（overwrite也不替换）。
+> 解析上传必须完整支持的 Middle+Markdown，保留所有成员原名/字节，MD-only拒收；
+> manifest最后核验发布且PG必需，重传新revision，不覆盖历史。旧MD/JSON/images忽略，
+> 只在内容/PDF访问按需冻结旧PDF，不bulk回填、不删除旧桶；没有nightly/boot/入库自动推理。
+> 下文涉及旧三桶覆盖、仅full.md+images、原PDF410/外部直链的段落保留为历史背景，
+> **不作为当前操作规则**。当前API/上传/续读统一见[论文内容契约](../server/paper-content.md)
+> 与[Upload API](../server/upload-api.md)；完整read视图不是原Middle JSON。
+
 QuantumAtlas 以 arXiv ID 为论文的主键。文本侧支持两种 ID 格式 + 版本后缀；存
 储侧把每条 ID 拆成「年月分片 / 子领域 / 文件 stem」三段做 sharding。本文档讲
 完整规则，包括 2026-06 引入的**按子领域分目录**新布局以及背后的根因。
@@ -37,7 +49,7 @@ QuantumAtlas 以 arXiv ID 为论文的主键。文本侧支持两种 ID 格式 +
 | `qatlas contrib pdf <id>` | **必填**；对象寻址按 `<id>v<n>` 命名 |
 | `qatlas contrib mineru <id>` | **必填** |
 | `GET /api/papers/{id}/markdown`（及 images 等） | 可不带；server 优先查本地 catalog 补最新版本，未收录才抓 arxiv.org（多版本时在响应里显式标）|
-| `GET /api/papers/{id}/pdf` | **恒 410 Gone**——PDF 分发已停用（设计性禁用，用 markdown 端点）|
+| `GET /api/papers/{id}/pdf` | **鉴权固定来源PDF字节**，source_id或语义version互斥，开关禁用404、Range同样鉴权；不需解析token|
 
 论文详情 `GET /api/papers/{id}` 与各资产端点还接受 **`qa_` paper_id**（服务端
 解析成该论文的 canonical 身份，取最高已收录的 arXiv 版本；DOI-only 论文走 DOI

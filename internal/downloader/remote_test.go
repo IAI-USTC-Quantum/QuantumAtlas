@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperassets"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperbundle"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/registry"
 )
 
@@ -66,26 +67,28 @@ func TestArxivOnlyFallsBackToFleet(t *testing.T) {
 		t.Fatalf("out=%+v err=%v calls=%d", out, err, remote.calls)
 	}
 }
-func TestExistingObjectRegistersActualHash(t *testing.T) {
+func TestFrozenAliasConflictNeverAttributesCandidateToOldBytes(t *testing.T) {
 	ctx := context.Background()
 	store := newLocalStore(t, t.TempDir())
 	reg := newFakeReg()
 	d := &Downloader{store: store, reg: reg}
 	original := makePDF(16384)
 	doi := "10.1000/conflict"
-	_, err := store.Put(ctx, paperassets.DOIAssetKey("pdf", doi), bytes.NewReader(original), int64(len(original)), "application/pdf")
+	paper, _, _ := reg.ResolveOrMint(ctx, registry.PaperRef{DOI: doi})
+	src, err := reg.RegisterFrozenPDF(ctx, store, paper, "doi:"+doi, original)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replacement := makePDF(20000)
-	out := &FetchOutcome{DOI: doi, Strategy: "remote-worker:browser", Result: &FetchResult{Body: bytes.NewReader(replacement), Size: int64(len(replacement)), Sha256: "not-the-stored-hash"}}
-	if err := d.storeOutcome(ctx, job{ref: registry.PaperRef{DOI: doi}}, out); err != nil {
+	if _, err := reg.BindPaperSourceImport(ctx, store, paper, src.SourceID, paperassets.DOIAssetKey("pdf", doi)); err != nil {
 		t.Fatal(err)
 	}
-	h := sha256.Sum256(original)
-	want := hex.EncodeToString(h[:])
-	if reg.upsertDOI[doi] != want || out.Result.Size != int64(len(original)) {
-		t.Fatalf("registered wrong object: %s size %d", reg.upsertDOI[doi], out.Result.Size)
+	replacement := makePDF(20000)
+	out := &FetchOutcome{DOI: doi, Strategy: "remote-worker:browser", URL: "https://candidate.example/new.pdf", Result: &FetchResult{Body: bytes.NewReader(replacement), Size: int64(len(replacement)), Sha256: "not-the-stored-hash"}}
+	if err := d.storeOutcome(ctx, job{ref: registry.PaperRef{DOI: doi, Title: pipelineTitle}}, out); !errors.Is(err, paperbundle.ErrIntegrity) {
+		t.Fatalf("different candidate did not fail explicitly: %v", err)
+	}
+	if reg.upsertDOI[doi] != "" || out.URL != "https://candidate.example/new.pdf" || out.Result.Sha256 == src.Sha256 {
+		t.Fatalf("candidate was silently attributed to old bytes: %+v", out)
 	}
 }
 
@@ -102,7 +105,7 @@ func TestRemoteArchiveDoesNotWaitForMinerU(t *testing.T) {
 	pdf := makePDF(16384)
 	h := sha256.Sum256(pdf)
 	out := &FetchOutcome{DOI: "10.1000/archive", Strategy: "remote-worker:browser", Result: &FetchResult{Body: bytes.NewReader(pdf), Size: int64(len(pdf)), Sha256: hex.EncodeToString(h[:])}}
-	if err := d.ArchiveRemote(ctx, registry.PaperRef{DOI: out.DOI}, out); err != nil {
+	if err := d.ArchiveRemote(ctx, registry.PaperRef{DOI: out.DOI, Title: pipelineTitle}, out); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 0 {
@@ -111,7 +114,7 @@ func TestRemoteArchiveDoesNotWaitForMinerU(t *testing.T) {
 	if reg.upsertDOI[out.DOI] == "" {
 		t.Fatal("archive did not register PDF")
 	}
-	if err := d.AfterRemoteArchive(ctx, registry.PaperRef{DOI: out.DOI}, out); err != nil {
+	if err := d.AfterRemoteArchive(ctx, registry.PaperRef{DOI: out.DOI, Title: pipelineTitle}, out); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 1 {

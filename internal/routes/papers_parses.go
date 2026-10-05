@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/registry"
 
@@ -104,6 +105,17 @@ func paperParseJSONHandler(re *core.RequestEvent, store objstore.Store, catalog 
 			"detail": "object store not configured on this server",
 		})
 	}
+	// New revisions must satisfy the whole pinned publication inventory.
+	// Explicit historical comment artifacts remain readable but never ready.
+	if cc, ok := catalog.(contentCatalog); ok {
+		bundle, published, err := cc.GetParseBundle(ctx, rp.canonical, revisionID)
+		if err != nil {
+			return contentAccessErrorResponse(re, err)
+		}
+		if published {
+			return paperBundleFileHandler(re, &config.Config{PaperAccessEnabled: true}, store, cc, requestedID, revisionID, bundle.MiddlePath)
+		}
+	}
 	data, err := blockReadVerified(ctx, store, rev.ObjstoreKey, rev.ArtifactSha256)
 	if err != nil {
 		if errors.Is(err, objstore.ErrNotFound) {
@@ -117,7 +129,7 @@ func paperParseJSONHandler(re *core.RequestEvent, store objstore.Store, catalog 
 	}
 	re.Response.Header().Set("ETag", `"`+rev.ArtifactSha256+`"`)
 	re.Response.Header().Set("X-QAtlas-Sha256", rev.ArtifactSha256)
-	re.Response.Header().Set("Cache-Control", "private, max-age=86400")
+	re.Response.Header().Set("Cache-Control", "private, max-age=0, must-revalidate")
 	re.Response.Header().Set("Content-Type", "application/json")
 	// No Range semantics needed for the JSON artifact; bytes are small
 	// and hash-verified as a whole.

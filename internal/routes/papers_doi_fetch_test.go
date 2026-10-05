@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -23,6 +24,7 @@ import (
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineru"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperassets"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/registry"
 	"github.com/pocketbase/pocketbase/core"
 )
 
@@ -218,171 +220,126 @@ func fakeOAPDFServer(t *testing.T) (url string, hits *int) {
 	return srv.URL + "/paper.pdf", n
 }
 
-// TestGetMarkdownByDOI_MissTriggersFetchConvertLRO: miss → 202 with
-// Operation-Location; the background job fetches the OA PDF, converts,
-// and a later GET streams the markdown (200). The status endpoint
-// renders the job for polling clients.
-func TestGetMarkdownByDOI_MissTriggersFetchConvertLRO(t *testing.T) {
+// DOI fixtures share the real complete-bundle reader helper, with DOI identity
+// resolution and source origin overridden (no network or inference backend).
+type doiReadingCatalog struct {
+	*readTestCatalog
+	doi         string
+	omitSources bool
+}
+
+func (c *doiReadingCatalog) Get(ctx context.Context, id string) (*registry.Paper, bool, error) {
+	p, ok, err := c.readTestCatalog.Get(ctx, id)
+	if p != nil {
+		v := *p
+		v.DOI = c.doi
+		v.ArxivID = ""
+		p = &v
+	}
+	return p, ok, err
+}
+func (c *doiReadingCatalog) GetWithAssets(ctx context.Context, id string) (*registry.PaperDetail, bool, error) {
+	p, ok, err := c.Get(ctx, id)
+	return &registry.PaperDetail{Paper: p}, ok, err
+}
+func (c *doiReadingCatalog) GetPaperIDByIdentity(ctx context.Context, scheme, id string) (string, bool, error) {
+	if scheme == "doi" && registry.NormalizeDOI(id) == c.doi {
+		return readTestPaper, true, nil
+	}
+	return c.readTestCatalog.GetPaperIDByIdentity(ctx, scheme, id)
+}
+func (c *doiReadingCatalog) ListPaperSources(ctx context.Context, id string) ([]registry.PaperSource, error) {
+	if c.omitSources {
+		return nil, nil
+	}
+	return c.readTestCatalog.ListPaperSources(ctx, id)
+}
+func (c *doiReadingCatalog) GetPaperSource(ctx context.Context, paper, id string) (registry.PaperSource, bool, error) {
+	if c.omitSources {
+		return registry.PaperSource{}, false, nil
+	}
+	return c.readTestCatalog.GetPaperSource(ctx, paper, id)
+}
+func newDOIReadingFixture(t *testing.T) (*doiReadingCatalog, objstore.Store, registry.ParseBundle) {
+	t.Helper()
+	c, s, b := newReadingFixture(t)
 	doi := "10.1038/s41534-020-00001-0"
-	store := newDOIFlowStore()
-	stub := newDOIMinerUStub(t)
-	converter := newDOIFlowConverter(t, store, stub)
-	oaURL, hits := fakeOAPDFServer(t)
-
-	re, rec := mustDOIMarkdownReq(t, doi)
-	if err := getMarkdownByDOIHandler(re, &config.Config{}, store, converter, doi, oaURL); err != nil {
-		t.Fatalf("handler: %v", err)
-	}
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("status = %d, want 202 (body: %s)", rec.Code, rec.Body.String())
-	}
-	if loc := rec.Header().Get("Operation-Location"); loc != "/api/papers/"+doi+"/markdown/status" {
-		t.Errorf("Operation-Location = %q", loc)
-	}
-	var body map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode 202 body: %v", err)
-	}
-	if body["doi"] != doi {
-		t.Errorf("body.doi = %v", body["doi"])
-	}
-	if body["arxiv_id"] != nil {
-		t.Errorf("body must not carry arxiv_id on the DOI surface: %v", body["arxiv_id"])
-	}
-
-	// Wait for the background job to finish, then re-GET → 200 bytes.
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if job, ok := converter.LookupDOI(doi); ok && job.State == mineru.JobStateDone {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	if job, ok := converter.LookupDOI(doi); !ok || job.State != mineru.JobStateDone {
-		final, _ := converter.LookupDOI(doi)
-		t.Fatalf("job not done: %+v", final)
-	}
-	if *hits != 1 {
-		t.Errorf("OA host hits = %d, want 1", *hits)
-	}
-	// The fetched PDF landed under the DOI layout with source metadata
-	// recorded via the published path.
-	if _, ok, _ := store.Stat(context.Background(), paperassets.DOIAssetKey("pdf", doi)); !ok {
-		t.Errorf("DOI pdf not stored")
-	}
-
-	re2, rec2 := mustDOIMarkdownReq(t, doi)
-	if err := getMarkdownByDOIHandler(re2, &config.Config{}, store, converter, doi, oaURL); err != nil {
-		t.Fatalf("handler (cached): %v", err)
-	}
-	if rec2.Code != http.StatusOK {
-		t.Fatalf("cached status = %d, want 200", rec2.Code)
-	}
-	if !strings.Contains(rec2.Body.String(), "# Hello DOI") {
-		t.Errorf("markdown body = %q", rec2.Body.String())
-	}
-	if got := rec2.Header().Get("X-QAtlas-DOI"); got != doi {
-		t.Errorf("X-QAtlas-DOI = %q", got)
-	}
-
-	// Status surface: cached now.
-	re3, rec3 := mustDOIStatusReq(t, doi, "markdown")
-	if err := markdownStatusByDOIHandler(re3, store, converter, doi); err != nil {
-		t.Fatalf("status handler: %v", err)
-	}
-	var st map[string]any
-	if err := json.Unmarshal(rec3.Body.Bytes(), &st); err != nil {
-		t.Fatalf("decode status: %v", err)
-	}
-	if st["state"] != "cached" || st["md_ready"] != true {
-		t.Errorf("status = %+v, want cached/md_ready", st)
-	}
+	c.source.Origin = "doi:" + doi
+	return &doiReadingCatalog{readTestCatalog: c, doi: doi}, s, b
+}
+func callDOIDerivative(t *testing.T, c *doiReadingCatalog, s objstore.Store, conv contentReadConverter, kind string) (*httptest.ResponseRecorder, map[string]any) {
+	return readRouteRequest(t, "/api/papers/"+c.doi+"/"+kind, func(re *core.RequestEvent) error {
+		return contentDerivativeHandler(re, &config.Config{PaperAccessEnabled: true}, s, c, conv, c.doi, kind)
+	})
 }
 
-// TestGetMarkdownByDOI_MissNoSource404: no stored PDF, no OA URL → the
-// job fails with ErrNoDOISource and the handler renders 404 with the
-// contrib-upload hint (not 502).
+func TestGetMarkdownByDOI_MissTriggersFetchConvertLRO(t *testing.T) {
+	c, s, _ := newDOIReadingFixture(t)
+	c.bundles = map[string]registry.ParseBundle{}
+	legacy := []byte("FORBIDDEN legacy DOI markdown")
+	_, _ = s.Put(t.Context(), paperassets.DOIAssetKey("markdown", c.doi), bytes.NewReader(legacy), int64(len(legacy)), "text/markdown")
+	conv := &readTestConverter{job: &mineru.Job{State: mineru.JobStateQueued, RevisionID: "pr_pending"}}
+	rec, body := callDOIDerivative(t, c, s, conv, "markdown")
+	if rec.Code != 202 || body["ready"] != false || conv.ensureCalls != 1 {
+		t.Fatalf("cold DOI %d %+v", rec.Code, body)
+	}
+	if rec.Header().Get("Operation-Location") != "/api/papers/"+readTestPaper+"/read/status?source_id="+readTestSource {
+		t.Fatal("status location not source pinned")
+	}
+	ready := writeReadingBundle(t, c.readTestCatalog, s, "pr_doiready", "HELLO DOI native Middle")
+	c.current = ready.RevisionID
+	rec, _ = callDOIDerivative(t, c, s, conv, "markdown")
+	if rec.Code != 200 || rec.Body.String() != "original parser markdown" || conv.ensureCalls != 1 {
+		t.Fatalf("ready DOI %d %s", rec.Code, rec.Body.String())
+	}
+	poll, b := readRouteRequest(t, "/api/papers/"+c.doi+"/read/status?source_id="+readTestSource, func(re *core.RequestEvent) error {
+		return contentReadStatusHandler(re, &config.Config{PaperAccessEnabled: true}, s, c, conv, c.doi)
+	})
+	if poll.Code != 200 || b["ready"] != true || b["md_ready"] != true || b["revision"] != ready.RevisionID {
+		t.Fatalf("verified DOI status %d %+v", poll.Code, b)
+	}
+}
 func TestGetMarkdownByDOI_MissNoSource404(t *testing.T) {
-	doi := "10.1093/closed/access.12345"
-	store := newDOIFlowStore()
-	stub := newDOIMinerUStub(t)
-	converter := newDOIFlowConverter(t, store, stub)
-
-	// First call: job queued (202); the failure lands asynchronously.
-	re, rec := mustDOIMarkdownReq(t, doi)
-	if err := getMarkdownByDOIHandler(re, &config.Config{}, store, converter, doi, ""); err != nil {
-		t.Fatalf("handler: %v", err)
-	}
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("first call status = %d, want 202", rec.Code)
-	}
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if job, ok := converter.LookupDOI(doi); ok && job.State == mineru.JobStateFailed {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-
-	// Second call within the failure cooldown: 404 + contrib hint.
-	re2, rec2 := mustDOIMarkdownReq(t, doi)
-	if err := getMarkdownByDOIHandler(re2, &config.Config{}, store, converter, doi, ""); err != nil {
-		t.Fatalf("handler: %v", err)
-	}
-	if rec2.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404 (body: %s)", rec2.Code, rec2.Body.String())
-	}
-	var body map[string]any
-	if err := json.Unmarshal(rec2.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode 404 body: %v", err)
-	}
-	detail, _ := body["detail"].(string)
-	if !strings.Contains(detail, "upload-pdf") {
-		t.Errorf("detail = %q, want contrib-upload hint", detail)
-	}
-
-	// The status endpoint renders the failed job for pollers.
-	re3, rec3 := mustDOIStatusReq(t, doi, "markdown")
-	if err := markdownStatusByDOIHandler(re3, store, converter, doi); err != nil {
-		t.Fatalf("status handler: %v", err)
-	}
-	var st map[string]any
-	if err := json.Unmarshal(rec3.Body.Bytes(), &st); err != nil {
-		t.Fatalf("decode status: %v", err)
-	}
-	// snapshotBody maps a cooling-down failure to state=cooldown.
-	if st["state"] != "cooldown" && st["state"] != "failed" {
-		t.Errorf("status state = %v, want cooldown|failed (%+v)", st["state"], st)
+	c, s, _ := newDOIReadingFixture(t)
+	c.omitSources = true
+	c.bundles = map[string]registry.ParseBundle{}
+	conv := &readTestConverter{job: &mineru.Job{State: mineru.JobStateQueued}}
+	rec, _ := callDOIDerivative(t, c, s, conv, "markdown")
+	if rec.Code != 404 || conv.ensureCalls != 0 {
+		t.Fatalf("missing PDF inferred/fabricated source %d", rec.Code)
 	}
 }
-
-// TestGetMarkdownByDOI_ConverterDisabledKeeps404: without MinerU tokens
-// the miss branch can't self-serve — plain 404.
 func TestGetMarkdownByDOI_ConverterDisabledKeeps404(t *testing.T) {
-	doi := "10.1093/closed/access.12345"
-	store := newDOIFlowStore()
-	converter := mineru.NewConverter(mineru.ConverterConfig{
-		PaperAccessEnabled: true, // no tokens → disabled
-	}, store, nil, nil)
-
-	re, rec := mustDOIMarkdownReq(t, doi)
-	if err := getMarkdownByDOIHandler(re, &config.Config{}, store, converter, doi, "https://example.com/x.pdf"); err != nil {
-		t.Fatalf("handler: %v", err)
+	c, s, _ := newDOIReadingFixture(t)
+	c.bundles = map[string]registry.ParseBundle{}
+	rec, _ := callDOIDerivative(t, c, s, nil, "markdown")
+	if rec.Code != 503 {
+		t.Fatalf("known frozen PDF without parser should expose capability gap: %d", rec.Code)
 	}
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404 (body: %s)", rec.Code, rec.Body.String())
+	// The master switch is separate from parser availability and gates bytes.
+	rec, _ = readRouteRequest(t, "/api/papers/"+c.doi+"/markdown", func(re *core.RequestEvent) error {
+		return contentDerivativeHandler(re, &config.Config{}, s, c, nil, c.doi, "markdown")
+	})
+	if rec.Code != 404 {
+		t.Fatal("disabled master leaked bytes")
 	}
 }
-
-// TestGetMarkdownByDOI_InvalidDOI400 keeps the pre-existing 400 on the
-// new signature.
 func TestGetMarkdownByDOI_InvalidDOI400(t *testing.T) {
-	store := newDOIFlowStore()
-	re, rec := mustDOIMarkdownReq(t, "not-a-doi")
-	if err := getMarkdownByDOIHandler(re, &config.Config{}, store, nil, "not-a-doi", ""); err != nil {
-		t.Fatalf("handler: %v", err)
+	c, s, _ := newDOIReadingFixture(t)
+	conv := &readTestConverter{job: &mineru.Job{State: mineru.JobStateQueued}}
+	rec, _ := readRouteRequest(t, "/api/papers/not-a-doi/read", func(re *core.RequestEvent) error {
+		return contentReadHandler(re, &config.Config{PaperAccessEnabled: true}, s, c, conv, "not-a-doi")
+	})
+	if rec.Code != 400 || conv.ensureCalls != 0 {
+		t.Fatalf("bad DOI reached acquisition: %d", rec.Code)
 	}
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", rec.Code)
+}
+func TestDOIContentFailureRemainsSourcePinned(t *testing.T) {
+	c, s, _ := newDOIReadingFixture(t)
+	c.bundles = map[string]registry.ParseBundle{}
+	conv := &readTestConverter{job: &mineru.Job{State: mineru.JobStateFailed, Err: errors.New("unsupported source PDF"), ErrKind: mineru.ErrFatal}}
+	rec, body := callDOIDerivative(t, c, s, conv, "markdown")
+	if rec.Code != 503 || body["state"] != "failed" || body["ready"] != false || body["source_id"] != readTestSource {
+		t.Fatalf("fatal source parse %d %+v", rec.Code, body)
 	}
 }

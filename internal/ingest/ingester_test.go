@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -26,11 +27,13 @@ import (
 
 // fakeReg implements registryWriter, recording every call.
 type fakeReg struct {
-	mu       sync.Mutex
-	upserts  []upsertCall
-	statuses []string
-	pending  []registry.PendingPaper
-	events   []recordedAcquisitionEvent
+	mu            sync.Mutex
+	upserts       []upsertCall
+	statuses      []string
+	pending       []registry.PendingPaper
+	events        []recordedAcquisitionEvent
+	frozenSources map[string]registry.PaperSource
+	frozenAliases map[string]string
 }
 
 type recordedAcquisitionEvent struct {
@@ -299,8 +302,8 @@ func TestOnMintDOIOnlyFetchesOpenAccessPDF(t *testing.T) {
 	if u.version != 0 || u.sha256 != testPDFSha() || u.size != int64(len(testPDF)) {
 		t.Errorf("published upsert = %+v", u)
 	}
-	if u.pdfPath != "doi/10.3788/cjl221209.pdf" {
-		t.Errorf("pdfPath = %q", u.pdfPath)
+	if !strings.HasPrefix(u.pdfPath, "content/") || !strings.HasSuffix(u.pdfPath, "/source.pdf") {
+		t.Errorf("PDF not frozen: %q", u.pdfPath)
 	}
 	if got := resolver.calls(); len(got) != 1 || got[0] != doi {
 		t.Errorf("resolver calls = %v", got)
@@ -311,7 +314,7 @@ func TestOnMintDOIOnlyFetchesOpenAccessPDF(t *testing.T) {
 	if got := stub.pdfHits.Load() + stub.absHits.Load(); got != 0 {
 		t.Errorf("unexpected arxiv traffic: %d", got)
 	}
-	r, _, err := store.Get(context.Background(), "pdf/doi/10.3788/cjl221209.pdf")
+	r, _, err := store.Get(context.Background(), u.pdfPath)
 	if err != nil {
 		t.Fatalf("Get DOI PDF: %v", err)
 	}
@@ -423,9 +426,9 @@ func TestIngestSuccessResolvesVersion(t *testing.T) {
 	if u.size != int64(len(testPDF)) {
 		t.Errorf("size = %d, want %d", u.size, len(testPDF))
 	}
-	// Legacy bucketRelKey convention: kind segment stripped.
-	if u.pdfPath != "2401/2401.12345v3.pdf" {
-		t.Errorf("pdfPath = %q, want %q", u.pdfPath, "2401/2401.12345v3.pdf")
+	// New asset rows retain the FULL logical content/ key.
+	if !strings.HasPrefix(u.pdfPath, "content/") || !strings.HasSuffix(u.pdfPath, "/source.pdf") {
+		t.Errorf("PDF path not frozen/full logical key: %q", u.pdfPath)
 	}
 	if got := stub.absHits.Load(); got != 1 {
 		t.Errorf("abs page hits = %d, want 1 (version resolution)", got)
@@ -448,13 +451,13 @@ func TestIngestSuccessStoresBytes(t *testing.T) {
 	if len(upserts) != 1 {
 		t.Fatalf("expected 1 UpsertPDF, got %+v", upserts)
 	}
-	if want := "9508/quant-ph/9508027v2.pdf"; upserts[0].pdfPath != want {
-		t.Errorf("pdfPath = %q, want %q", upserts[0].pdfPath, want)
+	if !strings.HasPrefix(upserts[0].pdfPath, "content/") || !strings.HasSuffix(upserts[0].pdfPath, "/source.pdf") {
+		t.Errorf("PDF not frozen: %q", upserts[0].pdfPath)
 	}
 
 	// Verify the stored bytes round-trip through the objstore at the
 	// canonical AssetKey.
-	rc, _, err := store.Get(context.Background(), "pdf/9508/quant-ph/9508027v2.pdf")
+	rc, _, err := store.Get(context.Background(), upserts[0].pdfPath)
 	if err != nil {
 		t.Fatalf("Get stored pdf: %v", err)
 	}

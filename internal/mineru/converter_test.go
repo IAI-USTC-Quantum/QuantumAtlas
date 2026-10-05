@@ -15,6 +15,7 @@ import (
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/arxiv"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperbundle"
 )
 
 // fakeStore is a minimal in-memory objstore.Store sufficient for
@@ -180,18 +181,36 @@ func (a *atomic64) load() int64 {
 func newMinerUStub(t *testing.T) *minerUStub {
 	t.Helper()
 	stub := &minerUStub{t: t}
-	stub.zipBody = buildResultZip(t, "out", "# Hello\n![](images/a.png)\n", map[string]string{
-		"images/a.png": "PNGDATA",
-	})
+	stub.zipBody = buildCompleteZip(t)
 	stub.server = httptest.NewServer(http.HandlerFunc(stub.handle))
 	return stub
 }
 
 func (s *minerUStub) close()      { s.server.Close() }
-func (s *minerUStub) url() string { return s.server.URL }
+func (s *minerUStub) url() string { return s.server.URL + "/api" }
 
 func (s *minerUStub) handle(w http.ResponseWriter, r *http.Request) {
 	switch {
+	case r.URL.Path == "/api/v1/uploads":
+		s.submissions.inc()
+		if s.submitFailCode != "" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": s.submitFailCode, "message": s.submitFailMsg}})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "up-1", "status": "pending", "upload_url": s.server.URL + "/upload/0"})
+	case r.URL.Path == "/api/v1/uploads/up-1/complete":
+		_, _ = w.Write([]byte(`{"file":{"id":"file-1"}}`))
+	case r.URL.Path == "/api/v1/parse/jobs" && r.Method == http.MethodPost:
+		_, _ = w.Write([]byte(`{"job_id":"job-1","status":"running"}`))
+	case r.URL.Path == "/api/v1/parse/jobs/job-1":
+		s.pollCalls.inc()
+		if s.taskFailWithMsg != "" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"job_id": "job-1", "status": "failed", "error": map[string]string{"code": "parse_failed", "message": s.taskFailWithMsg}})
+			return
+		}
+		_, _ = w.Write([]byte(`{"job_id":"job-1","status":"completed","files":[{"status":"completed","output_files":{"zip":{"file_id":"result-1"}}}]}`))
+	case r.URL.Path == "/api/v1/files/result-1/content":
+		_, _ = w.Write(s.zipBody)
 	case r.URL.Path == "/api/v4/file-urls/batch" && r.Method == http.MethodPost:
 		s.submissions.inc()
 		var body struct {
@@ -254,6 +273,7 @@ func makeConverter(t *testing.T, store objstore.Store, stubURL string, tokens ..
 	}
 	cfg := ConverterConfig{
 		PaperAccessEnabled:      true,
+		SourceCatalog:           newFakeSourceCatalog(),
 		MinerUAPITokens:         tokens,
 		MinerUAPIBaseURL:        stubURL,
 		MinerUModelVersion:      "vlm",
@@ -305,28 +325,24 @@ func TestConverter_EnabledWithSwitchAndTokensOnly(t *testing.T) {
 
 func TestConverter_CacheHitShortCircuits(t *testing.T) {
 	store := newFakeStore()
-	// pre-populate the markdown cache
-	store.put("markdown/2401/2401.12345v1.md", []byte("# cached"))
-
+	store.put("markdown/2401/2401.12345v1.md", []byte("# legacy ignored"))
+	store.put("pdf/2401/2401.12345v1.pdf", fakePDFBytes)
 	stub := newMinerUStub(t)
 	defer stub.close()
 	c := makeConverter(t, store, stub.url())
-	if !c.Enabled() {
-		t.Fatal("converter should be enabled")
+	first := c.Ensure(context.Background(), "2401.12345v1")
+	if first.State != JobStateQueued {
+		t.Fatalf("legacy cache unexpectedly accepted: %+v", first)
 	}
-
-	job := c.Ensure(context.Background(), "2401.12345v1")
-	if job.State != JobStateDone {
-		t.Fatalf("State = %v, want JobStateDone", job.State)
+	if !waitForJobState(c, "2401.12345v1", JobStateDone, 2*time.Second) {
+		t.Fatal("parse did not finish")
+	}
+	second := c.Ensure(context.Background(), "2401.12345v1")
+	if second.State != JobStateDone || second.RevisionID == "" || stub.submissions.load() != 1 {
+		t.Fatalf("complete-cache contract: %+v", second)
 	}
 	if c.Snapshot().CacheHits != 1 {
-		t.Errorf("CacheHits = %d, want 1", c.Snapshot().CacheHits)
-	}
-	if c.Snapshot().Submitted != 0 {
-		t.Errorf("Submitted = %d, want 0 (cache hit should not submit)", c.Snapshot().Submitted)
-	}
-	if stub.submissions.load() != 0 {
-		t.Errorf("stub.submissions = %d, want 0", stub.submissions.load())
+		t.Fatal("complete cache hit not counted")
 	}
 }
 
@@ -349,14 +365,7 @@ func TestConverter_EnsureSubmitsAndWrites(t *testing.T) {
 		t.Fatalf("job did not reach Done; final = %+v", final)
 	}
 
-	// Markdown should now be in the store.
-	if _, ok := store.get("markdown/2401/2401.12345v1.md"); !ok {
-		t.Errorf("markdown not written to store")
-	}
-	// Images should be a single zip, not scattered files.
-	if _, ok := store.get("images/2401/2401.12345v1.zip"); !ok {
-		t.Errorf("images zip not written to store")
-	}
+	assertCompleteStored(t, c, store, "2401.12345v1")
 	snap := c.Snapshot()
 	if snap.Submitted != 1 || snap.Succeeded != 1 {
 		t.Errorf("counters = %+v, want submitted=succeeded=1", snap)
@@ -509,13 +518,13 @@ type tokenAwareStub struct {
 func newTokenAwareStub(t *testing.T) *tokenAwareStub {
 	t.Helper()
 	stub := &tokenAwareStub{t: t, keyState: map[string]string{}}
-	stub.zipBody = buildResultZip(t, "out", "# Hello\n", nil)
+	stub.zipBody = buildCompleteZip(t)
 	stub.server = httptest.NewServer(http.HandlerFunc(stub.handle))
 	return stub
 }
 
 func (s *tokenAwareStub) close()      { s.server.Close() }
-func (s *tokenAwareStub) url() string { return s.server.URL }
+func (s *tokenAwareStub) url() string { return s.server.URL + "/api" }
 
 func (s *tokenAwareStub) markQuotaExhausted(token string) {
 	s.keyStateMu.Lock()
@@ -542,6 +551,21 @@ func (s *tokenAwareStub) handle(w http.ResponseWriter, r *http.Request) {
 	s.keyStateMu.Unlock()
 
 	switch {
+	case r.URL.Path == "/api/v1/uploads":
+		s.submissions.inc()
+		if state == "quota" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": "daily_limit_exceeded", "message": "daily quota exhausted"}})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "up-1", "status": "pending", "upload_url": s.server.URL + "/upload/0"})
+	case r.URL.Path == "/api/v1/uploads/up-1/complete":
+		_, _ = w.Write([]byte(`{"file":{"id":"file-1"}}`))
+	case r.URL.Path == "/api/v1/parse/jobs" && r.Method == http.MethodPost:
+		_, _ = w.Write([]byte(`{"job_id":"job-1","status":"running"}`))
+	case r.URL.Path == "/api/v1/parse/jobs/job-1":
+		_, _ = w.Write([]byte(`{"job_id":"job-1","status":"completed","files":[{"status":"completed","output_files":{"zip":{"file_id":"result-1"}}}]}`))
+	case r.URL.Path == "/api/v1/files/result-1/content":
+		_, _ = w.Write(s.zipBody)
 	case r.URL.Path == "/api/v4/file-urls/batch" && r.Method == http.MethodPost:
 		s.submissions.inc()
 		_, _ = io.Copy(io.Discard, r.Body)
@@ -895,6 +919,7 @@ func makeConverterWithFetcher(t *testing.T, store objstore.Store, stubURL, arxiv
 	}
 	cfg := ConverterConfig{
 		PaperAccessEnabled:      true,
+		SourceCatalog:           newFakeSourceCatalog(),
 		MinerUAPITokens:         tokens,
 		MinerUAPIBaseURL:        stubURL,
 		MinerUModelVersion:      "vlm",
@@ -939,16 +964,7 @@ func TestConverter_SilentFetchThenConvert(t *testing.T) {
 		t.Fatalf("job did not reach Done; final = %+v", final)
 	}
 
-	// PDF must now exist in the store (written via silent fetch).
-	if pdf, ok := store.get("pdf/2401/2401.12345v1.pdf"); !ok {
-		t.Errorf("PDF not written to store after silent fetch")
-	} else if !strings.HasPrefix(string(pdf), "%PDF-") {
-		t.Errorf("written PDF is missing %%PDF- magic; got %q", string(pdf)[:8])
-	}
-	// Markdown must also exist (convert ran after fetch).
-	if _, ok := store.get("markdown/2401/2401.12345v1.md"); !ok {
-		t.Errorf("markdown not written to store")
-	}
+	assertCompleteStored(t, c, store, "2401.12345v1")
 	if hits.load() != 1 {
 		t.Errorf("arxiv hits = %d, want exactly 1 (single fetch even though dedupe was N/A)", hits.load())
 	}
@@ -999,9 +1015,12 @@ func TestConverter_EnsurePDFFetchOnly(t *testing.T) {
 		t.Fatalf("job did not reach Done; final = %+v", final)
 	}
 
-	// PDF should be in old-style layout (with category prefix).
-	if _, ok := store.get("pdf/9508/quant-ph/9508027v2.pdf"); !ok {
-		t.Errorf("PDF not written to store under old-style layout; objects = %v", listKeys(store))
+	finalPDF, _ := c.Lookup("quant-ph/9508027v2")
+	if _, ok := store.get(paperbundle.PDFKey(finalPDF.PaperID, finalPDF.SourceID)); !ok {
+		t.Fatal("frozen PDF missing")
+	}
+	if _, ok := store.get("pdf/9508/quant-ph/9508027v2.pdf"); ok {
+		t.Fatal("fresh PDF wrote legacy location")
 	}
 	// MinerU should NOT have been touched (fetch-only path).
 	if _, ok := store.get("markdown/9508/quant-ph/9508027v2.md"); ok {
@@ -1065,19 +1084,13 @@ func TestConverter_SilentFetchDisabledWithoutFetcher(t *testing.T) {
 	store := newFakeStore()
 	stub := newMinerUStub(t)
 	defer stub.close()
-	c := makeConverter(t, store, stub.url()) // no Fetcher in ConverterConfig
-
-	c.Ensure(context.Background(), "2401.12345v1")
-	if !waitForJobState(c, "2401.12345v1", JobStateFailed, 2*time.Second) {
-		t.Fatal("expected failed state without fetcher")
-	}
-	final, _ := c.Lookup("2401.12345v1")
-	if !strings.Contains(errString(final.Err), "no PDF in store") {
-		t.Errorf("error message should say 'no PDF in store'; got %q", errString(final.Err))
+	c := makeConverter(t, store, stub.url())
+	j := c.Ensure(context.Background(), "2401.12345v1")
+	if j.State != JobStateFailed || !strings.Contains(errString(j.Err), "no PDF in store") {
+		t.Fatalf("missing PDF contract: %+v", j)
 	}
 }
 
-// listKeys is a small helper for failure messages.
 func listKeys(s *fakeStore) []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1283,7 +1296,7 @@ func TestConverter_PushesIndexAfterConversion(t *testing.T) {
 	}
 
 	pushed := pusher.snapshot()
-	if len(pushed) != 1 || pushed[0] != "2401.12345v1" {
-		t.Fatalf("pushed = %v, want [2401.12345v1]", pushed)
+	if len(pushed) != 1 || pushed[0] != "paper_test" {
+		t.Fatalf("pushed = %v, want [paper_test]", pushed)
 	}
 }

@@ -1,14 +1,10 @@
 package mineru
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -16,61 +12,29 @@ import (
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/arxiv"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
-	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperassets"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/registry"
 )
 
-// Converter is the server-side MinerU driver gated by the opt-in
-// QATLAS_PAPER_ACCESS_ENABLED master switch. It is constructed once
-// at boot from cmd/qatlasd/main.go and passed into routes.RegisterPapers.
+// Converter drives source-pinned MinerU V1 parsing behind the paper-access
+// master switch. PDF-only access freezes/verifies bytes without inference or
+// API tokens. Content access ignores all legacy outputs and is ready only when
+// the exact source SHA and every complete-manifest member verify.
 //
-// Lifecycle for one paper:
+// Concurrent callers share per-process jobs, bounded by the conversion and PDF
+// fetch semaphores. Token-ring quota rotation and failure cooldowns are retained.
+// Full result files are persisted unchanged under a new immutable revision;
+// publication/current pointers advance only after durable verification succeeds.
 //
-//  1. Handler calls Ensure(ctx, canonical). If the markdown is already
-//     in the object store the call returns immediately with JobStateDone
-//     (cache hit) and counts a cache_hit_total — no MinerU traffic.
-//  2. Otherwise Ensure dedupes against any in-flight or recently-failed
-//     job for the same canonical id. New requests get queued; concurrent
-//     requests piggyback on the same Job. A 60s cooldown on retryable
-//     / fatal failures and a "until tomorrow 00:01 local" cooldown on
-//     daily-limit failures prevents thundering herds against MinerU.
-//  3. A background goroutine acquires a slot in the concurrency
-//     semaphore (sized by MINERU_MAX_CONCURRENT_JOBS, default 4),
-//     reads the PDF bytes from the object store, pushes them to
-//     MinerU's own storage via the file-urls upload channel (no
-//     publicly reachable S3 needed), polls the resulting batch until
-//     done, downloads the result zip, writes images + markdown via
-//     PutWithOptions with IfNoneMatch:"*" (matches upload-mineru's
-//     first-writer-wins idempotency), and best-effort calls
-//     catalog.UpsertMD.
-//  4. The Lookup method is a side-effect-free snapshot used by the
-//     markdown/status endpoint.
-//
-// In-flight jobs are NOT persisted across restart — accepted as a v1
-// trade-off per issue #8 ("operator restarts during a conversion are
-// rare; resumed jobs are easier to reason about as fresh submissions").
-// The IfNoneMatch:"*" write also makes multi-edge double-submission
-// safe (first writer wins; loser silently observes 412 and treats it
-// as a successful write).
-//
-// Dedupe / queue / fetch progress are all PER-PROCESS state — two
-// edges running their own qatlasd will each maintain their own
-// c.jobs map, their own avgConvertDuration window, and their own
-// arxiv fetch semaphore. So two simultaneous
-// /markdown calls for the same paper that happen to land on
-// different edges will trigger TWO MinerU jobs (one each), wasting
-// quota; status responses on each edge see only that edge's queue.
-// IfNoneMatch:"*" on the markdown write still guarantees byte
-// integrity, but the cost is real. Cross-edge dedupe is tracked in
-// issue #13 (would require a shared lease lock in RustFS or Neo4j).
-// Acceptable for current scale (~2 edges, low traffic); revisit when
-// QPS justifies the complexity.
-//
+// Jobs/leases are not shared across edges or persisted across process restarts.
+// Complete immutable bundles survive restarts; partial packages are not cache
+// hits. Cross-edge requests can still consume duplicate provider quota.
 // Safe for concurrent use.
 type Converter struct {
 	cfg     ConverterConfig
 	store   objstore.Store
 	catalog *registry.Store
+	sources SourceCatalog
+	aliases map[string]string // canonical/source lookup alias -> SHA-pinned job key
 	keyRing *KeyRing
 	tokens  *TokenStore
 	logger  *slog.Logger
@@ -149,6 +113,15 @@ type ConverterConfig struct {
 	// QATLAS_PAPER_ACCESS_ENABLED master switch enables both ends).
 	Fetcher *arxiv.Fetcher
 
+	// DOIPDFURL discovers only a known publisher/OA PDF URL for a genuinely
+	// absent DOI source. It runs inside the async, deduped fetch-only job;
+	// returning no URL means ErrNoDOISource, never arXiv-edition substitution.
+	DOIPDFURL func(context.Context, string) (string, error)
+
+	// VerifyDOIPDF validates fresh publisher PDF ownership before any source
+	// freeze/publication. Stored frozen sources never revalidate over network.
+	VerifyDOIPDF func(context.Context, string, []byte) error
+
 	// ArxivFetchConcurrent bounds the number of in-flight arxiv.org
 	// fetches independently from MinerU job concurrency. I/O bound
 	// fetches don't block GPU-bound MinerU work, but we still cap
@@ -163,6 +136,12 @@ type ConverterConfig struct {
 	// best-effort: failures are logged, never propagated.
 	// *rag.RemoteClient satisfies the interface implicitly.
 	IndexPusher IndexPusher
+
+	// MinerUTier is the V1 API tier; v4 model_version is NOT a tier.
+	MinerUTier string
+	// SourceCatalog allows mocked source/revision storage in tests. Production
+	// defaults to the registry passed to NewConverter.
+	SourceCatalog SourceCatalog
 }
 
 // IndexPusher is the slice of the qatlas-rag client (internal/rag)
@@ -248,15 +227,19 @@ type QueueSnapshot struct {
 // Job after handing it to a caller (a fresh Job is created on retry
 // after the cooldown elapses).
 type Job struct {
-	Canonical     string
-	State         JobState
-	Phase         Phase
-	SubmittedAt   time.Time
-	StartedAt     time.Time
-	FinishedAt    time.Time
-	Err           error
-	ErrKind       error // ErrFatal / ErrRetryable / ErrDailyLimit, nil otherwise
-	CooldownUntil time.Time
+	PaperID         string
+	SourceID        string
+	RevisionID      string
+	SourcePDFSHA256 string
+	Canonical       string
+	State           JobState
+	Phase           Phase
+	SubmittedAt     time.Time
+	StartedAt       time.Time
+	FinishedAt      time.Time
+	Err             error
+	ErrKind         error // ErrFatal / ErrRetryable / ErrDailyLimit, nil otherwise
+	CooldownUntil   time.Time
 
 	// Fetch is populated when the converter had to fetch the PDF
 	// from arxiv as part of fulfilling this job. nil when the PDF
@@ -280,7 +263,8 @@ type Job struct {
 	// the DOI-keyed PDF isn't in the store yet. Empty for arxiv jobs
 	// and for DOI jobs that convert a pre-existing (contributed) PDF.
 	// Unexported: it's job-driver state, not status payload.
-	oaPdfURL string
+	oaPdfURL        string
+	parseAfterFetch bool // set only by an actual content request
 }
 
 // Counters is the per-process tally surfaced for the optional /metrics
@@ -353,6 +337,15 @@ func NewConverter(cfg ConverterConfig, store objstore.Store, catalog *registry.S
 	if logger == nil {
 		logger = slog.Default()
 	}
+	if cfg.MinerUTimeout <= 0 {
+		cfg.MinerUTimeout = 30 * time.Minute
+	}
+	if cfg.MinerUPollInterval <= 0 {
+		cfg.MinerUPollInterval = time.Second
+	}
+	if cfg.MinerUTier == "" {
+		cfg.MinerUTier = "standard"
+	}
 	maxConc := cfg.MinerUMaxConcurrentJobs
 	if maxConc < 1 {
 		maxConc = 1
@@ -370,6 +363,11 @@ func NewConverter(cfg ConverterConfig, store objstore.Store, catalog *registry.S
 		dailyResetAt: nextLocalDailyReset,
 		sem:          make(chan struct{}, maxConc),
 		jobs:         map[string]*Job{},
+		aliases:      map[string]string{},
+		sources:      cfg.SourceCatalog,
+	}
+	if c.sources == nil && catalog != nil {
+		c.sources = catalog
 	}
 	if cfg.Fetcher != nil {
 		c.arxivSem = make(chan struct{}, arxivConc)
@@ -578,13 +576,20 @@ func (c *Converter) Timeout() time.Duration { return c.cfg.MinerUTimeout }
 // Populates the Queue sub-object so the status endpoint can render
 // position/ETA without separately calling queueSnapshotFor.
 func (c *Converter) Lookup(canonical string) (*Job, bool) {
+	requested := canonical
 	c.mu.Lock()
+	if key, ok := c.aliases[canonical]; ok {
+		canonical = key
+	}
 	j, ok := c.jobs[canonical]
 	if !ok {
 		c.mu.Unlock()
 		return nil, false
 	}
-	cp := *j
+	cp := cloneJob(j)
+	if requested != canonical && !strings.HasPrefix(requested, "source:") {
+		cp.Canonical = strings.TrimPrefix(requested, "doi:")
+	}
 	c.mu.Unlock()
 	// queueSnapshotFor takes its own lock; release c.mu first to
 	// avoid contention on hot status polls.
@@ -701,86 +706,6 @@ func (c *Converter) queueSnapshotFor(canonical string, job Job) QueueSnapshot {
 	return qs
 }
 
-// Ensure starts (or piggybacks on) a conversion for canonical and
-// returns a Job describing the current state. The caller is expected
-// to translate the Job state into an HTTP response (cached → 200,
-// queued/running → 202, failed → 502, …).
-//
-// Ensure performs a cache-hit short-circuit before touching MinerU: if
-// the markdown is already in the object store it returns
-// JobStateDone immediately and bumps cache_hit_total. Cache misses
-// bump cache_miss_total before any dedup / submission work.
-//
-// Safe for concurrent use; concurrent Ensure calls for the same
-// canonical are deduped to a single MinerU submission.
-func (c *Converter) Ensure(ctx context.Context, canonical string) *Job {
-	readCtx, cancel := objstore.ReadContext(ctx)
-	_, _, exists, err := paperassets.LocateAssetByID(readCtx, c.store, "markdown", canonical)
-	cancel()
-	if err != nil {
-		return storageReadFailure(canonical, err)
-	}
-	if exists {
-		c.counters.CacheHits.Add(1)
-		return &Job{Canonical: canonical, State: JobStateDone, FinishedAt: c.now()}
-	}
-	c.counters.CacheMisses.Add(1)
-
-	if !c.enabled {
-		return &Job{
-			Canonical: canonical,
-			State:     JobStateFailed,
-			Err:       errors.New(c.disabledMsg),
-			ErrKind:   ErrFatal,
-		}
-	}
-
-	now := c.now()
-
-	c.mu.Lock()
-	if existing, ok := c.jobs[canonical]; ok {
-		switch existing.State {
-		case JobStateQueued, JobStateRunning:
-			cp := *existing
-			c.mu.Unlock()
-			return &cp
-		case JobStateDone:
-			cp := *existing
-			c.mu.Unlock()
-			return &cp
-		case JobStateFailed:
-			if !existing.CooldownUntil.IsZero() && now.Before(existing.CooldownUntil) {
-				cp := *existing
-				c.mu.Unlock()
-				return &cp
-			}
-			// Cooldown expired — fall through, replace the failed
-			// record with a fresh queued job.
-		}
-	}
-
-	job := &Job{
-		Canonical:   canonical,
-		State:       JobStateQueued,
-		SubmittedAt: now,
-	}
-	c.jobs[canonical] = job
-	// Snapshot while protected and before launching the driver: runJob may
-	// update State/StartedAt as soon as the goroutine becomes runnable.
-	cp := *job
-	c.mu.Unlock()
-
-	go c.run(canonical)
-	return &cp
-}
-
-// run is the per-job background driver for arxiv-keyed jobs.
-func (c *Converter) run(canonical string) {
-	c.runJob(canonical, "arxiv_id", canonical, func(ctx context.Context) error {
-		return c.runOnce(ctx, canonical)
-	})
-}
-
 // runJob is the shared per-job background driver. Acquires a semaphore
 // slot, runs the pipeline via once, and updates c.jobs[jobKey] with the
 // terminal state. Errors are captured into the Job; this method never
@@ -793,7 +718,19 @@ func (c *Converter) runJob(jobKey, logKey, logVal string, once func(context.Cont
 	ctx, cancel := context.WithTimeout(context.Background(), c.cfg.MinerUTimeout)
 	defer cancel()
 
-	c.sem <- struct{}{}
+	select {
+	case c.sem <- struct{}{}:
+	case <-ctx.Done():
+		kind, cooldown := c.classifyFailure(ctx.Err())
+		c.transition(jobKey, func(j *Job) {
+			j.State = JobStateFailed
+			j.Err = ctx.Err()
+			j.ErrKind = kind
+			j.CooldownUntil = cooldown
+			j.FinishedAt = c.now()
+		})
+		return
+	}
 	c.counters.InflightJobs.Add(1)
 	defer func() {
 		<-c.sem
@@ -851,552 +788,6 @@ func (c *Converter) runJob(jobKey, logKey, logVal string, once func(context.Cont
 		"err", err.Error(),
 		"cooldown_until", cooldown.Format(time.RFC3339),
 	)
-}
-
-// runOnce is one full conversion attempt. If the PDF is missing AND a
-// fetcher is configured, it pulls the PDF from arxiv first (tracked
-// via PhaseFetchingPDF + FetchProgress), writes it to the object
-// store, then hands off to convertStoredPDF for the MinerU step
-// (PhaseConvertingMD + ConvertProgress). When the PDF is already in
-// store the fetch step is skipped and Phase advances directly to
-// PhaseConvertingMD.
-func (c *Converter) runOnce(ctx context.Context, canonical string) error {
-	pdfKey, _, exists, err := paperassets.LocateAssetByID(ctx, c.store, "pdf", canonical)
-	if err != nil {
-		return fmt.Errorf("stat pdf: %w", err)
-	}
-	if !exists {
-		// Try to silently fetch from arxiv when a fetcher is wired.
-		// When no fetcher is configured we preserve the pre-A2
-		// behaviour and surface the missing PDF as a fatal error.
-		if c.cfg.Fetcher == nil {
-			return &Error{Msg: "no PDF in store for " + canonical, Kind: ErrFatal}
-		}
-		if err := c.fetchAndStorePDF(ctx, canonical); err != nil {
-			return err
-		}
-		// Re-locate after fetch — write may have landed under either
-		// post-A1 layout depending on id shape.
-		pdfKey, _, exists, err = paperassets.LocateAssetByID(ctx, c.store, "pdf", canonical)
-		if err != nil {
-			return fmt.Errorf("stat pdf (post-fetch): %w", err)
-		}
-		if !exists {
-			return &Error{Msg: "pdf not found after silent fetch (race? concurrent delete?) for " + canonical, Kind: ErrRetryable}
-		}
-	}
-
-	// File name MinerU will see: must carry a real .pdf suffix (the
-	// parser is chosen by extension) and must not contain path
-	// separators (old-style canonicals like "quant-ph/9508027v2" do).
-	uploadName := strings.ReplaceAll(canonical, "/", "_") + ".pdf"
-
-	return c.convertStoredPDF(ctx, canonical, pdfKey, uploadName, canonical,
-		func(ctx context.Context, result Result) error {
-			return c.writeResult(ctx, canonical, result)
-		})
-}
-
-// convertStoredPDF drives the MinerU pipeline for a PDF already present
-// in the object store at pdfKey: upload via the file-urls channel, poll
-// the batch, download the result zip, and hand it to writeFn for
-// persistence. Shared by the arxiv path (runOnce) and the DOI path
-// (runOnceDOI) — jobKey keys the Job transitions, dataID is what MinerU
-// echoes back on batch results (arxiv: the canonical id; DOI: the
-// "doi:<doi>" job key).
-//
-// Loops across the KeyRing on daily-limit errors so a single exhausted
-// key does not stop the whole conversion — only when EVERY key reports
-// daily-limit does the paper-level cooldown kick in. Returns a typed
-// *Error on MinerU failures so c.classifyFailure can route into the
-// correct counter + cooldown bucket.
-func (c *Converter) convertStoredPDF(ctx context.Context, jobKey, pdfKey, uploadName, dataID string, writeFn func(context.Context, Result) error) error {
-	// Transition into the convert phase. Allocate ConvertProgress so
-	// the status handler has something to render before the first
-	// MinerU round-trip.
-	c.transition(jobKey, func(j *Job) {
-		j.Phase = PhaseConvertingMD
-		if j.Convert == nil {
-			j.Convert = &ConvertProgress{StartedAt: c.now(), Stage: "submitting"}
-		}
-	})
-
-	// Try every key in the ring until one succeeds or all return
-	// daily-limit. A single key failure other than daily-limit
-	// (transport hiccup, bad PDF, …) propagates out immediately
-	// because it's not a key-pool problem.
-	for {
-		client, slot, ok := c.keyRing.Acquire()
-		if !ok {
-			// All keys exhausted. Surface a clear, operator-aimed message
-			// so the API caller knows it's a service-wide quota issue,
-			// not a problem with their specific paper.
-			recovery := c.keyRing.SoonestRecovery()
-			msg := "server quota exhausted: all " +
-				strconv.Itoa(c.keyRing.Size()) +
-				" MinerU API keys have reached today's daily limit"
-			if !recovery.IsZero() {
-				msg += " — service resumes at " + recovery.Local().Format(time.RFC3339)
-			}
-			return &Error{Msg: msg, Kind: ErrDailyLimit}
-		}
-
-		batchID, uploadURLs, err := client.ApplyUploadURLs(ctx, []string{uploadName}, SubmitOptions{
-			ModelVersion:  c.cfg.MinerUModelVersion,
-			Language:      c.cfg.MinerULanguage,
-			EnableFormula: c.cfg.MinerUEnableFormula,
-			EnableTable:   c.cfg.MinerUEnableTable,
-			IsOCR:         c.cfg.MinerUIsOCR,
-			DataID:        dataID,
-		})
-		if err != nil {
-			if errors.Is(err, ErrDailyLimit) {
-				c.keyRing.MarkDailyLimit(slot, c.dailyResetAt(c.now()))
-				c.logger.Warn("mineru: key exhausted, rotating", "slot", slot, "remaining", c.keyRing.AvailableSlots())
-				continue
-			}
-			return err
-		}
-
-		// Stream the PDF out of the object store and push it to
-		// MinerU's presigned upload URL. No publicly reachable S3
-		// endpoint needed — MinerU never fetches from us.
-		rc, info, err := c.store.Get(ctx, pdfKey)
-		if err != nil {
-			return fmt.Errorf("read pdf from store: %w", err)
-		}
-		uploadErr := client.UploadFile(ctx, uploadURLs[0], rc, info.Size)
-		rc.Close()
-		if uploadErr != nil {
-			if errors.Is(uploadErr, ErrDailyLimit) {
-				c.keyRing.MarkDailyLimit(slot, c.dailyResetAt(c.now()))
-				c.logger.Warn("mineru: key exhausted on upload, rotating", "slot", slot, "remaining", c.keyRing.AvailableSlots())
-				continue
-			}
-			return uploadErr
-		}
-
-		c.transition(jobKey, func(j *Job) {
-			if j.Convert != nil {
-				j.Convert.MinerUTaskID = batchID
-				j.Convert.Stage = "running"
-			}
-		})
-
-		zipURL, err := c.pollUntilDone(ctx, client, batchID, jobKey, dataID)
-		if err != nil {
-			if errors.Is(err, ErrDailyLimit) {
-				c.keyRing.MarkDailyLimit(slot, c.dailyResetAt(c.now()))
-				c.logger.Warn("mineru: key exhausted during poll, rotating", "slot", slot, "remaining", c.keyRing.AvailableSlots())
-				continue
-			}
-			return err
-		}
-
-		c.transition(jobKey, func(j *Job) {
-			if j.Convert != nil {
-				j.Convert.Stage = "downloading_zip"
-			}
-		})
-
-		result, err := client.FetchResult(ctx, zipURL)
-		if err != nil {
-			return err
-		}
-
-		if err := writeFn(ctx, result); err != nil {
-			return err
-		}
-		c.transition(jobKey, func(j *Job) {
-			if j.Convert != nil {
-				j.Convert.CompletedAt = c.now()
-			}
-		})
-		return nil
-	}
-}
-
-// fetchAndStorePDF acquires an arxiv-fetch slot, downloads the PDF
-// via c.cfg.Fetcher, and writes it to the object store under the
-// canonical key with IfNoneMatch:"*" (first-writer-wins idempotency
-// matches upload-pdf). The PDF sha256 is attached as object metadata
-// so upload-mineru's later cross-check stays consistent. Updates the
-// job's Phase + FetchProgress throughout.
-//
-// All fetch errors are wrapped with errFetchFailed so the caller
-// (run / runPDF) can label the failed Phase as PhaseErrorFetching.
-func (c *Converter) fetchAndStorePDF(ctx context.Context, canonical string) error {
-	parsed, err := paperassets.Parse(canonical)
-	if err != nil {
-		return &Error{Msg: "invalid canonical for fetch: " + err.Error(), Kind: ErrFatal}
-	}
-
-	// Acquire the arxiv-fetch semaphore (independent from MinerU
-	// concurrency) so a thundering herd of 100 /pdf requests can't
-	// open 100 sockets to arxiv.org. Block until a slot frees.
-	select {
-	case c.arxivSem <- struct{}{}:
-	case <-ctx.Done():
-		return &Error{Msg: "arxiv fetch cancelled: " + ctx.Err().Error(), Kind: ErrRetryable}
-	}
-	c.counters.InflightArxivFetches.Add(1)
-	defer func() {
-		<-c.arxivSem
-		c.counters.InflightArxivFetches.Add(-1)
-	}()
-
-	startedAt := c.now()
-	c.transition(canonical, func(j *Job) {
-		j.Phase = PhaseFetchingPDF
-		j.Fetch = &FetchProgress{StartedAt: startedAt}
-	})
-	c.counters.ArxivFetches.Add(1)
-
-	result, err := c.cfg.Fetcher.Fetch(ctx, parsed)
-	if err != nil {
-		c.counters.ArxivFetchFailed.Add(1)
-		c.transition(canonical, func(j *Job) {
-			if j.Fetch != nil {
-				j.Fetch.CompletedAt = c.now()
-			}
-		})
-		kind := ErrRetryable
-		switch {
-		case errors.Is(err, arxiv.ErrNotFound):
-			kind = ErrFatal
-		case errors.Is(err, arxiv.ErrNotPDF), errors.Is(err, arxiv.ErrTooLarge):
-			kind = ErrFatal
-		case errors.Is(err, arxiv.ErrRateLimited):
-			kind = ErrRetryable
-		}
-		return &Error{Msg: "fetch from arxiv: " + err.Error(), Kind: kind}
-	}
-
-	pdfKey := paperassets.AssetKey("pdf", canonical)
-	_, putErr := c.store.PutWithOptions(ctx, pdfKey, result.Body, result.Size, objstore.PutOptions{
-		ContentType: "application/pdf",
-		IfNoneMatch: "*",
-		Metadata: map[string]string{
-			"sha256":     result.Sha256,
-			"source":     "arxiv-silent-fetch",
-			"fetched_by": "qatlasd-converter",
-			"fetched_at": c.now().UTC().Format(time.RFC3339),
-		},
-	})
-	if putErr != nil && !errors.Is(putErr, objstore.ErrPreconditionFailed) {
-		c.counters.ArxivFetchFailed.Add(1)
-		return &Error{Msg: "store pdf after fetch: " + putErr.Error(), Kind: ErrRetryable}
-	}
-
-	completedAt := c.now()
-	c.transition(canonical, func(j *Job) {
-		if j.Fetch == nil {
-			j.Fetch = &FetchProgress{StartedAt: startedAt}
-		}
-		j.Fetch.CompletedAt = completedAt
-		j.Fetch.BytesReceived = result.Size
-		j.Fetch.BytesTotal = result.Size
-		j.Fetch.Sha256 = result.Sha256
-		j.Fetch.Attempts = result.Attempts
-	})
-	c.counters.ArxivFetchSucceeded.Add(1)
-
-	// Registry write-through is best-effort.
-	if c.catalog != nil {
-		if _, _, uErr := c.catalog.UpsertPDF(ctx,
-			registry.PaperRef{ArxivID: canonical},
-			registry.ArxivVersionOf(canonical), result.Sha256, result.Size,
-			bucketRelKey(pdfKey)); uErr != nil &&
-			!errors.Is(uErr, registry.ErrCatalogUnavailable) {
-			c.logger.Warn("papers: UpsertPDF write-through after silent fetch failed",
-				"arxiv_id", canonical, "error", uErr)
-		}
-	}
-
-	c.logger.Info("arxiv: silent fetch succeeded",
-		"arxiv_id", canonical,
-		"bytes", result.Size,
-		"sha256", result.Sha256,
-		"attempts", result.Attempts,
-		"duration_seconds", c.now().Sub(startedAt).Seconds(),
-	)
-	return nil
-}
-
-// EnsurePDF starts (or piggybacks on) a fetch-only job for canonical.
-// Unlike Ensure, this entry point never drives MinerU — it just makes
-// sure the PDF bytes are in the object store, returning JobStateDone
-// when they are.
-//
-// Internal asset-preparation path only: the public endpoint it used to
-// back (GET /api/papers/{id}/pdf) now answers 410 Gone (plan §B). The
-// fetch-only job machinery is retained for the internal pipeline (PDF
-// presence in the store is still a conversion prerequisite and is
-// surfaced via the pdf_ready debug boolean on /pdf/status).
-//
-// Behavior:
-//   - PDF already in store → return JobStateDone+PhaseReady immediately
-//     (CacheHits++).
-//   - PDF missing and no fetcher → return JobStateFailed+ErrFatal (no
-//     way to obtain the bytes).
-//   - PDF missing and fetcher available → dedupe against any in-flight
-//     job for the same canonical, queue a background fetch, return
-//     JobStateQueued+PhaseFetchingPDF.
-//
-// Concurrent calls for the same canonical (and concurrent overlap
-// with Ensure) all observe the same Job snapshot — when a markdown
-// Ensure is already fetching, a /pdf EnsurePDF call piggybacks and
-// returns the same in-flight Job.
-func (c *Converter) EnsurePDF(ctx context.Context, canonical string) *Job {
-	readCtx, cancel := objstore.ReadContext(ctx)
-	_, _, exists, err := paperassets.LocateAssetByID(readCtx, c.store, "pdf", canonical)
-	cancel()
-	if err != nil {
-		return storageReadFailure(canonical, err)
-	}
-	if exists {
-		c.counters.CacheHits.Add(1)
-		return &Job{Canonical: canonical, State: JobStateDone, Phase: PhaseReady, FinishedAt: c.now()}
-	}
-	c.counters.CacheMisses.Add(1)
-
-	if c.cfg.Fetcher == nil {
-		return &Job{
-			Canonical: canonical,
-			State:     JobStateFailed,
-			Phase:     PhaseErrorFetching,
-			Err:       errors.New("no PDF in store and arxiv fetcher not configured"),
-			ErrKind:   ErrFatal,
-		}
-	}
-
-	now := c.now()
-
-	c.mu.Lock()
-	if existing, ok := c.jobs[canonical]; ok {
-		switch existing.State {
-		case JobStateQueued, JobStateRunning:
-			cp := *existing
-			c.mu.Unlock()
-			return &cp
-		case JobStateDone:
-			cp := *existing
-			c.mu.Unlock()
-			return &cp
-		case JobStateFailed:
-			if !existing.CooldownUntil.IsZero() && now.Before(existing.CooldownUntil) {
-				cp := *existing
-				c.mu.Unlock()
-				return &cp
-			}
-		}
-	}
-
-	job := &Job{
-		Canonical:   canonical,
-		State:       JobStateQueued,
-		Phase:       PhaseFetchingPDF,
-		SubmittedAt: now,
-	}
-	c.jobs[canonical] = job
-	c.mu.Unlock()
-
-	go c.runPDF(canonical)
-
-	cp := *job
-	return &cp
-}
-
-// runPDF is the fetch-only background driver used by EnsurePDF.
-// Mirrors run() but skips the MinerU pipeline — the PDF lands in the
-// store and the job transitions Done+Ready.
-func (c *Converter) runPDF(canonical string) {
-	ctx, cancel := context.WithTimeout(context.Background(), c.cfg.MinerUTimeout)
-	defer cancel()
-
-	c.transition(canonical, func(j *Job) {
-		j.State = JobStateRunning
-		j.StartedAt = c.now()
-	})
-
-	err := c.fetchAndStorePDF(ctx, canonical)
-	if err == nil {
-		c.transition(canonical, func(j *Job) {
-			j.State = JobStateDone
-			j.Phase = PhaseReady
-			j.FinishedAt = c.now()
-		})
-		return
-	}
-
-	kind, cooldown := c.classifyFailure(err)
-	c.transition(canonical, func(j *Job) {
-		j.State = JobStateFailed
-		j.Phase = PhaseErrorFetching
-		j.FinishedAt = c.now()
-		j.Err = err
-		j.ErrKind = kind
-		j.CooldownUntil = cooldown
-	})
-	c.logger.Warn("arxiv: silent fetch (PDF-only) failed",
-		"arxiv_id", canonical,
-		"kind", kindLabel(kind),
-		"err", err.Error(),
-		"cooldown_until", cooldown.Format(time.RFC3339),
-	)
-}
-
-// pollUntilDone polls MinerU's batch-results endpoint at
-// cfg.MinerUPollInterval until the file's state transitions to done
-// or failed, or the per-job context expires. Uses the supplied client
-// so the caller controls which token / which key-ring slot the polling
-// traffic charges against. Per-poll progress (PolledCount) is folded
-// into the Job's ConvertProgress so the status handler can show
-// movement even during long-running jobs.
-//
-// The upload channel yields exactly one file per batch, so the first
-// reported entry is authoritative; DataID is checked when present as a
-// sanity guard against dataID (we submit DataID=dataID; jobKey only
-// keys the local Job transitions).
-func (c *Converter) pollUntilDone(ctx context.Context, client *Client, batchID, jobKey, dataID string) (string, error) {
-	tick := time.NewTicker(c.cfg.MinerUPollInterval)
-	defer tick.Stop()
-	for {
-		results, err := client.GetBatch(ctx, batchID)
-		if err != nil {
-			return "", err
-		}
-		c.transition(jobKey, func(j *Job) {
-			if j.Convert != nil {
-				j.Convert.PolledCount++
-			}
-		})
-		if len(results) > 0 {
-			st := results[0]
-			for _, r := range results {
-				if r.DataID == dataID {
-					st = r
-					break
-				}
-			}
-			switch st.State {
-			case "done":
-				if st.FullZipURL == "" {
-					return "", &Error{Msg: "task done but full_zip_url empty", Kind: ErrRetryable}
-				}
-				return st.FullZipURL, nil
-			case "failed":
-				return "", classifyAPIError("", st.ErrMsg, 0)
-			}
-			// Anything else (waiting-file / pending / running /
-			// converting) is in-flight — keep polling.
-		}
-		select {
-		case <-ctx.Done():
-			return "", fmt.Errorf("poll timeout: %w", ctx.Err())
-		case <-tick.C:
-		}
-	}
-}
-
-// writeResult writes images (as a single zip) first, then markdown,
-// mirroring the upload-mineru contributor handler's ordering — readers
-// see markdown only after the referenced image archive is durable.
-// Arxiv-keyed wrapper around writeResultTo.
-func (c *Converter) writeResult(ctx context.Context, canonical string, result Result) error {
-	mdKey := paperassets.AssetKey("markdown", canonical)
-	return c.writeResultTo(ctx,
-		paperassets.AssetKey("images", canonical), mdKey, result,
-		func(mdSha string, mdSize int64, imageCount int) error {
-			return c.upsertMDWriteThrough(ctx, canonical, mdSha, mdSize, imageCount)
-		},
-		"arxiv_id", canonical,
-	)
-}
-
-// writeResultDOI is the DOI-keyed writeResult: assets land under the
-// "<kind>/doi/<reg>/<suffix>" layout and the catalog write-through goes
-// through UpsertMDByDOI (source='published').
-func (c *Converter) writeResultDOI(ctx context.Context, doi string, result Result) error {
-	mdKey := paperassets.DOIAssetKey("markdown", doi)
-	return c.writeResultTo(ctx,
-		paperassets.DOIAssetKey("images", doi), mdKey, result,
-		func(mdSha string, mdSize int64, imageCount int) error {
-			return c.catalog.UpsertMDByDOI(ctx,
-				registry.PaperRef{DOI: doi}, mdSha, mdSize,
-				bucketRelKey(mdKey),
-				bucketRelKey(paperassets.DOIAssetKey("json", doi)),
-				imageCount)
-		},
-		"doi", doi,
-	)
-}
-
-// writeResultTo is the shared asset-write tail of the MinerU pipeline.
-// upsertMD performs the registry write-through (best-effort: failures
-// are logged, not propagated). logKey/logVal pick the log field naming.
-//
-// Uses IfNoneMatch:"*" so a concurrent edge that wrote first wins (we
-// observe 412 and treat that as success).
-//
-// The zip stores images flat (no directory prefix) using STORE
-// compression (images are already compressed; re-deflating wastes CPU
-// for ~0 savings). File names inside the zip match what MinerU emits
-// (typically "images/<sha256>.jpg"); we strip the leading "images/"
-// before writing the entry so the zip internal layout is flat — same
-// convention the contributor upload path uses.
-func (c *Converter) writeResultTo(ctx context.Context, imgKey, mdKey string, result Result, upsertMD func(mdSha string, mdSize int64, imageCount int) error, logKey, logVal string) error {
-	// --- Images zip ---
-	if len(result.Images) > 0 {
-		zipBytes, err := BuildImagesZip(result.Images)
-		if err != nil {
-			return fmt.Errorf("build images zip: %w", err)
-		}
-
-		_, err = c.store.PutWithOptions(ctx, imgKey, bytes.NewReader(zipBytes), int64(len(zipBytes)), objstore.PutOptions{
-			ContentType: "application/zip",
-			IfNoneMatch: "*",
-		})
-		if err != nil && !errors.Is(err, objstore.ErrPreconditionFailed) {
-			return fmt.Errorf("put images zip: %w", err)
-		}
-	}
-
-	// --- Markdown ---
-	mdSize := int64(len(result.Markdown))
-	_, err := c.store.PutWithOptions(ctx, mdKey, bytes.NewReader(result.Markdown), mdSize, objstore.PutOptions{
-		ContentType: "text/markdown; charset=utf-8",
-		IfNoneMatch: "*",
-	})
-	if err != nil && !errors.Is(err, objstore.ErrPreconditionFailed) {
-		return fmt.Errorf("put markdown: %w", err)
-	}
-
-	// Registry write-through is best-effort.
-	if c.catalog != nil {
-		sum := sha256.Sum256(result.Markdown)
-		mdSha := hex.EncodeToString(sum[:])
-		if uErr := upsertMD(mdSha, mdSize, len(result.Images)); uErr != nil &&
-			!errors.Is(uErr, registry.ErrCatalogUnavailable) {
-			c.logger.Warn("papers: UpsertMD write-through failed after conversion",
-				logKey, logVal, "error", uErr)
-		}
-	}
-
-	// The paper has markdown now: push the index build to qatlas-rag.
-	// Best-effort — a push failure must not fail the conversion.
-	if c.cfg.IndexPusher != nil {
-		if err := c.cfg.IndexPusher.PushIndex(ctx, logVal); err != nil {
-			c.logger.Warn("mineru: rag index push failed", logKey, logVal, "error", err)
-		}
-	}
-
-	c.logger.Info("mineru conversion succeeded",
-		logKey, logVal,
-		"md_bytes", mdSize,
-		"image_count", len(result.Images),
-	)
-	return nil
 }
 
 // classifyFailure routes err into one of the counters and computes a

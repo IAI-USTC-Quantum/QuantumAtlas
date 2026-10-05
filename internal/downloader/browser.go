@@ -9,12 +9,15 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
@@ -30,15 +33,15 @@ import (
 // Publisher logins/cookies live in THAT browser's user-data-dir — see
 // the deployment notes in config.example.yaml.
 //
-// Mechanism: the Fetch domain intercepts every response (stage
-// Response). PDF-ish responses (PDF/Octet-Stream mime, .pdf in the
-// URL, or a Content-Disposition attachment) have their body read over
-// CDP before being allowed to continue — this captures both inline
-// PDFs and forced downloads without needing the browser's filesystem.
-// HTML challenge pages are allowed through so their JavaScript can
-// clear; if a PDF never arrives within the budget the last HTML is
-// classified for the trace. The captured body still passes the shared
-// validation pipeline before the ladder accepts it.
+// Mechanism: the Fetch domain observes requests and responses, but reads bodies
+// ONLY for the actively selected MAIN-FRAME navigation and its bounded,
+// server-declared HTTP redirect chain. URL suffixes, iframe documents, preloads,
+// and arbitrary script downloads cannot authorize a capture. This covers inline
+// PDFs and forced downloads without needing the browser's filesystem. HTML
+// challenge pages continue so JavaScript can clear; if a PDF never arrives, the
+// last eligible HTML is classified for the trace. Format validation here is NOT
+// identity proof: the ladder must also call VerifyPublishedPDF before accepting
+// a published asset.
 
 // ErrBrowserNotConfigured is returned when the lane is disabled.
 var ErrBrowserNotConfigured = errors.New("downloader: browser lane not configured")
@@ -85,26 +88,12 @@ func (b *BrowserLane) Enabled() bool { return b != nil && b.cfg.CDPURL != "" }
 
 // browserBody is what one navigation produced.
 type browserBody struct {
-	url    string
-	body   []byte
-	kind   BodyKind
-	status int // observed CDP response status
-}
-
-// pdfish reports whether a paused response plausibly carries PDF bytes.
-// Content-Type was unreliable in EventRequestPaused across publishers,
-// so the URL shape and disposition carry the signal; the captured body
-// is classified anyway before acceptance.
-func pdfish(url, disposition string) bool {
-	u := strings.ToLower(url)
-	if strings.Contains(u, ".pdf") || strings.Contains(u, "/pdf/") ||
-		strings.HasSuffix(u, "/pdf") || strings.Contains(u, "getpdf") || strings.Contains(u, "pdfft") {
-		return true
-	}
-	if strings.Contains(strings.ToLower(disposition), "attachment") {
-		return true
-	}
-	return false
+	baseURI    string // resolution base, never the authoritative page host
+	navigation uint64 // actively selected navigation generation
+	url        string
+	body       []byte
+	kind       BodyKind
+	status     int // observed CDP response status
 }
 
 // FetchPDF loads rawURL in a fresh tab and returns a validated PDF
@@ -137,6 +126,9 @@ func (b *BrowserLane) validateBody(body *browserBody) (result *FetchResult, err 
 		}
 		return nil, fmt.Errorf("browser: %w (final: %s)", classifyBodyErr(body.kind), body.kind)
 	}
+	if body.status != 0 && body.status != http.StatusOK {
+		return nil, fmt.Errorf("browser: %w (status=%d)", ErrHTTP, body.status)
+	}
 	if int64(len(body.body)) > b.cfg.MaxPDFBytes {
 		return nil, ErrTooLarge
 	}
@@ -157,8 +149,8 @@ func (b *BrowserLane) validateBody(body *browserBody) (result *FetchResult, err 
 // navigate runs the observed-navigation loop: load the target, give
 // challenge JavaScript a window to clear, then actively mine the
 // article page for the real PDF link (citation_pdf_url / pdf anchors)
-// and navigate it — at most two hops. PDF-ish responses are captured
-// passively through the Fetch domain the whole time.
+// and navigate one selected candidate at a time — at most eight selections.
+// Only responses authorized by that active navigation may supply bytes.
 func (b *BrowserLane) navigate(ctx context.Context, rawURL string) (*browserBody, error) {
 	ctx, cancel := context.WithTimeout(ctx, b.cfg.Timeout)
 	defer cancel()
@@ -173,60 +165,66 @@ func (b *BrowserLane) navigate(ctx context.Context, rawURL string) (*browserBody
 	var mu sync.Mutex
 	var lastHTML *browserBody
 
+	scope := &browserNavigationScope{}
+	var mainFrame cdp.FrameID
 	chromedp.ListenTarget(tabCtx, func(ev interface{}) {
 		e, ok := ev.(*fetch.EventRequestPaused)
 		if !ok || e.Request == nil {
 			return
 		}
+		// Observe synchronously: a redirect must be recorded before its
+		// response is continued and before the child request arrives.
+		permit, capture := scope.observe(e)
 		go func(e *fetch.EventRequestPaused) {
 			defer func() { _ = recover() }() // tab may close mid-capture
-			url := e.Request.URL
-			isResponseStage := e.ResponseStatusCode != 0 || e.ResponseErrorReason != ""
-			isDocument := e.ResourceType == "Document"
-			disposition := ""
-			for _, h := range e.ResponseHeaders {
-				if strings.EqualFold(h.Name, "Content-Disposition") {
-					disposition = h.Value
+			defer func() { _ = chromedp.Run(tabCtx, fetch.ContinueRequest(e.RequestID)) }()
+			if !capture || !scope.current(permit) {
+				return
+			}
+			var body []byte
+			err := chromedp.Run(tabCtx, chromedp.ActionFunc(func(cctx context.Context) error {
+				var berr error
+				body, berr = fetch.GetResponseBody(e.RequestID).Do(cctx)
+				return berr
+			}))
+			if err != nil || len(body) == 0 || !scope.current(permit) {
+				return
+			}
+			captured := &browserBody{url: e.Request.URL, body: body, kind: ClassifyBody(body), status: int(e.ResponseStatusCode), navigation: permit.generation}
+			if debugBrowser {
+				log.Printf("[browserlane] BODY kind=%s len=%d url=%.100s", captured.kind, len(body), captured.url)
+			}
+			if captured.kind == BodyPDF {
+				select {
+				case resultCh <- captured:
+				default:
+				}
+			} else {
+				mu.Lock()
+				lastHTML = captured
+				mu.Unlock()
+				select {
+				case htmlCh <- captured:
+				default:
 				}
 			}
-			if isResponseStage && (isDocument || pdfish(url, disposition)) {
-				var body []byte
-				err := chromedp.Run(tabCtx, chromedp.ActionFunc(func(cctx context.Context) error {
-					var berr error
-					body, berr = fetch.GetResponseBody(e.RequestID).Do(cctx)
-					return berr
-				}))
-				if err == nil && len(body) > 0 {
-					if debugBrowser {
-						log.Printf("[browserlane] BODY kind=%s len=%d url=%.100s", ClassifyBody(body), len(body), url)
-					}
-					switch kind := ClassifyBody(body); kind {
-					case BodyPDF:
-						select {
-						case resultCh <- &browserBody{url: url, body: body, kind: kind, status: int(e.ResponseStatusCode)}:
-						default:
-						}
-					default:
-						if isDocument {
-							select {
-							case htmlCh <- &browserBody{url: url, body: body, kind: kind, status: int(e.ResponseStatusCode)}:
-							default:
-							}
-							mu.Lock()
-							lastHTML = &browserBody{url: url, body: body, kind: kind, status: int(e.ResponseStatusCode)}
-							mu.Unlock()
-						}
-					}
-				}
-			}
-			// Always let the request/response continue (even after
-			// capturing) so the page's own JS can proceed.
-			_ = chromedp.Run(tabCtx, fetch.ContinueRequest(e.RequestID))
 		}(e)
 	})
 
 	if err := chromedp.Run(tabCtx,
+		chromedp.ActionFunc(func(cctx context.Context) error {
+			tree, err := page.GetFrameTree().Do(cctx)
+			if err != nil {
+				return err
+			}
+			if tree == nil || tree.Frame == nil {
+				return errors.New("browser: missing main frame")
+			}
+			mainFrame = tree.Frame.ID
+			return nil
+		}),
 		fetch.Enable().WithPatterns([]*fetch.RequestPattern{
+			{RequestStage: "Request"},
 			{RequestStage: "Response"},
 		}),
 		// Stealth hardening for Cloudflare-managed challenges: the
@@ -244,9 +242,10 @@ func (b *BrowserLane) navigate(ctx context.Context, rawURL string) (*browserBody
 
 	visited := map[string]bool{}
 
-	navigateTo := func(u string) {
-		if visited[u] || len(visited) >= 8 {
-			return
+	navigateTo := func(u string) bool {
+		u = browserHTTPURL(u)
+		if u == "" || visited[u] || len(visited) >= 8 || !scope.selectNavigation(mainFrame, u) {
+			return false
 		}
 		visited[u] = true
 		if debugBrowser {
@@ -256,29 +255,48 @@ func (b *BrowserLane) navigate(ctx context.Context, rawURL string) (*browserBody
 			_, _, _, err := page.Navigate(u).Do(cctx)
 			return err
 		}))
+		return true
 	}
 	navigateTo(rawURL)
 
-	// Event-driven wait: every HTML document that arrives is mined
-	// immediately (Go-side regex, reusing the landing-page extractors)
-	// for the next PDF hop — challenge pages self-clear in the browser
-	// while we just keep following the links they reveal.
+	// Event-driven wait: only eligible main-frame HTML may reveal a
+	// next hop. SPA pages get a bounded render window before selection.
 	timer := time.NewTimer(b.cfg.Timeout)
 	defer timer.Stop()
 	for {
 		select {
 		case body := <-resultCh:
-			return body, nil
-		case html := <-htmlCh:
-			for _, u := range mineBrowserHTML(html) {
-				navigateTo(u)
+			if scope.currentBody(body) {
+				return body, nil
 			}
-			// SPA pages (ScienceDirect et al.) inject their citation
-			// meta only AFTER JS renders; the network body alone misses
-			// it. Give the renderer a beat, then mine the live DOM too.
-			time.Sleep(1200 * time.Millisecond)
-			for _, u := range b.mineRenderedDOM(tabCtx) {
-				navigateTo(u)
+		case html := <-htmlCh:
+			if !scope.currentBody(html) {
+				continue
+			}
+			// SPA metadata and dynamic <base> need a live snapshot. Never
+			// mine an unrelated JS navigation that replaced this document.
+			renderWait := time.NewTimer(1200 * time.Millisecond)
+			select {
+			case <-renderWait.C:
+			case <-ctx.Done():
+				renderWait.Stop()
+				continue
+			}
+			if !scope.currentBody(html) {
+				continue
+			}
+			candidates := mineBrowserHTML(html)
+			if rendered := b.renderedDocument(tabCtx); rendered != nil && browserHTTPURL(rendered.url) == browserHTTPURL(html.url) {
+				if live := mineBrowserHTML(rendered); len(live) > 0 {
+					candidates = live
+				}
+			}
+			// One explicit selection at a time. Racing all candidates
+			// would otherwise accept bytes from whichever reference won.
+			for _, u := range candidates {
+				if navigateTo(u) {
+					break
+				}
 			}
 		case <-timer.C:
 			mu.Lock()
@@ -301,33 +319,40 @@ func (b *BrowserLane) navigate(ctx context.Context, rawURL string) (*browserBody
 // mineRenderedDOM extracts PDF links from the CURRENT rendered DOM —
 // the complement to mineBrowserHTML (which sees the raw response body).
 func (b *BrowserLane) mineRenderedDOM(tabCtx context.Context) []string {
-	var out []string
-	_ = chromedp.Run(tabCtx, chromedp.Evaluate(`(function(){
-		var xs = [];
-		var m = document.querySelector('meta[name="citation_pdf_url"]');
-		if (m && m.content) xs.push(m.content);
-		document.querySelectorAll('a[href]').forEach(function(a){
-			var h = a.href || '';
-			if (/\.pdf(\?|$)|\/pdf($|\/)|pdf-direct|pdfft|getPDF|stamp\.jsp/i.test(h) && !/epdf/i.test(h)) xs.push(h);
-		});
-		return xs.slice(0, 6).join('\n');
-	})()`, &out))
-	if len(out) == 0 {
-		return nil
-	}
-	var urls []string
-	for _, line := range strings.Split(strings.Join(out, "\n"), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "http") {
-			urls = append(urls, line)
-		}
-	}
-	return urls
+	return mineBrowserHTML(b.renderedDocument(tabCtx))
 }
 
-// mineBrowserHTML extracts the next-hop PDF URLs from a document the
-// browser loaded — publisher-declared citation_pdf_url first, then
-// same-host-ish pdf anchors and the IEEE stamp iframe.
+func (b *BrowserLane) renderedDocument(tabCtx context.Context) *browserBody {
+	var doc struct {
+		URL     string `json:"url"`
+		BaseURI string `json:"baseURI"`
+		HTML    string `json:"html"`
+	}
+	// URL identifies the page's host; baseURI only resolves relative links.
+	if err := chromedp.Run(tabCtx, chromedp.Evaluate(renderedDocumentJS, &doc)); err != nil {
+		return nil
+	}
+	return &browserBody{url: doc.URL, baseURI: doc.BaseURI, body: []byte(doc.HTML)}
+}
+
+// Bound the snapshot like FetchText's landing-page read. The browser remains
+// responsible for navigating and rendering; candidate selection stays in Go.
+const renderedDocumentJS = `(function(){
+	return {
+		url: document.URL,
+		baseURI: document.baseURI,
+		html: document.documentElement ? document.documentElement.outerHTML.slice(0, 2 * 1024 * 1024) : ''
+	};
+})()`
+
+// Preserve publisher download endpoints previously recognized only by the
+// rendered-DOM miner, while applying the same host restrictions as .pdf links.
+var browserPDFHrefRe = regexp.MustCompile(`(?is)<a\b[^>]*\bhref=["']([^"'\s<>]*(?:\.pdf(?:\?[^"'\s<>]*)?|/pdf(?:[/?][^"'\s<>]*)?|pdf-direct[^"'\s<>]*|pdfft[^"'\s<>]*|getPDF[^"'\s<>]*|stamp\.jsp[^"'\s<>]*))["']`)
+
+// mineBrowserHTML extracts article-scoped next-hop PDF candidates. Explicit
+// citation metadata is authoritative (including CDN links); without it, only
+// same-host inline PDF metadata/IEEE frames, then same-host anchors, are used.
+// These are candidate guards, not proof that a PDF's contents match the work.
 func mineBrowserHTML(doc *browserBody) []string {
 	if doc == nil || len(doc.body) == 0 {
 		return nil
@@ -336,7 +361,15 @@ func mineBrowserHTML(doc *browserBody) []string {
 		log.Printf("[browserlane] MINE url=%.90s len=%d", doc.url, len(doc.body))
 	}
 	html := string(doc.body)
-	base := doc.url
+	base := doc.baseURI
+	if base == "" {
+		base = documentBaseURL(doc.body, doc.url)
+	}
+	// Weak links are compared AFTER base resolution against the actual
+	// article host, never against a potentially external <base> host.
+	samePageHost := func(raw string) bool {
+		return sameHostOrRelative(absolutize(raw, base), doc.url)
+	}
 	var out []string
 	seen := map[string]bool{}
 	add := func(raw string) {
@@ -345,7 +378,8 @@ func mineBrowserHTML(doc *browserBody) []string {
 			return
 		}
 		abs := absolutize(htmlUnescape(raw), base)
-		if abs == "" || seen[abs] {
+		u, err := url.Parse(abs)
+		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || seen[abs] {
 			return
 		}
 		seen[abs] = true
@@ -356,14 +390,27 @@ func mineBrowserHTML(doc *browserBody) []string {
 			add(m[1])
 		}
 	}
-	for _, m := range jsonPDFURLRe.FindAllStringSubmatch(html, 4) {
-		add(m[1])
+	if len(out) > 0 {
+		return out
 	}
-	for _, m := range pdfHrefRe.FindAllStringSubmatch(html, 12) {
-		add(m[1])
+	for _, m := range jsonPDFURLRe.FindAllStringSubmatch(html, 4) {
+		if samePageHost(htmlUnescape(m[1])) {
+			add(m[1])
+		}
 	}
 	if m := ieeeFrameSrcRe.FindStringSubmatch(html); m != nil {
-		add(m[1])
+		if samePageHost(htmlUnescape(m[1])) {
+			add(m[1])
+		}
+	}
+	if len(out) > 0 {
+		return out
+	}
+	for _, m := range browserPDFHrefRe.FindAllStringSubmatch(html, 12) {
+		raw := htmlUnescape(m[1])
+		if !strings.Contains(strings.ToLower(raw), "epdf") && samePageHost(raw) {
+			add(m[1])
+		}
 	}
 	return out
 }

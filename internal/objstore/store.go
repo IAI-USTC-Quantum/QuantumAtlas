@@ -10,7 +10,8 @@
 // # Keys
 //
 // All keys are forward-slash-delimited, never start with "/" or contain
-// ".." or "\\". The local backend maps each key to "<baseDir>/<key>";
+// empty, ".", or ".." components, NUL, or "\\". Dots within a name are
+// preserved verbatim. The local backend maps keys to "<baseDir>/<key>";
 // the S3 backend uses keys verbatim as object names. Callers are
 // responsible for sanitising keys before passing them in — the store
 // implementations refuse leading "/" or ".." to make traversal bugs
@@ -41,11 +42,10 @@ import (
 //
 // Metadata holds user-defined key/value pairs (S3 x-amz-meta-* headers
 // without the prefix; lower-case keys). It is populated by Stat and
-// Get on backends that support it (S3); LocalStore returns nil because
-// it has no native sidecar metadata store. Callers MUST treat a nil
-// or missing key the same way — "metadata unknown" rather than "known
-// to be empty" — and fall back to the legacy path (e.g. force a re-PUT
-// on upload conflicts).
+// Get on S3 and LocalStore (reserved metadata directory). Callers MUST
+// treat nil or missing metadata as unknown, never as proof of content
+// identity. Immutable content callers verify the persisted bytes and
+// must not fall back to an unconditional overwrite on upload conflicts.
 //
 // ETag is the backend-assigned strong identity for the current object
 // version, as returned by the underlying store. S3Store fills it with
@@ -120,12 +120,10 @@ type Store interface {
 	// PutWithMeta is Put plus user-defined metadata. On S3 each map
 	// entry becomes an x-amz-meta-<k> header (S3 lowercases keys on
 	// the wire — pass lowercase to avoid round-trip surprises). On
-	// LocalStore metadata is silently dropped: the dev-only local
-	// fallback has no native sidecar store and surfacing a "metadata
-	// unsupported" error would force every caller to special-case it.
+	// LocalStore persists metadata outside the object namespace.
 	// Callers that depend on metadata for correctness (e.g. content
-	// dedup via sha256) must already tolerate missing metadata on
-	// reads — see ObjectInfo.Metadata.
+	// dedup via sha256) must still tolerate missing metadata on
+	// legacy reads — see ObjectInfo.Metadata.
 	//
 	// Behaves identically to Put when metadata is nil or empty.
 	PutWithMeta(ctx context.Context, key string, r io.Reader, size int64, contentType string, metadata map[string]string) (int64, error)

@@ -87,8 +87,10 @@ func TestAPI_ServerInfo_AnonymousTier(t *testing.T) {
 	if caps["paper_access"] != true || caps["markdown_delivery"] != true {
 		t.Errorf("paper-access caps = %v/%v, want true/true", caps["paper_access"], caps["markdown_delivery"])
 	}
-	if caps["pdf_delivery"] != false {
-		t.Errorf("pdf_delivery = %v, want constant false", caps["pdf_delivery"])
+	for _, name := range []string{"pdf_delivery", "json_reading", "immutable_bundles"} {
+		if caps[name] != true {
+			t.Errorf("%s = %v, want enabled capability", name, caps[name])
+		}
 	}
 	if caps["agentic_search"] != true {
 		t.Errorf("agentic_search = %v, want true", caps["agentic_search"])
