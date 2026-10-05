@@ -2150,6 +2150,100 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/papers/source-register": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires papers:write, registry/object storage and pdftotext. Accepts only public HTTPS URLs; every redirect and DNS destination is validated and pinned. The PDF title must match first-page front matter. No DOI is synthesized and distinct URLs are not title-merged. IACR ePrint landing/PDF forms share one eprint identity. Same work and SHA reuse an immutable source; changed bytes create a new source. No parse or Markdown is fabricated. HTTP Idempotency-Key response replay is not promised: check server state after a transport failure. At most two registrations acquire PDFs concurrently in one process; excess requests receive 503 with Retry-After before acquisition.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Papers"
+                ],
+                "summary": "Register external PDF original",
+                "parameters": [
+                    {
+                        "description": "source_url HTTPS original, title (max 2000 UTF-8 bytes), authors (1..100, max 500 bytes each), year (1..9999)",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/routes.externalSourceRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{paper_id,created,external_id,source_url,source:{source_id,origin,sha256,size_bytes,created_at,source_url,retrieved_url,retrieved_at,pdf_endpoint}}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "invalid JSON, bibliographic fields or URL",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "requires papers:write",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "acquisition, size/format or title/provenance rejected",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "immutable storage/integrity or registration failure",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "catalog/storage unavailable or registration busy (Retry-After)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/papers/stats": {
             "get": {
                 "security": [
@@ -4094,7 +4188,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "{paper_id, sources:[{source_id,origin,sha256,size_bytes,is_current,created_at,pdf_endpoint}], current_source_id}",
+                        "description": "{paper_id, sources:[{source_id,origin,sha256,size_bytes,is_current,created_at,pdf_endpoint,source_url?,retrieved_url?,retrieved_at?}], current_source_id}",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -5510,6 +5604,34 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "routes.externalSourceRequest": {
+            "type": "object",
+            "required": [
+                "authors",
+                "source_url",
+                "title",
+                "year"
+            ],
+            "properties": {
+                "authors": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "source_url": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "year": {
+                    "type": "integer",
+                    "maximum": 9999,
+                    "minimum": 1
+                }
+            }
+        },
         "routes.meUsageResponse": {
             "type": "object",
             "properties": {

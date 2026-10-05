@@ -372,6 +372,25 @@ func docDownloaderRemoteJobs() {}
 // @Router      /api/papers [get]
 func docPapersList() {}
 
+// paperSourceRegister registers a verified external PDF original with explicit metadata.
+//
+// @Summary     Register external PDF original
+// @Description Requires papers:write, registry/object storage and pdftotext. Accepts only public HTTPS URLs; every redirect and DNS destination is validated and pinned. The PDF title must match first-page front matter. No DOI is synthesized and distinct URLs are not title-merged. IACR ePrint landing/PDF forms share one eprint identity. Same work and SHA reuse an immutable source; changed bytes create a new source. No parse or Markdown is fabricated. HTTP Idempotency-Key response replay is not promised: check server state after a transport failure. At most two registrations acquire PDFs concurrently in one process; excess requests receive 503 with Retry-After before acquisition.
+// @Tags        Papers
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       request body externalSourceRequest true "source_url HTTPS original, title (max 2000 UTF-8 bytes), authors (1..100, max 500 bytes each), year (1..9999)"
+// @Success     200 {object} map[string]interface{} "{paper_id,created,external_id,source_url,source:{source_id,origin,sha256,size_bytes,created_at,source_url,retrieved_url,retrieved_at,pdf_endpoint}}"
+// @Failure     400 {object} map[string]string "invalid JSON, bibliographic fields or URL"
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string "requires papers:write"
+// @Failure     422 {object} map[string]string "acquisition, size/format or title/provenance rejected"
+// @Failure     500 {object} map[string]string "immutable storage/integrity or registration failure"
+// @Failure     503 {object} map[string]string "catalog/storage unavailable or registration busy (Retry-After)"
+// @Router      /api/papers/source-register [post]
+func docPaperSourceRegister() {}
+
 // paperDetail returns one registry paper with its assets.
 //
 // @Summary     Get paper by id
@@ -780,7 +799,7 @@ func docPaperImageGet() {}
 // @Produce     json
 // @Security    BearerAuth
 // @Param       paper_id path string true "paper id: qa_... | arXiv id | DOI"
-// @Success     200 {object} map[string]interface{} "{paper_id, sources:[{source_id,origin,sha256,size_bytes,is_current,created_at,pdf_endpoint}], current_source_id}"
+// @Success     200 {object} map[string]interface{} "{paper_id, sources:[{source_id,origin,sha256,size_bytes,is_current,created_at,pdf_endpoint,source_url?,retrieved_url?,retrieved_at?}], current_source_id}"
 // @Failure     400 {object} map[string]string "unrecognized id form"
 // @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string

@@ -90,6 +90,7 @@ func RegisterPapers(
 	arxivFetcher *arxiv.Fetcher,
 ) {
 	registerV1MineruLeaseRoutes(se, cfg, rawStore, catalog, enforcer)
+	RegisterPaperExternalSources(se, rawStore, catalog, enforcer)
 
 	// Long-lived lazy write-through cache-aside orchestrator for the OpenAlex
 	// corpus (ADR 0012). Constructed once and captured below so its singleflight
@@ -227,6 +228,13 @@ func RegisterPapers(
 				if target.NotFound {
 					return re.JSON(http.StatusNotFound, map[string]string{
 						"detail": "no such paper: " + arxivPart,
+					})
+				}
+				if target.SourcesOnly {
+					return re.JSON(http.StatusConflict, map[string]any{
+						"code":             "external_source_requires_pinned_read",
+						"detail":           "external originals use immutable sources; list sources and select a source_id",
+						"sources_endpoint": "/api/papers/" + requestedID + "/sources",
 					})
 				}
 				if target.DOI != "" {
@@ -683,6 +691,9 @@ type paperAssetTarget struct {
 	// DOI is set for papers with no arXiv identity: they must be
 	// served through the DOI handlers.
 	DOI string
+	// SourcesOnly originals are read by immutable source_id, not a fabricated
+	// DOI/arXiv namespace or a mutable legacy asset key.
+	SourcesOnly bool
 	// NotFound is true when the qa_ id matches no papers row.
 	NotFound bool
 }
@@ -717,6 +728,8 @@ func resolvePaperAssetTarget(ctx context.Context, catalog paperCatalog, paperID 
 		return t, nil
 	case p.DOI != "":
 		return paperAssetTarget{DOI: registry.NormalizeDOI(p.DOI)}, nil
+	case strings.HasPrefix(p.PaperRef, "eprint:") || strings.HasPrefix(p.PaperRef, "source_url:"):
+		return paperAssetTarget{SourcesOnly: true}, nil
 	}
 	// papers rows carry at least one external id by schema; reaching
 	// here means a merged/tombstoned edge — treat as unknown rather

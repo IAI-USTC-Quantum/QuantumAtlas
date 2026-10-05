@@ -141,6 +141,16 @@ func (s *Store) GetPaperIDByIdentity(ctx context.Context, scheme, id string) (st
 	case "openalex":
 		id = strings.TrimSpace(id)
 		query = `SELECT paper_id FROM papers WHERE openalex_id = $1 LIMIT 1`
+	case KindEprint:
+		id = KindEprint + ":" + strings.TrimPrefix(strings.TrimSpace(id), KindEprint+":")
+		query = `SELECT paper_id FROM paper_identities WHERE identity_key = $1 AND kind = 'eprint' LIMIT 1`
+	case KindSourceURL:
+		normalized, err := NormalizeExternalSourceURL(strings.TrimPrefix(id, KindSourceURL+":"))
+		if err != nil {
+			return "", false, nil
+		}
+		id = KindSourceURL + ":" + normalized
+		query = `SELECT paper_id FROM paper_identities WHERE identity_key = $1 AND kind = 'source_url' LIMIT 1`
 	default:
 		return "", false, nil
 	}

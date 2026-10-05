@@ -26,13 +26,16 @@ import (
 // PaperSource projects one paper_sources row: the immutable identity of
 // one source PDF byte-set (origin label + sha256 + object-store key).
 type PaperSource struct {
-	SourceID    string
-	PaperID     string
-	Origin      string // e.g. "arxiv:v2", "upload" — free-form label
-	Sha256      string
-	ObjstoreKey string
-	SizeBytes   int64
-	CreatedAt   time.Time
+	SourceID     string
+	PaperID      string
+	Origin       string // e.g. "arxiv:v2", "upload" — free-form label
+	Sha256       string
+	ObjstoreKey  string
+	SizeBytes    int64
+	CreatedAt    time.Time
+	SourceURL    string    // original normalized acquisition URL; empty for legacy sources
+	RetrievedURL string    // validated final URL after redirects
+	RetrievedAt  time.Time // first successful acquisition; immutable on retries
 }
 
 // ParseRevision projects one parse_revisions row: one immutable parse
@@ -88,7 +91,8 @@ func (s *Store) ListPaperSources(ctx context.Context, paperID string) ([]PaperSo
 		return nil, ErrCatalogUnavailable
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT source_id, paper_id, origin, sha256, objstore_key, size_bytes, created_at
+		SELECT source_id, paper_id, origin, sha256, objstore_key, size_bytes, created_at,
+		       coalesce(source_url, ''), coalesce(retrieved_url, ''), retrieved_at
 		FROM paper_sources WHERE paper_id = $1
 		ORDER BY created_at ASC, source_id ASC`, paperID)
 	if err != nil {
@@ -114,7 +118,8 @@ func (s *Store) GetPaperSource(ctx context.Context, paperID, sourceID string) (P
 		return PaperSource{}, false, ErrCatalogUnavailable
 	}
 	row := s.pool.QueryRow(ctx, `
-		SELECT source_id, paper_id, origin, sha256, objstore_key, size_bytes, created_at
+		SELECT source_id, paper_id, origin, sha256, objstore_key, size_bytes, created_at,
+		       coalesce(source_url, ''), coalesce(retrieved_url, ''), retrieved_at
 		FROM paper_sources WHERE paper_id = $1 AND source_id = $2`, paperID, sourceID)
 	src, err := scanPaperSource(row)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -138,7 +143,8 @@ func (s *Store) FindPaperSourceBySHA(ctx context.Context, paperID, sha256 string
 		return PaperSource{}, false, ErrCatalogUnavailable
 	}
 	row := s.pool.QueryRow(ctx, `
-		SELECT source_id, paper_id, origin, sha256, objstore_key, size_bytes, created_at
+		SELECT source_id, paper_id, origin, sha256, objstore_key, size_bytes, created_at,
+		       coalesce(source_url, ''), coalesce(retrieved_url, ''), retrieved_at
 		FROM paper_sources WHERE paper_id = $1 AND sha256 = $2
 		ORDER BY created_at ASC, source_id ASC LIMIT 1`, paperID, sha256)
 	src, err := scanPaperSource(row)
@@ -278,9 +284,14 @@ type scanner interface {
 
 func scanPaperSource(row scanner) (PaperSource, error) {
 	var src PaperSource
+	var retrievedAt *time.Time
 	if err := row.Scan(&src.SourceID, &src.PaperID, &src.Origin, &src.Sha256,
-		&src.ObjstoreKey, &src.SizeBytes, &src.CreatedAt); err != nil {
+		&src.ObjstoreKey, &src.SizeBytes, &src.CreatedAt, &src.SourceURL,
+		&src.RetrievedURL, &retrievedAt); err != nil {
 		return src, fmt.Errorf("registry: scan paper source: %w", err)
+	}
+	if retrievedAt != nil {
+		src.RetrievedAt = *retrievedAt
 	}
 	return src, nil
 }
