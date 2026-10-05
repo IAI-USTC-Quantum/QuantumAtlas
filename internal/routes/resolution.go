@@ -32,11 +32,56 @@ package routes
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperassets"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/registry"
 )
+
+// canonicalReadCatalog follows explicit registry merges for read-side detail
+// and asset resolution. GetPaperIDByIdentity can still return a tombstone via
+// papers.doi after a merge moved paper_identities to the surviving qa_ row.
+// Never infer a replacement from asset paths, a DOI, or bibliographic metadata.
+// Embedding keeps the other paperCatalog operations unchanged and lets the
+// existing detail/figure/image handlers share the same bounded resolver.
+type canonicalReadCatalog struct {
+	paperCatalog
+}
+
+func (c canonicalReadCatalog) GetWithAssets(ctx context.Context, paperID string) (*registry.PaperDetail, bool, error) {
+	seen := make(map[string]bool)
+	current := paperID
+	for hop := 0; hop < 8; hop++ {
+		if seen[current] {
+			return nil, false, fmt.Errorf("paper merge cycle for %s", paperID)
+		}
+		seen[current] = true
+		detail, found, err := c.paperCatalog.GetWithAssets(ctx, current)
+		if err != nil {
+			return nil, false, err
+		}
+		if !found {
+			if hop > 0 {
+				return nil, false, fmt.Errorf("paper merge target %s missing for %s", current, paperID)
+			}
+			return nil, false, nil
+		}
+		if detail == nil || detail.Paper == nil {
+			return nil, false, fmt.Errorf("paper detail missing for %s", current)
+		}
+		next, merged := strings.CutPrefix(detail.Paper.Status, "merged_into:")
+		if !merged {
+			return detail, true, nil
+		}
+		if !isQASurrogate(next) || strings.TrimSpace(next) != next {
+			return nil, false, fmt.Errorf("invalid paper merge target for %s", current)
+		}
+		current = next
+	}
+	return nil, false, fmt.Errorf("paper merge chain too deep for %s", paperID)
+}
 
 // idResolution captures the input → resolved-canonical transformation
 // performed by the dispatch layer. Empty fields = no inference fired.
