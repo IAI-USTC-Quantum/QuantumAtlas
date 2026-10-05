@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -13,9 +14,9 @@ import (
 	"testing"
 
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/config"
-	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/mineru"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/objstore"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperassets"
+	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/paperbundle"
 	"github.com/IAI-USTC-Quantum/QuantumAtlas/internal/registry"
 )
 
@@ -204,107 +205,248 @@ func (s *issue25ReadStore) Get(_ context.Context, key string) (io.ReadCloser, ob
 	return io.NopCloser(bytes.NewReader(b)), objstore.ObjectInfo{Key: key, Size: int64(len(b))}, nil
 }
 
+// The current HTTP fixture records full logical reads and identity lookups.
+// Old DOI bytes may exist, but only a published complete bundle is ready.
+type issue25FrozenReadStore struct {
+	objstore.Store
+	readErr error
+	mu      sync.Mutex
+	reads   []string
+}
+
+func (s *issue25FrozenReadStore) record(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reads = append(s.reads, key)
+}
+func (s *issue25FrozenReadStore) Stat(ctx context.Context, key string) (objstore.ObjectInfo, bool, error) {
+	s.record(key)
+	if s.readErr != nil {
+		return objstore.ObjectInfo{}, false, s.readErr
+	}
+	return s.Store.Stat(ctx, key)
+}
+func (s *issue25FrozenReadStore) Get(ctx context.Context, key string) (io.ReadCloser, objstore.ObjectInfo, error) {
+	s.record(key)
+	if s.readErr != nil {
+		return nil, objstore.ObjectInfo{}, s.readErr
+	}
+	return s.Store.Get(ctx, key)
+}
+
+type issue25ContentCatalog struct {
+	*doiReadingCatalog
+	mu      sync.Mutex
+	lookups [][2]string
+}
+
+func (c *issue25ContentCatalog) GetPaperIDByIdentity(ctx context.Context, scheme, id string) (string, bool, error) {
+	c.mu.Lock()
+	c.lookups = append(c.lookups, [2]string{scheme, id})
+	c.mu.Unlock()
+	return c.doiReadingCatalog.GetPaperIDByIdentity(ctx, scheme, id)
+}
+
 func TestIssue25DOIAssetDispatchHTTP(t *testing.T) {
-	// Exercise the real DOI handler dispatcher and net/http transport, not
-	// just a recorder. The outer PB authorization/catch-all is not replaced
-	// or tested here; its local DOI decision is covered separately above.
 	for _, doi := range []string{"10.1145/3530258", "10.1145/3488559"} {
-		for _, scenario := range []string{"cached", "missing", "storage failure"} {
+		for _, scenario := range []string{"cached", "missing", "legacy MD only", "storage failure", "disabled"} {
 			t.Run(doi+"/"+scenario, func(t *testing.T) {
-				name := strings.Repeat("a", 64) + ".png"
-				markdown := []byte("# DOI-only fixture\n\n![](images/" + name + ")\n\nFig. 1: Fixture\n")
-				image := []byte("issue25 image bytes")
-				images, err := mineru.BuildImagesZip(map[string][]byte{"images/" + name: image})
+				dc, base, bundle := newDOIReadingFixture(t)
+				dc.doi = doi
+				dc.source.Origin = "doi:" + doi
+				catalog := &issue25ContentCatalog{doiReadingCatalog: dc}
+				pdf, err := readAllFromStore(t, base, dc.source.ObjstoreKey)
 				if err != nil {
 					t.Fatal(err)
 				}
-				store := &issue25ReadStore{objects: map[string][]byte{}}
-				if scenario == "cached" {
-					store.objects[paperassets.DOIAssetKey("markdown", doi)] = markdown
-					store.objects[paperassets.DOIAssetKey("pdf", doi)] = []byte("%PDF-1.7 fixture")
-					store.objects[paperassets.DOIAssetKey("images", doi)] = images
-				} else if scenario == "storage failure" {
-					store.readErr = errors.New("issue25 storage unavailable")
+				markdown, err := readAllFromStore(t, base, paperbundle.FileKey(readTestPaper, readTestSource, bundle.RevisionID, bundle.MarkdownPath))
+				if err != nil {
+					t.Fatal(err)
 				}
-				catalog := issue25DOIOnlyCatalog(doi)
-				catalog.publishedAssets[doi] = true
-				catalog.papers["qa_issue25_doi_only"].Assets = []registry.Asset{{AssetID: 25, Source: "published"}}
-				outcome, twin, err := decideLocalDOIServing(context.Background(), catalog, store, doi)
-				if err != nil || outcome != doiServeDOI || twin != "" {
-					t.Fatalf("published DOI decision = (%v, %q, %v)", outcome, twin, err)
+				const imageName = "nested/figure (1).jpg"
+				image, err := readAllFromStore(t, base, paperbundle.FileKey(readTestPaper, readTestSource, bundle.RevisionID, "images/"+imageName))
+				if err != nil {
+					t.Fatal(err)
 				}
-				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-					action := strings.TrimPrefix(req.URL.Path, "/api/papers/"+doi+"/")
-					statusKind := ""
-					if kind, ok := strings.CutSuffix(action, "/status"); ok {
-						action, statusKind = "status", kind
+				manifest, err := paperbundle.New(base).VerifyBundle(t.Context(), readTestPaper, readTestSource, bundle.RevisionID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				images := map[string][]byte{}
+				for _, member := range manifest.Files {
+					if isBundleImage(member.Path) {
+						raw, err := readAllFromStore(t, base, paperbundle.FileKey(readTestPaper, readTestSource, bundle.RevisionID, member.Path))
+						if err != nil {
+							t.Fatal(err)
+						}
+						images[member.Path] = raw
 					}
+				}
+				store := &issue25FrozenReadStore{Store: base}
+				cfg := &config.Config{PaperAccessEnabled: true}
+				switch scenario {
+				case "missing":
+					dc.omitSources = true
+					dc.bundles = map[string]registry.ParseBundle{}
+				case "legacy MD only":
+					dc.bundles = map[string]registry.ParseBundle{}
+					legacy := []byte("FORBIDDEN legacy DOI-only bytes")
+					if _, err := base.Put(t.Context(), paperassets.DOIAssetKey("markdown", doi), bytes.NewReader(legacy), int64(len(legacy)), "text/markdown"); err != nil {
+						t.Fatal(err)
+					}
+				case "storage failure":
+					store.readErr = errors.New("issue25 private-storage-host unavailable")
+				case "disabled":
+					cfg.PaperAccessEnabled = false
+				}
+				// Mount exactly the early convenience-content dispatcher used by GET,
+				// before the historical DOI dispatcher can mistake a numeric suffix for
+				// an arXiv identity. No PB authorization layer is mocked here.
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+					raw := strings.TrimPrefix(req.URL.Path, "/api/papers/")
 					re := newTestReqEvent(req, w)
-					applyDOICanonicalHeaders(re, doi, doi, "")
-					if err := dispatchGETDOIHandlers(re, &config.Config{}, store, catalog, nil, doi, action, statusKind, doi+"/"+action, ""); err != nil {
-						t.Errorf("DOI dispatch: %v", err)
+					handled, err := dispatchContentGET(re, cfg, store, catalog, nil, raw)
+					if err != nil {
+						t.Errorf("early content dispatch: %v", err)
+					}
+					if !handled {
+						t.Errorf("content route was not intercepted: %s", raw)
+						http.NotFound(w, req)
 					}
 				}))
-				defer srv.Close()
-
-				for _, action := range []string{"markdown", "markdown/status", "pdf", "pdf/status", "images/zip", "images/" + name, "figures"} {
-					resp, err := srv.Client().Get(srv.URL + "/api/papers/" + doi + "/" + action)
+				defer server.Close()
+				for _, action := range []string{"read", "read/status", "markdown", "markdown/status", "pdf", "pdf/status", "images/zip", "images/" + imageName, "figures"} {
+					response, err := server.Client().Get(server.URL + "/api/papers/" + doi + "/" + action)
 					if err != nil {
 						t.Fatal(err)
 					}
-					body, err := io.ReadAll(resp.Body)
-					resp.Body.Close()
+					body, err := io.ReadAll(response.Body)
+					response.Body.Close()
 					if err != nil {
 						t.Fatal(err)
 					}
-					want := http.StatusOK
-					switch {
-					case action == "pdf":
-						want = http.StatusGone // legacy PDF delivery remains disabled
-					case scenario == "storage failure":
-						want = http.StatusInternalServerError
-						if action == "markdown" || strings.HasSuffix(action, "/status") {
-							want = http.StatusServiceUnavailable
+					want := 200
+					switch scenario {
+					case "disabled":
+						want = 404
+					case "storage failure":
+						want = 503
+					case "missing":
+						want = 404
+						if strings.HasSuffix(action, "/status") {
+							want = 200
 						}
-					case scenario == "missing" && (action == "markdown" || strings.HasPrefix(action, "images/")):
-						want = http.StatusNotFound
+					case "legacy MD only":
+						if action != "pdf" && action != "pdf/status" {
+							want = 503
+							if strings.HasSuffix(action, "/status") {
+								want = 200
+							}
+						}
 					}
-					if resp.StatusCode != want {
-						t.Errorf("%s: HTTP %d %s, want %d", action, resp.StatusCode, body, want)
-					}
-					if got := resp.Header.Get("X-QAtlas-Resolved-Id"); got != doi {
-						t.Errorf("%s resolved id = %q, want DOI %q", action, got, doi)
+					if response.StatusCode != want {
+						t.Errorf("%s: HTTP %d %s want %d", action, response.StatusCode, body, want)
 					}
 					if bytes.Contains(body, []byte("invalid arxiv_id")) || bytes.Contains(body, []byte(`"arxiv_id"`)) {
-						t.Errorf("%s leaked arxiv identity: %s", action, body)
+						t.Errorf("%s fabricated arxiv identity: %s", action, body)
 					}
-					if scenario == "cached" {
-						expectedBytes := map[string][]byte{"markdown": markdown, "images/zip": images, "images/" + name: image}[action]
-						if expectedBytes != nil && !bytes.Equal(body, expectedBytes) {
-							t.Errorf("%s did not return this DOI's exact bytes", action)
+					if bytes.Contains(body, []byte("FORBIDDEN legacy")) {
+						t.Error("old DOI markdown was served or used as ready")
+					}
+					if scenario == "cached" || scenario == "legacy MD only" && strings.HasPrefix(action, "pdf") {
+						if got := response.Header.Get("X-QAtlas-Requested-Id"); got != doi {
+							t.Errorf("%s requested id %q want exact numeric DOI %q", action, got, doi)
+						}
+						if got := response.Header.Get("X-QAtlas-Resolved-Id"); got != readTestPaper {
+							t.Errorf("%s resolved id %q want registered paper %q", action, got, readTestPaper)
+						}
+						if got := response.Header.Get("X-QAtlas-Source-Id"); got != readTestSource {
+							t.Errorf("%s source id %q", action, got)
+						}
+						expected := map[string][]byte{"markdown": markdown, "images/" + imageName: image, "pdf": pdf}[action]
+						if expected != nil && !bytes.Equal(body, expected) {
+							t.Errorf("%s did not return exact frozen/published bytes", action)
 						}
 					}
-					if strings.HasSuffix(action, "/status") && scenario != "storage failure" {
+					if scenario == "cached" && action == "images/zip" {
+						archive, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
+						if err != nil {
+							t.Fatal(err)
+						}
+						if len(archive.File) != len(images) {
+							t.Fatal("image ZIP member inventory changed")
+						}
+						for _, member := range archive.File {
+							original, found := images[member.Name]
+							if !found {
+								t.Errorf("image ZIP changed original relative path: %s", member.Name)
+								continue
+							}
+							r, err := member.Open()
+							if err != nil {
+								t.Fatal(err)
+							}
+							actual, err := io.ReadAll(r)
+							r.Close()
+							if err != nil || !bytes.Equal(actual, original) {
+								t.Errorf("image ZIP changed %s bytes: %v", member.Name, err)
+							}
+						}
+						if response.Header.Get("X-QAtlas-Artifact-SHA256") != paperbundle.SHA256(body) {
+							t.Fatal("download archive SHA not exact-byte pinned")
+						}
+					}
+					if scenario == "missing" && strings.HasSuffix(action, "/status") {
 						var status map[string]any
 						if err := json.Unmarshal(body, &status); err != nil {
 							t.Fatal(err)
 						}
-						ready := scenario == "cached"
-						if status["md_ready"] != ready || status["pdf_ready"] != ready || status["doi"] != doi {
-							t.Errorf("%s wrong readiness/identity: %s", action, body)
+						if status["pdf_ready"] != false || status["md_ready"] != false || status["paper_id"] != readTestPaper {
+							t.Errorf("missing DOI status fabricated readiness/identity: %s", body)
+						}
+					}
+					if scenario == "storage failure" {
+						var problem map[string]any
+						if err := json.Unmarshal(body, &problem); err != nil {
+							t.Fatal(err)
+						}
+						if response.Header.Get("Retry-After") == "" || problem["retryable"] != true || problem["code"] != "asset_store_unavailable" || bytes.Contains(body, []byte("private-storage-host")) {
+							t.Errorf("%s storage retry/privacy contract: %s", action, body)
+						}
+					}
+					if strings.HasSuffix(action, "/status") && (scenario == "cached" || scenario == "legacy MD only") {
+						var status map[string]any
+						if err := json.Unmarshal(body, &status); err != nil {
+							t.Fatal(err)
+						}
+						mdReady := scenario == "cached" && !strings.HasPrefix(action, "pdf")
+						if status["md_ready"] != mdReady || status["pdf_ready"] != true || status["paper_id"] != readTestPaper || status["source_id"] != readTestSource {
+							t.Errorf("%s readiness/identity %s", action, body)
 						}
 					}
 				}
+				catalog.mu.Lock()
+				for _, lookup := range catalog.lookups {
+					if lookup != [2]string{"doi", doi} {
+						t.Errorf("numeric DOI reached another identity: %+v", lookup)
+					}
+				}
+				lookups := len(catalog.lookups)
+				catalog.mu.Unlock()
 				store.mu.Lock()
 				defer store.mu.Unlock()
-				for _, key := range store.reads {
-					valid := false
-					for _, kind := range []string{"markdown", "pdf", "images"} {
-						base := paperassets.DOIAssetKey(kind, doi)
-						valid = valid || key == base || (kind == "images" && strings.HasPrefix(key, strings.TrimSuffix(base, ".zip")+"/"))
+				if scenario == "disabled" {
+					if lookups != 0 || len(store.reads) != 0 {
+						t.Fatal("master switch off still resolved/read content")
 					}
-					if !valid {
-						t.Errorf("read outside requested DOI namespace: %q", key)
+					return
+				}
+				if lookups == 0 {
+					t.Fatal("HTTP dispatcher never resolved numeric DOI identity")
+				}
+				for _, key := range store.reads {
+					if !strings.HasPrefix(key, "content/"+readTestPaper+"/"+readTestSource+"/") && key != paperassets.DOIAssetKey("pdf", doi) {
+						t.Errorf("read outside selected immutable/DOI-PDF namespace: %q", key)
 					}
 				}
 			})

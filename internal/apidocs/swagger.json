@@ -2350,6 +2350,7 @@
                         "BearerAuth": []
                     }
                 ],
+                "description": "Same claim_id/exact-source locator contract as /api/v1/papers/{id}/mineru-lease. Gate on: authenticated same-origin pdf_url with source_id,pdf_requires_auth:true,verifiedSHA; gate off: external arXiv URL+catalogSHA only. No NAS/S3 presigns or user authentication forwarding to providers.",
                 "produces": [
                     "application/json"
                 ],
@@ -2497,7 +2498,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Accepts the entire MinerU result zip exactly as returned by `full_zip_url`. Server extracts `full.md` plus every `images/*` entry and stores them to the markdown and images object buckets respectively. Images are written before the markdown so any reader that observes the markdown also observes all referenced images. Replaces the v0.7.x `upload-markdown` endpoint (which only accepted a single .md file and silently dropped images).\n\nThe {arxiv_id} slot also accepts a DOI (`10.\u003cregistrant\u003e/\u003csuffix\u003e`) to contribute the converted *published* version. DOI bundles are stored under the `markdown/doi/...` + `images/doi/...` namespace; the server resolves canonical metadata (title, authors, linked arxiv id) from OpenAlex on the contributor's behalf — there is no `title` / `authors` form field. `verify=strict` rejects when OpenAlex cannot resolve the DOI (see upload-pdf). The result is reported in `X-QAtlas-Verification`.",
+                "description": "Requires a COMPLETE supported docvortex.middle/schema_version 2.0 Middle (middle_json.json or supported layout.json) AND markdown.md/full.md; MD-only, ContentList-only, incomplete or invalid schema packages are 422. All valid producer-original relative paths/names/bytes, including every JSON and unknown file, are retained; originals are never renamed or reserialized. Traversal, absolute/backslash paths, duplicate names, symlinks, CRC/ZIP errors fail the whole archive. Limits: ZIP/member 128MiB, expanded aggregate 256MiB, at most 10000 files.\nWrites create-only revision-scoped files into the new content bucket, verifies frozen exact PDF and every persisted member, writes separate manifest LAST, then publishes through PG (required). Every reupload is a new immutable revision/current publication; overwrite never changes historical revisions. Raw ZIP retention is optional; verified members+manifest are mandatory. No deferred-success indexing.\n\nThe {arxiv_id} slot also accepts a DOI for a published edition's exact already-uploaded PDF. Both paths share source-bound immutable bundle publication; there is no title/authors metadata override. PDF contribution establishes DOI metadata (see upload-pdf). A tier label records producer/request metadata, not proof of an executed provider quality mode.",
                 "consumes": [
                     "multipart/form-data"
                 ],
@@ -2518,7 +2519,7 @@
                     },
                     {
                         "type": "boolean",
-                        "description": "overwrite on content conflict",
+                        "description": "legacy input accepted; never replaces a frozen source or published revision",
                         "name": "overwrite",
                         "in": "query"
                     },
@@ -2530,54 +2531,101 @@
                     },
                     {
                         "type": "string",
-                        "description": "sha256 of the source PDF that was converted (cross-checked against stored PDF)",
+                        "description": "sha256 of the exact frozen PDF parsed; cross-checked before publication",
                         "name": "pdf_sha256",
                         "in": "query"
                     },
                     {
                         "type": "string",
-                        "description": "DOI only: 'strict' rejects when OpenAlex cannot resolve the DOI (default warn)",
+                        "description": "legacy input; DOI metadata belongs to PDF contribution, not a parse metadata override",
                         "name": "verify",
                         "in": "query"
                     },
                     {
                         "type": "string",
-                        "description": "short label of the contributor's MinerU run (truncated to 64 chars)",
+                        "description": "producer/contributor run label",
                         "name": "source",
                         "in": "query"
                     },
                     {
+                        "type": "string",
+                        "description": "exact source id under this paper; source/version must match",
+                        "name": "source_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "producer metadata label; default standard, not legacy model_version",
+                        "name": "tier",
+                        "in": "query"
+                    },
+                    {
                         "type": "file",
-                        "description": "MinerU result zip (must contain full.md; optional images/*)",
+                        "description": "complete supported Middle + Markdown ZIP; all original members retained",
                         "name": "mineru_zip",
                         "in": "formData",
                         "required": true
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
                     "201": {
-                        "description": "Created",
+                        "description": "{paper_id,source_id,source_sha256,revision_id,revision,is_current,tier,schema,schema_version,artifact_sha256,manifest_sha256,manifest,read_endpoint,blocks_endpoint}",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
                     },
                     "400": {
-                        "description": "Bad Request",
+                        "description": "malformed upload or source PDF SHA mismatch",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "upload exact source PDF first",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
                     },
                     "409": {
-                        "description": "Conflict",
+                        "description": "source/version identity conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "413": {
+                        "description": "multipart ZIP byte cap exceeded",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "422": {
+                        "description": "unsupported/incomplete package or integrity failure",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "PG/object store unavailable; no deferred success",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -2593,7 +2641,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Content-addressed upload with sha256 idempotency. 200 when\nbytes are unchanged, 201 when written, 409 on a content\nconflict without overwrite=true.\n\nThe {arxiv_id} slot also accepts a DOI (`10.\u003cregistrant\u003e/\u003csuffix\u003e`)\nfor contributing a *published* version that may have no arXiv\npreprint. DOI uploads are stored under a disjoint `pdf/doi/...`\nnamespace and the server resolves the DOI's title / authors /\nlinked arxiv id from OpenAlex — the contributor cannot supply\nthat metadata. The result is reported in `X-QAtlas-Verification`\nand the JSON `verification` block; `verify=strict` rejects a\ndoi-not-found with 409 (or metadata-unavailable / unconfigured\nwith 503).",
+                "description": "Freeze exact PDF bytes into the new content bucket and publish the alias/source identity through PostgreSQL (PG required, no deferred-success indexing). 200 for the same bound alias/SHA, 201 for a new frozen binding. The identifier alias is permanently bound to the first successful exact PDF: different bytes return 409 EVEN with overwrite=true. Same paper/SHA may reuse a source ID; semantic arXiv vN is not S3VersionId. Never mutate an old source or parse revision.\n\nThe {arxiv_id} slot also accepts a DOI (`10.\u003cregistrant\u003e/\u003csuffix\u003e`)\nfor contributing a *published* version that may have no arXiv\npreprint. DOI PDF bytes also use immutable content/{paper}/{source}/source.pdf;\nits canonical import alias is separate from arXiv vN. The server resolves the DOI's title / authors /\nlinked arxiv id from OpenAlex — the contributor cannot supply\nthat metadata. The result is reported in `X-QAtlas-Verification`\nand the JSON `verification` block; `verify=strict` rejects a\ndoi-not-found with 409 (or metadata-unavailable / unconfigured\nwith 503).",
                 "consumes": [
                     "multipart/form-data"
                 ],
@@ -2614,7 +2662,7 @@
                     },
                     {
                         "type": "boolean",
-                        "description": "overwrite on content conflict",
+                        "description": "legacy input accepted; never replaces a frozen source or published revision",
                         "name": "overwrite",
                         "in": "query"
                     },
@@ -2660,8 +2708,43 @@
                             "additionalProperties": true
                         }
                     },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
                     "409": {
-                        "description": "Conflict",
+                        "description": "frozen alias conflict, including overwrite=true",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "413": {
+                        "description": "PDF byte cap exceeded",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "422": {
+                        "description": "frozen source integrity failure",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "PG/object store unavailable; no deferred success",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -2677,239 +2760,63 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns the images zip (application/zip) for the given\narxiv id or DOI — the bundle the MinerU conversion\nproduced alongside the markdown. The id may also be a\nqa_ paper_id (resolved to the canonical identity\nfirst). Only registered when\nQATLAS_PAPER_ACCESS_ENABLED=true on the server.\n\nCanonical resolution: same DOI-wins rule as\n/api/papers/{id_or_doi}/markdown; pass `?force_arxiv=1`\nto opt out per request.\n\nThis endpoint has no long-running-operation semantics:\nwhen no images zip is stored it answers 404 (fetch\n/markdown first to trigger the conversion that produces\nthe images).\n\nTransport (ADR 0011): defaults to a byte stream\n(application/zip). Pass `?format=link` to instead\nreceive a JSON body with a short-lived RustFS direct\nlink (`{images_url, format:\"link\", expires_in}`); on a\nbackend that cannot presign (dev LocalStore) a link\nrequest transparently falls back to bytes. Any other\n?format= value is a 400.",
+                "description": "Requires paper_access.enabled and papers:read for every identity. Uses verified original members of a complete immutable bundle; legacy image buckets/ZIPs are ignored. Preserves producer-relative member names/bytes. No-pin missing content may return 202 and start lazy parsing; poll the shared pure read/status until ready then re-GET pinned source/revision. Does not expose NAS/S3 presigns.",
                 "produces": [
                     "application/zip"
                 ],
                 "tags": [
                     "Papers"
                 ],
-                "summary": "Get paper images zip",
+                "summary": "Get source/revision-pinned images ZIP",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "arXiv canonical id with vN suffix, or a DOI",
+                        "description": "paper id: qa_... | arXiv id | DOI",
                         "name": "id_or_doi",
                         "in": "path",
                         "required": true
                     },
                     {
                         "type": "string",
-                        "description": "1/true: bypass DOI-canonical default; return 409 if DOI has no arxiv twin",
-                        "name": "force_arxiv",
+                        "description": "exact source; mutually exclusive with version",
+                        "name": "source_id",
                         "in": "query"
                     },
                     {
                         "type": "string",
-                        "description": "link|bytes — override the default transport (images zip defaults to bytes)",
-                        "name": "format",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "images zip bytes (application/zip), or a JSON {images_url} when ?format=link",
-                        "schema": {
-                            "type": "string"
-                        }
-                    },
-                    "400": {
-                        "description": "invalid arxiv_id or DOI, or invalid ?format= value",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "404": {
-                        "description": "no images available (fetch /markdown first to trigger conversion)",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "409": {
-                        "description": "force_arxiv requested but DOI has no arxiv twin",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "503": {
-                        "description": "DOI resolution unavailable",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
-        "/api/papers/{id_or_doi}/markdown": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Returns the cached MinerU markdown for the given arxiv id\n(or DOI — the id_or_doi path component is auto-detected\nagainst the IANA prefix `10.\u003cregistrant\u003e/...`). A qa_\npaper_id is also accepted: the server resolves the\nsurrogate to the paper's canonical identity (pinned to\nthe highest ingested arXiv version; DOI-only papers are\nserved from the DOI namespace). Only\nregistered when QATLAS_PAPER_ACCESS_ENABLED=true on the\nserver (default off).\n\nCanonical resolution: a `:PaperWork` node with\n`identifier_scheme='doi'` ALWAYS wins over its arxiv\ntwin when both exist — DOI is the canonical identity of\nthe published version. The dispatcher serves DOI bytes\nfor either id form when a DOI contribution is on file;\npass `?force_arxiv=1` to opt out per request (DOI input\nwith force_arxiv + no arxiv twin returns 409). See\ndocs/server/upload-api.md §Canonical resolution.\n\nLong-running operation semantics: on cache miss the\nserver may transparently fetch the PDF from arxiv.org\n(silent_fetch) — or, for a DOI without an arXiv twin,\nfrom the open-access PDF URL OpenAlex surfaces\n(best_oa_location.pdf_url) — and trigger a MinerU\nconversion. The first call returns 202 with\n`Operation-Location:\n/api/papers/{id}/markdown/status` and `Retry-After: 5`;\nclients poll the status endpoint until state=cached then\nre-GET this resource for the bytes. A DOI with no arXiv\ntwin and no OA PDF stays 404 (contribute the PDF via\nPOST /api/papers/{doi}/upload-pdf).\n\nTransport (ADR 0011): markdown DEFAULTS to a byte stream\n(text/markdown). Pass `?format=link` to instead receive a\nJSON body with a short-lived RustFS direct link\n(`{markdown_url, format:\"link\", expires_in}`); on a backend\nthat cannot presign (dev LocalStore) a link request\ntransparently falls back to bytes.",
-                "produces": [
-                    "text/plain"
-                ],
-                "tags": [
-                    "Papers"
-                ],
-                "summary": "Get paper markdown",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "arXiv canonical id with vN suffix, or a DOI (e.g. 10.1103/PhysRevLett.103.150502)",
-                        "name": "id_or_doi",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "1/true: bypass the DOI-canonical default and serve the arxiv twin (or 409 if no twin exists)",
-                        "name": "force_arxiv",
+                        "description": "exact semantic arXiv vN",
+                        "name": "version",
                         "in": "query"
                     },
                     {
                         "type": "string",
-                        "description": "link|bytes — override the default transport (markdown defaults to bytes)",
-                        "name": "format",
+                        "description": "complete immutable parse revision",
+                        "name": "revision",
                         "in": "query"
                     }
                 ],
                 "responses": {
                     "200": {
-                        "description": "markdown bytes (text/markdown), or a JSON {markdown_url} when ?format=link",
+                        "description": "images ZIP assembled from verified original members",
                         "schema": {
-                            "type": "string"
+                            "type": "file"
                         }
                     },
                     "202": {
-                        "description": "long-running operation started; poll status_url",
+                        "description": "source-specific parse pending",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "invalid arxiv_id or DOI",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
+                        },
+                        "headers": {
+                            "Operation-Location": {
+                                "type": "string",
+                                "description": "pure readiness poll URL"
+                            },
+                            "Retry-After": {
+                                "type": "string",
+                                "description": "poll delay in seconds"
                             }
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "404": {
-                        "description": "DOI unknown to OpenAlex / no arXiv twin and no OA PDF (contrib upload possible); or paper unknown and silent fetch unavailable",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "409": {
-                        "description": "force_arxiv requested but DOI has no arxiv twin",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "502": {
-                        "description": "prior conversion failed inside the cooldown window, or OpenAlex upstream error",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "503": {
-                        "description": "asset storage unavailable (code=asset_store_unavailable, retryable=true, Retry-After); cache-only mode or DOI resolution unavailable",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
-        "/api/papers/{id_or_doi}/markdown/status": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Side-effect-free poll surface. Never starts a job and\nnever triggers a fetch. Only registered when\nQATLAS_PAPER_ACCESS_ENABLED=true on the server. Like the\nmarkdown endpoint, the id may be an arXiv id, a DOI, or\na qa_ paper_id.\n\nCanonical resolution: same DOI-wins rule as\n/api/papers/{id_or_doi}/markdown. Pass `?force_arxiv=1`\nto query the arxiv-side status instead.\n\nResponse shape always carries the agent-decision triple\n`state / pdf_ready / md_ready` plus an optional `phase`\n(fetching_pdf | converting_md | ready | error_fetching |\nerror_converting) and `fetch` / `convert` sub-objects\nwith bytes_received / mineru_task_id / polled_count so a\npolling client can show precise progress.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Papers"
-                ],
-                "summary": "Get markdown conversion status",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "arXiv canonical id or DOI",
-                        "name": "id_or_doi",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "1/true: bypass DOI-canonical default",
-                        "name": "force_arxiv",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "status payload (state ∈ cached|queued|running|none|failed|cooldown|unavailable)",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
                         }
                     },
                     "400": {
@@ -2940,7 +2847,25 @@
                         }
                     },
                     "404": {
-                        "description": "paper unknown and silent fetch unavailable",
+                        "description": "disabled or exact pins/members missing",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -2949,48 +2874,91 @@
                         }
                     },
                     "503": {
-                        "description": "asset storage unavailable; retryable=true with Retry-After",
+                        "description": "Service Unavailable",
                         "schema": {
                             "type": "object",
-                            "additionalProperties": true
+                            "additionalProperties": {
+                                "type": "string"
+                            }
                         }
                     }
                 }
             }
         },
-        "/api/papers/{id_or_doi}/pdf": {
+        "/api/papers/{id_or_doi}/markdown": {
             "get": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "PDF delivery is disabled. This endpoint no longer\nserves PDF bytes (or direct links) in any state: it\nvalidates the id and always returns 410 Gone with\n`{\"detail\": \"PDF delivery is disabled; use the markdown\nendpoint instead\"}`. Use\n/api/papers/{id_or_doi}/markdown instead. The id may be\nan arXiv id, a DOI, or a qa_ paper_id (resolved to the\ncanonical identity first). Only registered when\nQATLAS_PAPER_ACCESS_ENABLED=true on the server.",
+                "description": "Requires paper_access.enabled and papers:read for canonical IDs and aliases. Uses a verified complete immutable bundle of the exact frozen source, not legacy MD/JSON/images. Original Markdown bytes are preserved (this is not /read's derived JSON). Missing no-pin content may start lazy parsing and return 202; explicit pins never repair/fall back. Only content access triggers inference, never nightly/boot/ingest.\nformat=link returns an authenticated same-origin /parses/{revision}/files/{original_path} locator, not a private NAS/S3 presign. Every follow-up download remains gated/authenticated. Poll Operation-Location read/status until verified ready, then re-GET with source/revision pins.",
                 "produces": [
-                    "application/json"
+                    "text/plain"
                 ],
                 "tags": [
                     "Papers"
                 ],
-                "summary": "Get paper PDF (disabled — 410 Gone)",
+                "summary": "Get source/revision-pinned Markdown",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "arXiv canonical id with vN suffix, or a DOI",
+                        "description": "paper id: qa_... | arXiv id | DOI",
                         "name": "id_or_doi",
                         "in": "path",
                         "required": true
                     },
                     {
                         "type": "string",
-                        "description": "1/true: bypass DOI-canonical default; return 409 if DOI has no arxiv twin",
-                        "name": "force_arxiv",
+                        "description": "exact frozen source; mutually exclusive with version",
+                        "name": "source_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "exact semantic arXiv vN",
+                        "name": "version",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "immutable complete parse revision",
+                        "name": "revision",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "bytes (default) or authenticated internal link",
+                        "name": "format",
                         "in": "query"
                     }
                 ],
                 "responses": {
+                    "200": {
+                        "description": "original Markdown bytes or source/revision-pinned link JSON",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "202": {
+                        "description": "pending source-specific parsing",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        },
+                        "headers": {
+                            "Operation-Location": {
+                                "type": "string",
+                                "description": "pure readiness poll URL"
+                            },
+                            "Retry-After": {
+                                "type": "string",
+                                "description": "poll delay in seconds"
+                            }
+                        }
+                    },
                     "400": {
-                        "description": "invalid arxiv_id or DOI",
+                        "description": "Bad Request",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -3016,15 +2984,8 @@
                             }
                         }
                     },
-                    "409": {
-                        "description": "force_arxiv requested but DOI has no arxiv twin",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "410": {
-                        "description": "PDF delivery is disabled; use the markdown endpoint instead",
+                    "404": {
+                        "description": "disabled or exact pins/members missing",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -3032,18 +2993,320 @@
                             }
                         }
                     },
-                    "502": {
-                        "description": "OpenAlex upstream error (DOI dispatch)",
+                    "409": {
+                        "description": "source/revision conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "immutable content integrity failure",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "backend or parser unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/papers/{id_or_doi}/markdown/status": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Same gate/auth/pure verified bundle readiness as /read/status. Never downloads or starts parsing. Historical MD/Middle or process Done alone is not readiness. Returns top-level source_id/revision pins and ready/state; pending may be 202 with Operation-Location and Retry-After. Compatibility flags may additionally include pdf_ready/md_ready.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Papers"
+                ],
+                "summary": "Get complete Markdown readiness status",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "paper id: qa_... | arXiv id | DOI",
+                        "name": "id_or_doi",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "exact frozen PDF source",
+                        "name": "source_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "immutable complete parse revision",
+                        "name": "revision",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "source/revision-pinned readiness payload",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
                     },
-                    "503": {
-                        "description": "DOI resolution unavailable",
+                    "202": {
+                        "description": "source-specific operation pending",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
+                        },
+                        "headers": {
+                            "Operation-Location": {
+                                "type": "string",
+                                "description": "pure readiness poll URL"
+                            },
+                            "Retry-After": {
+                                "type": "string",
+                                "description": "poll delay in seconds"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "disabled or exact pins missing",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/papers/{id_or_doi}/pdf": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires paper_access.enabled and papers:read for every ID, including qa_ aliases and Range. Disabled returns 404, not 410. Direct access does not require source-list rows first: a legacy PDF may be lazily frozen; no old MD/JSON/images are copied. Stored PDF retrieval requires no MinerU token or parsing. Frozen missing/corrupt bytes fail closed, never fall back to legacy/current/latest bytes.\nsource_id and version are mutually exclusive exact pins. arXiv vN is semantic source origin, not S3VersionId. Same paper/SHA may reuse a source ID. Explicit pin mismatch or ambiguity never substitutes a source/version. Full response SHA headers describe the whole PDF, not a partial Range.",
+                "produces": [
+                    "application/pdf"
+                ],
+                "tags": [
+                    "Papers"
+                ],
+                "summary": "Get source-pinned paper PDF",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "paper id: qa_... | arXiv id | DOI",
+                        "name": "id_or_doi",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "exact source PDF id; mutually exclusive with version",
+                        "name": "source_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "exact semantic arXiv version vN; not an S3 VersionId",
+                        "name": "version",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "bytes (default) or link: same-origin authenticated pinned PDF locator, never bucket presign",
+                        "name": "format",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "standard bytes range; same authentication as full GET",
+                        "name": "Range",
+                        "in": "header"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "source PDF original bytes",
+                        "schema": {
+                            "type": "file"
+                        },
+                        "headers": {
+                            "X-QAtlas-PDF-SHA256": {
+                                "type": "string",
+                                "description": "whole PDF SHA-256"
+                            },
+                            "X-QAtlas-Paper-Id": {
+                                "type": "string",
+                                "description": "canonical paper id"
+                            },
+                            "X-QAtlas-Resolved-Id": {
+                                "type": "string",
+                                "description": "resolved canonical identity"
+                            },
+                            "X-QAtlas-Sha256": {
+                                "type": "string",
+                                "description": "whole PDF SHA-256"
+                            },
+                            "X-QAtlas-Source-Id": {
+                                "type": "string",
+                                "description": "immutable PDF source id"
+                            },
+                            "X-QAtlas-Source-Origin": {
+                                "type": "string",
+                                "description": "semantic origin, e.g. arxiv:v2"
+                            }
+                        }
+                    },
+                    "206": {
+                        "description": "authenticated partial content",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "400": {
+                        "description": "malformed or mutually exclusive query pins",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "paper access disabled or exact source/version/bytes missing",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "ambiguous source or identity conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "416": {
+                        "description": "invalid byte range",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "frozen PDF integrity mismatch",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "registry/store unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
                         }
                     }
                 }
@@ -3056,7 +3319,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Side-effect-free probe reporting the pdf_ready /\nmd_ready booleans for a paper. Retained for debugging\nafter PDF delivery was disabled (GET .../pdf answers\n410 Gone); the body no longer carries a pdf_url. The id\nmay be an arXiv id, a DOI, or a qa_ paper_id. Only\nregistered when QATLAS_PAPER_ACCESS_ENABLED=true.\n\nCanonical resolution: same DOI-wins rule as\n/api/papers/{id_or_doi}/markdown. Pass `?force_arxiv=1`\nto query the arxiv-side status instead.",
+                "description": "Side-effect-free probe reporting the pdf_ready /\nmd_ready booleans for a paper. This compatibility probe\ndoes not start parsing; direct /pdf now serves authenticated\nimmutable bytes. The body carries no bucket/presigned URL. The id\nmay be an arXiv id, a DOI, or a qa_ paper_id. Only\nregistered when QATLAS_PAPER_ACCESS_ENABLED=true.\n\nCanonical resolution: same DOI-wins rule as\n/api/papers/{id_or_doi}/markdown. Pass `?force_arxiv=1`\nto query the arxiv-side status instead.",
                 "produces": [
                     "application/json"
                 ],
@@ -3131,14 +3394,14 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Groups the markdown's image references into figures:\nconsecutive `![](images/\u003csha256\u003e.\u003cext\u003e)` lines form one\nmulti-panel figure sharing a caption (searched up to 12\nlines below the group, then 4 lines above). Each figure\nreports its number, caption, the preceding prose line as\ncontext (≤200 runes) and its image files with sizes plus\nper-image download URLs; images no figure references come\nback as unmatched_images, and image_count is the total\nlisted. Sizes come from the images zip's central\ndirectory (no member decompression) or the legacy\nper-paper directory listing. A paper with no markdown\nanswers 200 with markdown_ready:false and empty figures\n(its conversion has not produced markdown yet). The id\nmay be a qa_ surrogate, an arXiv id, or a DOI; arXiv/DOI\nforms are only dispatched when\nQATLAS_PAPER_ACCESS_ENABLED=true.",
+                "description": "Requires paper_access.enabled and papers:read for every ID including qa_. Uses original Markdown and manifest image members from one verified complete bundle. Member URLs target authenticated immutable /parses/{revision}/files/{original_path}, never flattened hashes or NAS presigns. No-pin missing content may be 202; poll shared read/status then re-GET source/revision pinned.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Papers"
                 ],
-                "summary": "Get paper figures index",
+                "summary": "Get source/revision-pinned figures index",
                 "parameters": [
                     {
                         "type": "string",
@@ -3146,18 +3409,53 @@
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "exact source; mutually exclusive with version",
+                        "name": "source_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "exact semantic arXiv vN",
+                        "name": "version",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "complete immutable revision",
+                        "name": "revision",
+                        "in": "query"
                     }
                 ],
                 "responses": {
                     "200": {
-                        "description": "{paper_id, resolved_id, markdown_ready, figures:[{fig_no, caption, context, images:[{name,size,url}]}], unmatched_images:[{name,size,url}], image_count}",
+                        "description": "{paper_id,resolved_id,source_id,revision,markdown_ready,figures,unmatched_images,image_count}",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
                     },
+                    "202": {
+                        "description": "source-specific parse pending",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        },
+                        "headers": {
+                            "Operation-Location": {
+                                "type": "string",
+                                "description": "pure readiness poll URL"
+                            },
+                            "Retry-After": {
+                                "type": "string",
+                                "description": "poll delay in seconds"
+                            }
+                        }
+                    },
                     "400": {
-                        "description": "unrecognized paper id",
+                        "description": "Bad Request",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -3184,7 +3482,25 @@
                         }
                     },
                     "404": {
-                        "description": "no such paper",
+                        "description": "disabled or exact pins/members missing",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -3193,7 +3509,7 @@
                         }
                     },
                     "503": {
-                        "description": "registry unavailable",
+                        "description": "Service Unavailable",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -3211,14 +3527,14 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Serves a single MinerU-extracted image (content-addressed\n`\u003csha256\u003e.\u003cjpg|jpeg|png|gif|webp\u003e`) without downloading\nthe whole images zip — the URLs in the figures index and\nthe images listing point here. Bytes come from the\npaper's images zip (member extracted in memory) or its\nlegacy per-paper directory. Responses are immutable\ncontent-addressed files and carry\n`Cache-Control: public, max-age=86400`. The id may be a\nqa_ surrogate, an arXiv id, or a DOI; arXiv/DOI forms are\nonly dispatched when QATLAS_PAPER_ACCESS_ENABLED=true.",
+                "description": "Requires paper_access.enabled and papers:read for every identity. Resolves the original producer-relative image path inside one complete immutable bundle, without flattening names or guessing another revision. No-pin unready content may return202; poll shared read/status then re-GET fixed source/revision. Downloads remain authenticated and private/no-cache; no public NAS presigns. Exact pins/missing members never fall back.",
                 "produces": [
-                    "image/jpeg"
+                    "application/octet-stream"
                 ],
                 "tags": [
                     "Papers"
                 ],
-                "summary": "Get paper image",
+                "summary": "Get source/revision-pinned image",
                 "parameters": [
                     {
                         "type": "string",
@@ -3229,21 +3545,56 @@
                     },
                     {
                         "type": "string",
-                        "description": "image file name: \u003csha256-hex\u003e.\u003cjpg|jpeg|png|gif|webp\u003e",
+                        "description": "original relative image name/path from figures or manifest",
                         "name": "name",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "exact source; mutually exclusive with version",
+                        "name": "source_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "exact semantic arXiv vN",
+                        "name": "version",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "complete immutable revision",
+                        "name": "revision",
+                        "in": "query"
                     }
                 ],
                 "responses": {
                     "200": {
-                        "description": "image bytes with the per-extension Content-Type",
+                        "description": "verified original image bytes",
                         "schema": {
                             "type": "file"
                         }
                     },
+                    "202": {
+                        "description": "source-specific parse pending",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        },
+                        "headers": {
+                            "Operation-Location": {
+                                "type": "string",
+                                "description": "pure readiness poll URL"
+                            },
+                            "Retry-After": {
+                                "type": "string",
+                                "description": "poll delay in seconds"
+                            }
+                        }
+                    },
                     "400": {
-                        "description": "name is not a whitelisted image file name",
+                        "description": "Bad Request",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -3270,7 +3621,25 @@
                         }
                     },
                     "404": {
-                        "description": "no such paper, or the paper's images hold no such member",
+                        "description": "disabled or exact pins/member missing",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -3279,7 +3648,296 @@
                         }
                     },
                     "503": {
-                        "description": "registry unavailable",
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/papers/{id}/read": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires paper_access.enabled and papers:read. This is derived Markdown-reading JSON, NOT raw Middle or Structured Content. Returns paper_id/source_id/revision/source_sha256/artifact_sha256/bundle_sha256?/renderer/format/content, request_scope, content_ranges, truncated, next_request and warnings?. page and block are 1-based exact producer indexes (not array offsets); block requires page. limit is a Unicode content budget, default 30000, max 100000.\nAn opaque cursor pins canonical paper/source/revision, PDF/Middle/bundle hashes, renderer and selection. Cursor-only resolves pins BEFORE selecting current; conflicting explicit pins/selectors are 409. Pinned failures never trigger repair, reparse, fallback or a current/latest substitution. Only content GET without a fixed revision/cursor may parse the selected verified source. source_id pins PDF, not a parse revision; absent PDF acquisition requires no source/revision/cursor pin. Old MD/JSON/images are ignored; legacy PDFs may be lazily frozen without deleting old storage.\nPending work returns 202 + Operation-Location=/api/papers/{canonical}/read/status?source_id=S once the source is known (otherwise retains the exact requested DOI/arXiv identity), plus Retry-After. Poll status without starting another job; only verified complete bundle readiness, not process Done or historical Middle existence, permits re-GET with fixed source/revision.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Papers"
+                ],
+                "summary": "Read paper content with immutable pins and continuation",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "paper id: qa_... | arXiv id | DOI",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "exact PDF source id; mutually exclusive with version",
+                        "name": "source_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "exact semantic arXiv vN source pin",
+                        "name": "version",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "immutable parse revision pin",
+                        "name": "revision",
+                        "in": "query"
+                    },
+                    {
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "1-based page number",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "1-based exact producer block index; requires page",
+                        "name": "block",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "opaque next_request.cursor; pinned revision loaded before current",
+                        "name": "cursor",
+                        "in": "query"
+                    },
+                    {
+                        "maximum": 100000,
+                        "minimum": 1,
+                        "type": "integer",
+                        "default": 30000,
+                        "description": "Unicode character budget",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Middle-derived reading envelope; truncated=true includes next_request.cursor",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "202": {
+                        "description": "source-pinned operation pending",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        },
+                        "headers": {
+                            "Operation-Location": {
+                                "type": "string",
+                                "description": "pure status poll URL"
+                            },
+                            "Retry-After": {
+                                "type": "string",
+                                "description": "poll delay in seconds"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "malformed query/cursor or invalid bounds",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "paper access disabled or exact pins/members missing",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "pin/selection/renderer/hash identity conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "frozen bytes or bundle integrity failure",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "backend or parser unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/papers/{id}/read/status": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Pure status request: never calls EnsureSource, downloads or starts parsing. Gate and auth match /read. Verifies frozen source and the published complete manifest/members. Historical Middle or a process Done flag is not readiness. Returns top-level paper_id/source_id/source_sha256/revision/state/ready; ready is 200, queued/running/pending may be 202 with the same Operation-Location and Retry-After. Explicit pins never fall back.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Papers"
+                ],
+                "summary": "Poll source-specific paper reading readiness",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "paper id: qa_... | arXiv id | DOI",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "exact PDF source id",
+                        "name": "source_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "immutable parse revision pin",
+                        "name": "revision",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{paper_id,source_id,source_sha256,revision,state,ready,md_ready,pdf_ready,read_url,markdown_url}; cached|failed|none",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "202": {
+                        "description": "{paper_id,source_id,source_sha256,revision,state,ready:false}; pending|queued|running",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        },
+                        "headers": {
+                            "Operation-Location": {
+                                "type": "string",
+                                "description": "same status URL"
+                            },
+                            "Retry-After": {
+                                "type": "string",
+                                "description": "poll delay in seconds"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "disabled or specified pins missing",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "source/revision identity conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "bundle/source integrity failure",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "backend unavailable",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -3601,29 +4259,73 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Lists the image objects of every asset of the paper,\nfetched on demand from the images bucket (no separate sync\nlisting exists). Each asset reports kind \"zip\" (single\nimages zip) or \"dir\" (per-paper directory) depending on the\nlayout found, its files, and whether the 200-object cap\ntruncated the listing. Empty files when the asset has no\nimages. Requires the papers:read scope.",
+                "description": "Requires paper_access.enabled and papers:read for every identity. Original producer-relative names, SHA and authenticated revision/member URLs come from a verified manifest, never old image buckets. No-pin unready content may return202; only content GET can trigger lazy parsing. Metadata registry listings are separate from this gated content inventory.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Papers"
                 ],
-                "summary": "List paper images",
+                "summary": "List source/revision-pinned paper images",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "surrogate paper id (qa_...)",
+                        "description": "paper id: qa_... | arXiv id | DOI",
                         "name": "paper_id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "exact source; mutually exclusive with version",
+                        "name": "source_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "exact semantic arXiv vN",
+                        "name": "version",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "complete immutable revision",
+                        "name": "revision",
+                        "in": "query"
                     }
                 ],
                 "responses": {
                     "200": {
-                        "description": "{paper_id, assets:[{asset_id, source, arxiv_version, kind, files:[{key,size}], truncated}]}",
+                        "description": "{paper_id,source_id,revision,files:[{key,name,size,sha256,url}],truncated:false,assets}",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
+                        }
+                    },
+                    "202": {
+                        "description": "source-specific parse pending",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        },
+                        "headers": {
+                            "Operation-Location": {
+                                "type": "string",
+                                "description": "pure readiness poll URL"
+                            },
+                            "Retry-After": {
+                                "type": "string",
+                                "description": "poll delay in seconds"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
                         }
                     },
                     "401": {
@@ -3645,7 +4347,25 @@
                         }
                     },
                     "404": {
-                        "description": "Not Found",
+                        "description": "disabled or exact pins missing",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -3654,7 +4374,7 @@
                         }
                     },
                     "503": {
-                        "description": "registry unavailable",
+                        "description": "Service Unavailable",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -3743,7 +4463,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Top-level blocks of one immutable parse revision, in\nstable (page_idx, block index) order. Block indexes are\nthe parse's own public 1-based numbers and may be\nnon-contiguous (1,2,5,...); gaps are real — never\nrenumbered. page_idx is the original 0-based page index\n(page_no in each item is the public 1-based number).\ncursor is the opaque next_cursor token (keyset on the\nlast emitted block); per_page defaults to 20, max 100.\nRequires login or papers:read.",
+                "description": "Top-level blocks of one immutable parse revision, in\nstable (page_idx, block index) order. Block indexes are\nthe parse's own public 1-based numbers and may be\nnon-contiguous (1,2,5,...); gaps are real — never\nrenumbered. page_idx is the original 0-based page index\n(page_no in each item is the public 1-based number).\ncursor is the opaque next_cursor token (keyset on the\nlast emitted block); per_page defaults to 20, max 100.\nRequires paper_access.enabled plus login/papers:read, including historical revisions and qa_ identities; disabled is 404.",
                 "produces": [
                     "application/json"
                 ],
@@ -3857,7 +4577,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Combined read of ONE block: source (paper + source PDF\nidentity + parse revision identity) + anchor (the\npermanent comment anchor: canonical qa_, source_id,\nparse_revision, schema, page_idx, block_index) +\ncontent (the block's parsed value, original JSON under\nraw) + discussions. Block lookup is EXACT on\n(page_idx, block index): a non-contiguous index gap or a\npage the parse lacks answers 404 — never a\nnearest-block fallback. The same visual text under two\nparses of one PDF is TWO distinct anchors; comments\nnever migrate between revisions. discussions is an\nempty placeholder until the Q2 comment API lands\n(discussions_ready=false). Requires login or\npapers:read.",
+                "description": "Combined read of ONE block: source (paper + source PDF\nidentity + parse revision identity) + anchor (the\npermanent comment anchor: canonical qa_, source_id,\nparse_revision, schema, page_idx, block_index) +\ncontent (the block's parsed value, original JSON under\nraw) + discussions. Block lookup is EXACT on\n(page_idx, block index): a non-contiguous index gap or a\npage the parse lacks answers 404 — never a\nnearest-block fallback. The same visual text under two\nparses of one PDF is TWO distinct anchors; comments\nnever migrate between revisions. Original block content requires\npaper_access.enabled plus login/papers:read for all IDs; comment\nmetadata does not provide an original-content gate bypass.",
                 "produces": [
                     "application/json"
                 ],
@@ -3967,7 +4687,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "A PNG crop of the ORIGINAL source PDF page rendered and\nclipped to the block's [0,1]-normalized bbox — a real\npage region, never a redraw of the parsed text. Honest\nfailures, never a fabricated image: the block carries\nno bbox → 404 reason=no_bbox; the source PDF bytes are\nmissing → 404 reason=source_missing; the page is beyond\nthe source PDF → 404 reason=page_out_of_range; no PDF\nrasterizer installed on the server → 503\nreason=renderer_unavailable (operators install\npoppler-utils or set paper_access.block_image_command;\nresolution via paper_access.block_image_dpi, default\n150). ETag is deterministic over (source sha, page,\nbbox, dpi). Requires login or papers:read.",
+                "description": "A PNG crop of the ORIGINAL source PDF page rendered and\nclipped to the block's [0,1]-normalized bbox — a real\npage region, never a redraw of the parsed text. Honest\nfailures, never a fabricated image: the block carries\nno bbox → 404 reason=no_bbox; the source PDF bytes are\nmissing → 404 reason=source_missing; the page is beyond\nthe source PDF → 404 reason=page_out_of_range; no PDF\nrasterizer installed on the server → 503\nreason=renderer_unavailable (operators install\npoppler-utils or set paper_access.block_image_command;\nresolution via paper_access.block_image_dpi, default\n150). ETag is deterministic over (source sha, page,\nbbox, dpi). Requires paper_access.enabled plus login/papers:read, including historical sources; Range/aliases do not bypass the gate.",
                 "produces": [
                     "image/png"
                 ],
@@ -4069,6 +4789,123 @@
                 }
             }
         },
+        "/api/papers/{paper_id}/parses/{revision}/files/{path}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires paper_access.enabled and papers:read; serves the exact original relative member path, including nested directories and all JSON/Markdown/images/unknown valid files. No renaming, flattening or JSON reserialization. Verifies the complete published manifest/source/members and the selected member SHA before bytes; exact pins never fall back. Unknown/untrusted types use attachment+nosniff, allowlisted raster images may be inline. Generated manifest lives separately from producer files. No raw S3 presigns.",
+                "produces": [
+                    "application/octet-stream"
+                ],
+                "tags": [
+                    "Papers"
+                ],
+                "summary": "Get a producer-original immutable bundle member",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "paper id or resolvable alias",
+                        "name": "paper_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "immutable complete parse revision",
+                        "name": "revision",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "original producer relative member path, may contain /; as listed by manifest",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "optional exact source consistency pin",
+                        "name": "source_id",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "byte-exact original member; ETag is member SHA-256",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "400": {
+                        "description": "unsafe member path",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "disabled, pins missing or member not in manifest",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "source/revision conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "bundle/source/member integrity failure",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "backend unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/papers/{paper_id}/parses/{revision}/json": {
             "get": {
                 "security": [
@@ -4076,7 +4913,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "The ORIGINAL Middle JSON artifact bytes of one parse\nrevision — not a re-serialization. ETag /\nX-QAtlas-Sha256 carry the artifact sha256 the revision\nrow pins; the server verifies the stored bytes against\nit before serving (a mismatch is a 500, never silent).\nRevisions are immutable: the bytes for a revision_id\nnever change. Requires login or papers:read.",
+                "description": "The ORIGINAL Middle JSON artifact bytes of one parse\nrevision — not a re-serialization. ETag /\nX-QAtlas-Sha256 carry the artifact sha256 the revision\nrow pins; the server verifies the stored bytes against\nit before serving (a mismatch is a 500, never silent).\nRevisions are immutable: the bytes for a revision_id\nnever change. Requires paper_access.enabled plus login/papers:read. Historical pinned Middle remains available for old comments, but is not evidence that a new complete bundle is ready; use /read for the derived view or /manifest and /files/{path} for all producer originals.",
                 "produces": [
                     "application/json"
                 ],
@@ -4145,6 +4982,116 @@
                     },
                     "503": {
                         "description": "registry or store unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/papers/{paper_id}/parses/{revision}/manifest": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires paper_access.enabled and papers:read; only published complete new bundles are accepted. Verifies exact frozen source, manifest and every original member before serving. Manifest is generated separately from originals: version,paper_id,source_id,revision_id,source_pdf_sha256,middle_path,markdown_path,files[{path,size_bytes,sha256}]. Old historical Middle alone is not bundle readiness. Never repairs or falls back to current.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Papers"
+                ],
+                "summary": "Get immutable complete-bundle manifest",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "paper id or resolvable alias",
+                        "name": "paper_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "immutable complete parse revision",
+                        "name": "revision",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "optional exact source consistency pin",
+                        "name": "source_id",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "generated manifest JSON bytes, ETag is manifest SHA-256",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "disabled or exact published bundle missing",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "source/revision conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "bundle/source integrity failure",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "backend unavailable",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -4242,7 +5189,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "The ORIGINAL PDF bytes of one source, hash-verifiable\nvia ETag / X-QAtlas-Sha256 (= the row's sha256). Range\nrequests are honoured with the SAME authentication as\nfull GETs. ?version=vN is a pin, not a hint: on mismatch\nwith the source's own origin the answer is 404 — the\nserver never substitutes a newer version or the journal\nedition. This is the block-comments reading surface; the\nlegacy /api/papers/{id}/pdf route stays 410.",
+                "description": "The ORIGINAL PDF bytes of one source, hash-verifiable\nvia ETag / X-QAtlas-Sha256 (= the row's sha256). Range\nrequests are honoured with the SAME authentication as\nfull GETs. ?version=vN is a pin, not a hint: on mismatch\nwith the source's own origin the answer is 404 — the\nserver never substitutes a newer version or the journal\nedition. Requires paper_access.enabled even for historical\nsources; /api/papers/{id}/pdf is the direct alias-aware source-pin entry point.",
                 "produces": [
                     "application/pdf"
                 ],
@@ -5242,7 +6189,7 @@
         },
         "/api/server/info": {
             "get": {
-                "description": "Capability discovery: mode / version / engine plus a\ncapabilities block — paper_access, markdown_delivery,\npdf_delivery (always false — the /pdf endpoint answers\n410 by design), agentic_search, and a nested mineru\nobject (enabled / on_demand). Privacy mirrors /api/health:\nanonymous callers see the booleans only; authenticated\ncallers (system PAT or session) additionally get\nmineru.daily_cap and mineru.converted_today from the\nbatch-scheduler snapshot. Note the quota semantics:\ndaily_cap self-limits the nightly BATCH scheduler\n(default 4000/day, reserving headroom for interactive\ntraffic); on-demand conversions triggered by GET\n/markdown are NOT counted against it — they only share\nthe upstream per-token daily quota.",
+                "description": "Capability discovery: mode / version / engine plus a\ncapabilities block — paper_access, markdown_delivery,\npdf_delivery (available when paper_access is enabled;\nstored PDF delivery requires no MinerU token), agentic_search, and a nested mineru\nobject (enabled / on_demand). Privacy mirrors /api/health:\nanonymous callers see the booleans only; authenticated\ncallers (system PAT or session) additionally get\nmineru.daily_cap and mineru.converted_today from the\nbatch-scheduler snapshot. Note the quota semantics:\ndaily_cap bounds explicit operator/manual batch runs;\nthere is no automatic nightly, boot, PDF-ingest or bulk\nconversion. Only explicit content access triggers lazy\nsource-bound inference; stored PDF reads are token-independent.\nManual and on-demand work still share upstream token quotas.",
                 "produces": [
                     "application/json"
                 ],
@@ -5268,7 +6215,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Acquires the same MinerU processing lease returned by the claim path. The response body uses claim_id as the lease identifier.",
+                "description": "Acquires the same MinerU processing lease returned by the claim path. The response body uses claim_id as the lease identifier. With paper_access enabled, pdf_url is a same-origin authenticated exact-source locator, source_id/pdf_requires_auth:true and verified PDF SHA are returned; never forward the user's auth to an external parser. Download exact bytes with auth, then use provider upload. With the gate off, only the external arXiv URL and grant catalog SHA are returned; no hosted PDF bytes.",
                 "produces": [
                     "application/json"
                 ],
