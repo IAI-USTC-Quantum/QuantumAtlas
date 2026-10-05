@@ -935,7 +935,7 @@ func docPaperBundleFile() {}
 // @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string
 // @Failure     404 {object} map[string]string "no such revision / bytes missing"
-// @Failure     422 {object} map[string]string "artifact fails the docvortex.middle v2.0 profile"
+// @Failure     422 {object} map[string]string "artifact fails a supported original Middle profile (DocVortex 2.0 or native pdf_info-v1)"
 // @Failure     503 {object} map[string]string "registry or store unavailable"
 // @Router      /api/papers/{paper_id}/parses/{revision}/blocks [get]
 func docPaperBlocksList() {}
@@ -968,7 +968,7 @@ func docPaperBlocksList() {}
 // @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string
 // @Failure     404 {object} map[string]string "no such revision or block (exact-index semantics)"
-// @Failure     422 {object} map[string]string "artifact fails the docvortex.middle v2.0 profile"
+// @Failure     422 {object} map[string]string "artifact fails a supported original Middle profile (DocVortex 2.0 or native pdf_info-v1)"
 // @Failure     503 {object} map[string]string "registry or store unavailable"
 // @Router      /api/papers/{paper_id}/parses/{revision}/blocks/{page_idx}/{block_index} [get]
 func docPaperBlockGet() {}
@@ -1001,7 +1001,7 @@ func docPaperBlockGet() {}
 // @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string
 // @Failure     404 {object} map[string]string "no_bbox | source_missing | page_out_of_range | no such revision/block"
-// @Failure     422 {object} map[string]string "artifact fails the docvortex.middle v2.0 profile"
+// @Failure     422 {object} map[string]string "artifact fails a supported original Middle profile (DocVortex 2.0 or native pdf_info-v1)"
 // @Failure     503 {object} map[string]string "renderer_unavailable | registry or store unavailable"
 // @Router      /api/papers/{paper_id}/parses/{revision}/blocks/{page_idx}/{block_index}/image [get]
 func docPaperBlockImage() {}
@@ -1068,7 +1068,7 @@ func docUploadPDF() {}
 // uploadMineRU stores a MinerU result zip (markdown + images bundle) for a paper.
 //
 // @Summary     Upload paper MinerU bundle (arXiv id or DOI)
-// @Description Requires a COMPLETE supported docvortex.middle/schema_version 2.0 Middle (middle_json.json or supported layout.json) AND markdown.md/full.md; MD-only, ContentList-only, incomplete or invalid schema packages are 422. All valid producer-original relative paths/names/bytes, including every JSON and unknown file, are retained; originals are never renamed or reserialized. Traversal, absolute/backslash paths, duplicate names, symlinks, CRC/ZIP errors fail the whole archive. Limits: ZIP/member 128MiB, expanded aggregate 256MiB, at most 10000 files.
+// @Description Requires a COMPLETE supported original Middle AND markdown.md/full.md. Supported profiles are docvortex.middle/schema_version 2.0 and genuine native pdf_info[] layout.json (mineru.native.middle/pdf_info-v1); producer engine version is not the structural schema version. MD-only, ContentList-only, incomplete or invalid schema packages are 422. All valid producer-original relative paths/names/bytes, including every JSON and unknown file, are retained; originals are never renamed or reserialized. Traversal, absolute/backslash paths, duplicate names, symlinks, CRC/ZIP errors fail the whole archive. Limits: ZIP/member 128MiB, expanded aggregate 256MiB, at most 10000 files.
 // @Description Writes create-only revision-scoped files into the new content bucket, verifies frozen exact PDF and every persisted member, writes separate manifest LAST, then publishes through PG (required). Every reupload is a new immutable revision/current publication; overwrite never changes historical revisions. Raw ZIP retention is optional; verified members+manifest are mandatory. No deferred-success indexing.
 // @Description
 // @Description The {arxiv_id} slot also accepts a DOI for a published edition's exact already-uploaded PDF. Both paths share source-bound immutable bundle publication; there is no title/authors metadata override. PDF contribution establishes DOI metadata (see upload-pdf). A tier label records producer/request metadata, not proof of an executed provider quality mode.

@@ -60,6 +60,18 @@ type MiddleBlock struct {
 	BBox    []float64 // nil or [4]float64 in [0,1]
 	// Raw is the complete original JSON object of the block.
 	Raw json.RawMessage
+	// RenderRaw is a derived native-profile view held ONLY in memory. Raw and
+	// the persisted artifact always remain producer-original bytes.
+	RenderRaw   json.RawMessage
+	NativePath  string
+	NativeIndex json.RawMessage
+}
+
+func (b MiddleBlock) RenderJSON() json.RawMessage {
+	if len(b.RenderRaw) != 0 {
+		return b.RenderRaw
+	}
+	return b.Raw
 }
 
 // ContentText returns the content as a plain string when it is a JSON
@@ -89,11 +101,13 @@ func (b MiddleBlock) ContentText() string {
 
 // MiddleDoc is a parsed Middle JSON artifact.
 type MiddleDoc struct {
-	Schema        string
-	SchemaVersion string
-	Pages         int // pdf_info.pages when present
-	PageSize      [][2]float64
-	Blocks        []MiddleBlock
+	Schema                string
+	SchemaVersion         string
+	Pages                 int // pdf_info.pages when present
+	PageSize              [][2]float64
+	Blocks                []MiddleBlock
+	ProducerVersion       string
+	NormalizationWarnings []string
 }
 
 type middleJSON struct {
@@ -166,6 +180,18 @@ func decodeBlockIndex(raw json.RawMessage) (int, bool) {
 //     if a future MinerU ships 1-based page-block indexes the +1 must
 //     be keyed off the producer version in metadata.
 func ParseMiddleJSON(data []byte) (*MiddleDoc, error) {
+	// Identify the envelope BEFORE decoding DocVortex's object pdf_info.
+	// An explicit wrong schema never falls through to another profile.
+	var envelope struct {
+		Schema  string          `json:"schema"`
+		PDFInfo json.RawMessage `json:"pdf_info"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return nil, fmt.Errorf("mineru: decode middle json: %w", err)
+	}
+	if envelope.Schema == "" && strings.HasPrefix(strings.TrimSpace(string(envelope.PDFInfo)), "[") {
+		return parseNativeMiddle(data)
+	}
 	var raw middleJSON
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("mineru: decode middle json: %w", err)

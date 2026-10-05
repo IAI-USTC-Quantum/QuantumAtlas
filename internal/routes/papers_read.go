@@ -83,7 +83,7 @@ func selectReadingSource(re *core.RequestEvent, cfg *config.Config, store objsto
 		if decodeErr != nil {
 			return rp, src, nil, true, readingErrorResponse(re, decodeErr)
 		}
-		if identity.Renderer != paperread.RendererVersion || sourceID != "" && sourceID != identity.SourceID || revision != "" && revision != identity.Revision {
+		if !paperread.IsSupportedRenderer(identity.Renderer) || sourceID != "" && sourceID != identity.SourceID || revision != "" && revision != identity.Revision {
 			return rp, src, nil, true, readingErrorResponse(re, paperread.ErrCursorMismatch)
 		}
 		sourceID, revision = identity.SourceID, identity.Revision
@@ -326,7 +326,7 @@ func contentReadStatusHandler(re *core.RequestEvent, cfg *config.Config, store o
 		}
 		query := selection.Encode()
 		base := "/api/papers/" + url.PathEscape(rp.canonical)
-		return re.JSON(http.StatusOK, map[string]any{"paper_id": rp.canonical, "source_id": src.SourceID, "source_sha256": src.Sha256, "revision": b.RevisionID, "state": "cached", "phase": "ready", "ready": true, "md_ready": true, "pdf_ready": true, "markdown_url": base + "/markdown?" + query, "read_url": base + "/read?" + query, "manifest_sha256": b.ManifestSHA256, "renderer": paperread.RendererVersion})
+		return re.JSON(http.StatusOK, map[string]any{"paper_id": rp.canonical, "source_id": src.SourceID, "source_sha256": src.Sha256, "revision": b.RevisionID, "state": "cached", "phase": "ready", "ready": true, "md_ready": true, "pdf_ready": true, "markdown_url": base + "/markdown?" + query, "read_url": base + "/read?" + query, "manifest_sha256": b.ManifestSHA256, "renderer": supportedBundleRenderer(b)})
 	}
 	var job *mineru.Job
 	if contentConverterAvailable(converter) {
@@ -342,6 +342,11 @@ func contentReadStatusHandler(re *core.RequestEvent, cfg *config.Config, store o
 		return re.JSON(http.StatusOK, body)
 	}
 	return contentPendingResponse(re, rp, src, job)
+}
+
+func supportedBundleRenderer(bundle registry.ParseBundle) string {
+	version, _ := paperread.RendererForProfile(bundle.Schema, bundle.SchemaVersion)
+	return version
 }
 
 func contentJobBody(rp resolvedPaper, src registry.PaperSource, job *mineru.Job) map[string]any {

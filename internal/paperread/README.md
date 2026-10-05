@@ -40,6 +40,17 @@ block content. Simple tables become GFM; complex tables preserve sanitized HTML
 geometry and relative embedded-image links. Unsupported future block types are
 shown as bounded inert raw content with warnings, not dropped as whole documents.
 
+Both honest artifact profiles are supported: `docvortex.middle/2.0` retains the
+released `qatlas-middle-markdown-v1` renderer and old cursors; native
+`mineru.native.middle/pdf_info-v1` uses `qatlas-mineru-native-markdown-v1`.
+Native `pdf_info[]` blocks retain their ORIGINAL `Raw` node and source bytes;
+only the parser's in-memory `RenderJSON()` view feeds the renderer. Producer
+line/span content, pixel boxes, zero-based explicit indexes, image payloads,
+formula bodies, and table HTML are adapted without writing a fake DocVortex
+artifact. Missing ambiguous native block indexes fail closed, not ordinalized.
+Cursor renderer pins must match the actual parsed profile, even when another
+renderer version is recognized. Artifact SHA always covers original bytes.
+
 Deliberate limits:
 
 - No document-wide cross-page paragraph merging, crop generation, OCR,
@@ -73,3 +84,9 @@ The existing realpaper remote ZIP contains `middle_json.json` produced by MinerU
 3.4.4, exported as the supported DocVortex Middle profile: 17 pages and 7 visual
 image bodies. That is genuine producer evidence, not proof of every possible
 4.0.10 engine/block subtype. Tests never parse a PDF or call a remote service.
+The separate `QATLAS_REAL_NATIVE_MINERU_ZIP` test uses the retrieved V1 standard
+ZIP with original `layout.json` (`_version_name=3.4.4`, hybrid, medium): 17 pages,
+241 exact producer-index anchors, 237 renderable ranges (four producer-deleted
+empty paragraphs remain original empty blocks), seven visual image bodies, and
+lossless Unicode reading continuation. The old DocVortex fixture remains a
+separate regression; it must not be mistaken for the native standard output.

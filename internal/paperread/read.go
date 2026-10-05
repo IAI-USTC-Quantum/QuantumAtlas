@@ -26,7 +26,27 @@ const (
 	MaxLimit     = 100000
 	// RendererVersion must change whenever rendered text or cursor positioning changes.
 	RendererVersion = "qatlas-middle-markdown-v1"
+	// NativeRendererVersion is independent of the released DocVortex renderer:
+	// adding native support must not change old DocVortex text or cursor pins.
+	NativeRendererVersion = "qatlas-mineru-native-markdown-v1"
 )
+
+func IsSupportedRenderer(version string) bool {
+	return version == RendererVersion || version == NativeRendererVersion
+}
+
+// RendererForProfile maps honest artifact identities to their renderer pins.
+// It never relabels native producer bytes as DocVortex schema.
+func RendererForProfile(schema, version string) (string, bool) {
+	switch {
+	case schema == mineru.MiddleSchema && version == mineru.MiddleSchemaVersion:
+		return RendererVersion, true
+	case schema == mineru.NativeMiddleSchema && version == mineru.NativeMiddleSchemaVersion:
+		return NativeRendererVersion, true
+	default:
+		return "", false
+	}
+}
 
 var (
 	ErrInvalidRequest   = errors.New("paperread: invalid request")
@@ -203,7 +223,7 @@ func Read(middleJSON []byte, opts Options) (*Response, error) {
 			return nil, err
 		}
 		if c.PaperID != opts.PaperID || c.SourceID != opts.SourceID || c.Revision != opts.Revision ||
-			c.Renderer != RendererVersion || c.SourceSHA256 != opts.SourceSHA256 ||
+			!IsSupportedRenderer(c.Renderer) || c.SourceSHA256 != opts.SourceSHA256 ||
 			c.BundleSHA256 != opts.BundleSHA256 || c.ArtifactSHA256 != artifactHash ||
 			(opts.Tier != "" && opts.Tier != c.Tier) ||
 			(opts.Page != 0 && opts.Page != c.ScopePage) || (opts.Block != 0 && opts.Block != c.ScopeBlock) ||
@@ -229,9 +249,16 @@ func Read(middleJSON []byte, opts Options) (*Response, error) {
 	if err != nil {
 		return nil, err
 	}
+	renderer, supported := RendererForProfile(doc.Schema, doc.SchemaVersion)
+	if !supported {
+		return nil, mineru.ErrUnsupportedVer
+	}
+	if cursor != nil && cursor.Renderer != renderer {
+		return nil, ErrCursorMismatch
+	}
 	blocks := doc.OrderedBlocks()
 	seen := make(map[[2]int]bool, len(blocks))
-	pageNumbers, err := artifactPages(middleJSON, blocks)
+	pageNumbers, err := artifactPages(middleJSON, blocks, doc.Schema)
 	if err != nil {
 		return nil, err
 	}
@@ -263,7 +290,7 @@ func Read(middleJSON []byte, opts Options) (*Response, error) {
 		if opts.Page > 0 && page != opts.Page || opts.Block > 0 && b.Index != opts.Block {
 			continue
 		}
-		text := r.block(b.Raw, 0)
+		text := r.block(b.RenderJSON(), 0)
 		if strings.TrimSpace(text) == "" {
 			continue
 		}
@@ -280,9 +307,9 @@ func Read(middleJSON []byte, opts Options) (*Response, error) {
 	response := &Response{
 		PaperID: opts.PaperID, SourceID: opts.SourceID, Revision: opts.Revision,
 		SourceSHA256: opts.SourceSHA256, ArtifactSHA256: artifactHash, BundleSHA256: opts.BundleSHA256,
-		Renderer: RendererVersion, Format: "markdown", ContentRanges: []ContentRange{},
+		Renderer: renderer, Format: "markdown", ContentRanges: []ContentRange{},
 		RequestScope: RequestScope{Page: opts.Page, Block: opts.Block, Limit: opts.Limit, Cursor: opts.Cursor},
-		Warnings:     r.warnings,
+		Warnings:     append(append([]string(nil), doc.NormalizationWarnings...), r.warnings...),
 	}
 	if len(segments) == 0 {
 		if cursor != nil {
@@ -325,7 +352,7 @@ func Read(middleJSON []byte, opts Options) (*Response, error) {
 		// Preserve whole block boundaries whenever another complete block has
 		// already fit. A single oversized segment is split at Unicode boundaries.
 		if available > remaining && out.Len() > 0 {
-			response.NextRequest = makeNext(opts, artifactHash, renderHash, seg, from)
+			response.NextRequest = makeNext(opts, artifactHash, renderHash, renderer, seg, from)
 			break
 		}
 		count := available
@@ -344,11 +371,11 @@ func Read(middleJSON []byte, opts Options) (*Response, error) {
 		}
 		remaining -= count
 		if to < len(seg.text) {
-			response.NextRequest = makeNext(opts, artifactHash, renderHash, seg, to)
+			response.NextRequest = makeNext(opts, artifactHash, renderHash, renderer, seg, to)
 			break
 		}
 		if remaining == 0 && i+1 < len(segments) {
-			response.NextRequest = makeNext(opts, artifactHash, renderHash, segments[i+1], 0)
+			response.NextRequest = makeNext(opts, artifactHash, renderHash, renderer, segments[i+1], 0)
 			break
 		}
 	}
@@ -357,9 +384,9 @@ func Read(middleJSON []byte, opts Options) (*Response, error) {
 	return response, nil
 }
 
-func makeNext(opts Options, artifactHash, renderHash string, seg renderedBlock, offset int) *NextRequest {
+func makeNext(opts Options, artifactHash, renderHash, renderer string, seg renderedBlock, offset int) *NextRequest {
 	c := readCursor{
-		Version: 1, CursorIdentity: CursorIdentity{opts.PaperID, opts.SourceID, opts.Revision, RendererVersion},
+		Version: 1, CursorIdentity: CursorIdentity{opts.PaperID, opts.SourceID, opts.Revision, renderer},
 		SourceSHA256: opts.SourceSHA256, BundleSHA256: opts.BundleSHA256,
 		ArtifactSHA256: artifactHash, RenderSHA256: renderHash, Tier: opts.Tier,
 		ScopePage: opts.Page, ScopeBlock: opts.Block, Limit: opts.Limit,
@@ -404,15 +431,23 @@ func middleTier(data []byte) string {
 	}
 	return "standard"
 }
-func artifactPages(data []byte, blocks []mineru.MiddleBlock) ([]int, error) {
+func artifactPages(data []byte, blocks []mineru.MiddleBlock, schema string) ([]int, error) {
+	type pageIdentity struct {
+		PageIdx *int `json:"page_idx"`
+	}
 	var raw struct {
-		Pages []struct {
-			PageIdx *int `json:"page_idx"`
-		} `json:"pages"`
+		Pages   []pageIdentity  `json:"pages"`
+		PDFInfo json.RawMessage `json:"pdf_info"`
 	}
 	_ = json.Unmarshal(data, &raw)
+	pagesFromArtifact := raw.Pages
+	if schema == mineru.NativeMiddleSchema {
+		if err := json.Unmarshal(raw.PDFInfo, &pagesFromArtifact); err != nil {
+			return nil, mineru.ErrBadBlocks
+		}
+	}
 	set := make(map[int]bool)
-	for _, p := range raw.Pages {
+	for _, p := range pagesFromArtifact {
 		if p.PageIdx == nil || *p.PageIdx < 0 || set[*p.PageIdx+1] {
 			return nil, fmt.Errorf("%w: duplicate or invalid page identity", mineru.ErrBadBlocks)
 		}

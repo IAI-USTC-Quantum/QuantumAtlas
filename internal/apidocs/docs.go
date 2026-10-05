@@ -2505,7 +2505,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Requires a COMPLETE supported docvortex.middle/schema_version 2.0 Middle (middle_json.json or supported layout.json) AND markdown.md/full.md; MD-only, ContentList-only, incomplete or invalid schema packages are 422. All valid producer-original relative paths/names/bytes, including every JSON and unknown file, are retained; originals are never renamed or reserialized. Traversal, absolute/backslash paths, duplicate names, symlinks, CRC/ZIP errors fail the whole archive. Limits: ZIP/member 128MiB, expanded aggregate 256MiB, at most 10000 files.\nWrites create-only revision-scoped files into the new content bucket, verifies frozen exact PDF and every persisted member, writes separate manifest LAST, then publishes through PG (required). Every reupload is a new immutable revision/current publication; overwrite never changes historical revisions. Raw ZIP retention is optional; verified members+manifest are mandatory. No deferred-success indexing.\n\nThe {arxiv_id} slot also accepts a DOI for a published edition's exact already-uploaded PDF. Both paths share source-bound immutable bundle publication; there is no title/authors metadata override. PDF contribution establishes DOI metadata (see upload-pdf). A tier label records producer/request metadata, not proof of an executed provider quality mode.",
+                "description": "Requires a COMPLETE supported original Middle AND markdown.md/full.md. Supported profiles are docvortex.middle/schema_version 2.0 and genuine native pdf_info[] layout.json (mineru.native.middle/pdf_info-v1); producer engine version is not the structural schema version. MD-only, ContentList-only, incomplete or invalid schema packages are 422. All valid producer-original relative paths/names/bytes, including every JSON and unknown file, are retained; originals are never renamed or reserialized. Traversal, absolute/backslash paths, duplicate names, symlinks, CRC/ZIP errors fail the whole archive. Limits: ZIP/member 128MiB, expanded aggregate 256MiB, at most 10000 files.\nWrites create-only revision-scoped files into the new content bucket, verifies frozen exact PDF and every persisted member, writes separate manifest LAST, then publishes through PG (required). Every reupload is a new immutable revision/current publication; overwrite never changes historical revisions. Raw ZIP retention is optional; verified members+manifest are mandatory. No deferred-success indexing.\n\nThe {arxiv_id} slot also accepts a DOI for a published edition's exact already-uploaded PDF. Both paths share source-bound immutable bundle publication; there is no title/authors metadata override. PDF contribution establishes DOI metadata (see upload-pdf). A tier label records producer/request metadata, not proof of an executed provider quality mode.",
                 "consumes": [
                     "multipart/form-data"
                 ],
@@ -4557,7 +4557,7 @@ const docTemplate = `{
                         }
                     },
                     "422": {
-                        "description": "artifact fails the docvortex.middle v2.0 profile",
+                        "description": "artifact fails a supported original Middle profile (DocVortex 2.0 or native pdf_info-v1)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -4667,7 +4667,7 @@ const docTemplate = `{
                         }
                     },
                     "422": {
-                        "description": "artifact fails the docvortex.middle v2.0 profile",
+                        "description": "artifact fails a supported original Middle profile (DocVortex 2.0 or native pdf_info-v1)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -4776,7 +4776,7 @@ const docTemplate = `{
                         }
                     },
                     "422": {
-                        "description": "artifact fails the docvortex.middle v2.0 profile",
+                        "description": "artifact fails a supported original Middle profile (DocVortex 2.0 or native pdf_info-v1)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {

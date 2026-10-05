@@ -52,8 +52,10 @@ qatlas contrib pdf 2501.00010v1 --pdf ./different.pdf --overwrite
 multipart 字段 `mineru_zip`；必须提交最终完整输出，不接受任意 `.md` 或任意 JSON
 冒充 Middle。要求：
 
-1. 支持的 `docvortex.middle` / `schema_version=2.0`，成员为 `middle_json.json`
-   或支持的 `layout.json`（实际原名保留）；
+1. 受支持的 Middle：`docvortex.middle` / `schema_version=2.0`（`middle_json.json`
+   或支持的 `layout.json`），或者真实 hosted V1 standard/hybrid 原生 `layout.json`
+   的 `pdf_info` 数组，记录为 `mineru.native.middle` / `pdf_info-v1`；
+   不向原生原件添加 DocVortex schema，生产者原名/原字节保留；
 2. `markdown.md` 或 `full.md`；
 3. 所选已冻结来源 PDF 存在，`pdf_sha256`（若传）等于实际解析的 exact source SHA。
 

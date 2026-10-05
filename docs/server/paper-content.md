@@ -99,6 +99,15 @@ GET /api/papers/{id}/read?cursor=OPAQUE_CURSOR
 - `content_ranges[]`（page/block、start_offset/end_offset、start/end locators）；
 - `truncated` 布尔值、可空 `next_request`、可选 `warnings[]`。
 
+原生 `mineru.native.middle/pdf_info-v1` 使用独立 renderer
+`qatlas-mineru-native-markdown-v1`，不改变已发布 DocVortex 的 renderer/游标文本。
+只构建内存消费视图：公开 page=`page_idx+1`、block=`native index+1`（原生编号0-based）；
+保留编号空隙，不用数组位置补造锚点，子块不冒充新的顶层锚点。原始 index/JSON位置仍
+可在固定 `layout.json` 对照。原生页单位 bbox 按有效 `page_size` 转为 `[0,1]` 供裁图，
+非法/缺失 bbox 不钳制、不虚构，返回警告或不可裁图；不把转换结果写回原件。
+`content_ranges` 的 start_offset/end_offset 为**渲染 Markdown 的 Unicode rune 半开区间**，
+不是原 JSON 字节位移；窗口可切进 Markdown 语法，按原样拼接连续 content 才恢复选定文本。
+
 这是由 Middle 生成的**阅读信封**，不是 Middle 原 JSON，不是 Structured Content，
 更不是“截断后的原始 artifact”。若 truncated=true，将 `next_request.cursor`
 原样传回下次请求。游标固定 paper/source/revision、PDF与Middle/完整包摘要、renderer
@@ -158,8 +167,10 @@ manifest 是单独生成的清单，字段为 `version=1`、`paper_id`、`source
 - fresh PDF/解析上传写新内容桶。成功绑定的导入别名（如明确 `arxiv:IDvN`）永久
   指向首次成功的确切 PDF；同别名不同字节返回 409，**即使 overwrite=true**。
   新语义 arXiv vN 或独立新 source 是新身份，不通过覆盖旧 source 实现。
-- `upload-mineru` 要求完整支持的 `docvortex.middle`/schema_version 2.0 Middle
-  （`middle_json.json` 或受支持的 `layout.json`）**及** `markdown.md`/`full.md`。
+- `upload-mineru` 要求完整受支持 Middle **及** `markdown.md`/`full.md`：
+  保留 `docvortex.middle`/schema_version 2.0，也支持实际 hosted V1 standard/hybrid 的
+  原生 `layout.json`（`pdf_info` 数组），记录为 `mineru.native.middle` / `pdf_info-v1`。
+  原生文件没有 DocVortex schema 标识，不向原件添加或伪造这些字段；原名/字节不变。
   MD-only、ContentList-only、缺件及无效 schema 拒收；图片可为空。
 - ZIP 所有合法原名/字节保留，未知成员也不丢。路径穿越、绝对/反斜杠路径、
   重名、symlink、CRC错误等导致整包失败。当前限制 ZIP 128MiB、单成员128MiB、

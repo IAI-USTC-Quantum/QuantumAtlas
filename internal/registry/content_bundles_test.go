@@ -212,12 +212,12 @@ func readyContentFixture(t *testing.T, objects objstore.Store, db *memoryContent
 	}
 	in := paperbundle.Input{PaperID: src.PaperID, SourceID: src.SourceID, RevisionID: revID, SourcePDFSHA256: src.Sha256,
 		MiddlePath: "paper/a_middle.json", MarkdownPath: "paper/a.md", Files: map[string][]byte{
-			"paper/a_middle.json": []byte(" {\"pdf_info\":[]}\r\n"), "paper/a.md": []byte("# Original\n"), "unknown/vendor.bin": {1, 2, 3},
+			"paper/a_middle.json": []byte(" {\"schema\":\"docvortex.middle\",\"schema_version\":\"2.0\",\"pdf_info\":{\"pages\":1},\"blocks\":[]}\r\n"), "paper/a.md": []byte("# Original\n"), "unknown/vendor.bin": {1, 2, 3},
 		}}
 	if _, err := paperbundle.New(objects).WriteBundle(ctx, in); err != nil {
 		t.Fatal(err)
 	}
-	b, err := prepareBundlePublication(ctx, objects, ParseRevision{PaperID: src.PaperID, SourceID: src.SourceID, RevisionID: revID, Schema: "mineru.middle", SchemaVersion: "1", Tier: "STANDARD"})
+	b, err := prepareBundlePublication(ctx, objects, ParseRevision{PaperID: src.PaperID, SourceID: src.SourceID, RevisionID: revID, Schema: DocVortexMiddleSchema, SchemaVersion: DocVortexMiddleSchemaVersion, Tier: "STANDARD"})
 	if err != nil {
 		t.Fatal(err)
 	}

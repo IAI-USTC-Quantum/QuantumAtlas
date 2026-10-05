@@ -202,12 +202,16 @@ func (c *Converter) convertSourceWithClient(ctx context.Context, client *Client,
 			if err != nil {
 				return err
 			}
+			doc, err := ParseMiddleJSON(result.MiddleJSON)
+			if err != nil {
+				return fmt.Errorf("validate returned Middle profile: %w", err)
+			}
 			c.transition(key, func(j *Job) { j.Convert.Stage = "persisting_bundle" })
 			_, err = paperbundle.New(c.store).WriteBundle(ctx, paperbundle.Input{PaperID: src.PaperID, SourceID: src.SourceID, RevisionID: revisionID, SourcePDFSHA256: src.Sha256, Files: result.Members, MiddlePath: result.MiddlePath, MarkdownPath: result.MarkdownPath})
 			if err != nil {
 				return fmt.Errorf("write complete bundle: %w", err)
 			}
-			_, err = c.sources.PublishBundle(ctx, c.store, registry.ParseRevision{PaperID: src.PaperID, SourceID: src.SourceID, RevisionID: revisionID, Schema: MiddleSchema, SchemaVersion: MiddleSchemaVersion, Tier: c.cfg.MinerUTier}, true)
+			_, err = c.sources.PublishBundle(ctx, c.store, registry.ParseRevision{PaperID: src.PaperID, SourceID: src.SourceID, RevisionID: revisionID, Schema: doc.Schema, SchemaVersion: doc.SchemaVersion, Tier: c.cfg.MinerUTier}, true)
 			if err != nil {
 				return fmt.Errorf("publish complete bundle: %w", err)
 			}

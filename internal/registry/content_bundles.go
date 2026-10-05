@@ -391,6 +391,9 @@ func (s *Store) PublishBundle(ctx context.Context, objects objstore.Store, rev P
 }
 
 func prepareBundlePublication(ctx context.Context, objects objstore.Store, rev ParseRevision) (ParseBundle, error) {
+	if err := requireParseProfile(rev.Schema, rev.SchemaVersion); err != nil {
+		return ParseBundle{}, err
+	}
 	m, err := paperbundle.New(objects).VerifyBundle(ctx, rev.PaperID, rev.SourceID, rev.RevisionID)
 	if err != nil {
 		return ParseBundle{}, err
@@ -400,6 +403,16 @@ func prepareBundlePublication(ctx context.Context, objects objstore.Store, rev P
 	if rev.Schema == "" || (rev.ObjstoreKey != "" && rev.ObjstoreKey != key) ||
 		(rev.ArtifactSha256 != "" && rev.ArtifactSha256 != middle.SHA256) {
 		return ParseBundle{}, paperbundle.ErrIntegrity
+	}
+	originalMiddle, err := readContentObject(ctx, objects, key)
+	if err != nil {
+		return ParseBundle{}, err
+	}
+	if paperbundle.SHA256(originalMiddle) != middle.SHA256 {
+		return ParseBundle{}, paperbundle.ErrIntegrity
+	}
+	if err := verifyMiddleProfile(originalMiddle, rev.Schema, rev.SchemaVersion); err != nil {
+		return ParseBundle{}, err
 	}
 	rev.ObjstoreKey, rev.ArtifactSha256, rev.Tier = key, middle.SHA256, NormalizeParseTier(rev.Tier)
 	manifestKey := paperbundle.ManifestKey(rev.PaperID, rev.SourceID, rev.RevisionID)
@@ -495,6 +508,9 @@ func (s *Store) GetParseBundle(ctx context.Context, paperID, revisionID string) 
 	if err != nil {
 		return ParseBundle{}, false, catalogUnavailable("registry: get parse bundle", err)
 	}
+	if err := requireParseProfile(b.Schema, b.SchemaVersion); err != nil {
+		return b, false, err
+	}
 	return b, true, nil
 }
 
@@ -526,6 +542,9 @@ func (s *Store) GetReadyParseBundle(ctx context.Context, objects objstore.Store,
 }
 
 func verifyPublishedBundle(ctx context.Context, objects objstore.Store, b ParseBundle) error {
+	if err := requireParseProfile(b.Schema, b.SchemaVersion); err != nil {
+		return err
+	}
 	m, err := paperbundle.New(objects).VerifyBundle(ctx, b.PaperID, b.SourceID, b.RevisionID)
 	if err != nil {
 		return err
@@ -535,6 +554,16 @@ func verifyPublishedBundle(ctx context.Context, objects objstore.Store, b ParseB
 		middle.SHA256 != b.ArtifactSha256 || b.ObjstoreKey != paperbundle.FileKey(b.PaperID, b.SourceID, b.RevisionID, m.MiddlePath) ||
 		b.ManifestKey != paperbundle.ManifestKey(b.PaperID, b.SourceID, b.RevisionID) {
 		return paperbundle.ErrIntegrity
+	}
+	originalMiddle, err := readContentObject(ctx, objects, b.ObjstoreKey)
+	if err != nil {
+		return err
+	}
+	if paperbundle.SHA256(originalMiddle) != b.ArtifactSha256 {
+		return paperbundle.ErrIntegrity
+	}
+	if err := verifyMiddleProfile(originalMiddle, b.Schema, b.SchemaVersion); err != nil {
+		return err
 	}
 	body, err := readContentObject(ctx, objects, b.ManifestKey)
 	if err != nil {

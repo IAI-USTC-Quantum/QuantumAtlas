@@ -32,7 +32,7 @@ func verifiedContentBundle(ctx context.Context, store objstore.Store, b registry
 		b.ObjstoreKey != paperbundle.FileKey(b.PaperID, b.SourceID, b.RevisionID, b.MiddlePath) {
 		return paperbundle.Manifest{}, paperbundle.ErrIntegrity
 	}
-	if b.Schema != mineru.MiddleSchema || b.SchemaVersion != mineru.MiddleSchemaVersion {
+	if !mineru.IsSupportedMiddleProfile(b.Schema, b.SchemaVersion) {
 		return paperbundle.Manifest{}, &contentAccessError{Status: http.StatusUnprocessableEntity, Detail: "published bundle has an unsupported Middle JSON profile"}
 	}
 	if _, err := paperbundle.New(store).ReadPDF(ctx, src.PaperID, src.SourceID, src.Sha256, src.SizeBytes); err != nil {
