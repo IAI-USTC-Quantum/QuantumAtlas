@@ -6,7 +6,10 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +23,34 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+const archiveFixtureTitle = "Verified Quantum Algorithms for Distributed Archive"
+
+// A real PDF with front matter, text objects and valid xref offsets; padding
+// comments retain the ordinary archive's minimum PDF-size boundary.
+func archiveFixturePDF(title string) []byte {
+	stream := "BT /F1 12 Tf 40 780 Td 20 TL\n(" + title + ") Tj T*\n(Alice Example) Tj T*\n(Abstract) Tj T*\nET\n"
+	objects := []string{
+		"<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [4 0 R] /Count 1 >>",
+		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>",
+		fmt.Sprintf("<< /Length %d >>\nstream\n%sendstream", len(stream), stream),
+	}
+	var pdf bytes.Buffer
+	pdf.WriteString("%PDF-1.4\n" + strings.Repeat("% harmless test comment\n", 1000))
+	offsets := []int{0}
+	for i, object := range objects {
+		offsets = append(offsets, pdf.Len())
+		fmt.Fprintf(&pdf, "%d 0 obj\n%s\nendobj\n", i+1, object)
+	}
+	xref := pdf.Len()
+	fmt.Fprintf(&pdf, "xref\n0 %d\n0000000000 65535 f \n", len(offsets))
+	for _, offset := range offsets[1:] {
+		fmt.Fprintf(&pdf, "%010d 00000 n \n", offset)
+	}
+	fmt.Fprintf(&pdf, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(offsets), xref)
+	return pdf.Bytes()
+}
+
 // This tests the REAL archive callback against all registry migrations and the
 // filesystem store, complementing runner/fleet tests with synthetic callbacks.
 func TestDownloadArchiveRealRegistryAndAdmission(t *testing.T) {
@@ -29,6 +60,9 @@ func TestDownloadArchiveRealRegistryAndAdmission(t *testing.T) {
 	dsn := os.Getenv("TEST_DOWNLOADFLEET_DATABASE_URL")
 	if dsn == "" {
 		t.Skip("disposable PostgreSQL required")
+	}
+	if _, err := exec.LookPath("pdftotext"); err != nil {
+		t.Fatal("real published archive integration requires pdftotext")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
@@ -73,7 +107,7 @@ func TestDownloadArchiveRealRegistryAndAdmission(t *testing.T) {
 	}
 	d := downloader.New(reg, store, nil, nil, downloader.Config{Journal: reg})
 	defer d.Shutdown(context.Background())
-	ref := registry.PaperRef{DOI: "10.1000/archive-full"}
+	ref := registry.PaperRef{DOI: "10.1000/archive-full", Title: archiveFixtureTitle}
 	paperID, _, err := reg.ResolveOrMint(ctx, ref)
 	if err != nil {
 		t.Fatal(err)
@@ -83,11 +117,24 @@ func TestDownloadArchiveRealRegistryAndAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx = downloader.WithAdmissionID(ctx, admission)
-	pdf := []byte("%PDF-1.4\n" + strings.Repeat("% harmless test comment\n", 1000) + "startxref\n0\n%%EOF\n")
+	pdf := archiveFixturePDF(archiveFixtureTitle)
 	digest := sha256.Sum256(pdf)
 	sha := hex.EncodeToString(digest[:])
 	outcome := func() *downloader.FetchOutcome {
 		return &downloader.FetchOutcome{DOI: ref.DOI, Strategy: "worker:test:browser", URL: "https://publisher.example/paper.pdf", Result: &downloader.FetchResult{Body: bytes.NewReader(pdf), Size: int64(len(pdf)), Sha256: sha}}
+	}
+	// Older workers may send any claimed title/hash. The central archive must
+	// reject wrong front matter before writing objects or registering assets.
+	wrongTitle := "An Unrelated Classical Algorithm for Searching Ordered Lists"
+	wrongPDF := archiveFixturePDF(wrongTitle)
+	wrong := outcome()
+	wrong.PublishedTitle = wrongTitle
+	wrong.Result = &downloader.FetchResult{Body: bytes.NewReader(wrongPDF), Size: int64(len(wrongPDF)), Sha256: sha}
+	if err = d.ArchiveRemote(ctx, ref, wrong); !errors.Is(err, downloader.ErrPDFIdentityUnproven) {
+		t.Fatalf("forged worker provenance accepted: %v", err)
+	}
+	if _, exists, err := store.Stat(ctx, paperassets.DOIAssetKey("pdf", ref.DOI)); err != nil || exists {
+		t.Fatalf("unproven archive wrote PDF: exists=%v err=%v", exists, err)
 	}
 	if err = d.ArchiveRemote(ctx, ref, outcome()); err != nil {
 		t.Fatal(err)

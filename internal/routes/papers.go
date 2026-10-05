@@ -89,6 +89,7 @@ func RegisterPapers(
 	arxivFetcher *arxiv.Fetcher,
 ) {
 	registerV1MineruLeaseRoutes(se, cfg, rawStore, catalog, enforcer)
+	RegisterPaperExternalSources(se, rawStore, catalog, enforcer)
 
 	// Long-lived lazy write-through cache-aside orchestrator for the OpenAlex
 	// corpus (ADR 0012). Constructed once and captured below so its singleflight
@@ -135,13 +136,15 @@ func RegisterPapers(
 		if handled, herr := dispatchBlockOriginalsGET(re, cfg, rawStore, catalog, raw); handled {
 			return herr
 		}
-		// Bibliographic detail remains metadata-only and never starts parsing.
+		// Bibliographic detail stays metadata-only; preserve upstream merged-ID
+		// resolution without resurrecting the legacy ungated content branches.
 		if strings.HasPrefix(raw, "qa_") && !strings.Contains(raw, "/") {
-			return paperDetailHandler(re, catalog, raw, ingester, converter)
+			return paperDetailHandler(re, canonicalReadCatalog{catalog}, raw, ingester, converter)
 		}
 		if handled, err := dispatchDetailByIdentifier(re, catalog, raw, ingester, converter); handled {
 			return err
 		}
+
 		return re.JSON(http.StatusNotFound, map[string]string{
 			"detail": fmt.Sprintf("no GET handler for /api/papers/%s", raw),
 		})
@@ -338,7 +341,7 @@ func dispatchDetailByIdentifier(
 			"detail": "not hosted; resolve metadata via GET /api/papers/lookup?ids=" + scheme + ":" + id,
 		})
 	}
-	return true, paperDetailHandler(re, catalog, paperID, ingester, converter)
+	return true, paperDetailHandler(re, canonicalReadCatalog{catalog}, paperID, ingester, converter)
 }
 
 // paperAssetTarget is the canonical serving identity a qa_ paper_id
@@ -355,6 +358,9 @@ type paperAssetTarget struct {
 	// DOI is set for papers with no arXiv identity: they must be
 	// served through the DOI handlers.
 	DOI string
+	// SourcesOnly originals are read by immutable source_id, not a fabricated
+	// DOI/arXiv namespace or a mutable legacy asset key.
+	SourcesOnly bool
 	// NotFound is true when the qa_ id matches no papers row.
 	NotFound bool
 }
@@ -366,7 +372,7 @@ type paperAssetTarget struct {
 // asset exists. Papers whose only identity is a DOI dispatch to the DOI
 // handlers directly.
 func resolvePaperAssetTarget(ctx context.Context, catalog paperCatalog, paperID string) (paperAssetTarget, error) {
-	detail, found, err := catalog.GetWithAssets(ctx, paperID)
+	detail, found, err := (canonicalReadCatalog{catalog}).GetWithAssets(ctx, paperID)
 	if err != nil {
 		return paperAssetTarget{}, err
 	}
@@ -389,6 +395,8 @@ func resolvePaperAssetTarget(ctx context.Context, catalog paperCatalog, paperID 
 		return t, nil
 	case p.DOI != "":
 		return paperAssetTarget{DOI: registry.NormalizeDOI(p.DOI)}, nil
+	case strings.HasPrefix(p.PaperRef, "eprint:") || strings.HasPrefix(p.PaperRef, "source_url:"):
+		return paperAssetTarget{SourcesOnly: true}, nil
 	}
 	// papers rows carry at least one external id by schema; reaching
 	// here means a merged/tombstoned edge — treat as unknown rather
@@ -442,7 +450,9 @@ func decideLocalDOIServing(ctx context.Context, catalog doiLocalCatalog, store o
 	if servable {
 		return doiServeDOI, "", nil
 	}
-	if twin, ok := doiArxivTwinFromCatalog(ctx, catalog, doi); ok {
+	if twin, ok, err := doiArxivTwinFromCatalog(ctx, catalog, doi); err != nil {
+		return doiServeDefer, "", err
+	} else if ok {
 		return doiServeArxiv, twin, nil
 	}
 	return doiServeDefer, "", nil
@@ -478,20 +488,25 @@ func doiNamespaceServable(ctx context.Context, catalog doiLocalCatalog, store ob
 // doiArxivTwinFromCatalog returns the arXiv identity of the paper a DOI
 // belongs to — versioned when an ingested arXiv asset carries a version,
 // bare otherwise. ok=false when the DOI matches no paper or the paper
-// has no arXiv identity (a true DOI-only paper).
-func doiArxivTwinFromCatalog(ctx context.Context, catalog doiLocalCatalog, doi string) (string, bool) {
+// has no arXiv identity (a true DOI-only paper). Lookup failures must not
+// become a miss: the caller cannot safely choose a different namespace
+// when it could not read the registered identity.
+func doiArxivTwinFromCatalog(ctx context.Context, catalog doiLocalCatalog, doi string) (string, bool, error) {
 	paperID, found, err := catalog.GetPaperIDByIdentity(ctx, "doi", doi)
 	if err != nil || !found {
-		return "", false
+		return "", false, err
 	}
 	target, err := resolvePaperAssetTarget(ctx, catalog, paperID)
 	if err != nil || target.NotFound {
-		return "", false
+		return "", false, err
 	}
 	if target.ArxivVersioned != "" {
-		return target.ArxivVersioned, true
+		return target.ArxivVersioned, true, nil
 	}
-	return target.ArxivBare, true
+	// Resolving a DOI-only paper succeeds, but it is NOT an arXiv twin.
+	// Returning ("", true) here sends every asset action to an arXiv
+	// handler with an empty id, including markdown/status and images/zip.
+	return target.ArxivBare, target.ArxivBare != "", nil
 }
 
 // splitMineruClaimRelease parses MinerU lease release paths and returns
@@ -580,7 +595,7 @@ func applyDOICanonicalHeaders(re *core.RequestEvent, requestedID, doi, arxivTwin
 		// parsing the header can detect the redirect cleanly.
 		h.Set("X-QAtlas-Defaults-Applied",
 			"served_as_doi_canonical (arxiv "+arxivTwin+
-				" → DOI "+doi+"; pass ?force_arxiv=1 to opt out)")
+				" -> DOI "+doi+"; pass ?force_arxiv=1 to opt out)")
 	}
 }
 
@@ -620,9 +635,9 @@ func dispatchGETDOIHandlers(
 	case action == "images/zip":
 		return imagesZipByDOIHandler(re, store, doi)
 	case action == "figures":
-		return paperFiguresHandler(re, catalog, store, doi)
+		return paperFiguresHandler(re, canonicalReadCatalog{catalog}, store, doi)
 	case isImagesMemberAction(action):
-		return paperImageGetHandler(re, catalog, store, doi, strings.TrimPrefix(action, "images/"))
+		return paperImageGetHandler(re, canonicalReadCatalog{catalog}, store, doi, strings.TrimPrefix(action, "images/"))
 	case action == "status":
 		return re.JSON(http.StatusOK, map[string]any{
 			"status": "available",

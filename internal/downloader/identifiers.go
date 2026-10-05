@@ -122,7 +122,7 @@ func ParseIdentifier(input string) (Identifier, error) {
 				return out, nil
 			}
 		}
-		return out, errUnsupported("unsupported URL shape (paste the DOI or arXiv id instead)")
+		return out, errUnsupported("unsupported URL shape for identifier-only fetch; use qatlas paper source-register URL --title TITLE --author AUTHOR --year YEAR for an external original")
 	}
 
 	// Bare DOI?

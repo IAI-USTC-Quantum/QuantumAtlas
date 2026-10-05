@@ -58,6 +58,9 @@ jobs:
         with:
           go-version-file: go.mod
       # Ordinary Go builds/tests do not need Node, Python packages or embedded UI.
+      # Published-PDF provenance fixtures exercise the actual bounded extractor.
+      - name: Install PDF provenance fixture dependency
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends poppler-utils
       - name: Go formatting (tracked source only)
         run: |
           UNFORMATTED="$(git ls-files -z -- '*.go' | xargs -0 -r gofmt -l)"

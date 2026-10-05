@@ -7,6 +7,7 @@ import (
 )
 
 func TestContentStorageDefaultsAndDistinctBucket(t *testing.T) {
+	clearConfigEnv(t)
 	p := filepath.Join(t.TempDir(), "config.yaml")
 	if err := os.WriteFile(p, []byte("paper_access:\n  enabled: true\n"), 0600); err != nil {
 		t.Fatal(err)
@@ -41,6 +42,7 @@ func TestContentStorageDefaultsAndDistinctBucket(t *testing.T) {
 }
 
 func TestMinerUTierIsIndependentOfLegacyModel(t *testing.T) {
+	clearConfigEnv(t)
 	p := filepath.Join(t.TempDir(), "config.yaml")
 	if err := os.WriteFile(p, []byte("paper_access:\n  enabled: true\n  mineru:\n    model_version: vlm\n    tier: LITE\n"), 0600); err != nil {
 		t.Fatal(err)

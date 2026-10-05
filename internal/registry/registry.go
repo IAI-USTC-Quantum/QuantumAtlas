@@ -93,6 +93,7 @@ type Paper struct {
 	Authors    []string
 	Status     string
 	PaperRef   string
+	ExternalID string
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 }
@@ -440,10 +441,10 @@ func (s *Store) Get(ctx context.Context, paperID string) (p *Paper, found bool, 
 	)
 	err = s.pool.QueryRow(ctx, `
 		SELECT paper_id, arxiv_id, doi, openalex_id, title_hash, title,
-		       coalesce(authors, '{}'), status, paper_ref, created_at, updated_at
+		       coalesce(authors, '{}'), status, paper_ref, created_at, updated_at, coalesce(external_id, '')
 		FROM papers WHERE paper_id = $1`, paperID,
 	).Scan(&row.PaperID, &arxiv, &doi, &openalex, &titleHash, &title,
-		&row.Authors, &row.Status, &paperRef, &row.CreatedAt, &row.UpdatedAt)
+		&row.Authors, &row.Status, &paperRef, &row.CreatedAt, &row.UpdatedAt, &row.ExternalID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, false, nil
 	}

@@ -27,7 +27,10 @@ type contentTx interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
-const sourceColumns = `source_id, paper_id, origin, sha256, objstore_key, size_bytes, created_at`
+const sourceColumns = `source_id, paper_id, origin, sha256, objstore_key, size_bytes, created_at,
+ coalesce(source_url,''), coalesce(retrieved_url,''), retrieved_at`
+const importedSourceColumns = `s.source_id, s.paper_id, s.origin, s.sha256, s.objstore_key, s.size_bytes, s.created_at,
+ coalesce(s.source_url,''), coalesce(s.retrieved_url,''), s.retrieved_at`
 const bundleColumns = `r.revision_id, r.paper_id, r.source_id, r.schema, r.schema_version,
  r.artifact_sha256, r.objstore_key, r.tier, r.created_at, r.is_current,
  b.manifest_key, b.source_pdf_sha256, b.middle_path, b.markdown_path, b.manifest_sha256`
@@ -39,7 +42,7 @@ func (s *Store) GetImportedPaperSource(ctx context.Context, paperID, legacyPDFKe
 	if !s.ensure(ctx) {
 		return PaperSource{}, false, ErrCatalogUnavailable
 	}
-	src, err := scanPaperSource(s.pool.QueryRow(ctx, `SELECT s.source_id, s.paper_id, s.origin, s.sha256, s.objstore_key, s.size_bytes, s.created_at
+	src, err := scanPaperSource(s.pool.QueryRow(ctx, `SELECT `+importedSourceColumns+`
  FROM paper_source_imports i JOIN paper_sources s ON s.source_id=i.source_id AND s.paper_id=i.paper_id
  WHERE i.paper_id=$1 AND i.legacy_key=$2`, paperID, legacyPDFKey))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -94,7 +97,7 @@ func bindPaperSourceImport(ctx context.Context, tx contentTx, objects objstore.S
 	if err != nil {
 		return PaperSource{}, err
 	}
-	prior, err := scanPaperSource(tx.QueryRow(ctx, `SELECT s.source_id, s.paper_id, s.origin, s.sha256, s.objstore_key, s.size_bytes, s.created_at
+	prior, err := scanPaperSource(tx.QueryRow(ctx, `SELECT `+importedSourceColumns+`
  FROM paper_source_imports i JOIN paper_sources s ON s.source_id=i.source_id AND s.paper_id=i.paper_id
  WHERE i.paper_id=$1 AND i.legacy_key=$2`, paperID, legacyPDFKey))
 	if err == nil {
@@ -214,7 +217,7 @@ func registerFrozenPaperSource(ctx context.Context, tx contentTx, objects objsto
 	if err := lockContentPaper(ctx, tx, paperID); err != nil {
 		return PaperSource{}, err
 	}
-	row := tx.QueryRow(ctx, `SELECT s.source_id, s.paper_id, s.origin, s.sha256, s.objstore_key, s.size_bytes, s.created_at
+	row := tx.QueryRow(ctx, `SELECT `+importedSourceColumns+`
  FROM paper_source_imports i JOIN paper_sources s ON s.source_id = i.source_id AND s.paper_id = i.paper_id
  WHERE i.paper_id = $1 AND i.legacy_key = $2`, paperID, legacyPDFKey)
 	src, err := scanPaperSource(row)
@@ -297,7 +300,18 @@ func freezePaperSource(ctx context.Context, tx contentTx, objects objstore.Store
 	key := paperbundle.PDFKey(src.PaperID, src.SourceID)
 	if strings.HasPrefix(src.ObjstoreKey, "content/") {
 		if src.ObjstoreKey != key {
-			return PaperSource{}, paperbundle.ErrIntegrity
+			// A registry identity may survive a canonical-paper merge. Move
+			// only the SAME source-ID object from an older content/ root;
+			// never repair from mutable input or a legacy PDF bucket.
+			parts := strings.Split(src.ObjstoreKey, "/")
+			if len(parts) != 4 || parts[0] != "content" || parts[2] != src.SourceID || parts[3] != "source.pdf" {
+				return PaperSource{}, paperbundle.ErrIntegrity
+			}
+			pdf, err := paperbundle.New(objects).ReadPDF(ctx, parts[1], src.SourceID, src.Sha256, src.SizeBytes)
+			if err != nil {
+				return PaperSource{}, err
+			}
+			return moveVerifiedSourceBytes(ctx, tx, objects, src, pdf)
 		}
 		_, err := paperbundle.New(objects).ReadPDF(ctx, src.PaperID, src.SourceID, src.Sha256, src.SizeBytes)
 		return src, err // Fail closed: NEVER read a legacy key after freezing.
@@ -315,6 +329,10 @@ func freezeSourceBytes(ctx context.Context, tx contentTx, objects objstore.Store
 	if strings.HasPrefix(src.ObjstoreKey, "content/") {
 		return freezePaperSource(ctx, tx, objects, src)
 	}
+	return moveVerifiedSourceBytes(ctx, tx, objects, src, pdf)
+}
+
+func moveVerifiedSourceBytes(ctx context.Context, tx contentTx, objects objstore.Store, src PaperSource, pdf []byte) (PaperSource, error) {
 	if int64(len(pdf)) != src.SizeBytes || paperbundle.SHA256(pdf) != src.Sha256 {
 		return PaperSource{}, paperbundle.ErrIntegrity
 	}

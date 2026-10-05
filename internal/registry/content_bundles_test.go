@@ -306,6 +306,39 @@ func TestPublicationRejectsMissingMembersAndConflictingIdentity(t *testing.T) {
 	}
 }
 
+func TestFrozenSourceRootRelocationPreservesProvenanceAndFailsClosed(t *testing.T) {
+	ctx := context.Background()
+	objects := contentObjects(t)
+	db := newMemoryContentDB()
+	pdf := []byte("%PDF-same immutable source")
+	src := contentSource("qa_survivor", "src_stable", paperbundle.PDFKey("qa_old", "src_stable"), pdf)
+	src.SourceURL = "https://source.example/paper.pdf"
+	src.RetrievedURL = "https://cdn.example/paper.pdf"
+	src.RetrievedAt = time.Now().UTC()
+	db.sources[src.SourceID] = src
+	if _, err := paperbundle.New(objects).FreezePDF(ctx, "qa_old", src.SourceID, pdf, src.Sha256); err != nil {
+		t.Fatal(err)
+	}
+	tx := db.begin()
+	got, err := freezePaperSource(ctx, tx, objects, src)
+	tx.finish()
+	if err != nil || got.ObjstoreKey != paperbundle.PDFKey(src.PaperID, src.SourceID) || got.SourceID != src.SourceID || got.SourceURL != src.SourceURL || got.RetrievedURL != src.RetrievedURL || !got.RetrievedAt.Equal(src.RetrievedAt) {
+		t.Fatalf("relocation rewrote identity/provenance: %+v %v", got, err)
+	}
+	// A row still referring to a missing old frozen root cannot be restored
+	// from newly supplied or mutable legacy bytes, even with the right SHA.
+	db.sources[src.SourceID] = src
+	if err := objects.Delete(ctx, src.ObjstoreKey); err != nil {
+		t.Fatal(err)
+	}
+	tx = db.begin()
+	_, err = freezeSourceBytes(ctx, tx, objects, src, pdf)
+	tx.finish()
+	if !errors.Is(err, objstore.ErrNotFound) {
+		t.Fatalf("missing old frozen root repaired from input: %v", err)
+	}
+}
+
 func TestContentCatalogUnavailable(t *testing.T) {
 	ctx := context.Background()
 	s := NewStore(nil)
@@ -361,6 +394,11 @@ func (tx *memoryContentTx) Exec(_ context.Context, sql string, args ...any) (pgc
 		return pgconn.NewCommandTag("SELECT 1"), nil
 	case strings.Contains(sql, "INSERT INTO paper_sources"):
 		s := PaperSource{SourceID: args[0].(string), PaperID: args[1].(string), Origin: args[2].(string), Sha256: args[3].(string), ObjstoreKey: args[4].(string), SizeBytes: args[5].(int64), CreatedAt: time.Now()}
+		if len(args) >= 9 {
+			s.SourceURL = args[6].(string)
+			s.RetrievedURL = args[7].(string)
+			s.RetrievedAt = args[8].(time.Time)
+		}
 		if _, ok := db.sources[s.SourceID]; ok {
 			return pgconn.CommandTag{}, errors.New("duplicate source ID")
 		}
@@ -408,6 +446,7 @@ func (tx *memoryContentTx) Exec(_ context.Context, sql string, args ...any) (pgc
 }
 func (tx *memoryContentTx) QueryRow(_ context.Context, sql string, args ...any) pgx.Row {
 	db := tx.db
+	compact := strings.Join(strings.Fields(sql), "")
 	switch {
 	case strings.Contains(sql, "FROM paper_source_imports"):
 		id, ok := db.imports[args[0].(string)+"\n"+args[1].(string)]
@@ -421,7 +460,7 @@ func (tx *memoryContentTx) QueryRow(_ context.Context, sql string, args ...any) 
 			if s.PaperID != args[0] {
 				continue
 			}
-			if strings.Contains(sql, "sha256 = $2") && s.Sha256 == args[1] || strings.Contains(sql, "objstore_key = $2") && s.ObjstoreKey == args[1] || strings.Contains(sql, "source_id=$2") && s.SourceID == args[1] {
+			if strings.Contains(compact, "sha256=$2") && s.Sha256 == args[1] || strings.Contains(compact, "objstore_key=$2") && s.ObjstoreKey == args[1] || strings.Contains(compact, "source_id=$2") && s.SourceID == args[1] {
 				matches = append(matches, s)
 			}
 		}
@@ -475,7 +514,12 @@ func (r memoryRow) Scan(dest ...any) error {
 	return nil
 }
 func sourceMemoryRow(s PaperSource) memoryRow {
-	return memoryRow{values: []any{s.SourceID, s.PaperID, s.Origin, s.Sha256, s.ObjstoreKey, s.SizeBytes, s.CreatedAt}}
+	var retrievedAt *time.Time
+	if !s.RetrievedAt.IsZero() {
+		at := s.RetrievedAt
+		retrievedAt = &at
+	}
+	return memoryRow{values: []any{s.SourceID, s.PaperID, s.Origin, s.Sha256, s.ObjstoreKey, s.SizeBytes, s.CreatedAt, s.SourceURL, s.RetrievedURL, retrievedAt}}
 }
 func revisionValues(r ParseRevision) []any {
 	return []any{r.RevisionID, r.PaperID, r.SourceID, r.Schema, r.SchemaVersion, r.ArtifactSha256, r.ObjstoreKey, r.Tier, r.CreatedAt, r.IsCurrent}
