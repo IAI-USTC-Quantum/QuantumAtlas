@@ -141,7 +141,7 @@ func TestAPI_PaperMatch_UpstreamFailure(t *testing.T) {
 	fake := &fakeMatchBackend{err: context.DeadlineExceeded}
 	h := newMatchHarness(t, fake)
 	status, _, _ := h.do(http.MethodPost, "/api/papers/match", `{"inputs":["x"]}`, rawHeader(h.sessionToken()))
-	if status != http.StatusBadGateway {
-		t.Fatalf("status = %d, want 502", status)
+	if status != http.StatusGatewayTimeout {
+		t.Fatalf("status = %d, want 504", status)
 	}
 }

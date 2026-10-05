@@ -1,5 +1,25 @@
 basePath: /
 definitions:
+  routes.externalSourceRequest:
+    properties:
+      authors:
+        items:
+          type: string
+        type: array
+      source_url:
+        type: string
+      title:
+        type: string
+      year:
+        maximum: 9999
+        minimum: 1
+        type: integer
+    required:
+    - authors
+    - source_url
+    - title
+    - year
+    type: object
   routes.meUsageResponse:
     properties:
       limit:
@@ -3016,7 +3036,7 @@ paths:
       - application/json
       responses:
         "200":
-          description: '{paper_id, sources:[{source_id,origin,sha256,size_bytes,is_current,created_at,pdf_endpoint}],
+          description: '{paper_id, sources:[{source_id,origin,sha256,size_bytes,is_current,created_at,pdf_endpoint,source_url?,retrieved_url?,retrieved_at?}],
             current_source_id}'
           schema:
             additionalProperties: true
@@ -3192,6 +3212,10 @@ paths:
         resolve to the surviving paper. Free-form `inputs` are
         auto-detected per entry; the typed fields force a kind;
         author/year narrow ambiguous title matches.
+        Upstream failures are never reported as empty matches: HTTP 504
+        denotes timeout; HTTP 502 includes a stable code distinguishing
+        transport, upstream HTTP and invalid response failures. Only the
+        numeric upstream_status is exposed, never private upstream bodies.
       parameters:
       - description: '{inputs: [string], doi?, arxiv_id?, openalex_id?, qatlas_id?,
           url?, title?, author?, year?}'
@@ -3228,16 +3252,20 @@ paths:
               type: string
             type: object
         "502":
-          description: Bad Gateway
+          description: code, detail, optional numeric upstream_status
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: match backend disabled
           schema:
             additionalProperties:
               type: string
             type: object
-        "503":
-          description: Service Unavailable
+        "504":
+          description: match_upstream_timeout; no match result available
           schema:
-            additionalProperties:
-              type: string
+            additionalProperties: true
             type: object
       security:
       - BearerAuth: []
@@ -3274,6 +3302,76 @@ paths:
       security:
       - BearerAuth: []
       summary: Papers needing MinerU
+      tags:
+      - Papers
+  /api/papers/source-register:
+    post:
+      consumes:
+      - application/json
+      description: 'Requires papers:write, registry/object storage and pdftotext.
+        Accepts only public HTTPS URLs; every redirect and DNS destination is validated
+        and pinned. The PDF title must match first-page front matter. No DOI is synthesized
+        and distinct URLs are not title-merged. IACR ePrint landing/PDF forms share
+        one eprint identity. Same work and SHA reuse an immutable source; changed
+        bytes create a new source. No parse or Markdown is fabricated. HTTP Idempotency-Key
+        response replay is not promised: check server state after a transport failure.
+        At most two registrations acquire PDFs concurrently in one process; excess
+        requests receive 503 with Retry-After before acquisition.'
+      parameters:
+      - description: source_url HTTPS original, title (max 2000 UTF-8 bytes), authors
+          (1..100, max 500 bytes each), year (1..9999)
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/routes.externalSourceRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{paper_id,created,external_id,source_url,source:{source_id,origin,sha256,size_bytes,created_at,source_url,retrieved_url,retrieved_at,pdf_endpoint}}'
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: invalid JSON, bibliographic fields or URL
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: requires papers:write
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "422":
+          description: acquisition, size/format or title/provenance rejected
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: immutable storage/integrity or registration failure
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: catalog/storage unavailable or registration busy (Retry-After)
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Register external PDF original
       tags:
       - Papers
   /api/papers/stats:

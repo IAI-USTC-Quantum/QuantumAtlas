@@ -229,7 +229,7 @@ func paperResolution(requested, canonical string) resolvedPaper {
 	}}
 	if requested != canonical {
 		r.resolution.DefaultsApplied = append(r.resolution.DefaultsApplied,
-			"paper_id_resolved ("+requested+" → "+canonical+")")
+			"paper_id_resolved ("+requested+" -> "+canonical+")")
 	}
 	return r
 }
@@ -282,7 +282,7 @@ func paperSourcesListHandler(re *core.RequestEvent, catalog blockCatalog, reques
 
 	items := make([]map[string]any, 0, len(sources))
 	for _, src := range sources {
-		items = append(items, map[string]any{
+		item := map[string]any{
 			"source_id":    src.SourceID,
 			"origin":       src.Origin,
 			"sha256":       src.Sha256,
@@ -290,7 +290,13 @@ func paperSourcesListHandler(re *core.RequestEvent, catalog blockCatalog, reques
 			"is_current":   src.SourceID == currentSource,
 			"created_at":   src.CreatedAt.UTC().Format(time.RFC3339),
 			"pdf_endpoint": "/api/papers/" + rp.canonical + "/sources/" + src.SourceID + "/pdf",
-		})
+		}
+		if src.SourceURL != "" {
+			item["source_url"] = src.SourceURL
+			item["retrieved_url"] = src.RetrievedURL
+			item["retrieved_at"] = src.RetrievedAt.UTC().Format(time.RFC3339)
+		}
+		items = append(items, item)
 	}
 	body := map[string]any{
 		"paper_id":          rp.canonical,

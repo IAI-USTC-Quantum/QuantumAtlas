@@ -54,6 +54,7 @@ parse revision 支持固定字节与解析版本。
    :caption: 检索、收录与管理
 
    guide/search
+   guide/external-sources
    guide/mineru
    guide/admin
 
