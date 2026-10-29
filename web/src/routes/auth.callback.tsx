@@ -20,6 +20,7 @@ import {
   type OAuthConflictInfo,
 } from '@/lib/auth'
 import { safeRedirect } from '@/lib/safe-redirect'
+import { isSharedSessionBootstrap } from '@/lib/shared-web-session'
 
 type CallbackSearch = {
   code?: string
@@ -76,7 +77,7 @@ function AuthCallbackPage() {
         // see login.tsx for the same fallback. window.location.replace
         // is the safe path for URLs with `?…` / `#…`; the normal
         // TanStack navigate call covers static route ids.
-        if (dest.includes('?') || dest.includes('#')) {
+        if (isSharedSessionBootstrap(dest) || dest.includes('?') || dest.includes('#')) {
           window.location.replace(dest)
         } else {
           navigate({ to: dest, replace: true })

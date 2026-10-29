@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
+import { toast } from 'sonner'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 import {
@@ -32,6 +33,7 @@ import {
 } from '@/components/ui/sheet'
 import { useLang } from '@/hooks/use-lang'
 import { logout, useAuth } from '@/lib/auth'
+import { SHARED_LOGOUT_ERROR } from '@/lib/shared-web-session'
 
 export function Topbar() {
   const { t } = useTranslation('common')
@@ -40,9 +42,22 @@ export function Topbar() {
   const auth = useAuth()
   const [mobileOpen, setMobileOpen] = useState(false)
 
-  function handleLogout() {
-    logout()
-    navigate({ to: '/login' })
+  const loggingOut = useRef(false)
+  const [logoutPending, setLogoutPending] = useState(false)
+
+  async function handleLogout() {
+    if (loggingOut.current) return
+    loggingOut.current = true
+    setLogoutPending(true)
+    try {
+      await logout()
+      await navigate({ to: '/login' })
+    } catch {
+      toast.error(SHARED_LOGOUT_ERROR)
+    } finally {
+      loggingOut.current = false
+      setLogoutPending(false)
+    }
   }
 
   const identity =
@@ -141,9 +156,10 @@ export function Topbar() {
             <DropdownMenuSeparator />
             <DropdownMenuItem
               variant="destructive"
-              onSelect={(event) => {
+              disabled={logoutPending}
+              onSelect={async (event) => {
                 event.preventDefault()
-                handleLogout()
+                await handleLogout()
               }}
             >
               <LogOut className="size-4" />

@@ -1,0 +1,5 @@
+{
+  "protocol": 1,
+  "sha256": "822c09a6d5a7dc7a88533002ae75fa1609d6e6dd3ee9ea68d6a16f2fa1045f99",
+  "scope": "Exact test-only snapshot of the shared web-session protocol client. Production loads the separately deployed same-origin /pursuit-session/client.js; this fixture is never bundled."
+}

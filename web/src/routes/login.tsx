@@ -22,6 +22,7 @@ import {
   type OAuth2ProviderName,
 } from '@/lib/auth'
 import { safeRedirect } from '@/lib/safe-redirect'
+import { isSharedSessionBootstrap } from '@/lib/shared-web-session'
 
 type LoginSearch = { from?: string; match?: string }
 
@@ -85,7 +86,7 @@ function LoginPage() {
       // accepts route ids — passing a raw URL with `?…` would either
       // fail typing or strip the search part. Fall back to a hard
       // navigation in that case so the SPA reloads with the full URL.
-      if (dest.includes('?') || dest.includes('#')) {
+      if (isSharedSessionBootstrap(dest) || dest.includes('?') || dest.includes('#')) {
         window.location.assign(dest)
       } else {
         navigate({ to: dest })

@@ -20,6 +20,26 @@
 
 import { useEffect, useState } from 'react'
 import { pb, AUTH_COLLECTION } from './pb'
+import { toast } from 'sonner'
+import {
+  logoutMainSharedSession,
+  SHARED_SESSION_ERROR,
+  sharedMainAuthBlocked,
+  sharedWebSessionEnabled,
+  syncMainSharedSession,
+  withMainSharedSessionLifecycle,
+  type SharedSessionLifecycle,
+} from './shared-web-session'
+import { exchangeSharedMainAuth, refreshSharedMainAuth } from './shared-pb-auth'
+
+async function syncSharedSessionAfterLogin() {
+  try {
+    await syncMainSharedSession()
+  } catch {
+    // A child-session outage must never erase valid main authentication.
+    toast.error(SHARED_SESSION_ERROR)
+  }
+}
 
 export type AuthUser = {
   id: string
@@ -83,12 +103,24 @@ export function ensureAuthBootstrap(): Promise<void> {
   if (bootstrapPromise) return bootstrapPromise
   bootstrapPromise = (async () => {
     try {
-      await pb.collection(AUTH_COLLECTION).authRefresh()
-    } catch {
-      // Server rejected the token (revoked, expired against server clock,
-      // user removed, PB secret rotated, etc). Drop it so we fall through
-      // cleanly to /login instead of rendering protected views that 401.
-      pb.authStore.clear()
+      if (sharedWebSessionEnabled()) {
+        try {
+          await refreshSharedMainAuth(() => toast.error(SHARED_SESSION_ERROR))
+        } catch {
+          // Import/lock/cancellation failures keep main identity but never mint.
+          toast.error(SHARED_SESSION_ERROR)
+        }
+        return
+      }
+      try {
+        await pb.collection(AUTH_COLLECTION).authRefresh()
+      } catch {
+        // Only a failed main bootstrap clears main identity. A separate
+        // shared-session failure below must not turn it into a main logout.
+        pb.authStore.clear()
+        return
+      }
+      await syncSharedSessionAfterLogin()
     } finally {
       bootstrapDone = true
       notifyReady()
@@ -108,7 +140,7 @@ function snapshot(): AuthState {
   }
   const record = pb.authStore.record as Record<string, unknown> | null
   return {
-    isAuthed: bootstrapDone && pb.authStore.isValid,
+    isAuthed: bootstrapDone && pb.authStore.isValid && !sharedMainAuthBlocked(),
     isChecking: !bootstrapDone,
     token: pb.authStore.token,
     user: record
@@ -163,6 +195,8 @@ type PendingOAuth = {
   redirectURL: string
   from: string | null
   mode: OAuth2FlowMode
+  sharedAuthEpoch?: string
+  sharedAuthSubject?: string | null
 }
 
 // The 409 body qatlasd's conflict hook returns when a new OAuth identity
@@ -228,26 +262,34 @@ export async function loginWithOAuth2(
   from?: string,
   mode: OAuth2FlowMode = 'login',
 ): Promise<void> {
-  const methods = await pb.collection(AUTH_COLLECTION).listAuthMethods()
-  const provider = methods.oauth2?.providers?.find((p) => p.name === providerName)
-  if (!provider) {
-    throw new Error(`${providerName} login is not enabled on this server.`)
+  async function prepare(lifecycle?: SharedSessionLifecycle): Promise<string> {
+    const snapshot = lifecycle?.authSnapshot()
+    const methods = await pb.collection(AUTH_COLLECTION).listAuthMethods(
+      lifecycle ? { signal: lifecycle.signal, requestKey: null } : undefined,
+    )
+    if (lifecycle && snapshot && !lifecycle.isCurrent(snapshot)) {
+      throw new Error('This sign-in was superseded. Please start sign-in again.')
+    }
+    const provider = methods.oauth2?.providers?.find((p) => p.name === providerName)
+    if (!provider) throw new Error(`${providerName} login is not enabled on this server.`)
+    const redirectURL = `${window.location.origin}/auth/callback`
+    const pending: PendingOAuth = {
+      provider: provider.name, state: provider.state,
+      codeVerifier: provider.codeVerifier, redirectURL,
+      from: from ?? null, mode,
+      ...(snapshot ? {
+        sharedAuthEpoch: snapshot.epoch,
+        sharedAuthSubject: snapshot.blocked ? null : (pb.authStore.record?.id ?? null),
+      } : {}),
+    }
+    sessionStorage.setItem(PENDING_KEY, JSON.stringify(pending))
+    return provider.authURL + encodeURIComponent(redirectURL)
   }
-  const redirectURL = `${window.location.origin}/auth/callback`
-  const pending: PendingOAuth = {
-    provider: provider.name,
-    state: provider.state,
-    codeVerifier: provider.codeVerifier,
-    redirectURL,
-    from: from ?? null,
-    mode,
-  }
-  sessionStorage.setItem(PENDING_KEY, JSON.stringify(pending))
-  // provider.authURL already ends with "&redirect_uri=" — just append the
-  // encoded SPA callback URL and navigate. window.location.assign keeps
-  // the provider's authorize page in the back/forward history so the
-  // browser Back button behaves naturally.
-  window.location.assign(provider.authURL + encodeURIComponent(redirectURL))
+  const target = sharedWebSessionEnabled()
+    ? await withMainSharedSessionLifecycle(prepare)
+    : await prepare()
+  // Whole-document provider navigation happens after releasing the lock.
+  window.location.assign(target)
 }
 
 // Thin named wrappers — most call sites care about one specific provider.
@@ -295,51 +337,41 @@ export async function completeOAuth2Login(
     sessionStorage.removeItem(PENDING_KEY)
     throw new Error('OAuth state mismatch. Please sign in again.')
   }
-  // For the link flow, remember who is binding so we can detect the
-  // identity-owned-by-another-account case (PocketBase then signs us in
-  // as that account rather than linking).
-  const prevRecordId =
-    pending.mode === 'link' ? (pb.authStore.record?.id ?? null) : null
+  function finish(previousId: string | null): OAuthCompletion {
+    bootstrapDone = true
+    notifyReady()
+    const nowId = pb.authStore.record?.id ?? null
+    const switched = pending.mode === 'link' && previousId != null &&
+      nowId != null && nowId !== previousId
+    if (pending.mode === 'link') {
+      sessionStorage.setItem(switched ? BIND_SWITCHED_KEY : BIND_DONE_KEY, '1')
+    }
+    return { from: pending.from, switchedAccount: switched }
+  }
   try {
-    await pb
-      .collection(AUTH_COLLECTION)
-      .authWithOAuth2Code(
-        pending.provider,
-        code,
-        pending.codeVerifier,
-        pending.redirectURL,
+    if (sharedWebSessionEnabled()) {
+      return await exchangeSharedMainAuth(
+        pending, code, finish, () => toast.error(SHARED_SESSION_ERROR),
       )
+    }
+    // Default-off deployments retain the existing SDK/store behavior.
+    const previousId = pending.mode === 'link' ? (pb.authStore.record?.id ?? null) : null
+    await pb.collection(AUTH_COLLECTION).authWithOAuth2Code(
+      pending.provider, code, pending.codeVerifier, pending.redirectURL,
+    )
+    const completion = finish(previousId)
+    await syncSharedSessionAfterLogin()
+    return completion
   } catch (e) {
     const conflict = asOAuthConflict(e, pending.from)
-    if (conflict) {
-      throw new OAuthConflictError(conflict)
-    }
+    if (conflict) throw new OAuthConflictError(conflict)
     throw e
   } finally {
-    sessionStorage.removeItem(PENDING_KEY)
-  }
-  // Bootstrap already counts as resolved once we have a server-issued auth
-  // record from the exchange.
-  bootstrapDone = true
-  notifyReady()
-  if (pending.mode === 'link') {
-    const nowRecordId = pb.authStore.record?.id ?? null
-    if (prevRecordId && nowRecordId && nowRecordId !== prevRecordId) {
-      sessionStorage.setItem(BIND_SWITCHED_KEY, '1')
-    } else {
-      sessionStorage.setItem(BIND_DONE_KEY, '1')
-    }
-  }
-  return {
-    from: pending.from,
-    switchedAccount:
-      pending.mode === 'link' &&
-      prevRecordId != null &&
-      pb.authStore.record?.id != null &&
-      pb.authStore.record.id !== prevRecordId,
+    // Do not consume a newer explicit attempt created while this one waited.
+    if (sessionStorage.getItem(PENDING_KEY) === raw) sessionStorage.removeItem(PENDING_KEY)
   }
 }
 
-export function logout() {
-  pb.authStore.clear()
+export async function logout(): Promise<void> {
+  await logoutMainSharedSession(() => pb.authStore.clear())
 }
